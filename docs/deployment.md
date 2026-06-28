@@ -216,6 +216,11 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 "I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
 ```
 
+> **Impact analysis** rides along automatically: if you've synced commitments
+> (§10), the check projects your realistic return from the learned bias and names
+> any at-risk commitment in the nudge ("…'Team sync' is now at risk"), with a
+> `hard_conflict` flag your workflow can use to escalate harder.
+
 **a. Twilio setup**
 
 1. Create a [Twilio](https://www.twilio.com/) account and buy a voice-capable

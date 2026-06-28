@@ -39,6 +39,12 @@ from pydantic import BaseModel, Field
 
 from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar
 from prefrontal.config import Settings, get_settings
+from prefrontal.impact import (
+    analyze_impact,
+    at_risk,
+    impact_phrase,
+    project_free_time,
+)
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
@@ -404,7 +410,10 @@ def create_app(
           level is crossed since the last poll it sets ``fire=true``, records the
           level so it fires once, and includes the ``message``.
 
-        Each returned item reports its post-check ``status``
+        For an active outing, **impact analysis** runs: the realistic free-time
+        is projected from the stated window and the learned time bias, and any
+        upcoming commitments that would be at risk are listed (and named in the
+        nudge message). Each returned item reports its post-check ``status``
         (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
@@ -419,6 +428,8 @@ def create_app(
         name = memory.get_state("user_name", "") or ""
         home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        commitments = memory.upcoming_commitments()
 
         results: list[dict[str, Any]] = []
         for outing in memory.active_outings():
@@ -438,6 +449,7 @@ def create_app(
             at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
 
             level, fire, message, outcome = "none", False, "", None
+            impacts: list[dict[str, Any]] = []
             if at_home:
                 # Location confirms the user is home — passive return.
                 closed = memory.close_outing(outing["id"], status="returned")
@@ -450,11 +462,27 @@ def create_app(
             else:
                 level = escalation_level(elapsed, window)
                 fire = level_rank(level) > level_rank(outing["last_level"])
+                # Impact analysis: project realistic free-time from the bias and
+                # see which upcoming commitments are now at risk.
+                risky = []
+                if commitments:
+                    projected = project_free_time(outing["departure_at"], window, bias)
+                    risky = at_risk(analyze_impact(projected, commitments))
+                    impacts = [
+                        {
+                            "commitment_id": i.commitment["id"],
+                            "title": i.commitment["title"],
+                            "start_at": i.commitment["start_at"],
+                            "slack_minutes": i.slack_minutes,
+                            "hardness": i.commitment.get("hardness"),
+                        }
+                        for i in risky
+                    ]
                 if fire:
                     memory.set_outing_level(outing["id"], level)
                     message = build_message(
                         level, elapsed_minutes=elapsed, window_minutes=window, name=name
-                    )
+                    ) + impact_phrase(risky)
                 outing_status = "active"
 
             results.append(
@@ -470,6 +498,8 @@ def create_app(
                     "at_home": at_home,
                     "status": outing_status,
                     "outcome": outcome,
+                    "impact": impacts,
+                    "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
                 }
             )
         return {"active": results}
