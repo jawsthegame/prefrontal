@@ -40,11 +40,17 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules.location_anchor import (
+    DEFAULT_ABANDON_RATIO,
+    DEFAULT_HOME_RADIUS_M,
     build_message,
     escalation_level,
     haversine_m,
+    is_abandoned,
+    is_at_home,
     level_rank,
     parse_time_window,
+    record_outing_abandoned,
+    record_outing_return,
 )
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
@@ -118,6 +124,17 @@ class OutingReturn(BaseModel):
         description="Outing to close. Defaults to the most recent active outing.",
     )
     status: Literal["returned", "abandoned"] = "returned"
+
+
+def _state_float(memory: MemoryStore, key: str, default: float) -> float:
+    """Read a coaching-state value as a float, falling back on missing/bad data."""
+    raw = memory.get_state(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def get_store(request: Request) -> MemoryStore:
@@ -340,12 +357,20 @@ def create_app(
     ) -> dict[str, Any]:
         """Evaluate active outings and report which nudges are due.
 
-        n8n polls this on a schedule. For each active outing it computes the
-        elapsed-time escalation level; when a *new* level has been crossed since
-        the last poll it sets ``fire=true``, records the level so it fires once,
-        and includes the user-facing ``message``. The body may optionally carry
-        ``current_lat``/``current_lon`` to annotate each outing with
-        ``distance_m`` from home (not used to gate nudges in v1).
+        n8n polls this on a schedule. For each active outing:
+
+        - If the body carries ``current_lat``/``current_lon`` and the user is
+          within the home radius, the outing is **passively closed** as returned
+          (location confirms the return) and no nudge fires — so a forgotten
+          "I'm back" tap, or coming home early, never triggers a call.
+        - Otherwise, if elapsed time has blown past the abandon ratio, the outing
+          is **auto-closed** as abandoned so it stops lingering active.
+        - Otherwise the elapsed-time escalation level is computed; when a *new*
+          level is crossed since the last poll it sets ``fire=true``, records the
+          level so it fires once, and includes the ``message``.
+
+        Each returned item reports its post-check ``status``
+        (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
         try:
@@ -357,15 +382,14 @@ def create_app(
         cur_lat = body.get("current_lat")
         cur_lon = body.get("current_lon")
         name = memory.get_state("user_name", "") or ""
+        home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
+        abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
 
-        active: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for outing in memory.active_outings():
             elapsed = outing["elapsed_minutes"] or 0.0
             window = outing["time_window_minutes"]
-            level = escalation_level(elapsed, window)
-            fire = level_rank(level) > level_rank(outing["last_level"])
-            if fire:
-                memory.set_outing_level(outing["id"], level)
+
             distance_m = None
             if (
                 cur_lat is not None
@@ -376,7 +400,29 @@ def create_app(
                 distance_m = round(
                     haversine_m(outing["home_lat"], outing["home_lon"], cur_lat, cur_lon)
                 )
-            active.append(
+            at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
+
+            level, fire, message, outcome = "none", False, "", None
+            if at_home:
+                # Location confirms the user is home — passive return.
+                closed = memory.close_outing(outing["id"], status="returned")
+                outcome = record_outing_return(memory, closed)["outcome"]
+                outing_status = "returned"
+            elif is_abandoned(elapsed, window, abandon_ratio):
+                closed = memory.close_outing(outing["id"], status="abandoned")
+                outcome = record_outing_abandoned(memory, closed)["outcome"]
+                outing_status = "abandoned"
+            else:
+                level = escalation_level(elapsed, window)
+                fire = level_rank(level) > level_rank(outing["last_level"])
+                if fire:
+                    memory.set_outing_level(outing["id"], level)
+                    message = build_message(
+                        level, elapsed_minutes=elapsed, window_minutes=window, name=name
+                    )
+                outing_status = "active"
+
+            results.append(
                 {
                     "outing_id": outing["id"],
                     "intention": outing["intention"],
@@ -384,18 +430,14 @@ def create_app(
                     "time_window_minutes": window,
                     "level": level,
                     "fire": fire,
-                    "message": build_message(
-                        level,
-                        elapsed_minutes=elapsed,
-                        window_minutes=window,
-                        name=name,
-                    )
-                    if fire
-                    else "",
+                    "message": message,
                     "distance_m": distance_m,
+                    "at_home": at_home,
+                    "status": outing_status,
+                    "outcome": outcome,
                 }
             )
-        return {"active": active}
+        return {"active": results}
 
     @app.post("/webhooks/outing/return", tags=["anchor"])
     def outing_return(
@@ -427,27 +469,18 @@ def create_app(
                 detail=f"Outing {outing_id} is not active.",
             )
 
+        if payload.status == "returned":
+            recorded = record_outing_return(memory, closed)
+        else:
+            recorded = record_outing_abandoned(memory, closed)
         actual = closed.get("actual_minutes")
-        window = closed.get("time_window_minutes")
-        outcome = None
-        episode_id = None
-        if payload.status == "returned" and actual is not None:
-            outcome = "success" if actual <= window else "miss"
-            episode_id = memory.log_episode(
-                "task",
-                predicted_value=window,
-                actual_value=round(actual, 1),
-                acknowledged=True,
-                context=f"outing: {closed.get('intention')}",
-                outcome=outcome,
-            )
         return {
             "outing_id": outing_id,
             "status": payload.status,
             "actual_minutes": round(actual, 1) if actual is not None else None,
-            "time_window_minutes": window,
-            "outcome": outcome,
-            "episode_id": episode_id,
+            "time_window_minutes": closed.get("time_window_minutes"),
+            "outcome": recorded["outcome"],
+            "episode_id": recorded["episode_id"],
         }
 
     return app

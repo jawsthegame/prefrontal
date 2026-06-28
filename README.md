@@ -94,7 +94,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
-| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — outing endpoints + escalation logic + n8n/Twilio workflow |
+| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Triage / coaching / delivery agents | — | 🔜 Not yet built |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,

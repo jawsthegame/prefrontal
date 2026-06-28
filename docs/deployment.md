@@ -243,6 +243,17 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 "Going out" and "I'm back" — see
 [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md).
 
+**c2. (Optional) Location-gating**
+
+If you feed the phone's location into the `Check Outings` node body
+(`current_lat`/`current_lon`, from a Home Assistant or iOS Shortcuts source) and
+set `home_lat`/`home_lon` when starting an outing, Prefrontal will **suppress the
+call and close the outing automatically once you're within the home radius**
+(`home_radius_m`, default 150 m). That means coming home early — or forgetting to
+tap "I'm back" — never triggers the 150% call. Without location it falls back to
+pure time-based escalation, so this is optional. Outings left open past
+`abandon_after_ratio`× the window (default 3×) auto-close as `abandoned`.
+
 **d. Try it (fast, no waiting)**
 
 Start an outing with a tiny window so thresholds trip within a minute or two:

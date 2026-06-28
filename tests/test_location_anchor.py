@@ -19,6 +19,8 @@ from prefrontal.modules.location_anchor import (
     build_message,
     escalation_level,
     haversine_m,
+    is_abandoned,
+    is_at_home,
     parse_time_window,
 )
 from prefrontal.webhooks.app import create_app
@@ -82,6 +84,24 @@ def test_haversine_known_distance():
     """Roughly one degree of latitude is ~111 km."""
     d = haversine_m(0.0, 0.0, 1.0, 0.0)
     assert 110_000 < d < 112_000
+
+
+@pytest.mark.parametrize(
+    ("distance", "radius", "expected"),
+    [(0, 150, True), (149, 150, True), (151, 150, False), (None, 150, False)],
+)
+def test_is_at_home(distance, radius, expected):
+    """Within the radius (and only with a known distance) counts as home."""
+    assert is_at_home(distance, radius) is expected
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "window", "ratio", "expected"),
+    [(44, 15, 3.0, False), (45, 15, 3.0, True), (60, 15, 3.0, True), (10, 0, 3.0, False)],
+)
+def test_is_abandoned(elapsed, window, ratio, expected):
+    """Abandoned once elapsed reaches window * ratio (never for a zero window)."""
+    assert is_abandoned(elapsed, window, ratio) is expected
 
 
 # -- store -------------------------------------------------------------------
@@ -202,6 +222,61 @@ def test_return_logs_episode_with_outcome(client, store):
     assert ep["episode_type"] == "task"
     assert ep["predicted_value"] == 10.0
     assert "coffee" in ep["context"]
+
+
+def test_check_at_home_passively_closes(client, store):
+    """Being within the home radius closes the outing (returned) without nudging."""
+    store.start_outing(
+        "getting coffee", 15.0, home_lat=0.0, home_lon=0.0,
+        departure_at=_utc_minutes_ago(8),
+    )
+    resp = client.post(
+        "/webhooks/outing/check",
+        json={"current_lat": 0.0001, "current_lon": 0.0},  # ~11 m from home
+        headers=_auth(),
+    ).json()
+    item = resp["active"][0]
+    assert item["at_home"] is True
+    assert item["fire"] is False
+    assert item["status"] == "returned"
+    assert item["outcome"] == "success"  # 8 min within the 15 min window
+    # No longer active, and a return episode was logged.
+    assert store.active_outings() == []
+    assert store.recent_episodes(1)[0]["episode_type"] == "task"
+
+
+def test_check_abandoned_auto_closes(client, store):
+    """Far past the abandon ratio closes the outing as abandoned, no nudge."""
+    # 20 min into a 5 min window = 400% > 300% abandon ratio.
+    store.start_outing("getting coffee", 5.0, departure_at=_utc_minutes_ago(20))
+    resp = client.post("/webhooks/outing/check", json={}, headers=_auth()).json()
+    item = resp["active"][0]
+    assert item["status"] == "abandoned"
+    assert item["fire"] is False
+    assert item["outcome"] == "miss"
+    assert store.active_outings() == []
+    # Abandoned logs a miss with no actual duration (doesn't pollute estimates).
+    ep = store.recent_episodes(1)[0]
+    assert ep["outcome"] == "miss"
+    assert ep["actual_value"] is None
+
+
+def test_check_away_still_escalates(client, store):
+    """A location away from home does not suppress time-based escalation."""
+    store.start_outing(
+        "getting coffee", 10.0, home_lat=0.0, home_lon=0.0,
+        departure_at=_utc_minutes_ago(16),  # 160% -> call
+    )
+    resp = client.post(
+        "/webhooks/outing/check",
+        json={"current_lat": 0.05, "current_lon": 0.0},  # ~5.5 km away
+        headers=_auth(),
+    ).json()
+    item = resp["active"][0]
+    assert item["at_home"] is False
+    assert item["status"] == "active"
+    assert item["level"] == "call"
+    assert item["fire"] is True
 
 
 def test_return_without_active_outing_is_404(client):
