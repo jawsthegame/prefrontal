@@ -1,0 +1,125 @@
+{
+  "name": "Prefrontal — Departure Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 15 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "event_title", "value": "Dentist", "type": "string" },
+            { "id": "a2", "name": "destination", "value": "123 Main St", "type": "string" },
+            { "id": "a3", "name": "leave_in_minutes", "value": 30, "type": "number" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "calendar-placeholder",
+      "name": "Next Event (PLACEHOLDER — replace with Calendar node)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/profile",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "text" } } }
+      },
+      "id": "get-profile",
+      "name": "Get Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama3.1:8b\",\n  \"stream\": false,\n  \"prompt\": \"You are Prefrontal, an executive-function coach. Behavioral profile of the user follows; obey it (especially any time multiplier).\\n\\n=== PROFILE ===\\n{{ $json.data }}\\n=== END PROFILE ===\\n\\nWrite ONE short, kind, specific departure nudge (max 2 sentences). Event: {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.event_title }} at {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.destination }}, naive leave-in {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.leave_in_minutes }} minutes.\"\n}",
+        "options": {}
+      },
+      "id": "ollama",
+      "name": "Compose with Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal\",\n  \"message\": \"{{ $json.response }}\"\n}",
+        "options": {}
+      },
+      "id": "pushover",
+      "name": "Send Pushover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event\": \"reminder.sent\",\n  \"episode_type\": \"departure\",\n  \"channel\": \"notification\",\n  \"context\": \"{{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.event_title }}\"\n}",
+        "options": {}
+      },
+      "id": "log-back",
+      "name": "Log to Prefrontal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [[{ "node": "Next Event (PLACEHOLDER — replace with Calendar node)", "type": "main", "index": 0 }]]
+    },
+    "Next Event (PLACEHOLDER — replace with Calendar node)": {
+      "main": [[{ "node": "Get Profile", "type": "main", "index": 0 }]]
+    },
+    "Get Profile": {
+      "main": [[{ "node": "Compose with Ollama", "type": "main", "index": 0 }]]
+    },
+    "Compose with Ollama": {
+      "main": [[{ "node": "Send Pushover", "type": "main", "index": 0 }]]
+    },
+    "Send Pushover": {
+      "main": [[{ "node": "Log to Prefrontal", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

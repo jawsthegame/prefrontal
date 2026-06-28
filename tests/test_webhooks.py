@@ -44,6 +44,18 @@ def test_health_needs_no_auth(client):
     assert resp.json()["status"] == "ok"
 
 
+def test_profile_requires_auth(client):
+    """The profile endpoint is auth-guarded."""
+    assert client.get("/profile").status_code == 401
+
+
+def test_profile_returns_markdown(client):
+    """With a valid token, /profile returns the behavioral profile as text."""
+    resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 200
+    assert "Behavioral profile" in resp.text
+
+
 def test_shortcut_rejects_missing_token(client):
     """A shortcut POST without the shared secret is rejected with 401."""
     resp = client.post("/webhooks/shortcut", json={"action": "made_it"})

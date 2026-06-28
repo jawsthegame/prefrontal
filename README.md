@@ -122,6 +122,11 @@ prefrontal profile
 prefrontal modules -v
 ```
 
+To run it always-on on a Mac mini and wire up Ollama, n8n, iOS Shortcuts, and
+Pushover/Ntfy, follow [`docs/deployment.md`](docs/deployment.md). The glue files
+(launchd service, importable n8n workflow, iOS Shortcut recipe) live in
+[`deploy/`](deploy/).
+
 Send a one-tap-style outcome the way an iOS Shortcut would:
 
 ```bash

@@ -1,0 +1,15 @@
+# deploy/
+
+Glue files for running Prefrontal on an always-on Mac mini. Follow the full
+runbook in [`../docs/deployment.md`](../docs/deployment.md); these are the files
+it tells you to copy/import.
+
+| File | What it is | Used in |
+|---|---|---|
+| `com.morningstatic.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
+| `n8n/departure-reminder.workflow.json` | Importable n8n workflow: schedule → `GET /profile` → Ollama → Pushover/Ntfy → `POST /webhooks/n8n`. A template — adjust nodes for your n8n version. | deployment §7 |
+| `ios-shortcut.md` | Recipe for the "Made it" / "Missed it" shortcuts and a location automation. | deployment §6 |
+
+Everything here is safe to commit: the plist and workflow contain **placeholders**
+(`REPLACE_WITH_...`, `PUSHOVER_TOKEN`) — no real secrets. Put real values in your
+local `.env` and in n8n credentials, never in these files.

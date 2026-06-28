@@ -7,6 +7,7 @@ turns them into rows in the behavioral memory layer.
 Routes:
 
 - ``GET  /health`` — liveness probe, no auth.
+- ``GET  /profile`` — the current behavioral profile (for n8n to feed Ollama).
 - ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
 - ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
 
@@ -27,12 +28,14 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from prefrontal.config import Settings, get_settings
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.summarizer import build_profile
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -159,6 +162,20 @@ def create_app(
     def health() -> dict[str, str]:
         """Liveness probe. Returns ``{"status": "ok"}`` with no auth required."""
         return {"status": "ok", "service": "prefrontal", "version": app.version}
+
+    @app.get("/profile", response_class=PlainTextResponse, tags=["memory"])
+    def profile(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> str:
+        """Return the current behavioral profile as Markdown.
+
+        This is the HTTP equivalent of ``prefrontal profile``. n8n fetches it to
+        prepend to an Ollama (or Anthropic) prompt so behavioral context travels
+        with every generated reminder/briefing. Auth-guarded like the webhooks.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return build_profile(memory)
 
     @app.post(
         "/webhooks/shortcut",
