@@ -182,7 +182,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for project layout, local setup, and co
 
 ## Status
 
-Early development. Not yet ready for general use.
+Early development. Not yet ready for general use. See [`ROADMAP.md`](ROADMAP.md)
+for what's stubbed and what's planned next.
 
 ---
 
