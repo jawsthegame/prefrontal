@@ -5,6 +5,7 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 
 - ``prefrontal init-db`` — create and seed the SQLite memory database.
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
+- ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
 - ``prefrontal profile`` — print (or write) the current behavioral profile.
 
 Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
@@ -19,6 +20,7 @@ from pathlib import Path
 from prefrontal import __version__
 from prefrontal.config import get_settings
 from prefrontal.memory.db import init_db
+from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules
@@ -73,6 +75,27 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
     print(f"Serving Prefrontal webhooks on http://{host}:{port} (docs at /docs)")
     uvicorn.run("prefrontal.webhooks.app:app", host=host, port=port, reload=args.reload)
+    return 0
+
+
+def _cmd_learn(args: argparse.Namespace) -> int:
+    """Recompute derived patterns from accumulated episodes.
+
+    Args:
+        args: Parsed arguments; uses ``args.db_path``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        summary = recompute_patterns(store)
+    by_type = ", ".join(f"{n} {t}" for t, n in sorted(summary.by_type.items())) or "none"
+    print(f"Recomputed patterns from {summary.episodes} episodes.")
+    print(f"Patterns written: {summary.patterns} ({by_type})")
+    if summary.bias is not None:
+        print(f"time_estimation_bias -> {summary.bias}")
     return 0
 
 
@@ -144,6 +167,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--reload", action="store_true", help="Auto-reload on code changes (development)."
     )
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_learn = sub.add_parser(
+        "learn", help="Recompute derived patterns from accumulated episodes."
+    )
+    p_learn.add_argument("--db-path", default=None, help="Override the database path.")
+    p_learn.set_defaults(func=_cmd_learn)
 
     p_profile = sub.add_parser("profile", help="Print the current behavioral profile.")
     p_profile.add_argument("--db-path", default=None, help="Override the database path.")

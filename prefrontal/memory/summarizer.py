@@ -130,9 +130,12 @@ def _describe_pattern(pattern: dict) -> str:
     detail_parts: list[str] = []
     if predicted is not None and observed is not None:
         detail_parts.append(f"predicted {predicted}, observed {observed}")
-    if variance is not None:
-        direction = "under" if variance > 0 else "over"
-        detail_parts.append(f"{direction}estimate by {abs(variance)}")
+        if variance is not None:
+            direction = "under" if variance > 0 else "over"
+            detail_parts.append(f"{direction}estimate by {abs(variance)}")
+    elif observed is not None:
+        # Rate-style patterns (channel_response, drift) have only an observed value.
+        detail_parts.append(f"observed {observed}")
     detail = "; ".join(detail_parts) if detail_parts else "no comparison data"
 
     return (

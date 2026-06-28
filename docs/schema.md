@@ -31,7 +31,10 @@ Raw outcome records. One row per agent interaction cycle.
 ---
 
 ### `patterns`
-Derived summaries. Updated periodically by a summarizer agent from `episodes`.
+Derived summaries computed from `episodes` by the pattern-computation pass
+(`prefrontal/memory/patterns.py`, run via `prefrontal learn`). `time_estimation`,
+`channel_response`, and `drift` are derived today; `context_switch` awaits switch
+source data. `confidence` grows with sample size as `n / (n + 5)`.
 
 | Column | Type | Description |
 |---|---|---|

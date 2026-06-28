@@ -88,6 +88,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Layer | Module | Status |
 |---|---|---|
 | Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state |
+| Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | 🧩 Stub — heuristic, LLM version TODO |
@@ -116,6 +117,9 @@ prefrontal init-db
 
 # Run the webhook listener (defaults to http://0.0.0.0:8000)
 prefrontal serve
+
+# Learn: recompute derived patterns + the time-estimation bias from episodes
+prefrontal learn
 
 # Print the current behavioral profile assembled from memory
 prefrontal profile

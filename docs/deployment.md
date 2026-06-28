@@ -281,7 +281,10 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
 The interventions declared by each module (`prefrontal modules -v`) are mostly
 `planned` — the n8n workflow gives you the proactive reminder loop today, but the
 per-module logic (escalation paths, hyperfocus protect-vs-interrupt, etc.) is
-still to be wired. The statistical pass that turns accumulated `episodes` into
-calibrated `patterns` is also a TODO; until then the profile reflects the seeded
-coaching defaults and any patterns you write directly. See the repo issues /
-roadmap for what's next.
+still to be wired. See `ROADMAP.md` for what's next.
+
+**Schedule the learning pass.** `prefrontal learn` recomputes derived patterns
+and the time-estimation bias from accumulated episodes. Run it periodically so
+the profile keeps sharpening — e.g. a second launchd agent with
+`StartCalendarInterval` (nightly), a `cron` entry, or an n8n schedule node that
+shells out / hits a future endpoint. A nightly run is plenty for a single user.
