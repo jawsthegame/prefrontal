@@ -48,6 +48,7 @@ them all):
 | Task Paralysis | `task_paralysis` | Task initiation / activation energy (tiny first steps, decomposition) |
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
+| Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
 profile, and declares the interventions it provides. Select a subset with
@@ -90,7 +91,8 @@ Prefrontal is in early development. This repository currently implements the **f
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | 🧩 Stub — heuristic, LLM version TODO |
-| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 4 modules; interventions are declared stubs |
+| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
+| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — outing endpoints + escalation logic + n8n/Twilio workflow |
 | Triage / coaching / delivery agents | — | 🔜 Not yet built |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,

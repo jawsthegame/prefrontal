@@ -75,6 +75,40 @@ This gives the system passive departure signals even when you don't tap anything
 
 ---
 
+## Shortcut: "Going out" (Location-Aware Task Anchor)
+
+Declares an intention so Prefrontal can nudge you back. Pairs with the
+`coffee-shop-nudge` n8n workflow.
+
+1. New shortcut named **Going out**.
+2. (Optional) **Ask for Input** (Text): "What's the plan, and back in how long?"
+3. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/outing/start`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):**
+     ```json
+     { "intention": "Provided Input" }
+     ```
+     Replace the `"intention"` value with the **Provided Input** variable. If you
+     phrase it like "getting coffee, back in 15 minutes", Prefrontal parses the
+     window automatically; otherwise add `"time_window_minutes": 15`.
+4. (Optional) include your home coordinates once so distance can be logged:
+   `"home_lat": 37.77, "home_lon": -122.41`.
+
+## Shortcut: "I'm back"
+
+Closes the active outing and logs intention-vs-actual for learning.
+
+1. New shortcut named **I'm back**.
+2. **Get Contents of URL** → `POST http://<your-mac>:8000/webhooks/outing/return`,
+   same headers, body `{}` (closes the most recent active outing).
+
+> The escalating nudges themselves (50% push, 100% push, 150% voice call) are
+> sent by the n8n workflow polling `/webhooks/outing/check` — you don't need a
+> shortcut for those. These two shortcuts just open and close the outing.
+
+---
+
 ## Troubleshooting
 
 - **401 Unauthorized** — token mismatch; re-check the `X-Prefrontal-Token` header.

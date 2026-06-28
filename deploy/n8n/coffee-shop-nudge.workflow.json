@@ -1,0 +1,132 @@
+{
+  "name": "Prefrontal — Coffee Shop Nudge (Location-Aware Task Anchor)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 1 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/webhooks/outing/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"current_lat\": null,\n  \"current_lon\": null\n}",
+        "options": {}
+      },
+      "id": "check-outings",
+      "name": "Check Outings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Flatten the check response into one item per *due* nudge.\nconst resp = $input.first().json;\nconst due = (resp.active || []).filter((o) => o.fire === true);\nreturn due.map((o) => ({ json: o }));"
+      },
+      "id": "flatten-due",
+      "name": "Due Nudges Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "is-call",
+              "leftValue": "={{ $json.level }}",
+              "rightValue": "call",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-voice-call",
+      "name": "Voice call?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/REPLACE_WITH_TWILIO_ACCOUNT_SID/Calls.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "REPLACE_WITH_YOUR_PHONE_E164" },
+            { "name": "From", "value": "REPLACE_WITH_TWILIO_NUMBER_E164" },
+            { "name": "Twiml", "value": "=<Response><Say voice=\"Polly.Matthew\">{{ $json.message }}</Say></Response>" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "twilio-call",
+      "name": "Twilio Voice Call (150%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'firm' ? 1 : 0 }}\n}",
+        "options": {}
+      },
+      "id": "pushover-push",
+      "name": "Pushover Push (50% / 100%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Check Outings", "type": "main", "index": 0 }]]
+    },
+    "Check Outings": {
+      "main": [[{ "node": "Due Nudges Only", "type": "main", "index": 0 }]]
+    },
+    "Due Nudges Only": {
+      "main": [[{ "node": "Voice call?", "type": "main", "index": 0 }]]
+    },
+    "Voice call?": {
+      "main": [
+        [{ "node": "Twilio Voice Call (150%)", "type": "main", "index": 0 }],
+        [{ "node": "Pushover Push (50% / 100%)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

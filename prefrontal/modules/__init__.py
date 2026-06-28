@@ -8,6 +8,8 @@ assistant. Each module targets one challenge:
 - :mod:`prefrontal.modules.task_paralysis` — task initiation / activation energy.
 - :mod:`prefrontal.modules.hyperfocus` — protect good focus, interrupt bad focus.
 - :mod:`prefrontal.modules.impulsivity` — friction before impulsive switches.
+- :mod:`prefrontal.modules.location_anchor` — escalating nudges back to a stated
+  intention as its time window elapses (the "Coffee Shop Nudge").
 
 Importing this package registers all built-in modules with
 :mod:`prefrontal.modules.registry`. Enable a subset via ``PREFRONTAL_MODULES``
@@ -22,6 +24,7 @@ and import it here so it loads.
 from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after registry)
     hyperfocus,
     impulsivity,
+    location_anchor,
     task_paralysis,
     time_blindness,
 )

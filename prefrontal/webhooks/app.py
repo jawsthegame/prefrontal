@@ -10,6 +10,9 @@ Routes:
 - ``GET  /profile`` — the current behavioral profile (for n8n to feed Ollama).
 - ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
 - ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
+- ``POST /webhooks/outing/start`` — declare an intention + time window.
+- ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
+- ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -36,6 +39,13 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
+from prefrontal.modules.location_anchor import (
+    build_message,
+    escalation_level,
+    haversine_m,
+    level_rank,
+    parse_time_window,
+)
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -78,6 +88,36 @@ class EpisodeCreated(BaseModel):
     episode_id: int
     outcome: str
     n8n_delivered: bool
+
+
+class OutingStart(BaseModel):
+    """Body of ``POST /webhooks/outing/start`` — declaring an intention."""
+
+    intention: str = Field(description="The stated mission, e.g. 'getting coffee'.")
+    time_window_minutes: float | None = Field(
+        default=None,
+        description="Stated window. If omitted, parsed from the intention text.",
+    )
+    home_lat: float | None = Field(default=None, description="Baseline latitude.")
+    home_lon: float | None = Field(default=None, description="Baseline longitude.")
+
+
+class OutingStarted(BaseModel):
+    """Response after an outing is started."""
+
+    outing_id: int
+    intention: str
+    time_window_minutes: float
+
+
+class OutingReturn(BaseModel):
+    """Body of ``POST /webhooks/outing/return`` — closing an outing."""
+
+    outing_id: int | None = Field(
+        default=None,
+        description="Outing to close. Defaults to the most recent active outing.",
+    )
+    status: Literal["returned", "abandoned"] = "returned"
 
 
 def get_store(request: Request) -> MemoryStore:
@@ -250,6 +290,165 @@ def create_app(
         if not isinstance(body, dict):
             body = {"value": body}
         return parse_inbound_event(body)
+
+    # -- Location-Aware Task Anchor (Coffee Shop Nudge) ----------------------
+
+    @app.post(
+        "/webhooks/outing/start",
+        response_model=OutingStarted,
+        status_code=status.HTTP_201_CREATED,
+        tags=["anchor"],
+    )
+    def outing_start(
+        payload: OutingStart,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> OutingStarted:
+        """Declare an outing: a stated intention and a time window.
+
+        The window is taken from ``time_window_minutes`` if given, otherwise
+        parsed from the intention text ("back in 15 minutes"). If neither yields
+        a window, responds 422 so the caller can ask explicitly.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        window = payload.time_window_minutes
+        if window is None:
+            window = parse_time_window(payload.intention)
+        if window is None or window <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Could not determine a time window. Include "
+                    "'time_window_minutes' or phrase it like 'back in 15 minutes'."
+                ),
+            )
+        outing_id = memory.start_outing(
+            payload.intention,
+            window,
+            home_lat=payload.home_lat,
+            home_lon=payload.home_lon,
+        )
+        return OutingStarted(
+            outing_id=outing_id, intention=payload.intention, time_window_minutes=window
+        )
+
+    @app.post("/webhooks/outing/check", tags=["anchor"])
+    async def outing_check(
+        request: Request,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Evaluate active outings and report which nudges are due.
+
+        n8n polls this on a schedule. For each active outing it computes the
+        elapsed-time escalation level; when a *new* level has been crossed since
+        the last poll it sets ``fire=true``, records the level so it fires once,
+        and includes the user-facing ``message``. The body may optionally carry
+        ``current_lat``/``current_lon`` to annotate each outing with
+        ``distance_m`` from home (not used to gate nudges in v1).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        cur_lat = body.get("current_lat")
+        cur_lon = body.get("current_lon")
+        name = memory.get_state("user_name", "") or ""
+
+        active: list[dict[str, Any]] = []
+        for outing in memory.active_outings():
+            elapsed = outing["elapsed_minutes"] or 0.0
+            window = outing["time_window_minutes"]
+            level = escalation_level(elapsed, window)
+            fire = level_rank(level) > level_rank(outing["last_level"])
+            if fire:
+                memory.set_outing_level(outing["id"], level)
+            distance_m = None
+            if (
+                cur_lat is not None
+                and cur_lon is not None
+                and outing["home_lat"] is not None
+                and outing["home_lon"] is not None
+            ):
+                distance_m = round(
+                    haversine_m(outing["home_lat"], outing["home_lon"], cur_lat, cur_lon)
+                )
+            active.append(
+                {
+                    "outing_id": outing["id"],
+                    "intention": outing["intention"],
+                    "elapsed_minutes": round(elapsed, 1),
+                    "time_window_minutes": window,
+                    "level": level,
+                    "fire": fire,
+                    "message": build_message(
+                        level,
+                        elapsed_minutes=elapsed,
+                        window_minutes=window,
+                        name=name,
+                    )
+                    if fire
+                    else "",
+                    "distance_m": distance_m,
+                }
+            )
+        return {"active": active}
+
+    @app.post("/webhooks/outing/return", tags=["anchor"])
+    def outing_return(
+        payload: OutingReturn,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Close an outing and log intention-vs-actual for pattern tracking.
+
+        Records the actual time out as a ``task`` episode (predicted = stated
+        window, actual = minutes out, outcome = ``success`` if within the window
+        else ``miss``) so the time-blindness learning can use it later.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        outing_id = payload.outing_id
+        if outing_id is None:
+            recent = memory.most_recent_active_outing()
+            if recent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No active outing to return.",
+                )
+            outing_id = recent["id"]
+
+        closed = memory.close_outing(outing_id, status=payload.status)
+        if closed is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Outing {outing_id} is not active.",
+            )
+
+        actual = closed.get("actual_minutes")
+        window = closed.get("time_window_minutes")
+        outcome = None
+        episode_id = None
+        if payload.status == "returned" and actual is not None:
+            outcome = "success" if actual <= window else "miss"
+            episode_id = memory.log_episode(
+                "task",
+                predicted_value=window,
+                actual_value=round(actual, 1),
+                acknowledged=True,
+                context=f"outing: {closed.get('intention')}",
+                outcome=outcome,
+            )
+        return {
+            "outing_id": outing_id,
+            "status": payload.status,
+            "actual_minutes": round(actual, 1) if actual is not None else None,
+            "time_window_minutes": window,
+            "outcome": outcome,
+            "episode_id": episode_id,
+        }
 
     return app
 

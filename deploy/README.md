@@ -8,7 +8,8 @@ it tells you to copy/import.
 |---|---|---|
 | `com.morningstatic.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
 | `n8n/departure-reminder.workflow.json` | Importable n8n workflow: schedule → `GET /profile` → Ollama → Pushover/Ntfy → `POST /webhooks/n8n`. A template — adjust nodes for your n8n version. | deployment §7 |
-| `ios-shortcut.md` | Recipe for the "Made it" / "Missed it" shortcuts and a location automation. | deployment §6 |
+| `n8n/coffee-shop-nudge.workflow.json` | Location-Aware Task Anchor: every-minute poll of `/webhooks/outing/check` → Pushover at 50%/100% → **Twilio voice call at 150%**. | deployment §8 |
+| `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, and the "Going out"/"I'm back" outing shortcuts. | deployment §6 |
 
 Everything here is safe to commit: the plist and workflow contain **placeholders**
 (`REPLACE_WITH_...`, `PUSHOVER_TOKEN`) — no real secrets. Put real values in your

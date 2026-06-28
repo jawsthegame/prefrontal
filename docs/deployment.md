@@ -203,7 +203,68 @@ releases, so adjust any node n8n flags on import.
 
 ---
 
-## 8. Verify end to end
+## 8. Module 1 — Location-Aware Task Anchor (Coffee Shop Nudge)
+
+The escalation logic lives in Prefrontal; n8n polls and delivers. Flow:
+
+```
+"Going out" Shortcut ─► POST /webhooks/outing/start   (logs intention + window)
+n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
+                          ├─ level soft (50%)  ─► Pushover
+                          ├─ level firm (100%) ─► Pushover (high priority)
+                          └─ level call (150%) ─► Twilio voice call
+"I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
+```
+
+**a. Twilio setup**
+
+1. Create a [Twilio](https://www.twilio.com/) account and buy a voice-capable
+   number. Note your **Account SID**, **Auth Token**, and the number (E.164,
+   e.g. `+15551234567`).
+2. In n8n: **Credentials → New → Basic Auth**. Username = Account SID,
+   Password = Auth Token. Name it e.g. "Twilio".
+
+**b. Import and configure the workflow**
+
+1. Import [`../deploy/n8n/coffee-shop-nudge.workflow.json`](../deploy/n8n/coffee-shop-nudge.workflow.json).
+2. **Check Outings** node → set the `X-Prefrontal-Token` header to your secret.
+3. **Twilio Voice Call** node → attach the Basic Auth credential; replace
+   `REPLACE_WITH_TWILIO_ACCOUNT_SID` in the URL, and set `To` (your phone) and
+   `From` (your Twilio number). The spoken text comes from `{{ $json.message }}`.
+4. **Pushover Push** node → set `PUSHOVER_TOKEN` / `PUSHOVER_USER` (or swap for
+   an Ntfy HTTP node).
+5. (Optional) Set your name for the voice message:
+   `prefrontal` has a `user_name` coaching key —
+   `sqlite3 prefrontal.db "UPDATE coaching_state SET value='Tom' WHERE key='user_name';"`
+6. **Execute Workflow** to test, then toggle **Active**.
+
+**c. Build the iOS shortcuts**
+
+"Going out" and "I'm back" — see
+[`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md).
+
+**d. Try it (fast, no waiting)**
+
+Start an outing with a tiny window so thresholds trip within a minute or two:
+
+```bash
+source .env 2>/dev/null
+curl -s -X POST http://localhost:8000/webhooks/outing/start \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -H "Content-Type: application/json" \
+  -d '{"intention":"test coffee run","time_window_minutes":1}'
+
+# Wait ~30s (50%), then poll the way n8n does — note level/fire/message:
+curl -s -X POST http://localhost:8000/webhooks/outing/check \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -d '{}' | python3 -m json.tool
+
+# Close it and see intention-vs-actual logged as an episode:
+curl -s -X POST http://localhost:8000/webhooks/outing/return \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -d '{}' | python3 -m json.tool
+```
+
+---
+
+## 9. Verify end to end
 
 1. `curl http://localhost:8000/health` → ok.
 2. `curl -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" http://localhost:8000/profile`

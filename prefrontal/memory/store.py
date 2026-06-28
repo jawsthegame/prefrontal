@@ -316,3 +316,125 @@ class MemoryStore:
             "SELECT * FROM coaching_state ORDER BY key ASC"
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
+
+    # -- outings (Location-Aware Task Anchor) --------------------------------
+
+    def start_outing(
+        self,
+        intention: str,
+        time_window_minutes: float,
+        *,
+        home_lat: float | None = None,
+        home_lon: float | None = None,
+        departure_at: str | None = None,
+    ) -> int:
+        """Record a declared outing and return its id.
+
+        Args:
+            intention: The stated mission ("getting coffee").
+            time_window_minutes: The stated "back in N minutes" window.
+            home_lat: Optional baseline latitude.
+            home_lon: Optional baseline longitude.
+            departure_at: Optional ISO timestamp for the departure; defaults to
+                the DB's ``CURRENT_TIMESTAMP``. Mainly useful for tests.
+
+        Returns:
+            The new outing's ``id``.
+        """
+        columns = ["intention", "time_window_minutes", "home_lat", "home_lon"]
+        values: list[Any] = [intention, time_window_minutes, home_lat, home_lon]
+        if departure_at is not None:
+            columns.append("departure_at")
+            values.append(departure_at)
+        placeholders = ", ".join("?" for _ in columns)
+        cur = self.conn.execute(
+            f"INSERT INTO outings ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_outing(self, outing_id: int) -> dict[str, Any] | None:
+        """Return a single outing by id, or ``None`` if it does not exist."""
+        row = self.conn.execute(
+            "SELECT * FROM outings WHERE id = ?", (outing_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def active_outings(self) -> list[dict[str, Any]]:
+        """Return active outings with a computed ``elapsed_minutes`` field.
+
+        Elapsed time is computed in SQL against ``CURRENT_TIMESTAMP`` (both
+        timestamps are UTC), so callers never have to deal with timezones.
+
+        Returns:
+            A list of outing dicts, each including ``elapsed_minutes``.
+        """
+        rows = self.conn.execute(
+            "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
+            "AS elapsed_minutes FROM outings WHERE status = 'active' ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def most_recent_active_outing(self) -> dict[str, Any] | None:
+        """Return the newest active outing (with ``elapsed_minutes``), or ``None``."""
+        row = self.conn.execute(
+            "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
+            "AS elapsed_minutes FROM outings WHERE status = 'active' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def set_outing_level(self, outing_id: int, level: str) -> None:
+        """Record the highest escalation level that has fired for an outing.
+
+        Args:
+            outing_id: The outing to update.
+            level: One of ``none``/``soft``/``firm``/``call``.
+        """
+        self.conn.execute(
+            "UPDATE outings SET last_level = ? WHERE id = ?", (level, outing_id)
+        )
+        self.conn.commit()
+
+    def close_outing(
+        self, outing_id: int, status: str = "returned"
+    ) -> dict[str, Any] | None:
+        """Close an active outing and return it with a computed ``actual_minutes``.
+
+        Args:
+            outing_id: The outing to close.
+            status: Terminal status to set (``returned`` or ``abandoned``).
+
+        Returns:
+            The closed outing dict including ``actual_minutes`` (minutes between
+            departure and return), or ``None`` if the outing was not active.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET status = ?, returned_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'active'",
+            (status, outing_id),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        row = self.conn.execute(
+            "SELECT *, (julianday(returned_at) - julianday(departure_at)) * 1440.0 "
+            "AS actual_minutes FROM outings WHERE id = ?",
+            (outing_id,),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def recent_outings(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent outings (any status), newest first.
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            A list of outing dicts ordered by ``id`` descending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM outings ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]

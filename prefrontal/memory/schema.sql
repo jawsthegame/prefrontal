@@ -54,6 +54,24 @@ CREATE TABLE IF NOT EXISTS coaching_state (
     source       TEXT                           -- inferred | explicit
 );
 
+-- Active and historical "outings": a stated intention plus a time window, used
+-- by the Location-Aware Task Anchor module to nudge the user back on track. One
+-- row per declared outing ("getting coffee, back in 15 min").
+CREATE TABLE IF NOT EXISTS outings (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    intention           TEXT    NOT NULL,            -- free-text stated mission
+    time_window_minutes REAL    NOT NULL,            -- stated "back in N minutes"
+    departure_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    home_lat            REAL,                         -- baseline location (optional)
+    home_lon            REAL,
+    status              TEXT    NOT NULL DEFAULT 'active',  -- active | returned | abandoned
+    last_level          TEXT    NOT NULL DEFAULT 'none',   -- highest escalation already fired
+    returned_at         DATETIME,                     -- set when the outing is closed
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_outings_status ON outings (status);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES
