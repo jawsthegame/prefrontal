@@ -109,6 +109,60 @@ Closes the active outing and logs intention-vs-actual for learning.
 
 ---
 
+## Location source (passive return & gating)
+
+Location is **optional** — without it the anchor escalates purely on elapsed
+time. Wiring it in lets Prefrontal stop nudging once you're actually home. There
+are two tiers; the first is iOS-only and takes five minutes, the second is
+continuous but needs Home Assistant.
+
+### Tier 1 — iOS arrival geofence (simplest)
+
+Uses iOS's native "when I arrive" trigger to close the outing on arrival. No
+continuous tracking, no extra infrastructure.
+
+1. Shortcuts → **Automation** → **+** → **Arrive** → choose **Home**.
+2. Action **Get Contents of URL** → `POST http://<your-mac>:8000/webhooks/outing/return`,
+   the usual token + JSON headers, body `{}`.
+3. **Run Immediately** on (no confirmation tap).
+
+Now walking in the door closes the active outing and logs the return — even if
+you never tap "I'm back". (This calls `/return` directly; it does not need the
+location-gating logic in `/check`.)
+
+### Tier 2 — Home Assistant continuous location (full gating)
+
+The HA companion app reports your phone's position continuously as a
+`device_tracker` entity. The n8n workflow reads it each poll and passes your
+current coordinates into `/webhooks/outing/check`, which then **suppresses
+in-progress nudges as you get within the home radius** (not just on arrival) and
+annotates each outing with `distance_m`.
+
+1. Install the **Home Assistant companion app** on your phone and enable location
+   sharing. Confirm you have a `device_tracker.<your_phone>` entity with
+   `latitude`/`longitude` attributes.
+2. Create a **Long-Lived Access Token** in HA (profile page).
+3. In the `coffee-shop-nudge` workflow, add an **HTTP Request** node *before*
+   `Check Outings`:
+   - `GET http://<home-assistant>:8123/api/states/device_tracker.<your_phone>`
+   - Header `Authorization: Bearer <HA long-lived token>`
+4. Point the `Check Outings` body at those attributes instead of `null`:
+   ```json
+   {
+     "current_lat": {{ $json.attributes.latitude }},
+     "current_lon": {{ $json.attributes.longitude }}
+   }
+   ```
+5. Set your home coordinates when starting an outing (the "Going out" shortcut's
+   optional `home_lat`/`home_lon`), and tune the radius if needed:
+   `sqlite3 prefrontal.db "UPDATE coaching_state SET value='200' WHERE key='home_radius_m';"`
+
+With Tier 2, coming home early — at any point in the outing — quietly closes it
+and cancels the pending call. Tier 1 only fires on the arrival geofence; either
+is a big improvement over time-only.
+
+---
+
 ## Troubleshooting
 
 - **401 Unauthorized** — token mismatch; re-check the `X-Prefrontal-Token` header.
