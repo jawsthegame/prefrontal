@@ -13,13 +13,15 @@ intervention status.)
   Run via `prefrontal learn`. *(Next: schedule it periodically; add finer
   `context_key` bucketing than episode type; derive `context_switch` once switch
   events are captured.)*
+- **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
+  profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
+  returns prioritized coaching prose, falling back to the heuristic when the
+  model is down. Run via `prefrontal summarize`. *(Next: optional Anthropic
+  provider for higher-quality summaries; cache/serve the narrative from
+  `GET /profile`.)*
 
 ## Known stubs in the current code
 
-- **LLM-backed summarizer** — `build_profile()` is a deterministic, templated
-  heuristic. A local-model (Ollama) version that synthesizes nuanced, prioritized
-  guidance is planned, with the heuristic as a fallback.
-  *(`prefrontal/memory/summarizer.py`.)*
 - **n8n inbound handlers** — `POST /webhooks/n8n` classifies events via
   `parse_inbound_event()` but routes none of them to real handlers yet.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/app.py`.)*
@@ -51,7 +53,7 @@ intervention status.)
   (today delivery is handled in n8n).
 - **Ingestion** — mail monitoring (Google Apps Script digest), calendar sync.
 - **Morning briefing** — daily digest calibrated to coaching preferences.
-- **Inference providers** — Ollama client (and optional Anthropic API) wired in
-  Python for the hybrid architecture.
+- **Inference providers** — Ollama client is wired (summarizer); an optional
+  Anthropic API provider for heavier reasoning is still to come.
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.

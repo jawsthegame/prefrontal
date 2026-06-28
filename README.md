@@ -91,7 +91,8 @@ Prefrontal is in early development. This repository currently implements the **f
 | Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
-| Profile summarizer | `prefrontal/memory/summarizer.py` | 🧩 Stub — heuristic, LLM version TODO |
+| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
+| Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
 | Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — outing endpoints + escalation logic + n8n/Twilio workflow |
 | Triage / coaching / delivery agents | — | 🔜 Not yet built |
@@ -121,8 +122,12 @@ prefrontal serve
 # Learn: recompute derived patterns + the time-estimation bias from episodes
 prefrontal learn
 
-# Print the current behavioral profile assembled from memory
+# Print the structured behavioral profile assembled from memory
 prefrontal profile
+
+# Summarize it into prioritized prose via a local Ollama model -> profile.md
+# (falls back to the structured profile if Ollama isn't running)
+prefrontal summarize
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v

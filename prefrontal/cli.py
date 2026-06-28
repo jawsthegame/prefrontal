@@ -6,7 +6,8 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal init-db`` — create and seed the SQLite memory database.
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
-- ``prefrontal profile`` — print (or write) the current behavioral profile.
+- ``prefrontal profile`` — print (or write) the structured behavioral profile.
+- ``prefrontal summarize`` — LLM-summarize the profile (Ollama) to ``profile.md``.
 
 Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
 """
@@ -22,7 +23,7 @@ from prefrontal.config import get_settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
-from prefrontal.memory.summarizer import build_profile
+from prefrontal.memory.summarizer import build_profile, summarize_profile
 from prefrontal.modules import available, enabled_modules
 
 
@@ -122,6 +123,48 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_summarize(args: argparse.Namespace) -> int:
+    """LLM-summarize the profile via Ollama, writing it to a file or stdout.
+
+    Falls back to the structured profile if the model is unavailable, unless
+    ``--no-fallback`` is given.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``output``, ``model``,
+            ``no_fallback``.
+
+    Returns:
+        Process exit code (0 on success, 1 if generation failed with no fallback).
+    """
+    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    client = OllamaClient(
+        base_url=settings.ollama_url, model=args.model or settings.ollama_model
+    )
+    try:
+        with MemoryStore.open(db_path) as store:
+            result = summarize_profile(
+                store, client=client, fallback=not args.no_fallback
+            )
+    except OllamaError as exc:
+        print(f"Summarization failed: {exc}", file=sys.stderr)
+        return 1
+
+    if result.source == "heuristic":
+        print(
+            f"Ollama unavailable ({client.base_url}, model {client.model}); "
+            "wrote the structured profile instead.",
+            file=sys.stderr,
+        )
+    output = args.output or "profile.md"
+    Path(output).write_text(result.text)
+    label = f"{result.source}" + (f" ({result.model})" if result.model else "")
+    print(f"Wrote {label} profile to {output}")
+    return 0
+
+
 def _cmd_modules(args: argparse.Namespace) -> int:
     """List available modules and whether each is enabled.
 
@@ -180,6 +223,21 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="Write to a file instead of stdout."
     )
     p_profile.set_defaults(func=_cmd_profile)
+
+    p_summarize = sub.add_parser(
+        "summarize", help="LLM-summarize the profile (Ollama) to profile.md."
+    )
+    p_summarize.add_argument("--db-path", default=None, help="Override the database path.")
+    p_summarize.add_argument(
+        "-o", "--output", default=None, help="Output path (default: profile.md)."
+    )
+    p_summarize.add_argument("--model", default=None, help="Override the Ollama model.")
+    p_summarize.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Fail instead of falling back to the structured profile.",
+    )
+    p_summarize.set_defaults(func=_cmd_summarize)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(

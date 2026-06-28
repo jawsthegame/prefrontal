@@ -283,8 +283,17 @@ The interventions declared by each module (`prefrontal modules -v`) are mostly
 per-module logic (escalation paths, hyperfocus protect-vs-interrupt, etc.) is
 still to be wired. See `ROADMAP.md` for what's next.
 
-**Schedule the learning pass.** `prefrontal learn` recomputes derived patterns
-and the time-estimation bias from accumulated episodes. Run it periodically so
-the profile keeps sharpening — e.g. a second launchd agent with
-`StartCalendarInterval` (nightly), a `cron` entry, or an n8n schedule node that
-shells out / hits a future endpoint. A nightly run is plenty for a single user.
+**Schedule the learning pass + summary.** Run these periodically (nightly is
+plenty for one user) via a launchd agent with `StartCalendarInterval`, `cron`, or
+an n8n schedule node:
+
+```bash
+prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
+prefrontal summarize   # structured profile -> Ollama -> profile.md (prose)
+```
+
+`prefrontal summarize` writes a narrative `profile.md` using the local Ollama
+model from `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it
+falls back to the structured profile, so the file is always written. The live
+`GET /profile` endpoint always returns the fast structured profile — point agents
+at the generated `profile.md` when you want the prose version.
