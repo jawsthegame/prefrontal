@@ -13,6 +13,9 @@ Routes:
 - ``POST /webhooks/outing/start`` — declare an intention + time window.
 - ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
 - ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
+- ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
+- ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
+- ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -34,6 +37,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar
 from prefrontal.config import Settings, get_settings
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
@@ -124,6 +128,37 @@ class OutingReturn(BaseModel):
         description="Outing to close. Defaults to the most recent active outing.",
     )
     status: Literal["returned", "abandoned"] = "returned"
+
+
+class CalendarEvent(BaseModel):
+    """One event in a ``POST /webhooks/calendar/sync`` batch."""
+
+    title: str = Field(description="Event title.")
+    start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
+    external_id: str | None = Field(default=None, description="Calendar event id.")
+    end_at: str | None = Field(default=None, description="ISO-8601 end.")
+    location: str | None = Field(default=None, description="Event location.")
+    lead_minutes: float | None = Field(
+        default=None, description="Travel+prep buffer before start (default 10)."
+    )
+    hard: bool = Field(default=False, description="A hard deadline vs a soft one.")
+
+
+class CalendarSync(BaseModel):
+    """Body of ``POST /webhooks/calendar/sync`` — a full upcoming-events batch."""
+
+    events: list[CalendarEvent] = Field(default_factory=list)
+
+
+class CommitmentCreate(BaseModel):
+    """Body of ``POST /commitments`` — a single manual commitment."""
+
+    title: str
+    start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
+    end_at: str | None = None
+    location: str | None = None
+    lead_minutes: float | None = None
+    hard: bool = False
 
 
 def _state_float(memory: MemoryStore, key: str, default: float) -> float:
@@ -481,6 +516,88 @@ def create_app(
             "time_window_minutes": closed.get("time_window_minutes"),
             "outcome": recorded["outcome"],
             "episode_id": recorded["episode_id"],
+        }
+
+    # -- Commitments (schedule for impact analysis) --------------------------
+
+    @app.post("/webhooks/calendar/sync", tags=["schedule"])
+    def calendar_sync(
+        payload: CalendarSync,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Sync a batch of upcoming calendar events into ``commitments``.
+
+        n8n posts the current window of events on a schedule; this upserts them
+        (by ``external_id``) and prunes calendar events that disappeared. A bad
+        timestamp rejects the whole batch with 422 (never partially applies).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            summary = sync_calendar(
+                memory, [e.model_dump() for e in payload.events]
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        return {
+            "added": summary.added,
+            "updated": summary.updated,
+            "cancelled": summary.cancelled,
+            "upcoming": summary.upcoming,
+            "conflicts": summary.conflicts,
+        }
+
+    @app.post(
+        "/commitments", status_code=status.HTTP_201_CREATED, tags=["schedule"]
+    )
+    def commitment_create(
+        payload: CommitmentCreate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Add a single commitment manually (source ``manual``)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            fields = normalize_event({**payload.model_dump(), "source": "manual"})
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        commitment_id, _ = memory.upsert_commitment(**fields)
+        return {"commitment_id": commitment_id}
+
+    @app.get("/commitments", tags=["schedule"])
+    def commitments_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """List active upcoming commitments, soonest first."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"commitments": memory.upcoming_commitments()}
+
+    @app.get("/commitments/conflicts", tags=["schedule"])
+    def commitments_conflicts(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Report double-bookings among upcoming commitments.
+
+        Returns overlapping pairs (most useful across merged personal + work
+        calendars). n8n can poll this and push a double-booking alert.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        conflicts = find_conflicts(memory.upcoming_commitments())
+        return {
+            "conflicts": [
+                {
+                    "a": {"id": c.a["id"], "title": c.a["title"], "start_at": c.a["start_at"]},
+                    "b": {"id": c.b["id"], "title": c.b["title"], "start_at": c.b["start_at"]},
+                    "overlap_minutes": c.overlap_minutes,
+                }
+                for c in conflicts
+            ]
         }
 
     return app

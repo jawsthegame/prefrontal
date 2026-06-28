@@ -72,6 +72,31 @@ CREATE TABLE IF NOT EXISTS outings (
 
 CREATE INDEX IF NOT EXISTS idx_outings_status ON outings (status);
 
+-- Upcoming commitments — the schedule the system reasons about (e.g. for impact
+-- analysis: "running over now puts your 10:30 at risk"). Populated from a
+-- calendar by the sync endpoint, or added manually. `lead_minutes` is the
+-- travel+prep buffer needed before `start_at`; `hardness` distinguishes a hard
+-- deadline from a soft one. `external_id` is the calendar event id, used to
+-- upsert on re-sync (partial-unique so manual rows can omit it).
+CREATE TABLE IF NOT EXISTS commitments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id  TEXT,                              -- calendar event id (NULL for manual)
+    title        TEXT    NOT NULL,
+    start_at     DATETIME NOT NULL,                 -- stored normalized to UTC
+    end_at       DATETIME,
+    location     TEXT,
+    lead_minutes REAL    NOT NULL DEFAULT 10,       -- travel+prep buffer before start
+    hardness     TEXT    NOT NULL DEFAULT 'soft',   -- hard | soft
+    source       TEXT    NOT NULL DEFAULT 'calendar', -- calendar | manual
+    status       TEXT    NOT NULL DEFAULT 'active',   -- active | cancelled
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_external
+    ON commitments (external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_commitments_start ON commitments (start_at);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES

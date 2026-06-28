@@ -291,6 +291,43 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
 
 ---
 
+## 10. Calendar sync + double-booking alerts
+
+Feeds your schedule into Prefrontal's `commitments` table so it can (next)
+do impact analysis and (now) flag double-bookings across calendars.
+
+Flow: every 15 min, n8n pulls **personal events from Google Calendar** (direct
+OAuth) and **work events from a shared ICS feed**, merges them, and POSTs the
+combined batch to `/webhooks/calendar/sync`. If the resulting schedule has any
+overlaps, it sends a Pushover **double-booking alert**.
+
+```
+n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
+                    └─ GET work ICS feed ──────────┴─► merge ─► POST /webhooks/calendar/sync
+                                                                   └─ conflicts > 0 ─► Pushover alert
+```
+
+1. Import [`../deploy/n8n/calendar-sync.workflow.json`](../deploy/n8n/calendar-sync.workflow.json).
+2. **Google Calendar node** → attach a Google OAuth2 credential (personal account);
+   `primary` is your personal calendar.
+3. **Get Work ICS node** → paste your work calendar's shared/secret **iCal feed
+   URL** (read-only). Google/Outlook/most providers expose one per calendar.
+4. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
+5. **Double-booking alert** → set Pushover token/user (or swap for Ntfy).
+6. **Execute Workflow** once, then toggle **Active**.
+
+Notes:
+- Events are namespaced `personal:…` / `work:…`, so the two feeds are deduped and
+  one calendar's sync never prunes the other's events. Always sync all calendars
+  together (this workflow does) so pruning stays correct.
+- The ICS parser is minimal (UID/SUMMARY/DTSTART/DTEND/LOCATION) and treats
+  TZID-only times as UTC — fine for a UTC/`Z` feed; for local-time feeds prefer a
+  community ICS node.
+- Check the result: `GET /commitments` (upcoming) and `GET /commitments/conflicts`
+  (overlaps). Add one-offs with `POST /commitments`.
+
+---
+
 ## What's not automated yet
 
 The interventions declared by each module (`prefrontal modules -v`) are mostly

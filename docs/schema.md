@@ -83,6 +83,18 @@ Persistent preferences and working memory for the coaching layer.
 
 ---
 
+## Additional tables
+
+Beyond the three core tables above, the schema (`prefrontal/memory/schema.sql`)
+also defines:
+
+- **`outings`** — active/historical "task anchors" (a stated intention + time
+  window) for the Location-Aware Task Anchor module.
+- **`commitments`** — upcoming schedule items synced from calendars (or added
+  manually), used for double-booking detection and (next) impact analysis.
+
+---
+
 ## System Prompt Injection
 
 A summarizer agent runs periodically and writes a `profile.md` from the above tables. Every agent prepends this to its system prompt.

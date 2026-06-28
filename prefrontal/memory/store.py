@@ -452,3 +452,136 @@ class MemoryStore:
             "SELECT * FROM outings ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- commitments (schedule for impact analysis) --------------------------
+
+    def upsert_commitment(
+        self,
+        *,
+        title: str,
+        start_at: str,
+        external_id: str | None = None,
+        end_at: str | None = None,
+        location: str | None = None,
+        lead_minutes: float = 10.0,
+        hardness: str = "soft",
+        source: str = "calendar",
+    ) -> tuple[int, bool]:
+        """Insert or update a commitment, returning ``(id, created)``.
+
+        When ``external_id`` is given and already exists, the row is updated in
+        place (and re-activated) — so re-syncing a calendar is idempotent.
+        Timestamps should already be normalized to UTC (see
+        :func:`prefrontal.commitments.to_utc`).
+
+        Args:
+            title: Commitment title.
+            start_at: UTC start timestamp (``YYYY-MM-DD HH:MM:SS``).
+            external_id: Calendar event id, or ``None`` for a manual entry.
+            end_at: Optional UTC end timestamp.
+            location: Optional location.
+            lead_minutes: Travel+prep buffer needed before ``start_at``.
+            hardness: ``hard`` or ``soft``.
+            source: ``calendar`` or ``manual``.
+
+        Returns:
+            ``(id, created)`` where ``created`` is ``True`` for a new row.
+        """
+        if external_id is not None:
+            existing = self.conn.execute(
+                "SELECT id FROM commitments WHERE external_id = ?", (external_id,)
+            ).fetchone()
+            if existing is not None:
+                self.conn.execute(
+                    "UPDATE commitments SET title = ?, start_at = ?, end_at = ?, "
+                    "location = ?, lead_minutes = ?, hardness = ?, source = ?, "
+                    "status = 'active', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE external_id = ?",
+                    (title, start_at, end_at, location, lead_minutes, hardness,
+                     source, external_id),
+                )
+                self.conn.commit()
+                return int(existing["id"]), False
+
+        cur = self.conn.execute(
+            "INSERT INTO commitments (external_id, title, start_at, end_at, "
+            "location, lead_minutes, hardness, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (external_id, title, start_at, end_at, location, lead_minutes,
+             hardness, source),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid), True
+
+    def get_commitment(self, commitment_id: int) -> dict[str, Any] | None:
+        """Return a single commitment by id, or ``None``."""
+        row = self.conn.execute(
+            "SELECT * FROM commitments WHERE id = ?", (commitment_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def upcoming_commitments(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return active commitments starting now or later, soonest first.
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            A list of commitment dicts ordered by ``start_at`` ascending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE status = 'active' "
+            "AND start_at >= datetime('now') ORDER BY start_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def cancel_commitment(self, commitment_id: int) -> bool:
+        """Mark a commitment cancelled. Returns ``True`` if a row changed."""
+        cur = self.conn.execute(
+            "UPDATE commitments SET status = 'cancelled', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'",
+            (commitment_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def cancel_missing_calendar(self, keep_external_ids: set[str]) -> int:
+        """Cancel future calendar commitments absent from a fresh sync.
+
+        Manual commitments are never touched. Pruning is **feed-aware**: an
+        ``external_id`` may be namespaced ``feed:id`` (e.g. ``personal:…``,
+        ``work:…``), and only commitments whose namespace appears in this batch
+        are eligible for cancellation. That way syncing one calendar never
+        cancels another calendar's events. If the batch uses no namespaces, the
+        legacy behavior applies (prune any missing calendar commitment).
+
+        Args:
+            keep_external_ids: The ``external_id``\\ s present in the new sync.
+
+        Returns:
+            The number of commitments cancelled.
+        """
+        keep = set(keep_external_ids)
+        namespaces = {e.split(":", 1)[0] for e in keep if ":" in e}
+        rows = self.conn.execute(
+            "SELECT id, external_id FROM commitments WHERE source = 'calendar' "
+            "AND status = 'active' AND start_at >= datetime('now')"
+        ).fetchall()
+        cancelled = 0
+        for row in rows:
+            eid = row["external_id"]
+            if eid in keep:
+                continue
+            if namespaces:
+                ns = eid.split(":", 1)[0] if eid and ":" in eid else None
+                if ns not in namespaces:
+                    continue  # belongs to a feed not part of this sync; leave it
+            self.conn.execute(
+                "UPDATE commitments SET status = 'cancelled', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (row["id"],),
+            )
+            cancelled += 1
+        self.conn.commit()
+        return cancelled

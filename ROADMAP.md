@@ -47,6 +47,11 @@ the first test. Code follow-ups below are optional polish.
   model is down. Run via `prefrontal summarize`. *(Next: optional Anthropic
   provider for higher-quality summaries; cache/serve the narrative from
   `GET /profile`.)*
+- **Calendar ingestion + double-booking** ✅ — `commitments` table +
+  `prefrontal/commitments.py`: feed-aware calendar sync
+  (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,
+  `GET /commitments`, and overlap detection at `GET /commitments/conflicts` with
+  a Pushover alert in the sync workflow.
 
 ## Known stubs in the current code
 
@@ -74,6 +79,17 @@ the first test. Code follow-ups below are optional polish.
   pattern pass folds into `time_estimation` and the bias multiplier.
 - **Finer `context_key`** — give outings their own pattern bucket so coffee runs
   calibrate separately from other tasks (still open).
+
+## Next up: impact analysis (now unblocked)
+
+With the schedule in `commitments`, the "what gets thrown off when I'm running
+behind" feature can be built: an `impact_analysis(projected_free_at, commitments)`
+that, for each upcoming commitment, computes latest-safe-departure
+(`start_at − lead_minutes`) and flags the ones now at risk. Made **predictive** by
+projecting realistic free-time from the `time_estimation_bias` (you say 15 min →
+~21 min). Surface the top impact inside the outing nudge ("…and your 10:30 is now
+at risk") and escalate harder when a `hard` commitment is threatened. Later:
+full cascade/domino propagation through the chain of commitments.
 
 ## Beyond v1 (from the README architecture)
 
