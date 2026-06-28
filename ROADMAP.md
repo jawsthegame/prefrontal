@@ -53,7 +53,11 @@ intervention status.)
   (today delivery is handled in n8n).
 - **Ingestion** — mail monitoring (Google Apps Script digest), calendar sync.
 - **Morning briefing** — daily digest calibrated to coaching preferences.
-- **Inference providers** — Ollama client is wired (summarizer); an optional
-  Anthropic API provider for heavier reasoning is still to come.
+- **Optional Anthropic provider** — keep inference local by default, but add an
+  opt-in Anthropic API path (e.g. Claude Haiku for cheap, high-quality
+  summaries; a larger model for heavier coaching/triage reasoning), selectable
+  per agent as the README describes. The summarizer already takes an injected
+  client, so this slots in behind the same interface. Local-first stays the
+  default; the cloud path is explicit and configurable.
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
