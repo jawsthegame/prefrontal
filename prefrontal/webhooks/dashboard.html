@@ -2,46 +2,62 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
 <title>Prefrontal — Monitor</title>
 <style>
   :root {
     --bg: #0f1115; --card: #181b22; --line: #262b36; --fg: #e6e9ef;
-    --muted: #8b93a7; --accent: #6ea8fe;
+    --muted: #8b93a7; --accent: #6ea8fe; --good: #5bc97a;
     --none: #6b7280; --soft: #d9a93b; --firm: #e07b39; --call: #e0556b;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
   }
   header {
-    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-    padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky;
-    top: 0; background: var(--bg); z-index: 5;
+    display: flex; align-items: baseline; gap: 10px 12px; flex-wrap: wrap;
+    padding: 14px 20px; padding-top: max(14px, env(safe-area-inset-top));
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: rgba(15,17,21,.92); backdrop-filter: blur(8px); z-index: 5;
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   header .meta { color: var(--muted); font-size: 13px; }
   header .spacer { flex: 1; }
-  button {
+  button { font-family: inherit; }
+  .ghost {
     background: var(--card); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+    border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; min-height: 36px;
   }
-  button:hover { border-color: var(--accent); }
-  main {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-    gap: 16px; padding: 20px; max-width: 1400px; margin: 0 auto;
+  .ghost:hover { border-color: var(--accent); }
+
+  .banner { padding: 16px 20px 0; max-width: 1400px; margin: 0 auto; }
+  .masonry {
+    columns: 360px; column-gap: 16px; padding: 16px 20px 28px;
+    max-width: 1400px; margin: 0 auto;
   }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 12px; }
-  .card.wide { grid-column: 1 / -1; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin: 0 0 16px; break-inside: avoid;
+  }
+  .banner .card { margin-bottom: 0; }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); margin: 0 0 12px;
+  }
   .empty { color: var(--muted); font-style: italic; }
-  .row { padding: 10px 0; border-top: 1px solid var(--line); }
+
+  .row { display: flex; align-items: flex-start; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
   .row:first-of-type { border-top: none; }
+  .row .main { flex: 1; min-width: 0; }
+  .row .acts { display: flex; gap: 6px; flex-shrink: 0; }
   .row .title { font-weight: 600; }
   .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
   .badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase;
-           padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; }
+           padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; vertical-align: middle; }
   .lvl-none { background: #2a2f3a; color: var(--none); }
   .lvl-soft { background: #3a2f12; color: var(--soft); }
   .lvl-firm { background: #3a2412; color: var(--firm); }
@@ -50,21 +66,59 @@
   .pri-3 { background: #3a1620; color: var(--call); }
   .pri-2 { background: #3a2412; color: var(--firm); }
   .conflict { background: #3a1620; color: var(--call); }
+
   .bar { height: 6px; border-radius: 4px; background: #2a2f3a; margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
-  pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; font: 13px/1.55 ui-monospace, Menlo, monospace; color: var(--fg); }
-  details summary { cursor: pointer; color: var(--muted); }
-  .err { color: var(--call); font-size: 13px; }
-  #gate {
-    position: fixed; inset: 0; background: var(--bg); display: none;
-    align-items: center; justify-content: center; z-index: 10;
+
+  .btn-sm {
+    font-size: 12px; padding: 0 11px; min-height: 34px; border-radius: 8px;
+    background: #222734; border: 1px solid var(--line); color: var(--muted); cursor: pointer;
   }
-  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; width: min(420px, 90vw); }
+  .btn-go:hover { border-color: var(--good); color: var(--good); }
+  .btn-x:hover { border-color: var(--call); color: var(--call); }
+
+  .addrow { display: flex; gap: 8px; margin-bottom: 12px; }
+  .addrow input {
+    flex: 1; min-width: 0; padding: 9px 11px; border-radius: 8px; min-height: 38px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 15px;
+  }
+  .addrow select {
+    padding: 0 8px; min-height: 38px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
+  }
+  .addrow .add {
+    padding: 0 16px; min-height: 38px; border-radius: 8px; background: var(--accent);
+    color: #0b0d12; border: none; font-weight: 700; cursor: pointer;
+  }
+
+  /* lightweight markdown */
+  .md h3 { font-size: 14px; margin: 14px 0 6px; }
+  .md h4 { font-size: 12px; margin: 12px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .md p { margin: 6px 0; }
+  .md ul { margin: 6px 0; padding-left: 20px; }
+  .md li { margin: 2px 0; }
+  .md em { color: var(--muted); font-style: normal; opacity: .8; }
+  .md code { background: #2a2f3a; padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+  .md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent);
+                   background: #1d212b; color: var(--muted); border-radius: 0 6px 6px 0; }
+  details summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
+  .err { color: var(--call); font-size: 13px; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; width: min(420px, 100%); }
   #gate h2 { margin: 0 0 6px; font-size: 16px; }
   #gate p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
-  #gate input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
-                background: var(--bg); color: var(--fg); font-size: 14px; margin-bottom: 12px; }
-  #gate button { width: 100%; padding: 10px; background: var(--accent); color: #0b0d12; border: none; font-weight: 700; }
+  #gate input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--bg); color: var(--fg); font-size: 16px; margin-bottom: 12px; }
+  #gate button { width: 100%; padding: 12px; min-height: 44px; background: var(--accent); color: #0b0d12; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+
+  @media (max-width: 520px) {
+    .banner { padding: 12px 12px 0; }
+    .masonry { columns: 1; padding: 12px 12px 24px; }
+    header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); }
+    .addrow { flex-wrap: wrap; }
+    .addrow input { flex-basis: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -72,17 +126,33 @@
   <h1>🧠 Prefrontal</h1>
   <span class="meta" id="status">loading…</span>
   <span class="spacer"></span>
-  <button id="refresh">Refresh</button>
-  <button id="signout" title="Forget the saved token">Sign out</button>
+  <button class="ghost" id="refresh">Refresh</button>
+  <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
 </header>
 
-<main id="app">
-  <section class="card wide" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
-  <section class="card" id="c-todos"><h2>Todos</h2><div class="body"></div></section>
+<div class="banner">
+  <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
+</div>
+
+<main class="masonry">
+  <section class="card" id="c-todos">
+    <h2>Todos</h2>
+    <div class="addrow">
+      <input id="todo-title" placeholder="Add a todo…" autocomplete="off" />
+      <select id="todo-pri" aria-label="priority">
+        <option value="1" selected>normal</option>
+        <option value="3">urgent</option>
+        <option value="2">high</option>
+        <option value="0">low</option>
+      </select>
+      <button class="add" data-action="todo-add">Add</button>
+    </div>
+    <div class="body"></div>
+  </section>
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
-  <section class="card wide" id="c-profile"><h2>Behavioral profile</h2><div class="body"></div></section>
+  <section class="card" id="c-profile"><h2>Behavioral profile</h2><div class="body"></div></section>
 </main>
 
 <div id="gate">
@@ -111,6 +181,37 @@ function fmt(ts) {
 }
 function mins(n) { return n == null ? "—" : Math.round(n) + " min"; }
 
+// Minimal, safe markdown: escape first, then format a known subset.
+function md(src) {
+  const inline = (s) => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/(^|[\s(])_([^_]+?)_(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  const out = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  for (const raw of String(src).split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    let m;
+    if ((m = line.match(/^\s*[-•]\s+(.*)$/))) { if (!inList) { out.push("<ul>"); inList = true; } out.push("<li>" + inline(m[1]) + "</li>"); continue; }
+    closeList();
+    if ((m = line.match(/^###\s+(.*)$/))) out.push("<h4>" + inline(m[1]) + "</h4>");
+    else if ((m = line.match(/^##\s+(.*)$/))) out.push("<h3>" + inline(m[1]) + "</h3>");
+    else if ((m = line.match(/^#\s+(.*)$/))) out.push("<h3>" + inline(m[1]) + "</h3>");
+    else if ((m = line.match(/^>\s?(.*)$/))) out.push("<blockquote>" + inline(m[1]) + "</blockquote>");
+    else if (line.trim() === "" || /^[-—]{3,}$/.test(line.trim())) { /* skip blank / rule */ }
+    else out.push("<p>" + inline(line) + "</p>");
+  }
+  closeList();
+  return '<div class="md">' + out.join("") + "</div>";
+}
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY); clearInterval(timer);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+
 async function api(path) {
   const r = await fetch(path, { headers: { "X-Prefrontal-Token": token } });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
@@ -118,51 +219,72 @@ async function api(path) {
   const ct = r.headers.get("content-type") || "";
   return ct.includes("application/json") ? r.json() : r.text();
 }
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "X-Prefrontal-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (r.status === 401) { gate("That token was rejected."); throw new Error("401"); }
+  if (!r.ok) { alert("Action failed (HTTP " + r.status + "): " + (await r.text())); throw new Error(path); }
+  return r.json().catch(() => ({}));
+}
 
 function renderOutings(d) {
   const a = (d.active || []);
   if (!a.length) return `<div class="empty">No active outings.</div>`;
   return a.map((o) => {
     const pct = o.time_window_minutes ? Math.min(150, (o.elapsed_minutes / o.time_window_minutes) * 100) : 0;
-    const col = `var(--${o.level})`;
     return `<div class="row">
-      <div><span class="title">${esc(o.intention)}</span> <span class="badge lvl-${o.level}">${o.level}</span></div>
-      <div class="sub">out ${mins(o.elapsed_minutes)} of ${mins(o.time_window_minutes)} · since ${fmt(o.departure_at)}</div>
-      <div class="bar"><span style="width:${(pct/1.5).toFixed(0)}%;background:${col}"></span></div>
+      <div class="main">
+        <div><span class="title">${esc(o.intention)}</span> <span class="badge lvl-${o.level}">${o.level}</span></div>
+        <div class="sub">out ${mins(o.elapsed_minutes)} of ${mins(o.time_window_minutes)} · since ${fmt(o.departure_at)}</div>
+        <div class="bar"><span style="width:${(pct / 1.5).toFixed(0)}%;background:var(--${o.level})"></span></div>
+      </div>
+      <div class="acts">
+        <button class="btn-sm btn-go" data-action="outing-return" data-id="${o.outing_id}">Back</button>
+        <button class="btn-sm btn-x" data-action="outing-abandon" data-id="${o.outing_id}">Abandon</button>
+      </div>
     </div>`;
   }).join("");
 }
 function renderRecent(d) {
   const r = (d.recent || []).filter((o) => o.status !== "active");
   if (!r.length) return `<div class="empty">No recent outings.</div>`;
-  return r.slice(0, 12).map((o) => `<div class="row">
+  return r.slice(0, 12).map((o) => `<div class="row"><div class="main">
     <div><span class="title">${esc(o.intention)}</span> <span class="pill">${o.status}</span></div>
     <div class="sub">window ${mins(o.time_window_minutes)} · left ${fmt(o.departure_at)} · back ${fmt(o.returned_at)}</div>
-  </div>`).join("");
+  </div></div>`).join("");
 }
 function renderTodos(d) {
   const t = (d.todos || []);
   if (!t.length) return `<div class="empty">No open todos.</div>`;
   const names = ["low", "normal", "high", "urgent"];
   return t.map((x) => `<div class="row">
-    <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
-    <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
+    <div class="main">
+      <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
+      <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
+    </div>
+    <div class="acts">
+      <button class="btn-sm btn-go" data-action="todo-done" data-id="${x.id}">Done</button>
+      <button class="btn-sm btn-x" data-action="todo-drop" data-id="${x.id}">Drop</button>
+    </div>
   </div>`).join("");
 }
 function renderCommitments(list, conflicts) {
   const c = (list.commitments || []);
-  const conflictIds = new Set();
-  (conflicts.conflicts || []).forEach((p) => { conflictIds.add(p.a.id); conflictIds.add(p.b.id); });
+  const ids = new Set();
+  (conflicts.conflicts || []).forEach((p) => { ids.add(p.a.id); ids.add(p.b.id); });
   let html = "";
-  if (conflicts.conflicts && conflicts.conflicts.length) {
-    html += conflicts.conflicts.map((p) => `<div class="row"><span class="badge conflict">conflict</span>
-      <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div>`).join("");
-  }
+  (conflicts.conflicts || []).forEach((p) => {
+    html += `<div class="row"><div class="main"><span class="badge conflict">conflict</span>
+      <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div></div>`;
+  });
   if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
-  html += c.map((x) => `<div class="row">
-    <div><span class="title">${esc(x.title)}</span>${conflictIds.has(x.id) ? ' <span class="pill conflict">double-booked</span>' : ""}</div>
+  html += c.map((x) => `<div class="row"><div class="main">
+    <div><span class="title">${esc(x.title)}</span>${ids.has(x.id) ? ' <span class="pill conflict">double-booked</span>' : ""}</div>
     <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
-  </div>`).join("");
+  </div></div>`).join("");
   return html;
 }
 
@@ -173,36 +295,47 @@ async function load() {
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), api("/profile"),
   ]);
-  // 401 anywhere → re-gate.
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
-    token = null; localStorage.removeItem(KEY);
-    $("#gate-err").textContent = "That token was rejected.";
-    $("#gate").style.display = "flex"; return;
+    gate("That token was rejected."); return;
   }
   const [outings, todos, commitments, conflicts, briefing, profile] = results;
-  const put = (sel, ok, val, render) => {
-    $(sel + " .body").innerHTML = ok ? render(val) : `<div class="err">unavailable</div>`;
-  };
-  put("#c-outings", outings.status === "fulfilled", outings.value, renderOutings);
-  put("#c-recent", outings.status === "fulfilled", outings.value, renderRecent);
-  put("#c-todos", todos.status === "fulfilled", todos.value, renderTodos);
-  $("#c-commitments .body").innerHTML =
-    commitments.status === "fulfilled"
-      ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
-      : `<div class="err">unavailable</div>`;
-  $("#c-briefing .body").innerHTML =
-    briefing.status === "fulfilled" ? `<pre>${esc(briefing.value.text || "")}</pre>` : `<div class="err">unavailable</div>`;
-  $("#c-profile .body").innerHTML =
-    profile.status === "fulfilled"
-      ? `<details open><summary>profile markdown</summary><pre>${esc(profile.value)}</pre></details>`
-      : `<div class="err">unavailable</div>`;
+  const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
+  put("#c-outings", outings, renderOutings);
+  put("#c-recent", outings, renderRecent);
+  put("#c-todos", todos, renderTodos);
+  $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
+    ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
+    : `<div class="err">unavailable</div>`;
+  $("#c-briefing .body").innerHTML = briefing.status === "fulfilled" ? md(briefing.value.text || "") : `<div class="err">unavailable</div>`;
+  $("#c-profile .body").innerHTML = profile.status === "fulfilled"
+    ? `<details><summary>show profile</summary>${md(profile.value)}</details>` : `<div class="err">unavailable</div>`;
   $("#status").textContent = "updated " + new Date().toLocaleTimeString();
 }
 
 function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
 
+// Action delegation (rows are re-rendered, so listen on the document).
+document.addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const act = el.dataset.action, id = el.dataset.id;
+  try {
+    if (act === "todo-add") {
+      const title = $("#todo-title").value.trim();
+      if (!title) return;
+      await post("/todos", { title, priority: Number($("#todo-pri").value) });
+      $("#todo-title").value = "";
+    } else if (act === "todo-done") { await post(`/todos/${id}/done`); }
+    else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
+    else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
+    else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
+    load();
+  } catch (_) { /* post() already surfaced the error */ }
+});
+$("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
+
 $("#refresh").onclick = load;
-$("#signout").onclick = () => { token = null; localStorage.removeItem(KEY); clearInterval(timer); $("#gate").style.display = "flex"; };
+$("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
   if (!v) return;
