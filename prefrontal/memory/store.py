@@ -160,6 +160,20 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def all_episodes(self) -> list[dict[str, Any]]:
+        """Return every episode in chronological order.
+
+        Used by the pattern-computation pass, which aggregates the full history.
+        Volume is single-user and human-paced, so loading all rows is fine.
+
+        Returns:
+            A list of episode dicts ordered by ``timestamp`` then ``id`` ascending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM episodes ORDER BY timestamp ASC, id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def episodes_by_type(
         self, episode_type: str, limit: int = 100
     ) -> list[dict[str, Any]]:

@@ -5,13 +5,17 @@ a stub and what's planned next, so the gap between "scaffolded" and "finished"
 stays visible to contributors. (See also `prefrontal modules -v` for per-module
 intervention status.)
 
+## Recently shipped
+
+- **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
+  `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
+  (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
+  Run via `prefrontal learn`. *(Next: schedule it periodically; add finer
+  `context_key` bucketing than episode type; derive `context_switch` once switch
+  events are captured.)*
+
 ## Known stubs in the current code
 
-- **Pattern-computation pass** — the job that turns accumulated `episodes` into
-  calibrated `patterns` (variance, confidence, sample size) is not written yet.
-  Until it exists, `profile.md` reflects the seeded coaching defaults plus any
-  patterns written directly. This is the heart of "how it learns."
-  *(`prefrontal/memory/` — new summarizer/aggregation step.)*
 - **LLM-backed summarizer** — `build_profile()` is a deterministic, templated
   heuristic. A local-model (Ollama) version that synthesizes nuanced, prioritized
   guidance is planned, with the heuristic as a fallback.
@@ -34,9 +38,10 @@ intervention status.)
 - **Abandoned auto-close** — auto-close outings that are never returned (e.g. far
   past the window with no `/return`) as `status="abandoned"` so they don't nudge
   forever; record them for pattern tracking.
-- **Feed outings into learning** — once the pattern-computation pass exists,
-  outing `miss` episodes should sharpen future time-window predictions
-  (`time_estimation` patterns).
+- **Feed outings into learning** ✅ — outing returns log `task` episodes that the
+  pattern pass now folds into `time_estimation` and the bias multiplier. (Next:
+  give outings their own `context_key` so coffee runs calibrate separately from
+  other tasks.)
 
 ## Beyond v1 (from the README architecture)
 
