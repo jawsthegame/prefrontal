@@ -58,6 +58,11 @@ the first test. Code follow-ups below are optional polish.
   (an `impact` list + `hard_conflict` flag) and named in the nudge ("…'Team sync'
   is now at risk"). *(Next: full cascade/domino propagation through the chain;
   expose impact beyond outings.)*
+- **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
+  commitments, double-bookings, what slipped this past week, and a coaching note
+  (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +
+  `prefrontal briefing` (`--llm` for Ollama prose, heuristic fallback); delivered
+  by `deploy/n8n/morning-briefing.workflow.json`.
 
 ## Known stubs in the current code
 
@@ -89,11 +94,11 @@ the first test. Code follow-ups below are optional polish.
 ## Beyond v1 (from the README architecture)
 
 - **Triage agent** — classify/prioritize/route inbound signals.
-- **Coaching agent** — generate briefings, reminders, check-ins from the profile.
+- **Coaching agent** — generate reminders/check-ins from the profile (the
+  morning briefing is the first slice of this).
 - **Delivery layer** — first-class Pushover / Ntfy / TTS integrations in Python
   (today delivery is handled in n8n).
-- **Ingestion** — mail monitoring (Google Apps Script digest), calendar sync.
-- **Morning briefing** — daily digest calibrated to coaching preferences.
+- **Ingestion** — mail monitoring (Google Apps Script digest).
 - **Optional Anthropic provider** — keep inference local by default, but add an
   opt-in Anthropic API path (e.g. Claude Haiku for cheap, high-quality
   summaries; a larger model for heavier coaching/triage reasoning), selectable

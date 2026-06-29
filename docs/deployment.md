@@ -333,6 +333,22 @@ Notes:
 
 ---
 
+## 11. Morning briefing
+
+A daily digest of today's commitments, double-bookings, what slipped this past
+week, and a reminder of your time bias — calibrated to `preferred_briefing_format`
+(`short`/`long`).
+
+- Preview it now: `prefrontal briefing` (add `--llm` for Ollama prose).
+- Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json),
+  set the `X-Prefrontal-Token` header and Pushover token/user. It fires at 7am,
+  `GET /briefing`, and pushes the digest text. (Insert an Ollama node between the
+  two for prose, or point it at `prefrontal summarize`-style output.)
+- The briefing is best once calendars are syncing (§10) and a few days of
+  episodes have accrued (so "what slipped" and the bias are meaningful).
+
+---
+
 ## What's not automated yet
 
 The interventions declared by each module (`prefrontal modules -v`) are mostly

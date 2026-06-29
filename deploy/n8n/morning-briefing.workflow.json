@@ -1,0 +1,55 @@
+{
+  "name": "Prefrontal — Morning Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "days", "triggerAtHour": 7 }] }
+      },
+      "id": "schedule",
+      "name": "Daily 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/briefing",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-briefing",
+      "name": "GET /briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }}\n}",
+        "options": {}
+      },
+      "id": "pushover",
+      "name": "Deliver briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "Daily 7am": { "main": [[{ "node": "GET /briefing", "type": "main", "index": 0 }]] },
+    "GET /briefing": { "main": [[{ "node": "Deliver briefing", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

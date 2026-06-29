@@ -16,6 +16,7 @@ Routes:
 - ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
 - ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
+- ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -37,6 +38,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar
 from prefrontal.config import Settings, get_settings
 from prefrontal.impact import (
@@ -628,6 +630,28 @@ def create_app(
                 }
                 for c in conflicts
             ]
+        }
+
+    @app.get("/briefing", tags=["schedule"])
+    def briefing(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Return today's morning briefing as structured data plus rendered text.
+
+        n8n can deliver the ``text`` directly, or feed it to Ollama for prose
+        (or call ``prefrontal summarize``-style). Always fast and model-free here.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        b = build_briefing(memory)
+        return {
+            "date": b.date,
+            "format": b.format,
+            "today": b.today,
+            "conflicts": b.conflicts,
+            "slips": b.slips,
+            "coaching": b.coaching,
+            "text": render_briefing(b),
         }
 
     return app

@@ -174,6 +174,22 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def episodes_since(self, since: str) -> list[dict[str, Any]]:
+        """Return episodes at or after a UTC timestamp, newest first.
+
+        Args:
+            since: UTC timestamp (``YYYY-MM-DD HH:MM:SS``); inclusive lower bound.
+
+        Returns:
+            A list of episode dicts. Used by the morning briefing's "what slipped
+            recently" section.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM episodes WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def episodes_by_type(
         self, episode_type: str, limit: int = 100
     ) -> list[dict[str, Any]]:
@@ -533,6 +549,23 @@ class MemoryStore:
             "SELECT * FROM commitments WHERE status = 'active' "
             "AND start_at >= datetime('now') ORDER BY start_at ASC LIMIT ?",
             (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def commitments_between(self, start: str, end: str) -> list[dict[str, Any]]:
+        """Return active commitments starting in ``[start, end)``, soonest first.
+
+        Args:
+            start: Inclusive UTC lower bound (``YYYY-MM-DD HH:MM:SS``).
+            end: Exclusive UTC upper bound.
+
+        Returns:
+            A list of commitment dicts (e.g. "today's" commitments for the briefing).
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE status = 'active' "
+            "AND start_at >= ? AND start_at < ? ORDER BY start_at ASC",
+            (start, end),
         ).fetchall()
         return [dict(r) for r in rows]
 

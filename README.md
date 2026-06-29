@@ -91,6 +91,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
 | Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
+| Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
@@ -130,6 +131,9 @@ prefrontal profile
 # Summarize it into prioritized prose via a local Ollama model -> profile.md
 # (falls back to the structured profile if Ollama isn't running)
 prefrontal summarize
+
+# Print today's morning briefing (add --llm for friendly prose via Ollama)
+prefrontal briefing
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v

@@ -8,6 +8,7 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
 - ``prefrontal profile`` — print (or write) the structured behavioral profile.
 - ``prefrontal summarize`` — LLM-summarize the profile (Ollama) to ``profile.md``.
+- ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
 
 Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
 """
@@ -19,6 +20,7 @@ import sys
 from pathlib import Path
 
 from prefrontal import __version__
+from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.config import get_settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
@@ -165,6 +167,36 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_briefing(args: argparse.Namespace) -> int:
+    """Print today's morning briefing (deterministic, or LLM prose with --llm).
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        if args.llm:
+            result = summarize_briefing(store)
+            text = result.text
+            if result.source == "heuristic":
+                print(
+                    "Ollama unavailable; printing the structured briefing.",
+                    file=sys.stderr,
+                )
+        else:
+            text = render_briefing(build_briefing(store))
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote briefing to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def _cmd_modules(args: argparse.Namespace) -> int:
     """List available modules and whether each is enabled.
 
@@ -238,6 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail instead of falling back to the structured profile.",
     )
     p_summarize.set_defaults(func=_cmd_summarize)
+
+    p_brief = sub.add_parser("briefing", help="Print today's morning briefing.")
+    p_brief.add_argument("--db-path", default=None, help="Override the database path.")
+    p_brief.add_argument(
+        "--llm", action="store_true", help="Rewrite as prose via Ollama (falls back)."
+    )
+    p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_brief.set_defaults(func=_cmd_briefing)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(
