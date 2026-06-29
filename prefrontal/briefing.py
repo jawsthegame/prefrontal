@@ -111,7 +111,12 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     state = store.all_state()
     coaching = {
         k: state[k]["value"]
-        for k in ("time_estimation_bias", "responsive_hours_start", "responsive_hours_end")
+        for k in (
+            "time_estimation_bias",
+            "responsive_hours_start",
+            "responsive_hours_end",
+            "user_name",
+        )
         if k in state
     }
     fmt_pref = state.get("preferred_briefing_format", {}).get("value", "short")

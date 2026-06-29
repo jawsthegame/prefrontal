@@ -19,6 +19,8 @@ Routes:
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
 - ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
 - ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
+- ``GET  /dashboard`` — read-only monitoring UI (self-contained HTML shell).
+- ``GET  /family`` — calm, non-technical family view (right now + today).
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -58,10 +60,10 @@ from prefrontal.impact import (
     project_free_time,
 )
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
-from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
@@ -87,6 +89,8 @@ ACTION_OUTCOME: dict[str, str] = {
 
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
 DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
+#: The calm, read-only family view (a friendly subset of the dashboard).
+FAMILY_HTML = (Path(__file__).with_name("family.html")).read_text(encoding="utf-8")
 
 
 class ShortcutPayload(BaseModel):
@@ -332,6 +336,18 @@ def create_app(
         which it polls and refreshes. Reachable over Tailscale from any device.
         """
         return DASHBOARD_HTML
+
+    @app.get("/family", response_class=HTMLResponse, tags=["system"])
+    def family() -> str:
+        """Serve the family view — a calm, non-technical, read-only page.
+
+        Like ``/dashboard`` the shell is unauthenticated and carries no data; it
+        prompts once for the access code (the ``X-Prefrontal-Token``) and polls
+        only the gentle, read-only endpoints (``/outings`` for "right now" and
+        ``/briefing`` for today's plan). No levels, profile, or action buttons —
+        meant for a partner to glance at over Tailscale.
+        """
+        return FAMILY_HTML
 
     @app.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(

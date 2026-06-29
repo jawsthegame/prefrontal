@@ -284,7 +284,8 @@ def infer_time_window(
 
     if client is not None:
         try:
-            minutes = _parse_minutes_reply(client.generate(intention.strip(), system=INFER_SYSTEM_PROMPT))
+            reply = client.generate(intention.strip(), system=INFER_SYSTEM_PROMPT)
+            minutes = _parse_minutes_reply(reply)
         except OllamaError:
             minutes = None
         if minutes is not None:

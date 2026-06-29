@@ -449,3 +449,12 @@ def test_dashboard_page_served_without_auth(client):
     assert "text/html" in resp.headers["content-type"]
     assert "Prefrontal" in resp.text
     assert "X-Prefrontal-Token" in resp.text  # it asks for the token client-side
+
+
+def test_family_page_served_without_auth(client):
+    """The family view shell is plain HTML, needs no token, and carries no data."""
+    resp = client.get("/family")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Right now" in resp.text  # the calm family copy, not the monitor
+    assert "X-Prefrontal-Token" in resp.text  # asks for the access code client-side

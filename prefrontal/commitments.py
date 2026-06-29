@@ -49,14 +49,14 @@ def is_placeholder_title(title: str | None) -> bool:
     return _normalize_title(title) in GENERIC_TITLES
 
 
-def is_possible_conflict(conflict: "Conflict") -> bool:
+def is_possible_conflict(conflict: Conflict) -> bool:
     """A *possible* (soft) conflict — at least one side is a placeholder title."""
     return is_placeholder_title(conflict.a.get("title")) or is_placeholder_title(
         conflict.b.get("title")
     )
 
 
-def conflict_dismissal_key(conflict: "Conflict") -> str:
+def conflict_dismissal_key(conflict: Conflict) -> str:
     """A stable key for dismissing a possible-conflict pair.
 
     Built from each event's identity, start time, and normalized title, so a
@@ -72,8 +72,8 @@ def conflict_dismissal_key(conflict: "Conflict") -> str:
 
 
 def partition_conflicts(
-    conflicts: list["Conflict"], dismissed: set[str]
-) -> tuple[list["Conflict"], list["Conflict"]]:
+    conflicts: list[Conflict], dismissed: set[str]
+) -> tuple[list[Conflict], list[Conflict]]:
     """Split conflicts into ``(hard, possible)``.
 
     *Hard* = a real double-booking (both sides specifically titled). *Possible* =
