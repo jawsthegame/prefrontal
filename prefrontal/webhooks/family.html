@@ -68,7 +68,7 @@
   </section>
 
   <section class="card" id="c-today">
-    <p class="label">On the calendar today</p>
+    <p class="label">Still ahead today</p>
     <div class="body"></div>
   </section>
 
@@ -135,8 +135,15 @@ function renderNow(outings, name) {
 }
 
 function renderToday(briefing) {
-  const items = (briefing.today || []);
-  if (!items.length) return `<p class="empty">Nothing on the calendar today. 🌤️</p>`;
+  // Only what's still ahead: drop anything that has already ended. An event with
+  // an end time counts as past once it ends (so in-progress events still show);
+  // one with only a start counts as past once it's started.
+  const now = Date.now();
+  const items = (briefing.today || []).filter((c) => {
+    const end = toDate(c.end_at || c.start_at);
+    return end && !isNaN(end) && end.getTime() >= now;
+  });
+  if (!items.length) return `<p class="empty">Nothing left on the calendar today. 🌤️</p>`;
   return items.map((c) => {
     const t = clock(toDate(c.start_at));
     const where = c.location ? `<div class="where">${esc(c.location)}</div>` : "";
