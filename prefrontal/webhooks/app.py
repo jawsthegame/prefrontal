@@ -34,10 +34,11 @@ serve`` CLI command.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from prefrontal.briefing import build_briefing, render_briefing
@@ -76,6 +77,9 @@ ACTION_OUTCOME: dict[str, str] = {
     "missed_it": "miss",
     "partial": "partial",
 }
+
+#: The self-contained monitoring page, read once at import (like ``schema.sql``).
+DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
 
 
 class ShortcutPayload(BaseModel):
@@ -303,6 +307,18 @@ def create_app(
     def health() -> dict[str, str]:
         """Liveness probe. Returns ``{"status": "ok"}`` with no auth required."""
         return {"status": "ok", "service": "prefrontal", "version": app.version}
+
+    @app.get("/dashboard", response_class=HTMLResponse, tags=["system"])
+    def dashboard() -> str:
+        """Serve the read-only monitoring page (a self-contained HTML shell).
+
+        The page itself is unauthenticated — it carries no data. It prompts for
+        the ``X-Prefrontal-Token`` once (kept in the browser's localStorage) and
+        sends it on every fetch to the auth-guarded ``GET`` endpoints
+        (``/outings``, ``/todos``, ``/commitments``, ``/briefing``, ``/profile``),
+        which it polls and refreshes. Reachable over Tailscale from any device.
+        """
+        return DASHBOARD_HTML
 
     @app.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(
@@ -602,6 +618,46 @@ def create_app(
             "outcome": recorded["outcome"],
             "episode_id": recorded["episode_id"],
         }
+
+    @app.get("/outings", tags=["anchor"])
+    def outings_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Read-only snapshot of outings for monitoring — **no side effects**.
+
+        Unlike ``/webhooks/outing/check`` (which fires nudges and auto-closes
+        abandoned outings), this never mutates state, so a dashboard can poll it
+        freely. Active outings carry their current elapsed-time escalation
+        ``level`` (computed, not recorded); recent outings are returned newest
+        first for history.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        active = [
+            {
+                "outing_id": o["id"],
+                "intention": o["intention"],
+                "elapsed_minutes": round(o.get("elapsed_minutes") or 0.0, 1),
+                "time_window_minutes": o["time_window_minutes"],
+                "level": escalation_level(
+                    o.get("elapsed_minutes") or 0.0, o["time_window_minutes"]
+                ),
+                "departure_at": o["departure_at"],
+            }
+            for o in memory.active_outings()
+        ]
+        recent = [
+            {
+                "outing_id": o["id"],
+                "intention": o["intention"],
+                "status": o["status"],
+                "time_window_minutes": o["time_window_minutes"],
+                "departure_at": o["departure_at"],
+                "returned_at": o.get("returned_at"),
+            }
+            for o in memory.recent_outings(limit=20)
+        ]
+        return {"active": active, "recent": recent}
 
     # -- Commitments (schedule for impact analysis) --------------------------
 
