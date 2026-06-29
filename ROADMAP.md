@@ -128,5 +128,19 @@ the first test. Code follow-ups below are optional polish.
   layer, auth, and delivery. *(Open design question: separate DB-per-user vs. a
   shared DB with row-level scoping — the latter is simpler to operate and is the
   likely default.)*
+- **Encouragement & recovery layer (optional)** — when a day is going badly,
+  shift tone from nudging to reassurance. A detector watches the signals already
+  computed — the briefing's "what slipped", rising `drift`, a missed *hard*
+  commitment, repeated outings run long — and, past a threshold, emits an
+  encouraging message that acknowledges the rough day without judgment, then
+  gives concrete get-back-on-track recommendations: re-fit the day's todos into
+  the remaining free windows (`fit_todos()` + free-window logic already exist),
+  suggest deferring or dropping low-priority commitments, and name one small
+  next step. Opt-in and tone-calibrated to the coaching prefs (so it never
+  becomes saccharine for users who don't want it). Local-first: the trigger and
+  recommendation logic are deterministic; the Ollama summarizer phrases the
+  reassurance with a heuristic fallback. Likely surfaces as a briefing variant
+  plus a `GET /encouragement`-style endpoint an n8n flow can deliver. Pairs
+  naturally with the coaching agent above.
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
