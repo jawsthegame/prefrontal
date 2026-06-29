@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import math
 import re
+from typing import Protocol
 
+from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -180,6 +182,120 @@ def parse_time_window(text: str) -> float | None:
             return value * 60.0
         return value
     return None
+
+
+# --- Time-window inference (when nothing is stated and nothing parses) -------
+#
+# A windowless intention used to be rejected with 422 — but a forgotten "back in
+# N minutes" shouldn't mean no tracking at all. So we *infer* a window, mirroring
+# the summarizer's "LLM with heuristic fallback" approach: ask the local model
+# first, fall back to a keyword heuristic, and finally to a sane default. The
+# result is always advisory — the user can still state an explicit window.
+
+#: Window used when neither the model nor the heuristics can offer anything.
+DEFAULT_INFERRED_WINDOW_MINUTES = 30.0
+
+#: Sanity bounds for an inferred window; replies outside this are discarded so a
+#: hallucinated "0" or "9999" never becomes a real escalation schedule.
+MIN_INFERRED_MINUTES = 1.0
+MAX_INFERRED_MINUTES = 480.0
+
+#: Keyword → typical-minutes table for the heuristic fallback. First match wins,
+#: so order from most-specific to least (e.g. "walk the dog" before "walk").
+_HEURISTIC_WINDOWS: tuple[tuple[tuple[str, ...], float], ...] = (
+    (("coffee", "espresso", "latte", "cappuccino"), 15.0),
+    (("walk the dog", "walk dog", "dog walk"), 20.0),
+    (("gas", "fuel", "atm", "bank", "post office", "pharmacy", "drugstore"), 20.0),
+    (("grocery", "groceries", "supermarket", "shopping", "the store"), 45.0),
+    (("haircut", "barber", "salon"), 45.0),
+    (("gym", "workout", "work out", "run", "jog", "exercise"), 60.0),
+    (("lunch", "dinner", "brunch", "breakfast", "restaurant", "eat", "food"), 60.0),
+    (("doctor", "dentist", "appointment", "clinic"), 60.0),
+    (("walk", "errand", "errands"), 30.0),
+)
+
+#: System prompt steering the model to emit a bare integer count of minutes.
+INFER_SYSTEM_PROMPT = (
+    "You estimate how long a quick personal errand will take. Given a short "
+    "stated intention, reply with ONLY a whole number: the minutes the person "
+    "will most likely be out before returning home. No words, no units, no range."
+)
+
+
+class _Generator(Protocol):
+    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
+
+    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
+
+
+def heuristic_time_window(intention: str) -> float | None:
+    """Guess a window from keywords in the intention, or ``None`` if none match.
+
+    Args:
+        intention: The stated mission text.
+
+    Returns:
+        Typical minutes for the first matching keyword group, else ``None``.
+    """
+    lowered = intention.lower()
+    for keywords, minutes in _HEURISTIC_WINDOWS:
+        if any(keyword in lowered for keyword in keywords):
+            return minutes
+    return None
+
+
+def _parse_minutes_reply(reply: str) -> float | None:
+    """Extract an in-bounds minute count from a model reply, or ``None``."""
+    match = re.search(r"\d+(?:\.\d+)?", reply or "")
+    if not match:
+        return None
+    value = float(match.group())
+    if value < MIN_INFERRED_MINUTES or value > MAX_INFERRED_MINUTES:
+        return None
+    return value
+
+
+def infer_time_window(
+    intention: str,
+    *,
+    client: _Generator | None = None,
+    fallback: bool = True,
+) -> tuple[float, str] | None:
+    """Infer a time window (minutes) for an intention with no stated window.
+
+    Tries, in order: the local LLM (if ``client`` is given), a keyword heuristic,
+    then a sane default — so any non-empty intention yields a window. Mirrors the
+    summarizer's graceful degradation.
+
+    Args:
+        intention: The stated mission text.
+        client: An Ollama-like client exposing ``generate``; ``None`` skips the
+            model and goes straight to the heuristic.
+        fallback: When ``False`` and the model is consulted but yields nothing
+            usable, return ``None`` instead of degrading to heuristic/default.
+
+    Returns:
+        ``(minutes, source)`` where ``source`` is ``"llm"``/``"heuristic"``/
+        ``"default"``, or ``None`` for a blank intention (or a model-only miss
+        with ``fallback=False``).
+    """
+    if not intention or not intention.strip():
+        return None
+
+    if client is not None:
+        try:
+            minutes = _parse_minutes_reply(client.generate(intention.strip(), system=INFER_SYSTEM_PROMPT))
+        except OllamaError:
+            minutes = None
+        if minutes is not None:
+            return (minutes, "llm")
+        if not fallback:
+            return None
+
+    heuristic = heuristic_time_window(intention)
+    if heuristic is not None:
+        return (heuristic, "heuristic")
+    return (DEFAULT_INFERRED_WINDOW_MINUTES, "default")
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

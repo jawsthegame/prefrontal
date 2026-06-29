@@ -53,12 +53,14 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
     build_message,
     escalation_level,
     haversine_m,
+    infer_time_window,
     is_abandoned,
     is_at_home,
     level_rank,
@@ -129,6 +131,13 @@ class OutingStarted(BaseModel):
     outing_id: int
     intention: str
     time_window_minutes: float
+    time_window_source: str = Field(
+        default="explicit",
+        description=(
+            "How the window was determined: 'explicit' (given), 'parsed' (from "
+            "the text), 'llm'/'heuristic'/'default' (inferred when none stated)."
+        ),
+    )
 
 
 class OutingReturn(BaseModel):
@@ -231,8 +240,17 @@ def _verify_token(settings: Settings, provided: str | None) -> None:
         )
 
 
+#: Per-request timeout (seconds) for the hot-path window inference. Kept short:
+#: ``/outing/start`` is interactive (an iOS Shortcut waits on it), so a slow or
+#: unreachable model must degrade to the heuristic fast rather than hang the tap.
+INFER_TIMEOUT_SECONDS = 10.0
+
+
 def create_app(
-    *, store: MemoryStore | None = None, settings: Settings | None = None
+    *,
+    store: MemoryStore | None = None,
+    settings: Settings | None = None,
+    ollama: OllamaClient | None = None,
 ) -> FastAPI:
     """Build and return the Prefrontal webhook application.
 
@@ -251,6 +269,13 @@ def create_app(
     n8n = N8nClient(
         webhook_url=resolved_settings.n8n_webhook_url,
         token=resolved_settings.n8n_webhook_token,
+    )
+    # Client used to infer a window when a start states none. Built from settings
+    # unless injected (tests pass a mock-transport client to stay offline).
+    ollama_client = ollama or OllamaClient(
+        base_url=resolved_settings.ollama_url,
+        model=resolved_settings.ollama_model,
+        timeout=INFER_TIMEOUT_SECONDS,
     )
 
     @asynccontextmanager
@@ -382,20 +407,29 @@ def create_app(
     ) -> OutingStarted:
         """Declare an outing: a stated intention and a time window.
 
-        The window is taken from ``time_window_minutes`` if given, otherwise
-        parsed from the intention text ("back in 15 minutes"). If neither yields
-        a window, responds 422 so the caller can ask explicitly.
+        The window is resolved in order of confidence: ``time_window_minutes`` if
+        given ('explicit'), else parsed from the text like "back in 15 minutes"
+        ('parsed'), else **inferred** from the intention — the local model first,
+        then a keyword heuristic, then a default ('llm'/'heuristic'/'default').
+        Only a blank intention (nothing to reason from) responds 422.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
         window = payload.time_window_minutes
+        source = "explicit"
         if window is None:
-            window = parse_time_window(payload.intention)
+            parsed = parse_time_window(payload.intention)
+            if parsed is not None:
+                window, source = parsed, "parsed"
+        if window is None:
+            inferred = infer_time_window(payload.intention, client=ollama_client)
+            if inferred is not None:
+                window, source = inferred
         if window is None or window <= 0:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    "Could not determine a time window. Include "
-                    "'time_window_minutes' or phrase it like 'back in 15 minutes'."
+                    "Could not determine a time window: the intention is empty. "
+                    "Send a non-empty intention, or include 'time_window_minutes'."
                 ),
             )
         outing_id = memory.start_outing(
@@ -405,7 +439,10 @@ def create_app(
             home_lon=payload.home_lon,
         )
         return OutingStarted(
-            outing_id=outing_id, intention=payload.intention, time_window_minutes=window
+            outing_id=outing_id,
+            intention=payload.intention,
+            time_window_minutes=window,
+            time_window_source=source,
         )
 
     @app.post("/webhooks/outing/check", tags=["anchor"])

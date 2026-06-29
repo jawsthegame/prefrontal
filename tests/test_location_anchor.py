@@ -9,21 +9,42 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.location_anchor import (
+    DEFAULT_INFERRED_WINDOW_MINUTES,
     build_message,
     escalation_level,
     haversine_m,
+    heuristic_time_window,
+    infer_time_window,
     is_abandoned,
     is_at_home,
     parse_time_window,
 )
 from prefrontal.webhooks.app import create_app
+
+
+def _offline_ollama() -> OllamaClient:
+    """An OllamaClient whose every call fails — forces the heuristic/default path."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no server in tests")
+
+    return OllamaClient(transport=httpx.MockTransport(refuse))
+
+
+def _ollama_replying(text: str) -> OllamaClient:
+    """An OllamaClient whose generate() returns `text` (for the LLM path)."""
+    return OllamaClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": text})
+    ))
 
 SECRET = "anchor-secret"
 
@@ -69,6 +90,47 @@ def test_escalation_level(elapsed, window, expected):
 def test_parse_time_window(text, expected):
     """The parser extracts a window from natural language, or returns None."""
     assert parse_time_window(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("grabbing a coffee", 15.0),
+        ("walk the dog", 20.0),
+        ("quick grocery run", 45.0),
+        ("heading to the gym", 60.0),
+        ("just stepping out", None),  # no keyword
+    ],
+)
+def test_heuristic_time_window(text, expected):
+    """The keyword heuristic maps common errands to typical durations."""
+    assert heuristic_time_window(text) == expected
+
+
+def test_infer_prefers_llm_then_falls_back():
+    """LLM answer wins; on a bad/empty reply it degrades to heuristic/default."""
+    good = _ollama_replying("20")
+    assert infer_time_window("anything", client=good) == (20.0, "llm")
+
+    # Out-of-bounds reply is discarded -> heuristic ('coffee').
+    bad = _ollama_replying("99999")
+    assert infer_time_window("grab a coffee", client=bad) == (15.0, "heuristic")
+
+    # No client at all -> straight to heuristic, then default.
+    assert infer_time_window("grab a coffee") == (15.0, "heuristic")
+    assert infer_time_window("visiting a friend") == (DEFAULT_INFERRED_WINDOW_MINUTES, "default")
+
+
+def test_infer_blank_intention_is_none():
+    """A blank intention yields None (nothing to reason from)."""
+    assert infer_time_window("   ") is None
+    assert infer_time_window("") is None
+
+
+def test_infer_no_fallback_returns_none_on_model_miss():
+    """With fallback disabled, an unusable model reply gives None (no default)."""
+    bad = _ollama_replying("no idea")
+    assert infer_time_window("grab a coffee", client=bad, fallback=False) is None
 
 
 def test_build_message_uses_name_for_call():
@@ -142,8 +204,16 @@ def store():
 
 @pytest.fixture()
 def client(store):
-    """A TestClient wired to the injected store with auth enabled."""
-    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    """A TestClient wired to the injected store with auth enabled.
+
+    The Ollama client is offline so tests never touch the network; windowless
+    starts therefore degrade deterministically to the heuristic/default.
+    """
+    app = create_app(
+        store=store,
+        settings=Settings(webhook_secret=SECRET),
+        ollama=_offline_ollama(),
+    )
     with TestClient(app) as c:
         yield c
 
@@ -163,11 +233,60 @@ def test_start_parses_window_from_intention(client):
     assert resp.json()["time_window_minutes"] == 15.0
 
 
-def test_start_requires_a_window(client):
-    """A non-parseable intention with no explicit window is a 422."""
+def test_start_infers_window_when_unparseable(client):
+    """A non-parseable intention is no longer rejected — the window is inferred.
+
+    The fixture's Ollama is offline, so this exercises the heuristic/default
+    fallback: 'just heading out' matches no keyword and lands on the default.
+    """
     resp = client.post(
         "/webhooks/outing/start",
         json={"intention": "just heading out"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["time_window_minutes"] == DEFAULT_INFERRED_WINDOW_MINUTES
+    assert body["time_window_source"] == "default"
+
+
+def test_start_infers_window_from_heuristic(client):
+    """A keyword intention ('coffee') gets the heuristic window when offline."""
+    resp = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "grabbing a coffee"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["time_window_minutes"] == 15.0
+    assert body["time_window_source"] == "heuristic"
+
+
+def test_start_infers_window_via_llm(store):
+    """When the model answers, its estimate wins over the heuristic/default."""
+    app = create_app(
+        store=store,
+        settings=Settings(webhook_secret=SECRET),
+        ollama=_ollama_replying("About 25 minutes"),
+    )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/webhooks/outing/start",
+            json={"intention": "returning a package"},
+            headers=_auth(),
+        )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["time_window_minutes"] == 25.0
+    assert body["time_window_source"] == "llm"
+
+
+def test_start_rejects_blank_intention(client):
+    """A blank intention has nothing to infer from, so it's still a 422."""
+    resp = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "   "},
         headers=_auth(),
     )
     assert resp.status_code == 422
