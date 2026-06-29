@@ -112,5 +112,21 @@ the first test. Code follow-ups below are optional polish.
   per agent as the README describes. The summarizer already takes an injected
   client, so this slots in behind the same interface. Local-first stays the
   default; the cloud path is explicit and configurable.
+- **Multiple users** — today Prefrontal is single-tenant throughout: one
+  SQLite DB, a global `state` table (the behavioral profile, `home_radius_m`,
+  `time_estimation_bias`, etc.), one `PREFRONTAL_WEBHOOK_SECRET`, and a single
+  Pushover/Twilio delivery target in the n8n workflows. Multi-user support would
+  require: a `users` table and a `user_id` foreign key on the per-user tables
+  (`episodes`, `outings`, `commitments`, `todos`, and the `state`/patterns rows,
+  which would become per-user); per-user auth (a token or key per user rather
+  than one shared secret) and request scoping so every endpoint resolves the
+  caller; per-user delivery routing (each user's own Pushover/Twilio/Shortcut
+  identifiers, so a nudge goes to the right phone); and per-user learning so the
+  pattern pass and summarizer compute a profile per user instead of globally.
+  The pure cores (escalation, impact, scheduling, summarizer) are already
+  user-agnostic and would carry over unchanged; the work is in the storage
+  layer, auth, and delivery. *(Open design question: separate DB-per-user vs. a
+  shared DB with row-level scoping — the latter is simpler to operate and is the
+  likely default.)*
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
