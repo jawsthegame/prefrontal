@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "url": "http://localhost:8000/profile",
+        "url": "http://127.0.0.1:8000/profile",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -52,7 +52,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:11434/api/generate",
+        "url": "http://127.0.0.1:11434/api/generate",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"llama3.1:8b\",\n  \"stream\": false,\n  \"prompt\": \"You are Prefrontal, an executive-function coach. Behavioral profile of the user follows; obey it (especially any time multiplier).\\n\\n=== PROFILE ===\\n{{ $json.data }}\\n=== END PROFILE ===\\n\\nWrite ONE short, kind, specific departure nudge (max 2 sentences). Event: {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.event_title }} at {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.destination }}, naive leave-in {{ $('Next Event (PLACEHOLDER — replace with Calendar node)').item.json.leave_in_minutes }} minutes.\"\n}",
@@ -82,7 +82,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:8000/webhooks/n8n",
+        "url": "http://127.0.0.1:8000/webhooks/n8n",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
