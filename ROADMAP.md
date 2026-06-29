@@ -100,6 +100,16 @@ the first test. Code follow-ups below are optional polish.
 
 ## Beyond v1 (from the README architecture)
 
+- **iOS lock-screen widget (current outing)** — a Lock Screen / Home Screen
+  widget showing the active outing at a glance: intention, time elapsed vs the
+  stated window, and the escalation level (on track / wrap up / overdue) — so
+  it's visible without opening anything. The data already exists at
+  `GET /outings` (active outings with `intention`, `elapsed_minutes`,
+  `time_window_minutes`, computed `level`, `departure_at`). Likely built with
+  Scriptable (a widget script that polls `/outings` over Tailscale with the
+  token) or a small WidgetKit app; a timeline entry per poll, colored by level,
+  with "—" when nothing is active. Pairs naturally with the `/family` view and
+  the existing iOS Shortcuts.
 - **Triage agent** — classify/prioritize/route inbound signals.
 - **Coaching agent** — generate reminders/check-ins from the profile (the
   morning briefing is the first slice of this).

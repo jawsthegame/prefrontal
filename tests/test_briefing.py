@@ -84,6 +84,12 @@ def test_render_short_vs_long(store):
     assert "Mtg 0" in long and "Mtg 7" in long
 
 
+def test_briefing_coaching_surfaces_user_name(store):
+    """user_name is included in the briefing's coaching dict (for the family view)."""
+    store.set_state("user_name", "Tom", source="explicit")
+    assert build_briefing(store).coaching.get("user_name") == "Tom"
+
+
 def test_render_empty_day(store):
     """An empty calendar reads cleanly."""
     text = render_briefing(build_briefing(store))
