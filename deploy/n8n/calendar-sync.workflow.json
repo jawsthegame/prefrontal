@@ -87,7 +87,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Collect all mapped events from every feed into one sync batch.\nreturn [{ json: { events: $input.all().map((i) => i.json) } }];"
+        "jsCode": "// Collect mapped events from every feed, then (a) keep only the near-term\n// window — raw ICS feeds dump full history (years of events) — and (b)\n// guarantee a title, since ICS events without SUMMARY would 422 the whole\n// batch. Window ~36h matches the original OAuth design.\nconst now = Date.now();\nconst FROM = now - 60 * 60 * 1000;\nconst TO = now + 36 * 60 * 60 * 1000;\nconst events = $input.all()\n  .map((i) => i.json)\n  .filter((e) => { const t = Date.parse(e.start_at); return !Number.isNaN(t) && t >= FROM && t <= TO; })\n  .map((e) => ({ ...e, title: (e.title && String(e.title).trim()) || '(busy)' }));\nreturn [{ json: { events } }];"
       },
       "id": "bundle",
       "name": "Bundle events",
