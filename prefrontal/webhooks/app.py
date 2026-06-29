@@ -17,6 +17,8 @@ Routes:
 - ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
+- ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
+- ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -39,7 +41,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from prefrontal.briefing import build_briefing, render_briefing
-from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar
+from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar, to_utc
 from prefrontal.config import Settings, get_settings
 from prefrontal.impact import (
     analyze_impact,
@@ -64,6 +66,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_abandoned,
     record_outing_return,
 )
+from prefrontal.scheduling import fit_todos
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -167,6 +170,19 @@ class CommitmentCreate(BaseModel):
     location: str | None = None
     lead_minutes: float | None = None
     hard: bool = False
+
+
+class TodoCreate(BaseModel):
+    """Body of ``POST /todos`` — an open loop to fit into free time."""
+
+    title: str
+    notes: str | None = None
+    estimate_minutes: float | None = Field(
+        default=None, description="How long it'll take (enables time-fitting)."
+    )
+    priority: int = Field(default=1, ge=0, le=3, description="0 low … 3 urgent.")
+    deadline: str | None = Field(default=None, description="Optional ISO-8601 deadline.")
+    energy: str | None = Field(default=None, description="low | medium | high.")
 
 
 def _state_float(memory: MemoryStore, key: str, default: float) -> float:
@@ -651,7 +667,91 @@ def create_app(
             "conflicts": b.conflicts,
             "slips": b.slips,
             "coaching": b.coaching,
+            "spare": b.spare,
             "text": render_briefing(b),
+        }
+
+    # -- Todos (open loops fitted into free time) ----------------------------
+
+    @app.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
+    def todo_create(
+        payload: TodoCreate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Add an open todo (an open loop to fit into free time later)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        deadline = None
+        if payload.deadline:
+            try:
+                deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+        todo_id = memory.add_todo(
+            payload.title,
+            notes=payload.notes,
+            estimate_minutes=payload.estimate_minutes,
+            priority=payload.priority,
+            deadline=deadline,
+            energy=payload.energy,
+        )
+        return {"todo_id": todo_id}
+
+    @app.get("/todos", tags=["todos"])
+    def todos_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """List open todos (priority then deadline order)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"todos": memory.open_todos()}
+
+    @app.post("/todos/{todo_id}/{action}", tags=["todos"])
+    def todo_close(
+        todo_id: int,
+        action: Literal["done", "drop"],
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Mark a todo done or drop it."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        new_status = "done" if action == "done" else "dropped"
+        if not memory.close_todo(todo_id, status=new_status):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "status": new_status}
+
+    @app.get("/todos/fit", tags=["todos"])
+    def todos_fit(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        minutes: float,
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Rank the open todos that fit in ``minutes`` of free time, right now.
+
+        Applies the learned time bias, so a "10-minute" todo is judged at its
+        realistic length. Great for "I have 20 minutes — what can I knock out?"
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        fits = fit_todos(minutes, memory.open_todos(), bias)
+        return {
+            "available_minutes": minutes,
+            "fits": [
+                {
+                    "todo_id": f["todo"]["id"],
+                    "title": f["todo"]["title"],
+                    "estimate_minutes": f["todo"].get("estimate_minutes"),
+                    "effective_minutes": f["effective_minutes"],
+                    "priority": f["todo"].get("priority"),
+                }
+                for f in fits
+            ],
         }
 
     return app

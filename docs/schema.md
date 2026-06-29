@@ -91,7 +91,9 @@ also defines:
 - **`outings`** — active/historical "task anchors" (a stated intention + time
   window) for the Location-Aware Task Anchor module.
 - **`commitments`** — upcoming schedule items synced from calendars (or added
-  manually), used for double-booking detection and (next) impact analysis.
+  manually), used for double-booking detection and impact analysis.
+- **`todos`** — open loops (not pinned to a clock time) with an estimate and
+  priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
 
 ---
 

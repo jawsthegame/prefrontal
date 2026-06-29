@@ -97,6 +97,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_external
     ON commitments (external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_commitments_start ON commitments (start_at);
 
+-- Open loops — "todos" that aren't pinned to a clock time but need doing
+-- (call the dentist, plan a birthday). The scheduler fits these into free
+-- windows between commitments. `estimate_minutes` is how long it'll take;
+-- `priority` 0=low…3=urgent; `energy` and `deadline` are optional hints.
+CREATE TABLE IF NOT EXISTS todos (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    title            TEXT    NOT NULL,
+    notes            TEXT,
+    estimate_minutes REAL,
+    priority         INTEGER NOT NULL DEFAULT 1,    -- 0 low | 1 normal | 2 high | 3 urgent
+    deadline         DATETIME,                       -- optional, UTC
+    energy           TEXT,                           -- low | medium | high (optional)
+    status           TEXT    NOT NULL DEFAULT 'open', -- open | done | dropped
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at     DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES

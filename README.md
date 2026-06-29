@@ -92,6 +92,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
+| Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
@@ -134,6 +135,10 @@ prefrontal summarize
 
 # Print today's morning briefing (add --llm for friendly prose via Ollama)
 prefrontal briefing
+
+# Capture open loops, then fit them into spare time
+prefrontal todo add "Call dentist" --minutes 10 --priority 2
+prefrontal fit 20      # "with 20 min free, you could knock out…"
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v

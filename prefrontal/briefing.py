@@ -29,6 +29,11 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.commitments import find_conflicts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
+from prefrontal.scheduling import free_windows, suggest_for_windows
+
+#: Default available-hours band (UTC hours) for fitting todos into the day.
+DEFAULT_DAY_START_HOUR = 8
+DEFAULT_DAY_END_HOUR = 20
 
 if TYPE_CHECKING:
     from prefrontal.integrations.ollama import OllamaClient
@@ -57,6 +62,7 @@ class Briefing:
         conflicts: Double-booking pairs among upcoming commitments.
         slips: Count of recent ``miss`` episodes by ``episode_type``.
         coaching: Selected coaching values surfaced in the briefing.
+        spare: Free windows in the rest of the day, each with a suggested todo.
     """
 
     date: str
@@ -65,6 +71,7 @@ class Briefing:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     slips: dict[str, int] = field(default_factory=dict)
     coaching: dict[str, str] = field(default_factory=dict)
+    spare: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -109,6 +116,29 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     }
     fmt_pref = state.get("preferred_briefing_format", {}).get("value", "short")
 
+    # Spare time: free windows in the rest of the day, each with a fitting todo.
+    spare: list[dict[str, Any]] = []
+    todos = store.open_todos()
+    if todos:
+        try:
+            bias = float(state.get("time_estimation_bias", {}).get("value", 1.0))
+        except (TypeError, ValueError):
+            bias = 1.0
+        band_start = max(now, day_start.replace(hour=DEFAULT_DAY_START_HOUR))
+        band_end = day_start.replace(hour=DEFAULT_DAY_END_HOUR)
+        if band_end > band_start:
+            windows = free_windows(today, band_start, band_end)
+            for s in suggest_for_windows(windows, todos, bias):
+                pick = s["suggestion"]
+                spare.append(
+                    {
+                        "start": s["window"].start,
+                        "minutes": s["window"].minutes,
+                        "suggestion": pick["title"] if pick else None,
+                        "todo_id": pick["id"] if pick else None,
+                    }
+                )
+
     return Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -116,6 +146,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         conflicts=conflicts,
         slips=dict(slip_counter),
         coaching=coaching,
+        spare=spare,
     )
 
 
@@ -168,6 +199,17 @@ def render_briefing(briefing: Briefing) -> str:
         total = sum(briefing.slips.values())
         detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
         lines.append(f"**Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
+        lines.append("")
+
+    # Spare time + suggestions.
+    suggested = [s for s in briefing.spare if s["suggestion"]]
+    if suggested:
+        lines.append("**Spare time:**")
+        for s in suggested:
+            lines.append(
+                f"- {s['start'][11:16]} ({s['minutes']:g} min free) — good for: "
+                f"{s['suggestion']}"
+            )
         lines.append("")
 
     # Coaching note.

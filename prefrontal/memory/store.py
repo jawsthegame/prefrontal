@@ -579,6 +579,74 @@ class MemoryStore:
         self.conn.commit()
         return cur.rowcount > 0
 
+    # -- todos (open loops fitted into free time) ----------------------------
+
+    def add_todo(
+        self,
+        title: str,
+        *,
+        notes: str | None = None,
+        estimate_minutes: float | None = None,
+        priority: int = 1,
+        deadline: str | None = None,
+        energy: str | None = None,
+    ) -> int:
+        """Insert an open todo and return its id.
+
+        Args:
+            title: What needs doing.
+            notes: Optional detail.
+            estimate_minutes: How long it'll take (enables fitting into windows).
+            priority: 0 low / 1 normal / 2 high / 3 urgent.
+            deadline: Optional UTC deadline (``YYYY-MM-DD HH:MM:SS``).
+            energy: Optional ``low``/``medium``/``high`` hint.
+
+        Returns:
+            The new todo's id.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO todos (title, notes, estimate_minutes, priority, "
+            "deadline, energy) VALUES (?, ?, ?, ?, ?, ?)",
+            (title, notes, estimate_minutes, priority, deadline, energy),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_todo(self, todo_id: int) -> dict[str, Any] | None:
+        """Return a single todo by id, or ``None``."""
+        row = self.conn.execute(
+            "SELECT * FROM todos WHERE id = ?", (todo_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def open_todos(self) -> list[dict[str, Any]]:
+        """Return open todos, highest priority then soonest deadline first.
+
+        Returns:
+            A list of todo dicts with ``status = 'open'``.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM todos WHERE status = 'open' "
+            "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def close_todo(self, todo_id: int, status: str = "done") -> bool:
+        """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
+
+        Args:
+            todo_id: The todo to close.
+            status: ``done`` or ``dropped``.
+        """
+        completed = "CURRENT_TIMESTAMP" if status == "done" else "NULL"
+        cur = self.conn.execute(
+            f"UPDATE todos SET status = ?, completed_at = {completed}, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'",
+            (status, todo_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def cancel_missing_calendar(self, keep_external_ids: set[str]) -> int:
         """Cancel future calendar commitments absent from a fresh sync.
 

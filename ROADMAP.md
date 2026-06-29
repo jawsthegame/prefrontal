@@ -63,6 +63,13 @@ the first test. Code follow-ups below are optional polish.
   (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +
   `prefrontal briefing` (`--llm` for Ollama prose, heuristic fallback); delivered
   by `deploy/n8n/morning-briefing.workflow.json`.
+- **Todos + time-fitting** ✅ — `todos` table + `prefrontal/scheduling.py`: open
+  loops (call the dentist, plan a birthday) with estimate/priority/deadline, plus
+  `free_windows()` over the schedule and `fit_todos()` that ranks what fits a gap
+  (bias-adjusted). `GET/POST /todos`, `GET /todos/fit?minutes=N`,
+  `prefrontal todo`/`fit`, and a "spare time" section in the morning briefing.
+  *(Next: multi-suggestion per window; auto-schedule a todo into a window as a
+  commitment; energy-aware fitting.)*
 
 ## Known stubs in the current code
 
