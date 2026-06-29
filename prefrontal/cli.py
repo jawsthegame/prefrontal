@@ -1,0 +1,179 @@
+"""Command line entry point for Prefrontal.
+
+Exposes three subcommands, wired up as the ``prefrontal`` console script in
+``pyproject.toml``:
+
+- ``prefrontal init-db`` — create and seed the SQLite memory database.
+- ``prefrontal serve`` — run the webhook listener with uvicorn.
+- ``prefrontal profile`` — print (or write) the current behavioral profile.
+
+Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from prefrontal import __version__
+from prefrontal.config import get_settings
+from prefrontal.memory.db import init_db
+from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.summarizer import build_profile
+from prefrontal.modules import available, enabled_modules
+
+
+def _cmd_init_db(args: argparse.Namespace) -> int:
+    """Create and seed the memory database.
+
+    Args:
+        args: Parsed arguments; uses ``args.db_path``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    conn = init_db(db_path)
+    store = MemoryStore(conn)
+    # Seed the coaching-state defaults owned by each enabled module (never
+    # clobbers existing values).
+    modules = enabled_modules(settings)
+    for module in modules:
+        module.seed(store)
+    state = store.all_state()
+    conn.close()
+    print(f"Initialized memory database at {db_path}")
+    print("Tables: episodes, patterns, coaching_state")
+    print(f"Seeded {len(state)} coaching_state rows.")
+    print(f"Enabled modules: {', '.join(m.key for m in modules) or '(none)'}")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Run the FastAPI webhook listener via uvicorn.
+
+    Args:
+        args: Parsed arguments; uses ``args.host`` / ``args.port`` overrides.
+
+    Returns:
+        Process exit code (0 on clean shutdown).
+    """
+    import uvicorn
+
+    settings = get_settings()
+    host = args.host or settings.host
+    port = args.port or settings.port
+    if not settings.auth_enabled:
+        print(
+            "WARNING: PREFRONTAL_WEBHOOK_SECRET is unset — webhook auth is "
+            "disabled. Only expose this on a trusted network.",
+            file=sys.stderr,
+        )
+    print(f"Serving Prefrontal webhooks on http://{host}:{port} (docs at /docs)")
+    uvicorn.run("prefrontal.webhooks.app:app", host=host, port=port, reload=args.reload)
+    return 0
+
+
+def _cmd_profile(args: argparse.Namespace) -> int:
+    """Build the behavioral profile and print it (or write it to a file).
+
+    Args:
+        args: Parsed arguments; uses ``args.db_path`` and optional ``args.output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    # Don't re-seed here; just read whatever exists. initialize=True is still
+    # safe and idempotent, and guarantees the tables exist for a fresh checkout.
+    with MemoryStore.open(db_path) as store:
+        profile = build_profile(store)
+    if args.output:
+        Path(args.output).write_text(profile)
+        print(f"Wrote profile to {args.output}")
+    else:
+        print(profile, end="")
+    return 0
+
+
+def _cmd_modules(args: argparse.Namespace) -> int:
+    """List available modules and whether each is enabled.
+
+    Args:
+        args: Parsed arguments; uses ``args.verbose`` to also list interventions.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    enabled = {m.key for m in enabled_modules(settings)}
+    for module in available():
+        mark = "on " if module.key in enabled else "off"
+        print(f"[{mark}] {module.key} — {module.title}")
+        print(f"        {module.challenge}")
+        if args.verbose:
+            for iv in module.interventions():
+                print(f"          - {iv.name} ({iv.status}): {iv.description}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Construct the top-level argument parser.
+
+    Returns:
+        A configured :class:`argparse.ArgumentParser` with subcommands attached.
+    """
+    parser = argparse.ArgumentParser(
+        prog="prefrontal",
+        description="Prefrontal — an open source executive function agent system.",
+    )
+    parser.add_argument("--version", action="version", version=f"prefrontal {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_init = sub.add_parser("init-db", help="Create and seed the SQLite memory database.")
+    p_init.add_argument("--db-path", default=None, help="Override the database path.")
+    p_init.set_defaults(func=_cmd_init_db)
+
+    p_serve = sub.add_parser("serve", help="Run the webhook listener.")
+    p_serve.add_argument("--host", default=None, help="Bind host (default from config).")
+    p_serve.add_argument("--port", type=int, default=None, help="Bind port (default from config).")
+    p_serve.add_argument(
+        "--reload", action="store_true", help="Auto-reload on code changes (development)."
+    )
+    p_serve.set_defaults(func=_cmd_serve)
+
+    p_profile = sub.add_parser("profile", help="Print the current behavioral profile.")
+    p_profile.add_argument("--db-path", default=None, help="Override the database path.")
+    p_profile.add_argument(
+        "-o", "--output", default=None, help="Write to a file instead of stdout."
+    )
+    p_profile.set_defaults(func=_cmd_profile)
+
+    p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
+    p_modules.add_argument(
+        "-v", "--verbose", action="store_true", help="Also list each module's interventions."
+    )
+    p_modules.set_defaults(func=_cmd_modules)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Program entry point.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Process exit code.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

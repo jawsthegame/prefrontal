@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that runs `prefrontal serve` always-on.
+
+  Install:
+    cp deploy/com.morningstatic.prefrontal.plist ~/Library/LaunchAgents/
+    # then edit the paths below to match your username and install location
+    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
+
+  WorkingDirectory must be the repo root so the `.env` next to it is loaded.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.morningstatic.prefrontal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/tom/prefrontal/.venv/bin/prefrontal</string>
+        <string>serve</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tom/prefrontal</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so child processes resolve as expected. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
