@@ -686,3 +686,20 @@ class MemoryStore:
             cancelled += 1
         self.conn.commit()
         return cancelled
+
+    # -- Dismissed possible-conflicts ----------------------------------------
+
+    def dismiss_conflict(self, signature: str) -> None:
+        """Record that the user dismissed a possible-conflict pair (idempotent)."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO dismissed_conflicts (signature) VALUES (?)",
+            (signature,),
+        )
+        self.conn.commit()
+
+    def dismissed_conflicts(self) -> set[str]:
+        """Return the set of dismissed possible-conflict signatures."""
+        rows = self.conn.execute(
+            "SELECT signature FROM dismissed_conflicts"
+        ).fetchall()
+        return {r["signature"] for r in rows}

@@ -11,7 +11,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar, to_utc
+from prefrontal.commitments import (
+    find_conflicts,
+    is_placeholder_title,
+    normalize_event,
+    sync_calendar,
+    to_utc,
+)
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
@@ -289,3 +295,57 @@ def test_commitment_endpoints_require_auth(client):
     assert client.get("/commitments").status_code == 401
     manual = client.post("/commitments", json={"title": "x", "start_at": "2026-01-01"})
     assert manual.status_code == 401
+
+
+# -- possible conflicts (placeholder overlaps) -------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Busy", True), ("(busy)", True), ("Block", True), ("BLOCK", True),
+        ("Hold", True), ("Focus time", True), ("OOO", True), ("Private", True),
+        ("Dentist", False), ("Block party planning", False), ("1:1 with Casey", False),
+    ],
+)
+def test_is_placeholder_title(title, expected):
+    """Generic holds are placeholders; specific titles (even containing a word) aren't."""
+    assert is_placeholder_title(title) is expected
+
+
+def _clash():
+    """A real event overlapping a placeholder, on different feeds."""
+    return [
+        {"title": "Dentist", "start_at": _iso(60), "end_at": _iso(120),
+         "external_id": "personal:d"},
+        {"title": "Busy", "start_at": _iso(75), "end_at": _iso(135),
+         "external_id": "work:b"},
+    ]
+
+
+def test_sync_splits_hard_and_possible(store):
+    """A placeholder overlapping a real event is a *possible* conflict, not hard."""
+    first = sync_calendar(store, _clash())
+    assert first.conflicts == 0
+    assert (first.possible_conflicts, first.new_possible_conflict) == (1, True)
+    # Unchanged on the next poll → not "new" (no re-alert).
+    second = sync_calendar(store, _clash())
+    assert (second.possible_conflicts, second.new_possible_conflict) == (1, False)
+
+
+def test_possible_conflict_dismiss_endpoint(client):
+    """The possible-conflict carries a key; dismissing it removes it and sticks."""
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": _clash()})
+    conf = client.get("/commitments/conflicts", headers=_auth()).json()
+    assert conf["conflicts"] == []
+    assert len(conf["possible_conflicts"]) == 1
+    key = conf["possible_conflicts"][0]["key"]
+
+    client.post("/commitments/conflicts/dismiss", headers=_auth(), json={"key": key})
+    after = client.get("/commitments/conflicts", headers=_auth()).json()
+    assert after["possible_conflicts"] == []
+    # A re-sync of the same clash stays dismissed (and doesn't re-alert).
+    resync = client.post(
+        "/webhooks/calendar/sync", headers=_auth(), json={"events": _clash()}
+    ).json()
+    assert resync["new_possible_conflict"] is False

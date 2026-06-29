@@ -42,7 +42,14 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from prefrontal.briefing import build_briefing, render_briefing
-from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar, to_utc
+from prefrontal.commitments import (
+    conflict_dismissal_key,
+    find_conflicts,
+    normalize_event,
+    partition_conflicts,
+    sync_calendar,
+    to_utc,
+)
 from prefrontal.config import Settings, get_settings
 from prefrontal.impact import (
     analyze_impact,
@@ -183,6 +190,12 @@ class CommitmentCreate(BaseModel):
     location: str | None = None
     lead_minutes: float | None = None
     hard: bool = False
+
+
+class ConflictDismiss(BaseModel):
+    """Body of ``POST /commitments/conflicts/dismiss`` — a possible-conflict key."""
+
+    key: str = Field(description="The possible-conflict's `key` from the conflicts list.")
 
 
 class TodoCreate(BaseModel):
@@ -689,6 +702,8 @@ def create_app(
             "upcoming": summary.upcoming,
             "conflicts": summary.conflicts,
             "new_conflict": summary.new_conflict,
+            "possible_conflicts": summary.possible_conflicts,
+            "new_possible_conflict": summary.new_possible_conflict,
         }
 
     @app.post(
@@ -724,23 +739,46 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Report double-bookings among upcoming commitments.
+        """Report overlaps among upcoming commitments, split by firmness.
 
-        Returns overlapping pairs (most useful across merged personal + work
-        calendars). n8n can poll this and push a double-booking alert.
+        ``conflicts`` are firm double-bookings (two real events overlap).
+        ``possible_conflicts`` are soft — a placeholder (Busy/Block/Hold)
+        overlapping a real event — excluding any the user has dismissed; each
+        carries a ``key`` to dismiss it via ``POST /commitments/conflicts/dismiss``.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
-        conflicts = find_conflicts(memory.upcoming_commitments())
+        hard, possible = partition_conflicts(
+            find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
+        )
+
+        def pair(c: Any) -> dict[str, Any]:
+            return {
+                "a": {"id": c.a["id"], "title": c.a["title"], "start_at": c.a["start_at"]},
+                "b": {"id": c.b["id"], "title": c.b["title"], "start_at": c.b["start_at"]},
+                "overlap_minutes": c.overlap_minutes,
+            }
+
         return {
-            "conflicts": [
-                {
-                    "a": {"id": c.a["id"], "title": c.a["title"], "start_at": c.a["start_at"]},
-                    "b": {"id": c.b["id"], "title": c.b["title"], "start_at": c.b["start_at"]},
-                    "overlap_minutes": c.overlap_minutes,
-                }
-                for c in conflicts
-            ]
+            "conflicts": [pair(c) for c in hard],
+            "possible_conflicts": [
+                {**pair(c), "key": conflict_dismissal_key(c)} for c in possible
+            ],
         }
+
+    @app.post("/commitments/conflicts/dismiss", tags=["schedule"])
+    def dismiss_possible_conflict(
+        payload: ConflictDismiss,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Dismiss a possible conflict by its ``key`` (from the conflicts list).
+
+        The dismissal sticks across re-syncs but lapses if either event moves or
+        is retitled (the key is derived from start time + title).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        memory.dismiss_conflict(payload.key)
+        return {"dismissed": payload.key}
 
     @app.get("/briefing", tags=["schedule"])
     def briefing(

@@ -66,6 +66,7 @@
   .pri-3 { background: #3a1620; color: var(--call); }
   .pri-2 { background: #3a2412; color: var(--firm); }
   .conflict { background: #3a1620; color: var(--call); }
+  .possible { background: #3a2f12; color: var(--soft); }
 
   .bar { height: 6px; border-radius: 4px; background: #2a2f3a; margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
@@ -280,6 +281,13 @@ function renderCommitments(list, conflicts) {
     html += `<div class="row"><div class="main"><span class="badge conflict">conflict</span>
       <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div></div>`;
   });
+  (conflicts.possible_conflicts || []).forEach((p) => {
+    html += `<div class="row">
+      <div class="main"><span class="badge possible">possible</span>
+        <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div>
+      <div class="acts"><button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}">Dismiss</button></div>
+    </div>`;
+  });
   if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
   html += c.map((x) => `<div class="row"><div class="main">
     <div><span class="title">${esc(x.title)}</span>${ids.has(x.id) ? ' <span class="pill conflict">double-booked</span>' : ""}</div>
@@ -329,6 +337,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
+    else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
     load();
   } catch (_) { /* post() already surfaced the error */ }
 });
