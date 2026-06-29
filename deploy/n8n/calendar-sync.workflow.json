@@ -123,10 +123,10 @@
           "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 },
           "conditions": [
             {
-              "id": "has-conflicts",
-              "leftValue": "={{ $json.conflicts }}",
-              "rightValue": 0,
-              "operator": { "type": "number", "operation": "gt" }
+              "id": "new-conflict",
+              "leftValue": "={{ $json.new_conflict }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
           ],
           "combinator": "and"
