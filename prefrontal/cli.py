@@ -6,7 +6,11 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal init-db`` — create and seed the SQLite memory database.
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
-- ``prefrontal profile`` — print (or write) the current behavioral profile.
+- ``prefrontal profile`` — print (or write) the structured behavioral profile.
+- ``prefrontal summarize`` — LLM-summarize the profile (Ollama) to ``profile.md``.
+- ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
+- ``prefrontal todo`` — add/list/done open todos (open loops).
+- ``prefrontal fit`` — show open todos that fit N minutes of free time.
 
 Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
 """
@@ -18,12 +22,14 @@ import sys
 from pathlib import Path
 
 from prefrontal import __version__
+from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.config import get_settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
-from prefrontal.memory.summarizer import build_profile
+from prefrontal.memory.summarizer import build_profile, summarize_profile
 from prefrontal.modules import available, enabled_modules
+from prefrontal.scheduling import fit_todos
 
 
 def _cmd_init_db(args: argparse.Namespace) -> int:
@@ -122,6 +128,146 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_summarize(args: argparse.Namespace) -> int:
+    """LLM-summarize the profile via Ollama, writing it to a file or stdout.
+
+    Falls back to the structured profile if the model is unavailable, unless
+    ``--no-fallback`` is given.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``output``, ``model``,
+            ``no_fallback``.
+
+    Returns:
+        Process exit code (0 on success, 1 if generation failed with no fallback).
+    """
+    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    client = OllamaClient(
+        base_url=settings.ollama_url, model=args.model or settings.ollama_model
+    )
+    try:
+        with MemoryStore.open(db_path) as store:
+            result = summarize_profile(
+                store, client=client, fallback=not args.no_fallback
+            )
+    except OllamaError as exc:
+        print(f"Summarization failed: {exc}", file=sys.stderr)
+        return 1
+
+    if result.source == "heuristic":
+        print(
+            f"Ollama unavailable ({client.base_url}, model {client.model}); "
+            "wrote the structured profile instead.",
+            file=sys.stderr,
+        )
+    output = args.output or "profile.md"
+    Path(output).write_text(result.text)
+    label = f"{result.source}" + (f" ({result.model})" if result.model else "")
+    print(f"Wrote {label} profile to {output}")
+    return 0
+
+
+def _cmd_briefing(args: argparse.Namespace) -> int:
+    """Print today's morning briefing (deterministic, or LLM prose with --llm).
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        if args.llm:
+            result = summarize_briefing(store)
+            text = result.text
+            if result.source == "heuristic":
+                print(
+                    "Ollama unavailable; printing the structured briefing.",
+                    file=sys.stderr,
+                )
+        else:
+            text = render_briefing(build_briefing(store))
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote briefing to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
+def _cmd_todo(args: argparse.Namespace) -> int:
+    """Add, list, or close open todos.
+
+    Args:
+        args: Parsed arguments; ``todo_action`` plus action-specific fields.
+
+    Returns:
+        Process exit code (0 on success, 1 on a not-found close).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        if args.todo_action == "add":
+            todo_id = store.add_todo(
+                args.title,
+                estimate_minutes=args.minutes,
+                priority=args.priority,
+                energy=args.energy,
+            )
+            print(f"Added todo #{todo_id}: {args.title}")
+        elif args.todo_action == "list":
+            todos = store.open_todos()
+            if not todos:
+                print("No open todos.")
+            for t in todos:
+                est = f" ~{t['estimate_minutes']:g}m" if t.get("estimate_minutes") else ""
+                print(f"#{t['id']} [P{t['priority']}]{est} {t['title']}")
+        elif args.todo_action in ("done", "drop"):
+            status_ = "done" if args.todo_action == "done" else "dropped"
+            if store.close_todo(args.todo_id, status=status_):
+                print(f"Todo #{args.todo_id} marked {status_}.")
+            else:
+                print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)
+                return 1
+    return 0
+
+
+def _cmd_fit(args: argparse.Namespace) -> int:
+    """Show open todos that fit a block of free time, applying the time bias.
+
+    Args:
+        args: Parsed arguments; uses ``minutes`` and ``db_path``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+
+        def _state_float(key: str, default: float) -> float:
+            raw = store.get_state(key)
+            try:
+                return float(raw) if raw is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        bias = _state_float("time_estimation_bias", 1.0)
+        fits = fit_todos(args.minutes, store.open_todos(), bias)
+    print(f"With {args.minutes:g} minutes free, you could knock out:")
+    if not fits:
+        print("  (nothing with an estimate fits — add estimates with `todo add --minutes`)")
+    for f in fits:
+        t = f["todo"]
+        print(f"  #{t['id']} {t['title']} (~{f['effective_minutes']:g}m)")
+    return 0
+
+
 def _cmd_modules(args: argparse.Namespace) -> int:
     """List available modules and whether each is enabled.
 
@@ -180,6 +326,51 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="Write to a file instead of stdout."
     )
     p_profile.set_defaults(func=_cmd_profile)
+
+    p_summarize = sub.add_parser(
+        "summarize", help="LLM-summarize the profile (Ollama) to profile.md."
+    )
+    p_summarize.add_argument("--db-path", default=None, help="Override the database path.")
+    p_summarize.add_argument(
+        "-o", "--output", default=None, help="Output path (default: profile.md)."
+    )
+    p_summarize.add_argument("--model", default=None, help="Override the Ollama model.")
+    p_summarize.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Fail instead of falling back to the structured profile.",
+    )
+    p_summarize.set_defaults(func=_cmd_summarize)
+
+    p_brief = sub.add_parser("briefing", help="Print today's morning briefing.")
+    p_brief.add_argument("--db-path", default=None, help="Override the database path.")
+    p_brief.add_argument(
+        "--llm", action="store_true", help="Rewrite as prose via Ollama (falls back)."
+    )
+    p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_brief.set_defaults(func=_cmd_briefing)
+
+    p_todo = sub.add_parser("todo", help="Add/list/close open todos (open loops).")
+    p_todo.add_argument("--db-path", default=None, help="Override the database path.")
+    todo_sub = p_todo.add_subparsers(dest="todo_action", required=True)
+    t_add = todo_sub.add_parser("add", help="Add a todo.")
+    t_add.add_argument("title", help="What needs doing.")
+    t_add.add_argument("--minutes", type=float, default=None, help="Time estimate.")
+    t_add.add_argument(
+        "--priority", type=int, default=1, choices=[0, 1, 2, 3], help="0 low … 3 urgent."
+    )
+    t_add.add_argument("--energy", default=None, help="low | medium | high.")
+    todo_sub.add_parser("list", help="List open todos.")
+    t_done = todo_sub.add_parser("done", help="Mark a todo done.")
+    t_done.add_argument("todo_id", type=int)
+    t_drop = todo_sub.add_parser("drop", help="Drop a todo.")
+    t_drop.add_argument("todo_id", type=int)
+    p_todo.set_defaults(func=_cmd_todo)
+
+    p_fit = sub.add_parser("fit", help="Show todos that fit a block of free time.")
+    p_fit.add_argument("minutes", type=float, help="Minutes of free time you have.")
+    p_fit.add_argument("--db-path", default=None, help="Override the database path.")
+    p_fit.set_defaults(func=_cmd_fit)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(

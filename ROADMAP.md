@@ -5,6 +5,34 @@ a stub and what's planned next, so the gap between "scaffolded" and "finished"
 stays visible to contributors. (See also `prefrontal modules -v` for per-module
 intervention status.)
 
+## ⭐ Priority: first real-world test (Module 1 live on the mini)
+
+The code for an end-to-end Coffee Shop Nudge is **done and tested** — outing
+endpoints, time escalation, location-gating, abandoned auto-close, passive
+return, and the learning + summarizer passes. The only remaining work is
+**operational** (on the Mac mini); see `docs/deployment.md` for the full runbook.
+Ordered path to the first real nudge:
+
+1. **Stand up Prefrontal** — clone, `pip install -e .`, set a strong
+   `PREFRONTAL_WEBHOOK_SECRET` in `.env`, `prefrontal init-db`, load the launchd
+   agent (`deploy/com.morningstatic.prefrontal.plist`). Confirm `GET /health`.
+2. **Ollama** — `ollama pull qwen2.5:14b` (24GB mini), set `OLLAMA_MODEL`.
+3. **n8n** — import `deploy/n8n/coffee-shop-nudge.workflow.json`; set the
+   Prefrontal token, the Twilio Basic-Auth credential + `To`/`From`, and Pushover
+   token/user.
+4. **iOS Shortcuts** — build "Going out" / "I'm back" (`deploy/ios-shortcut.md`).
+   *Optional but recommended:* feed `current_lat`/`current_lon` into the n8n
+   `Check Outings` body (from an HA/iOS location source) to activate
+   location-gating + passive return.
+5. **Tailscale** — so the phone reaches the mini remotely.
+6. **Dry run** — start an outing with a 1-minute window and confirm: push at
+   ~30s (50%), push at ~1m (100%), Twilio call at ~90s (150%), and that
+   `/return` (or coming home) logs the episode.
+7. **Schedule learning** — nightly `prefrontal learn && prefrontal summarize`.
+
+Everything above the dry run is configuration; no further code is required for
+the first test. Code follow-ups below are optional polish.
+
 ## Recently shipped
 
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
@@ -13,45 +41,76 @@ intervention status.)
   Run via `prefrontal learn`. *(Next: schedule it periodically; add finer
   `context_key` bucketing than episode type; derive `context_switch` once switch
   events are captured.)*
+- **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
+  profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
+  returns prioritized coaching prose, falling back to the heuristic when the
+  model is down. Run via `prefrontal summarize`. *(Next: optional Anthropic
+  provider for higher-quality summaries; cache/serve the narrative from
+  `GET /profile`.)*
+- **Calendar ingestion + double-booking** ✅ — `commitments` table +
+  `prefrontal/commitments.py`: feed-aware calendar sync
+  (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,
+  `GET /commitments`, and overlap detection at `GET /commitments/conflicts` with
+  a Pushover alert in the sync workflow.
+- **Impact analysis** ✅ — `prefrontal/impact.py`: projects realistic free-time
+  from the `time_estimation_bias` and flags upcoming commitments now at risk
+  (`start_at − lead_minutes` vs projection). Surfaced in `/webhooks/outing/check`
+  (an `impact` list + `hard_conflict` flag) and named in the nudge ("…'Team sync'
+  is now at risk"). *(Next: full cascade/domino propagation through the chain;
+  expose impact beyond outings.)*
+- **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
+  commitments, double-bookings, what slipped this past week, and a coaching note
+  (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +
+  `prefrontal briefing` (`--llm` for Ollama prose, heuristic fallback); delivered
+  by `deploy/n8n/morning-briefing.workflow.json`.
+- **Todos + time-fitting** ✅ — `todos` table + `prefrontal/scheduling.py`: open
+  loops (call the dentist, plan a birthday) with estimate/priority/deadline, plus
+  `free_windows()` over the schedule and `fit_todos()` that ranks what fits a gap
+  (bias-adjusted). `GET/POST /todos`, `GET /todos/fit?minutes=N`,
+  `prefrontal todo`/`fit`, and a "spare time" section in the morning briefing.
+  *(Next: multi-suggestion per window; auto-schedule a todo into a window as a
+  commitment; energy-aware fitting.)*
 
 ## Known stubs in the current code
 
-- **LLM-backed summarizer** — `build_profile()` is a deterministic, templated
-  heuristic. A local-model (Ollama) version that synthesizes nuanced, prioritized
-  guidance is planned, with the heuristic as a fallback.
-  *(`prefrontal/memory/summarizer.py`.)*
 - **n8n inbound handlers** — `POST /webhooks/n8n` classifies events via
   `parse_inbound_event()` but routes none of them to real handlers yet.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/app.py`.)*
 - **Module interventions** — most declared interventions are `status="planned"`.
-  Module 1 (Location-Aware Task Anchor) is the exception: its soft/firm/call
-  escalation is wired end-to-end.
+  Module 1 (Location-Aware Task Anchor) is the exception: its escalation,
+  location-gating, and auto-close interventions are wired end-to-end.
 - **n8n departure-reminder template** — ships with a hardcoded calendar
   placeholder; swap in a real Google Calendar / CalDAV node.
   *(`deploy/n8n/departure-reminder.workflow.json`.)*
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
-- **Location-gating the escalation** — only fire the 150% voice call if the user
-  is still away from home (use `distance_m`, already computed in
-  `/webhooks/outing/check`), so a quiet early return suppresses the call.
-- **Abandoned auto-close** — auto-close outings that are never returned (e.g. far
-  past the window with no `/return`) as `status="abandoned"` so they don't nudge
-  forever; record them for pattern tracking.
+- **Location-gating the escalation** ✅ — when a location check places the user
+  within the home radius (`home_radius_m`), `/webhooks/outing/check` suppresses
+  the nudge and passively closes the outing as returned, so coming home early (or
+  forgetting "I'm back") never triggers a call. Needs `current_lat`/`current_lon`
+  in the poll body to activate.
+- **Abandoned auto-close** ✅ — outings left open past `abandon_after_ratio`× the
+  window (default 3×) are auto-closed as `abandoned` and logged as a drift `miss`
+  (no fabricated duration), so they stop lingering active.
 - **Feed outings into learning** ✅ — outing returns log `task` episodes that the
-  pattern pass now folds into `time_estimation` and the bias multiplier. (Next:
-  give outings their own `context_key` so coffee runs calibrate separately from
-  other tasks.)
+  pattern pass folds into `time_estimation` and the bias multiplier.
+- **Finer `context_key`** — give outings their own pattern bucket so coffee runs
+  calibrate separately from other tasks (still open).
 
 ## Beyond v1 (from the README architecture)
 
 - **Triage agent** — classify/prioritize/route inbound signals.
-- **Coaching agent** — generate briefings, reminders, check-ins from the profile.
+- **Coaching agent** — generate reminders/check-ins from the profile (the
+  morning briefing is the first slice of this).
 - **Delivery layer** — first-class Pushover / Ntfy / TTS integrations in Python
   (today delivery is handled in n8n).
-- **Ingestion** — mail monitoring (Google Apps Script digest), calendar sync.
-- **Morning briefing** — daily digest calibrated to coaching preferences.
-- **Inference providers** — Ollama client (and optional Anthropic API) wired in
-  Python for the hybrid architecture.
+- **Ingestion** — mail monitoring (Google Apps Script digest).
+- **Optional Anthropic provider** — keep inference local by default, but add an
+  opt-in Anthropic API path (e.g. Claude Haiku for cheap, high-quality
+  summaries; a larger model for heavier coaching/triage reasoning), selectable
+  per agent as the README describes. The summarizer already takes an injected
+  client, so this slots in behind the same interface. Local-first stays the
+  default; the cloud path is explicit and configurable.
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.

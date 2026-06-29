@@ -242,6 +242,11 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 "I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
 ```
 
+> **Impact analysis** rides along automatically: if you've synced commitments
+> (§10), the check projects your realistic return from the learned bias and names
+> any at-risk commitment in the nudge ("…'Team sync' is now at risk"), with a
+> `hard_conflict` flag your workflow can use to escalate harder.
+
 **a. Twilio setup**
 
 1. Create a [Twilio](https://www.twilio.com/) account and buy a voice-capable
@@ -268,6 +273,21 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 
 "Going out" and "I'm back" — see
 [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md).
+
+**c2. (Optional) Location-gating**
+
+If you feed the phone's location into the `Check Outings` node body
+(`current_lat`/`current_lon`) and set `home_lat`/`home_lon` when starting an
+outing, Prefrontal will **suppress the call and close the outing automatically
+once you're within the home radius** (`home_radius_m`, default 150 m). That means
+coming home early — or forgetting to tap "I'm back" — never triggers the 150%
+call. Without location it falls back to pure time-based escalation, so this is
+optional. Outings left open past `abandon_after_ratio`× the window (default 3×)
+auto-close as `abandoned`.
+
+Two ways to supply location — an iOS arrival geofence (simplest) or continuous
+Home Assistant tracking (full mid-outing gating) — are written up in
+[`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md) under "Location source".
 
 **d. Try it (fast, no waiting)**
 
@@ -302,6 +322,59 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
 
 ---
 
+## 10. Calendar sync + double-booking alerts
+
+Feeds your schedule into Prefrontal's `commitments` table so it can (next)
+do impact analysis and (now) flag double-bookings across calendars.
+
+Flow: every 15 min, n8n pulls **personal events from Google Calendar** (direct
+OAuth) and **work events from a shared ICS feed**, merges them, and POSTs the
+combined batch to `/webhooks/calendar/sync`. If the resulting schedule has any
+overlaps, it sends a Pushover **double-booking alert**.
+
+```
+n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
+                    └─ GET work ICS feed ──────────┴─► merge ─► POST /webhooks/calendar/sync
+                                                                   └─ conflicts > 0 ─► Pushover alert
+```
+
+1. Import [`../deploy/n8n/calendar-sync.workflow.json`](../deploy/n8n/calendar-sync.workflow.json).
+2. **Google Calendar node** → attach a Google OAuth2 credential (personal account);
+   `primary` is your personal calendar.
+3. **Get Work ICS node** → paste your work calendar's shared/secret **iCal feed
+   URL** (read-only). Google/Outlook/most providers expose one per calendar.
+4. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
+5. **Double-booking alert** → set Pushover token/user (or swap for Ntfy).
+6. **Execute Workflow** once, then toggle **Active**.
+
+Notes:
+- Events are namespaced `personal:…` / `work:…`, so the two feeds are deduped and
+  one calendar's sync never prunes the other's events. Always sync all calendars
+  together (this workflow does) so pruning stays correct.
+- The ICS parser is minimal (UID/SUMMARY/DTSTART/DTEND/LOCATION) and treats
+  TZID-only times as UTC — fine for a UTC/`Z` feed; for local-time feeds prefer a
+  community ICS node.
+- Check the result: `GET /commitments` (upcoming) and `GET /commitments/conflicts`
+  (overlaps). Add one-offs with `POST /commitments`.
+
+---
+
+## 11. Morning briefing
+
+A daily digest of today's commitments, double-bookings, what slipped this past
+week, and a reminder of your time bias — calibrated to `preferred_briefing_format`
+(`short`/`long`).
+
+- Preview it now: `prefrontal briefing` (add `--llm` for Ollama prose).
+- Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json),
+  set the `X-Prefrontal-Token` header and Pushover token/user. It fires at 7am,
+  `GET /briefing`, and pushes the digest text. (Insert an Ollama node between the
+  two for prose, or point it at `prefrontal summarize`-style output.)
+- The briefing is best once calendars are syncing (§10) and a few days of
+  episodes have accrued (so "what slipped" and the bias are meaningful).
+
+---
+
 ## What's not automated yet
 
 The interventions declared by each module (`prefrontal modules -v`) are mostly
@@ -309,8 +382,17 @@ The interventions declared by each module (`prefrontal modules -v`) are mostly
 per-module logic (escalation paths, hyperfocus protect-vs-interrupt, etc.) is
 still to be wired. See `ROADMAP.md` for what's next.
 
-**Schedule the learning pass.** `prefrontal learn` recomputes derived patterns
-and the time-estimation bias from accumulated episodes. Run it periodically so
-the profile keeps sharpening — e.g. a second launchd agent with
-`StartCalendarInterval` (nightly), a `cron` entry, or an n8n schedule node that
-shells out / hits a future endpoint. A nightly run is plenty for a single user.
+**Schedule the learning pass + summary.** Run these periodically (nightly is
+plenty for one user) via a launchd agent with `StartCalendarInterval`, `cron`, or
+an n8n schedule node:
+
+```bash
+prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
+prefrontal summarize   # structured profile -> Ollama -> profile.md (prose)
+```
+
+`prefrontal summarize` writes a narrative `profile.md` using the local Ollama
+model from `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it
+falls back to the structured profile, so the file is always written. The live
+`GET /profile` endpoint always returns the fast structured profile — point agents
+at the generated `profile.md` when you want the prose version.

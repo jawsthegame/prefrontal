@@ -37,10 +37,48 @@ CALL_THRESHOLD = 1.5
 #: Escalation levels in increasing severity. Index is the rank.
 LEVELS = ("none", "soft", "firm", "call")
 
+#: Default radius (metres) within which the user counts as "home" — used to
+#: suppress nudges and passively confirm a return when location is available.
+DEFAULT_HOME_RADIUS_M = 150.0
+
+#: Default multiple of the stated window after which an unreturned outing is
+#: auto-closed as abandoned (stops it lingering active forever).
+DEFAULT_ABANDON_RATIO = 3.0
+
 
 def level_rank(level: str) -> int:
     """Return the severity rank of an escalation level (``none`` -> 0)."""
     return LEVELS.index(level)
+
+
+def is_at_home(distance_m: float | None, radius_m: float = DEFAULT_HOME_RADIUS_M) -> bool:
+    """Whether a known distance from home is within the home radius.
+
+    Args:
+        distance_m: Distance from home in metres, or ``None`` if location is
+            unknown (in which case the answer is ``False`` — we never assume).
+        radius_m: The home radius in metres.
+
+    Returns:
+        ``True`` only when ``distance_m`` is known and within ``radius_m``.
+    """
+    return distance_m is not None and distance_m <= radius_m
+
+
+def is_abandoned(
+    elapsed_minutes: float, window_minutes: float, ratio: float = DEFAULT_ABANDON_RATIO
+) -> bool:
+    """Whether an outing has run long enough to be considered abandoned.
+
+    Args:
+        elapsed_minutes: Minutes since departure.
+        window_minutes: The stated window.
+        ratio: Multiple of the window beyond which it's abandoned.
+
+    Returns:
+        ``True`` if elapsed has reached ``window_minutes * ratio``.
+    """
+    return window_minutes > 0 and elapsed_minutes >= window_minutes * ratio
 
 
 def escalation_level(elapsed_minutes: float, window_minutes: float) -> str:
@@ -182,6 +220,10 @@ class LocationAnchorModule(Module):
     default_state = {
         # Optional first name used in the voice-call message; blank by default.
         "user_name": "",
+        # Radius (metres) within which the user counts as home (location-gating).
+        "home_radius_m": str(int(DEFAULT_HOME_RADIUS_M)),
+        # Auto-close an outing as abandoned past this multiple of its window.
+        "abandon_after_ratio": str(DEFAULT_ABANDON_RATIO),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -203,6 +245,18 @@ class LocationAnchorModule(Module):
                 name="voice_call",
                 description="Twilio voice call at 150% of the stated window.",
                 trigger="elapsed time reaches 150% of the stated window",
+                status="active",
+            ),
+            Intervention(
+                name="location_gating",
+                description="Suppress nudges and passively close the outing when home.",
+                trigger="a location check places the user within the home radius",
+                status="active",
+            ),
+            Intervention(
+                name="abandoned_auto_close",
+                description="Auto-close an outing left open far past its window.",
+                trigger="elapsed time exceeds the abandon ratio with no return",
                 status="active",
             ),
         ]
@@ -228,6 +282,61 @@ class LocationAnchorModule(Module):
             "100%, voice call at 150% of the stated time."
         )
         return "\n".join(f"- {line}" for line in lines)
+
+
+def record_outing_return(store: MemoryStore, closed: dict) -> dict:
+    """Log a genuine outing return as a ``task`` episode for pattern tracking.
+
+    Predicted = the stated window, actual = minutes actually out, outcome
+    ``success`` if within the window else ``miss`` — so the learning pass folds
+    it into ``time_estimation`` and the bias.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        closed: A closed outing dict (with ``actual_minutes``).
+
+    Returns:
+        ``{"episode_id": int|None, "outcome": str|None}``.
+    """
+    actual = closed.get("actual_minutes")
+    window = closed.get("time_window_minutes")
+    if actual is None or window is None:
+        return {"episode_id": None, "outcome": None}
+    outcome = "success" if actual <= window else "miss"
+    episode_id = store.log_episode(
+        "task",
+        predicted_value=window,
+        actual_value=round(actual, 1),
+        acknowledged=True,
+        context=f"outing: {closed.get('intention')}",
+        outcome=outcome,
+    )
+    return {"episode_id": episode_id, "outcome": outcome}
+
+
+def record_outing_abandoned(store: MemoryStore, closed: dict) -> dict:
+    """Log an abandoned outing as a drift ``miss`` (no reliable actual time).
+
+    ``actual_value`` is intentionally ``None`` — we don't know when (or if) the
+    user returned — so it contributes to ``drift`` but never pollutes
+    ``time_estimation`` with a fabricated duration.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        closed: The closed (abandoned) outing dict.
+
+    Returns:
+        ``{"episode_id": int, "outcome": "miss"}``.
+    """
+    episode_id = store.log_episode(
+        "task",
+        predicted_value=closed.get("time_window_minutes"),
+        actual_value=None,
+        acknowledged=False,
+        context=f"outing abandoned: {closed.get('intention')}",
+        outcome="miss",
+    )
+    return {"episode_id": episode_id, "outcome": "miss"}
 
 
 def _minutes_between(start: str | None, end: str | None) -> float | None:

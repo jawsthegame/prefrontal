@@ -13,6 +13,12 @@ Routes:
 - ``POST /webhooks/outing/start`` — declare an intention + time window.
 - ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
 - ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
+- ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
+- ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
+- ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
+- ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
+- ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
+- ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
 
 Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
 against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
@@ -34,18 +40,33 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from prefrontal.briefing import build_briefing, render_briefing
+from prefrontal.commitments import find_conflicts, normalize_event, sync_calendar, to_utc
 from prefrontal.config import Settings, get_settings
+from prefrontal.impact import (
+    analyze_impact,
+    at_risk,
+    impact_phrase,
+    project_free_time,
+)
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules.location_anchor import (
+    DEFAULT_ABANDON_RATIO,
+    DEFAULT_HOME_RADIUS_M,
     build_message,
     escalation_level,
     haversine_m,
+    is_abandoned,
+    is_at_home,
     level_rank,
     parse_time_window,
+    record_outing_abandoned,
+    record_outing_return,
 )
+from prefrontal.scheduling import fit_todos
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -118,6 +139,61 @@ class OutingReturn(BaseModel):
         description="Outing to close. Defaults to the most recent active outing.",
     )
     status: Literal["returned", "abandoned"] = "returned"
+
+
+class CalendarEvent(BaseModel):
+    """One event in a ``POST /webhooks/calendar/sync`` batch."""
+
+    title: str = Field(description="Event title.")
+    start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
+    external_id: str | None = Field(default=None, description="Calendar event id.")
+    end_at: str | None = Field(default=None, description="ISO-8601 end.")
+    location: str | None = Field(default=None, description="Event location.")
+    lead_minutes: float | None = Field(
+        default=None, description="Travel+prep buffer before start (default 10)."
+    )
+    hard: bool = Field(default=False, description="A hard deadline vs a soft one.")
+
+
+class CalendarSync(BaseModel):
+    """Body of ``POST /webhooks/calendar/sync`` — a full upcoming-events batch."""
+
+    events: list[CalendarEvent] = Field(default_factory=list)
+
+
+class CommitmentCreate(BaseModel):
+    """Body of ``POST /commitments`` — a single manual commitment."""
+
+    title: str
+    start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
+    end_at: str | None = None
+    location: str | None = None
+    lead_minutes: float | None = None
+    hard: bool = False
+
+
+class TodoCreate(BaseModel):
+    """Body of ``POST /todos`` — an open loop to fit into free time."""
+
+    title: str
+    notes: str | None = None
+    estimate_minutes: float | None = Field(
+        default=None, description="How long it'll take (enables time-fitting)."
+    )
+    priority: int = Field(default=1, ge=0, le=3, description="0 low … 3 urgent.")
+    deadline: str | None = Field(default=None, description="Optional ISO-8601 deadline.")
+    energy: str | None = Field(default=None, description="low | medium | high.")
+
+
+def _state_float(memory: MemoryStore, key: str, default: float) -> float:
+    """Read a coaching-state value as a float, falling back on missing/bad data."""
+    raw = memory.get_state(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def get_store(request: Request) -> MemoryStore:
@@ -340,12 +416,23 @@ def create_app(
     ) -> dict[str, Any]:
         """Evaluate active outings and report which nudges are due.
 
-        n8n polls this on a schedule. For each active outing it computes the
-        elapsed-time escalation level; when a *new* level has been crossed since
-        the last poll it sets ``fire=true``, records the level so it fires once,
-        and includes the user-facing ``message``. The body may optionally carry
-        ``current_lat``/``current_lon`` to annotate each outing with
-        ``distance_m`` from home (not used to gate nudges in v1).
+        n8n polls this on a schedule. For each active outing:
+
+        - If the body carries ``current_lat``/``current_lon`` and the user is
+          within the home radius, the outing is **passively closed** as returned
+          (location confirms the return) and no nudge fires — so a forgotten
+          "I'm back" tap, or coming home early, never triggers a call.
+        - Otherwise, if elapsed time has blown past the abandon ratio, the outing
+          is **auto-closed** as abandoned so it stops lingering active.
+        - Otherwise the elapsed-time escalation level is computed; when a *new*
+          level is crossed since the last poll it sets ``fire=true``, records the
+          level so it fires once, and includes the ``message``.
+
+        For an active outing, **impact analysis** runs: the realistic free-time
+        is projected from the stated window and the learned time bias, and any
+        upcoming commitments that would be at risk are listed (and named in the
+        nudge message). Each returned item reports its post-check ``status``
+        (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
         try:
@@ -357,15 +444,16 @@ def create_app(
         cur_lat = body.get("current_lat")
         cur_lon = body.get("current_lon")
         name = memory.get_state("user_name", "") or ""
+        home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
+        abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        commitments = memory.upcoming_commitments()
 
-        active: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for outing in memory.active_outings():
             elapsed = outing["elapsed_minutes"] or 0.0
             window = outing["time_window_minutes"]
-            level = escalation_level(elapsed, window)
-            fire = level_rank(level) > level_rank(outing["last_level"])
-            if fire:
-                memory.set_outing_level(outing["id"], level)
+
             distance_m = None
             if (
                 cur_lat is not None
@@ -376,7 +464,46 @@ def create_app(
                 distance_m = round(
                     haversine_m(outing["home_lat"], outing["home_lon"], cur_lat, cur_lon)
                 )
-            active.append(
+            at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
+
+            level, fire, message, outcome = "none", False, "", None
+            impacts: list[dict[str, Any]] = []
+            if at_home:
+                # Location confirms the user is home — passive return.
+                closed = memory.close_outing(outing["id"], status="returned")
+                outcome = record_outing_return(memory, closed)["outcome"]
+                outing_status = "returned"
+            elif is_abandoned(elapsed, window, abandon_ratio):
+                closed = memory.close_outing(outing["id"], status="abandoned")
+                outcome = record_outing_abandoned(memory, closed)["outcome"]
+                outing_status = "abandoned"
+            else:
+                level = escalation_level(elapsed, window)
+                fire = level_rank(level) > level_rank(outing["last_level"])
+                # Impact analysis: project realistic free-time from the bias and
+                # see which upcoming commitments are now at risk.
+                risky = []
+                if commitments:
+                    projected = project_free_time(outing["departure_at"], window, bias)
+                    risky = at_risk(analyze_impact(projected, commitments))
+                    impacts = [
+                        {
+                            "commitment_id": i.commitment["id"],
+                            "title": i.commitment["title"],
+                            "start_at": i.commitment["start_at"],
+                            "slack_minutes": i.slack_minutes,
+                            "hardness": i.commitment.get("hardness"),
+                        }
+                        for i in risky
+                    ]
+                if fire:
+                    memory.set_outing_level(outing["id"], level)
+                    message = build_message(
+                        level, elapsed_minutes=elapsed, window_minutes=window, name=name
+                    ) + impact_phrase(risky)
+                outing_status = "active"
+
+            results.append(
                 {
                     "outing_id": outing["id"],
                     "intention": outing["intention"],
@@ -384,18 +511,16 @@ def create_app(
                     "time_window_minutes": window,
                     "level": level,
                     "fire": fire,
-                    "message": build_message(
-                        level,
-                        elapsed_minutes=elapsed,
-                        window_minutes=window,
-                        name=name,
-                    )
-                    if fire
-                    else "",
+                    "message": message,
                     "distance_m": distance_m,
+                    "at_home": at_home,
+                    "status": outing_status,
+                    "outcome": outcome,
+                    "impact": impacts,
+                    "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
                 }
             )
-        return {"active": active}
+        return {"active": results}
 
     @app.post("/webhooks/outing/return", tags=["anchor"])
     def outing_return(
@@ -427,27 +552,206 @@ def create_app(
                 detail=f"Outing {outing_id} is not active.",
             )
 
+        if payload.status == "returned":
+            recorded = record_outing_return(memory, closed)
+        else:
+            recorded = record_outing_abandoned(memory, closed)
         actual = closed.get("actual_minutes")
-        window = closed.get("time_window_minutes")
-        outcome = None
-        episode_id = None
-        if payload.status == "returned" and actual is not None:
-            outcome = "success" if actual <= window else "miss"
-            episode_id = memory.log_episode(
-                "task",
-                predicted_value=window,
-                actual_value=round(actual, 1),
-                acknowledged=True,
-                context=f"outing: {closed.get('intention')}",
-                outcome=outcome,
-            )
         return {
             "outing_id": outing_id,
             "status": payload.status,
             "actual_minutes": round(actual, 1) if actual is not None else None,
-            "time_window_minutes": window,
-            "outcome": outcome,
-            "episode_id": episode_id,
+            "time_window_minutes": closed.get("time_window_minutes"),
+            "outcome": recorded["outcome"],
+            "episode_id": recorded["episode_id"],
+        }
+
+    # -- Commitments (schedule for impact analysis) --------------------------
+
+    @app.post("/webhooks/calendar/sync", tags=["schedule"])
+    def calendar_sync(
+        payload: CalendarSync,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Sync a batch of upcoming calendar events into ``commitments``.
+
+        n8n posts the current window of events on a schedule; this upserts them
+        (by ``external_id``) and prunes calendar events that disappeared. A bad
+        timestamp rejects the whole batch with 422 (never partially applies).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            summary = sync_calendar(
+                memory, [e.model_dump() for e in payload.events]
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        return {
+            "added": summary.added,
+            "updated": summary.updated,
+            "cancelled": summary.cancelled,
+            "upcoming": summary.upcoming,
+            "conflicts": summary.conflicts,
+        }
+
+    @app.post(
+        "/commitments", status_code=status.HTTP_201_CREATED, tags=["schedule"]
+    )
+    def commitment_create(
+        payload: CommitmentCreate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Add a single commitment manually (source ``manual``)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            fields = normalize_event({**payload.model_dump(), "source": "manual"})
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        commitment_id, _ = memory.upsert_commitment(**fields)
+        return {"commitment_id": commitment_id}
+
+    @app.get("/commitments", tags=["schedule"])
+    def commitments_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """List active upcoming commitments, soonest first."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"commitments": memory.upcoming_commitments()}
+
+    @app.get("/commitments/conflicts", tags=["schedule"])
+    def commitments_conflicts(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Report double-bookings among upcoming commitments.
+
+        Returns overlapping pairs (most useful across merged personal + work
+        calendars). n8n can poll this and push a double-booking alert.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        conflicts = find_conflicts(memory.upcoming_commitments())
+        return {
+            "conflicts": [
+                {
+                    "a": {"id": c.a["id"], "title": c.a["title"], "start_at": c.a["start_at"]},
+                    "b": {"id": c.b["id"], "title": c.b["title"], "start_at": c.b["start_at"]},
+                    "overlap_minutes": c.overlap_minutes,
+                }
+                for c in conflicts
+            ]
+        }
+
+    @app.get("/briefing", tags=["schedule"])
+    def briefing(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Return today's morning briefing as structured data plus rendered text.
+
+        n8n can deliver the ``text`` directly, or feed it to Ollama for prose
+        (or call ``prefrontal summarize``-style). Always fast and model-free here.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        b = build_briefing(memory)
+        return {
+            "date": b.date,
+            "format": b.format,
+            "today": b.today,
+            "conflicts": b.conflicts,
+            "slips": b.slips,
+            "coaching": b.coaching,
+            "spare": b.spare,
+            "text": render_briefing(b),
+        }
+
+    # -- Todos (open loops fitted into free time) ----------------------------
+
+    @app.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
+    def todo_create(
+        payload: TodoCreate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Add an open todo (an open loop to fit into free time later)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        deadline = None
+        if payload.deadline:
+            try:
+                deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+        todo_id = memory.add_todo(
+            payload.title,
+            notes=payload.notes,
+            estimate_minutes=payload.estimate_minutes,
+            priority=payload.priority,
+            deadline=deadline,
+            energy=payload.energy,
+        )
+        return {"todo_id": todo_id}
+
+    @app.get("/todos", tags=["todos"])
+    def todos_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """List open todos (priority then deadline order)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"todos": memory.open_todos()}
+
+    @app.post("/todos/{todo_id}/{action}", tags=["todos"])
+    def todo_close(
+        todo_id: int,
+        action: Literal["done", "drop"],
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Mark a todo done or drop it."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        new_status = "done" if action == "done" else "dropped"
+        if not memory.close_todo(todo_id, status=new_status):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "status": new_status}
+
+    @app.get("/todos/fit", tags=["todos"])
+    def todos_fit(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        minutes: float,
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Rank the open todos that fit in ``minutes`` of free time, right now.
+
+        Applies the learned time bias, so a "10-minute" todo is judged at its
+        realistic length. Great for "I have 20 minutes — what can I knock out?"
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        fits = fit_todos(minutes, memory.open_todos(), bias)
+        return {
+            "available_minutes": minutes,
+            "fits": [
+                {
+                    "todo_id": f["todo"]["id"],
+                    "title": f["todo"]["title"],
+                    "estimate_minutes": f["todo"].get("estimate_minutes"),
+                    "effective_minutes": f["effective_minutes"],
+                    "priority": f["todo"].get("priority"),
+                }
+                for f in fits
+            ],
         }
 
     return app

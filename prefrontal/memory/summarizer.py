@@ -4,26 +4,43 @@ The README describes a summarizer agent that periodically reads ``patterns`` and
 ``coaching_state`` and writes a ``profile.md`` that every agent prepends to its
 system prompt — so behavioral context travels with every interaction.
 
-This module ships the **deterministic, heuristic** version of that summarizer.
-It turns the structured rows into readable prose using simple templates and no
-model call, which makes it testable and dependency-free. The richer LLM-backed
-summarizer (which would synthesize nuanced, prioritized guidance) is a planned
-follow-up.
+There are two layers here:
 
-.. todo::
-   Replace :func:`build_profile` (or add a sibling) that calls a local Ollama
-   model — or optionally the Anthropic API — to produce the narrative profile,
-   using this heuristic output as a structured fallback.
+- :func:`build_profile` — the **deterministic, structured** profile: the facts,
+  rendered from the tables with simple templates and no model call. Testable,
+  dependency-free, and stable enough to diff.
+- :func:`summarize_profile` — the **LLM-backed** summarizer: it feeds the
+  structured profile to a local Ollama model and asks for concise, prioritized,
+  second-person coaching guidance (the ``docs/schema.md`` example). If the model
+  is unavailable or errors, it falls back to the structured profile, so the
+  pipeline never hard-fails on a down model.
+
+The structured profile is the model's *input*, which keeps the LLM grounded in
+real numbers rather than free-associating.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
+    from prefrontal.integrations.ollama import OllamaClient
     from prefrontal.modules.base import Module
+
+#: System prompt steering the model from structured facts to coaching prose.
+SUMMARIZER_SYSTEM_PROMPT = (
+    "You are Prefrontal's profile summarizer. You are given a structured "
+    "behavioral profile of one person with ADHD: learned patterns, coaching "
+    "preferences, and active support modules. Rewrite it as concise, prioritized "
+    "coaching guidance addressed to the agents that will help this person — "
+    "second person ('the user'), 4-6 sentences, most actionable first. Obey the "
+    "numbers exactly, especially any time-estimation multiplier and responsive "
+    "hours. Do not invent facts not present in the input. Lead with what to do, "
+    "not a description. No preamble, headings, or bullet list — just the prose."
+)
 
 
 def build_profile(
@@ -107,6 +124,83 @@ def build_profile(
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+@dataclass(frozen=True)
+class ProfileSummary:
+    """Result of :func:`summarize_profile`.
+
+    Attributes:
+        text: The profile text to inject into agent prompts.
+        source: ``"llm"`` if a model produced it, ``"heuristic"`` if the
+            structured fallback was used.
+        model: The model name when ``source == "llm"``, else ``None``.
+        structured: The structured profile that was fed to the model (also the
+            fallback text), useful for debugging and diffing.
+    """
+
+    text: str
+    source: str
+    model: str | None = None
+    structured: str = ""
+
+
+def summarize_profile(
+    store: MemoryStore,
+    *,
+    client: OllamaClient | None = None,
+    modules: list[Module] | None = None,
+    fallback: bool = True,
+) -> ProfileSummary:
+    """Produce the behavioral profile, preferring an LLM narrative.
+
+    Builds the structured profile (:func:`build_profile`), then asks a local
+    Ollama model to rewrite it as prioritized coaching prose. On any model
+    failure it returns the structured profile instead (unless ``fallback`` is
+    ``False``), so a down model never breaks the pipeline.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        client: An Ollama client. Defaults to one built from settings.
+        modules: Modules to include in the structured profile (see
+            :func:`build_profile`).
+        fallback: If ``True`` (default), fall back to the structured profile on
+            model failure; if ``False``, re-raise the error.
+
+    Returns:
+        A :class:`ProfileSummary`.
+
+    Raises:
+        prefrontal.integrations.ollama.OllamaError: If the model fails and
+            ``fallback`` is ``False``.
+    """
+    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+
+    structured = build_profile(store, modules=modules)
+    client = client or OllamaClient.from_settings()
+
+    try:
+        prose = client.generate(structured, system=SUMMARIZER_SYSTEM_PROMPT)
+    except OllamaError:
+        if not fallback:
+            raise
+        return ProfileSummary(
+            text=structured, source="heuristic", model=None, structured=structured
+        )
+
+    # An empty (or whitespace-only) model reply is treated as a failure to
+    # produce anything useful.
+    prose = prose.strip()
+    if not prose:
+        if not fallback:
+            raise OllamaError("Ollama returned an empty summary.")
+        return ProfileSummary(
+            text=structured, source="heuristic", model=None, structured=structured
+        )
+
+    return ProfileSummary(
+        text=prose, source="llm", model=client.model, structured=structured
+    )
 
 
 def _describe_pattern(pattern: dict) -> str:

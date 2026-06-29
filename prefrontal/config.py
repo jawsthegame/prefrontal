@@ -60,6 +60,9 @@ class Settings:
             An empty tuple means "enable every registered module" — the right
             default for a fresh install, since everyone's ADHD profile differs
             and modules are opt-out rather than opt-in.
+        ollama_url: Base URL of the local Ollama server used by the LLM
+            summarizer. Local-first: stays on the host by default.
+        ollama_model: Ollama model name the summarizer generates with.
     """
 
     db_path: str = "prefrontal.db"
@@ -69,6 +72,8 @@ class Settings:
     n8n_webhook_url: str = ""
     n8n_webhook_token: str = ""
     modules: tuple[str, ...] = ()
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1:8b"
 
     @property
     def auth_enabled(self) -> bool:
@@ -101,6 +106,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", ""),
         n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", ""),
         modules=modules,
+        ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
+        ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
     )
 
 

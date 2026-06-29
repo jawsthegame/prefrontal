@@ -1,0 +1,177 @@
+{
+  "name": "Prefrontal — Calendar Sync (personal Google + work ICS)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      },
+      "id": "schedule",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 320]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": { "__rl": true, "mode": "list", "value": "primary" },
+        "returnAll": false,
+        "limit": 50,
+        "options": { "timeMin": "={{ $now.toISO() }}", "timeMax": "={{ $now.plus(36, 'hours').toISO() }}", "singleEvents": true, "orderBy": "startTime" }
+      },
+      "id": "gcal",
+      "name": "Google Calendar (personal)",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [240, 200],
+      "notes": "Attach your Google OAuth2 credential. 'primary' = your personal calendar."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map Google Calendar events -> Prefrontal commitment shape.\nreturn $input.all().map((i) => {\n  const e = i.json;\n  const start = (e.start && (e.start.dateTime || e.start.date)) || null;\n  const end = (e.end && (e.end.dateTime || e.end.date)) || null;\n  return { json: {\n    external_id: 'personal:' + e.id,\n    title: e.summary || '(busy)',\n    start_at: start,\n    end_at: end,\n    location: e.location || null,\n    hard: false,\n  } };\n}).filter((x) => x.json.start_at);"
+      },
+      "id": "map-personal",
+      "name": "Map Personal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "url": "REPLACE_WITH_WORK_ICS_FEED_URL",
+        "options": { "response": { "response": { "responseFormat": "text" } } }
+      },
+      "id": "get-ics",
+      "name": "Get Work ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 440],
+      "notes": "Paste your shared/secret iCal feed URL (read-only)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser: unfolds lines, pulls UID/SUMMARY/DTSTART/DTEND/LOCATION.\n// NOTE: TZID-only times are treated as UTC (no tz database here). For a feed in\n// local time, prefer a community ICS node or a UTC feed. Good enough for a\n// shared work feed whose times are UTC/Z.\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = 'work:' + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
+      },
+      "id": "parse-ics",
+      "name": "Parse Work ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 440]
+    },
+    {
+      "parameters": { "mode": "append" },
+      "id": "merge",
+      "name": "Merge feeds",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [720, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all mapped events from both feeds into one sync batch.\nreturn [{ json: { events: $input.all().map((i) => i.json) } }];"
+      },
+      "id": "bundle",
+      "name": "Bundle events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/webhooks/calendar/sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ events: $json.events }) }}",
+        "options": {}
+      },
+      "id": "post-sync",
+      "name": "POST /webhooks/calendar/sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "has-conflicts",
+              "leftValue": "={{ $json.conflicts }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-conflicts",
+      "name": "Double-booked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1380, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — double-booking\",\n  \"message\": \"⚠️ {{ $json.conflicts }} overlapping commitment(s) on your calendar. Check /commitments/conflicts.\",\n  \"priority\": 1\n}",
+        "options": {}
+      },
+      "id": "pushover-conflict",
+      "name": "Double-booking alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 240]
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [[
+        { "node": "Google Calendar (personal)", "type": "main", "index": 0 },
+        { "node": "Get Work ICS", "type": "main", "index": 0 }
+      ]]
+    },
+    "Google Calendar (personal)": {
+      "main": [[{ "node": "Map Personal", "type": "main", "index": 0 }]]
+    },
+    "Map Personal": {
+      "main": [[{ "node": "Merge feeds", "type": "main", "index": 0 }]]
+    },
+    "Get Work ICS": {
+      "main": [[{ "node": "Parse Work ICS", "type": "main", "index": 0 }]]
+    },
+    "Parse Work ICS": {
+      "main": [[{ "node": "Merge feeds", "type": "main", "index": 1 }]]
+    },
+    "Merge feeds": {
+      "main": [[{ "node": "Bundle events", "type": "main", "index": 0 }]]
+    },
+    "Bundle events": {
+      "main": [[{ "node": "POST /webhooks/calendar/sync", "type": "main", "index": 0 }]]
+    },
+    "POST /webhooks/calendar/sync": {
+      "main": [[{ "node": "Double-booked?", "type": "main", "index": 0 }]]
+    },
+    "Double-booked?": {
+      "main": [
+        [{ "node": "Double-booking alert", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

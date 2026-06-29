@@ -89,11 +89,16 @@ Prefrontal is in early development. This repository currently implements the **f
 |---|---|---|
 | Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state |
 | Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
+| Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
+| Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
+| Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
+| Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
-| Profile summarizer | `prefrontal/memory/summarizer.py` | 🧩 Stub — heuristic, LLM version TODO |
+| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
+| Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
-| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — outing endpoints + escalation logic + n8n/Twilio workflow |
+| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Triage / coaching / delivery agents | — | 🔜 Not yet built |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,
@@ -121,8 +126,19 @@ prefrontal serve
 # Learn: recompute derived patterns + the time-estimation bias from episodes
 prefrontal learn
 
-# Print the current behavioral profile assembled from memory
+# Print the structured behavioral profile assembled from memory
 prefrontal profile
+
+# Summarize it into prioritized prose via a local Ollama model -> profile.md
+# (falls back to the structured profile if Ollama isn't running)
+prefrontal summarize
+
+# Print today's morning briefing (add --llm for friendly prose via Ollama)
+prefrontal briefing
+
+# Capture open loops, then fit them into spare time
+prefrontal todo add "Call dentist" --minutes 10 --priority 2
+prefrontal fit 20      # "with 20 min free, you could knock out…"
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v
