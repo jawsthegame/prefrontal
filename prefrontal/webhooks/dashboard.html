@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prefrontal — Monitor</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #181b22; --line: #262b36; --fg: #e6e9ef;
+    --muted: #8b93a7; --accent: #6ea8fe;
+    --none: #6b7280; --soft: #d9a93b; --firm: #e07b39; --call: #e0556b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky;
+    top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  button {
+    background: var(--card); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  main {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+    gap: 16px; padding: 20px; max-width: 1400px; margin: 0 auto;
+  }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 12px; }
+  .card.wide { grid-column: 1 / -1; }
+  .empty { color: var(--muted); font-style: italic; }
+  .row { padding: 10px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: none; }
+  .row .title { font-weight: 600; }
+  .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase;
+           padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; }
+  .lvl-none { background: #2a2f3a; color: var(--none); }
+  .lvl-soft { background: #3a2f12; color: var(--soft); }
+  .lvl-firm { background: #3a2412; color: var(--firm); }
+  .lvl-call { background: #3a1620; color: var(--call); }
+  .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
+  .pri-3 { background: #3a1620; color: var(--call); }
+  .pri-2 { background: #3a2412; color: var(--firm); }
+  .conflict { background: #3a1620; color: var(--call); }
+  .bar { height: 6px; border-radius: 4px; background: #2a2f3a; margin-top: 8px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; }
+  pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; font: 13px/1.55 ui-monospace, Menlo, monospace; color: var(--fg); }
+  details summary { cursor: pointer; color: var(--muted); }
+  .err { color: var(--call); font-size: 13px; }
+  #gate {
+    position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; z-index: 10;
+  }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; width: min(420px, 90vw); }
+  #gate h2 { margin: 0 0 6px; font-size: 16px; }
+  #gate p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  #gate input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+                background: var(--bg); color: var(--fg); font-size: 14px; margin-bottom: 12px; }
+  #gate button { width: 100%; padding: 10px; background: var(--accent); color: #0b0d12; border: none; font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Prefrontal</h1>
+  <span class="meta" id="status">loading…</span>
+  <span class="spacer"></span>
+  <button id="refresh">Refresh</button>
+  <button id="signout" title="Forget the saved token">Sign out</button>
+</header>
+
+<main id="app">
+  <section class="card wide" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
+  <section class="card" id="c-todos"><h2>Todos</h2><div class="body"></div></section>
+  <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
+  <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
+  <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
+  <section class="card wide" id="c-profile"><h2>Behavioral profile</h2><div class="body"></div></section>
+</main>
+
+<div id="gate">
+  <div class="box">
+    <h2>Enter access token</h2>
+    <p>This is your <code>PREFRONTAL_WEBHOOK_SECRET</code>. It's stored only in this browser.</p>
+    <input id="token-input" type="password" placeholder="X-Prefrontal-Token" autocomplete="off" />
+    <div class="err" id="gate-err"></div>
+    <button id="token-save">Open dashboard</button>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+const REFRESH_MS = 15000;
+let token = localStorage.getItem(KEY);
+let timer = null;
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+
+function fmt(ts) {
+  if (!ts) return "—";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d) ? ts : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function mins(n) { return n == null ? "—" : Math.round(n) + " min"; }
+
+async function api(path) {
+  const r = await fetch(path, { headers: { "X-Prefrontal-Token": token } });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("application/json") ? r.json() : r.text();
+}
+
+function renderOutings(d) {
+  const a = (d.active || []);
+  if (!a.length) return `<div class="empty">No active outings.</div>`;
+  return a.map((o) => {
+    const pct = o.time_window_minutes ? Math.min(150, (o.elapsed_minutes / o.time_window_minutes) * 100) : 0;
+    const col = `var(--${o.level})`;
+    return `<div class="row">
+      <div><span class="title">${esc(o.intention)}</span> <span class="badge lvl-${o.level}">${o.level}</span></div>
+      <div class="sub">out ${mins(o.elapsed_minutes)} of ${mins(o.time_window_minutes)} · since ${fmt(o.departure_at)}</div>
+      <div class="bar"><span style="width:${(pct/1.5).toFixed(0)}%;background:${col}"></span></div>
+    </div>`;
+  }).join("");
+}
+function renderRecent(d) {
+  const r = (d.recent || []).filter((o) => o.status !== "active");
+  if (!r.length) return `<div class="empty">No recent outings.</div>`;
+  return r.slice(0, 12).map((o) => `<div class="row">
+    <div><span class="title">${esc(o.intention)}</span> <span class="pill">${o.status}</span></div>
+    <div class="sub">window ${mins(o.time_window_minutes)} · left ${fmt(o.departure_at)} · back ${fmt(o.returned_at)}</div>
+  </div>`).join("");
+}
+function renderTodos(d) {
+  const t = (d.todos || []);
+  if (!t.length) return `<div class="empty">No open todos.</div>`;
+  const names = ["low", "normal", "high", "urgent"];
+  return t.map((x) => `<div class="row">
+    <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
+    <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
+  </div>`).join("");
+}
+function renderCommitments(list, conflicts) {
+  const c = (list.commitments || []);
+  const conflictIds = new Set();
+  (conflicts.conflicts || []).forEach((p) => { conflictIds.add(p.a.id); conflictIds.add(p.b.id); });
+  let html = "";
+  if (conflicts.conflicts && conflicts.conflicts.length) {
+    html += conflicts.conflicts.map((p) => `<div class="row"><span class="badge conflict">conflict</span>
+      <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div>`).join("");
+  }
+  if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
+  html += c.map((x) => `<div class="row">
+    <div><span class="title">${esc(x.title)}</span>${conflictIds.has(x.id) ? ' <span class="pill conflict">double-booked</span>' : ""}</div>
+    <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
+  </div>`).join("");
+  return html;
+}
+
+async function load() {
+  if (!token) { $("#gate").style.display = "flex"; return; }
+  $("#status").textContent = "refreshing…";
+  const results = await Promise.allSettled([
+    api("/outings"), api("/todos"), api("/commitments"),
+    api("/commitments/conflicts"), api("/briefing"), api("/profile"),
+  ]);
+  // 401 anywhere → re-gate.
+  if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
+    token = null; localStorage.removeItem(KEY);
+    $("#gate-err").textContent = "That token was rejected.";
+    $("#gate").style.display = "flex"; return;
+  }
+  const [outings, todos, commitments, conflicts, briefing, profile] = results;
+  const put = (sel, ok, val, render) => {
+    $(sel + " .body").innerHTML = ok ? render(val) : `<div class="err">unavailable</div>`;
+  };
+  put("#c-outings", outings.status === "fulfilled", outings.value, renderOutings);
+  put("#c-recent", outings.status === "fulfilled", outings.value, renderRecent);
+  put("#c-todos", todos.status === "fulfilled", todos.value, renderTodos);
+  $("#c-commitments .body").innerHTML =
+    commitments.status === "fulfilled"
+      ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
+      : `<div class="err">unavailable</div>`;
+  $("#c-briefing .body").innerHTML =
+    briefing.status === "fulfilled" ? `<pre>${esc(briefing.value.text || "")}</pre>` : `<div class="err">unavailable</div>`;
+  $("#c-profile .body").innerHTML =
+    profile.status === "fulfilled"
+      ? `<details open><summary>profile markdown</summary><pre>${esc(profile.value)}</pre></details>`
+      : `<div class="err">unavailable</div>`;
+  $("#status").textContent = "updated " + new Date().toLocaleTimeString();
+}
+
+function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
+
+$("#refresh").onclick = load;
+$("#signout").onclick = () => { token = null; localStorage.removeItem(KEY); clearInterval(timer); $("#gate").style.display = "flex"; };
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  $("#gate").style.display = "none"; $("#gate-err").textContent = "";
+  start();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+if (token) start(); else $("#gate").style.display = "flex";
+</script>
+</body>
+</html>

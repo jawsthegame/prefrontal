@@ -408,3 +408,44 @@ def test_outing_endpoints_require_auth(client):
     assert client.post("/webhooks/outing/start", json={"intention": "x"}).status_code == 401
     assert client.post("/webhooks/outing/check", json={}).status_code == 401
     assert client.post("/webhooks/outing/return", json={}).status_code == 401
+    assert client.get("/outings").status_code == 401
+
+
+# -- monitoring dashboard ----------------------------------------------------
+
+
+def test_outings_endpoint_reports_active_and_recent(client, store):
+    """GET /outings returns active outings (with computed level) + recent ones."""
+    store.start_outing("getting coffee", 10.0, departure_at=_utc_minutes_ago(6))  # 60% -> soft
+    oid = store.start_outing("dog walk", 20.0)
+    store.close_outing(oid, status="returned")
+
+    data = client.get("/outings", headers=_auth()).json()
+    assert [o["intention"] for o in data["active"]] == ["getting coffee"]
+    assert data["active"][0]["level"] == "soft"
+    # The closed one shows up in recent history.
+    recent_closed = [o for o in data["recent"] if o["status"] == "returned"]
+    assert any(o["intention"] == "dog walk" for o in recent_closed)
+
+
+def test_outings_endpoint_has_no_side_effects(client, store):
+    """Polling /outings never fires nudges or closes outings (unlike /check).
+
+    A 20-min-old 5-min outing is well past the abandon ratio: /check would close
+    it as abandoned, but /outings must leave it untouched.
+    """
+    store.start_outing("getting coffee", 5.0, departure_at=_utc_minutes_ago(20))
+    client.get("/outings", headers=_auth())
+    client.get("/outings", headers=_auth())
+    # Still active, still no episodes logged.
+    assert len(store.active_outings()) == 1
+    assert store.recent_episodes(1) == []
+
+
+def test_dashboard_page_served_without_auth(client):
+    """The dashboard shell is plain HTML, needs no token, and carries no data."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Prefrontal" in resp.text
+    assert "X-Prefrontal-Token" in resp.text  # it asks for the token client-side
