@@ -35,6 +35,7 @@ class SyncSummary:
     cancelled: int
     upcoming: int
     conflicts: int
+    new_conflict: bool
 
 
 @dataclass(frozen=True)
@@ -135,13 +136,37 @@ def sync_calendar(store: MemoryStore, events: list[dict[str, Any]]) -> SyncSumma
             updated += 1
     cancelled = store.cancel_missing_calendar(keep)
     upcoming = store.upcoming_commitments()
+    conflicts = find_conflicts(upcoming)
+    # Only flag a *new* conflict situation, so a standing double-booking doesn't
+    # re-alert on every poll. We remember the last conflict signature and report
+    # new_conflict only when the set changes to a non-empty one.
+    signature = _conflict_signature(conflicts)
+    new_conflict = bool(conflicts) and signature != store.get_state(
+        "last_conflict_signature", ""
+    )
+    store.set_state("last_conflict_signature", signature, source="inferred")
     return SyncSummary(
         added=added,
         updated=updated,
         cancelled=cancelled,
         upcoming=len(upcoming),
-        conflicts=len(find_conflicts(upcoming)),
+        conflicts=len(conflicts),
+        new_conflict=new_conflict,
     )
+
+
+def _conflict_signature(conflicts: list[Conflict]) -> str:
+    """A stable string identifying a set of conflicts (order-independent).
+
+    Keys each pair by ``external_id`` (falling back to row id), sorts within and
+    across pairs, so the same double-bookings always produce the same signature.
+    """
+    pairs = []
+    for c in conflicts:
+        a = c.a.get("external_id") or f"id:{c.a.get('id')}"
+        b = c.b.get("external_id") or f"id:{c.b.get('id')}"
+        pairs.append("|".join(sorted([str(a), str(b)])))
+    return ";".join(sorted(pairs))
 
 
 def _parse_utc(ts: str) -> datetime:

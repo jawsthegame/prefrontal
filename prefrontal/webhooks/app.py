@@ -688,6 +688,7 @@ def create_app(
             "cancelled": summary.cancelled,
             "upcoming": summary.upcoming,
             "conflicts": summary.conflicts,
+            "new_conflict": summary.new_conflict,
         }
 
     @app.post(

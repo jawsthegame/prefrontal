@@ -162,6 +162,35 @@ def test_sync_reports_conflicts(store):
     assert summary.conflicts == 1
 
 
+def test_sync_new_conflict_only_fires_on_change(store):
+    """new_conflict flags a *changed* conflict set, not every poll with a conflict."""
+    clash = [
+        {"title": "Personal", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "personal:x"},
+        {"title": "Work", "start_at": _iso(75), "end_at": _iso(105),
+         "external_id": "work:y"},
+    ]
+    first = sync_calendar(store, clash)
+    assert (first.conflicts, first.new_conflict) == (1, True)
+
+    # Same conflict next poll → no re-alert.
+    second = sync_calendar(store, clash)
+    assert (second.conflicts, second.new_conflict) == (1, False)
+
+    # Resolve it (move Work clear of Personal) → no conflict, no alert.
+    resolved = sync_calendar(store, [
+        {"title": "Personal", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "personal:x"},
+        {"title": "Work", "start_at": _iso(200), "end_at": _iso(230),
+         "external_id": "work:y"},
+    ])
+    assert (resolved.conflicts, resolved.new_conflict) == (0, False)
+
+    # Reintroduce the same clash → alert again.
+    again = sync_calendar(store, clash)
+    assert (again.conflicts, again.new_conflict) == (1, True)
+
+
 def test_sync_rejects_bad_batch_atomically(store):
     """A bad timestamp rejects the whole batch before any write."""
     with pytest.raises(ValueError):
