@@ -32,11 +32,16 @@ Open Terminal on the Mac mini. Install [Homebrew](https://brew.sh) if you don't
 have it, then:
 
 ```bash
-brew install python@3.12 ollama n8n tailscale
+brew install python@3.12 ollama tailscale
 ```
 
-(You can also run n8n via `npx n8n` or Docker; Homebrew is simplest for an
-always-on host.)
+**n8n is not in Homebrew** — install it with npm (see step 7). It needs
+**Node.js 22 LTS** (newer Node breaks n8n's native `isolated-vm` build):
+
+```bash
+brew install node@22
+brew link --force --overwrite node@22   # node@22 is keg-only
+```
 
 ---
 
@@ -178,9 +183,26 @@ curl -s -X POST http://localhost:8000/webhooks/shortcut \
 
 ## 7. n8n (orchestration + delivery)
 
+Install via npm (n8n is not a Homebrew formula). The native `isolated-vm`
+dependency compiles with `node-gyp`, which needs a Python that still ships
+`distutils` — provide it with `setuptools` in a venv:
+
 ```bash
-brew services start n8n             # editor at http://localhost:5678
+python3.12 -m venv ~/.n8n-gyp && ~/.n8n-gyp/bin/pip install setuptools
+npm_config_python=~/.n8n-gyp/bin/python npm install -g n8n
+n8n start                           # editor at http://localhost:5678
 ```
+
+To run it always-on, add a launchd agent like the one in step 3 whose
+`ProgramArguments` is `/opt/homebrew/bin/n8n start` and whose `PATH` includes
+`/opt/homebrew/opt/node@22/bin`. (Or just `npx n8n` for ad-hoc use.)
+
+> **macOS networking gotcha:** the bundled workflows call Prefrontal and Ollama
+> at `http://127.0.0.1:...`, **not** `localhost`. Node resolves `localhost` to
+> IPv6 `::1`, but Prefrontal (uvicorn `0.0.0.0`) and Ollama bind IPv4 only, so
+> `localhost` URLs fail with `ECONNREFUSED`. Keep any new HTTP nodes on
+> `127.0.0.1`. Also: stop n8n before editing its SQLite DB directly — it holds
+> the DB open (WAL) and caches active workflows in memory.
 
 1. Open the editor, **Import from File**, and choose
    [`../deploy/n8n/departure-reminder.workflow.json`](../deploy/n8n/departure-reminder.workflow.json).
@@ -190,8 +212,12 @@ brew services start n8n             # editor at http://localhost:5678
 3. Set credentials/values it can't ship with:
    - **Prefrontal token** — in the two Prefrontal HTTP nodes' `X-Prefrontal-Token`
      header, paste your `PREFRONTAL_WEBHOOK_SECRET`.
-   - **Pushover** — set `PUSHOVER_TOKEN` and `PUSHOVER_USER` in the send node
-     (or swap it for an Ntfy HTTP node hitting `https://ntfy.sh/<your-topic>`).
+   - **Pushover** — in the send node's JSON body, set `PUSHOVER_TOKEN` to an
+     **Application API token** (`a…`, create one at pushover.net/apps/build) and
+     `PUSHOVER_USER` to your **User key** (`u…`). Both go in the body and set the
+     node's Authentication to *None* — a `pushoverApi` credential alone does not
+     supply `user`. (Or swap it for an Ntfy HTTP node hitting
+     `https://ntfy.sh/<your-topic>`.)
    - **Ollama model** — match what you pulled in step 4.
    - Replace the **calendar placeholder** Set node with a real Google
      Calendar / CalDAV node when you're ready; the template hardcodes a sample
