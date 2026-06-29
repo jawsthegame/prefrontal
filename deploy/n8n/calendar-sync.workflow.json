@@ -153,6 +153,43 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1600, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "new-possible-conflict",
+              "leftValue": "={{ $json.new_possible_conflict }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-possible",
+      "name": "Possible conflict?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1380, 540]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — possible conflict\",\n  \"message\": \"🟡 {{ $json.possible_conflicts }} possible conflict(s): a hold (Busy/Block) overlaps a real event. Review or dismiss at /dashboard.\",\n  \"priority\": 0\n}",
+        "options": {}
+      },
+      "id": "pushover-possible",
+      "name": "Possible-conflict alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 540]
     }
   ],
   "connections": {
@@ -188,11 +225,20 @@
       "main": [[{ "node": "POST /webhooks/calendar/sync", "type": "main", "index": 0 }]]
     },
     "POST /webhooks/calendar/sync": {
-      "main": [[{ "node": "Double-booked?", "type": "main", "index": 0 }]]
+      "main": [[
+        { "node": "Double-booked?", "type": "main", "index": 0 },
+        { "node": "Possible conflict?", "type": "main", "index": 0 }
+      ]]
     },
     "Double-booked?": {
       "main": [
         [{ "node": "Double-booking alert", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Possible conflict?": {
+      "main": [
+        [{ "node": "Possible-conflict alert", "type": "main", "index": 0 }],
         []
       ]
     }

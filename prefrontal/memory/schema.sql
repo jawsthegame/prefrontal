@@ -117,6 +117,15 @@ CREATE TABLE IF NOT EXISTS todos (
 
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
 
+-- Dismissed "possible conflicts" — soft double-bookings (a generic Busy/Block/
+-- Hold overlapping a real event) the user has waved off. Keyed by a signature
+-- of the event pair (external_id + start + title), so a dismissal sticks across
+-- re-syncs but lapses if either event moves or is retitled (the key changes).
+CREATE TABLE IF NOT EXISTS dismissed_conflicts (
+    signature    TEXT PRIMARY KEY,
+    dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES

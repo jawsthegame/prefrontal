@@ -16,6 +16,7 @@ Persistence lives in :class:`~prefrontal.memory.store.MemoryStore`.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -24,6 +25,69 @@ from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
+
+#: Placeholder/hold titles that aren't real events. When one of these overlaps a
+#: specifically-titled event (e.g. a work "Block" mirroring a real personal
+#: meeting), it's a *possible* conflict — surfaced softly and dismissable —
+#: rather than a firm double-booking. Matched against a normalized title.
+GENERIC_TITLES = frozenset({
+    "busy", "block", "blocked", "hold", "hold time", "held", "ooo",
+    "out of office", "out", "tentative", "private", "focus", "focus time",
+    "reserved", "placeholder", "do not schedule", "dns", "no meetings",
+    "no meeting", "tbd",
+})
+
+
+def _normalize_title(title: str | None) -> str:
+    """Lowercase, strip punctuation/emoji, collapse spaces — for placeholder match."""
+    cleaned = re.sub(r"[^a-z0-9 ]+", " ", (title or "").lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def is_placeholder_title(title: str | None) -> bool:
+    """Whether a title is a generic placeholder/hold rather than a real event."""
+    return _normalize_title(title) in GENERIC_TITLES
+
+
+def is_possible_conflict(conflict: "Conflict") -> bool:
+    """A *possible* (soft) conflict — at least one side is a placeholder title."""
+    return is_placeholder_title(conflict.a.get("title")) or is_placeholder_title(
+        conflict.b.get("title")
+    )
+
+
+def conflict_dismissal_key(conflict: "Conflict") -> str:
+    """A stable key for dismissing a possible-conflict pair.
+
+    Built from each event's identity, start time, and normalized title, so a
+    dismissal sticks across re-syncs but lapses (the conflict resurfaces) if
+    either event moves or is retitled.
+    """
+
+    def part(c: dict[str, Any]) -> str:
+        ident = c.get("external_id") or f"id:{c.get('id')}"
+        return f"{ident}@{c.get('start_at')}#{_normalize_title(c.get('title'))}"
+
+    return "::".join(sorted([part(conflict.a), part(conflict.b)]))
+
+
+def partition_conflicts(
+    conflicts: list["Conflict"], dismissed: set[str]
+) -> tuple[list["Conflict"], list["Conflict"]]:
+    """Split conflicts into ``(hard, possible)``.
+
+    *Hard* = a real double-booking (both sides specifically titled). *Possible* =
+    one side is a placeholder, minus any whose dismissal key is in ``dismissed``.
+    """
+    hard: list[Conflict] = []
+    possible: list[Conflict] = []
+    for c in conflicts:
+        if is_possible_conflict(c):
+            if conflict_dismissal_key(c) not in dismissed:
+                possible.append(c)
+        else:
+            hard.append(c)
+    return hard, possible
 
 
 @dataclass(frozen=True)
@@ -36,6 +100,8 @@ class SyncSummary:
     upcoming: int
     conflicts: int
     new_conflict: bool
+    possible_conflicts: int
+    new_possible_conflict: bool
 
 
 @dataclass(frozen=True)
@@ -136,22 +202,36 @@ def sync_calendar(store: MemoryStore, events: list[dict[str, Any]]) -> SyncSumma
             updated += 1
     cancelled = store.cancel_missing_calendar(keep)
     upcoming = store.upcoming_commitments()
-    conflicts = find_conflicts(upcoming)
-    # Only flag a *new* conflict situation, so a standing double-booking doesn't
-    # re-alert on every poll. We remember the last conflict signature and report
-    # new_conflict only when the set changes to a non-empty one.
-    signature = _conflict_signature(conflicts)
-    new_conflict = bool(conflicts) and signature != store.get_state(
+    # Split overlaps into firm double-bookings vs. soft "possible" ones (a
+    # placeholder Busy/Block overlapping a real event); drop dismissed possibles.
+    hard, possible = partition_conflicts(
+        find_conflicts(upcoming), store.dismissed_conflicts()
+    )
+
+    # Only flag a *new* situation, so a standing conflict doesn't re-alert every
+    # poll: remember the last signature and report "new" only when it changes to
+    # a non-empty set. Hard and possible are tracked independently.
+    hard_sig = _conflict_signature(hard)
+    new_conflict = bool(hard) and hard_sig != store.get_state(
         "last_conflict_signature", ""
     )
-    store.set_state("last_conflict_signature", signature, source="inferred")
+    store.set_state("last_conflict_signature", hard_sig, source="inferred")
+
+    possible_sig = ";".join(sorted(conflict_dismissal_key(c) for c in possible))
+    new_possible_conflict = bool(possible) and possible_sig != store.get_state(
+        "last_possible_signature", ""
+    )
+    store.set_state("last_possible_signature", possible_sig, source="inferred")
+
     return SyncSummary(
         added=added,
         updated=updated,
         cancelled=cancelled,
         upcoming=len(upcoming),
-        conflicts=len(conflicts),
+        conflicts=len(hard),
         new_conflict=new_conflict,
+        possible_conflicts=len(possible),
+        new_possible_conflict=new_possible_conflict,
     )
 
 
