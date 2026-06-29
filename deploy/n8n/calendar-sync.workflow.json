@@ -1,5 +1,5 @@
 {
-  "name": "Prefrontal — Calendar Sync (personal Google + work ICS)",
+  "name": "Prefrontal — Calendar Sync (3 ICS feeds: personal + work + Outlook)",
   "nodes": [
     {
       "parameters": {
@@ -9,77 +9,96 @@
       "name": "Every 15 min",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 320]
+      "position": [0, 360]
     },
     {
       "parameters": {
-        "operation": "getAll",
-        "calendar": { "__rl": true, "mode": "list", "value": "primary" },
-        "returnAll": false,
-        "limit": 50,
-        "options": { "timeMin": "={{ $now.toISO() }}", "timeMax": "={{ $now.plus(36, 'hours').toISO() }}", "singleEvents": true, "orderBy": "startTime" }
+        "url": "REPLACE_WITH_PERSONAL_GOOGLE_ICS_URL",
+        "options": { "response": { "response": { "responseFormat": "text" } } }
       },
-      "id": "gcal",
-      "name": "Google Calendar (personal)",
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3,
-      "position": [240, 200],
-      "notes": "Attach your Google OAuth2 credential. 'primary' = your personal calendar."
+      "id": "get-ics-personal",
+      "name": "Get Personal ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 120],
+      "notes": "Google Calendar → Settings → your calendar → 'Secret address in iCal format'. NOTE: Google caches this; new events can lag a few hours."
     },
     {
       "parameters": {
-        "jsCode": "// Map Google Calendar events -> Prefrontal commitment shape.\nreturn $input.all().map((i) => {\n  const e = i.json;\n  const start = (e.start && (e.start.dateTime || e.start.date)) || null;\n  const end = (e.end && (e.end.dateTime || e.end.date)) || null;\n  return { json: {\n    external_id: 'personal:' + e.id,\n    title: e.summary || '(busy)',\n    start_at: start,\n    end_at: end,\n    location: e.location || null,\n    hard: false,\n  } };\n}).filter((x) => x.json.start_at);"
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments, namespaced 'personal:'.\n// NOTE: TZID-only times are treated as UTC. Prefer a UTC/Z feed.\nconst NS = 'personal:';\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
       },
-      "id": "map-personal",
-      "name": "Map Personal",
+      "id": "parse-ics-personal",
+      "name": "Parse Personal ICS",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 200]
+      "position": [480, 120]
     },
     {
       "parameters": {
         "url": "REPLACE_WITH_WORK_ICS_FEED_URL",
         "options": { "response": { "response": { "responseFormat": "text" } } }
       },
-      "id": "get-ics",
+      "id": "get-ics-work",
       "name": "Get Work ICS",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [240, 440],
-      "notes": "Paste your shared/secret iCal feed URL (read-only)."
+      "position": [240, 360],
+      "notes": "Paste your work calendar's shared/secret iCal feed URL (read-only)."
     },
     {
       "parameters": {
-        "jsCode": "// Minimal ICS parser: unfolds lines, pulls UID/SUMMARY/DTSTART/DTEND/LOCATION.\n// NOTE: TZID-only times are treated as UTC (no tz database here). For a feed in\n// local time, prefer a community ICS node or a UTC feed. Good enough for a\n// shared work feed whose times are UTC/Z.\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = 'work:' + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments, namespaced 'work:'.\nconst NS = 'work:';\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
       },
-      "id": "parse-ics",
+      "id": "parse-ics-work",
       "name": "Parse Work ICS",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 440]
+      "position": [480, 360]
     },
     {
-      "parameters": { "mode": "append" },
+      "parameters": {
+        "url": "REPLACE_WITH_OUTLOOK_ICS_FEED_URL",
+        "options": { "response": { "response": { "responseFormat": "text" } } }
+      },
+      "id": "get-ics-outlook",
+      "name": "Get Outlook ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 600],
+      "notes": "Outlook/M365 → Settings → Calendar → Shared calendars → Publish a calendar → copy the ICS link."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments, namespaced 'outlook:'.\nconst NS = 'outlook:';\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
+      },
+      "id": "parse-ics-outlook",
+      "name": "Parse Outlook ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 600]
+    },
+    {
+      "parameters": { "mode": "append", "numberInputs": 3 },
       "id": "merge",
       "name": "Merge feeds",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [720, 320]
+      "position": [720, 360]
     },
     {
       "parameters": {
-        "jsCode": "// Collect all mapped events from both feeds into one sync batch.\nreturn [{ json: { events: $input.all().map((i) => i.json) } }];"
+        "jsCode": "// Collect all mapped events from every feed into one sync batch.\nreturn [{ json: { events: $input.all().map((i) => i.json) } }];"
       },
       "id": "bundle",
       "name": "Bundle events",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [940, 320]
+      "position": [940, 360]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:8000/webhooks/calendar/sync",
+        "url": "http://127.0.0.1:8000/webhooks/calendar/sync",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -95,7 +114,8 @@
       "name": "POST /webhooks/calendar/sync",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1160, 320]
+      "position": [1160, 360],
+      "notes": "127.0.0.1 (NOT localhost): Node resolves localhost to ::1, Prefrontal binds IPv4 only."
     },
     {
       "parameters": {
@@ -117,7 +137,7 @@
       "name": "Double-booked?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1380, 320]
+      "position": [1380, 360]
     },
     {
       "parameters": {
@@ -132,20 +152,21 @@
       "name": "Double-booking alert",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1600, 240]
+      "position": [1600, 280]
     }
   ],
   "connections": {
     "Every 15 min": {
       "main": [[
-        { "node": "Google Calendar (personal)", "type": "main", "index": 0 },
-        { "node": "Get Work ICS", "type": "main", "index": 0 }
+        { "node": "Get Personal ICS", "type": "main", "index": 0 },
+        { "node": "Get Work ICS", "type": "main", "index": 0 },
+        { "node": "Get Outlook ICS", "type": "main", "index": 0 }
       ]]
     },
-    "Google Calendar (personal)": {
-      "main": [[{ "node": "Map Personal", "type": "main", "index": 0 }]]
+    "Get Personal ICS": {
+      "main": [[{ "node": "Parse Personal ICS", "type": "main", "index": 0 }]]
     },
-    "Map Personal": {
+    "Parse Personal ICS": {
       "main": [[{ "node": "Merge feeds", "type": "main", "index": 0 }]]
     },
     "Get Work ICS": {
@@ -153,6 +174,12 @@
     },
     "Parse Work ICS": {
       "main": [[{ "node": "Merge feeds", "type": "main", "index": 1 }]]
+    },
+    "Get Outlook ICS": {
+      "main": [[{ "node": "Parse Outlook ICS", "type": "main", "index": 0 }]]
+    },
+    "Parse Outlook ICS": {
+      "main": [[{ "node": "Merge feeds", "type": "main", "index": 2 }]]
     },
     "Merge feeds": {
       "main": [[{ "node": "Bundle events", "type": "main", "index": 0 }]]
