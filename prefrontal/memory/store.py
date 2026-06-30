@@ -855,6 +855,8 @@ class MemoryStore:
         lead_minutes: float = 10.0,
         hardness: str = "soft",
         source: str = "calendar",
+        kind: str = "self",
+        kind_source: str | None = None,
     ) -> tuple[int, bool]:
         """Insert or update a commitment, returning ``(id, created)``.
 
@@ -887,20 +889,22 @@ class MemoryStore:
                 self.conn.execute(
                     "UPDATE commitments SET title = ?, start_at = ?, end_at = ?, "
                     "location = ?, dest_lat = ?, dest_lon = ?, lead_minutes = ?, "
-                    "hardness = ?, source = ?, status = 'active', "
-                    "updated_at = CURRENT_TIMESTAMP WHERE external_id = ?",
+                    "hardness = ?, source = ?, kind = ?, kind_source = ?, "
+                    "status = 'active', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE external_id = ?",
                     (title, start_at, end_at, location, dest_lat, dest_lon,
-                     lead_minutes, hardness, source, external_id),
+                     lead_minutes, hardness, source, kind, kind_source, external_id),
                 )
                 self.conn.commit()
                 return int(existing["id"]), False
 
         cur = self.conn.execute(
             "INSERT INTO commitments (external_id, title, start_at, end_at, "
-            "location, dest_lat, dest_lon, lead_minutes, hardness, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "location, dest_lat, dest_lon, lead_minutes, hardness, source, "
+            "kind, kind_source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (external_id, title, start_at, end_at, location, dest_lat, dest_lon,
-             lead_minutes, hardness, source),
+             lead_minutes, hardness, source, kind, kind_source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True
@@ -955,6 +959,78 @@ class MemoryStore:
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def kinds_by_external_id(
+        self, external_ids: set[str]
+    ) -> dict[str, tuple[str, str | None]]:
+        """Return ``{external_id: (kind, kind_source)}`` for the given ids.
+
+        Used by the sync to reuse an already-decided ``kind`` (so a recurring
+        event isn't re-classified every poll, and a user's correction is never
+        clobbered by a fresh LLM verdict). Ids absent from the table are simply
+        missing from the result.
+        """
+        if not external_ids:
+            return {}
+        ids = list(external_ids)
+        placeholders = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            f"SELECT external_id, kind, kind_source FROM commitments "
+            f"WHERE external_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {r["external_id"]: (r["kind"], r["kind_source"]) for r in rows}
+
+    def set_commitment_kind(
+        self, commitment_id: int, kind: str, source: str
+    ) -> dict[str, Any] | None:
+        """Set a commitment's ``kind`` (and how it was set); return the updated row.
+
+        Returns ``None`` if no such commitment exists.
+        """
+        self.conn.execute(
+            "UPDATE commitments SET kind = ?, kind_source = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (kind, source, commitment_id),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
+    def record_kind_feedback(
+        self, title: str, kind: str, *, llm_kind: str | None = None
+    ) -> None:
+        """Record a ``self``/``fyi`` label for a title (latest verdict wins).
+
+        Keyed by the normalized (lowercased, trimmed) title so repeated
+        corrections to the same event collapse to one row. These rows seed the
+        classifier's few-shot examples (see :func:`prefrontal.classify`).
+        """
+        display = (title or "").strip()
+        norm = display.lower()
+        if not norm:
+            return
+        self.conn.execute(
+            "INSERT INTO kind_feedback (title, display, kind, llm_kind) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (title) DO UPDATE SET display = excluded.display, "
+            "kind = excluded.kind, llm_kind = excluded.llm_kind, "
+            "updated_at = CURRENT_TIMESTAMP",
+            (norm, display, kind, llm_kind),
+        )
+        self.conn.commit()
+
+    def kind_feedback_examples(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return learned kind labels, most-recently-corrected first.
+
+        Folded into the classifier prompt as few-shot examples so the model's
+        verdicts evolve toward the user's corrections.
+        """
+        rows = self.conn.execute(
+            "SELECT title, display, kind, llm_kind FROM kind_feedback "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def set_commitment_coords(
         self, commitment_id: int, lat: float, lon: float
