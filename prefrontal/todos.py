@@ -18,9 +18,12 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from prefrontal.integrations.ollama import OllamaError
+
+if TYPE_CHECKING:
+    from prefrontal.memory.store import MemoryStore
 
 #: Estimate used when neither the model nor the heuristics can offer one.
 DEFAULT_ESTIMATE_MINUTES = 30.0
@@ -439,3 +442,72 @@ def avoided_todos(
         out.append({"todo": todo, "days_open": round(days, 1), "score": score})
     out.sort(key=lambda x: -x["score"])
     return out
+
+
+# --- Outcome capture (feed the learning loop) --------------------------------
+#
+# Closing a todo is a real behavioral outcome, but until now it was thrown away:
+# the learning pass only saw outings, focus sessions, and mail. A finished todo
+# is a task ``success``; a dropped one is a ``miss`` — exactly the ``drift``
+# signal for the ``task`` type, and the moment an avoided todo finally resolves.
+# This mirrors ``record_outing_return`` / ``record_outing_abandoned`` so todo
+# closes flow into the same episode history every other touchpoint already does.
+
+
+def todo_episode_fields(
+    todo: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Derive :meth:`MemoryStore.log_episode` kwargs from a closed todo (pure).
+
+    A ``done`` todo is a task ``success``; anything else (``dropped``) is a
+    ``miss`` — so it folds into the ``drift`` score for ``task``. The estimate is
+    recorded as ``predicted_value``, but ``actual_value`` is deliberately
+    ``None``: a todo's created→closed span is wall-clock, not time spent on task,
+    so treating it as the actual duration would pollute ``time_estimation`` (the
+    same reasoning as ``record_outing_abandoned``). The age is kept in ``notes``
+    for future analysis instead.
+
+    Args:
+        todo: A todo dict (as returned by the store), ideally post-close so its
+            ``status`` and ``completed_at`` are current.
+        now: Reference time (naive UTC) for the age note when ``completed_at`` is
+            absent (e.g. a dropped todo). ``None`` skips the age note.
+
+    Returns:
+        A kwargs dict for :meth:`MemoryStore.log_episode`.
+    """
+    done = (todo.get("status") or "").lower() == "done"
+    end = _parse_ts(todo.get("completed_at")) or now
+    start = _parse_ts(todo.get("created_at"))
+    notes = None
+    if start is not None and end is not None:
+        days = max(0.0, (end - start).total_seconds() / 86400.0)
+        notes = f"{'completed' if done else 'dropped'} after {days:.1f}d open"
+    return {
+        "episode_type": "task",
+        "predicted_value": todo.get("estimate_minutes"),
+        "actual_value": None,
+        "acknowledged": None,
+        "context": f"todo {'done' if done else 'dropped'}: {todo.get('title')}",
+        "outcome": "success" if done else "miss",
+        "notes": notes,
+    }
+
+
+def record_todo_closed(
+    store: MemoryStore, todo: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Log a closed todo as a ``task`` episode for pattern tracking.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        todo: The closed todo dict (post-close, so ``status`` reflects the
+            outcome).
+        now: Reference time forwarded to :func:`todo_episode_fields`.
+
+    Returns:
+        ``{"episode_id": int, "outcome": str}``.
+    """
+    fields = todo_episode_fields(todo, now=now)
+    episode_id = store.log_episode(**fields)
+    return {"episode_id": episode_id, "outcome": fields["outcome"]}
