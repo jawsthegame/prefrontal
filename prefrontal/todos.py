@@ -249,3 +249,113 @@ def augment_todo(
             dl, sources["deadline"] = None, "heuristic"
 
     return AugmentedTodo(est, pri, energy_val, dl, sources)
+
+
+# --- Decomposition (the initiation lever) ------------------------------------
+#
+# Big tasks stall on *starting*. Decomposition turns "write the report" into one
+# tiny, obvious first action (≤ max_first_step_minutes) that breaks inertia, plus
+# the remaining steps kept collapsed so the list itself doesn't re-trigger
+# paralysis. Same LLM-with-heuristic-fallback shape as the rest of this module.
+
+DEFAULT_MAX_FIRST_STEP_MINUTES = 5.0
+_MAX_STEPS = 5
+
+#: Verb → a concrete tiny first action, for the offline/heuristic fallback.
+_FIRST_STEP_HEURISTICS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("write", "draft", "outline", "blog", "post", "essay", "report", "doc"),
+     "Open a blank doc and write one rough heading or ugly sentence — that's it."),
+    (("plan", "design", "strategy", "brainstorm"),
+     "Open a note and jot three bullet points, however messy."),
+    (("call", "phone", "ring"),
+     "Find the number, put it on screen, and dial — don't rehearse."),
+    (("email", "reply", "respond", "message", "write back"),
+     "Open a reply and type just the first line."),
+    (("research", "find", "look into", "compare", "read"),
+     "Open one tab and search the very first question."),
+    (("clean", "tidy", "organize", "sort", "declutter"),
+     "Set a 5-minute timer and clear one small surface."),
+    (("buy", "order", "pick up", "shop"),
+     "Open the site/app and put one item in the cart."),
+    (("schedule", "book", "rsvp", "confirm"),
+     "Open the calendar and pick one candidate time."),
+)
+
+
+@dataclass(frozen=True)
+class Decomposition:
+    """A todo broken into a tiny first step plus the remaining ordered steps."""
+
+    first_step: str
+    first_step_minutes: float
+    steps: list[str]  # remaining steps after the first (may be empty)
+    source: str       # "llm" | "heuristic"
+
+
+_DECOMP_SYSTEM = (
+    "You help someone with ADHD *start* a task — initiation is the hard part. "
+    "Given a task and a max number of minutes for the first step, reply with "
+    "ONLY JSON, no prose: {\"first_step\": \"<one concrete, physical, obvious "
+    "action doable in <=N minutes that breaks inertia>\", \"first_step_minutes\": "
+    "<integer <=N>, \"steps\": [\"<next step>\", ...]}. The first step must be "
+    "tiny and unintimidating (open the file, find the number, write one line). "
+    "steps = the remaining 2-5 short steps to finish."
+)
+
+
+def _heuristic_decomposition(title: str, max_first_minutes: float) -> Decomposition:
+    """A generic-but-actionable first step when the model is unavailable."""
+    t = _norm(title)
+    step = (
+        f"Set a {int(max_first_minutes)}-minute timer and do the smallest visible "
+        "piece — just begin."
+    )
+    for keywords, action in _FIRST_STEP_HEURISTICS:
+        if _matches(t, keywords):
+            step = action
+            break
+    return Decomposition(step, min(max_first_minutes, 5.0), [], "heuristic")
+
+
+def decompose_task(
+    title: str,
+    *,
+    max_first_minutes: float = DEFAULT_MAX_FIRST_STEP_MINUTES,
+    client: _Generator | None = None,
+) -> Decomposition:
+    """Break a task into a tiny first step (+ remaining steps).
+
+    Tries the model first (one JSON call); falls back to a verb-keyed heuristic
+    first step (with no further steps) when the model is unavailable or unusable.
+
+    Args:
+        title: The task text.
+        max_first_minutes: Ceiling for the first step's length.
+        client: An Ollama-like client; ``None`` uses the heuristic.
+
+    Returns:
+        A :class:`Decomposition`.
+    """
+    if client is not None:
+        try:
+            reply = client.generate(
+                f"Task: {title}\nFirst step max minutes: {int(max_first_minutes)}",
+                system=_DECOMP_SYSTEM,
+            )
+        except OllamaError:
+            reply = ""
+        match = re.search(r"\{.*\}", reply or "", re.DOTALL)
+        if match:
+            try:
+                raw = json.loads(match.group())
+            except (ValueError, TypeError):
+                raw = {}
+            first = raw.get("first_step") if isinstance(raw, dict) else None
+            if isinstance(first, str) and first.strip():
+                mins = raw.get("first_step_minutes")
+                mins = float(mins) if isinstance(mins, (int, float)) and not isinstance(mins, bool) else max_first_minutes
+                mins = max(MIN_ESTIMATE_MINUTES, min(mins, max_first_minutes))
+                steps = raw.get("steps")
+                steps = [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS] if isinstance(steps, list) else []
+                return Decomposition(first.strip(), mins, steps, "llm")
+    return _heuristic_decomposition(title, max_first_minutes)
