@@ -97,8 +97,8 @@ Prefrontal is in early development. This repository currently implements the **f
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
+| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
-| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; 3 wired end-to-end, 2 (task paralysis, impulsivity) still declared stubs |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
@@ -134,8 +134,9 @@ prefrontal learn
 # Print the structured behavioral profile assembled from memory
 prefrontal profile
 
-# Summarize it into prioritized prose via a local Ollama model -> profile.md
-# (falls back to the structured profile if Ollama isn't running)
+# Summarize it into prioritized prose via a local Ollama model. Caches the
+# narrative (served by GET /profile) and writes profile.md. Falls back to the
+# structured profile if Ollama isn't running. Run nightly after `learn`.
 prefrontal summarize
 
 # Print today's morning briefing (add --llm for friendly prose via Ollama)

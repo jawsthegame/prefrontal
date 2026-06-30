@@ -119,9 +119,12 @@ the first test. Code follow-ups below are optional polish.
 - **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
   profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
   returns prioritized coaching prose, falling back to the heuristic when the
-  model is down. Run via `prefrontal summarize`. *(Next: optional Anthropic
-  provider for higher-quality summaries; cache/serve the narrative from
-  `GET /profile`.)*
+  model is down. Run via `prefrontal summarize`, which now **caches** the
+  narrative in the `profile_cache` table so `GET /profile` serves the prose
+  without a per-request model round-trip (`?refresh=1` regenerates it,
+  `?format=structured` returns the raw input; `X-Profile-*` headers report
+  source/model/age/staleness). *(Next: optional Anthropic provider for
+  higher-quality summaries.)*
 - **Calendar ingestion + double-booking** ✅ — `commitments` table +
   `prefrontal/commitments.py`: feed-aware calendar sync
   (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,

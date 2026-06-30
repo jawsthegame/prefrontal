@@ -7,10 +7,12 @@ shortcut -> episode mapping end to end without touching disk or the network.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
@@ -50,10 +52,76 @@ def test_profile_requires_auth(client):
 
 
 def test_profile_returns_markdown(client):
-    """With a valid token, /profile returns the behavioral profile as text."""
+    """With no narrative cached, /profile falls back to the structured profile."""
     resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})
     assert resp.status_code == 200
     assert "Behavioral profile" in resp.text
+    assert resp.headers["X-Profile-Source"] == "uncached"
+
+
+def test_profile_serves_cached_narrative(client, store):
+    """Once a narrative is cached, /profile serves the prose, not the structure."""
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_profile_cache(
+        "Lead with departures: pad estimates 1.4x.",
+        source="llm",
+        model="qwen2.5:14b",
+        structured=build_profile(store),  # matches current facts → not stale
+    )
+    resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 200
+    assert resp.text == "Lead with departures: pad estimates 1.4x."
+    assert resp.headers["X-Profile-Source"] == "llm"
+    assert resp.headers["X-Profile-Model"] == "qwen2.5:14b"
+    assert resp.headers["X-Profile-Generated-At"]
+    assert resp.headers["X-Profile-Stale"] == "false"
+
+
+def test_profile_format_structured_bypasses_cache(client, store):
+    """?format=structured returns the raw profile even when a narrative is cached."""
+    store.set_profile_cache(
+        "cached prose", source="llm", model="m", structured="# Behavioral profile\n"
+    )
+    resp = client.get(
+        "/profile?format=structured", headers={"X-Prefrontal-Token": SECRET}
+    )
+    assert resp.status_code == 200
+    assert "Behavioral profile" in resp.text
+    assert "cached prose" not in resp.text
+    assert resp.headers["X-Profile-Source"] == "structured"
+
+
+def test_profile_stale_header_tracks_facts(client, store):
+    """Changing an underlying fact flips X-Profile-Stale to true."""
+    store.set_profile_cache(
+        "prose", source="llm", model="m", structured="# Behavioral profile\nstale"
+    )
+    resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.headers["X-Profile-Stale"] == "true"  # structured no longer matches
+
+
+def _mock_ollama(reply: str) -> OllamaClient:
+    """An OllamaClient whose /api/generate always returns `reply`."""
+    return OllamaClient(
+        model="mock-model",
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"response": reply})
+        ),
+    )
+
+
+def test_profile_refresh_generates_and_caches(store):
+    """?refresh=1 regenerates the narrative via Ollama and persists it."""
+    settings = Settings(webhook_secret=SECRET)
+    app = create_app(store=store, settings=settings, ollama=_mock_ollama("fresh prose"))
+    with TestClient(app) as c:
+        resp = c.get("/profile?refresh=1", headers={"X-Prefrontal-Token": SECRET})
+        assert resp.status_code == 200
+        assert resp.text == "fresh prose"
+        assert resp.headers["X-Profile-Source"] == "llm"
+    # The regenerated narrative is now cached for subsequent (non-refresh) reads.
+    assert store.get_profile_cache()["text"] == "fresh prose"
 
 
 def test_shortcut_rejects_missing_token(client):

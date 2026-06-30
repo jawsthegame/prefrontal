@@ -17,6 +17,13 @@ There are two layers here:
 
 The structured profile is the model's *input*, which keeps the LLM grounded in
 real numbers rather than free-associating.
+
+Because the LLM pass needs a (slow) model round-trip, the narrative is **cached**
+in the ``profile_cache`` table rather than regenerated per request:
+:func:`refresh_profile_cache` writes it (nightly, via ``prefrontal summarize``)
+and :func:`load_cached_summary` reads it back, so ``GET /profile`` serves prose
+without hitting the model on every poll. :func:`cache_is_stale` flags when the
+underlying facts have moved on since the cache was written.
 """
 
 from __future__ import annotations
@@ -137,12 +144,16 @@ class ProfileSummary:
         model: The model name when ``source == "llm"``, else ``None``.
         structured: The structured profile that was fed to the model (also the
             fallback text), useful for debugging and diffing.
+        generated_at: When the narrative was produced — set only when the
+            summary was loaded from the cache (see :func:`load_cached_summary`);
+            ``None`` for a freshly generated one.
     """
 
     text: str
     source: str
     model: str | None = None
     structured: str = ""
+    generated_at: str | None = None
 
 
 def summarize_profile(
@@ -201,6 +212,82 @@ def summarize_profile(
     return ProfileSummary(
         text=prose, source="llm", model=client.model, structured=structured
     )
+
+
+def cache_summary(store: MemoryStore, summary: ProfileSummary) -> None:
+    """Persist a :class:`ProfileSummary` to the single-row profile cache.
+
+    This is what makes the (slow) LLM narrative cheap to serve: the nightly
+    ``prefrontal summarize`` writes it once and ``GET /profile`` reads it back
+    via :func:`load_cached_summary` on every poll.
+    """
+    store.set_profile_cache(
+        summary.text,
+        source=summary.source,
+        model=summary.model,
+        structured=summary.structured,
+    )
+
+
+def load_cached_summary(store: MemoryStore) -> ProfileSummary | None:
+    """Return the cached narrative as a :class:`ProfileSummary`, or ``None``.
+
+    The returned summary carries ``generated_at`` so callers can report (and
+    age-check) when the narrative was produced.
+    """
+    row = store.get_profile_cache()
+    if row is None:
+        return None
+    return ProfileSummary(
+        text=row["text"],
+        source=row["source"],
+        model=row["model"],
+        structured=row.get("structured") or "",
+        generated_at=row.get("generated_at"),
+    )
+
+
+def refresh_profile_cache(
+    store: MemoryStore,
+    *,
+    client: OllamaClient | None = None,
+    modules: list[Module] | None = None,
+    fallback: bool = True,
+) -> ProfileSummary:
+    """Regenerate the narrative via :func:`summarize_profile` and cache it.
+
+    Returns the freshly generated :class:`ProfileSummary` (also now persisted).
+    Used by ``prefrontal summarize`` and by ``GET /profile?refresh=1``.
+    """
+    summary = summarize_profile(
+        store, client=client, modules=modules, fallback=fallback
+    )
+    cache_summary(store, summary)
+    return summary
+
+
+def cache_is_stale(
+    store: MemoryStore,
+    cached: ProfileSummary | None = None,
+    *,
+    modules: list[Module] | None = None,
+) -> bool:
+    """Report whether the cached narrative no longer matches the current facts.
+
+    Rebuilds the structured profile and compares it to the one the cached prose
+    was derived from. A missing cache, or one with no recorded structured input,
+    counts as stale (there is nothing to trust).
+
+    Args:
+        store: An open store.
+        cached: A previously loaded summary; loaded on demand when omitted.
+        modules: Modules to include in the structured profile (must match what
+            the cache was built with for the comparison to be meaningful).
+    """
+    cached = cached or load_cached_summary(store)
+    if cached is None or not cached.structured:
+        return True
+    return build_profile(store, modules=modules) != cached.structured
 
 
 def _describe_pattern(pattern: dict) -> str:
