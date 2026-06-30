@@ -79,7 +79,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
-from prefrontal.todos import augment_todo
+from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, augment_todo, decompose_task
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -227,6 +227,29 @@ def _state_float(memory: MemoryStore, key: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _decompose_and_store(
+    memory: MemoryStore, todo_id: int, title: str, client: Any
+) -> dict[str, Any]:
+    """Generate a todo's first-step decomposition, persist it, and return it."""
+    max_first = _state_float(
+        memory, "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
+    )
+    d = decompose_task(title, max_first_minutes=max_first, client=client)
+    memory.set_decomposition(
+        todo_id,
+        first_step=d.first_step,
+        first_step_minutes=d.first_step_minutes,
+        steps=d.steps,
+        source=d.source,
+    )
+    return {
+        "first_step": d.first_step,
+        "first_step_minutes": d.first_step_minutes,
+        "steps": d.steps,
+        "source": d.source,
+    }
 
 
 def get_store(request: Request) -> MemoryStore:
@@ -873,6 +896,13 @@ def create_app(
             deadline=deadline,
             energy=aug.energy,
         )
+        # Big tasks stall on starting — auto-decompose into a tiny first step.
+        threshold = _state_float(memory, "decomposition_threshold_minutes", 30.0)
+        decomposition = None
+        if aug.estimate_minutes >= threshold:
+            decomposition = _decompose_and_store(
+                memory, todo_id, payload.title, ollama_client
+            )
         return {
             "todo_id": todo_id,
             "estimate_minutes": aug.estimate_minutes,
@@ -880,6 +910,7 @@ def create_app(
             "energy": aug.energy,
             "deadline": deadline,
             "augmented": aug.sources,
+            "decomposition": decomposition,
         }
 
     @app.get("/todos", tags=["todos"])
@@ -887,9 +918,36 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """List open todos (priority then deadline order)."""
+        """List open todos (priority then deadline order), with decompositions."""
         _verify_token(resolved_settings, x_prefrontal_token)
-        return {"todos": memory.open_todos()}
+        todos = memory.open_todos()
+        for todo in todos:
+            todo["decomposition"] = memory.get_decomposition(todo["id"])
+        return {"todos": todos}
+
+    @app.post("/todos/{todo_id}/decompose", tags=["todos"])
+    def todo_decompose(
+        todo_id: int,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Break an open todo into a tiny first step (+ remaining steps).
+
+        On-demand counterpart to the auto-decompose on big todos — call it the
+        moment you're about to start something and need a way in. Regenerates
+        and replaces any existing decomposition.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo["status"] != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        decomposition = _decompose_and_store(
+            memory, todo_id, todo["title"], ollama_client
+        )
+        return {"todo_id": todo_id, "decomposition": decomposition}
 
     @app.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(

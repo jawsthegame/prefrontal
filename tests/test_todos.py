@@ -20,6 +20,7 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
 from prefrontal.todos import (
     augment_todo,
+    decompose_task,
     heuristic_deadline,
     heuristic_energy,
     heuristic_estimate,
@@ -263,3 +264,65 @@ def test_augment_deadline_falls_back_to_llm_when_heuristic_blank():
     a = augment_todo("Submit taxes before the cutoff", client=llm, today=date(2026, 7, 1))
     assert a.deadline == "2026-08-15"
     assert a.sources["deadline"] == "llm"
+
+
+# -- decomposition -----------------------------------------------------------
+
+
+def test_decompose_task_llm_then_heuristic():
+    """The model gives a first step + rest; offline falls back to a verb heuristic."""
+    llm = _ollama_json(
+        '{"first_step":"Open the doc and write one heading","first_step_minutes":3,'
+        '"steps":["Draft section 1","Skim for typos"]}'
+    )
+    d = decompose_task("Write the annual report", client=llm)
+    assert d.first_step == "Open the doc and write one heading"
+    assert d.first_step_minutes == 3.0
+    assert d.steps == ["Draft section 1", "Skim for typos"]
+    assert d.source == "llm"
+
+    h = decompose_task("Write the annual report")  # no client → heuristic
+    assert "doc" in h.first_step.lower() and h.steps == [] and h.source == "heuristic"
+
+
+def test_decompose_clamps_first_step_minutes():
+    """An over-long first-step estimate is clamped to the max."""
+    llm = _ollama_json('{"first_step":"Do it","first_step_minutes":999,"steps":[]}')
+    d = decompose_task("Big thing", max_first_minutes=5, client=llm)
+    assert d.first_step_minutes == 5.0
+
+
+def test_decomposition_store_roundtrip(store):
+    """set/get_decomposition round-trips with steps JSON-decoded."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    assert store.get_decomposition(tid) is None
+    store.set_decomposition(
+        tid, first_step="Just open it", first_step_minutes=2, steps=["a", "b"], source="llm"
+    )
+    got = store.get_decomposition(tid)
+    assert got["first_step"] == "Just open it" and got["steps"] == ["a", "b"]
+
+
+def test_post_big_todo_auto_decomposes(client):
+    """A big todo (heuristic estimate ≥ threshold) gets a stored first step."""
+    r = client.post("/todos", json={"title": "Write the project proposal"}, headers=_auth())
+    body = r.json()
+    assert body["estimate_minutes"] >= 30
+    assert body["decomposition"] is not None and body["decomposition"]["first_step"]
+    listed = client.get("/todos", headers=_auth()).json()["todos"]
+    match = next(t for t in listed if t["title"] == "Write the project proposal")
+    assert match["decomposition"]["first_step"]
+
+
+def test_small_todo_no_auto_but_on_demand_and_no_route_collision(client):
+    """A small todo doesn't auto-decompose; the on-demand route works and
+    doesn't collide with done/drop."""
+    r = client.post("/todos", json={"title": "Call Bob"}, headers=_auth())  # ~10 min
+    body = r.json()
+    assert body["decomposition"] is None
+    tid = body["todo_id"]
+
+    d = client.post(f"/todos/{tid}/decompose", headers=_auth())
+    assert d.status_code == 200 and d.json()["decomposition"]["first_step"]
+
+    assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200
