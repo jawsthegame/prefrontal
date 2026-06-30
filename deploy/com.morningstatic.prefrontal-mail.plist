@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that fetches + triages mail on a schedule (the no-n8n path).
+
+  Unlike the always-on `prefrontal serve` agent, this is a *periodic* job: it
+  runs `deploy/mail-fetch.sh` every StartInterval seconds, which calls
+  `prefrontal mail fetch` once per account. KeepAlive is intentionally absent —
+  the job should exit after each run, not be restarted. launchd will not start a
+  second copy while one is still running, so a slow IMAP pull never overlaps
+  itself.
+
+  Install:
+    cp deploy/com.morningstatic.prefrontal-mail.plist ~/Library/LaunchAgents/
+    # edit the paths + account list below to match your install
+    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-mail.plist
+
+  WorkingDirectory must be the repo root so the `.env` next to it is loaded
+  (that is where MAIL_IMAP_*_<ACCOUNT> and PREFRONTAL_MAIL_ACCOUNTS live).
+
+  Before loading this, do a ONE-TIME backlog clear with the heuristic so the
+  first run doesn't triage a full inbox of unread through the model:
+    cd /Users/tom/src/prefrontal
+    .venv/bin/prefrontal mail fetch --account personal --heuristic
+    .venv/bin/prefrontal mail fetch --account work --heuristic
+  Steady-state runs (below) then triage only the new trickle with the model.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.morningstatic.prefrontal-mail</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/tom/src/prefrontal/deploy/mail-fetch.sh</string>
+        <!-- One argument per account; must match PREFRONTAL_MAIL_ACCOUNTS names. -->
+        <string>personal</string>
+        <string>work</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tom/src/prefrontal</string>
+
+    <!-- Every 15 minutes. launchd skips runs while the Mac is asleep and fires
+         once on wake if a scheduled interval elapsed. -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal-mail.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal-mail.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so child processes resolve as expected. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

@@ -362,7 +362,12 @@ def _cmd_mail(args: argparse.Namespace) -> int:
 
     with MemoryStore.open(db_path) as store:
         summary = ingest_messages(
-            store, messages, account=account, policy=policy, client=client
+            store,
+            messages,
+            account=account,
+            policy=policy,
+            client=client,
+            use_model=not args.heuristic,
         )
     print(
         f"[{summary.account}/{summary.policy}] received {summary.received}, "
@@ -489,9 +494,19 @@ def build_parser() -> argparse.ArgumentParser:
     m_sync = mail_sub.add_parser("sync", help="Ingest messages from a JSON file.")
     m_sync.add_argument("file", help="Path to a JSON list (or {messages: [...]}).")
     m_sync.add_argument("--account", required=True, help="Logical account name.")
+    m_sync.add_argument(
+        "--heuristic",
+        action="store_true",
+        help="Skip the model; triage with the keyword heuristic (fast backlog clear).",
+    )
     m_fetch = mail_sub.add_parser("fetch", help="Fetch unread over IMAP, then ingest.")
     m_fetch.add_argument("--account", required=True, help="Logical account name.")
     m_fetch.add_argument("--limit", type=int, default=50, help="Max unread to fetch.")
+    m_fetch.add_argument(
+        "--heuristic",
+        action="store_true",
+        help="Skip the model; triage with the keyword heuristic (fast backlog clear).",
+    )
     p_mail.set_defaults(func=_cmd_mail)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")

@@ -184,6 +184,14 @@ def test_triage_falls_back_to_heuristic_when_model_down():
     assert v.source == "heuristic"
 
 
+def test_use_model_false_skips_the_model():
+    """A working model is ignored when use_model=False (backlog-clear path)."""
+    boom = _ollama_returning({"needs_action": True, "urgency": "urgent"})
+    item = normalize_message(_msg(), account="p", policy="full")
+    v = triage_message(item, client=boom, use_model=False)
+    assert v.source == "heuristic"
+
+
 # -- config policy parsing ---------------------------------------------------
 
 
