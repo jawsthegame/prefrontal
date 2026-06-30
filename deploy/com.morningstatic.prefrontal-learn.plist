@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that runs the nightly learning pass (deploy/learn.sh):
+  `prefrontal learn && prefrontal summarize`.
+
+  Separate from com.morningstatic.prefrontal.plist (the always-on server): this
+  one is a periodic job, not a daemon, so no KeepAlive — it runs once at the
+  scheduled time and exits.
+
+  Install:
+    cp deploy/com.morningstatic.prefrontal-learn.plist ~/Library/LaunchAgents/
+    # then edit the paths below to match your username and install location
+    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-learn.plist
+    # run it once now to confirm it works (don't wait for 03:30):
+    launchctl start com.morningstatic.prefrontal-learn
+
+  StartCalendarInterval fires at 03:30 local time daily. If the mini is asleep
+  at that hour, launchd runs the job on the next wake. Adjust Hour/Minute to
+  taste; nightly is plenty for one user.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.morningstatic.prefrontal-learn</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/tom/prefrontal/deploy/learn.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tom/prefrontal</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.learn.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.learn.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so Ollama and other tools resolve. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Install location; learn.sh cd's here so the adjacent .env loads. -->
+        <key>PREFRONTAL_HOME</key>
+        <string>/Users/tom/prefrontal</string>
+    </dict>
+</dict>
+</plist>
