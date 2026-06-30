@@ -415,5 +415,3 @@ light up the actual second user.
   (`/admin/users/{h}/rotate`) invalidates old devices — acceptable, document it.
 - **Per-user module enablement** (v2) — would move `PREFRONTAL_MODULES` into a
   per-user state key and have the registry resolve per request.
-</content>
-</invoke>

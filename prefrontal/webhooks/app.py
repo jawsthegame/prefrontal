@@ -96,7 +96,6 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
-from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import (
     build_profile,
@@ -136,6 +135,7 @@ from prefrontal.todos import (
     augment_todo,
     avoided_todos,
     decompose_task,
+    record_todo_closed,
 )
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
@@ -357,6 +357,23 @@ class TodoCreate(BaseModel):
     energy: str | None = Field(default=None, description="low | medium | high.")
 
 
+class TodoDeadlineUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/deadline`` — move or clear a todo's deadline."""
+
+    deadline: str | None = Field(
+        default=None,
+        description="New ISO-8601 deadline, or null to clear it entirely.",
+    )
+
+
+class StepDone(BaseModel):
+    """Body of ``POST /todos/{id}/steps/{i}/done`` — tick a decomposed step."""
+
+    done: bool = Field(
+        default=True, description="True to mark the step done, false to clear it."
+    )
+
+
 def _state_float(memory: MemoryStore, key: str, default: float) -> float:
     """Read a coaching-state value as a float, falling back on missing/bad data."""
     raw = memory.get_state(key)
@@ -494,7 +511,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         """Open the memory store on startup; close it on shutdown if we own it."""
         owns_store = store is None
-        active_store = store or MemoryStore(init_db(resolved_settings.db_path))
+        # Per-thread connections: FastAPI runs the sync endpoints in a
+        # threadpool, and a single shared connection is not safe across threads
+        # (it interleaves statements and returns garbled result sets).
+        active_store = store or MemoryStore.threaded(resolved_settings.db_path)
         app.state.store = active_store
         app.state.settings = resolved_settings
         app.state.n8n = n8n
@@ -502,7 +522,7 @@ def create_app(
             yield
         finally:
             if owns_store:
-                active_store.conn.close()
+                active_store.close()
 
     app = FastAPI(
         title="Prefrontal Webhooks",
@@ -1666,6 +1686,66 @@ def create_app(
         )
         return {"todo_id": todo_id, "decomposition": decomposition}
 
+    @app.post("/todos/{todo_id}/deadline", tags=["todos"])
+    def todo_set_deadline(
+        todo_id: int,
+        payload: TodoDeadlineUpdate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Move (or clear) an open todo's deadline.
+
+        Plans drift — a deadline set at creation or inferred from the title often
+        needs to change. A non-empty ``deadline`` is normalized to UTC (422 on
+        garbage); ``null``/empty clears it. Declared before the ``{action}`` route
+        so "deadline" isn't mistaken for a done/drop action.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        deadline = None
+        if payload.deadline:
+            try:
+                deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+        if not memory.update_todo_deadline(todo_id, deadline):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "deadline": deadline}
+
+    @app.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
+    def todo_step_done(
+        todo_id: int,
+        step_index: int,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        payload: StepDone | None = None,
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Tick a single decomposed step done (or clear it).
+
+        Index ``0`` is the first step and ``1..N`` are the remaining steps.
+        Checking steps off one at a time turns a stalled task into visible
+        progress. Body ``{"done": false}`` un-ticks a step; the body is optional
+        and defaults to marking it done. Returns the refreshed decomposition.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        done = payload.done if payload is not None else True
+        if not memory.set_step_done(todo_id, step_index, done=done):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no step {step_index}.",
+            )
+        return {
+            "todo_id": todo_id,
+            "step_index": step_index,
+            "done": done,
+            "decomposition": memory.get_decomposition(todo_id),
+        }
+
     @app.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(
         todo_id: int,
@@ -1673,7 +1753,12 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Mark a todo done or drop it."""
+        """Mark a todo done or drop it.
+
+        Closing logs a ``task`` episode (done ⇒ ``success``, drop ⇒ ``miss``) so
+        the outcome feeds the learning pass like every other touchpoint — the
+        moment an avoided todo finally resolves is captured, not discarded.
+        """
         _verify_token(resolved_settings, x_prefrontal_token)
         new_status = "done" if action == "done" else "dropped"
         if not memory.close_todo(todo_id, status=new_status):
@@ -1681,7 +1766,13 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Todo {todo_id} is not open.",
             )
-        return {"todo_id": todo_id, "status": new_status}
+        closed = memory.get_todo(todo_id)
+        episode_id = (
+            record_todo_closed(memory, closed, now=utcnow())["episode_id"]
+            if closed is not None
+            else None
+        )
+        return {"todo_id": todo_id, "status": new_status, "episode_id": episode_id}
 
     @app.get("/todos/fit", tags=["todos"])
     def todos_fit(

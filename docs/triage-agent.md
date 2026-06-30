@@ -28,6 +28,16 @@ personal email accounts into a normalized stream, triages by urgency, and
 surfaces what needs action"), but triage is source-agnostic: anything that can
 be normalized into a `Signal` flows through the same path.
 
+> **Reality note (2026-06).** Mail ingestion has since **shipped** as a
+> standalone slice (`prefrontal/mail/`: `normalize_message` → an Ollama+heuristic
+> triage → an actionable item routed to `todos`, stored in `mail_messages`). It
+> is, in effect, this spec's `route=todo` path hard-wired to one source. The
+> general `Signal` / `TriageDecision` / `triage_log` core described here is **not
+> built** — `parse_inbound_event` is still a classify-only stub. When this lands,
+> it should **absorb** the mail path (mail becomes a `Signal` adapter feeding the
+> shared `classify`/`apply`) rather than running a second, parallel triage; the
+> `mail_messages.todo_id` link already mirrors the spec's `routed_ref`.
+
 **Non-goals (v1).**
 
 - **Not** a new inference engine or a long-running daemon. Triage is a pure

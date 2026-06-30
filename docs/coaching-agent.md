@@ -143,9 +143,10 @@ class Module(ABC):
   reframes it as a <5-minute first action — using the first sub-step from
   `store.get_decomposition` when one exists. This is the new capability the
   success test exercises; flip the intervention to `status="active"` with it.
-  *(When the avoidance-detection branch merges, its `avoided_todos` signal — "open
-  N days and skipped" — is the natural input for picking *which* stalled todo to
-  surface; the evaluator reads it then instead of a plain staleness threshold.)*
+  *(Avoidance detection has since shipped: its `avoided_todos` signal — "open
+  N days and skipped" (`prefrontal/todos.py`, `GET /todos/avoided`) — is the
+  natural input for picking *which* stalled todo to surface, so the evaluator
+  reads it instead of a plain staleness threshold.)*
 
 ---
 
@@ -292,6 +293,18 @@ via the existing `fit_todos`). Opt-in via a coaching key, tone-calibrated throug
 the same LLM phrasing path (§5) with a heuristic fallback. It is literally
 another `evaluate`-style producer; no new plumbing.
 
+> **Reconciliation with [`docs/encouragement.md`](encouragement.md).** That spec
+> details the same feature but proposes shipping it **standalone first** — a pure
+> `prefrontal/encouragement.py` core plus a `GET /encouragement` endpoint — rather
+> than as a coaching-agent cue, because the coaching agent isn't built yet and the
+> encouragement layer can land independently. The two are not in conflict on
+> *behavior* (same signals, same deterministic-plan-then-optional-prose shape);
+> they differ only on *where it plugs in*. Intended path: build it standalone per
+> `encouragement.md`, then, when the coaching agent lands, wrap `assess_day` as one
+> more `evaluate`-style cue source so delivery/debounce/channel choice route
+> through the shared engine. Whichever ships, there should be **one** `assess_day`
+> implementation, not two.
+
 ---
 
 ## 10. Touch list (where the work lands)
@@ -381,5 +394,3 @@ are where the user feels new coaching.
   inside a polled endpoint adds latency. Proposal: phrase `ambient`/digest cues
   with the model, keep `nudge`/`urgent`/`critical` on deterministic templates, and
   revisit only if prose is wanted on nudges.
-</content>
-</invoke>

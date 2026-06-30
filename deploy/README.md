@@ -7,6 +7,8 @@ it tells you to copy/import.
 | File | What it is | Used in |
 |---|---|---|
 | `com.morningstatic.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
+| `learn.sh` | Chains the nightly learning pass: `prefrontal learn` then `prefrontal summarize`, with timestamped logging. | deployment §12 |
+| `com.morningstatic.prefrontal-learn.plist` | launchd agent that runs `learn.sh` nightly at 03:30 (periodic, no `KeepAlive`). | deployment §12 |
 | `n8n/departure-reminder.workflow.json` | Importable n8n workflow: schedule → `GET /profile` → Ollama → Pushover/Ntfy → `POST /webhooks/n8n`. A template — adjust nodes for your n8n version. | deployment §7 |
 | `n8n/coffee-shop-nudge.workflow.json` | Location-Aware Task Anchor: every-minute poll of `/webhooks/outing/check` → Pushover at 50%/100% → **Twilio voice call at 150%**. | deployment §8 |
 | `n8n/calendar-sync.workflow.json` | Syncs personal Google Calendar + a work ICS feed into `commitments` (merged, deduped) and fires a Pushover **double-booking alert** on overlaps. | deployment §10 |

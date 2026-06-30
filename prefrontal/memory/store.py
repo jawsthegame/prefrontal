@@ -21,7 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -41,22 +42,124 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 class MemoryStore:
     """A high-level, dict-returning interface to the Prefrontal memory tables.
 
-    A ``MemoryStore`` borrows an open connection; it does not close it on its
-    own unless created via :meth:`open`, whose context manager does. This lets
-    long-lived processes (the webhook server) share one connection while tests
-    and the CLI use the convenient context-managed form.
+    A store operates in one of two connection modes:
+
+    - **Single connection** (``MemoryStore(conn)``) — every method runs against
+      the one connection passed in. This suits the CLI, tests, and any
+      single-threaded use, and is the only mode that works with a private
+      ``":memory:"`` database (which cannot be reopened by a second connection).
+    - **Per-thread connections** (:meth:`threaded`) — each thread that touches
+      the store lazily gets its own connection to the file database. This is
+      required by the webhook server: FastAPI runs sync endpoints in a
+      threadpool, and a single :class:`sqlite3.Connection` is **not** safe for
+      concurrent use across threads. Sharing one connection there interleaves
+      statements and returns truncated, empty, or duplicated result sets at
+      random. A connection per thread keeps reads genuinely concurrent and
+      correct; SQLite serializes the occasional write at the file level.
+
+    A store created via :meth:`open` or :meth:`threaded` owns the connection(s)
+    it opens; call :meth:`close` (or use :meth:`open`'s context manager) to
+    release them. A store wrapping a caller-supplied connection does not close
+    it.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        """Wrap an already-open connection.
+    def __init__(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        connection_factory: Callable[[], sqlite3.Connection] | None = None,
+    ) -> None:
+        """Create a store in single-connection or per-thread mode.
 
         Args:
-            conn: A connection produced by :func:`prefrontal.memory.db.connect`
-                or :func:`prefrontal.memory.db.init_db`.
+            conn: An already-open connection to use for every call
+                (single-connection mode). Produced by
+                :func:`prefrontal.memory.db.connect` or
+                :func:`prefrontal.memory.db.init_db`.
+            connection_factory: A zero-argument callable that opens a fresh
+                connection (per-thread mode). Called once per thread; the
+                returned connection is cached for that thread's lifetime.
+
+        Raises:
+            ValueError: If neither or both of ``conn`` and
+                ``connection_factory`` are provided.
         """
-        self.conn = conn
+        if (conn is None) == (connection_factory is None):
+            raise ValueError(
+                "Provide exactly one of conn or connection_factory."
+            )
+        self._fixed_conn = conn
+        self._factory = connection_factory
+        self._local = threading.local()
+        # Track factory-opened connections so close() can release them all.
+        self._owned_conns: list[sqlite3.Connection] = []
+        self._conns_lock = threading.Lock()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """The connection for the calling thread.
+
+        In single-connection mode this is always the wrapped connection. In
+        per-thread mode the connection is created lazily on first access from
+        each thread and reused thereafter.
+        """
+        if self._factory is None:
+            assert self._fixed_conn is not None  # guaranteed by __init__
+            return self._fixed_conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._factory()
+            with self._conns_lock:
+                self._owned_conns.append(conn)
+            self._local.conn = conn
+        return conn
 
     # -- construction helpers ------------------------------------------------
+
+    @classmethod
+    def threaded(cls, db_path: str, *, initialize: bool = True) -> MemoryStore:
+        """Build a store that opens one connection per accessing thread.
+
+        The schema is applied once up front (when ``initialize`` is true); each
+        per-thread connection then simply opens the existing file database.
+
+        Args:
+            db_path: Path to the database **file**. Per-thread mode cannot use
+                ``":memory:"`` — a second connection to it sees an empty,
+                separate database — so a file path is required.
+            initialize: If ``True`` (default), apply the schema once before any
+                per-thread connection is opened.
+
+        Returns:
+            A :class:`MemoryStore` in per-thread connection mode.
+
+        Raises:
+            ValueError: If ``db_path`` is ``":memory:"``.
+        """
+        if db_path == ":memory:":
+            raise ValueError(
+                "Per-thread mode requires a file database, not ':memory:'."
+            )
+        if initialize:
+            # Apply the schema once, then drop this bootstrap connection; the
+            # per-thread connections opened by the factory inherit the file.
+            init_db(db_path).close()
+        return cls(connection_factory=lambda: connect(db_path))
+
+    def close(self) -> None:
+        """Close any connection(s) this store opened.
+
+        In single-connection mode this closes the wrapped connection. In
+        per-thread mode it closes every connection the factory has opened. A
+        store wrapping a caller-supplied connection leaves it open (the caller
+        owns it) — use :meth:`open` or :meth:`threaded` for owned lifecycles.
+        """
+        if self._factory is None:
+            return
+        with self._conns_lock:
+            for conn in self._owned_conns:
+                conn.close()
+            self._owned_conns.clear()
 
     @classmethod
     @contextmanager
@@ -983,6 +1086,25 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def update_todo_deadline(self, todo_id: int, deadline: str | None) -> bool:
+        """Set (or clear) an open todo's deadline. Returns ``True`` if it changed.
+
+        Plans drift; a deadline set when the todo was created — or inferred from
+        its title — often needs to move. Only open todos are editable (a closed
+        todo's deadline is moot), so this no-ops on a done/dropped/absent todo.
+
+        Args:
+            todo_id: The todo to update.
+            deadline: A UTC deadline (``YYYY-MM-DD HH:MM:SS``), or ``None`` to clear it.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET deadline = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'open'",
+            (deadline, todo_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 
@@ -1171,7 +1293,12 @@ class MemoryStore:
         steps: list[str],
         source: str,
     ) -> None:
-        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded."""
+        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded.
+
+        Replacing a decomposition leaves ``done_steps`` unset (NULL), which resets
+        any per-step progress — the steps themselves changed, so old check-offs no
+        longer apply.
+        """
         self.conn.execute(
             "INSERT OR REPLACE INTO todo_decompositions "
             "(todo_id, first_step, first_step_minutes, steps, source) "
@@ -1181,9 +1308,13 @@ class MemoryStore:
         self.conn.commit()
 
     def get_decomposition(self, todo_id: int) -> dict[str, Any] | None:
-        """Return a todo's decomposition (``steps`` decoded), or ``None``."""
+        """Return a todo's decomposition, or ``None``.
+
+        ``steps`` is decoded to a list of strings and ``done_steps`` to a sorted
+        list of completed step indices (0 = ``first_step``, 1..N = ``steps``).
+        """
         row = self.conn.execute(
-            "SELECT first_step, first_step_minutes, steps, source "
+            "SELECT first_step, first_step_minutes, steps, source, done_steps "
             "FROM todo_decompositions WHERE todo_id = ?",
             (todo_id,),
         ).fetchone()
@@ -1194,4 +1325,55 @@ class MemoryStore:
             d["steps"] = json.loads(d["steps"]) if d["steps"] else []
         except (ValueError, TypeError):
             d["steps"] = []
+        d["done_steps"] = self._decode_done_steps(d.get("done_steps"))
         return d
+
+    @staticmethod
+    def _decode_done_steps(raw: Any) -> list[int]:
+        """Decode the stored ``done_steps`` JSON into a sorted list of ints."""
+        try:
+            value = json.loads(raw) if raw else []
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return sorted({int(i) for i in value if isinstance(i, int) and not isinstance(i, bool)})
+
+    def set_step_done(self, todo_id: int, step_index: int, done: bool = True) -> bool:
+        """Mark one decomposed step done (or undone). Returns ``True`` if valid.
+
+        Steps are indexed with ``0`` = ``first_step`` and ``1..N`` = the remaining
+        ``steps``, so a decomposition with M remaining steps has indices ``0..M``.
+        Ticking a step off is its own small win — visible progress is what keeps a
+        broken-down task moving. No-ops (returns ``False``) when the todo has no
+        decomposition or ``step_index`` is out of range.
+
+        Args:
+            todo_id: The todo whose decomposition to update.
+            step_index: Which step (``0`` = first step).
+            done: ``True`` to mark done, ``False`` to clear it.
+        """
+        row = self.conn.execute(
+            "SELECT steps, done_steps FROM todo_decompositions WHERE todo_id = ?",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            steps = json.loads(row["steps"]) if row["steps"] else []
+        except (ValueError, TypeError):
+            steps = []
+        total = 1 + (len(steps) if isinstance(steps, list) else 0)
+        if step_index < 0 or step_index >= total:
+            return False
+        done_set = set(self._decode_done_steps(row["done_steps"]))
+        if done:
+            done_set.add(step_index)
+        else:
+            done_set.discard(step_index)
+        self.conn.execute(
+            "UPDATE todo_decompositions SET done_steps = ? WHERE todo_id = ?",
+            (json.dumps(sorted(done_set)), todo_id),
+        )
+        self.conn.commit()
+        return True

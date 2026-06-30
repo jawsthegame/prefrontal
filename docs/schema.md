@@ -2,7 +2,12 @@
 
 ## Overview
 
-Three SQLite tables covering episodic memory, behavioral patterns, and coaching state. A summarizer agent compresses these into a profile document injected into every agent's system prompt.
+Three **core** tables cover episodic memory, behavioral patterns, and coaching
+state — the heart of the learning loop. A growing set of **feature** tables
+(outings, focus sessions, commitments, todos, mail, and supporting caches) back
+the individual modules and ingestion paths; they are documented under
+[Additional tables](#additional-tables). A summarizer agent compresses memory
+into a profile document injected into every agent's system prompt.
 
 The canonical, executable definition of this schema lives in
 [`prefrontal/memory/schema.sql`](../prefrontal/memory/schema.sql). This document is the
@@ -115,6 +120,18 @@ also defines:
   buffer is used.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
+- **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
+  first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
+  task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).
+- **`dismissed_conflicts`** — soft double-bookings the user has waved off, keyed
+  by a signature of the event pair so a dismissal sticks across calendar re-syncs
+  but lapses if either event moves (`prefrontal/commitments.py`).
+- **`mail_messages`** — ingested and triaged email, one row per message
+  (deduped on account-scoped `message_id`). The triage pass
+  (`prefrontal/mail/`, Ollama with a heuristic fallback) fills `needs_action`,
+  `urgency`, `category`, and a one-line `summary`; `todo_id` links to the open
+  loop created for anything actionable. Retention is per-account
+  (`full` stores body/snippet; `signals` stores only subject/sender + verdict).
 - **`places`** — user-curated destination aliases (`name` → `lat`/`lon`, e.g.
   "gym" → coords), matched against a commitment's location/title before any
   network geocoding (`prefrontal/geocode.py`, managed via `POST /places`).

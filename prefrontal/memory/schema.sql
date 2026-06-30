@@ -3,10 +3,20 @@
 -- The canonical, executable definition of the memory layer. The human-readable
 -- companion lives in docs/schema.md; if the two disagree, THIS file wins.
 --
--- Three tables:
+-- Three core tables hold the learning loop:
 --   episodes        raw outcome records, one per agent interaction cycle
---   patterns        derived summaries computed from episodes by the summarizer
+--   patterns        derived summaries computed from episodes by the learn pass
 --   coaching_state  persistent key/value preferences and working memory
+--
+-- Plus feature tables backing the modules and ingestion paths:
+--   outings              Location-Aware Task Anchor blocks (intention + window)
+--   focus_sessions       Hyperfocus deep-work blocks (protect / interrupt)
+--   commitments          synced/manual schedule items (impact + double-booking)
+--   todos                open loops fitted into free windows
+--   todo_decompositions  tiny-first-step breakdown for stall-prone todos
+--   dismissed_conflicts  soft double-bookings the user has waved off
+--   mail_messages        ingested + triaged email, surfaced as action items
+--   places, geocode_cache  local-first destination resolution for departures
 --
 -- Everything is idempotent: CREATE TABLE IF NOT EXISTS plus INSERT OR IGNORE on
 -- the unique coaching_state.key, so applying this file repeatedly is safe.
@@ -210,12 +220,18 @@ CREATE TABLE IF NOT EXISTS profile_cache (
 -- remaining steps, for todos big enough to stall on (≥ decomposition_threshold).
 -- The first step is the initiation lever; the rest stays collapsed so the list
 -- doesn't re-trigger paralysis. One row per todo (regenerate = replace).
+--
+-- `done_steps` is a JSON array of completed step indices, where index 0 is the
+-- first_step and 1..N are `steps`. Checking off a step is its own little win —
+-- visible progress is what keeps a decomposed task moving. Regenerating the
+-- decomposition replaces the row, which resets progress (the steps changed).
 CREATE TABLE IF NOT EXISTS todo_decompositions (
     todo_id            INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
     first_step         TEXT    NOT NULL,
     first_step_minutes REAL,
     steps              TEXT,   -- JSON array of the remaining ordered steps
     source             TEXT,   -- llm | heuristic
+    done_steps         TEXT,   -- JSON array of completed step indices (0 = first_step)
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

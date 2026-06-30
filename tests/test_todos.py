@@ -18,6 +18,7 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
+from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.todos import (
     augment_todo,
     avoidance_score,
@@ -27,6 +28,8 @@ from prefrontal.todos import (
     heuristic_energy,
     heuristic_estimate,
     heuristic_priority,
+    record_todo_closed,
+    todo_episode_fields,
 )
 
 
@@ -303,6 +306,56 @@ def test_decomposition_store_roundtrip(store):
     )
     got = store.get_decomposition(tid)
     assert got["first_step"] == "Just open it" and got["steps"] == ["a", "b"]
+    assert got["done_steps"] == []  # nothing ticked yet
+
+
+def test_set_step_done_roundtrip_and_bounds(store):
+    """Steps tick on/off by index (0 = first step); out-of-range no-ops."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    assert store.set_step_done(tid, 0) is False  # no decomposition yet
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["a", "b"], source="llm"
+    )
+    # Indices 0..2 are valid (first_step + 2 remaining).
+    assert store.set_step_done(tid, 0) is True
+    assert store.set_step_done(tid, 2) is True
+    assert store.get_decomposition(tid)["done_steps"] == [0, 2]
+    # Idempotent + un-tick.
+    assert store.set_step_done(tid, 0) is True
+    assert store.set_step_done(tid, 2, done=False) is True
+    assert store.get_decomposition(tid)["done_steps"] == [0]
+    # Out of range never records anything.
+    assert store.set_step_done(tid, 3) is False
+    assert store.set_step_done(tid, -1) is False
+    assert store.get_decomposition(tid)["done_steps"] == [0]
+
+
+def test_regenerating_decomposition_resets_step_progress(store):
+    """Replacing a decomposition clears done_steps — the steps changed."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["a"], source="llm"
+    )
+    store.set_step_done(tid, 1)
+    assert store.get_decomposition(tid)["done_steps"] == [1]
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["x", "y"], source="llm"
+    )
+    assert store.get_decomposition(tid)["done_steps"] == []
+
+
+def test_update_todo_deadline_open_only(store):
+    """Deadline moves and clears on open todos; closed todos no-op."""
+    tid = store.add_todo("Renew passport", estimate_minutes=20, deadline="2026-07-01 00:00:00")
+    assert store.update_todo_deadline(tid, "2026-08-15 09:00:00") is True
+    assert store.get_todo(tid)["deadline"] == "2026-08-15 09:00:00"
+    # Clearing.
+    assert store.update_todo_deadline(tid, None) is True
+    assert store.get_todo(tid)["deadline"] is None
+    # Once closed, the deadline is frozen.
+    store.close_todo(tid, status="done")
+    assert store.update_todo_deadline(tid, "2026-09-01 00:00:00") is False
+    assert store.update_todo_deadline(999, "2026-09-01 00:00:00") is False  # absent
 
 
 def test_post_big_todo_auto_decomposes(client):
@@ -383,3 +436,145 @@ def test_briefing_surfaces_avoided(store):
     b = build_briefing(store, now=now)
     assert any(a["title"] == "Renew passport" for a in b.avoided)
     assert "keep putting off" in render_briefing(b).lower()
+
+
+# -- outcome capture (closing a todo feeds the learning loop) -----------------
+
+
+def test_todo_episode_fields_done_is_success():
+    """A done todo becomes a task success; estimate is predicted, actual stays None."""
+    fields = todo_episode_fields(
+        {
+            "title": "File taxes",
+            "status": "done",
+            "estimate_minutes": 30,
+            "created_at": "2026-06-01 09:00:00",
+            "completed_at": "2026-06-03 09:00:00",
+        }
+    )
+    assert fields["episode_type"] == "task"
+    assert fields["outcome"] == "success"
+    assert fields["predicted_value"] == 30
+    assert fields["actual_value"] is None  # wall-clock age must not pollute time_estimation
+    assert fields["context"] == "todo done: File taxes"
+    assert fields["notes"] == "completed after 2.0d open"
+
+
+def test_todo_episode_fields_drop_is_miss_with_now_for_age():
+    """A dropped todo (no completed_at) is a miss; age comes from the passed `now`."""
+    fields = todo_episode_fields(
+        {
+            "title": "Read manual",
+            "status": "dropped",
+            "estimate_minutes": 20,
+            "created_at": "2026-06-01 09:00:00",
+            "completed_at": None,
+        },
+        now=datetime(2026, 6, 6, 9, 0, 0),
+    )
+    assert fields["outcome"] == "miss"
+    assert fields["actual_value"] is None
+    assert fields["notes"] == "dropped after 5.0d open"
+
+
+def test_todo_close_endpoint_logs_episode(client, store_open):
+    """Closing a todo over HTTP logs a task episode and returns its id."""
+    tid = client.post(
+        "/todos", json={"title": "Call dentist", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+
+    done = client.post(f"/todos/{tid}/done", headers=_auth())
+    assert done.status_code == 200
+    assert done.json()["episode_id"] is not None
+
+    eps = store_open.episodes_by_type("task")
+    assert len(eps) == 1
+    assert eps[0]["outcome"] == "success"
+    assert eps[0]["context"] == "todo done: Call dentist"
+
+
+def test_todo_drop_endpoint_logs_miss(client, store_open):
+    """Dropping a todo records a miss — the avoidance signal isn't discarded."""
+    tid = client.post(
+        "/todos", json={"title": "Reconcile budget", "estimate_minutes": 25}, headers=_auth()
+    ).json()["todo_id"]
+
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+    eps = store_open.episodes_by_type("task")
+    assert eps and eps[0]["outcome"] == "miss"
+
+
+def test_todo_closes_feed_drift_pattern(client, store_open):
+    """Several closes flow into the learning pass as a `task` drift pattern."""
+    for i in range(3):
+        tid = client.post(
+            "/todos", json={"title": f"task {i}", "estimate_minutes": 10}, headers=_auth()
+        ).json()["todo_id"]
+        client.post(f"/todos/{tid}/done", headers=_auth())
+    tid = client.post(
+        "/todos", json={"title": "skipped", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+
+    recompute_patterns(store_open)
+    drift = [p for p in store_open.get_patterns("drift") if p["context_key"] == "task"]
+    assert drift, "expected a task drift pattern derived from todo closes"
+    assert drift[0]["sample_size"] == 4
+    # 3 successes (0.0) + 1 miss (1.0) over 4 ⇒ 0.25
+    assert drift[0]["observed_value"] == 0.25
+# -- deadline updates & step completion (endpoints) --------------------------
+
+
+def test_update_deadline_endpoint(client, store_open):
+    """POST /todos/{id}/deadline moves, clears, validates, and 404s as expected."""
+    tid = store_open.add_todo("Renew passport", estimate_minutes=20)
+    # Set a deadline (date-only is normalized to midnight UTC).
+    r = client.post(f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth())
+    assert r.status_code == 200 and r.json()["deadline"] == "2026-08-15 00:00:00"
+    assert store_open.get_todo(tid)["deadline"] == "2026-08-15 00:00:00"
+    # Clear it.
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": None}, headers=_auth()).json()["deadline"] is None
+    # Garbage is rejected.
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "not-a-date"}, headers=_auth()).status_code == 422
+    # Unknown / closed todo → 404.
+    assert client.post("/todos/999/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+    store_open.close_todo(tid, status="done")
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+
+
+def test_step_done_endpoint(client, store_open):
+    """POST /todos/{id}/steps/{i}/done ticks steps and surfaces them in GET /todos."""
+    tid = store_open.add_todo("Write the report", estimate_minutes=90)
+    store_open.set_decomposition(
+        tid, first_step="Open the doc", first_step_minutes=2, steps=["Draft intro", "Edit"], source="llm"
+    )
+    # Tick the first step (index 0) — default body marks it done.
+    r = client.post(f"/todos/{tid}/steps/0/done", headers=_auth())
+    assert r.status_code == 200 and r.json()["decomposition"]["done_steps"] == [0]
+    # Tick a remaining step, then un-tick the first.
+    client.post(f"/todos/{tid}/steps/2/done", headers=_auth())
+    r = client.post(f"/todos/{tid}/steps/0/done", json={"done": False}, headers=_auth())
+    assert r.json()["decomposition"]["done_steps"] == [2]
+    # It surfaces in the list payload the dashboard renders.
+    listed = client.get("/todos", headers=_auth()).json()["todos"]
+    match = next(t for t in listed if t["id"] == tid)
+    assert match["decomposition"]["done_steps"] == [2]
+    # Out-of-range step → 404; the done/drop route still works (no collision).
+    assert client.post(f"/todos/{tid}/steps/9/done", headers=_auth()).status_code == 404
+    assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200
+
+
+def test_migrate_adds_done_steps_idempotently():
+    """_migrate back-fills done_steps on a pre-existing decomposition table."""
+    import sqlite3
+
+    from prefrontal.memory.db import _migrate
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE todo_decompositions (todo_id INTEGER PRIMARY KEY, first_step TEXT)")
+    _migrate(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(todo_decompositions)")}
+    assert "done_steps" in cols
+    _migrate(conn)  # second run is a no-op, not an error
+    conn.close()
