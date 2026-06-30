@@ -356,10 +356,18 @@ def decompose_task(
             first = raw.get("first_step") if isinstance(raw, dict) else None
             if isinstance(first, str) and first.strip():
                 mins = raw.get("first_step_minutes")
-                mins = float(mins) if isinstance(mins, (int, float)) and not isinstance(mins, bool) else max_first_minutes
+                mins = (
+                    float(mins)
+                    if isinstance(mins, (int, float)) and not isinstance(mins, bool)
+                    else max_first_minutes
+                )
                 mins = max(MIN_ESTIMATE_MINUTES, min(mins, max_first_minutes))
                 steps = raw.get("steps")
-                steps = [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS] if isinstance(steps, list) else []
+                steps = (
+                    [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS]
+                    if isinstance(steps, list)
+                    else []
+                )
                 return Decomposition(first.strip(), mins, steps, "llm")
     return _heuristic_decomposition(title, max_first_minutes)
 

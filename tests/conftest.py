@@ -43,7 +43,7 @@ class _OfflineOllama:
         pass
 
     @classmethod
-    def from_settings(cls, *args: object, **kwargs: object) -> "_OfflineOllama":
+    def from_settings(cls, *args: object, **kwargs: object) -> _OfflineOllama:
         return cls()
 
     def available(self) -> bool:
