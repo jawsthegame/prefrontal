@@ -6,14 +6,19 @@
 //
 // SETUP
 //   1. Install Scriptable (App Store), open it, tap + to add a script, paste this.
-//   2. Set TOKEN below to your PREFRONTAL_WEBHOOK_SECRET (kept only on your phone).
+//   2. Set TOKEN below to your Prefrontal token (kept only on your phone). On a
+//      solo deploy that's the PREFRONTAL_WEBHOOK_SECRET; on a multi-user deploy
+//      it's the per-user token the operator issued you — the server scopes this
+//      widget to your own outings/commitments/todos, so each person's phone runs
+//      the same script with their own token. If your token is rotated, update it
+//      here.
 //   3. Run once in-app to test. Then long-press the home screen → add a
 //      Scriptable widget (Medium recommended) → choose this script.
 //   Works anywhere your phone can reach the mini over Tailscale.
 
 // --- config ---------------------------------------------------------------
 const BASE_URL = "http://agent-1.tail8b0a.ts.net:8000";
-const TOKEN = "PASTE_YOUR_PREFRONTAL_WEBHOOK_SECRET";
+const TOKEN = "PASTE_YOUR_PREFRONTAL_TOKEN"; // solo: webhook secret · multi-user: your per-user token
 const REFRESH_MINUTES = 15;
 
 // --- palette (matches the dashboard) --------------------------------------
