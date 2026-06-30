@@ -62,6 +62,9 @@
   .lvl-soft { background: #3a2f12; color: var(--soft); }
   .lvl-firm { background: #3a2412; color: var(--firm); }
   .lvl-call { background: #3a1620; color: var(--call); }
+  .lvl-check { background: #3a2f12; color: var(--soft); }
+  .lvl-break { background: #3a1620; color: var(--call); }
+  .protect { background: #16301f; color: #5fb87a; }
   .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
   .pri-3 { background: #3a1620; color: var(--call); }
   .pri-2 { background: #3a2412; color: var(--firm); }
@@ -134,6 +137,7 @@
 
 <div class="banner">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
+  <section class="card" id="c-focus"><h2>Focus</h2><div class="body"></div></section>
 </div>
 
 <main class="masonry">
@@ -250,6 +254,35 @@ function renderOutings(d) {
     </div>`;
   }).join("");
 }
+function renderFocus(d) {
+  const a = (d.active || []);
+  const r = (d.recent || []).filter((s) => s.status !== "active").slice(0, 8);
+  let html = "";
+  if (!a.length) html += `<div class="empty">No active focus session.</div>`;
+  else html += a.map((s) => {
+    const lvl = s.level || "none";
+    const plan = s.planned_minutes != null ? " of ~" + mins(s.planned_minutes) : "";
+    const prot = s.protect ? ` <span class="pill protect">protected</span>` : "";
+    const align = s.aligned ? "" : ` <span class="pill">off-task</span>`;
+    return `<div class="row">
+      <div class="main">
+        <div><span class="title">${esc(s.intended_task)}</span> <span class="badge lvl-${lvl}">${lvl}</span>${prot}${align}</div>
+        <div class="sub">${mins(s.elapsed_minutes)}${plan} · since ${fmt(s.started_at)}</div>
+      </div>
+      <div class="acts">
+        <button class="btn-sm btn-go" data-action="focus-end" data-id="${s.session_id}">End</button>
+      </div>
+    </div>`;
+  }).join("");
+  if (r.length) {
+    html += `<div class="sub" style="margin-top:8px;opacity:.7">Recent</div>`;
+    html += r.map((s) => `<div class="row"><div class="main">
+      <div><span class="title">${esc(s.intended_task)}</span> <span class="pill">${esc(s.status)}</span>${s.outcome ? ` <span class="pill">${esc(s.outcome)}</span>` : ""}</div>
+      <div class="sub">${s.planned_minutes != null ? "planned ~" + mins(s.planned_minutes) + " · " : ""}${fmt(s.started_at)}${s.breadcrumb ? " · next: " + esc(s.breadcrumb) : ""}</div>
+    </div></div>`).join("");
+  }
+  return html;
+}
 function renderRecent(d) {
   const r = (d.recent || []).filter((o) => o.status !== "active");
   if (!r.length) return `<div class="empty">No recent outings.</div>`;
@@ -301,15 +334,16 @@ async function load() {
   if (!token) { $("#gate").style.display = "flex"; return; }
   $("#status").textContent = "refreshing…";
   const results = await Promise.allSettled([
-    api("/outings"), api("/todos"), api("/commitments"),
+    api("/outings"), api("/focus"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), api("/profile"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile] = results;
+  const [outings, focus, todos, commitments, conflicts, briefing, profile] = results;
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
+  put("#c-focus", focus, renderFocus);
   put("#c-recent", outings, renderRecent);
   put("#c-todos", todos, renderTodos);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
@@ -338,6 +372,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
+    else if (act === "focus-end") { if (!confirm("End this focus session?")) return; await post("/webhooks/focus/end", { session_id: Number(id), status: "ended" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
     load();
   } catch (_) { /* post() already surfaced the error */ }

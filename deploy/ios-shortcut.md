@@ -109,6 +109,48 @@ Closes the active outing and logs intention-vs-actual for learning.
 
 ---
 
+## Shortcut: "Getting into" (Hyperfocus)
+
+Declares a focus session so Prefrontal protects the block while it's healthy and
+only interrupts to check an overrun or force a biological break. Pairs with the
+`hyperfocus-check` n8n workflow.
+
+1. New shortcut named **Getting into**.
+2. (Optional) **Ask for Input** (Text): "Getting into what?"
+3. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/focus/start`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):**
+     ```json
+     { "intended_task": "Provided Input" }
+     ```
+     Replace the `"intended_task"` value with the **Provided Input** variable. Add
+     `"planned_minutes": 90` if you want the gentle "still on this?" check to fire
+     at a specific length rather than the default soft block; add
+     `"aligned": false` to declare up front that this is *not* what you meant to
+     be doing (so it's treated as a redirect, not protected).
+
+## Shortcut: "Surfacing"
+
+Closes the active focus session and logs planned-vs-actual for learning.
+
+1. New shortcut named **Surfacing**.
+2. (Optional) **Ask for Input** (Text): "Where were you / next step?" → use it as
+   the `breadcrumb` so re-entry is cheap next time.
+3. **Get Contents of URL** → `POST http://<your-mac>:8000/webhooks/focus/end`,
+   same headers, body `{}` to close the most recent active session, or include a
+   rating and breadcrumb:
+   ```json
+   { "outcome": "worth_it", "breadcrumb": "Provided Input" }
+   ```
+   `outcome` is one of `worth_it` / `should_have_stopped` / `pulled_off`.
+
+> The interrupts themselves (the `check` and `break` pushes) are sent by the n8n
+> workflow polling `/webhooks/focus/check` — you don't need a shortcut for those.
+> These two shortcuts just open and close the session.
+
+---
+
 ## Location source (passive return & gating)
 
 Location is **optional** — without it the anchor escalates purely on elapsed
