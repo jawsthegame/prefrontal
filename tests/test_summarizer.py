@@ -13,7 +13,13 @@ import pytest
 
 from prefrontal.integrations.ollama import OllamaClient, OllamaError
 from prefrontal.memory.store import MemoryStore
-from prefrontal.memory.summarizer import summarize_profile
+from prefrontal.memory.summarizer import (
+    cache_is_stale,
+    cache_summary,
+    load_cached_summary,
+    refresh_profile_cache,
+    summarize_profile,
+)
 
 
 @pytest.fixture()
@@ -125,3 +131,48 @@ def test_summarize_no_fallback_raises(store):
     """With fallback disabled, a model error propagates."""
     with pytest.raises(OllamaError):
         summarize_profile(store, client=_FakeClient(error=True), fallback=False)
+
+
+# -- narrative cache ---------------------------------------------------------
+
+
+def test_load_cached_summary_none_when_empty(store):
+    """Nothing is cached on a fresh store."""
+    assert load_cached_summary(store) is None
+
+
+def test_cache_summary_round_trip(store):
+    """cache_summary persists a ProfileSummary that load_cached_summary returns."""
+    summary = summarize_profile(store, client=_FakeClient(reply="pad estimates 1.4x."))
+    cache_summary(store, summary)
+
+    loaded = load_cached_summary(store)
+    assert loaded.text == "pad estimates 1.4x."
+    assert loaded.source == "llm"
+    assert loaded.model == "fake-model"
+    assert loaded.structured.startswith("# Behavioral profile")
+    # generated_at is populated only on the loaded (cached) copy.
+    assert summary.generated_at is None
+    assert loaded.generated_at
+
+
+def test_refresh_profile_cache_generates_and_persists(store):
+    """refresh_profile_cache returns a fresh summary and writes it to the cache."""
+    result = refresh_profile_cache(store, client=_FakeClient(reply="do the next thing."))
+    assert result.source == "llm"
+    assert load_cached_summary(store).text == "do the next thing."
+
+
+def test_cache_is_stale_detects_changes(store):
+    """The cache is fresh right after writing, stale once the facts move on."""
+    refresh_profile_cache(store, client=_FakeClient(reply="prose"))
+    assert cache_is_stale(store) is False
+
+    # Change an underlying fact: the structured profile no longer matches.
+    store.set_state("time_estimation_bias", "1.9", source="explicit")
+    assert cache_is_stale(store) is True
+
+
+def test_cache_is_stale_when_empty(store):
+    """A missing cache counts as stale (nothing to trust)."""
+    assert cache_is_stale(store) is True

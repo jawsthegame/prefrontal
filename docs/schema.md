@@ -121,12 +121,21 @@ also defines:
 - **`geocode_cache`** — normalized free-text location → coordinates (or a
   recorded miss, `lat`/`lon` NULL), so the same address resolves once instead of
   re-calling the geocoder each sync. Populated only when `geocoding_enabled` is on.
+- **`profile_cache`** — the single cached LLM profile narrative (the coaching
+  prose from `summarize_profile`), with its `source` (`llm`/`heuristic`),
+  `model`, the `structured` input it was derived from, a `structured_hash`, and
+  `generated_at`. Written by `prefrontal summarize` (or `GET /profile?refresh=1`)
+  and served by `GET /profile`, so the slow model round-trip happens once rather
+  than on every poll.
 
 ---
 
 ## System Prompt Injection
 
-A summarizer agent runs periodically and writes a `profile.md` from the above tables. Every agent prepends this to its system prompt.
+A summarizer agent runs periodically and writes a `profile.md` from the above
+tables, **caching** the result in `profile_cache`. Every agent prepends this to
+its system prompt; `GET /profile` serves the cached narrative (regenerate with
+`?refresh=1`, or get the raw structured input with `?format=structured`).
 
 **Example output:**
 

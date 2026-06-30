@@ -188,6 +188,24 @@ CREATE INDEX IF NOT EXISTS idx_mail_account ON mail_messages (account);
 CREATE INDEX IF NOT EXISTS idx_mail_needs_action ON mail_messages (needs_action);
 CREATE INDEX IF NOT EXISTS idx_mail_received ON mail_messages (received_at);
 
+-- Cached LLM profile narrative — the prioritized coaching prose produced by the
+-- summarizer (prefrontal/memory/summarizer.py). Generating it needs an Ollama
+-- (or, later, Anthropic) round-trip, which is too slow to run on every
+-- `GET /profile` poll, so the nightly `prefrontal summarize` writes it here and
+-- the endpoint serves it. One row (id = 1). `structured_hash` is a fingerprint of
+-- the structured profile the prose was derived from, so callers can tell when the
+-- cache has gone stale (the underlying patterns/state changed) without a full
+-- copy comparison.
+CREATE TABLE IF NOT EXISTS profile_cache (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- single-row cache
+    text            TEXT    NOT NULL,                    -- the narrative to serve
+    source          TEXT    NOT NULL,                    -- llm | heuristic
+    model           TEXT,                                -- model name when source = llm
+    structured      TEXT,                                -- the structured profile fed to the model
+    structured_hash TEXT,                                -- fingerprint of `structured` at cache time
+    generated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Task decompositions — a tiny first step (≤ max_first_step_minutes) plus the
 -- remaining steps, for todos big enough to stall on (≥ decomposition_threshold).
 -- The first step is the initiation lever; the rest stays collapsed so the list

@@ -18,6 +18,7 @@ trustworthy without any meaningful cost.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -396,6 +397,58 @@ class MemoryStore:
             "accuracy_m": float(accuracy) if accuracy else None,
             "at": row["last_updated"],
         }
+
+    # -- profile narrative cache ---------------------------------------------
+
+    def get_profile_cache(self) -> dict[str, Any] | None:
+        """Return the cached profile narrative row, or ``None`` if unset.
+
+        The row carries the served ``text`` plus provenance (``source``,
+        ``model``, ``generated_at``) and the ``structured``/``structured_hash``
+        the prose was derived from (for staleness checks).
+        """
+        row = self.conn.execute(
+            "SELECT text, source, model, structured, structured_hash, "
+            "generated_at FROM profile_cache WHERE id = 1"
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def set_profile_cache(
+        self,
+        text: str,
+        *,
+        source: str,
+        model: str | None,
+        structured: str,
+    ) -> None:
+        """Insert or replace the single cached profile narrative.
+
+        ``structured_hash`` is computed here (a SHA-256 of ``structured``) so the
+        caller never has to; ``generated_at`` is refreshed to the DB clock.
+
+        Args:
+            text: The narrative to serve from ``GET /profile``.
+            source: ``llm`` if a model produced it, ``heuristic`` for the fallback.
+            model: The model name when ``source == "llm"``, else ``None``.
+            structured: The structured profile the narrative was derived from.
+        """
+        digest = hashlib.sha256(structured.encode("utf-8")).hexdigest()
+        self.conn.execute(
+            """
+            INSERT INTO profile_cache (
+                id, text, source, model, structured, structured_hash, generated_at
+            ) VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                text            = excluded.text,
+                source          = excluded.source,
+                model           = excluded.model,
+                structured      = excluded.structured,
+                structured_hash = excluded.structured_hash,
+                generated_at    = CURRENT_TIMESTAMP
+            """,
+            (text, source, model, structured, digest),
+        )
+        self.conn.commit()
 
     # -- outings (Location-Aware Task Anchor) --------------------------------
 

@@ -95,7 +95,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
-| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
+| Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
 | Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
@@ -129,8 +129,9 @@ prefrontal learn
 # Print the structured behavioral profile assembled from memory
 prefrontal profile
 
-# Summarize it into prioritized prose via a local Ollama model -> profile.md
-# (falls back to the structured profile if Ollama isn't running)
+# Summarize it into prioritized prose via a local Ollama model. Caches the
+# narrative (served by GET /profile) and writes profile.md. Falls back to the
+# structured profile if Ollama isn't running. Run nightly after `learn`.
 prefrontal summarize
 
 # Print today's morning briefing (add --llm for friendly prose via Ollama)

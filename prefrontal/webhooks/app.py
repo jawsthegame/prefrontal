@@ -7,7 +7,8 @@ turns them into rows in the behavioral memory layer.
 Routes:
 
 - ``GET  /health`` — liveness probe, no auth.
-- ``GET  /profile`` — the current behavioral profile (for n8n to feed Ollama).
+- ``GET  /profile`` — the behavioral profile; serves the cached LLM narrative
+  (``?refresh=1`` to regenerate, ``?format=structured`` for the raw input).
 - ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
 - ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
 - ``POST /webhooks/location`` — the phone's current position (iOS Shortcut).
@@ -50,7 +51,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -88,7 +98,12 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
-from prefrontal.memory.summarizer import build_profile
+from prefrontal.memory.summarizer import (
+    build_profile,
+    cache_is_stale,
+    load_cached_summary,
+    refresh_profile_cache,
+)
 from prefrontal.modules.hyperfocus import (
     DEFAULT_FOCUS_ABANDON_RATIO,
     DEFAULT_HARD_INTERRUPT_MINUTES,
@@ -449,6 +464,11 @@ def create_app(
         model=resolved_settings.ollama_model,
         timeout=INFER_TIMEOUT_SECONDS,
     )
+    # Separate client for the on-demand ``GET /profile?refresh=1`` summary, with
+    # the full (longer) generation timeout — summarizing the whole profile is a
+    # heavier call than the snappy window inference above. Reuses an injected
+    # client in tests so the refresh path stays offline.
+    summarizer_client = ollama or OllamaClient.from_settings(resolved_settings)
     # Forward-geocoder for commitment destinations. Built from settings unless
     # injected (tests pass a stub). Only consulted when the runtime
     # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.
@@ -523,16 +543,63 @@ def create_app(
     @app.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(
         memory: Annotated[MemoryStore, Depends(get_store)],
+        response: Response,
+        refresh: Annotated[
+            bool,
+            Query(description="Regenerate the narrative via Ollama now and cache it."),
+        ] = False,
+        fmt: Annotated[
+            Literal["narrative", "structured"],
+            Query(alias="format", description="'narrative' (cached prose) or 'structured'."),
+        ] = "narrative",
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> str:
-        """Return the current behavioral profile as Markdown.
+        """Return the behavioral profile, preferring the cached LLM narrative.
 
-        This is the HTTP equivalent of ``prefrontal profile``. n8n fetches it to
-        prepend to an Ollama (or Anthropic) prompt so behavioral context travels
-        with every generated reminder/briefing. Auth-guarded like the webhooks.
+        By default this serves the prioritized coaching prose produced by
+        ``prefrontal summarize`` (cached in ``profile_cache``), so n8n can fetch
+        it on every reminder/briefing without paying for a model round-trip. The
+        ``X-Profile-*`` response headers report provenance (``Source``,
+        ``Model``, ``Generated-At``) and whether the cache has gone ``Stale``
+        relative to the current facts.
+
+        Query params:
+
+        - ``refresh=1`` — regenerate the narrative via Ollama now and cache it
+          (falls back to the structured profile if the model is down).
+        - ``format=structured`` — return the raw structured profile (the model's
+          input), bypassing the cache. This is the old behavior.
+
+        When nothing is cached yet (and ``refresh`` was not requested), it falls
+        back to the structured profile so the endpoint always returns something.
+        Auth-guarded like the webhooks.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
-        return build_profile(memory)
+
+        if fmt == "structured":
+            response.headers["X-Profile-Source"] = "structured"
+            return build_profile(memory)
+
+        if refresh:
+            summary = refresh_profile_cache(memory, client=summarizer_client)
+        else:
+            summary = load_cached_summary(memory)
+
+        if summary is None:
+            # Nothing summarized yet — serve the structured profile rather than
+            # an empty body, and flag that no narrative has been cached.
+            response.headers["X-Profile-Source"] = "uncached"
+            return build_profile(memory)
+
+        response.headers["X-Profile-Source"] = summary.source
+        if summary.model:
+            response.headers["X-Profile-Model"] = summary.model
+        if summary.generated_at:
+            response.headers["X-Profile-Generated-At"] = summary.generated_at
+        response.headers["X-Profile-Stale"] = (
+            "true" if cache_is_stale(memory, summary) else "false"
+        )
+        return summary.text
 
     @app.post(
         "/webhooks/shortcut",

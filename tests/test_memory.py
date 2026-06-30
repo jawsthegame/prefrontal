@@ -148,3 +148,34 @@ def test_build_profile_lists_patterns(store):
     profile = build_profile(store)
     assert "time_estimation" in profile
     assert "departure" in profile
+
+
+def test_profile_cache_empty_by_default(store):
+    """A fresh DB has no cached narrative."""
+    assert store.get_profile_cache() is None
+
+
+def test_profile_cache_round_trip_and_hash(store):
+    """set_profile_cache stores the row, derives the hash, and upserts in place."""
+    import hashlib
+
+    structured = "# Behavioral profile\n\nfacts"
+    store.set_profile_cache(
+        "coaching prose", source="llm", model="qwen2.5:14b", structured=structured
+    )
+    row = store.get_profile_cache()
+    assert row["text"] == "coaching prose"
+    assert row["source"] == "llm"
+    assert row["model"] == "qwen2.5:14b"
+    assert row["structured"] == structured
+    assert row["structured_hash"] == hashlib.sha256(structured.encode()).hexdigest()
+    assert row["generated_at"]  # populated by the DB clock
+
+    # A second write replaces the single row rather than inserting a new one.
+    store.set_profile_cache(
+        "newer prose", source="heuristic", model=None, structured="# Behavioral profile\n"
+    )
+    assert store.get_profile_cache()["text"] == "newer prose"
+    assert store.get_profile_cache()["model"] is None
+    count = store.conn.execute("SELECT COUNT(*) AS n FROM profile_cache").fetchone()["n"]
+    assert count == 1

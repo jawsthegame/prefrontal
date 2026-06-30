@@ -7,7 +7,8 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
 - ``prefrontal profile`` — print (or write) the structured behavioral profile.
-- ``prefrontal summarize`` — LLM-summarize the profile (Ollama) to ``profile.md``.
+- ``prefrontal summarize`` — LLM-summarize the profile (Ollama); cache it for
+  ``GET /profile`` and write ``profile.md``.
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
@@ -28,7 +29,11 @@ from prefrontal.config import get_settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
-from prefrontal.memory.summarizer import build_profile, summarize_profile
+from prefrontal.memory.summarizer import (
+    build_profile,
+    cache_summary,
+    summarize_profile,
+)
 from prefrontal.modules import available, enabled_modules
 from prefrontal.scheduling import fit_todos
 
@@ -130,14 +135,18 @@ def _cmd_profile(args: argparse.Namespace) -> int:
 
 
 def _cmd_summarize(args: argparse.Namespace) -> int:
-    """LLM-summarize the profile via Ollama, writing it to a file or stdout.
+    """LLM-summarize the profile via Ollama, caching it and writing a file.
 
-    Falls back to the structured profile if the model is unavailable, unless
-    ``--no-fallback`` is given.
+    The narrative is stored in the ``profile_cache`` table so ``GET /profile``
+    can serve it without a model round-trip; run nightly after ``prefrontal
+    learn``. It is also written to ``profile.md`` (or ``--output``) for
+    inspection. Falls back to the structured profile if the model is
+    unavailable, unless ``--no-fallback`` is given. ``--no-cache`` skips the DB
+    write (file only).
 
     Args:
         args: Parsed arguments; uses ``db_path``, ``output``, ``model``,
-            ``no_fallback``.
+            ``no_fallback``, ``no_cache``.
 
     Returns:
         Process exit code (0 on success, 1 if generation failed with no fallback).
@@ -154,6 +163,8 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
             result = summarize_profile(
                 store, client=client, fallback=not args.no_fallback
             )
+            if not args.no_cache:
+                cache_summary(store, result)
     except OllamaError as exc:
         print(f"Summarization failed: {exc}", file=sys.stderr)
         return 1
@@ -161,13 +172,14 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
     if result.source == "heuristic":
         print(
             f"Ollama unavailable ({client.base_url}, model {client.model}); "
-            "wrote the structured profile instead.",
+            "cached the structured profile instead.",
             file=sys.stderr,
         )
     output = args.output or "profile.md"
     Path(output).write_text(result.text)
     label = f"{result.source}" + (f" ({result.model})" if result.model else "")
-    print(f"Wrote {label} profile to {output}")
+    where = output if args.no_cache else f"the profile cache and {output}"
+    print(f"Wrote {label} profile to {where}")
     return 0
 
 
@@ -427,6 +439,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-fallback",
         action="store_true",
         help="Fail instead of falling back to the structured profile.",
+    )
+    p_summarize.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Skip writing the narrative to the profile cache (file only).",
     )
     p_summarize.set_defaults(func=_cmd_summarize)
 

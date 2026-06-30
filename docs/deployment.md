@@ -394,11 +394,16 @@ an n8n schedule node:
 
 ```bash
 prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
-prefrontal summarize   # structured profile -> Ollama -> profile.md (prose)
+prefrontal summarize   # profile -> Ollama -> cache (+ profile.md) as prose
 ```
 
-`prefrontal summarize` writes a narrative `profile.md` using the local Ollama
-model from `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it
-falls back to the structured profile, so the file is always written. The live
-`GET /profile` endpoint always returns the fast structured profile — point agents
-at the generated `profile.md` when you want the prose version.
+`prefrontal summarize` generates the narrative with the local Ollama model from
+`.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it falls back to
+the structured profile, so it always produces something. It **caches** the
+narrative in the `profile_cache` table (and writes `profile.md` for inspection),
+so the live `GET /profile` endpoint serves that prose to agents without a
+per-request model call. Add `?refresh=1` to regenerate on demand, or
+`?format=structured` to get the raw structured profile instead. The `X-Profile-*`
+response headers report the source, model, generation time, and whether the cache
+has gone stale relative to the current facts (i.e. it's time to re-run
+`summarize`).
