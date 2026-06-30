@@ -162,6 +162,19 @@ CREATE INDEX IF NOT EXISTS idx_mail_account ON mail_messages (account);
 CREATE INDEX IF NOT EXISTS idx_mail_needs_action ON mail_messages (needs_action);
 CREATE INDEX IF NOT EXISTS idx_mail_received ON mail_messages (received_at);
 
+-- Task decompositions — a tiny first step (≤ max_first_step_minutes) plus the
+-- remaining steps, for todos big enough to stall on (≥ decomposition_threshold).
+-- The first step is the initiation lever; the rest stays collapsed so the list
+-- doesn't re-trigger paralysis. One row per todo (regenerate = replace).
+CREATE TABLE IF NOT EXISTS todo_decompositions (
+    todo_id            INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+    first_step         TEXT    NOT NULL,
+    first_step_minutes REAL,
+    steps              TEXT,   -- JSON array of the remaining ordered steps
+    source             TEXT,   -- llm | heuristic
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES

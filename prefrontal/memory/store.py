@@ -18,6 +18,7 @@ trustworthy without any meaningful cost.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -808,3 +809,38 @@ class MemoryStore:
             "ORDER BY (m.received_at IS NULL), m.received_at DESC, m.id DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+    # -- Task decompositions -------------------------------------------------
+
+    def set_decomposition(
+        self,
+        todo_id: int,
+        *,
+        first_step: str,
+        first_step_minutes: float | None,
+        steps: list[str],
+        source: str,
+    ) -> None:
+        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO todo_decompositions "
+            "(todo_id, first_step, first_step_minutes, steps, source) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (todo_id, first_step, first_step_minutes, json.dumps(steps), source),
+        )
+        self.conn.commit()
+
+    def get_decomposition(self, todo_id: int) -> dict[str, Any] | None:
+        """Return a todo's decomposition (``steps`` decoded), or ``None``."""
+        row = self.conn.execute(
+            "SELECT first_step, first_step_minutes, steps, source "
+            "FROM todo_decompositions WHERE todo_id = ?",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["steps"] = json.loads(d["steps"]) if d["steps"] else []
+        except (ValueError, TypeError):
+            d["steps"] = []
+        return d

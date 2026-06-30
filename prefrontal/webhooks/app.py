@@ -82,6 +82,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
+from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, augment_todo, decompose_task
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -229,7 +230,9 @@ class TodoCreate(BaseModel):
     estimate_minutes: float | None = Field(
         default=None, description="How long it'll take (enables time-fitting)."
     )
-    priority: int = Field(default=1, ge=0, le=3, description="0 low … 3 urgent.")
+    priority: int | None = Field(
+        default=None, ge=0, le=3, description="0 low … 3 urgent. Omit to infer."
+    )
     deadline: str | None = Field(default=None, description="Optional ISO-8601 deadline.")
     energy: str | None = Field(default=None, description="low | medium | high.")
 
@@ -243,6 +246,29 @@ def _state_float(memory: MemoryStore, key: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _decompose_and_store(
+    memory: MemoryStore, todo_id: int, title: str, client: Any
+) -> dict[str, Any]:
+    """Generate a todo's first-step decomposition, persist it, and return it."""
+    max_first = _state_float(
+        memory, "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
+    )
+    d = decompose_task(title, max_first_minutes=max_first, client=client)
+    memory.set_decomposition(
+        todo_id,
+        first_step=d.first_step,
+        first_step_minutes=d.first_step_minutes,
+        steps=d.steps,
+        source=d.source,
+    )
+    return {
+        "first_step": d.first_step,
+        "first_step_minutes": d.first_step_minutes,
+        "steps": d.steps,
+        "source": d.source,
+    }
 
 
 def get_store(request: Request) -> MemoryStore:
@@ -907,35 +933,101 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Add an open todo (an open loop to fit into free time later)."""
+        """Add an open todo, auto-filling any fields you didn't supply.
+
+        Missing ``estimate_minutes``/``priority``/``energy``/``deadline`` are
+        inferred (local model → keyword heuristic → default) so the todo is
+        schedulable and honestly sortable. Supplied values are kept as-is; the
+        response's ``augmented`` map says where each field came from.
+        """
         _verify_token(resolved_settings, x_prefrontal_token)
-        deadline = None
+        # A user-supplied deadline is validated strictly (422 on garbage); an
+        # inferred one is best-effort (dropped if it somehow won't parse).
+        user_deadline = None
         if payload.deadline:
             try:
-                deadline = to_utc(payload.deadline)
+                user_deadline = to_utc(payload.deadline)
             except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Bad deadline: {exc}",
                 ) from exc
+
+        aug = augment_todo(
+            payload.title,
+            estimate_minutes=payload.estimate_minutes,
+            priority=payload.priority,
+            energy=payload.energy,
+            deadline=payload.deadline,
+            client=ollama_client,
+        )
+        deadline = user_deadline
+        if user_deadline is None and aug.deadline:
+            try:
+                deadline = to_utc(aug.deadline)
+            except ValueError:
+                deadline = None
+
         todo_id = memory.add_todo(
             payload.title,
             notes=payload.notes,
-            estimate_minutes=payload.estimate_minutes,
-            priority=payload.priority,
+            estimate_minutes=aug.estimate_minutes,
+            priority=aug.priority,
             deadline=deadline,
-            energy=payload.energy,
+            energy=aug.energy,
         )
-        return {"todo_id": todo_id}
+        # Big tasks stall on starting — auto-decompose into a tiny first step.
+        threshold = _state_float(memory, "decomposition_threshold_minutes", 30.0)
+        decomposition = None
+        if aug.estimate_minutes >= threshold:
+            decomposition = _decompose_and_store(
+                memory, todo_id, payload.title, ollama_client
+            )
+        return {
+            "todo_id": todo_id,
+            "estimate_minutes": aug.estimate_minutes,
+            "priority": aug.priority,
+            "energy": aug.energy,
+            "deadline": deadline,
+            "augmented": aug.sources,
+            "decomposition": decomposition,
+        }
 
     @app.get("/todos", tags=["todos"])
     def todos_list(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """List open todos (priority then deadline order)."""
+        """List open todos (priority then deadline order), with decompositions."""
         _verify_token(resolved_settings, x_prefrontal_token)
-        return {"todos": memory.open_todos()}
+        todos = memory.open_todos()
+        for todo in todos:
+            todo["decomposition"] = memory.get_decomposition(todo["id"])
+        return {"todos": todos}
+
+    @app.post("/todos/{todo_id}/decompose", tags=["todos"])
+    def todo_decompose(
+        todo_id: int,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Break an open todo into a tiny first step (+ remaining steps).
+
+        On-demand counterpart to the auto-decompose on big todos — call it the
+        moment you're about to start something and need a way in. Regenerates
+        and replaces any existing decomposition.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo["status"] != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        decomposition = _decompose_and_store(
+            memory, todo_id, todo["title"], ollama_client
+        )
+        return {"todo_id": todo_id, "decomposition": decomposition}
 
     @app.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(
