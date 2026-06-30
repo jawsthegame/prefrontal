@@ -930,6 +930,25 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def update_todo_deadline(self, todo_id: int, deadline: str | None) -> bool:
+        """Set (or clear) an open todo's deadline. Returns ``True`` if it changed.
+
+        Plans drift; a deadline set when the todo was created — or inferred from
+        its title — often needs to move. Only open todos are editable (a closed
+        todo's deadline is moot), so this no-ops on a done/dropped/absent todo.
+
+        Args:
+            todo_id: The todo to update.
+            deadline: A UTC deadline (``YYYY-MM-DD HH:MM:SS``), or ``None`` to clear it.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET deadline = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'open'",
+            (deadline, todo_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 
@@ -1118,7 +1137,12 @@ class MemoryStore:
         steps: list[str],
         source: str,
     ) -> None:
-        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded."""
+        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded.
+
+        Replacing a decomposition leaves ``done_steps`` unset (NULL), which resets
+        any per-step progress — the steps themselves changed, so old check-offs no
+        longer apply.
+        """
         self.conn.execute(
             "INSERT OR REPLACE INTO todo_decompositions "
             "(todo_id, first_step, first_step_minutes, steps, source) "
@@ -1128,9 +1152,13 @@ class MemoryStore:
         self.conn.commit()
 
     def get_decomposition(self, todo_id: int) -> dict[str, Any] | None:
-        """Return a todo's decomposition (``steps`` decoded), or ``None``."""
+        """Return a todo's decomposition, or ``None``.
+
+        ``steps`` is decoded to a list of strings and ``done_steps`` to a sorted
+        list of completed step indices (0 = ``first_step``, 1..N = ``steps``).
+        """
         row = self.conn.execute(
-            "SELECT first_step, first_step_minutes, steps, source "
+            "SELECT first_step, first_step_minutes, steps, source, done_steps "
             "FROM todo_decompositions WHERE todo_id = ?",
             (todo_id,),
         ).fetchone()
@@ -1141,4 +1169,55 @@ class MemoryStore:
             d["steps"] = json.loads(d["steps"]) if d["steps"] else []
         except (ValueError, TypeError):
             d["steps"] = []
+        d["done_steps"] = self._decode_done_steps(d.get("done_steps"))
         return d
+
+    @staticmethod
+    def _decode_done_steps(raw: Any) -> list[int]:
+        """Decode the stored ``done_steps`` JSON into a sorted list of ints."""
+        try:
+            value = json.loads(raw) if raw else []
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(value, list):
+            return []
+        return sorted({int(i) for i in value if isinstance(i, int) and not isinstance(i, bool)})
+
+    def set_step_done(self, todo_id: int, step_index: int, done: bool = True) -> bool:
+        """Mark one decomposed step done (or undone). Returns ``True`` if valid.
+
+        Steps are indexed with ``0`` = ``first_step`` and ``1..N`` = the remaining
+        ``steps``, so a decomposition with M remaining steps has indices ``0..M``.
+        Ticking a step off is its own small win — visible progress is what keeps a
+        broken-down task moving. No-ops (returns ``False``) when the todo has no
+        decomposition or ``step_index`` is out of range.
+
+        Args:
+            todo_id: The todo whose decomposition to update.
+            step_index: Which step (``0`` = first step).
+            done: ``True`` to mark done, ``False`` to clear it.
+        """
+        row = self.conn.execute(
+            "SELECT steps, done_steps FROM todo_decompositions WHERE todo_id = ?",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            steps = json.loads(row["steps"]) if row["steps"] else []
+        except (ValueError, TypeError):
+            steps = []
+        total = 1 + (len(steps) if isinstance(steps, list) else 0)
+        if step_index < 0 or step_index >= total:
+            return False
+        done_set = set(self._decode_done_steps(row["done_steps"]))
+        if done:
+            done_set.add(step_index)
+        else:
+            done_set.discard(step_index)
+        self.conn.execute(
+            "UPDATE todo_decompositions SET done_steps = ? WHERE todo_id = ?",
+            (json.dumps(sorted(done_set)), todo_id),
+        )
+        self.conn.commit()
+        return True

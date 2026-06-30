@@ -342,6 +342,23 @@ class TodoCreate(BaseModel):
     energy: str | None = Field(default=None, description="low | medium | high.")
 
 
+class TodoDeadlineUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/deadline`` — move or clear a todo's deadline."""
+
+    deadline: str | None = Field(
+        default=None,
+        description="New ISO-8601 deadline, or null to clear it entirely.",
+    )
+
+
+class StepDone(BaseModel):
+    """Body of ``POST /todos/{id}/steps/{i}/done`` — tick a decomposed step."""
+
+    done: bool = Field(
+        default=True, description="True to mark the step done, false to clear it."
+    )
+
+
 def _state_float(memory: MemoryStore, key: str, default: float) -> float:
     """Read a coaching-state value as a float, falling back on missing/bad data."""
     raw = memory.get_state(key)
@@ -1598,6 +1615,66 @@ def create_app(
             memory, todo_id, todo["title"], ollama_client
         )
         return {"todo_id": todo_id, "decomposition": decomposition}
+
+    @app.post("/todos/{todo_id}/deadline", tags=["todos"])
+    def todo_set_deadline(
+        todo_id: int,
+        payload: TodoDeadlineUpdate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Move (or clear) an open todo's deadline.
+
+        Plans drift — a deadline set at creation or inferred from the title often
+        needs to change. A non-empty ``deadline`` is normalized to UTC (422 on
+        garbage); ``null``/empty clears it. Declared before the ``{action}`` route
+        so "deadline" isn't mistaken for a done/drop action.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        deadline = None
+        if payload.deadline:
+            try:
+                deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+        if not memory.update_todo_deadline(todo_id, deadline):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "deadline": deadline}
+
+    @app.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
+    def todo_step_done(
+        todo_id: int,
+        step_index: int,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        payload: StepDone | None = None,
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Tick a single decomposed step done (or clear it).
+
+        Index ``0`` is the first step and ``1..N`` are the remaining steps.
+        Checking steps off one at a time turns a stalled task into visible
+        progress. Body ``{"done": false}`` un-ticks a step; the body is optional
+        and defaults to marking it done. Returns the refreshed decomposition.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        done = payload.done if payload is not None else True
+        if not memory.set_step_done(todo_id, step_index, done=done):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no step {step_index}.",
+            )
+        return {
+            "todo_id": todo_id,
+            "step_index": step_index,
+            "done": done,
+            "decomposition": memory.get_decomposition(todo_id),
+        }
 
     @app.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(

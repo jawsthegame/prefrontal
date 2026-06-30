@@ -192,12 +192,18 @@ CREATE INDEX IF NOT EXISTS idx_mail_received ON mail_messages (received_at);
 -- remaining steps, for todos big enough to stall on (≥ decomposition_threshold).
 -- The first step is the initiation lever; the rest stays collapsed so the list
 -- doesn't re-trigger paralysis. One row per todo (regenerate = replace).
+--
+-- `done_steps` is a JSON array of completed step indices, where index 0 is the
+-- first_step and 1..N are `steps`. Checking off a step is its own little win —
+-- visible progress is what keeps a decomposed task moving. Regenerating the
+-- decomposition replaces the row, which resets progress (the steps changed).
 CREATE TABLE IF NOT EXISTS todo_decompositions (
     todo_id            INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
     first_step         TEXT    NOT NULL,
     first_step_minutes REAL,
     steps              TEXT,   -- JSON array of the remaining ordered steps
     source             TEXT,   -- llm | heuristic
+    done_steps         TEXT,   -- JSON array of completed step indices (0 = first_step)
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
