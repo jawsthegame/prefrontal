@@ -116,3 +116,12 @@ def test_token_header_still_works_alongside_cookie(client):
     """Machine clients are unaffected: the per-user token still authenticates."""
     assert client.get("/todos", headers={"X-Prefrontal-Token": "tok-tom"}).status_code == 200
     assert client.get("/todos").status_code == 401  # no token, no cookie
+
+
+def test_signed_state_no_cookie_needed():
+    """CSRF state is a signed token (survives the cross-site redirect; no cookie)."""
+    st = oauth.sign_state(SECRET)
+    assert oauth.verify_state(st, SECRET) is True
+    assert oauth.verify_state("forged", SECRET) is False
+    assert oauth.verify_state(oauth.sign_state(SECRET, now=0), SECRET) is False  # expired
+    assert oauth.verify_state(st, "other-secret") is False
