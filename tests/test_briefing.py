@@ -22,6 +22,7 @@ from prefrontal.impact import utcnow
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "brief-secret"
 
@@ -33,7 +34,7 @@ def _at(dt) -> str:
 @pytest.fixture()
 def store():
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 def test_build_briefing_collects_today_conflicts_slips(store):

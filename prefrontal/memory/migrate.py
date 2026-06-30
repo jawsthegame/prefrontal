@@ -1,0 +1,293 @@
+"""Migrate an existing single-tenant database into the multi-tenant schema.
+
+The deployed ``prefrontal.db`` predates multi-tenancy: its per-user tables have
+no ``user_id`` column and their uniqueness constraints are global (e.g.
+``coaching_state.key UNIQUE``). This module brings such a database up to the
+shape in :mod:`prefrontal.memory.schema` **non-destructively and idempotently**:
+
+1. Create the ``users`` table (idempotent).
+2. If there is no user yet but per-user data exists, create the **legacy user**
+   from ``coaching_state.user_name`` (or a supplied handle, default ``me``) with
+   a freshly generated token, printed once by the caller. Capture its id.
+3. ``ALTER TABLE … ADD COLUMN user_id`` on every per-user table that lacks it,
+   then ``UPDATE … SET user_id = <legacy_id>``.
+4. Rebuild the tables whose *uniqueness* changed (``coaching_state``,
+   ``patterns``, ``dismissed_conflicts``, ``kind_feedback``, ``mail_messages``,
+   ``places``, ``profile_cache``) using SQLite's standard table-rebuild dance,
+   so the new composite uniques/indexes match ``schema.sql``.
+5. Stamp ``schema_version`` so the migration is a no-op on the next run.
+
+Fresh installs never hit this — ``schema.sql`` already has the final shape and
+:func:`prefrontal.memory.store.provision_user` seeds the first user.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+
+from prefrontal.memory.store import MemoryStore, generate_token, seed_user_state
+
+#: Schema version stamped once this migration has run. Bumping the on-disk
+#: ``user_version`` pragma to this value marks the database multi-tenant.
+MULTI_TENANT_VERSION = 1
+
+#: Tables that gained a ``user_id`` column. The ones in ``_REBUILD`` additionally
+#: changed a uniqueness constraint and so need the full rebuild dance; the rest
+#: only need an ``ADD COLUMN`` + backfill.
+_USER_TABLES = (
+    "episodes",
+    "patterns",
+    "coaching_state",
+    "outings",
+    "focus_sessions",
+    "commitments",
+    "todos",
+    "dismissed_conflicts",
+    "kind_feedback",
+    "mail_messages",
+    "places",
+    "profile_cache",
+)
+
+
+@dataclass(frozen=True)
+class MigrationResult:
+    """Outcome of :func:`migrate_to_multi_tenant`.
+
+    Attributes:
+        migrated: ``True`` if the database was upgraded on this call; ``False``
+            if it was already multi-tenant (a no-op).
+        legacy_handle: The handle of the legacy user, when one was created.
+        token: The legacy user's raw token (shown once), when one was created.
+        rows_backfilled: ``{table: row_count}`` of rows assigned to the legacy
+            user, for the caller to report.
+    """
+
+    migrated: bool
+    legacy_handle: str | None = None
+    token: str | None = None
+    rows_backfilled: dict[str, int] | None = None
+
+
+def _schema_version(conn: sqlite3.Connection) -> int:
+    """Return the stamped ``user_version`` pragma (0 on an unstamped DB)."""
+    return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names of ``table`` (empty set if it does not exist)."""
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def needs_migration(conn: sqlite3.Connection) -> bool:
+    """Report whether ``conn`` holds a *legacy* single-tenant database to migrate.
+
+    True only when a per-user table already exists **without** a ``user_id``
+    column. A brand-new, empty database (no tables yet) is *not* legacy — there
+    is nothing to backfill, and ``schema.sql`` will create the final shape — so
+    this returns ``False`` for it (and for an already-migrated DB).
+    """
+    if _schema_version(conn) >= MULTI_TENANT_VERSION:
+        return False
+    cols = _table_columns(conn, "episodes")
+    return bool(cols) and "user_id" not in cols
+
+
+def is_multi_tenant(conn: sqlite3.Connection) -> bool:
+    """Report whether ``conn``'s database is on (or ready for) the row-scoped schema.
+
+    The inverse of a legacy database needing migration: ``True`` for a fresh DB
+    (nothing to migrate), an already-migrated DB, or one stamped current.
+    """
+    return not needs_migration(conn)
+
+
+def migrate_to_multi_tenant(
+    conn: sqlite3.Connection, *, handle: str | None = None
+) -> MigrationResult:
+    """Upgrade a single-tenant database in place. Idempotent.
+
+    Self-contained: it creates the ``users`` table, adds the ``user_id`` column
+    to every per-user table, backfills it to a single legacy user, and rebuilds
+    the tables whose uniqueness changed. It does **not** depend on ``schema.sql``
+    having run (``init_db`` calls this *before* applying the new schema, because
+    the new indexes reference ``user_id``). Runs the rebuild inside a transaction
+    with foreign keys disabled, per SQLite's documented procedure.
+
+    Args:
+        conn: An open connection to the database to migrate.
+        handle: Handle for the legacy user. Defaults to ``coaching_state.user_name``
+            if set, else ``me``.
+
+    Returns:
+        A :class:`MigrationResult` describing what happened.
+    """
+    if not needs_migration(conn):
+        return MigrationResult(migrated=False)
+
+    # Read the legacy user's name (pre-migration coaching_state has no user_id,
+    # so a plain key lookup works) before we touch the table.
+    if handle is None:
+        row = conn.execute(
+            "SELECT value FROM coaching_state WHERE key = 'user_name'"
+        ).fetchone()
+        handle = (row["value"].strip() if row and row["value"] else "") or "me"
+
+    token = generate_token()
+    from prefrontal.memory.store import sha256_hex
+
+    # Create the users table up front (the migration's INSERT needs it; a fresh
+    # schema.sql run later is an idempotent no-op over it).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT NOT NULL UNIQUE, "
+        "display_name TEXT, token_hash TEXT NOT NULL UNIQUE, "
+        "status TEXT NOT NULL DEFAULT 'active', "
+        "is_operator BOOLEAN NOT NULL DEFAULT 0, "
+        "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with conn:  # one transaction; commits on success, rolls back on error
+            legacy_id = conn.execute(
+                "INSERT INTO users (handle, display_name, token_hash, is_operator) "
+                "VALUES (?, ?, ?, 1)",
+                (handle, handle, sha256_hex(token)),
+            ).lastrowid
+
+            counts: dict[str, int] = {}
+            for table in _USER_TABLES:
+                cols = _table_columns(conn, table)
+                if not cols:
+                    continue  # table absent in this DB — nothing to migrate
+                if "user_id" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
+                cur = conn.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL",
+                    (legacy_id,),
+                )
+                counts[table] = cur.rowcount
+
+            # Rebuild the tables whose *uniqueness* changed, so the new composite
+            # uniques replace the legacy global ones. (The leftover single-column
+            # indexes are harmless and get superseded by schema.sql's user-scoped
+            # ones; we drop the ones that would otherwise duplicate.)
+            _rebuild_constraints(conn, legacy_id)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    conn.execute(f"PRAGMA user_version = {MULTI_TENANT_VERSION}")
+    conn.commit()
+    # Seed any coaching defaults / module state the legacy user is missing
+    # (their existing values are preserved by seed_user_state's non-clobbering
+    # writes), so a migrated user looks like a freshly provisioned one.
+    seed_user_state(MemoryStore(conn).scoped(int(legacy_id)))
+    return MigrationResult(
+        migrated=True,
+        legacy_handle=handle,
+        token=token,
+        rows_backfilled=counts,
+    )
+
+
+def _rebuild_constraints(conn: sqlite3.Connection, legacy_id: int) -> None:
+    """Rebuild the tables whose *uniqueness* changed into per-user composites.
+
+    SQLite cannot alter a column-level ``UNIQUE`` in place, so these tables use
+    the create-copy-drop-rename dance. The leftover single-column indexes on the
+    other tables are dropped (``schema.sql``, applied right after the migration,
+    adds the leading-``user_id`` replacements). Must run with foreign keys off,
+    inside the migration's transaction.
+    """
+    # Drop legacy indexes that schema.sql replaces with user-scoped equivalents,
+    # so there is no stale/duplicate index after the upgrade.
+    for legacy_index in (
+        "idx_episodes_timestamp",
+        "idx_outings_status",
+        "idx_focus_sessions_status",
+        "idx_commitments_external",
+        "idx_commitments_start",
+        "idx_todos_status",
+        "idx_mail_account",
+        "idx_mail_needs_action",
+        "idx_mail_received",
+    ):
+        conn.execute(f"DROP INDEX IF EXISTS {legacy_index}")
+
+    _rebuild_table(
+        conn,
+        "coaching_state",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE coaching_state_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "key TEXT NOT NULL, value TEXT, "
+            "last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "source TEXT, UNIQUE (user_id, key))"
+        ),
+        columns="id, user_id, key, value, last_updated, source",
+    )
+    _rebuild_table(
+        conn,
+        "patterns",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE patterns_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "pattern_type TEXT NOT NULL, context_key TEXT NOT NULL, "
+            "observed_value REAL, predicted_value REAL, variance REAL, "
+            "sample_size INTEGER DEFAULT 0, confidence REAL DEFAULT 0.0, "
+            "last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "UNIQUE (user_id, pattern_type, context_key))"
+        ),
+        columns=(
+            "id, user_id, pattern_type, context_key, observed_value, "
+            "predicted_value, variance, sample_size, confidence, last_updated"
+        ),
+    )
+    _rebuild_table(
+        conn,
+        "dismissed_conflicts",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE dismissed_conflicts_new ("
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "signature TEXT NOT NULL, "
+            "dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (user_id, signature))"
+        ),
+        columns="user_id, signature, dismissed_at",
+    )
+
+
+def _rebuild_table(
+    conn: sqlite3.Connection,
+    table: str,
+    legacy_id: int,
+    *,
+    new_table: str,
+    columns: str,
+) -> None:
+    """Run SQLite's create-copy-drop-rename rebuild for one table.
+
+    A no-op if ``table`` does not exist (e.g. a partial fixture DB). Any row that
+    still has a NULL ``user_id`` after the backfill (there should be none) is
+    coalesced to ``legacy_id`` so the new ``NOT NULL`` constraint holds.
+    """
+    if not _table_columns(conn, table):
+        return
+    conn.execute(f"DROP TABLE IF EXISTS {table}_new")
+    conn.execute(new_table)
+    select_cols = ", ".join(
+        f"COALESCE(user_id, {legacy_id})" if c == "user_id" else c
+        for c in (col.strip() for col in columns.split(","))
+    )
+    conn.execute(
+        f"INSERT INTO {table}_new ({columns}) SELECT {select_cols} FROM {table}"
+    )
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")

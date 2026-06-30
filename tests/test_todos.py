@@ -31,6 +31,7 @@ from prefrontal.todos import (
     record_todo_closed,
     todo_episode_fields,
 )
+from tests.conftest import scoped_default
 
 
 def _offline_ollama() -> OllamaClient:
@@ -61,7 +62,7 @@ def _at(dt: datetime) -> str:
 @pytest.fixture()
 def store():
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 def test_todo_lifecycle(store):
@@ -134,7 +135,7 @@ def test_suggest_for_windows_no_double_booking():
 def store_open():
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

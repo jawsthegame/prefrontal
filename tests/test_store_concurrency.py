@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, provision_user
 
 
 def _start_at(minutes_from_now: float) -> str:
@@ -73,16 +73,20 @@ def test_concurrent_reads_always_see_every_commitment(tmp_path):
     """
     store = MemoryStore.threaded(str(tmp_path / "memory.db"))
     try:
+        # provision_user writes (and seeds state), so do it before any threads.
+        user, _ = provision_user(store, "tester", is_operator=True)
+        scoped = store.scoped(user["id"])
+
         expected = 12
         for i in range(expected):
-            store.upsert_commitment(
+            scoped.upsert_commitment(
                 title=f"Event {i}",
                 start_at=_start_at(60 + i),
                 external_id=f"feed:{i}",
             )
 
         def read_count(_: int) -> int:
-            return len(store.upcoming_commitments())
+            return len(scoped.upcoming_commitments())
 
         with ThreadPoolExecutor(max_workers=16) as pool:
             counts = list(pool.map(read_count, range(400)))
@@ -101,9 +105,13 @@ def test_concurrent_reads_and_writes_stay_consistent(tmp_path):
     """
     store = MemoryStore.threaded(str(tmp_path / "memory.db"))
     try:
+        # provision_user writes (and seeds state), so do it before any threads.
+        user, _ = provision_user(store, "tester", is_operator=True)
+        scoped = store.scoped(user["id"])
+
         base = 8
         for i in range(base):
-            store.upsert_commitment(
+            scoped.upsert_commitment(
                 title=f"Base {i}", start_at=_start_at(30 + i), external_id=f"base:{i}"
             )
 
@@ -113,12 +121,12 @@ def test_concurrent_reads_and_writes_stay_consistent(tmp_path):
         writer_ns = [n for n in range(n_tasks) if n % 3 == 0]
 
         def writer(i: int) -> None:
-            store.upsert_commitment(
+            scoped.upsert_commitment(
                 title=f"New {i}", start_at=_start_at(500 + i), external_id=f"new:{i}"
             )
 
         def reader(_: int) -> int:
-            return len(store.upcoming_commitments())
+            return len(scoped.upcoming_commitments())
 
         with ThreadPoolExecutor(max_workers=12) as pool:
             tasks = [
@@ -129,7 +137,7 @@ def test_concurrent_reads_and_writes_stay_consistent(tmp_path):
 
         # Reads land somewhere between the starting count and the final total;
         # none are torn (negative, zero when rows exist, or above the ceiling).
-        final = len(store.upcoming_commitments())
+        final = len(scoped.upcoming_commitments())
         assert final == base + len(writer_ns)
         assert all(base <= c <= final for c in counts)
     finally:
@@ -145,10 +153,14 @@ def test_reaps_connections_of_exited_threads(tmp_path):
     """
     store = MemoryStore.threaded(str(tmp_path / "memory.db"))
     try:
+        # provision_user writes (and seeds state), so do it before any threads.
+        user, _ = provision_user(store, "tester", is_operator=True)
+        scoped = store.scoped(user["id"])
+
         captured: list[sqlite3.Connection] = []
 
         def open_then_die(i: int) -> None:
-            store.upsert_commitment(
+            scoped.upsert_commitment(
                 title="x", start_at=_start_at(10), external_id=f"die:{i}"
             )
             captured.append(store.conn)  # this thread's connection
@@ -179,10 +191,14 @@ def test_close_releases_every_thread_connection(tmp_path):
     """close() shuts every per-thread connection; reuse after close fails."""
     store = MemoryStore.threaded(str(tmp_path / "memory.db"))
 
+    # provision_user writes (and seeds state), so do it before any threads.
+    user, _ = provision_user(store, "tester", is_operator=True)
+    scoped = store.scoped(user["id"])
+
     conns: list[object] = []
 
     def touch(i: int) -> None:
-        store.upsert_commitment(
+        scoped.upsert_commitment(
             title="x", start_at=_start_at(10), external_id=f"touch:{i}"
         )
         conns.append(store.conn)

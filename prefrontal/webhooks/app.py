@@ -34,10 +34,14 @@ Routes:
 - ``GET  /dashboard`` — read-only monitoring UI (self-contained HTML shell).
 - ``GET  /family`` — calm, non-technical family view (right now + today).
 
-Authentication is a shared secret in the ``X-Prefrontal-Token`` header, checked
-against :attr:`prefrontal.config.Settings.webhook_secret`. iOS Shortcuts can set
-custom headers, so this stays low-friction. If no secret is configured, auth is
-disabled — only appropriate on a fully trusted local network.
+Authentication resolves the ``X-Prefrontal-Token`` header to a **user** (see
+:func:`resolve_user`): the token's ``sha256`` is matched against the ``users``
+table and the request is scoped to that user, so one person never sees another's
+data. iOS Shortcuts can set custom headers, so this stays low-friction. A
+deployment may set ``PREFRONTAL_DEFAULT_USER`` so tokenless requests resolve to
+one user (the single-user / trusted-LAN compatibility mode), and the legacy
+``PREFRONTAL_WEBHOOK_SECRET`` still works as a bootstrap operator token until
+per-user tokens are provisioned.
 
 The app is built by :func:`create_app`, a factory so tests can inject an
 in-memory store. Importing :data:`app` builds a default instance from the
@@ -47,7 +51,9 @@ serve`` CLI command.
 
 from __future__ import annotations
 
+import hmac
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -98,7 +104,7 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
-from prefrontal.memory.store import MemoryStore, feed_label
+from prefrontal.memory.store import MemoryStore, feed_label, provision_user, sha256_hex
 from prefrontal.memory.summarizer import (
     build_profile,
     cache_is_stale,
@@ -350,6 +356,18 @@ class MailSync(BaseModel):
     )
 
 
+class UserCreate(BaseModel):
+    """Body of ``POST /admin/users`` — provision a user (operator-only)."""
+
+    handle: str = Field(description="Unique short handle, e.g. 'sam'.")
+    display_name: str | None = Field(
+        default=None, description="Name shown in nudges/briefings."
+    )
+    is_operator: bool = Field(
+        default=False, description="Whether the user may call the admin surface."
+    )
+
+
 class TodoCreate(BaseModel):
     """Body of ``POST /todos`` — an open loop to fit into free time."""
 
@@ -393,6 +411,26 @@ def _state_float(memory: MemoryStore, key: str, default: float) -> float:
         return default
 
 
+#: Per-user delivery routing keys read from coaching state and returned to n8n
+#: so a nudge reaches the right user's phone (the credentials stay global in
+#: n8n; only the destination is per-user). See docs/multi-tenant.md §6.5.
+_DELIVERY_KEYS = ("pushover_user_key", "twilio_to", "twilio_from", "ntfy_topic")
+
+
+def _delivery_fields(memory: MemoryStore) -> dict[str, Any]:
+    """Return ``{delivery: {...}, delivery_configured: bool}`` for the scoped user.
+
+    n8n reads ``delivery`` to route a nudge to this user's target instead of a
+    hardcoded credential; ``delivery_configured`` is ``False`` when none is set
+    (so the dashboard can warn and n8n can fall back to the operator default).
+    """
+    delivery = {k: memory.get_state(k) for k in _DELIVERY_KEYS}
+    return {
+        "delivery": delivery,
+        "delivery_configured": any(v for v in delivery.values()),
+    }
+
+
 def _decompose_and_store(
     memory: MemoryStore, todo_id: int, title: str, client: Any
 ) -> dict[str, Any]:
@@ -416,39 +454,102 @@ def _decompose_and_store(
     }
 
 
+@dataclass(frozen=True)
+class ScopedRequest:
+    """The resolved identity + per-user store for an authenticated request.
+
+    Produced by the :func:`resolve_user` dependency. ``store`` is already scoped
+    to ``user`` (it injects ``user["id"]`` into every statement), so a handler
+    cannot accidentally read or write another user's rows.
+    """
+
+    user: dict[str, Any]
+    store: MemoryStore
+
+
 def get_store(request: Request) -> MemoryStore:
-    """FastAPI dependency returning the app's memory store.
+    """FastAPI dependency returning the app's **unscoped** memory store.
 
-    Defined at module level (not as a closure) so that, with
-    ``from __future__ import annotations`` in effect, FastAPI can resolve the
-    ``Depends(get_store)`` annotation via ``get_type_hints``.
-
-    Args:
-        request: The incoming request, used to reach ``app.state.store``.
-
-    Returns:
-        The process-wide :class:`MemoryStore`.
+    Used by the user-resolution layer and the admin surface. Defined at module
+    level (not a closure) so that, with ``from __future__ import annotations`` in
+    effect, FastAPI can resolve the ``Depends(get_store)`` annotation via
+    ``get_type_hints``.
     """
     return request.app.state.store
 
 
-def _verify_token(settings: Settings, provided: str | None) -> None:
-    """Enforce the shared-secret header, raising HTTP 401 on mismatch.
+def _resolve_user_row(
+    request: Request, token: str | None
+) -> dict[str, Any]:
+    """Resolve an ``X-Prefrontal-Token`` value to an active user row.
 
-    Args:
-        settings: Active settings (provides the expected secret).
-        provided: The value of the ``X-Prefrontal-Token`` header, if any.
+    Resolution order:
+
+    1. A blank/absent token resolves to ``PREFRONTAL_DEFAULT_USER`` when one is
+       configured (the single-user / trusted-LAN compatibility mode); without a
+       default user a token is required.
+    2. A token whose ``sha256`` matches an active user resolves to that user.
+    3. The legacy ``PREFRONTAL_WEBHOOK_SECRET`` resolves to the first operator
+       user — a bootstrap so an operator can provision the first real tokens.
 
     Raises:
-        HTTPException: 401 if auth is enabled and the token is missing or wrong.
+        HTTPException: 401 if no active user can be resolved.
     """
-    if not settings.auth_enabled:
-        return
-    if provided != settings.webhook_secret:
+    store: MemoryStore = request.app.state.store
+    settings: Settings = request.app.state.settings
+
+    if not token:
+        if settings.default_user:
+            row = store.get_user(settings.default_user)
+            if row is not None and row["status"] == "active":
+                return row
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing X-Prefrontal-Token header.",
+            detail="Missing X-Prefrontal-Token header.",
         )
+
+    row = store.get_user_by_token_hash(sha256_hex(token))
+    if row is not None and row["status"] == "active":
+        return row
+
+    # Bootstrap: the legacy shared secret maps to the first operator user, so a
+    # fresh deployment can authenticate before any per-user token is minted.
+    if settings.webhook_secret and hmac.compare_digest(token, settings.webhook_secret):
+        for candidate in store.list_users():
+            if candidate["is_operator"] and candidate["status"] == "active":
+                return store.get_user(candidate["handle"])
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing X-Prefrontal-Token header.",
+    )
+
+
+def resolve_user(
+    request: Request,
+    x_prefrontal_token: Annotated[str | None, Header()] = None,
+) -> ScopedRequest:
+    """FastAPI dependency: resolve the request's token to a scoped store + user.
+
+    Replaces the old shared-secret check on every data endpoint. Returns a
+    :class:`ScopedRequest` carrying the user row and a store already scoped to
+    that user, so handlers neither see another user's data nor have to remember
+    a ``WHERE user_id = ?``.
+    """
+    user = _resolve_user_row(request, x_prefrontal_token)
+    return ScopedRequest(user=user, store=request.app.state.store.scoped(user["id"]))
+
+
+def require_operator(
+    ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+) -> ScopedRequest:
+    """Like :func:`resolve_user` but also requires the user be an operator (403)."""
+    if not ctx.user.get("is_operator"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator privileges required.",
+        )
+    return ctx
 
 
 #: Per-request timeout (seconds) for the hot-path window inference. Kept short:
@@ -570,7 +671,7 @@ def create_app(
 
     @app.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(
-        memory: Annotated[MemoryStore, Depends(get_store)],
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
         response: Response,
         refresh: Annotated[
             bool,
@@ -580,7 +681,6 @@ def create_app(
             Literal["narrative", "structured"],
             Query(alias="format", description="'narrative' (cached prose) or 'structured'."),
         ] = "narrative",
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> str:
         """Return the behavioral profile, preferring the cached LLM narrative.
 
@@ -602,7 +702,7 @@ def create_app(
         back to the structured profile so the endpoint always returns something.
         Auth-guarded like the webhooks.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
 
         if fmt == "structured":
             response.headers["X-Profile-Source"] = "structured"
@@ -637,8 +737,7 @@ def create_app(
     )
     def shortcut(
         payload: ShortcutPayload,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> EpisodeCreated:
         """Log a one-tap outcome from an iOS Shortcut.
 
@@ -646,7 +745,7 @@ def create_app(
         ``outcome``; ``log`` uses the explicit ``outcome`` field. Best-effort
         fires an ``episode.logged`` event to n8n (a no-op unless configured).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
 
         if payload.action == "log":
             if not payload.outcome:
@@ -686,15 +785,15 @@ def create_app(
     @app.post("/webhooks/n8n", tags=["ingestion"])
     async def n8n_inbound(
         request: Request,
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Receive an event pushed by an n8n workflow.
 
         Currently classifies the payload via
         :func:`prefrontal.integrations.n8n.parse_inbound_event` and echoes the
         routing decision. Concrete per-event handlers are a documented TODO.
+        Authenticated like the other webhooks (no per-user data is touched yet).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
         try:
             body = await request.json()
         except Exception:
@@ -706,8 +805,7 @@ def create_app(
     @app.post("/webhooks/location", tags=["ingestion"])
     def location_ping(
         payload: LocationPing,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Record the phone's current position (from an iOS Shortcut).
 
@@ -717,17 +815,16 @@ def create_app(
         reads it to estimate travel time to upcoming commitments. A location
         automation ("when I leave Home", on a schedule, or one-tap) can POST it.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         memory.set_location(payload.lat, payload.lon, payload.accuracy_m)
         return {"stored": True, "lat": payload.lat, "lon": payload.lon}
 
     @app.get("/location", tags=["ingestion"])
     def location_get(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Return the last-known position (or ``{"location": null}`` if unset)."""
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         return {"location": memory.get_location()}
     # -- Mail ingestion ------------------------------------------------------
 
@@ -736,8 +833,7 @@ def create_app(
     )
     def mail_sync(
         payload: MailSync,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Ingest a batch of messages for one account: dedup, triage, store.
 
@@ -747,7 +843,7 @@ def create_app(
         keyword heuristic if it's unavailable — so a down model never blocks the
         sync. Re-posting the same messages is idempotent (dedup on message id).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         if not payload.account.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -775,8 +871,7 @@ def create_app(
 
     @app.get("/mail", tags=["ingestion"])
     def mail_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Read-only snapshot: recent triaged mail and the open action items.
 
@@ -784,7 +879,7 @@ def create_app(
         linked todo is still open); ``recent`` is the latest ingested mail for a
         dashboard. No side effects — safe to poll.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         return {
             "needs_action": memory.mail_needing_action(),
             "recent": memory.recent_mail(limit=30),
@@ -800,8 +895,7 @@ def create_app(
     )
     def outing_start(
         payload: OutingStart,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> OutingStarted:
         """Declare an outing: a stated intention and a time window.
 
@@ -811,7 +905,7 @@ def create_app(
         then a keyword heuristic, then a default ('llm'/'heuristic'/'default').
         Only a blank intention (nothing to reason from) responds 422.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         window = payload.time_window_minutes
         source = "explicit"
         if window is None:
@@ -846,8 +940,7 @@ def create_app(
     @app.post("/webhooks/outing/check", tags=["anchor"])
     async def outing_check(
         request: Request,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Evaluate active outings and report which nudges are due.
 
@@ -869,7 +962,7 @@ def create_app(
         nudge message). Each returned item reports its post-check ``status``
         (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         try:
             body = await request.json()
         except Exception:
@@ -885,11 +978,12 @@ def create_app(
             last = memory.get_location()
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
-        name = memory.get_state("user_name", "") or ""
+        name = ctx.user.get("display_name") or ""
         home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
         bias = _state_float(memory, "time_estimation_bias", 1.0)
         commitments = memory.upcoming_commitments()
+        delivery = _delivery_fields(memory)
 
         results: list[dict[str, Any]] = []
         for outing in memory.active_outings():
@@ -960,6 +1054,7 @@ def create_app(
                     "outcome": outcome,
                     "impact": impacts,
                     "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
+                    **delivery,
                 }
             )
         return {"active": results}
@@ -967,8 +1062,7 @@ def create_app(
     @app.post("/webhooks/outing/return", tags=["anchor"])
     def outing_return(
         payload: OutingReturn,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Close an outing and log intention-vs-actual for pattern tracking.
 
@@ -976,7 +1070,7 @@ def create_app(
         window, actual = minutes out, outcome = ``success`` if within the window
         else ``miss``) so the time-blindness learning can use it later.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         outing_id = payload.outing_id
         if outing_id is None:
             recent = memory.most_recent_active_outing()
@@ -1010,8 +1104,7 @@ def create_app(
 
     @app.get("/outings", tags=["anchor"])
     def outings_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Read-only snapshot of outings for monitoring — **no side effects**.
 
@@ -1021,7 +1114,7 @@ def create_app(
         ``level`` (computed, not recorded); recent outings are returned newest
         first for history.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         active = [
             {
                 "outing_id": o["id"],
@@ -1058,8 +1151,7 @@ def create_app(
     )
     def focus_start(
         payload: FocusStart,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> FocusStarted:
         """Declare a focus session: a stated task and an optional planned length.
 
@@ -1068,7 +1160,7 @@ def create_app(
         ``planned_minutes`` is given, and the hard biological break is keyed off
         ``hard_interrupt_minutes`` regardless. Only a blank task is rejected.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         if not payload.intended_task.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1088,8 +1180,7 @@ def create_app(
 
     @app.post("/webhooks/focus/check", tags=["focus"])
     def focus_check(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Evaluate active focus sessions and report which interrupts are due.
 
@@ -1110,8 +1201,8 @@ def create_app(
         (or :func:`prefrontal.modules.hyperfocus.is_focus_protected`) to gate
         other nudges. A ``break`` is never suppressed.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
-        name = memory.get_state("user_name", "") or ""
+        memory = ctx.store
+        name = ctx.user.get("display_name") or ""
         soft = _state_float(memory, "hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = _state_float(memory, "hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
         abandon_ratio = _state_float(
@@ -1174,8 +1265,7 @@ def create_app(
     @app.post("/webhooks/focus/end", tags=["focus"])
     def focus_end(
         payload: FocusEnd,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Close a focus session and log planned-vs-actual for pattern tracking.
 
@@ -1184,7 +1274,7 @@ def create_app(
         it. A captured ``breadcrumb`` and one-tap ``outcome`` rating ride along
         on the session row and the episode notes.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         session_id = payload.session_id
         if session_id is None:
             recent = memory.most_recent_active_focus_session()
@@ -1226,8 +1316,7 @@ def create_app(
 
     @app.get("/focus", tags=["focus"])
     def focus_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Read-only snapshot of focus sessions for monitoring — **no side effects**.
 
@@ -1237,7 +1326,7 @@ def create_app(
         ``protect`` flag (computed, not recorded); recent sessions are returned
         newest first for history.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         soft = _state_float(memory, "hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = _state_float(memory, "hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
         protect_enabled = (
@@ -1285,8 +1374,7 @@ def create_app(
     @app.post("/webhooks/calendar/sync", tags=["schedule"])
     def calendar_sync(
         payload: CalendarSync,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Sync a batch of upcoming calendar events into ``commitments``.
 
@@ -1294,7 +1382,7 @@ def create_app(
         (by ``external_id``) and prunes calendar events that disappeared. A bad
         timestamp rejects the whole batch with 422 (never partially applies).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         # Classify only when Ollama is reachable — one liveness check up front
         # avoids a slow per-event timeout storm when it's down (new events then
         # default to 'self', the conservative, conflict-preserving choice).
@@ -1333,8 +1421,7 @@ def create_app(
     @app.post("/webhooks/departure/check", tags=["schedule"])
     async def departure_check(
         request: Request,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Evaluate upcoming commitments and report whether to nudge a departure.
 
@@ -1348,7 +1435,7 @@ def create_app(
         reminder doesn't re-alert every cycle. Current coordinates may be
         overridden in the request body (``current_lat``/``current_lon``).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         try:
             body = await request.json()
         except Exception:
@@ -1364,7 +1451,7 @@ def create_app(
                 cur_lat, cur_lon = last["lat"], last["lon"]
 
         bias = _state_float(memory, "time_estimation_bias", 1.0)
-        name = memory.get_state("user_name", "") or ""
+        name = ctx.user.get("display_name") or ""
         plans = [
             plan_departure(
                 c,
@@ -1416,8 +1503,7 @@ def create_app(
     )
     def commitment_create(
         payload: CommitmentCreate,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Add a single commitment manually (source ``manual``).
 
@@ -1425,7 +1511,7 @@ def create_app(
         runs (curated places + cache always; network geocoder only when
         ``geocoding_enabled`` is on) so the departure reminder can use travel time.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         try:
             fields = normalize_event({**payload.model_dump(), "source": "manual"})
         except ValueError as exc:
@@ -1444,8 +1530,7 @@ def create_app(
 
     @app.post("/commitments/geocode", tags=["schedule"])
     def commitments_geocode(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Run a geocoding pass over commitments missing coordinates.
 
@@ -1453,14 +1538,13 @@ def create_app(
         Curated places + the cache are always consulted; the network geocoder is
         used only when ``geocoding_enabled`` is on.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         return _run_geocode(memory)
 
     @app.post("/places", status_code=status.HTTP_201_CREATED, tags=["schedule"])
     def place_create(
         payload: PlaceCreate,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Add (or update) a curated place alias used before any geocoding.
 
@@ -1468,7 +1552,7 @@ def create_app(
         updates its coordinates. Matched against a commitment's location and
         title, so "gym" resolves "Gym session" instantly and offline.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         name = normalize_query(payload.name)
         if not name:
             raise HTTPException(
@@ -1482,26 +1566,23 @@ def create_app(
 
     @app.get("/places", tags=["schedule"])
     def places_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """List curated place aliases (most specific name first)."""
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         return {"places": memory.places()}
 
     @app.get("/commitments", tags=["schedule"])
     def commitments_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """List active upcoming commitments, soonest first."""
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         return {"commitments": memory.upcoming_commitments()}
 
     @app.get("/commitments/conflicts", tags=["schedule"])
     def commitments_conflicts(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Report overlaps among upcoming commitments, split by firmness.
 
@@ -1510,7 +1591,7 @@ def create_app(
         overlapping a real event — excluding any the user has dismissed; each
         carries a ``key`` to dismiss it via ``POST /commitments/conflicts/dismiss``.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         hard, possible = partition_conflicts(
             find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
         )
@@ -1540,15 +1621,14 @@ def create_app(
     @app.post("/commitments/conflicts/dismiss", tags=["schedule"])
     def dismiss_possible_conflict(
         payload: ConflictDismiss,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Dismiss a possible conflict by its ``key`` (from the conflicts list).
 
         The dismissal sticks across re-syncs but lapses if either event moves or
         is retitled (the key is derived from start time + title).
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         memory.dismiss_conflict(payload.key)
         return {"dismissed": payload.key}
 
@@ -1556,8 +1636,7 @@ def create_app(
     def set_commitment_kind(
         commitment_id: int,
         payload: CommitmentKind,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Correct a commitment's kind (``self`` vs ``fyi``).
 
@@ -1565,7 +1644,7 @@ def create_app(
         so the classifier's prompt evolves toward the user's judgement, and marks
         the row ``kind_source='user'`` so a later sync never re-classifies it.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         kind = payload.kind.strip().lower()
         if kind not in KINDS:
             raise HTTPException(
@@ -1587,15 +1666,14 @@ def create_app(
 
     @app.get("/briefing", tags=["schedule"])
     def briefing(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Return today's morning briefing as structured data plus rendered text.
 
         n8n can deliver the ``text`` directly, or feed it to Ollama for prose
         (or call ``prefrontal summarize``-style). Always fast and model-free here.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         b = build_briefing(memory)
         return {
             "date": b.date,
@@ -1613,8 +1691,7 @@ def create_app(
     @app.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
     def todo_create(
         payload: TodoCreate,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Add an open todo, auto-filling any fields you didn't supply.
 
@@ -1623,7 +1700,7 @@ def create_app(
         schedulable and honestly sortable. Supplied values are kept as-is; the
         response's ``augmented`` map says where each field came from.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         # A user-supplied deadline is validated strictly (422 on garbage); an
         # inferred one is best-effort (dropped if it somehow won't parse).
         user_deadline = None
@@ -1678,11 +1755,10 @@ def create_app(
 
     @app.get("/todos", tags=["todos"])
     def todos_list(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """List open todos with decompositions and an avoidance flag."""
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         todos = memory.open_todos()
         avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
         for todo in todos:
@@ -1695,8 +1771,7 @@ def create_app(
 
     @app.get("/todos/avoided", tags=["todos"])
     def todos_avoided(
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """The important todos you keep skipping, worst-avoided first.
 
@@ -1704,7 +1779,7 @@ def create_app(
         open a while) so the fun/shiny task doesn't quietly win. Pure heuristic
         over age/priority/size/deadline — no extra tracking.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         items = avoided_todos(memory.open_todos(), utcnow())
         return {
             "avoided": [
@@ -1724,8 +1799,7 @@ def create_app(
     @app.post("/todos/{todo_id}/decompose", tags=["todos"])
     def todo_decompose(
         todo_id: int,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Break an open todo into a tiny first step (+ remaining steps).
 
@@ -1733,7 +1807,7 @@ def create_app(
         moment you're about to start something and need a way in. Regenerates
         and replaces any existing decomposition.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         todo = memory.get_todo(todo_id)
         if todo is None or todo["status"] != "open":
             raise HTTPException(
@@ -1749,8 +1823,7 @@ def create_app(
     def todo_set_deadline(
         todo_id: int,
         payload: TodoDeadlineUpdate,
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Move (or clear) an open todo's deadline.
 
@@ -1759,7 +1832,7 @@ def create_app(
         garbage); ``null``/empty clears it. Declared before the ``{action}`` route
         so "deadline" isn't mistaken for a done/drop action.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         deadline = None
         if payload.deadline:
             try:
@@ -1780,9 +1853,8 @@ def create_app(
     def todo_step_done(
         todo_id: int,
         step_index: int,
-        memory: Annotated[MemoryStore, Depends(get_store)],
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
         payload: StepDone | None = None,
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
         """Tick a single decomposed step done (or clear it).
 
@@ -1791,7 +1863,7 @@ def create_app(
         progress. Body ``{"done": false}`` un-ticks a step; the body is optional
         and defaults to marking it done. Returns the refreshed decomposition.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         done = payload.done if payload is not None else True
         if not memory.set_step_done(todo_id, step_index, done=done):
             raise HTTPException(
@@ -1809,8 +1881,7 @@ def create_app(
     def todo_close(
         todo_id: int,
         action: Literal["done", "drop"],
-        memory: Annotated[MemoryStore, Depends(get_store)],
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Mark a todo done or drop it.
 
@@ -1818,7 +1889,7 @@ def create_app(
         the outcome feeds the learning pass like every other touchpoint — the
         moment an avoided todo finally resolves is captured, not discarded.
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         new_status = "done" if action == "done" else "dropped"
         if not memory.close_todo(todo_id, status=new_status):
             raise HTTPException(
@@ -1835,16 +1906,15 @@ def create_app(
 
     @app.get("/todos/fit", tags=["todos"])
     def todos_fit(
-        memory: Annotated[MemoryStore, Depends(get_store)],
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
         minutes: float,
-        x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
         """Rank the open todos that fit in ``minutes`` of free time, right now.
 
         Applies the learned time bias, so a "10-minute" todo is judged at its
         realistic length. Great for "I have 20 minutes — what can I knock out?"
         """
-        _verify_token(resolved_settings, x_prefrontal_token)
+        memory = ctx.store
         bias = _state_float(memory, "time_estimation_bias", 1.0)
         fits = fit_todos(minutes, memory.open_todos(), bias)
         return {
@@ -1860,6 +1930,70 @@ def create_app(
                 for f in fits
             ],
         }
+
+    # -- Admin: user provisioning (operator-only) ----------------------------
+
+    @app.post("/admin/users", status_code=status.HTTP_201_CREATED, tags=["admin"])
+    def admin_create_user(
+        payload: UserCreate,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Provision a new user, returning the raw token **once**.
+
+        Thin HTTP wrapper over :func:`prefrontal.memory.store.provision_user`
+        (the same path the CLI uses), so an operator can add a user over
+        Tailscale. The token is shown here and never again — store it now.
+        """
+        unscoped = app.state.store  # user CRUD lives on the unscoped store
+        if unscoped.get_user(payload.handle) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Handle '{payload.handle}' is already taken.",
+            )
+        user, token = provision_user(
+            unscoped,
+            payload.handle,
+            display_name=payload.display_name,
+            is_operator=payload.is_operator,
+        )
+        return {
+            "handle": user["handle"],
+            "display_name": user["display_name"],
+            "is_operator": bool(user["is_operator"]),
+            "token": token,  # shown once
+        }
+
+    @app.get("/admin/users", tags=["admin"])
+    def admin_list_users(
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """List users (handles, display names, status) — never their tokens."""
+        return {"users": app.state.store.list_users()}
+
+    @app.post("/admin/users/{handle}/rotate", tags=["admin"])
+    def admin_rotate_user(
+        handle: str,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Mint a new token for ``handle`` (old devices stop working). Shown once."""
+        token = app.state.store.rotate_user_token(handle)
+        if token is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+            )
+        return {"handle": handle, "token": token}
+
+    @app.post("/admin/users/{handle}/disable", tags=["admin"])
+    def admin_disable_user(
+        handle: str,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Disable a user (their token stops resolving). Idempotent."""
+        if not app.state.store.set_user_status(handle, "disabled"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+            )
+        return {"handle": handle, "status": "disabled"}
 
     return app
 

@@ -25,6 +25,7 @@ from prefrontal.modules.hyperfocus import (
     should_protect,
 )
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "focus-secret"
 
@@ -94,11 +95,13 @@ def test_build_focus_message_varies_by_level_and_alignment():
 
 def test_is_focus_protected_reflects_active_sessions():
     """The live helper protects an aligned healthy block and not a misaligned one."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         assert is_focus_protected(store) is False  # nothing active
         store.start_focus_session("deep work", started_at=_utc_minutes_ago(30))
         assert is_focus_protected(store) is True
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         store.start_focus_session(
             "doomscrolling", aligned=False, started_at=_utc_minutes_ago(30)
         )
@@ -110,7 +113,8 @@ def test_is_focus_protected_reflects_active_sessions():
 
 def test_focus_session_store_lifecycle():
     """Start -> active (with elapsed) -> close (with actual minutes + breadcrumb)."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         sid = store.start_focus_session(
             "the API refactor", planned_minutes=60, started_at=_utc_minutes_ago(12)
         )
@@ -140,7 +144,7 @@ def store():
     """An in-memory store kept open for the whole test."""
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

@@ -11,6 +11,7 @@ import pytest
 
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
+from tests.conftest import scoped_default
 
 # The coaching_state seed rows defined in schema.sql / docs/schema.md. (Modules
 # seed their own additional keys when enabled; these are the schema-level seeds
@@ -34,9 +35,9 @@ SEED_KEYS = {
 
 @pytest.fixture()
 def store():
-    """Yield a MemoryStore backed by a fresh in-memory, schema-initialized DB."""
+    """Yield a user-scoped MemoryStore on a fresh in-memory, schema-initialized DB."""
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 def test_schema_creates_core_tables(store):
@@ -58,9 +59,11 @@ def test_seed_rows_present(store):
 
 def test_seed_is_idempotent_and_non_clobbering():
     """Re-initializing must not duplicate rows or overwrite user-changed values."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         store.set_state("time_estimation_bias", "1.6", source="explicit")
-        # Re-applying the schema (init_db) again on the same connection.
+        # Re-applying the structural schema (init_db) again on the same
+        # connection must not touch the per-user state.
         from prefrontal.memory.db import SCHEMA_PATH
 
         store.conn.executescript(SCHEMA_PATH.read_text())

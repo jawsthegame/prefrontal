@@ -25,6 +25,7 @@ from prefrontal.mail.triage import _heuristic_triage, priority_for_urgency, tria
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "test-secret"
 
@@ -37,7 +38,7 @@ def store():
     """An in-memory, schema-initialized store kept open for the whole test."""
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 
