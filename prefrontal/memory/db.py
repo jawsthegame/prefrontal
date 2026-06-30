@@ -71,6 +71,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 #: Maps table name -> list of ``(column, type)`` that must be present.
 _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "commitments": [("dest_lat", "REAL"), ("dest_lon", "REAL")],
+    "todo_decompositions": [("done_steps", "TEXT")],
 }
 
 
@@ -84,6 +85,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """
     for table, columns in _ADDED_COLUMNS.items():
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table absent (PRAGMA returns no rows) — nothing to alter
         for name, col_type in columns:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")

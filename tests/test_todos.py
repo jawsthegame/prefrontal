@@ -303,6 +303,56 @@ def test_decomposition_store_roundtrip(store):
     )
     got = store.get_decomposition(tid)
     assert got["first_step"] == "Just open it" and got["steps"] == ["a", "b"]
+    assert got["done_steps"] == []  # nothing ticked yet
+
+
+def test_set_step_done_roundtrip_and_bounds(store):
+    """Steps tick on/off by index (0 = first step); out-of-range no-ops."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    assert store.set_step_done(tid, 0) is False  # no decomposition yet
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["a", "b"], source="llm"
+    )
+    # Indices 0..2 are valid (first_step + 2 remaining).
+    assert store.set_step_done(tid, 0) is True
+    assert store.set_step_done(tid, 2) is True
+    assert store.get_decomposition(tid)["done_steps"] == [0, 2]
+    # Idempotent + un-tick.
+    assert store.set_step_done(tid, 0) is True
+    assert store.set_step_done(tid, 2, done=False) is True
+    assert store.get_decomposition(tid)["done_steps"] == [0]
+    # Out of range never records anything.
+    assert store.set_step_done(tid, 3) is False
+    assert store.set_step_done(tid, -1) is False
+    assert store.get_decomposition(tid)["done_steps"] == [0]
+
+
+def test_regenerating_decomposition_resets_step_progress(store):
+    """Replacing a decomposition clears done_steps — the steps changed."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["a"], source="llm"
+    )
+    store.set_step_done(tid, 1)
+    assert store.get_decomposition(tid)["done_steps"] == [1]
+    store.set_decomposition(
+        tid, first_step="Open it", first_step_minutes=2, steps=["x", "y"], source="llm"
+    )
+    assert store.get_decomposition(tid)["done_steps"] == []
+
+
+def test_update_todo_deadline_open_only(store):
+    """Deadline moves and clears on open todos; closed todos no-op."""
+    tid = store.add_todo("Renew passport", estimate_minutes=20, deadline="2026-07-01 00:00:00")
+    assert store.update_todo_deadline(tid, "2026-08-15 09:00:00") is True
+    assert store.get_todo(tid)["deadline"] == "2026-08-15 09:00:00"
+    # Clearing.
+    assert store.update_todo_deadline(tid, None) is True
+    assert store.get_todo(tid)["deadline"] is None
+    # Once closed, the deadline is frozen.
+    store.close_todo(tid, status="done")
+    assert store.update_todo_deadline(tid, "2026-09-01 00:00:00") is False
+    assert store.update_todo_deadline(999, "2026-09-01 00:00:00") is False  # absent
 
 
 def test_post_big_todo_auto_decomposes(client):
@@ -383,3 +433,61 @@ def test_briefing_surfaces_avoided(store):
     b = build_briefing(store, now=now)
     assert any(a["title"] == "Renew passport" for a in b.avoided)
     assert "keep putting off" in render_briefing(b).lower()
+
+
+# -- deadline updates & step completion (endpoints) --------------------------
+
+
+def test_update_deadline_endpoint(client, store_open):
+    """POST /todos/{id}/deadline moves, clears, validates, and 404s as expected."""
+    tid = store_open.add_todo("Renew passport", estimate_minutes=20)
+    # Set a deadline (date-only is normalized to midnight UTC).
+    r = client.post(f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth())
+    assert r.status_code == 200 and r.json()["deadline"] == "2026-08-15 00:00:00"
+    assert store_open.get_todo(tid)["deadline"] == "2026-08-15 00:00:00"
+    # Clear it.
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": None}, headers=_auth()).json()["deadline"] is None
+    # Garbage is rejected.
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "not-a-date"}, headers=_auth()).status_code == 422
+    # Unknown / closed todo → 404.
+    assert client.post("/todos/999/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+    store_open.close_todo(tid, status="done")
+    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+
+
+def test_step_done_endpoint(client, store_open):
+    """POST /todos/{id}/steps/{i}/done ticks steps and surfaces them in GET /todos."""
+    tid = store_open.add_todo("Write the report", estimate_minutes=90)
+    store_open.set_decomposition(
+        tid, first_step="Open the doc", first_step_minutes=2, steps=["Draft intro", "Edit"], source="llm"
+    )
+    # Tick the first step (index 0) — default body marks it done.
+    r = client.post(f"/todos/{tid}/steps/0/done", headers=_auth())
+    assert r.status_code == 200 and r.json()["decomposition"]["done_steps"] == [0]
+    # Tick a remaining step, then un-tick the first.
+    client.post(f"/todos/{tid}/steps/2/done", headers=_auth())
+    r = client.post(f"/todos/{tid}/steps/0/done", json={"done": False}, headers=_auth())
+    assert r.json()["decomposition"]["done_steps"] == [2]
+    # It surfaces in the list payload the dashboard renders.
+    listed = client.get("/todos", headers=_auth()).json()["todos"]
+    match = next(t for t in listed if t["id"] == tid)
+    assert match["decomposition"]["done_steps"] == [2]
+    # Out-of-range step → 404; the done/drop route still works (no collision).
+    assert client.post(f"/todos/{tid}/steps/9/done", headers=_auth()).status_code == 404
+    assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200
+
+
+def test_migrate_adds_done_steps_idempotently():
+    """_migrate back-fills done_steps on a pre-existing decomposition table."""
+    import sqlite3
+
+    from prefrontal.memory.db import _migrate
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE todo_decompositions (todo_id INTEGER PRIMARY KEY, first_step TEXT)")
+    _migrate(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(todo_decompositions)")}
+    assert "done_steps" in cols
+    _migrate(conn)  # second run is a no-op, not an error
+    conn.close()
