@@ -87,19 +87,24 @@ Prefrontal is in early development. This repository currently implements the **f
 
 | Layer | Module | Status |
 |---|---|---|
-| Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state |
+| Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state + feature tables |
 | Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
 | Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
+| Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
+| Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
+| Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
-| n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Stub — bidirectional, documented TODOs |
+| n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + LLM (Ollama) summary with heuristic fallback |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
-| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; most interventions are declared stubs |
-| Location-Aware Task Anchor (Module 1) | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
-| Triage / coaching / delivery agents | — | 🔜 Not yet built |
+| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; 3 wired end-to-end, 2 (task paralysis, impulsivity) still declared stubs |
+| Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
+| Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
+| Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |
+| Triage / coaching / delivery agents | — | 🔜 Not yet built as general agents — see `docs/triage-agent.md`, `docs/coaching-agent.md` (mail triage above is the first concrete slice) |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,
 then `prefrontal/webhooks/app.py`.

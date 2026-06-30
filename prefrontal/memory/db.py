@@ -42,13 +42,26 @@ def connect(db_path: str) -> sqlite3.Connection:
     """
     if db_path != ":memory:":
         Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False lets a single shared connection be used from the
-    # webhook server's threadpool (FastAPI runs sync endpoints off-loop). Writes
-    # are low-volume, human-paced events and SQLite serializes them internally,
-    # so a shared connection is safe here.
+    # check_same_thread=False is needed because the webhook server hands a
+    # store's connection between threadpool tasks. It only disables sqlite3's
+    # owning-thread *check* — it does not make a connection safe for concurrent
+    # use. A single connection used from several threads at once interleaves
+    # statements and corrupts result sets, so the server opens one connection
+    # per thread (see MemoryStore.threaded); within a thread, access is serial.
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    if db_path != ":memory:":
+        # WAL lets readers and a single writer proceed concurrently across
+        # connections, which the per-thread webhook store relies on. It also
+        # avoids the rollback-journal deadlock where two connections each hold a
+        # shared lock and both try to upgrade to a write lock (which a busy
+        # timeout cannot break). WAL is a persistent, per-file setting; applying
+        # it on every connect is idempotent and harmless for the CLI and tests.
+        conn.execute("PRAGMA journal_mode = WAL")
+    # A writer briefly excludes other writers; wait for it rather than raising
+    # "database is locked" immediately. Writes are short and human-paced.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -58,6 +71,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 #: Maps table name -> list of ``(column, type)`` that must be present.
 _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "commitments": [("dest_lat", "REAL"), ("dest_lon", "REAL")],
+    "todo_decompositions": [("done_steps", "TEXT")],
 }
 
 
@@ -71,6 +85,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """
     for table, columns in _ADDED_COLUMNS.items():
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table absent (PRAGMA returns no rows) — nothing to alter
         for name, col_type in columns:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")

@@ -12,22 +12,32 @@ future-us alike.
 prefrontal/
 ├── prefrontal/                # the Python package
 │   ├── config.py              # environment-driven Settings (see .env.example)
-│   ├── cli.py                 # `prefrontal` console script: init-db | serve | profile
+│   ├── cli.py                 # `prefrontal` console script: init-db | serve | learn |
+│   │                          #   profile | summarize | briefing | todo | fit | mail | modules
 │   ├── memory/                # the SQLite behavioral memory layer (the core)
-│   │   ├── schema.sql         # canonical schema: episodes, patterns, coaching_state
+│   │   ├── schema.sql         # canonical schema (episodes, patterns, coaching_state + feature tables)
 │   │   ├── db.py              # connection management + init_db()
 │   │   ├── store.py           # MemoryStore: the read/write API over the tables
-│   │   └── summarizer.py      # build_profile(): tables -> profile.md (heuristic stub)
+│   │   ├── patterns.py        # learn pass: episodes -> derived patterns + time-estimation bias
+│   │   └── summarizer.py      # build_profile() + summarize_profile() (Ollama, heuristic fallback)
 │   ├── webhooks/              # FastAPI listener for iOS Shortcut / n8n triggers
-│   │   └── app.py             # routes: /health, /webhooks/shortcut, /webhooks/n8n
+│   │   └── app.py             # routes: /health, /webhooks/{shortcut,n8n,outing,focus,mail,calendar}/*, ...
 │   ├── modules/              # challenge-area modules (one per EF difficulty)
 │   │   ├── base.py            # Module ABC + Intervention dataclass
 │   │   ├── registry.py        # register / available / enabled_modules
-│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity
-│   └── integrations/          # external systems
-│       └── n8n.py             # bidirectional n8n stub (outbound client + inbound parser)
-├── docs/schema.md             # human-readable companion to schema.sql
-├── tests/                     # pytest suite (memory + webhooks)
+│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor
+│   ├── mail/                  # mail ingestion: normalize -> triage -> surface as todos
+│   ├── integrations/          # external systems: n8n, ollama, nominatim (geocoder)
+│   ├── briefing.py            # morning digest (build + optional Ollama prose)
+│   ├── commitments.py         # calendar sync + double-booking detection
+│   ├── scheduling.py          # free-window + todo time-fitting
+│   ├── todos.py               # open loops, augmentation, tiny-first-step decomposition
+│   ├── impact.py              # at-risk-commitment projection from the learned bias
+│   ├── departure.py           # travel-aware "when to leave" reminders
+│   └── geocode.py             # places -> cache -> opt-in Nominatim resolution
+├── docs/                      # schema.md + design specs (triage, coaching, impulsivity, multi-tenant)
+├── deploy/                    # launchd plist, n8n workflows, iOS Shortcuts, Scriptable widget
+├── tests/                     # pytest suite (memory, webhooks, modules, ...)
 ├── pyproject.toml             # build, dependencies, tooling config
 └── .env.example               # all configuration, with safe defaults
 ```
@@ -71,9 +81,10 @@ Please make sure `pytest` and `ruff check .` pass before opening a pull request.
 - **Local first.** Behavioral data must not leave the host unless the user
   explicitly configures it (e.g. an `N8N_WEBHOOK_URL`). Outbound integrations
   default to a no-op.
-- **Stubs are labeled.** Incomplete pieces (the n8n inbound handlers, the
-  LLM-backed summarizer) carry a `.. todo::` note in their docstring so the gap
-  between "scaffolded" and "finished" is always visible.
+- **Stubs are labeled.** Incomplete pieces (e.g. the n8n inbound event router)
+  carry a `.. todo::` note in their docstring, and not-yet-wired module behaviors
+  stay `Intervention(status="planned")`, so the gap between "scaffolded" and
+  "finished" is always visible.
 - **Tests for behavior you add.** New endpoints or store methods come with a
   test in `tests/`.
 

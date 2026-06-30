@@ -381,5 +381,3 @@ are where the user feels new coaching.
   inside a polled endpoint adds latency. Proposal: phrase `ambient`/digest cues
   with the model, keep `nudge`/`urgent`/`critical` on deterministic templates, and
   revisit only if prose is wanted on nudges.
-</content>
-</invoke>

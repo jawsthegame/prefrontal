@@ -382,6 +382,7 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 ---
 
 ## 12. Schedule the nightly learning pass
+## What's not automated yet
 
 The behavioral profile only improves if patterns are recomputed as episodes
 accrue. Run the learning pass on a schedule (nightly is plenty for one user):
@@ -420,6 +421,15 @@ endpoint always returns the fast structured profile — point agents at the
 generated `profile.md` when you want the prose version.
 
 ---
+
+Three of the five modules are wired end-to-end today — **Location-Aware Task
+Anchor** (the coffee-shop nudge above), **Hyperfocus** (focus sessions, the
+`/webhooks/focus/*` endpoints), and **Time Blindness**. The remaining two —
+**Task Paralysis** and **Impulsivity** — still declare `planned` interventions.
+Run `prefrontal modules -v` for the live status, and see `ROADMAP.md` for what's
+next. (Mail ingestion is also live — `prefrontal mail fetch`/`sync` and
+`POST /webhooks/mail/sync`; an n8n mail-poll workflow can post batches the same
+way the calendar sync does.)
 
 ## What's not automated yet
 
