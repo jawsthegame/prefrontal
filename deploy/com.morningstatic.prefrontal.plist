@@ -30,6 +30,23 @@
     <key>KeepAlive</key>
     <true/>
 
+    <!-- Prefrontal holds one SQLite connection (db + -wal + -shm = 3 fds) per
+         worker thread. The macOS default soft limit of 256 is far too low and
+         the process can exhaust fds, 500ing DB endpoints with "unable to open
+         database file". Raise it well clear of steady state. (The store also
+         reaps dead worker threads' connections, so this is headroom, not a
+         band-aid for an unbounded leak.) -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
     <key>StandardOutPath</key>
     <string>/Users/tom/Library/Logs/prefrontal.out.log</string>
 

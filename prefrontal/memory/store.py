@@ -39,6 +39,14 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _safe_close(conn: sqlite3.Connection) -> None:
+    """Close a connection, swallowing errors (it may already be closed/broken)."""
+    try:
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
 # Human labels for known calendar feeds. The feed a calendar commitment came
 # from is encoded as the ``external_id`` prefix (``family:UID``); unknown feeds
 # fall back to a title-cased slug, so new feeds work without a code change.
@@ -119,8 +127,10 @@ class MemoryStore:
         self._fixed_conn = conn
         self._factory = connection_factory
         self._local = threading.local()
-        # Track factory-opened connections so close() can release them all.
-        self._owned_conns: list[sqlite3.Connection] = []
+        # Track factory-opened connections by the thread that owns each, so
+        # close() can release them all AND so connections belonging to dead
+        # worker threads can be reaped (their fds reclaimed) — see ``conn``.
+        self._conns_by_thread: dict[int, sqlite3.Connection] = {}
         self._conns_lock = threading.Lock()
 
     @property
@@ -137,10 +147,30 @@ class MemoryStore:
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = self._factory()
-            with self._conns_lock:
-                self._owned_conns.append(conn)
             self._local.conn = conn
+            ident = threading.get_ident()
+            with self._conns_lock:
+                # A recycled ident means the previous owner thread is gone; close
+                # its now-orphaned connection before claiming the slot.
+                stale = self._conns_by_thread.pop(ident, None)
+                if stale is not None and stale is not conn:
+                    _safe_close(stale)
+                self._conns_by_thread[ident] = conn
+                self._reap_dead_conns_locked()
         return conn
+
+    def _reap_dead_conns_locked(self) -> None:
+        """Close connections whose owning thread has exited (call under lock).
+
+        FastAPI runs sync endpoints on a pool of worker threads that AnyIO reaps
+        when idle. Without this, each reaped thread's connection — 3 fds (db +
+        ``-wal`` + ``-shm``) — would leak forever, eventually exhausting the
+        process fd limit and 500ing every DB endpoint. Cheap: only runs when a
+        brand-new thread first opens a connection, never on the request path.
+        """
+        alive = {t.ident for t in threading.enumerate()}
+        for ident in [i for i in self._conns_by_thread if i not in alive]:
+            _safe_close(self._conns_by_thread.pop(ident))
 
     # -- construction helpers ------------------------------------------------
 
@@ -185,9 +215,9 @@ class MemoryStore:
         if self._factory is None:
             return
         with self._conns_lock:
-            for conn in self._owned_conns:
-                conn.close()
-            self._owned_conns.clear()
+            for conn in self._conns_by_thread.values():
+                _safe_close(conn)
+            self._conns_by_thread.clear()
 
     @classmethod
     @contextmanager
