@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from prefrontal.config import Settings, _parse_mail_accounts
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message
-from prefrontal.mail.imap import _unseen_criteria
+from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
 from prefrontal.mail.models import normalize_date, parse_sender
 from prefrontal.mail.triage import _heuristic_triage, priority_for_urgency, triage_message
 from prefrontal.memory.db import init_db
@@ -74,6 +74,48 @@ def _msg(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+# -- IMAP: Gmail "Important only" --------------------------------------------
+
+
+def test_imap_account_gmail_defaults_to_important_only():
+    """A Gmail account fetches only Important mail unless told otherwise."""
+    env = {"MAIL_IMAP_USER_PERSONAL": "me@gmail.com", "MAIL_IMAP_PASSWORD_PERSONAL": "pw"}
+    acct = ImapAccount.from_env("personal", env=env)
+    assert acct.is_gmail is True
+    assert acct.important_only is True
+
+
+def test_imap_account_nongmail_not_important_only():
+    """A non-Gmail host can't use the Gmail extension, so it stays off."""
+    env = {
+        "MAIL_IMAP_USER_WORK": "me@corp.com",
+        "MAIL_IMAP_PASSWORD_WORK": "pw",
+        "MAIL_IMAP_HOST_WORK": "imap.corp.com",
+    }
+    acct = ImapAccount.from_env("work", env=env)
+    assert acct.is_gmail is False
+    assert acct.important_only is False
+
+
+def test_imap_account_important_only_env_override():
+    """MAIL_IMAP_IMPORTANT_ONLY_<NAME> overrides the Gmail default."""
+    env = {
+        "MAIL_IMAP_USER_PERSONAL": "me@gmail.com",
+        "MAIL_IMAP_PASSWORD_PERSONAL": "pw",
+        "MAIL_IMAP_IMPORTANT_ONLY_PERSONAL": "false",
+    }
+    assert ImapAccount.from_env("personal", env=env).important_only is False
+
+
+def test_important_filter_only_for_gmail_important():
+    """The X-GM-RAW filter is added only for a Gmail + important_only account."""
+    gmail = ImapAccount("personal", "imap.gmail.com", "u", "p", important_only=True)
+    assert _important_filter(gmail) == ("X-GM-RAW", '"is:important"')
+    # Non-Gmail (even if flagged) and plain Gmail without the flag: no filter.
+    assert _important_filter(ImapAccount("w", "imap.corp.com", "u", "p", important_only=True)) == ()
+    assert _important_filter(ImapAccount("p", "imap.gmail.com", "u", "p")) == ()
 
 
 # -- normalization -----------------------------------------------------------
