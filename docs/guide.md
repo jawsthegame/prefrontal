@@ -362,6 +362,31 @@ prefrontal user rotate tom                               # mint a new token (old
 - **Operators** (`--operator`) can manage users over HTTP via `/admin/users`.
 - Migrating an old single-user DB: `prefrontal migrate-multi-tenant`.
 
+### Signing in: Google (browser) vs. tokens (machines)
+
+Two ways to authenticate, used by different clients:
+
+- **Web pages** (`/dashboard`, `/family`) — **Sign in with Google**. You click the
+  button, approve Google's consent once, and a signed session cookie carries you
+  after that (no token to paste). Only emails in the `GOOGLE_OAUTH_ALLOWED`
+  allowlist may sign in, each mapped to a user handle.
+- **Automations** (n8n, iOS Shortcuts, the widget) — the per-user
+  `X-Prefrontal-Token` header, unchanged. They can't do an interactive login, so
+  tokens stay for them. `resolve_user` accepts **either** a session cookie or a token.
+
+Google sign-in is optional and off until configured. To enable it:
+
+1. Serve the app over **HTTPS** (Google requires it): on the host,
+   `tailscale serve --bg 8000` → `https://<your-tailnet-name>` (the CLI lives at
+   `/Applications/Tailscale.app/Contents/MacOS/Tailscale` on macOS — alias it,
+   don't symlink it). The config persists across reboots.
+2. **Google Cloud Console** → Credentials → OAuth client ID (*Web application*).
+   Redirect URI `https://<your-tailnet-name>/auth/google/callback`; add yourself
+   as a test user on the consent screen.
+3. Set `GOOGLE_OAUTH_CLIENT_ID/SECRET`, `OAUTH_BASE_URL`, `SESSION_SECRET`
+   (`openssl rand -hex 32`), and `GOOGLE_OAUTH_ALLOWED="you@gmail.com=yourhandle"`
+   in `.env`, then restart. The handle must match an existing user (case-sensitive).
+
 Full design: [`multi-tenant.md`](multi-tenant.md).
 
 ---
@@ -405,6 +430,8 @@ token client-side).
 | `POST /places` · `GET /places` | Curated location aliases |
 | `POST /webhooks/mail/sync` · `GET /mail` | Ingest mail / recent + action items |
 | `GET /dashboard` · `GET /family` | Web surfaces (no auth on the shell) |
+| `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
+| `POST /auth/logout` | Clear the browser session cookie |
 | `POST /admin/users` · `GET /admin/users` | Provision / list users (operator only) |
 | `POST /admin/users/{handle}/rotate` · `/disable` | Rotate token / disable user |
 
@@ -442,3 +469,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `llama3.1:8b` | Local inference (use `127.0.0.1`, not `localhost`) |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
 | `GEOCODER_URL` | Nominatim | Geocoding endpoint (opt-in) |
+| `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | _(empty)_ | Google sign-in client (off until both set) |
+| `OAUTH_BASE_URL` | _(empty)_ | Public https origin for the OAuth redirect |
+| `SESSION_SECRET` | _(empty)_ | Signs the browser session cookie (`openssl rand -hex 32`) |
+| `GOOGLE_OAUTH_ALLOWED` | _(empty)_ | `email=handle,…` allowlist of who may sign in |
