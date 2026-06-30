@@ -206,9 +206,11 @@ To run it always-on, add a launchd agent like the one in step 3 whose
 
 1. Open the editor, **Import from File**, and choose
    [`../deploy/n8n/departure-reminder.workflow.json`](../deploy/n8n/departure-reminder.workflow.json).
-2. The workflow has five nodes: a schedule trigger → `GET /profile` → Ollama
-   compose → Pushover/Ntfy send → `POST /webhooks/n8n` (log that a reminder
-   fired).
+2. The workflow has four nodes: a schedule trigger (every 5 min) →
+   `POST /webhooks/departure/check` → a Code node that continues only when a
+   reminder is due (`fire === true`) → Pushover/Ntfy send → `POST /webhooks/n8n`
+   (log that a reminder fired). Prefrontal does the "when to leave" reasoning and
+   returns a ready `message`, so there's no Ollama compose step on this path.
 3. Set credentials/values it can't ship with:
    - **Prefrontal token** — in the two Prefrontal HTTP nodes' `X-Prefrontal-Token`
      header, paste your `PREFRONTAL_WEBHOOK_SECRET`.
@@ -218,11 +220,14 @@ To run it always-on, add a launchd agent like the one in step 3 whose
      node's Authentication to *None* — a `pushoverApi` credential alone does not
      supply `user`. (Or swap it for an Ntfy HTTP node hitting
      `https://ntfy.sh/<your-topic>`.)
-   - **Ollama model** — match what you pulled in step 4.
-   - Replace the **calendar placeholder** Set node with a real Google
-     Calendar / CalDAV node when you're ready; the template hardcodes a sample
-     event so you can see the end-to-end flow immediately.
 4. **Execute Workflow** once to test, then toggle it **Active**.
+
+> **For a *travel-time* estimate** (rather than the static `lead_minutes`
+> fallback), Prefrontal needs two things: the phone's recent location (set up the
+> "Update location" shortcut in `deploy/ios-shortcut.md`) and destination
+> coordinates on commitments (`dest_lat`/`dest_lon`, populated by the calendar
+> sync or a manual `POST /commitments`). Without them the reminder still fires —
+> it just leans on each commitment's `lead_minutes`.
 
 This is a starting template — node `typeVersion`s can differ across n8n
 releases, so adjust any node n8n flags on import.

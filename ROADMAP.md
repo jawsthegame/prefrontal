@@ -35,6 +35,19 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Last-known location + travel-aware departure reminders** ✅ —
+  `POST /webhooks/location` stores the phone's position (one iOS "Update
+  location" automation), so the coffee-shop nudge gates on location **without
+  Home Assistant** (the check falls back to the stored fix). `prefrontal/
+  departure.py` + `POST /webhooks/departure/check` then compute *when to leave*
+  for the next commitment: a local, bias-adjusted travel estimate
+  (straight-line distance × road-factor ÷ speed, no maps API) from the stored
+  location to the commitment's optional `dest_lat`/`dest_lon`, escalating
+  heads-up → soon → go and deduped per `(commitment, level)`. Falls back to the
+  static `lead_minutes` when coordinates or a recent fix are missing. The
+  rewritten `deploy/n8n/departure-reminder.workflow.json` polls it and pushes via
+  Pushover. *(Next: optional geocoding of free-text `location`; per-commitment
+  travel learning; surface the leave-by time in the briefing and widget.)*
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
@@ -79,9 +92,11 @@ the first test. Code follow-ups below are optional polish.
 - **Module interventions** — most declared interventions are `status="planned"`.
   Module 1 (Location-Aware Task Anchor) is the exception: its escalation,
   location-gating, and auto-close interventions are wired end-to-end.
-- **n8n departure-reminder template** — ships with a hardcoded calendar
-  placeholder; swap in a real Google Calendar / CalDAV node.
-  *(`deploy/n8n/departure-reminder.workflow.json`.)*
+- **Departure-reminder destination coords** — the reminder is now real
+  (`/webhooks/departure/check`), but for a *travel-time* estimate (vs. the static
+  `lead_minutes` fallback) the calendar sync must populate `dest_lat`/`dest_lon`.
+  The n8n calendar node still needs a geocode step (or hard-coded coordinates for
+  recurring places). *(`deploy/n8n/calendar-sync.workflow.json`.)*
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 

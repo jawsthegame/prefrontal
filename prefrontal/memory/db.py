@@ -52,12 +52,38 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+#: Columns added after a table's original definition. ``CREATE TABLE IF NOT
+#: EXISTS`` never alters an existing table, so columns introduced later must be
+#: back-filled with ``ALTER TABLE`` on databases created before they existed.
+#: Maps table name -> list of ``(column, type)`` that must be present.
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "commitments": [("dest_lat", "REAL"), ("dest_lon", "REAL")],
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Back-fill columns added after a table's original schema (idempotent).
+
+    New seed rows and tables are handled by ``schema.sql`` itself (it is
+    idempotent), but ``CREATE TABLE IF NOT EXISTS`` leaves an existing table's
+    columns untouched. This adds any missing later columns so an always-on
+    database upgrades in place on the next :func:`init_db`.
+    """
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, col_type in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
+
+
 def init_db(db_path: str) -> sqlite3.Connection:
     """Create and seed the memory database, returning an open connection.
 
     Applies ``schema.sql`` against ``db_path``. The script is idempotent
     (``CREATE TABLE IF NOT EXISTS`` plus ``INSERT OR IGNORE`` seed rows), so
-    calling this repeatedly is safe and will not clobber existing data.
+    calling this repeatedly is safe and will not clobber existing data. After
+    the script runs, :func:`_migrate` back-fills any columns added to existing
+    tables since their original definition.
 
     Args:
         db_path: Filesystem path to the database file (or ``":memory:"``).
@@ -67,5 +93,6 @@ def init_db(db_path: str) -> sqlite3.Connection:
     """
     conn = connect(db_path)
     conn.executescript(SCHEMA_PATH.read_text())
+    _migrate(conn)
     conn.commit()
     return conn

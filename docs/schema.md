@@ -72,6 +72,18 @@ Persistent preferences and working memory for the coaching layer.
 | `preferred_reminder_channel` | `notification` | inferred |
 | `time_estimation_bias` | `1.4` | inferred (40% underestimate multiplier) |
 | `active_escalation_path` | `notification,sound,tts` | explicit |
+| `travel_speed_kmh` | `30` | inferred (departure-reminder travel estimate) |
+| `travel_road_factor` | `1.3` | inferred (straight-line → road distance) |
+| `departure_prep_minutes` | `5` | inferred (buffer added to travel) |
+| `departure_heads_up_minutes` | `30` | inferred (gentle "leave soon" horizon) |
+| `departure_soon_minutes` | `10` | inferred ("get ready" horizon) |
+
+> **Runtime keys (not seeded).** `POST /webhooks/location` writes the phone's
+> last-known position as `last_location_lat`, `last_location_lon`, and
+> `last_location_accuracy_m`; the latitude row's `last_updated` is its freshness.
+> The outing check and departure check read these when a poll body omits explicit
+> coordinates. `last_departure_signature` records the last fired
+> `(commitment, level)` so a standing departure reminder doesn't re-alert.
 
 > **Module-contributed keys.** Each enabled challenge-area module
 > (`prefrontal/modules/`) seeds its own additional `coaching_state` rows when the
@@ -91,7 +103,10 @@ also defines:
 - **`outings`** — active/historical "task anchors" (a stated intention + time
   window) for the Location-Aware Task Anchor module.
 - **`commitments`** — upcoming schedule items synced from calendars (or added
-  manually), used for double-booking detection and impact analysis.
+  manually), used for double-booking detection and impact analysis. Optional
+  `dest_lat`/`dest_lon` enable a local travel-time estimate for departure
+  reminders (`prefrontal/departure.py`); without them the static `lead_minutes`
+  buffer is used.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
 
