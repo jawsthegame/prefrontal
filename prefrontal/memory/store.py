@@ -469,6 +469,143 @@ class MemoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- focus sessions (Hyperfocus) -----------------------------------------
+
+    def start_focus_session(
+        self,
+        intended_task: str,
+        *,
+        planned_minutes: float | None = None,
+        aligned: bool = True,
+        started_at: str | None = None,
+    ) -> int:
+        """Record a declared focus session and return its id.
+
+        Args:
+            intended_task: What the user is getting into ("the API refactor").
+            planned_minutes: Optional intended duration. When set, it (rather
+                than the soft block default) is the point past which a gentle
+                alignment check fires.
+            aligned: The protect bit — whether this is the thing the user meant
+                to be doing. ``True`` (the default) makes the block eligible for
+                the protect window.
+            started_at: Optional ISO timestamp for the start; defaults to the
+                DB's ``CURRENT_TIMESTAMP``. Mainly useful for tests.
+
+        Returns:
+            The new session's ``id``.
+        """
+        columns = ["intended_task", "planned_minutes", "aligned"]
+        values: list[Any] = [intended_task, planned_minutes, 1 if aligned else 0]
+        if started_at is not None:
+            columns.append("started_at")
+            values.append(started_at)
+        placeholders = ", ".join("?" for _ in columns)
+        cur = self.conn.execute(
+            f"INSERT INTO focus_sessions ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_focus_session(self, session_id: int) -> dict[str, Any] | None:
+        """Return a single focus session by id, or ``None`` if it does not exist."""
+        row = self.conn.execute(
+            "SELECT * FROM focus_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def active_focus_sessions(self) -> list[dict[str, Any]]:
+        """Return active focus sessions with a computed ``elapsed_minutes`` field.
+
+        Elapsed time is computed in SQL against ``CURRENT_TIMESTAMP`` (both
+        timestamps are UTC), so callers never have to deal with timezones.
+
+        Returns:
+            A list of session dicts, each including ``elapsed_minutes``.
+        """
+        rows = self.conn.execute(
+            "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
+            "AS elapsed_minutes FROM focus_sessions WHERE status = 'active' ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def most_recent_active_focus_session(self) -> dict[str, Any] | None:
+        """Return the newest active focus session (with ``elapsed_minutes``), or ``None``."""
+        row = self.conn.execute(
+            "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
+            "AS elapsed_minutes FROM focus_sessions WHERE status = 'active' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def set_focus_session_level(self, session_id: int, level: str) -> None:
+        """Record the highest interrupt level that has fired for a session.
+
+        Args:
+            session_id: The session to update.
+            level: One of ``none``/``check``/``break``.
+        """
+        self.conn.execute(
+            "UPDATE focus_sessions SET last_level = ? WHERE id = ?", (level, session_id)
+        )
+        self.conn.commit()
+
+    def close_focus_session(
+        self,
+        session_id: int,
+        status: str = "ended",
+        *,
+        breadcrumb: str | None = None,
+        outcome: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Close an active focus session and return it with ``actual_minutes``.
+
+        ``breadcrumb`` and ``outcome`` are only written when provided (a
+        ``COALESCE`` keeps any value already set), so a passive auto-close never
+        clobbers a breadcrumb the user captured.
+
+        Args:
+            session_id: The session to close.
+            status: Terminal status to set (``ended`` or ``abandoned``).
+            breadcrumb: Optional "where I was / next step" note for cheap re-entry.
+            outcome: Optional one-tap rating (``worth_it``/``should_have_stopped``/
+                ``pulled_off``).
+
+        Returns:
+            The closed session dict including ``actual_minutes`` (minutes between
+            start and end), or ``None`` if the session was not active.
+        """
+        cur = self.conn.execute(
+            "UPDATE focus_sessions SET status = ?, ended_at = CURRENT_TIMESTAMP, "
+            "breadcrumb = COALESCE(?, breadcrumb), outcome = COALESCE(?, outcome) "
+            "WHERE id = ? AND status = 'active'",
+            (status, breadcrumb, outcome, session_id),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        row = self.conn.execute(
+            "SELECT *, (julianday(ended_at) - julianday(started_at)) * 1440.0 "
+            "AS actual_minutes FROM focus_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def recent_focus_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent focus sessions (any status), newest first.
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            A list of session dicts ordered by ``id`` descending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM focus_sessions ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- commitments (schedule for impact analysis) --------------------------
 
     def upsert_commitment(

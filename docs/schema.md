@@ -90,6 +90,11 @@ also defines:
 
 - **`outings`** — active/historical "task anchors" (a stated intention + time
   window) for the Location-Aware Task Anchor module.
+- **`focus_sessions`** — active/historical deep-work blocks (a stated task, an
+  optional planned duration, and an `aligned` "is this what I meant to do?" bit)
+  for the Hyperfocus module. Drives the asymmetric protect-vs-interrupt logic: an
+  aligned block is shielded from other modules' nudges until it overruns its plan
+  (a gentle check) or passes the hard ceiling (a biological break).
 - **`commitments`** — upcoming schedule items synced from calendars (or added
   manually), used for double-booking detection and impact analysis.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
