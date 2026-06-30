@@ -261,6 +261,35 @@ CREATE INDEX IF NOT EXISTS idx_mail_user_needs_action
     ON mail_messages (user_id, needs_action);
 CREATE INDEX IF NOT EXISTS idx_mail_user_received ON mail_messages (user_id, received_at);
 
+-- Negative triage corrections, learned from dropped email todos. When the user
+-- drops a todo that mail intake created (a `needs_action` verdict), that's a
+-- signal triage may have over-flagged. But a drop is ambiguous — it can equally
+-- mean "I avoided something I should have done" (exactly what avoided_todos
+-- exists to catch) — so we record the *context* of each drop and let the
+-- prompt-builder decide what's signal: only quick drops (`days_open` small) and
+-- repeat-offender senders become "don't flag this" hints. Those are folded back
+-- into the triage system prompt as negative few-shot examples, so triage evolves
+-- toward the user's corrections (mirrors `kind_feedback` for the commitment
+-- classifier). One row per drop — repetition is what makes a sender a hint.
+CREATE TABLE IF NOT EXISTS triage_feedback (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    todo_id       INTEGER REFERENCES todos (id),  -- the dropped todo (kept for provenance)
+    message_id    TEXT,                            -- originating mail message_id
+    sender_email  TEXT,
+    sender_name   TEXT,
+    subject       TEXT,
+    summary       TEXT,                            -- triage summary at flag time
+    category      TEXT,                            -- triage category at flag time
+    urgency       TEXT,                            -- triage urgency at flag time
+    days_open     REAL,                            -- age (days) when dropped — the quick-drop discriminator
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_triage_feedback_user ON triage_feedback (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_triage_feedback_sender
+    ON triage_feedback (user_id, sender_email);
+
 -- Cached LLM profile narrative — the prioritized coaching prose produced by the
 -- summarizer (prefrontal/memory/summarizer.py). Generating it needs an Ollama
 -- (or, later, Anthropic) round-trip, which is too slow to run on every

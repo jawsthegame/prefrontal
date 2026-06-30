@@ -68,6 +68,7 @@ def ingest_messages(
     fallback: bool = True,
     use_model: bool = True,
     create_todos: bool = True,
+    corrections: str = "",
 ) -> IngestSummary:
     """Normalize, dedup, triage, and persist a batch of raw messages.
 
@@ -84,6 +85,10 @@ def ingest_messages(
             heuristic instead of the model (fast backlog clear).
         create_todos: When ``True`` (default), create a todo for each
             needs-action message and link it on the mail row.
+        corrections: A learned-corrections addendum (see
+            :func:`prefrontal.mail.feedback.learned_corrections`) appended to the
+            triage system prompt, so triage adapts to the user's Drop feedback.
+            Passed through to :func:`triage_message`; empty = base prompt.
 
     Returns:
         An :class:`IngestSummary`.
@@ -103,7 +108,11 @@ def ingest_messages(
         seen.add(item.message_id)  # guard against duplicates within one batch
 
         verdict = triage_message(
-            item, client=client, fallback=fallback, use_model=use_model
+            item,
+            client=client,
+            fallback=fallback,
+            use_model=use_model,
+            corrections=corrections,
         )
 
         todo_id = None

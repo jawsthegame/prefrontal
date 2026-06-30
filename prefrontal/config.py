@@ -100,6 +100,13 @@ class Settings:
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
+    # Triage learns from dropped email todos (see prefrontal/mail/feedback.py). A
+    # drop only counts as a "this didn't need action" correction when it's quick
+    # (dropped within this many days of arriving) or comes from a sender dropped
+    # at least `triage_repeat_threshold` times — so a one-off slow drop, which is
+    # more likely avoidance than a triage error, is ignored.
+    triage_quick_drop_days: float = 2.0
+    triage_repeat_threshold: int = 2
     # Google sign-in for the web surfaces (dashboard/family). Machine clients
     # (n8n, iOS Shortcuts, the widget) keep using per-user tokens regardless.
     google_oauth_client_id: str = ""
@@ -197,6 +204,12 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
+        triage_quick_drop_days=float(
+            os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
+        ),
+        triage_repeat_threshold=int(
+            os.environ.get("PREFRONTAL_TRIAGE_REPEAT_THRESHOLD", "2")
+        ),
         google_oauth_client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
         google_oauth_client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
         oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),

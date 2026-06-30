@@ -457,9 +457,43 @@ def _cmd_mail(args: argparse.Namespace) -> int:
 
     from prefrontal.integrations.ollama import OllamaClient
     from prefrontal.mail import ingest_messages
+    from prefrontal.mail.feedback import learned_corrections
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path
+
+    if args.mail_action == "learned":
+        with MemoryStore.open(db_path) as unscoped:
+            store = _resolve_user_store(unscoped, args.user)
+            if args.clear:
+                cleared = store.clear_triage_feedback()
+                print(f"Cleared {cleared} learned triage correction(s).")
+                return 0
+            senders = store.triage_dropped_senders(
+                min_count=settings.triage_repeat_threshold
+            )
+            recent = store.triage_feedback_list(limit=20)
+            addendum = learned_corrections(
+                store,
+                quick_drop_days=settings.triage_quick_drop_days,
+                repeat_threshold=settings.triage_repeat_threshold,
+            )
+        print(f"Repeat-dropped senders ({len(senders)}):")
+        for s in senders:
+            who = s.get("sender_email") or s.get("sender_name") or "?"
+            print(f"  {who}: {s.get('drops')} dropped")
+        print(f"\nRecent drops ({len(recent)}):")
+        for r in recent:
+            who = r.get("sender_name") or r.get("sender_email") or "?"
+            age = r.get("days_open")
+            age_s = f"{age:.1f}d" if isinstance(age, (int, float)) else "?"
+            print(f"  #{r.get('id')} [{age_s}] {who}: {r.get('subject') or '(no subject)'}")
+        if addendum:
+            print("\nPrompt addendum injected on the next sync:")
+            print(addendum)
+        else:
+            print("\n(No corrections qualify yet — triage uses the base prompt.)")
+        return 0
 
     if args.mail_action == "list":
         with MemoryStore.open(db_path) as unscoped:
@@ -522,6 +556,11 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             policy=policy,
             client=client,
             use_model=not args.heuristic,
+            corrections=learned_corrections(
+                store,
+                quick_drop_days=settings.triage_quick_drop_days,
+                repeat_threshold=settings.triage_repeat_threshold,
+            ),
         )
     print(
         f"[{summary.account}/{summary.policy}] received {summary.received}, "
@@ -686,6 +725,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_mail.add_argument("--user", default=None, help="Handle of the user to act on.")
     mail_sub = p_mail.add_subparsers(dest="mail_action", required=True)
     mail_sub.add_parser("list", help="List recent triaged mail and action items.")
+    m_learned = mail_sub.add_parser(
+        "learned", help="Show (or clear) what triage learned from dropped todos."
+    )
+    m_learned.add_argument(
+        "--clear", action="store_true", help="Forget all learned corrections."
+    )
     m_sync = mail_sub.add_parser("sync", help="Ingest messages from a JSON file.")
     m_sync.add_argument("file", help="Path to a JSON list (or {messages: [...]}).")
     m_sync.add_argument("--account", required=True, help="Logical account name.")
