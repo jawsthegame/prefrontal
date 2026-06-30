@@ -136,6 +136,45 @@ def test_concurrent_reads_and_writes_stay_consistent(tmp_path):
         store.close()
 
 
+def test_reaps_connections_of_exited_threads(tmp_path):
+    """A connection whose owner thread has exited is closed, not leaked forever.
+
+    Guards the fd-exhaustion outage: FastAPI's threadpool reaps idle workers, so
+    without reaping each dead thread's 3 fds (db + -wal + -shm) leaked until the
+    process hit its file-descriptor limit and 500'd every DB endpoint.
+    """
+    store = MemoryStore.threaded(str(tmp_path / "memory.db"))
+    try:
+        captured: list[sqlite3.Connection] = []
+
+        def open_then_die(i: int) -> None:
+            store.upsert_commitment(
+                title="x", start_at=_start_at(10), external_id=f"die:{i}"
+            )
+            captured.append(store.conn)  # this thread's connection
+
+        # Each runs in a brand-new thread that exits immediately after.
+        for i in range(6):
+            t = threading.Thread(target=open_then_die, args=(i,))
+            t.start()
+            t.join()
+
+        # One more access from yet another fresh thread triggers a final sweep.
+        sweeper = threading.Thread(target=lambda: store.conn)
+        sweeper.start()
+        sweeper.join()
+
+        # Every connection owned by a now-dead thread has been closed…
+        for c in captured:
+            with pytest.raises(sqlite3.ProgrammingError):
+                c.execute("SELECT 1")
+        # …and the registry didn't accumulate one entry per thread ever seen.
+        with store._conns_lock:
+            assert len(store._conns_by_thread) <= 2
+    finally:
+        store.close()
+
+
 def test_close_releases_every_thread_connection(tmp_path):
     """close() shuts every per-thread connection; reuse after close fails."""
     store = MemoryStore.threaded(str(tmp_path / "memory.db"))
