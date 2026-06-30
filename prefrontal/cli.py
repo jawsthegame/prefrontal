@@ -27,6 +27,7 @@ from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
+from prefrontal.mail.imap import DEFAULT_UNSEEN_WINDOW_DAYS
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
@@ -355,7 +356,9 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             )
             return 1
         try:
-            messages = fetch_unread(imap, limit=args.limit)
+            messages = fetch_unread(
+                imap, limit=args.limit, since_days=args.since_days
+            )
         except Exception as exc:  # imaplib raises a variety of errors
             print(f"IMAP fetch failed: {exc}", file=sys.stderr)
             return 1
@@ -502,6 +505,12 @@ def build_parser() -> argparse.ArgumentParser:
     m_fetch = mail_sub.add_parser("fetch", help="Fetch unread over IMAP, then ingest.")
     m_fetch.add_argument("--account", required=True, help="Logical account name.")
     m_fetch.add_argument("--limit", type=int, default=50, help="Max unread to fetch.")
+    m_fetch.add_argument(
+        "--since-days",
+        type=int,
+        default=DEFAULT_UNSEEN_WINDOW_DAYS,
+        help="Only consider unread newer than N days (0 = all). Bounds big inboxes.",
+    )
     m_fetch.add_argument(
         "--heuristic",
         action="store_true",

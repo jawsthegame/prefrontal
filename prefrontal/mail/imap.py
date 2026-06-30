@@ -20,12 +20,25 @@ import email
 import imaplib
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.message import Message
 from typing import Any
 
 #: Default IMAP host when an account doesn't specify one.
 DEFAULT_IMAP_HOST = "imap.gmail.com"
+
+#: Default recency window (days) for the UNSEEN search. A large neglected inbox
+#: can hold tens of thousands of unread; an unbounded ``SEARCH UNSEEN`` then
+#: returns an id list that overruns imaplib's ~1 MB line limit (and triaging
+#: years of dead mail into todos is pointless anyway). Bounding to recent unread
+#: keeps the response small and the results actionable. ``None`` means no bound.
+DEFAULT_UNSEEN_WINDOW_DAYS = 30
+
+#: imaplib caps a single response line at 1 MB by default; a backlog of unread
+#: ids can exceed that even within the window. Lift it defensively (belt-and-
+#: suspenders alongside the recency bound) so a big-but-bounded list still reads.
+_MAXLINE_FLOOR = 10_000_000
 
 
 @dataclass(frozen=True)
@@ -77,16 +90,29 @@ class ImapAccount:
         )
 
 
-def fetch_unread(account: ImapAccount, *, limit: int = 50) -> list[dict[str, Any]]:
+def fetch_unread(
+    account: ImapAccount,
+    *,
+    limit: int = 50,
+    since_days: int | None = DEFAULT_UNSEEN_WINDOW_DAYS,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Fetch unread messages from an account as raw dicts.
 
     Connects over IMAPS, selects the mailbox read-only (so fetching does not mark
     messages read — Prefrontal observes, it doesn't touch your unread state),
-    searches ``UNSEEN``, and returns the most recent ``limit`` of them.
+    searches for unread mail within the recency window, and returns the most
+    recent ``limit`` of them.
 
     Args:
         account: The IMAP account to read.
         limit: Maximum number of (most recent) unread messages to return.
+        since_days: Only consider unread mail newer than this many days
+            (``SEARCH UNSEEN SINCE <date>``). Bounds the response size on a large
+            neglected inbox and keeps results actionable. ``None`` searches all
+            unread (use with care on big mailboxes).
+        now: Reference "now" for the window (defaults to the current UTC time);
+            injectable for tests.
 
     Returns:
         A list of raw message dicts ready for
@@ -95,12 +121,18 @@ def fetch_unread(account: ImapAccount, *, limit: int = 50) -> list[dict[str, Any
     Raises:
         imaplib.IMAP4.error: On login or protocol failure.
     """
+    # A bounded-but-still-large id list can exceed imaplib's default 1 MB line
+    # cap; lift the floor before connecting.
+    if imaplib._MAXLINE < _MAXLINE_FLOOR:
+        imaplib._MAXLINE = _MAXLINE_FLOOR
+
+    criteria = _unseen_criteria(since_days, now)
     conn = imaplib.IMAP4_SSL(account.host)
     try:
         conn.login(account.user, account.password)
         # readonly=True: never change \Seen flags just by ingesting.
         conn.select(account.mailbox, readonly=True)
-        typ, data = conn.search(None, "UNSEEN")
+        typ, data = conn.search(None, *criteria)
         if typ != "OK" or not data or not data[0]:
             return []
         ids = data[0].split()
@@ -119,6 +151,21 @@ def fetch_unread(account: ImapAccount, *, limit: int = 50) -> list[dict[str, Any
         except imaplib.IMAP4.error:
             pass
         conn.logout()
+
+
+def _unseen_criteria(since_days: int | None, now: datetime | None) -> tuple[str, ...]:
+    """Build the IMAP SEARCH criteria for unread mail within the window.
+
+    Returns ``("UNSEEN",)`` when unbounded, else ``("UNSEEN", "SINCE", <date>)``
+    where date is IMAP's ``DD-Mon-YYYY`` form (e.g. ``31-May-2026``). The SINCE
+    date is internal-date based and day-granular, which is exactly what bounding
+    a backlog needs.
+    """
+    if not since_days or since_days <= 0:
+        return ("UNSEEN",)
+    ref = now or datetime.now(timezone.utc)
+    since = (ref - timedelta(days=since_days)).strftime("%d-%b-%Y")
+    return ("UNSEEN", "SINCE", since)
 
 
 def _parse_rfc822(raw_bytes: bytes, account: str) -> dict[str, Any]:
