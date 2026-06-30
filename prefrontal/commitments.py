@@ -17,6 +17,7 @@ Persistence lives in :class:`~prefrontal.memory.store.MemoryStore`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -25,6 +26,14 @@ from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
+
+#: Commitment ``kind`` — whether an event is *yours* (something you attend, can
+#: conflict) or *FYI*: just so you know where someone will be (e.g. a partner's
+#: "Harlequin Brow Appt"). FYI commitments are shown but never treated as a
+#: double-booking. See :mod:`prefrontal.classify`.
+KIND_SELF = "self"
+KIND_FYI = "fyi"
+KINDS = (KIND_SELF, KIND_FYI)
 
 #: Placeholder/hold titles that aren't real events. When one of these overlaps a
 #: specifically-titled event (e.g. a work "Block" mirroring a real personal
@@ -176,7 +185,12 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def sync_calendar(store: MemoryStore, events: list[dict[str, Any]]) -> SyncSummary:
+def sync_calendar(
+    store: MemoryStore,
+    events: list[dict[str, Any]],
+    *,
+    classify: Callable[[str], tuple[str, str]] | None = None,
+) -> SyncSummary:
     """Idempotently sync a batch of calendar events into ``commitments``.
 
     Upserts every provided event (by ``external_id``) and cancels future
@@ -186,6 +200,11 @@ def sync_calendar(store: MemoryStore, events: list[dict[str, Any]]) -> SyncSumma
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
         events: Raw event dicts (see :func:`normalize_event`).
+        classify: Optional ``title -> (kind, kind_source)`` callable used to tag
+            *new* events as ``self``/``fyi`` (see :mod:`prefrontal.classify`).
+            Events already in the store keep their existing ``kind`` — so a
+            recurring event isn't re-classified every poll and a user's manual
+            correction is never overwritten. ``None`` leaves new events ``self``.
 
     Returns:
         A :class:`SyncSummary`.
@@ -195,12 +214,24 @@ def sync_calendar(store: MemoryStore, events: list[dict[str, Any]]) -> SyncSumma
             before any write, so a bad payload never partially applies).
     """
     normalized = [normalize_event(e) for e in events]  # validate all up front
+    existing_kinds = store.kinds_by_external_id(
+        {f["external_id"] for f in normalized if f["external_id"]}
+    )
     added = updated = 0
     keep: set[str] = set()
     for fields in normalized:
-        _, created = store.upsert_commitment(**fields)
-        if fields["external_id"]:
-            keep.add(fields["external_id"])
+        eid = fields["external_id"]
+        if eid and eid in existing_kinds:
+            kind, kind_source = existing_kinds[eid]  # keep prior verdict
+        elif classify is not None:
+            kind, kind_source = classify(fields["title"])
+        else:
+            kind, kind_source = KIND_SELF, "default"
+        _, created = store.upsert_commitment(
+            **fields, kind=kind, kind_source=kind_source
+        )
+        if eid:
+            keep.add(eid)
         if created:
             added += 1
         else:
@@ -293,7 +324,9 @@ def find_conflicts(
     Returns:
         A list of :class:`Conflict`, each with the overlap in minutes.
     """
-    items = sorted(commitments, key=lambda c: c["start_at"])
+    # FYI commitments ("where someone will be") never count as double-bookings.
+    real = [c for c in commitments if c.get("kind") != KIND_FYI]
+    items = sorted(real, key=lambda c: c["start_at"])
     intervals = [(c, *_interval(c, default_minutes)) for c in items]
     conflicts: list[Conflict] = []
     for i, (ci, si, ei) in enumerate(intervals):

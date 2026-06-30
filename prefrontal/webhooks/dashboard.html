@@ -64,6 +64,7 @@
   .lvl-firm { background: #3a2412; color: var(--firm); }
   .lvl-call { background: #3a1620; color: var(--call); }
   .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
+  .pill.fyi { background: #1e2a3a; color: #8ab4d8; }
   .pri-3 { background: #3a1620; color: var(--call); }
   .pri-2 { background: #3a2412; color: var(--firm); }
   .conflict { background: #3a1620; color: var(--call); }
@@ -341,10 +342,20 @@ function renderCommitments(list, conflicts) {
     </div>`;
   });
   if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
-  html += c.map((x) => `<div class="row"><div class="main">
-    <div><span class="title">${esc(x.title)}</span>${x.calendar ? ` <span class="pill">${esc(x.calendar)}</span>` : ""}${ids.has(x.id) ? ' <span class="pill conflict">double-booked</span>' : ""}</div>
-    <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
-  </div></div>`).join("");
+  html += c.map((x) => {
+    const fyi = x.kind === "fyi";
+    const cal = x.calendar ? ` <span class="pill">${esc(x.calendar)}</span>` : "";
+    const fyiBadge = fyi ? ' <span class="pill fyi" title="Where someone will be — never a conflict">FYI</span>' : "";
+    const dbl = (!fyi && ids.has(x.id)) ? ' <span class="pill conflict">double-booked</span>' : "";
+    const target = fyi ? "self" : "fyi";
+    const btnTitle = fyi ? "Not FYI — mark as your own commitment" : "Mark FYI (where someone will be — never a conflict)";
+    return `<div class="row"><div class="main">
+      <div><span class="title">${esc(x.title)}</span>${cal}${fyiBadge}${dbl}</div>
+      <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
+    </div>
+    <div class="acts"><button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${target}" title="${btnTitle}">${fyi ? "Mine" : "FYI"}</button></div>
+  </div>`;
+  }).join("");
   return html;
 }
 
@@ -396,6 +407,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
+    else if (act === "commitment-kind") { await post(`/commitments/${id}/kind`, { kind: el.dataset.kind }); }
     else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     else if (act === "todo-deadline") {
       // Stored as "YYYY-MM-DD HH:MM:SS" UTC; offer the date as the default.

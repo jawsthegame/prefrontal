@@ -146,6 +146,93 @@ def test_sync_is_feed_aware(store):
     assert titles == {"Work mtg", "Coffee"}
 
 
+def test_sync_classifies_new_events_and_keeps_verdict(store):
+    """New events are classified once; existing ones aren't re-classified."""
+    calls: list[str] = []
+
+    def classify(title: str) -> tuple[str, str]:
+        calls.append(title)
+        return ("fyi", "llm") if "brow" in title.lower() else ("self", "llm")
+
+    events = [
+        {"title": "Harlequin Brow Appt", "start_at": _iso(60), "external_id": "family:1"},
+        {"title": "Standup", "start_at": _iso(90), "external_id": "work:1"},
+    ]
+    sync_calendar(store, events, classify=classify)
+    by_title = {c["title"]: c for c in store.upcoming_commitments()}
+    assert by_title["Harlequin Brow Appt"]["kind"] == "fyi"
+    assert by_title["Standup"]["kind"] == "self"
+    assert len(calls) == 2
+
+    # Re-syncing the same events must not consult the classifier again.
+    calls.clear()
+    sync_calendar(store, events, classify=classify)
+    assert calls == []
+    assert {c["title"]: c["kind"] for c in store.upcoming_commitments()}[
+        "Harlequin Brow Appt"
+    ] == "fyi"
+
+
+def test_sync_preserves_user_kind_correction(store):
+    """A user's manual kind override is never clobbered by a later sync."""
+    events = [
+        {"title": "Brow appt", "start_at": _iso(60), "external_id": "family:1"},
+    ]
+    sync_calendar(store, events, classify=lambda t: ("fyi", "llm"))
+    cid = store.upcoming_commitments()[0]["id"]
+    store.set_commitment_kind(cid, "self", "user")  # the user disagrees
+    # A fresh sync with a classifier that would say 'fyi' must not override.
+    sync_calendar(store, events, classify=lambda t: ("fyi", "llm"))
+    assert store.get_commitment(cid)["kind"] == "self"
+
+
+def test_find_conflicts_ignores_fyi(store):
+    """An FYI commitment overlapping a real one is not a double-booking."""
+    base = "2026-06-28 10:00:00"
+    items = [
+        {"id": 1, "title": "Work mtg", "start_at": base, "end_at": "2026-06-28 11:00:00",
+         "kind": "self"},
+        {"id": 2, "title": "Jamie brow", "start_at": "2026-06-28 10:30:00",
+         "end_at": "2026-06-28 11:30:00", "kind": "fyi"},
+    ]
+    assert find_conflicts(items) == []
+    # Same pair, both 'self' → it is a conflict.
+    items[1]["kind"] = "self"
+    assert len(find_conflicts(items)) == 1
+
+
+def test_kind_feedback_latest_wins(store):
+    """record_kind_feedback collapses by normalized title; latest verdict wins."""
+    store.record_kind_feedback("Harlequin Brow Appt", "fyi", llm_kind="self")
+    store.record_kind_feedback("harlequin brow appt", "self", llm_kind="fyi")
+    examples = store.kind_feedback_examples()
+    assert len(examples) == 1
+    assert examples[0]["kind"] == "self"
+    assert examples[0]["display"] == "harlequin brow appt"
+
+
+def test_set_commitment_kind_endpoint_records_feedback(client):
+    """POST /commitments/{id}/kind updates the row and learns from it."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "Harlequin Brow Appt", "start_at": _iso(60),
+             "external_id": "family:9"},
+        ]},
+    )
+    cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
+    r = client.post(f"/commitments/{cid}/kind", headers=_auth(), json={"kind": "fyi"})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["kind"] == "fyi"
+    assert r.json()["commitment"]["kind_source"] == "user"
+    # Bad kind → 422; unknown id → 404.
+    assert client.post(f"/commitments/{cid}/kind", headers=_auth(),
+                       json={"kind": "nope"}).status_code == 422
+    assert client.post("/commitments/99999/kind", headers=_auth(),
+                       json={"kind": "fyi"}).status_code == 404
+
+
 def test_find_conflicts_detects_overlap():
     """Overlapping intervals are flagged; back-to-back ones are not."""
     base = "2026-06-28 10:00:00"

@@ -70,7 +70,12 @@ def connect(db_path: str) -> sqlite3.Connection:
 #: back-filled with ``ALTER TABLE`` on databases created before they existed.
 #: Maps table name -> list of ``(column, type)`` that must be present.
 _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "commitments": [("dest_lat", "REAL"), ("dest_lon", "REAL")],
+    "commitments": [
+        ("dest_lat", "REAL"),
+        ("dest_lon", "REAL"),
+        ("kind", "TEXT NOT NULL DEFAULT 'self'"),
+        ("kind_source", "TEXT"),
+    ],
     "todo_decompositions": [("done_steps", "TEXT")],
 }
 
