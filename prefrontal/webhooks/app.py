@@ -104,6 +104,7 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
+from prefrontal.mail.feedback import learned_corrections, record_drop_feedback
 from prefrontal.memory.store import MemoryStore, feed_label, provision_user, sha256_hex
 from prefrontal.memory.summarizer import (
     build_profile,
@@ -138,7 +139,6 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
-from prefrontal.webhooks.oauth import register_oauth_routes, session_user
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     augment_todo,
@@ -146,6 +146,7 @@ from prefrontal.todos import (
     decompose_task,
     record_todo_closed,
 )
+from prefrontal.webhooks.oauth import register_oauth_routes, session_user
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -355,6 +356,12 @@ class MailSync(BaseModel):
         default=None,
         description="Override the account's configured retention policy for this batch.",
     )
+
+
+class TriageForget(BaseModel):
+    """Body of ``POST /mail/triage/learned/forget`` — drop one learned correction."""
+
+    id: int = Field(description="The `triage_feedback` row id to forget (from the learned list).")
 
 
 class UserCreate(BaseModel):
@@ -866,6 +873,11 @@ def create_app(
             account=payload.account,
             policy=policy,
             client=ollama_client,
+            corrections=learned_corrections(
+                memory,
+                quick_drop_days=resolved_settings.triage_quick_drop_days,
+                repeat_threshold=resolved_settings.triage_repeat_threshold,
+            ),
         )
         return {
             "account": summary.account,
@@ -894,6 +906,51 @@ def create_app(
             "needs_action": memory.mail_needing_action(),
             "recent": memory.recent_mail(limit=30),
         }
+
+    @app.get("/mail/triage/learned", tags=["ingestion"])
+    def triage_learned(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """What triage has learned from your dropped intake todos.
+
+        ``senders`` are repeat offenders (treated as no-action hints), ``recent``
+        is the raw drop log (for curation), and ``prompt_addendum`` is the exact
+        text appended to the triage system prompt on the next sync — so you can
+        see, and ``forget``/``clear`` below, anything it picked up. Read-only.
+        """
+        memory = ctx.store
+        return {
+            "senders": memory.triage_dropped_senders(
+                min_count=resolved_settings.triage_repeat_threshold
+            ),
+            "recent": memory.triage_feedback_list(limit=50),
+            "prompt_addendum": learned_corrections(
+                memory,
+                quick_drop_days=resolved_settings.triage_quick_drop_days,
+                repeat_threshold=resolved_settings.triage_repeat_threshold,
+            ),
+        }
+
+    @app.post("/mail/triage/learned/forget", tags=["ingestion"])
+    def triage_forget(
+        payload: TriageForget,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Forget one learned correction (e.g. a drop that was really avoidance)."""
+        removed = ctx.store.forget_triage_feedback(payload.id)
+        if not removed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No triage correction with id {payload.id}.",
+            )
+        return {"ok": True, "forgot": payload.id}
+
+    @app.post("/mail/triage/learned/clear", tags=["ingestion"])
+    def triage_clear(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Forget all learned corrections — resets triage to the base prompt."""
+        return {"ok": True, "cleared": ctx.store.clear_triage_feedback()}
 
     # -- Location-Aware Task Anchor (Coffee Shop Nudge) ----------------------
 
@@ -1898,6 +1955,11 @@ def create_app(
         Closing logs a ``task`` episode (done ⇒ ``success``, drop ⇒ ``miss``) so
         the outcome feeds the learning pass like every other touchpoint — the
         moment an avoided todo finally resolves is captured, not discarded.
+
+        Dropping additionally feeds the *triage* loop: if the todo came from mail
+        intake, the drop is recorded as a correction (see
+        :func:`prefrontal.mail.feedback.record_drop_feedback`) so a future sync's
+        prompt learns not to repeat that false positive.
         """
         memory = ctx.store
         new_status = "done" if action == "done" else "dropped"
@@ -1912,6 +1974,8 @@ def create_app(
             if closed is not None
             else None
         )
+        if action == "drop" and closed is not None:
+            record_drop_feedback(memory, todo_id, closed, now=utcnow())
         return {"todo_id": todo_id, "status": new_status, "episode_id": episode_id}
 
     @app.get("/todos/fit", tags=["todos"])

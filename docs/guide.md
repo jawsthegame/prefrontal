@@ -326,6 +326,32 @@ curl -s "$PF/mail" -H "X-Prefrontal-Token: $TOK"
 > "Can you review the proposal?" → todo *"Reply to Sarah re: proposal"* (priority
 > high). A Substack digest → logged, not surfaced.
 
+### Triage learns from what you drop
+
+**What:** When you **Drop** a todo that mail intake created, that's a hint triage
+over-flagged. Those corrections are folded back into the triage prompt, so it
+stops re-flagging the same kind of mail — it adapts to *your* inbox over time.
+
+**The catch it avoids:** a Drop is ambiguous — it can mean "this never needed
+action" *or* "I avoided something I should have done" (what [Avoidance](#avoidance--surface-what-you-keep-skipping)
+surfaces). Feeding every drop to the prompt would teach it to suppress
+important-but-avoided mail. So a drop only counts as a correction when it's
+reliable: **quick** (dropped within `PREFRONTAL_TRIAGE_QUICK_DROP_DAYS`, before
+it could be avoided) or from a **repeat sender** (dropped
+`PREFRONTAL_TRIAGE_REPEAT_THRESHOLD`+ times). A one-off slow drop is recorded but
+never injected.
+
+```bash
+prefrontal mail learned            # repeat senders, recent drops, the exact prompt addendum
+prefrontal mail learned --clear    # forget everything triage has learned
+curl -s "$PF/mail/triage/learned" -H "X-Prefrontal-Token: $TOK"
+curl -sX POST "$PF/mail/triage/learned/forget" -H "X-Prefrontal-Token: $TOK" -d '{"id":3}'
+```
+
+> Drop three "Daily standup notes" emails from a bot in a row → the next sync's
+> triage prompt learns that sender's mail doesn't need action, and stops making
+> todos for it. Wrongly attributed? `forget` that one row and it's gone.
+
 ---
 
 ## Surfaces: dashboard, family view, and widget

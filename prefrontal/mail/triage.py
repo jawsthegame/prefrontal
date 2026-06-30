@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from prefrontal.mail.models import MailItem
 
@@ -85,12 +85,60 @@ def priority_for_urgency(urgency: str | None) -> int:
     return _URGENCY_PRIORITY.get((urgency or "").lower(), 1)
 
 
+def build_corrections_block(
+    senders: list[dict[str, Any]], examples: list[dict[str, Any]]
+) -> str:
+    """Render learned drop-corrections into a prompt addendum (``""`` if none).
+
+    The output is appended to :data:`TRIAGE_SYSTEM_PROMPT` so triage's behavior
+    evolves toward the user's own Drop feedback — without touching the base
+    instructions or the message under review. Two kinds of signal:
+
+    - ``senders``: from :meth:`MemoryStore.triage_dropped_senders` — repeat
+      offenders, given as a "treat as no-action" hint list.
+    - ``examples``: from :meth:`MemoryStore.triage_recent_quick_drops`, each a
+      ``{"sender", "subject", "summary"}`` dict — recent quick drops, as
+      negative few-shot examples.
+
+    Kept compact and bounded by the callers' limits so it can't crowd out the
+    message or push the model toward suppressing everything.
+    """
+    if not senders and not examples:
+        return ""
+    lines = [
+        "",
+        "The user has corrected past triage by dropping these flagged emails "
+        "without acting. Use this to avoid repeating the same false positives — "
+        "but still flag a clear, direct, personal request even from these senders.",
+    ]
+    if senders:
+        lines.append(
+            "Senders whose mail the user has repeatedly dropped (treat similar "
+            "mail as NOT needing action):"
+        )
+        for s in senders:
+            who = s.get("sender_email") or s.get("sender_name") or "unknown"
+            drops = s.get("drops")
+            lines.append(f"- {who}" + (f" ({drops} dropped)" if drops else ""))
+    if examples:
+        lines.append(
+            "Recent emails the user dropped without acting (similar mail does "
+            "not need action):"
+        )
+        for e in examples:
+            subject = e.get("subject") or e.get("summary") or "(no subject)"
+            who = e.get("sender") or "unknown"
+            lines.append(f'- From {who} | Subject: "{subject}"')
+    return "\n".join(lines)
+
+
 def triage_message(
     item: MailItem,
     *,
     client: OllamaClient | None = None,
     fallback: bool = True,
     use_model: bool = True,
+    corrections: str = "",
 ) -> MailTriage:
     """Triage one message, preferring the local model with a heuristic fallback.
 
@@ -104,6 +152,10 @@ def triage_message(
         use_model: If ``False``, skip the model entirely and triage with the
             keyword heuristic. Useful for clearing a large backlog of existing
             unread fast, without spinning the model up per message.
+        corrections: A learned-corrections addendum (see
+            :func:`build_corrections_block`) appended to the system prompt so the
+            model adapts to the user's Drop feedback. Empty string = base prompt.
+            Only affects the model path; the heuristic fallback ignores it.
 
     Returns:
         A :class:`MailTriage`.
@@ -120,7 +172,7 @@ def triage_message(
     client = client or OllamaClient.from_settings()
     prompt = _build_prompt(item)
     try:
-        raw = client.generate(prompt, system=TRIAGE_SYSTEM_PROMPT)
+        raw = client.generate(prompt, system=TRIAGE_SYSTEM_PROMPT + corrections)
     except OllamaError:
         if not fallback:
             raise
