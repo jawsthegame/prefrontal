@@ -7,6 +7,8 @@ Covers the pure title helpers (heuristic + LLM-with-fallback) and the
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -16,13 +18,22 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import (
+    DEFAULT_PAUSE_SECONDS,
+    build_pause_message,
     heuristic_capture_title,
     infer_capture_title,
+    pause_seconds,
+    switch_response,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
 SECRET = "impulse-secret"
+
+
+def _utc_minutes_ago(minutes: float) -> str:
+    """A SQLite-style UTC timestamp `minutes` in the past (for started_at)."""
+    return (datetime.utcnow() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _offline_ollama() -> OllamaClient:
@@ -150,3 +161,123 @@ def test_capture_requires_auth(client):
     assert client.post(
         "/webhooks/impulse/capture", json={"impulse_text": "x"}
     ).status_code == 401
+
+
+# -- pure reflective-pause core ----------------------------------------------
+
+
+def test_pause_is_longer_early_in_a_block():
+    """A switch early in a planned block pauses longer than one near the end."""
+    early = pause_seconds(5, 90, base_seconds=20)
+    late = pause_seconds(90, 90, base_seconds=20)
+    assert early > late
+    assert late == pytest.approx(20)  # at plan end → base
+
+
+def test_pause_bounds_and_no_plan():
+    """Bounded to [base, 3*base]; a windowless block is a flat base pause."""
+    assert pause_seconds(0, 60, base_seconds=20) == pytest.approx(60)  # 3x at the start
+    assert pause_seconds(999, 60, base_seconds=20) == pytest.approx(20)  # clamped past plan
+    assert pause_seconds(40, None, base_seconds=20) == 20  # no plan → flat base
+    assert pause_seconds(40, 0, base_seconds=20) == 20
+
+
+def test_switch_response_normalizes_and_rejects():
+    assert switch_response(" Defer ") == "defer"
+    for bad in ("", "nope", None):
+        with pytest.raises(ValueError):
+            switch_response(bad)
+
+
+def test_pause_message_names_task_and_time():
+    msg = build_pause_message("writing the Q3 report", 20, name="Tom")
+    assert "writing the Q3 report" in msg
+    assert "20 min" in msg
+    assert "Tom" in msg
+
+
+# -- HTTP: reflective-pause loop (switch / resolve) --------------------------
+
+
+def test_switch_records_impulse_without_changing_status(client, store):
+    """/focus/switch counts the impulse and returns a pause, but doesn't close it."""
+    sid = store.start_focus_session(
+        "the API refactor", planned_minutes=90, started_at=_utc_minutes_ago(20)
+    )
+    body = client.post("/webhooks/focus/switch", json={}, headers=_auth()).json()
+    assert body["session_id"] == sid
+    assert body["intended_task"] == "the API refactor"
+    assert body["pause_seconds"] > DEFAULT_PAUSE_SECONDS  # 20/90 in → scaled up
+    assert body["options"] == ["return", "defer", "switch"]
+    session = store.get_focus_session(sid)
+    assert session["status"] == "active"  # no state change beyond the counter
+    assert session["switch_impulses"] == 1
+    assert session["switches_deferred"] == 0
+
+
+def test_switch_with_no_active_session_is_409(client):
+    resp = client.post("/webhooks/focus/switch", json={}, headers=_auth())
+    assert resp.status_code == 409
+
+
+def test_resolve_return_keeps_block_active(client, store):
+    sid = store.start_focus_session("deep work", started_at=_utc_minutes_ago(10))
+    client.post("/webhooks/focus/switch", json={}, headers=_auth())
+    body = client.post(
+        "/webhooks/focus/resolve", json={"action": "return"}, headers=_auth()
+    ).json()
+    assert body["session_status"] == "active"
+    assert body["todo_id"] is None
+    assert "back to" in body["confirmation"].lower()
+    assert store.get_focus_session(sid)["status"] == "active"
+
+
+def test_resolve_defer_parks_impulse_and_stays(client, store):
+    """defer creates a source='impulse' todo, counts the deferral, keeps the block."""
+    sid = store.start_focus_session("deep work", started_at=_utc_minutes_ago(10))
+    client.post("/webhooks/focus/switch", json={}, headers=_auth())
+    body = client.post(
+        "/webhooks/focus/resolve",
+        json={"action": "defer", "impulse_text": "reorganize the font folder"},
+        headers=_auth(),
+    ).json()
+    assert body["session_status"] == "active"
+    todo = store.get_todo(body["todo_id"])
+    assert todo["source"] == "impulse"
+    assert todo["notes"] == "reorganize the font folder"
+    session = store.get_focus_session(sid)
+    assert session["switch_impulses"] == 1  # counted once, by /switch
+    assert session["switches_deferred"] == 1
+
+
+def test_resolve_defer_without_text_is_422(client, store):
+    store.start_focus_session("deep work", started_at=_utc_minutes_ago(10))
+    client.post("/webhooks/focus/switch", json={}, headers=_auth())
+    resp = client.post(
+        "/webhooks/focus/resolve", json={"action": "defer"}, headers=_auth()
+    )
+    assert resp.status_code == 422
+
+
+def test_resolve_switch_closes_block_and_logs_episode(client, store):
+    sid = store.start_focus_session(
+        "deep work", planned_minutes=60, started_at=_utc_minutes_ago(30)
+    )
+    client.post("/webhooks/focus/switch", json={}, headers=_auth())
+    body = client.post(
+        "/webhooks/focus/resolve", json={"action": "switch"}, headers=_auth()
+    ).json()
+    assert body["session_status"] == "switched"
+    assert store.get_focus_session(sid)["status"] == "switched"
+    ep = store.recent_episodes(1)[0]
+    assert ep["episode_type"] == "task"
+    assert ep["outcome"] == "partial"  # real block, cut short by a deliberate switch
+    assert "switched" in ep["context"]
+
+
+def test_resolve_bad_action_is_422(client, store):
+    store.start_focus_session("deep work", started_at=_utc_minutes_ago(10))
+    resp = client.post(
+        "/webhooks/focus/resolve", json={"action": "teleport"}, headers=_auth()
+    )
+    assert resp.status_code == 422

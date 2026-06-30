@@ -7,19 +7,38 @@ module's three `planned` interventions and the roadmap's "derive `context_switch
 once switch events are captured" note. If this and the code/roadmap disagree,
 this file wins until the work lands.
 
-> **Shipped so far (2026-06):** the **bare capture-and-defer** path — the §7.3
-> "capture without a switch context" — is live and `capture_and_defer` is now
-> `status="active"`. It lives at **`POST /webhooks/impulse/capture`** (not
-> `/focus/capture` as §7.3 sketched) deliberately, to sidestep the `/focus/*`
-> namespace the shipped Hyperfocus module already owns — see the reality note
-> below. It adds the `todos.source` column (§4.2, via the existing guarded
-> `_ADDED_COLUMNS` migration in `memory/db.py`), the pure title helpers
-> (`heuristic_capture_title` / `infer_capture_title`, §5), and the "Capture" iOS
-> Shortcut (§10), with a speakable `confirmation` read-back. **Not yet built:**
-> the `focus_sessions`-backed switch interception (`/focus/switch`,
-> `/focus/resolve`), the `context_switch` learning loop (§8), `switch_rate_feedback`,
-> and the profile/briefing/dashboard surfaces — all still gated on the
-> Hyperfocus reconciliation below.
+> **Shipped so far (2026-06).** The Hyperfocus reconciliation below is **resolved
+> as option (a)**: there is one focus-session model — Hyperfocus's shipped
+> `focus_sessions` table — and Impulsivity's switch-interception fires against
+> the *active* session rather than a second table. Live now:
+>
+> - **Bare capture-and-defer** (§7.3 "capture without a switch context") at
+>   **`POST /webhooks/impulse/capture`**; `capture_and_defer` is `status="active"`.
+> - **The reflective-pause loop** (§7.2/§7.3 ship-order step 2) at
+>   **`POST /webhooks/focus/switch`** (records the impulse + returns a pause
+>   directive; 409 with no active block) and **`POST /webhooks/focus/resolve`**
+>   (`return` / `defer` / `switch`); `reflective_pause` is `status="active"`.
+> - **Schema**, all additive via the guarded `_ADDED_COLUMNS` migration
+>   (`memory/db.py`): `todos.source` (§4.2) and two switch counters on
+>   `focus_sessions` — `switch_impulses` / `switches_deferred` (§4.1's intent,
+>   grafted onto the existing table per option (a) rather than a new one). A
+>   deliberate `switch` closes the block as `status='switched'` and logs a
+>   `partial` `task` episode (`record_focus_switched`).
+> - **Pure core** (§5): `pause_seconds` (scales up early in a block),
+>   `switch_response`, `build_pause_message`, plus the capture-title helpers.
+> - **iOS Shortcuts** (§10): "Capture" and "Switching?", both with a speakable
+>   `confirmation` read-back.
+>
+> One divergence worth recording: the shipped Hyperfocus module permits *multiple*
+> concurrent active sessions, where §6 assumed a single one. Rather than force a
+> one-active invariant (it would change Hyperfocus's `protect` semantics), the
+> switch fires against `most_recent_active_focus_session()`.
+>
+> **Not yet built** (spec ship-order steps 3–4, which need a few days of data):
+> the `context_switch` learning derivation (§8) — the `switch_impulses` /
+> `switches_deferred` counters are persisted now so the data accrues —
+> `switch_rate_feedback` (§10 briefing line, still `planned`), the upgraded
+> profile section (§9), and the dashboard "In focus" card.
 
 > **Reality note (2026-06).** This spec is still **unimplemented** — the
 > Impulsivity module's three interventions remain `status="planned"`. But the

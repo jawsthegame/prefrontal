@@ -79,6 +79,10 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "todo_decompositions": [("done_steps", "TEXT")],
     "todos": [("source", "TEXT NOT NULL DEFAULT 'manual'")],
+    "focus_sessions": [
+        ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
+        ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 

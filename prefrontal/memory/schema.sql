@@ -132,8 +132,10 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     planned_minutes REAL,                              -- optional intended duration
     aligned         BOOLEAN NOT NULL DEFAULT 1,        -- is this the thing you meant to do?
     started_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    status          TEXT    NOT NULL DEFAULT 'active',  -- active | ended | abandoned
+    status          TEXT    NOT NULL DEFAULT 'active',  -- active | ended | abandoned | switched
     last_level      TEXT    NOT NULL DEFAULT 'none',    -- highest interrupt already fired
+    switch_impulses   INTEGER NOT NULL DEFAULT 0,       -- times a switch-away was signalled
+    switches_deferred INTEGER NOT NULL DEFAULT 0,       -- of those, captured-and-deferred
     breadcrumb      TEXT,                              -- "where I was / next step", set on exit
     outcome         TEXT,                              -- worth_it | should_have_stopped | pulled_off
     ended_at        DATETIME,                          -- set when the session is closed

@@ -120,11 +120,19 @@ from prefrontal.modules.hyperfocus import (
     focus_level,
     record_focus_abandoned,
     record_focus_end,
+    record_focus_switched,
     should_protect,
 )
 from prefrontal.modules.hyperfocus import is_abandoned as focus_is_abandoned
 from prefrontal.modules.hyperfocus import level_rank as focus_level_rank
-from prefrontal.modules.impulsivity import infer_capture_title
+from prefrontal.modules.impulsivity import (
+    DEFAULT_PAUSE_SECONDS,
+    SWITCH_ACTIONS,
+    build_pause_message,
+    infer_capture_title,
+    pause_seconds,
+    switch_response,
+)
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
@@ -304,6 +312,54 @@ class ImpulseCaptured(BaseModel):
     confirmation: str = Field(
         default="",
         description="Speakable one-line read-back a thin client can show verbatim.",
+    )
+
+
+class SwitchImpulse(BaseModel):
+    """Body of ``POST /webhooks/focus/switch`` — signalling the pull to switch."""
+
+    session_id: int | None = Field(
+        default=None,
+        description="Focus session the impulse fires against; defaults to the active one.",
+    )
+
+
+class SwitchPause(BaseModel):
+    """Response to a switch-impulse — the reflective-pause directive."""
+
+    session_id: int
+    intended_task: str
+    elapsed_minutes: float
+    pause_seconds: float = Field(
+        description="How long the client should hold before offering options."
+    )
+    message: str
+    options: list[str] = Field(description="Resolutions the client should present.")
+
+
+class SwitchResolve(BaseModel):
+    """Body of ``POST /webhooks/focus/resolve`` — how a switch-impulse was resolved."""
+
+    session_id: int | None = Field(
+        default=None, description="Defaults to the active session."
+    )
+    action: str = Field(description="One of 'return' / 'defer' / 'switch'.")
+    impulse_text: str | None = Field(
+        default=None, description="For 'defer': the impulse to park as a todo."
+    )
+
+
+class SwitchResolved(BaseModel):
+    """Response after a switch-impulse is resolved."""
+
+    session_id: int
+    action: str
+    todo_id: int | None = Field(
+        default=None, description="The parked impulse's todo id (only for 'defer')."
+    )
+    session_status: str = Field(description="The session's status after resolving.")
+    confirmation: str = Field(
+        default="", description="Speakable one-line read-back a thin client shows verbatim."
     )
 
 
@@ -513,6 +569,15 @@ def _focus_end_confirmation(status: str, actual: float | None, planned: float | 
 def _impulse_captured_confirmation(title: str) -> str:
     """One-line read-back for a captured-and-deferred impulse."""
     return f"Parked “{title}” — it's safe in your list. Back to what you were doing."
+
+
+def _switch_resolved_confirmation(action: str, task: str, title: str | None) -> str:
+    """One-line read-back for how a switch-impulse was resolved."""
+    if action == "return":
+        return f"Good call — back to “{task}.”"
+    if action == "defer":
+        return f"Parked “{title}” for later — staying on “{task}.”"
+    return f"Switched off “{task}.” Logged it — go do the new thing."
 
 
 #: Per-user delivery routing keys read from coaching state and returned to n8n
@@ -1393,6 +1458,131 @@ def create_app(
             confirmation=_focus_started_confirmation(
                 payload.intended_task.strip(), payload.planned_minutes, payload.aligned
             ),
+        )
+
+    @app.post(
+        "/webhooks/focus/switch",
+        response_model=SwitchPause,
+        tags=["impulsivity"],
+    )
+    def focus_switch(
+        payload: SwitchImpulse,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> SwitchPause:
+        """The reflective-pause interception (Impulsivity): you feel the pull to switch.
+
+        Records the *impulse* against the active focus block (the desk-bound twin
+        of an outing — see docs/impulsivity.md) and returns a pause directive: the
+        task you're on, how long you've been on it, a reflective-pause length, and
+        the resolutions to offer. It does **not** change session state beyond the
+        impulse counter — the user's choice is a separate ``/focus/resolve`` call,
+        so a connection dropped mid-pause can't strand the session.
+
+        With no active focus block there's nothing to switch *from*, so this 409s;
+        the client should offer to start one, or just capture the thought via
+        ``POST /webhooks/impulse/capture`` (which needs no block).
+        """
+        memory = ctx.store
+        session = (
+            memory.get_focus_session(payload.session_id)
+            if payload.session_id is not None
+            else memory.most_recent_active_focus_session()
+        )
+        if session is None or session.get("status") != "active":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "No active focus block to switch from. Start one with "
+                    "/webhooks/focus/start, or capture the thought via "
+                    "/webhooks/impulse/capture."
+                ),
+            )
+        # The session may have come from get_focus_session (no elapsed) — recompute
+        # from the active list so the pause scales on real elapsed time.
+        elapsed = session.get("elapsed_minutes")
+        if elapsed is None:
+            match = next(
+                (s for s in memory.active_focus_sessions() if s["id"] == session["id"]),
+                None,
+            )
+            elapsed = (match or {}).get("elapsed_minutes") or 0.0
+        memory.record_switch_impulse(session["id"])
+        base = _state_float(memory, "pause_seconds", DEFAULT_PAUSE_SECONDS)
+        name = ctx.user.get("display_name") or ""
+        return SwitchPause(
+            session_id=session["id"],
+            intended_task=session["intended_task"],
+            elapsed_minutes=round(elapsed, 1),
+            pause_seconds=pause_seconds(elapsed, session.get("planned_minutes"), base),
+            message=build_pause_message(session["intended_task"], elapsed, name=name),
+            options=list(SWITCH_ACTIONS),
+        )
+
+    @app.post(
+        "/webhooks/focus/resolve",
+        response_model=SwitchResolved,
+        tags=["impulsivity"],
+    )
+    def focus_resolve(
+        payload: SwitchResolve,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> SwitchResolved:
+        """Resolve a switch-impulse after the pause (Impulsivity).
+
+        - **return** — friction worked; no state change beyond the impulse already
+          counted. The block stays active.
+        - **defer** — capture-and-defer: park ``impulse_text`` as a
+          ``source='impulse'`` todo and count the deferral, then stay on the block.
+        - **switch** — the user is moving on deliberately; close the block as
+          ``switched`` and log the (shortened-but-real) episode.
+        """
+        memory = ctx.store
+        try:
+            action = switch_response(payload.action)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
+        session = (
+            memory.get_focus_session(payload.session_id)
+            if payload.session_id is not None
+            else memory.most_recent_active_focus_session()
+        )
+        if session is None or session.get("status") != "active":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No active focus block to resolve a switch against.",
+            )
+        session_id = session["id"]
+        task = session["intended_task"]
+
+        todo_id: int | None = None
+        session_status = "active"
+        title: str | None = None
+        if action == "defer":
+            raw = (payload.impulse_text or "").strip()
+            if not raw:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="'defer' needs impulse_text to capture.",
+                )
+            title = infer_capture_title(raw, client=ollama_client) or raw
+            todo_id = memory.add_todo(title, notes=raw, source="impulse")
+            memory.mark_switch_deferred(session_id)
+        elif action == "switch":
+            closed = memory.close_focus_session(session_id, status="switched")
+            if closed is not None:
+                record_focus_switched(memory, closed)
+            session_status = "switched"
+        # 'return' is a no-op beyond what /focus/switch already counted.
+
+        return SwitchResolved(
+            session_id=session_id,
+            action=action,
+            todo_id=todo_id,
+            session_status=session_status,
+            confirmation=_switch_resolved_confirmation(action, task, title),
         )
 
     @app.post("/webhooks/focus/check", tags=["focus"])

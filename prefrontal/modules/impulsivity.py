@@ -19,8 +19,79 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
 
+#: Default reflective pause, in seconds (also the ``pause_seconds`` state default).
+DEFAULT_PAUSE_SECONDS = 20.0
+
+#: Valid resolutions of a switch-impulse, in the order the Shortcut menu shows them.
+SWITCH_ACTIONS = ("return", "defer", "switch")
+
 #: Words past this many in the raw impulse get dropped from the heuristic title.
 _CAPTURE_TITLE_MAX_WORDS = 8
+
+
+def pause_seconds(
+    elapsed_minutes: float,
+    planned_minutes: float | None,
+    base_seconds: float = DEFAULT_PAUSE_SECONDS,
+) -> float:
+    """Reflective-pause length (seconds) for a switch-impulse.
+
+    A switch *early* in a block is the most disruptive — there's the most to
+    lose by abandoning it — so the pause is longest then and shrinks toward
+    ``base_seconds`` as the block nears its planned end. With no planned
+    duration there's no progress to scale against, so it returns ``base_seconds``
+    flat. Bounded to ``[base_seconds, 3 * base_seconds]``.
+
+    Args:
+        elapsed_minutes: Minutes since the focus block started.
+        planned_minutes: The stated intended duration, or ``None``.
+        base_seconds: The configured baseline pause.
+
+    Returns:
+        The pause length in seconds, rounded to one decimal.
+    """
+    if not planned_minutes or planned_minutes <= 0:
+        return base_seconds
+    frac = min(max(elapsed_minutes / planned_minutes, 0.0), 1.0)  # 0 early → 1 at plan end
+    factor = 3.0 - 2.0 * frac  # 3x at the start, 1x once the plan is spent
+    return round(base_seconds * min(max(factor, 1.0), 3.0), 1)
+
+
+def switch_response(action: str) -> str:
+    """Validate and normalize a chosen switch resolution.
+
+    Args:
+        action: One of ``return`` / ``defer`` / ``switch`` (any case).
+
+    Returns:
+        The lower-cased action.
+
+    Raises:
+        ValueError: If ``action`` is not a known resolution.
+    """
+    normalized = (action or "").strip().lower()
+    if normalized not in SWITCH_ACTIONS:
+        raise ValueError(f"action must be one of {SWITCH_ACTIONS}, got {action!r}")
+    return normalized
+
+
+def build_pause_message(intended_task: str, elapsed_minutes: float, *, name: str = "") -> str:
+    """The reminder shown during the reflective pause — re-surfaces the current task.
+
+    Args:
+        intended_task: What the user declared they're working on, quoted back.
+        elapsed_minutes: Minutes into the block (rendered whole).
+        name: Optional first name; included when set.
+
+    Returns:
+        A short, concrete message naming the task and the time already invested.
+    """
+    elapsed = round(elapsed_minutes)
+    who = f" {name}" if name else ""
+    return (
+        f"Hold on{who} — you're {elapsed} min into “{intended_task}.” "
+        "Does the new thing actually need you now, or can it wait?"
+    )
 
 #: System prompt for LLM-titling a captured impulse. Kept tight so a local model
 #: returns a clean label, never a paragraph; the heuristic covers it if it doesn't.
@@ -111,6 +182,7 @@ class ImpulsivityModule(Module):
                 name="reflective_pause",
                 description="Insert a short, dismissible pause before an impulsive switch.",
                 trigger="a context switch away from an active intended task",
+                status="active",
             ),
             Intervention(
                 name="capture_and_defer",
