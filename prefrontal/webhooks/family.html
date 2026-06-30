@@ -40,6 +40,7 @@
   .where { color: var(--muted); font-size: 14px; }
   .cal { display: inline-block; margin-left: 8px; font-size: 12px; color: var(--muted);
          border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; vertical-align: middle; }
+  .cal.fyi { color: #5b7fa6; border-color: #5b7fa6; }
   .empty { color: var(--muted); }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align: middle; }
   .dot.warn { background: var(--warn); }
@@ -185,8 +186,9 @@ function renderToday(briefing) {
     const t = clock(toDate(c.start_at));
     const where = c.location ? `<div class="where">${esc(c.location)}</div>` : "";
     const cal = c.calendar ? `<span class="cal">${esc(c.calendar)}</span>` : "";
+    const fyi = c.kind === "fyi" ? `<span class="cal fyi" title="Just so you know where someone will be">FYI</span>` : "";
     return `<div class="item"><div class="time">${t}</div>
-      <div class="what">${esc(c.title)}${cal}${where}</div></div>`;
+      <div class="what">${esc(c.title)}${cal}${fyi}${where}</div></div>`;
   }).join("");
 }
 

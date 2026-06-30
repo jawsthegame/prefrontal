@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS commitments (
     hardness     TEXT    NOT NULL DEFAULT 'soft',   -- hard | soft
     source       TEXT    NOT NULL DEFAULT 'calendar', -- calendar | manual
     status       TEXT    NOT NULL DEFAULT 'active',   -- active | cancelled
+    kind         TEXT    NOT NULL DEFAULT 'self',   -- self (yours) | fyi (where someone will be; never a conflict)
+    kind_source  TEXT,                              -- how kind was set: llm | user | default
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -161,6 +163,21 @@ CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
 CREATE TABLE IF NOT EXISTS dismissed_conflicts (
     signature    TEXT PRIMARY KEY,
     dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Labeled examples that teach the "is this my commitment, or just FYI about
+-- where someone will be?" classifier. Seeded by the LLM's own determinations
+-- and, more importantly, by the user correcting them in the UI. Keyed by the
+-- normalized (lowercased) title so the latest verdict per title wins; these
+-- rows are folded back into the classifier prompt as few-shot examples, so the
+-- model's behavior evolves toward the user's corrections over time.
+CREATE TABLE IF NOT EXISTS kind_feedback (
+    title       TEXT PRIMARY KEY,    -- normalized (lowercased, trimmed) title
+    display     TEXT NOT NULL,       -- original-case title, shown to the model
+    kind        TEXT NOT NULL,       -- the corrected/confirmed label: self | fyi
+    llm_kind    TEXT,                -- what the model predicted (NULL if no LLM verdict)
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Ingested and triaged email. One row per message, deduplicated on the

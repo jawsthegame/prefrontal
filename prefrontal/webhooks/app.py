@@ -65,7 +65,9 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from prefrontal.briefing import build_briefing, render_briefing
+from prefrontal.classify import classify_kind
 from prefrontal.commitments import (
+    KINDS,
     conflict_dismissal_key,
     find_conflicts,
     normalize_event,
@@ -324,6 +326,12 @@ class ConflictDismiss(BaseModel):
     """Body of ``POST /commitments/conflicts/dismiss`` — a possible-conflict key."""
 
     key: str = Field(description="The possible-conflict's `key` from the conflicts list.")
+
+
+class CommitmentKind(BaseModel):
+    """Body of ``POST /commitments/{id}/kind`` — correct a commitment's kind."""
+
+    kind: str = Field(description="`self` (your commitment) or `fyi` (where someone will be).")
 
 
 class MailSync(BaseModel):
@@ -1287,9 +1295,19 @@ def create_app(
         timestamp rejects the whole batch with 422 (never partially applies).
         """
         _verify_token(resolved_settings, x_prefrontal_token)
+        # Classify only when Ollama is reachable — one liveness check up front
+        # avoids a slow per-event timeout storm when it's down (new events then
+        # default to 'self', the conservative, conflict-preserving choice).
+        classify = None
+        if ollama_client.available():
+            examples = memory.kind_feedback_examples()
+
+            def classify(title: str) -> tuple[str, str]:
+                return classify_kind(title, client=ollama_client, examples=examples)
+
         try:
             summary = sync_calendar(
-                memory, [e.model_dump() for e in payload.events]
+                memory, [e.model_dump() for e in payload.events], classify=classify
             )
         except ValueError as exc:
             raise HTTPException(
@@ -1533,6 +1551,39 @@ def create_app(
         _verify_token(resolved_settings, x_prefrontal_token)
         memory.dismiss_conflict(payload.key)
         return {"dismissed": payload.key}
+
+    @app.post("/commitments/{commitment_id}/kind", tags=["schedule"])
+    def set_commitment_kind(
+        commitment_id: int,
+        payload: CommitmentKind,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Correct a commitment's kind (``self`` vs ``fyi``).
+
+        Records the correction as feedback (alongside the model's prior verdict)
+        so the classifier's prompt evolves toward the user's judgement, and marks
+        the row ``kind_source='user'`` so a later sync never re-classifies it.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        kind = payload.kind.strip().lower()
+        if kind not in KINDS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"kind must be one of {KINDS}",
+            )
+        current = memory.get_commitment(commitment_id)
+        if current is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_kind(commitment_id, kind, "user")
+        # Learn from the correction: store the user's label + what was there
+        # before (often the model's verdict) as a few-shot example.
+        memory.record_kind_feedback(
+            current["title"], kind, llm_kind=current.get("kind")
+        )
+        return {"commitment": updated}
 
     @app.get("/briefing", tags=["schedule"])
     def briefing(
