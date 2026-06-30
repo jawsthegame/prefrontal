@@ -63,6 +63,13 @@ class Settings:
         ollama_url: Base URL of the local Ollama server used by the LLM
             summarizer. Local-first: stays on the host by default.
         ollama_model: Ollama model name the summarizer generates with.
+        geocoder_url: Geocoding search endpoint used to resolve a commitment's
+            free-text location to coordinates (Nominatim-compatible). Only called
+            when the ``geocoding_enabled`` coaching-state flag is on; defaults to
+            the public OpenStreetMap Nominatim service.
+        geocoder_user_agent: ``User-Agent`` sent with geocoder requests.
+            Nominatim's usage policy requires an identifying agent; set it to
+            something that identifies your deployment.
         mail_accounts: Per-account retention policy for ingested mail, mapping a
             logical account name to ``"full"`` (store subject/sender/snippet/body)
             or ``"signals"`` (store only subject + sender + the triage verdict;
@@ -82,6 +89,8 @@ class Settings:
     modules: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+    geocoder_url: str = "https://nominatim.openstreetmap.org/search"
+    geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
 
@@ -134,6 +143,13 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         modules=modules,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        geocoder_url=os.environ.get(
+            "GEOCODER_URL", "https://nominatim.openstreetmap.org/search"
+        ),
+        geocoder_user_agent=os.environ.get(
+            "GEOCODER_USER_AGENT",
+            "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)",
+        ),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
     )

@@ -144,16 +144,29 @@ The `departure-reminder` n8n workflow polls `/webhooks/departure/check`, which
 works out *when to leave* for your next commitment and pushes a nudge as that
 moment approaches (a 30-min heads-up, a 10-min "get ready", and a "leave now").
 
-It estimates travel time **locally** — no maps API — from your last-known
-location (the "Update location" shortcut above) to the commitment's
-coordinates, padded by your learned time bias and a prep buffer. For that to
-beat the static `lead_minutes` buffer, give commitments coordinates:
+It estimates travel time **locally** — no maps API in the hot path — from your
+last-known location (the "Update location" shortcut above) to the commitment's
+coordinates, padded by your learned time bias and a prep buffer. Commitments get
+those coordinates (`dest_lat`/`dest_lon`) in any of three ways, tried in order:
 
-- **Calendar sync** — include `dest_lat`/`dest_lon` per event in the
-  `/webhooks/calendar/sync` body (geocode the event location in n8n, or hard-code
-  for recurring places).
-- **Manual** — `POST /commitments` accepts `dest_lat`/`dest_lon` alongside
-  `title`/`start_at`.
+1. **Curated places (recommended, offline)** — teach Prefrontal your recurring
+   destinations once:
+   ```
+   POST /places  { "name": "gym", "lat": 37.77, "lon": -122.41 }
+   ```
+   Any commitment whose location or title contains "gym" then resolves
+   instantly, with no network call. `GET /places` lists them.
+2. **Network geocoding (opt-in)** — flip the flag to let the calendar sync
+   resolve free-text addresses via OpenStreetMap Nominatim:
+   ```
+   sqlite3 prefrontal.db "UPDATE coaching_state SET value='1' WHERE key='geocoding_enabled';"
+   ```
+   Results are cached (so each address is looked up once), and a bad address is
+   remembered as a miss rather than retried. Off by default — see the geocoding
+   note in `.env.example`. Run `POST /commitments/geocode` to backfill existing
+   commitments after enabling it or adding places.
+3. **Explicit coordinates** — `POST /commitments` and the calendar-sync event
+   body both accept `dest_lat`/`dest_lon` directly.
 
 Without coordinates (or without a recent location) it falls back to the
 commitment's `lead_minutes`, so the reminder still fires — just less precisely.

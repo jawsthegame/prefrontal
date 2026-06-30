@@ -24,7 +24,9 @@ Routes:
 - ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
 - ``POST /webhooks/departure/check`` — n8n polls this for due departure nudges.
 - ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
+- ``POST /commitments/geocode`` — backfill destination coords for commitments.
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
+- ``GET  /places`` / ``POST /places`` — curated destination aliases for geocoding.
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
 - ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
 - ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
@@ -72,6 +74,7 @@ from prefrontal.departure import (
     next_departure,
     plan_departure,
 )
+from prefrontal.geocode import enrich_commitments, normalize_query
 from prefrontal.impact import (
     analyze_impact,
     at_risk,
@@ -80,6 +83,7 @@ from prefrontal.impact import (
     utcnow,
 )
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
+from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
 from prefrontal.memory.db import init_db
@@ -292,6 +296,15 @@ class LocationPing(BaseModel):
     )
 
 
+class PlaceCreate(BaseModel):
+    """Body of ``POST /places`` — a curated destination alias."""
+
+    name: str = Field(description="Alias to match against a location/title, e.g. 'gym'.")
+    lat: float = Field(description="Latitude in degrees.")
+    lon: float = Field(description="Longitude in degrees.")
+    label: str | None = Field(default=None, description="Optional display spelling.")
+
+
 class ConflictDismiss(BaseModel):
     """Body of ``POST /commitments/conflicts/dismiss`` — a possible-conflict key."""
 
@@ -409,6 +422,7 @@ def create_app(
     store: MemoryStore | None = None,
     settings: Settings | None = None,
     ollama: OllamaClient | None = None,
+    geocoder: NominatimGeocoder | None = None,
 ) -> FastAPI:
     """Build and return the Prefrontal webhook application.
 
@@ -435,6 +449,26 @@ def create_app(
         model=resolved_settings.ollama_model,
         timeout=INFER_TIMEOUT_SECONDS,
     )
+    # Forward-geocoder for commitment destinations. Built from settings unless
+    # injected (tests pass a stub). Only consulted when the runtime
+    # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.
+    geocoder_client = geocoder or NominatimGeocoder.from_settings(resolved_settings)
+
+    def _run_geocode(memory: MemoryStore, *, limit: int = 25) -> dict[str, int]:
+        """Enrich commitments with destination coords (best-effort).
+
+        Curated places and the cache are always consulted (offline); the network
+        geocoder is passed only when the ``geocoding_enabled`` coaching-state flag
+        is on, so a fresh install never reaches off-host by default.
+        """
+        enabled = (memory.get_state("geocoding_enabled", "0") or "0").strip() in (
+            "1",
+            "true",
+            "True",
+        )
+        return enrich_commitments(
+            memory, geocoder=geocoder_client if enabled else None, limit=limit
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -1174,6 +1208,11 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
+        # Fill in destination coordinates for events that arrived with only a
+        # free-text location, so the departure reminder can estimate travel time.
+        # Curated places + the cache are offline; the network geocoder is used
+        # only when geocoding_enabled is on. Best-effort: never blocks the sync.
+        geocoded = _run_geocode(memory)
         return {
             "added": summary.added,
             "updated": summary.updated,
@@ -1183,6 +1222,7 @@ def create_app(
             "new_conflict": summary.new_conflict,
             "possible_conflicts": summary.possible_conflicts,
             "new_possible_conflict": summary.new_possible_conflict,
+            "geocoded": geocoded["resolved"],
         }
 
     @app.post("/webhooks/departure/check", tags=["schedule"])
@@ -1274,7 +1314,12 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Add a single commitment manually (source ``manual``)."""
+        """Add a single commitment manually (source ``manual``).
+
+        If a ``location`` is given without explicit coordinates, a geocode pass
+        runs (curated places + cache always; network geocoder only when
+        ``geocoding_enabled`` is on) so the departure reminder can use travel time.
+        """
         _verify_token(resolved_settings, x_prefrontal_token)
         try:
             fields = normalize_event({**payload.model_dump(), "source": "manual"})
@@ -1283,7 +1328,61 @@ def create_app(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
         commitment_id, _ = memory.upsert_commitment(**fields)
-        return {"commitment_id": commitment_id}
+        if fields.get("dest_lat") is None and fields.get("location"):
+            _run_geocode(memory)
+        commitment = memory.get_commitment(commitment_id)
+        return {
+            "commitment_id": commitment_id,
+            "dest_lat": commitment.get("dest_lat") if commitment else None,
+            "dest_lon": commitment.get("dest_lon") if commitment else None,
+        }
+
+    @app.post("/commitments/geocode", tags=["schedule"])
+    def commitments_geocode(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Run a geocoding pass over commitments missing coordinates.
+
+        Useful for backfilling after enabling geocoding or adding curated places.
+        Curated places + the cache are always consulted; the network geocoder is
+        used only when ``geocoding_enabled`` is on.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return _run_geocode(memory)
+
+    @app.post("/places", status_code=status.HTTP_201_CREATED, tags=["schedule"])
+    def place_create(
+        payload: PlaceCreate,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Add (or update) a curated place alias used before any geocoding.
+
+        The ``name`` is normalized to a match key; re-posting the same name
+        updates its coordinates. Matched against a commitment's location and
+        title, so "gym" resolves "Gym session" instantly and offline.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        name = normalize_query(payload.name)
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Place 'name' is empty after normalization.",
+            )
+        place_id = memory.add_place(
+            name, payload.lat, payload.lon, label=payload.label or payload.name
+        )
+        return {"place_id": place_id, "name": name}
+
+    @app.get("/places", tags=["schedule"])
+    def places_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """List curated place aliases (most specific name first)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"places": memory.places()}
 
     @app.get("/commitments", tags=["schedule"])
     def commitments_list(
