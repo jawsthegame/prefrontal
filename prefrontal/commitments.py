@@ -152,8 +152,9 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         event: A raw event dict. Requires ``title`` and ``start_at``; optional
-            ``external_id``, ``end_at``, ``location``, ``dest_lat``, ``dest_lon``,
-            ``lead_minutes``, ``hard``.
+            ``external_id``, ``end_at``, ``location``, ``url`` (a.k.a.
+            ``source_url`` / ``html_link``, a deeplink to the source event),
+            ``dest_lat``, ``dest_lon``, ``lead_minutes``, ``hard``.
 
     Returns:
         Kwargs ready for :meth:`MemoryStore.upsert_commitment`.
@@ -177,6 +178,10 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
         "external_id": event.get("external_id") or None,
         "end_at": to_utc(end_raw) if end_raw else None,
         "location": event.get("location") or None,
+        "source_url": (
+            event.get("url") or event.get("source_url") or event.get("html_link")
+        )
+        or None,
         "dest_lat": float(dest_lat) if dest_lat is not None else None,
         "dest_lon": float(dest_lon) if dest_lon is not None else None,
         "lead_minutes": float(lead) if lead is not None else 10.0,

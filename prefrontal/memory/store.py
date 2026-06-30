@@ -36,6 +36,7 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
+from urllib.parse import quote_plus
 
 from prefrontal.memory.db import connect, init_db
 
@@ -123,9 +124,35 @@ def feed_label(external_id: str | None) -> str | None:
     return _FEED_LABELS.get(slug, slug.capitalize())
 
 
+def commitment_url(commitment: dict[str, Any]) -> str | None:
+    """Return a deeplink to a commitment's source event, or ``None``.
+
+    Prefers an explicit ``source_url`` supplied by the sync (used verbatim, so
+    it works for any provider — a Google ``htmlLink``, an Outlook event URL, a
+    Gmail message link, …). Otherwise derives a best-effort link for events that
+    came from Google Calendar, whose iCal UID ends ``@google.com``: the bare UID
+    can't reconstruct a precise event link (Google's ``eid`` also needs the
+    calendar id, which an ICS feed doesn't carry), but a title *search* reliably
+    lands on the event. Providers we can't derive a link for (Outlook, iCloud)
+    return ``None`` unless a ``source_url`` was provided.
+
+    Only ``http(s)`` URLs are returned, so a stored value can be dropped into an
+    ``href`` without opening a ``javascript:``-style injection.
+    """
+    url = (commitment.get("source_url") or "").strip()
+    if url:
+        return url if url.startswith(("http://", "https://")) else None
+    external_id = commitment.get("external_id") or ""
+    title = (commitment.get("title") or "").strip()
+    if title and external_id.endswith("@google.com"):
+        return "https://calendar.google.com/calendar/u/0/r/search?q=" + quote_plus(title)
+    return None
+
+
 def _with_calendar(d: dict[str, Any]) -> dict[str, Any]:
-    """Annotate a commitment dict with a ``calendar`` display label."""
+    """Annotate a commitment dict with a ``calendar`` label and source ``url``."""
     d["calendar"] = feed_label(d.get("external_id"))
+    d["url"] = commitment_url(d)
     return d
 
 
@@ -1113,6 +1140,7 @@ class MemoryStore:
         external_id: str | None = None,
         end_at: str | None = None,
         location: str | None = None,
+        source_url: str | None = None,
         dest_lat: float | None = None,
         dest_lon: float | None = None,
         lead_minutes: float = 10.0,
@@ -1134,6 +1162,8 @@ class MemoryStore:
             external_id: Calendar event id, or ``None`` for a manual entry.
             end_at: Optional UTC end timestamp.
             location: Optional free-text location.
+            source_url: Optional deeplink to the source event/email (stored
+                verbatim and surfaced in the dashboard).
             dest_lat: Optional destination latitude (enables travel-time
                 estimation for departure reminders).
             dest_lon: Optional destination longitude.
@@ -1152,12 +1182,13 @@ class MemoryStore:
             if existing is not None:
                 self.conn.execute(
                     "UPDATE commitments SET title = ?, start_at = ?, end_at = ?, "
-                    "location = ?, dest_lat = ?, dest_lon = ?, lead_minutes = ?, "
-                    "hardness = ?, source = ?, kind = ?, kind_source = ?, "
-                    "status = 'active', updated_at = CURRENT_TIMESTAMP "
+                    "location = ?, source_url = ?, dest_lat = ?, dest_lon = ?, "
+                    "lead_minutes = ?, hardness = ?, source = ?, kind = ?, "
+                    "kind_source = ?, status = 'active', "
+                    "updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = ? AND user_id = ?",
-                    (title, start_at, end_at, location, dest_lat, dest_lon,
-                     lead_minutes, hardness, source, kind, kind_source,
+                    (title, start_at, end_at, location, source_url, dest_lat,
+                     dest_lon, lead_minutes, hardness, source, kind, kind_source,
                      existing["id"], self._uid()),
                 )
                 self.conn.commit()
@@ -1165,11 +1196,11 @@ class MemoryStore:
 
         cur = self.conn.execute(
             "INSERT INTO commitments (user_id, external_id, title, start_at, end_at, "
-            "location, dest_lat, dest_lon, lead_minutes, hardness, source, "
-            "kind, kind_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self._uid(), external_id, title, start_at, end_at, location, dest_lat,
-             dest_lon, lead_minutes, hardness, source, kind, kind_source),
+            "location, source_url, dest_lat, dest_lon, lead_minutes, hardness, "
+            "source, kind, kind_source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), external_id, title, start_at, end_at, location, source_url,
+             dest_lat, dest_lon, lead_minutes, hardness, source, kind, kind_source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True

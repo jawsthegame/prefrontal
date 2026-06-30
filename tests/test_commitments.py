@@ -20,7 +20,7 @@ from prefrontal.commitments import (
 )
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
-from prefrontal.memory.store import MemoryStore, feed_label
+from prefrontal.memory.store import MemoryStore, commitment_url, feed_label
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
@@ -52,11 +52,50 @@ def test_normalize_event_requires_title_and_start():
 
 
 def test_normalize_event_defaults():
-    """Defaults: lead 10 min, soft, calendar source."""
+    """Defaults: lead 10 min, soft, calendar source, no source_url."""
     out = normalize_event({"title": "Dentist", "start_at": "2026-06-28T10:00:00Z"})
     assert out["lead_minutes"] == 10.0
     assert out["hardness"] == "soft"
     assert out["source"] == "calendar"
+    assert out["source_url"] is None
+
+
+def test_normalize_event_accepts_url_aliases():
+    """A source link arrives as ``url``, ``source_url``, or ``html_link``."""
+    for key in ("url", "source_url", "html_link"):
+        out = normalize_event(
+            {"title": "x", "start_at": "2026-06-28T10:00:00Z", key: "https://e/1"}
+        )
+        assert out["source_url"] == "https://e/1"
+
+
+# -- deeplinks ---------------------------------------------------------------
+
+
+def test_commitment_url_prefers_explicit_source_url():
+    """An explicit http(s) source_url is used verbatim, for any provider."""
+    c = {"external_id": "outlook:ABC", "title": "Block", "source_url": "https://x/e"}
+    assert commitment_url(c) == "https://x/e"
+
+
+def test_commitment_url_rejects_non_http_source_url():
+    """A non-http(s) source_url is dropped (no javascript: into an href)."""
+    c = {"title": "x", "source_url": "javascript:alert(1)"}
+    assert commitment_url(c) is None
+
+
+def test_commitment_url_derives_google_search_link():
+    """A Google event (UID ends @google.com) gets a title-search deeplink."""
+    c = {"external_id": "work:abc_R20260629T190000@google.com", "title": "Casey 1:1"}
+    url = commitment_url(c)
+    assert url == "https://calendar.google.com/calendar/u/0/r/search?q=Casey+1%3A1"
+
+
+def test_commitment_url_none_for_unlinkable_providers():
+    """Outlook/iCloud UIDs aren't linkable without an explicit source_url."""
+    assert commitment_url({"external_id": "outlook:DEADBEEF", "title": "Block"}) is None
+    assert commitment_url({"external_id": "personal:UUID-1", "title": "Brow"}) is None
+    assert commitment_url({"external_id": None, "title": "Manual"}) is None
 
 
 # -- store -------------------------------------------------------------------
@@ -79,6 +118,29 @@ def test_upsert_inserts_then_updates_by_external_id(store):
     assert created1 is True and created2 is False
     assert cid1 == cid2
     assert store.get_commitment(cid1)["title"] == "Standup (moved)"
+
+
+def test_source_url_round_trips_and_surfaces_as_url(store):
+    """An explicit source_url persists across upsert and surfaces as ``url``."""
+    cid, _ = store.upsert_commitment(
+        title="Demo",
+        start_at=to_utc(_iso(60)),
+        external_id="work:e1@google.com",
+        source_url="https://example.com/event/1",
+    )
+    got = store.get_commitment(cid)
+    assert got["source_url"] == "https://example.com/event/1"
+    assert got["url"] == "https://example.com/event/1"  # explicit wins over derived
+
+
+def test_upcoming_commitment_url_falls_back_to_derived(store):
+    """Without a source_url, a Google commitment exposes a derived search link."""
+    store.upsert_commitment(
+        title="Casey 1:1", start_at=to_utc(_iso(60)), external_id="work:e2@google.com"
+    )
+    (got,) = store.upcoming_commitments()
+    assert got["source_url"] is None
+    assert got["url"] == "https://calendar.google.com/calendar/u/0/r/search?q=Casey+1%3A1"
 
 
 def test_feed_label_maps_prefix_to_display_name():
