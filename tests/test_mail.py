@@ -12,6 +12,7 @@ a real server: one handler returns a valid JSON verdict (the model path), and a
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 from prefrontal.config import Settings, _parse_mail_accounts
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message
+from prefrontal.mail.imap import _unseen_criteria
 from prefrontal.mail.models import normalize_date, parse_sender
 from prefrontal.mail.triage import _heuristic_triage, priority_for_urgency, triage_message
 from prefrontal.memory.db import init_db
@@ -193,6 +195,18 @@ def test_use_model_false_skips_the_model():
 
 
 # -- config policy parsing ---------------------------------------------------
+
+
+def test_unseen_criteria_bounded():
+    """A positive window yields UNSEEN SINCE <DD-Mon-YYYY>."""
+    now = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
+    assert _unseen_criteria(30, now) == ("UNSEEN", "SINCE", "31-May-2026")
+
+
+def test_unseen_criteria_unbounded():
+    """No/zero window searches all unread."""
+    assert _unseen_criteria(None, None) == ("UNSEEN",)
+    assert _unseen_criteria(0, None) == ("UNSEEN",)
 
 
 def test_parse_mail_accounts():
