@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS commitments (
     start_at     DATETIME NOT NULL,                 -- stored normalized to UTC
     end_at       DATETIME,
     location     TEXT,                              -- free-text location (e.g. "123 Main St")
+    source_url   TEXT,                              -- deeplink to the source event/email (verbatim), if the sync supplies one
     dest_lat     REAL,                              -- optional destination coordinates, used to
     dest_lon     REAL,                              --   estimate travel time for departure reminders
     lead_minutes REAL    NOT NULL DEFAULT 10,       -- travel+prep buffer before start
