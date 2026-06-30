@@ -39,6 +39,34 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+# Human labels for known calendar feeds. The feed a calendar commitment came
+# from is encoded as the ``external_id`` prefix (``family:UID``); unknown feeds
+# fall back to a title-cased slug, so new feeds work without a code change.
+_FEED_LABELS = {
+    "personal": "Personal",
+    "work": "Work",
+    "outlook": "Outlook",
+    "family": "Family",
+}
+
+
+def feed_label(external_id: str | None) -> str | None:
+    """Return a display label for the calendar feed, or ``None`` if not a feed.
+
+    Manual commitments (no namespaced ``external_id``) return ``None``.
+    """
+    if not external_id or ":" not in external_id:
+        return None
+    slug = external_id.split(":", 1)[0]
+    return _FEED_LABELS.get(slug, slug.capitalize())
+
+
+def _with_calendar(d: dict[str, Any]) -> dict[str, Any]:
+    """Annotate a commitment dict with a ``calendar`` display label."""
+    d["calendar"] = feed_label(d.get("external_id"))
+    return d
+
+
 class MemoryStore:
     """A high-level, dict-returning interface to the Prefrontal memory tables.
 
@@ -882,7 +910,8 @@ class MemoryStore:
         row = self.conn.execute(
             "SELECT * FROM commitments WHERE id = ?", (commitment_id,)
         ).fetchone()
-        return _row_to_dict(row)
+        d = _row_to_dict(row)
+        return _with_calendar(d) if d is not None else None
 
     def upcoming_commitments(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return active commitments starting now or later, soonest first.
@@ -898,7 +927,7 @@ class MemoryStore:
             "AND start_at >= datetime('now') ORDER BY start_at ASC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_with_calendar(dict(r)) for r in rows]
 
     def commitments_between(self, start: str, end: str) -> list[dict[str, Any]]:
         """Return active commitments starting in ``[start, end)``, soonest first.
@@ -915,7 +944,7 @@ class MemoryStore:
             "AND start_at >= ? AND start_at < ? ORDER BY start_at ASC",
             (start, end),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_with_calendar(dict(r)) for r in rows]
 
     def cancel_commitment(self, commitment_id: int) -> bool:
         """Mark a commitment cancelled. Returns ``True`` if a row changed."""

@@ -38,6 +38,8 @@
   .time { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--accent); min-width: 64px; }
   .what { flex: 1; }
   .where { color: var(--muted); font-size: 14px; }
+  .cal { display: inline-block; margin-left: 8px; font-size: 12px; color: var(--muted);
+         border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; vertical-align: middle; }
   .empty { color: var(--muted); }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align: middle; }
   .dot.warn { background: var(--warn); }
@@ -182,8 +184,9 @@ function renderToday(briefing) {
   return items.map((c) => {
     const t = clock(toDate(c.start_at));
     const where = c.location ? `<div class="where">${esc(c.location)}</div>` : "";
+    const cal = c.calendar ? `<span class="cal">${esc(c.calendar)}</span>` : "";
     return `<div class="item"><div class="time">${t}</div>
-      <div class="what">${esc(c.title)}${where}</div></div>`;
+      <div class="what">${esc(c.title)}${cal}${where}</div></div>`;
   }).join("");
 }
 
