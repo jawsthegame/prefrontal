@@ -86,7 +86,6 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
-from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules.hyperfocus import (
@@ -474,7 +473,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         """Open the memory store on startup; close it on shutdown if we own it."""
         owns_store = store is None
-        active_store = store or MemoryStore(init_db(resolved_settings.db_path))
+        # Per-thread connections: FastAPI runs the sync endpoints in a
+        # threadpool, and a single shared connection is not safe across threads
+        # (it interleaves statements and returns garbled result sets).
+        active_store = store or MemoryStore.threaded(resolved_settings.db_path)
         app.state.store = active_store
         app.state.settings = resolved_settings
         app.state.n8n = n8n
@@ -482,7 +484,7 @@ def create_app(
             yield
         finally:
             if owns_store:
-                active_store.conn.close()
+                active_store.close()
 
     app = FastAPI(
         title="Prefrontal Webhooks",
