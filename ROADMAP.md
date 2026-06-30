@@ -127,7 +127,13 @@ the first test. Code follow-ups below are optional polish.
   the existing iOS Shortcuts.
 - **Triage agent** — classify/prioritize/route inbound signals.
 - **Coaching agent** — generate reminders/check-ins from the profile (the
-  morning briefing is the first slice of this).
+  morning briefing is the first slice of this). Specced in
+  [`docs/coaching-agent.md`](docs/coaching-agent.md): a tick-driven decision
+  engine that asks each module's new `evaluate()` hook "what's due?", then
+  decides whether to fire, what to say, and on which channel (learned
+  `channel_response` + quiet hours + debounce), logging the outcome back as an
+  episode. Generalizes the `outing/check` loop and folds in the encouragement
+  layer below.
 - **Delivery layer** — first-class Pushover / Ntfy / TTS integrations in Python
   (today delivery is handled in n8n).
 - **Ingestion** — mail monitoring (Google Apps Script digest).
