@@ -6,13 +6,13 @@ and the morning-briefing "spare time" tie-in.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.briefing import build_briefing
+from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
@@ -20,6 +20,8 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
 from prefrontal.todos import (
     augment_todo,
+    avoidance_score,
+    avoided_todos,
     decompose_task,
     heuristic_deadline,
     heuristic_energy,
@@ -326,3 +328,58 @@ def test_small_todo_no_auto_but_on_demand_and_no_route_collision(client):
     assert d.status_code == 200 and d.json()["decomposition"]["first_step"]
 
     assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200
+
+
+# -- avoidance detection -----------------------------------------------------
+
+
+def _aged_todo(**kw):
+    base = {"id": 1, "title": "Call insurance", "status": "open", "priority": 2,
+            "estimate_minutes": 10, "deadline": None, "created_at": "2026-06-25 12:00:00"}
+    base.update(kw)
+    return base
+
+
+def test_avoidance_scoring_and_exemptions():
+    now = datetime(2026, 7, 1, 12, 0, 0)  # 6 days after the default created_at
+    avoided = avoided_todos([_aged_todo()], now)
+    assert avoided and avoided[0]["todo"]["id"] == 1 and avoided[0]["days_open"] == 6.0
+
+    # Low-priority "someday" items are exempt.
+    assert avoided_todos([_aged_todo(id=2, priority=0)], now) == []
+    # Fresh todos aren't avoidance yet (under min_days).
+    assert avoided_todos([_aged_todo(id=3, created_at="2026-06-30 12:00:00")], now) == []
+    # An overdue deadline amplifies the score.
+    assert avoidance_score(_aged_todo(deadline="2026-06-28 12:00:00"), now) > avoidance_score(_aged_todo(), now)
+
+
+def test_todos_avoided_endpoint_and_flag(client, store_open):
+    old = store_open.add_todo("Call insurance", estimate_minutes=10, priority=2)
+    store_open.conn.execute(
+        "UPDATE todos SET created_at = ? WHERE id = ?", ("2020-01-01 00:00:00", old)
+    )
+    store_open.conn.commit()
+    store_open.add_todo("Just added", estimate_minutes=10, priority=2)  # fresh
+
+    avoided = client.get("/todos/avoided", headers=_auth()).json()["avoided"]
+    assert [a["title"] for a in avoided] == ["Call insurance"]
+
+    todos = client.get("/todos", headers=_auth()).json()["todos"]
+    flagged = {t["title"]: t["avoidance"] is not None for t in todos}
+    assert flagged["Call insurance"] is True
+    assert flagged["Just added"] is False
+
+
+def test_briefing_surfaces_avoided(store):
+    from prefrontal.impact import utcnow
+
+    now = utcnow()
+    tid = store.add_todo("Renew passport", estimate_minutes=20, priority=2)
+    store.conn.execute(
+        "UPDATE todos SET created_at = ? WHERE id = ?",
+        ((now - timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S"), tid),
+    )
+    store.conn.commit()
+    b = build_briefing(store, now=now)
+    assert any(a["title"] == "Renew passport" for a in b.avoided)
+    assert "keep putting off" in render_briefing(b).lower()

@@ -58,6 +58,7 @@ from prefrontal.impact import (
     at_risk,
     impact_phrase,
     project_free_time,
+    utcnow,
 )
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.ollama import OllamaClient
@@ -79,7 +80,12 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
-from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, augment_todo, decompose_task
+from prefrontal.todos import (
+    DEFAULT_MAX_FIRST_STEP_MINUTES,
+    augment_todo,
+    avoided_todos,
+    decompose_task,
+)
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -918,12 +924,45 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """List open todos (priority then deadline order), with decompositions."""
+        """List open todos with decompositions and an avoidance flag."""
         _verify_token(resolved_settings, x_prefrontal_token)
         todos = memory.open_todos()
+        avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
         for todo in todos:
             todo["decomposition"] = memory.get_decomposition(todo["id"])
+            hit = avoided.get(todo["id"])
+            todo["avoidance"] = (
+                {"days_open": hit["days_open"], "score": hit["score"]} if hit else None
+            )
         return {"todos": todos}
+
+    @app.get("/todos/avoided", tags=["todos"])
+    def todos_avoided(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """The important todos you keep skipping, worst-avoided first.
+
+        Honest prioritization: surfaces what's been sitting (high enough priority,
+        open a while) so the fun/shiny task doesn't quietly win. Pure heuristic
+        over age/priority/size/deadline — no extra tracking.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        items = avoided_todos(memory.open_todos(), utcnow())
+        return {
+            "avoided": [
+                {
+                    "todo_id": a["todo"]["id"],
+                    "title": a["todo"]["title"],
+                    "days_open": a["days_open"],
+                    "score": a["score"],
+                    "priority": a["todo"].get("priority"),
+                    "estimate_minutes": a["todo"].get("estimate_minutes"),
+                    "deadline": a["todo"].get("deadline"),
+                }
+                for a in items
+            ]
+        }
 
     @app.post("/todos/{todo_id}/decompose", tags=["todos"])
     def todo_decompose(
