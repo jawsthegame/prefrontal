@@ -16,9 +16,9 @@ from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
+from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
-from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.todos import (
     augment_todo,
     avoidance_score,
@@ -28,7 +28,6 @@ from prefrontal.todos import (
     heuristic_energy,
     heuristic_estimate,
     heuristic_priority,
-    record_todo_closed,
     todo_episode_fields,
 )
 
@@ -229,7 +228,9 @@ def test_heuristic_deadline_relative_terms():
 
 def test_augment_prefers_stated_then_llm_then_heuristic():
     """Supplied fields win; else the model; else heuristics."""
-    llm = _ollama_json('{"estimate_minutes": 25, "priority": 2, "energy": "high", "deadline": null}')
+    llm = _ollama_json(
+        '{"estimate_minutes": 25, "priority": 2, "energy": "high", "deadline": null}'
+    )
     a = augment_todo("Call the dentist", priority=0, client=llm)
     assert a.priority == 0 and a.sources["priority"] == "stated"   # stated wins
     assert a.estimate_minutes == 25.0 and a.sources["estimate_minutes"] == "llm"
@@ -257,15 +258,20 @@ def test_post_todo_augments_missing_fields(client):
 def test_augment_deadline_prefers_heuristic_over_llm():
     """For a relative date the exact heuristic wins over the model's guess."""
     # Model returns a wrong date; "by Friday" heuristic should override it.
-    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-01-01"}')
-    a = augment_todo("File the report by Friday", client=llm, today=date(2026, 7, 1))  # Wed
+    llm = _ollama_json(
+        '{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-01-01"}'
+    )
+    # date(2026, 7, 1) is a Wednesday.
+    a = augment_todo("File the report by Friday", client=llm, today=date(2026, 7, 1))
     assert a.deadline == "2026-07-03"          # the actual Friday
     assert a.sources["deadline"] == "heuristic"
 
 
 def test_augment_deadline_falls_back_to_llm_when_heuristic_blank():
     """When the heuristic finds no relative term, the model's date is used."""
-    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-08-15"}')
+    llm = _ollama_json(
+        '{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-08-15"}'
+    )
     a = augment_todo("Submit taxes before the cutoff", client=llm, today=date(2026, 7, 1))
     assert a.deadline == "2026-08-15"
     assert a.sources["deadline"] == "llm"
@@ -403,7 +409,9 @@ def test_avoidance_scoring_and_exemptions():
     # Fresh todos aren't avoidance yet (under min_days).
     assert avoided_todos([_aged_todo(id=3, created_at="2026-06-30 12:00:00")], now) == []
     # An overdue deadline amplifies the score.
-    assert avoidance_score(_aged_todo(deadline="2026-06-28 12:00:00"), now) > avoidance_score(_aged_todo(), now)
+    assert avoidance_score(
+        _aged_todo(deadline="2026-06-28 12:00:00"), now
+    ) > avoidance_score(_aged_todo(), now)
 
 
 def test_todos_avoided_endpoint_and_flag(client, store_open):
@@ -533,20 +541,36 @@ def test_update_deadline_endpoint(client, store_open):
     assert r.status_code == 200 and r.json()["deadline"] == "2026-08-15 00:00:00"
     assert store_open.get_todo(tid)["deadline"] == "2026-08-15 00:00:00"
     # Clear it.
-    assert client.post(f"/todos/{tid}/deadline", json={"deadline": None}, headers=_auth()).json()["deadline"] is None
+    cleared = client.post(
+        f"/todos/{tid}/deadline", json={"deadline": None}, headers=_auth()
+    )
+    assert cleared.json()["deadline"] is None
     # Garbage is rejected.
-    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "not-a-date"}, headers=_auth()).status_code == 422
+    bad = client.post(
+        f"/todos/{tid}/deadline", json={"deadline": "not-a-date"}, headers=_auth()
+    )
+    assert bad.status_code == 422
     # Unknown / closed todo → 404.
-    assert client.post("/todos/999/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+    missing = client.post(
+        "/todos/999/deadline", json={"deadline": "2026-08-15"}, headers=_auth()
+    )
+    assert missing.status_code == 404
     store_open.close_todo(tid, status="done")
-    assert client.post(f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth()).status_code == 404
+    closed = client.post(
+        f"/todos/{tid}/deadline", json={"deadline": "2026-08-15"}, headers=_auth()
+    )
+    assert closed.status_code == 404
 
 
 def test_step_done_endpoint(client, store_open):
     """POST /todos/{id}/steps/{i}/done ticks steps and surfaces them in GET /todos."""
     tid = store_open.add_todo("Write the report", estimate_minutes=90)
     store_open.set_decomposition(
-        tid, first_step="Open the doc", first_step_minutes=2, steps=["Draft intro", "Edit"], source="llm"
+        tid,
+        first_step="Open the doc",
+        first_step_minutes=2,
+        steps=["Draft intro", "Edit"],
+        source="llm",
     )
     # Tick the first step (index 0) — default body marks it done.
     r = client.post(f"/todos/{tid}/steps/0/done", headers=_auth())
