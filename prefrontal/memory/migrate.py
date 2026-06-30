@@ -262,6 +262,72 @@ def _rebuild_constraints(conn: sqlite3.Connection, legacy_id: int) -> None:
         ),
         columns="user_id, signature, dismissed_at",
     )
+    _rebuild_table(
+        conn,
+        "places",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE places_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "name TEXT NOT NULL, label TEXT, lat REAL NOT NULL, lon REAL NOT NULL, "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "UNIQUE (user_id, name))"
+        ),
+        columns="id, user_id, name, label, lat, lon, created_at",
+    )
+    _rebuild_table(
+        conn,
+        "kind_feedback",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE kind_feedback_new ("
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "title TEXT NOT NULL, display TEXT NOT NULL, kind TEXT NOT NULL, "
+            "llm_kind TEXT, "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (user_id, title))"
+        ),
+        columns="user_id, title, display, kind, llm_kind, created_at, updated_at",
+    )
+    _rebuild_table(
+        conn,
+        "mail_messages",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE mail_messages_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "user_id INTEGER NOT NULL REFERENCES users(id), "
+            "account TEXT NOT NULL, message_id TEXT NOT NULL, thread_id TEXT, "
+            "sender_name TEXT, sender_email TEXT, subject TEXT, received_at DATETIME, "
+            "snippet TEXT, body TEXT, unread BOOLEAN, "
+            "needs_action BOOLEAN NOT NULL DEFAULT 0, urgency TEXT, category TEXT, "
+            "waiting_on TEXT, summary TEXT, triage_source TEXT, "
+            "policy TEXT NOT NULL DEFAULT 'full', "
+            "todo_id INTEGER REFERENCES todos (id), "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "UNIQUE (user_id, account, message_id))"
+        ),
+        columns=(
+            "id, user_id, account, message_id, thread_id, sender_name, sender_email, "
+            "subject, received_at, snippet, body, unread, needs_action, urgency, "
+            "category, waiting_on, summary, triage_source, policy, todo_id, created_at"
+        ),
+    )
+    _rebuild_table(
+        conn,
+        "profile_cache",
+        legacy_id,
+        new_table=(
+            "CREATE TABLE profile_cache_new ("
+            "user_id INTEGER PRIMARY KEY REFERENCES users(id), "
+            "text TEXT NOT NULL, source TEXT NOT NULL, model TEXT, "
+            "structured TEXT, structured_hash TEXT, "
+            "generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        ),
+        columns="user_id, text, source, model, structured, structured_hash, generated_at",
+    )
 
 
 def _rebuild_table(

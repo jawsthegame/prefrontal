@@ -276,6 +276,34 @@ def _legacy_single_tenant_db() -> sqlite3.Connection:
             signature TEXT PRIMARY KEY,
             dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE places (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE, label TEXT,
+            lat REAL NOT NULL, lon REAL NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE kind_feedback (
+            title TEXT PRIMARY KEY, display TEXT NOT NULL, kind TEXT NOT NULL,
+            llm_kind TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE mail_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL,
+            message_id TEXT NOT NULL, thread_id TEXT, sender_name TEXT,
+            sender_email TEXT, subject TEXT, received_at DATETIME, snippet TEXT,
+            body TEXT, unread BOOLEAN, needs_action BOOLEAN NOT NULL DEFAULT 0,
+            urgency TEXT, category TEXT, waiting_on TEXT, summary TEXT,
+            triage_source TEXT, policy TEXT NOT NULL DEFAULT 'full', todo_id INTEGER,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (account, message_id)
+        );
+        CREATE TABLE profile_cache (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            text TEXT NOT NULL, source TEXT NOT NULL, model TEXT,
+            structured TEXT, structured_hash TEXT,
+            generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         INSERT INTO coaching_state (key, value, source) VALUES
             ('user_name', 'Tom', 'explicit'),
             ('time_estimation_bias', '1.7', 'inferred');
@@ -286,6 +314,11 @@ def _legacy_single_tenant_db() -> sqlite3.Connection:
         INSERT INTO patterns (pattern_type, context_key, observed_value)
             VALUES ('drift', 'task', 0.5);
         INSERT INTO dismissed_conflicts (signature) VALUES ('sig-1');
+        INSERT INTO places (name, label, lat, lon) VALUES ('gym', 'Gym', 1.0, 2.0);
+        INSERT INTO kind_feedback (title, display, kind) VALUES ('standup', 'Standup', 'self');
+        INSERT INTO mail_messages (account, message_id, subject)
+            VALUES ('personal', 'm-1', 'hello');
+        INSERT INTO profile_cache (id, text, source) VALUES (1, 'cached', 'heuristic');
         """
     )
     conn.commit()
@@ -322,6 +355,53 @@ def test_migration_backfills_legacy_user():
     assert len(store.open_todos()) == 2
     assert is_multi_tenant(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == MULTI_TENANT_VERSION
+
+
+def test_migration_rebuilds_all_uniqueness_constraints():
+    """Every table whose uniqueness changed is rebuilt to the composite key.
+
+    Regression for a drift where ``_rebuild_constraints`` rebuilt only
+    coaching_state/patterns/dismissed_conflicts, leaving places, kind_feedback,
+    mail_messages, and profile_cache on their legacy single-column uniques — so
+    their ``ON CONFLICT (user_id, …)`` upserts 500'd on a migrated DB.
+    """
+    conn = _legacy_single_tenant_db()
+    result = migrate_to_multi_tenant(conn, handle="tom")
+    assert result.migrated is True
+    legacy_id = conn.execute("SELECT id FROM users WHERE handle='tom'").fetchone()["id"]
+
+    def table_sql(name: str) -> str:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        return " ".join(row["sql"].split())  # normalize whitespace
+
+    # Each rebuilt table now carries the user-scoped composite key from schema.sql.
+    assert "UNIQUE (user_id, name)" in table_sql("places")
+    assert "PRIMARY KEY (user_id, title)" in table_sql("kind_feedback")
+    assert "UNIQUE (user_id, account, message_id)" in table_sql("mail_messages")
+    assert "user_id INTEGER PRIMARY KEY" in table_sql("profile_cache")
+
+    # Pre-existing rows survived and were backfilled to the legacy user.
+    assert conn.execute(
+        "SELECT user_id FROM places WHERE name='gym'"
+    ).fetchone()["user_id"] == legacy_id
+
+    # The upserts that used to 500 now resolve in place (no duplicate, value updates).
+    store = MemoryStore(conn).scoped(legacy_id)
+    store.add_place("gym", 9.0, 9.0, label="Gym2")  # ON CONFLICT (user_id, name)
+    gyms = conn.execute("SELECT lat, COUNT(*) c FROM places WHERE name='gym'").fetchone()
+    assert gyms["c"] == 1 and gyms["lat"] == 9.0
+
+    store.record_kind_feedback("standup", "fyi")  # ON CONFLICT (user_id, title)
+    assert conn.execute(
+        "SELECT kind FROM kind_feedback WHERE title='standup'"
+    ).fetchone()["kind"] == "fyi"
+
+    # set_profile_cache upserts ON CONFLICT (user_id):
+    store.set_profile_cache("fresh", source="llm", model="m", structured="{}")
+    cache = conn.execute("SELECT text, COUNT(*) c FROM profile_cache").fetchone()
+    assert cache["c"] == 1 and cache["text"] == "fresh"
 
 
 def test_migration_is_idempotent():
