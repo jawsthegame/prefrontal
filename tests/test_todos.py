@@ -246,3 +246,20 @@ def test_post_todo_augments_missing_fields(client):
     # And it now shows up in a 15-minute fit (previously impossible with no estimate).
     fit = client.get("/todos/fit", params={"minutes": 15}, headers=_auth()).json()
     assert "Call the dentist" in [f["title"] for f in fit["fits"]]
+
+
+def test_augment_deadline_prefers_heuristic_over_llm():
+    """For a relative date the exact heuristic wins over the model's guess."""
+    # Model returns a wrong date; "by Friday" heuristic should override it.
+    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-01-01"}')
+    a = augment_todo("File the report by Friday", client=llm, today=date(2026, 7, 1))  # Wed
+    assert a.deadline == "2026-07-03"          # the actual Friday
+    assert a.sources["deadline"] == "heuristic"
+
+
+def test_augment_deadline_falls_back_to_llm_when_heuristic_blank():
+    """When the heuristic finds no relative term, the model's date is used."""
+    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-08-15"}')
+    a = augment_todo("Submit taxes before the cutoff", client=llm, today=date(2026, 7, 1))
+    assert a.deadline == "2026-08-15"
+    assert a.sources["deadline"] == "llm"

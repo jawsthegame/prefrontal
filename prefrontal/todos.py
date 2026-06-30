@@ -197,10 +197,12 @@ def augment_todo(
 ) -> AugmentedTodo:
     """Fill in whichever todo fields weren't supplied.
 
-    For each missing field: the model's value (one JSON call covering all of
-    them) if usable, else a keyword heuristic / sane default. Supplied values are
-    kept verbatim and marked ``stated``. ``deadline`` is treated as supplied only
-    when non-empty; otherwise it's inferred (and may stay ``None``).
+    For estimate/priority/energy: the model's value (one JSON call covering all
+    of them) if usable, else a keyword heuristic / default. **Deadline is the
+    exception** — the exact heuristic is tried first (its weekday math is more
+    reliable than the model's date arithmetic) and the model is only a fallback
+    for phrasing the heuristic can't parse. Supplied values are kept verbatim and
+    marked ``stated``; ``deadline`` counts as supplied only when non-empty.
 
     Args:
         title: The todo text.
@@ -231,11 +233,19 @@ def augment_todo(
     pri = resolve("priority", priority, lambda: heuristic_priority(title))
     energy_val = resolve("energy", energy, lambda: heuristic_energy(title))
 
+    # Deadline ordering differs from the other fields: the heuristic's weekday
+    # math is exact ("by Friday" → the right date), whereas the model sometimes
+    # miscomputes dates — so prefer the heuristic when it matches a relative term,
+    # and only fall back to the model for fuzzier phrasing it can't parse.
     if deadline:
         dl, sources["deadline"] = deadline, "stated"
-    elif "deadline" in llm:
-        dl, sources["deadline"] = llm["deadline"], "llm"
     else:
-        dl, sources["deadline"] = heuristic_deadline(title, today), "heuristic"
+        guess = heuristic_deadline(title, today)
+        if guess is not None:
+            dl, sources["deadline"] = guess, "heuristic"
+        elif "deadline" in llm:
+            dl, sources["deadline"] = llm["deadline"], "llm"
+        else:
+            dl, sources["deadline"] = None, "heuristic"
 
     return AugmentedTodo(est, pri, energy_val, dl, sources)
