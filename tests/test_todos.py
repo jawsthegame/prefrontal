@@ -18,6 +18,7 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
+from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.todos import (
     augment_todo,
     avoidance_score,
@@ -27,6 +28,8 @@ from prefrontal.todos import (
     heuristic_energy,
     heuristic_estimate,
     heuristic_priority,
+    record_todo_closed,
+    todo_episode_fields,
 )
 
 
@@ -383,3 +386,89 @@ def test_briefing_surfaces_avoided(store):
     b = build_briefing(store, now=now)
     assert any(a["title"] == "Renew passport" for a in b.avoided)
     assert "keep putting off" in render_briefing(b).lower()
+
+
+# -- outcome capture (closing a todo feeds the learning loop) -----------------
+
+
+def test_todo_episode_fields_done_is_success():
+    """A done todo becomes a task success; estimate is predicted, actual stays None."""
+    fields = todo_episode_fields(
+        {
+            "title": "File taxes",
+            "status": "done",
+            "estimate_minutes": 30,
+            "created_at": "2026-06-01 09:00:00",
+            "completed_at": "2026-06-03 09:00:00",
+        }
+    )
+    assert fields["episode_type"] == "task"
+    assert fields["outcome"] == "success"
+    assert fields["predicted_value"] == 30
+    assert fields["actual_value"] is None  # wall-clock age must not pollute time_estimation
+    assert fields["context"] == "todo done: File taxes"
+    assert fields["notes"] == "completed after 2.0d open"
+
+
+def test_todo_episode_fields_drop_is_miss_with_now_for_age():
+    """A dropped todo (no completed_at) is a miss; age comes from the passed `now`."""
+    fields = todo_episode_fields(
+        {
+            "title": "Read manual",
+            "status": "dropped",
+            "estimate_minutes": 20,
+            "created_at": "2026-06-01 09:00:00",
+            "completed_at": None,
+        },
+        now=datetime(2026, 6, 6, 9, 0, 0),
+    )
+    assert fields["outcome"] == "miss"
+    assert fields["actual_value"] is None
+    assert fields["notes"] == "dropped after 5.0d open"
+
+
+def test_todo_close_endpoint_logs_episode(client, store_open):
+    """Closing a todo over HTTP logs a task episode and returns its id."""
+    tid = client.post(
+        "/todos", json={"title": "Call dentist", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+
+    done = client.post(f"/todos/{tid}/done", headers=_auth())
+    assert done.status_code == 200
+    assert done.json()["episode_id"] is not None
+
+    eps = store_open.episodes_by_type("task")
+    assert len(eps) == 1
+    assert eps[0]["outcome"] == "success"
+    assert eps[0]["context"] == "todo done: Call dentist"
+
+
+def test_todo_drop_endpoint_logs_miss(client, store_open):
+    """Dropping a todo records a miss — the avoidance signal isn't discarded."""
+    tid = client.post(
+        "/todos", json={"title": "Reconcile budget", "estimate_minutes": 25}, headers=_auth()
+    ).json()["todo_id"]
+
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+    eps = store_open.episodes_by_type("task")
+    assert eps and eps[0]["outcome"] == "miss"
+
+
+def test_todo_closes_feed_drift_pattern(client, store_open):
+    """Several closes flow into the learning pass as a `task` drift pattern."""
+    for i in range(3):
+        tid = client.post(
+            "/todos", json={"title": f"task {i}", "estimate_minutes": 10}, headers=_auth()
+        ).json()["todo_id"]
+        client.post(f"/todos/{tid}/done", headers=_auth())
+    tid = client.post(
+        "/todos", json={"title": "skipped", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+
+    recompute_patterns(store_open)
+    drift = [p for p in store_open.get_patterns("drift") if p["context_key"] == "task"]
+    assert drift, "expected a task drift pattern derived from todo closes"
+    assert drift[0]["sample_size"] == 4
+    # 3 successes (0.0) + 1 miss (1.0) over 4 ⇒ 0.25
+    assert drift[0]["observed_value"] == 0.25

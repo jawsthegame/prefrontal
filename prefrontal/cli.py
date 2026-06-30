@@ -25,12 +25,14 @@ from pathlib import Path
 from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.config import get_settings
+from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile, summarize_profile
 from prefrontal.modules import available, enabled_modules
 from prefrontal.scheduling import fit_todos
+from prefrontal.todos import record_todo_closed
 
 
 def _cmd_init_db(args: argparse.Namespace) -> int:
@@ -231,6 +233,9 @@ def _cmd_todo(args: argparse.Namespace) -> int:
         elif args.todo_action in ("done", "drop"):
             status_ = "done" if args.todo_action == "done" else "dropped"
             if store.close_todo(args.todo_id, status=status_):
+                closed = store.get_todo(args.todo_id)
+                if closed is not None:
+                    record_todo_closed(store, closed, now=utcnow())
                 print(f"Todo #{args.todo_id} marked {status_}.")
             else:
                 print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)

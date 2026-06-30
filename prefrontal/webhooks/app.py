@@ -121,6 +121,7 @@ from prefrontal.todos import (
     augment_todo,
     avoided_todos,
     decompose_task,
+    record_todo_closed,
 )
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
@@ -1606,7 +1607,12 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Mark a todo done or drop it."""
+        """Mark a todo done or drop it.
+
+        Closing logs a ``task`` episode (done ⇒ ``success``, drop ⇒ ``miss``) so
+        the outcome feeds the learning pass like every other touchpoint — the
+        moment an avoided todo finally resolves is captured, not discarded.
+        """
         _verify_token(resolved_settings, x_prefrontal_token)
         new_status = "done" if action == "done" else "dropped"
         if not memory.close_todo(todo_id, status=new_status):
@@ -1614,7 +1620,13 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Todo {todo_id} is not open.",
             )
-        return {"todo_id": todo_id, "status": new_status}
+        closed = memory.get_todo(todo_id)
+        episode_id = (
+            record_todo_closed(memory, closed, now=utcnow())["episode_id"]
+            if closed is not None
+            else None
+        )
+        return {"todo_id": todo_id, "status": new_status, "episode_id": episode_id}
 
     @app.get("/todos/fit", tags=["todos"])
     def todos_fit(

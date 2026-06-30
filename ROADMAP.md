@@ -35,6 +35,16 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Todo outcome capture** ✅ — closing a todo now logs a `task` episode (done ⇒
+  `success`, drop ⇒ `miss`) via `record_todo_closed()` in `prefrontal/todos.py`,
+  wired into `POST /todos/{id}/{action}` and `prefrontal todo done/drop`. This
+  was the largest uninstrumented user-touch surface: the learning pass already
+  saw outings, focus sessions, and mail, but a finished-or-abandoned todo — the
+  moment an avoided task finally resolves — was thrown away. It feeds the `task`
+  `drift` score; `actual_value` stays `None` (a todo's created→closed span is
+  wall-clock, not time-on-task, so it never pollutes `time_estimation`), with the
+  age kept in the episode `notes`. *(Next: capture departure outcomes
+  automatically — see "Learning & adaptation" below.)*
 - **Commitment geocoding (places → cache → Nominatim)** ✅ —
   `prefrontal/geocode.py` resolves a commitment's free-text `location` to
   `dest_lat`/`dest_lon` so the departure reminder's travel estimate actually
@@ -118,6 +128,59 @@ the first test. Code follow-ups below are optional polish.
   pattern pass folds into `time_estimation` and the bias multiplier.
 - **Finer `context_key`** — give outings their own pattern bucket so coffee runs
   calibrate separately from other tasks (still open).
+
+## Learning & adaptation — the road past v1
+
+Prefrontal's "it gets better the longer you use it" loop is real but narrow:
+`episodes` → `recompute_patterns()` (deterministic stats) → `coaching_state` /
+`patterns` → `summarize_profile()` (LLM renders prose) → injected into every
+agent prompt. The only thing that *adapts* is the deterministic layer; the LLM
+sits at the end and renders, deliberately kept out of the write path so the
+profile can't be hallucinated into.
+
+The honest constraint is that **learning quality is capped by observable,
+structured signal — not by model quality or prompt design.** The steps below are
+ordered by leverage; each is independent but builds on denser capture.
+
+1. **Finish dense capture (in progress).** Todo closes now log episodes (above);
+   outings, focus, mail, and the one-tap `POST /episode` endpoint already do. The
+   remaining gap is **automatic departure outcomes** — did the user actually
+   leave on time for a commitment? Today that outcome is only captured if the
+   user taps `made_it`/`missed_it` (`POST /episode`); auto-capturing it needs an
+   actual-departure signal (a geofence exit or the stored location fix in
+   `POST /webhooks/location` crossing the home radius), compared against the
+   computed leave-by time in `prefrontal/departure.py`. That's a real feature,
+   not a one-liner — hence its own line item rather than folding into the todo
+   work.
+2. **LLM-as-sensor, not LLM-as-author.** Add a path that turns *unstructured*
+   signal (a free-text note, a conversation, an observed behavior) into
+   *candidate* episodes or `coaching_state` updates — e.g. "I always blow off
+   admin on Mondays" has nowhere to land today, because the loop only learns from
+   things already shaped as structured episodes. The model should *propose* into
+   the existing deterministic / human-confirmed write path (a new `source` value
+   like `llm_inferred`, distinct from `inferred`/`explicit` in `coaching_state`),
+   never write authoritative facts directly. This preserves the auditable spine
+   while widening what can be observed. The summarizer's grounded-prompt +
+   heuristic-fallback shape (`prefrontal/memory/summarizer.py`) is the pattern to
+   mirror, flipped to emit structured JSON instead of prose.
+3. **Recency weighting / decay.** `compute_patterns()` and `compute_bias()` weigh
+   every episode equally regardless of age, so the profile tracks cumulative
+   history and is slow to follow a person who has *changed*. Add a half-life /
+   exponential decay (older episodes count less) or a sliding window, so a recent
+   shift in behavior moves the bias faster than a year of stale data resists it.
+4. **Close the loop: measure whether adaptations help.** Nothing today verifies
+   that a learned value actually improves outcomes — e.g. does applying the 1.4×
+   `time_estimation_bias` reduce subsequent `miss` rates? Track prediction error
+   over time (post-bias predicted vs actual) and surface it, so a bad adaptation
+   is visible and self-correcting rather than asserted. This also gives the
+   signal to know when to trust a pattern enough to act on it more assertively.
+5. **Generalize beyond the three hardcoded pattern types.**
+   `time_estimation`/`channel_response`/`drift` are fixed in
+   `prefrontal/memory/patterns.py`, and `context_key` is just the episode type.
+   Adapting to a *new* dimension of someone's life is currently a code change,
+   not learning. Add context-conditioned patterns (bias by task type, by time of
+   day, by energy level) — the schema's `context_key` already supports finer
+   bucketing — and derive `context_switch` once switch events are captured.
 
 ## Beyond v1 (from the README architecture)
 
