@@ -74,6 +74,7 @@ from prefrontal.modules.hyperfocus import (
     DEFAULT_SOFT_BLOCK_MINUTES,
     build_focus_message,
     focus_level,
+    is_focus_protected,
     record_focus_abandoned,
     record_focus_end,
     should_protect,
@@ -570,6 +571,15 @@ def create_app(
         upcoming commitments that would be at risk are listed (and named in the
         nudge message). Each returned item reports its post-check ``status``
         (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
+
+        **Hyperfocus gating.** While an aligned focus block is protected (see
+        :func:`prefrontal.modules.hyperfocus.is_focus_protected`), a non-critical
+        ``soft`` nudge is *deferred* — ``fire`` is held back and
+        ``suppressed_by_focus`` is set — so productive hyperfocus is not
+        interrupted by a gentle "still on track?". The level is not recorded, so
+        the soft nudge still fires once protection lifts. A ``firm``/``call``
+        escalation, or any outing with a hard commitment at risk, always punches
+        through.
         """
         _verify_token(resolved_settings, x_prefrontal_token)
         try:
@@ -604,6 +614,7 @@ def create_app(
             at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
 
             level, fire, message, outcome = "none", False, "", None
+            suppressed_by_focus = False
             impacts: list[dict[str, Any]] = []
             if at_home:
                 # Location confirms the user is home — passive return.
@@ -633,11 +644,22 @@ def create_app(
                         }
                         for i in risky
                     ]
+                hard_conflict = any(i["hardness"] == "hard" for i in impacts)
                 if fire:
-                    memory.set_outing_level(outing["id"], level)
-                    message = build_message(
-                        level, elapsed_minutes=elapsed, window_minutes=window, name=name
-                    ) + impact_phrase(risky)
+                    # Protect aligned hyperfocus: defer a non-critical (soft)
+                    # nudge while a focus block is shielded — unless a hard
+                    # commitment is at risk, which always punches through.
+                    # Firm/call escalations are never suppressed. The level is
+                    # intentionally NOT recorded when deferred, so the soft nudge
+                    # still fires once focus protection lifts.
+                    if level == "soft" and not hard_conflict and is_focus_protected(memory):
+                        suppressed_by_focus = True
+                        fire = False
+                    else:
+                        memory.set_outing_level(outing["id"], level)
+                        message = build_message(
+                            level, elapsed_minutes=elapsed, window_minutes=window, name=name
+                        ) + impact_phrase(risky)
                 outing_status = "active"
 
             results.append(
@@ -655,6 +677,7 @@ def create_app(
                     "outcome": outcome,
                     "impact": impacts,
                     "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
+                    "suppressed_by_focus": suppressed_by_focus,
                 }
             )
         return {"active": results}

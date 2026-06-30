@@ -34,6 +34,11 @@ def _utc_minutes_ago(minutes: float) -> str:
     return (datetime.utcnow() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _utc_minutes_ahead(minutes: float) -> str:
+    """A SQLite-style UTC timestamp `minutes` in the future (for commitments)."""
+    return (datetime.utcnow() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+
 # -- pure logic --------------------------------------------------------------
 
 
@@ -285,3 +290,66 @@ def test_focus_endpoints_require_auth(client):
     assert client.post("/webhooks/focus/check").status_code == 401
     assert client.post("/webhooks/focus/end", json={}).status_code == 401
     assert client.get("/focus").status_code == 401
+
+
+# -- cross-module: protected hyperfocus suppresses non-critical outing nudges --
+
+
+def _outing_item(client, status_code=200):
+    """POST the outing check and return the single active outing item."""
+    resp = client.post("/webhooks/outing/check", json={}, headers=_auth())
+    assert resp.status_code == status_code
+    return resp.json()["active"][0]
+
+
+def test_protected_focus_defers_soft_outing_nudge(store, client):
+    """A soft outing nudge is held back (not cancelled) while focus is protected."""
+    # window 20, out 12 min -> ratio 0.6 -> soft level, would normally fire.
+    oid = store.start_outing("coffee", 20.0, departure_at=_utc_minutes_ago(12))
+    store.start_focus_session("deep work", started_at=_utc_minutes_ago(30))
+
+    item = _outing_item(client)
+    assert item["level"] == "soft"
+    assert item["fire"] is False
+    assert item["suppressed_by_focus"] is True
+    # Deferred, not cancelled: the level is not recorded, so it can fire later.
+    assert store.get_outing(oid)["last_level"] == "none"
+
+
+def test_unprotected_soft_outing_nudge_still_fires(store, client):
+    """Without an aligned focus block, the same soft nudge fires normally."""
+    store.start_outing("coffee", 20.0, departure_at=_utc_minutes_ago(12))
+    item = _outing_item(client)
+    assert item["level"] == "soft"
+    assert item["fire"] is True
+    assert item["suppressed_by_focus"] is False
+
+
+def test_firm_outing_nudge_punches_through_focus(store, client):
+    """A firm escalation is critical — it fires even while focus is protected."""
+    # window 10, out 12 min -> ratio 1.2 -> firm.
+    store.start_outing("errand", 10.0, departure_at=_utc_minutes_ago(12))
+    store.start_focus_session("deep work", started_at=_utc_minutes_ago(30))
+    item = _outing_item(client)
+    assert item["level"] == "firm"
+    assert item["fire"] is True
+    assert item["suppressed_by_focus"] is False
+
+
+def test_hard_commitment_punches_through_focus(store, client):
+    """A soft nudge with a hard commitment at risk is not suppressed."""
+    store.start_outing("coffee", 20.0, departure_at=_utc_minutes_ago(12))
+    store.start_focus_session("deep work", started_at=_utc_minutes_ago(30))
+    # Hard commitment so soon that the realistic return blows its lead time.
+    store.upsert_commitment(
+        title="dentist",
+        start_at=_utc_minutes_ahead(10),
+        lead_minutes=10,
+        hardness="hard",
+        source="manual",
+    )
+    item = _outing_item(client)
+    assert item["level"] == "soft"
+    assert item["hard_conflict"] is True
+    assert item["fire"] is True
+    assert item["suppressed_by_focus"] is False
