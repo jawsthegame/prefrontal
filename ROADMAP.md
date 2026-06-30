@@ -28,7 +28,10 @@ Ordered path to the first real nudge:
 6. **Dry run** — start an outing with a 1-minute window and confirm: push at
    ~30s (50%), push at ~1m (100%), Twilio call at ~90s (150%), and that
    `/return` (or coming home) logs the episode.
-7. **Schedule learning** — nightly `prefrontal learn && prefrontal summarize`.
+7. **Schedule learning** ✅ — nightly `prefrontal learn && prefrontal summarize`
+   via `deploy/learn.sh` + `deploy/com.morningstatic.prefrontal-learn.plist`
+   (launchd `StartCalendarInterval`, 03:30); see deployment §12. Load it and the
+   profile recalibrates on its own.
 
 Everything above the dry run is configuration; no further code is required for
 the first test. Code follow-ups below are optional polish.
@@ -45,6 +48,32 @@ the first test. Code follow-ups below are optional polish.
   wall-clock, not time-on-task, so it never pollutes `time_estimation`), with the
   age kept in the episode `notes`. *(Next: capture departure outcomes
   automatically — see "Learning & adaptation" below.)*
+- **Mail ingestion + triage** ✅ — `prefrontal/mail/` normalizes a batch of
+  messages, triages each (Ollama with a deterministic heuristic fallback) into
+  `needs_action`/`urgency`/`category`/one-line `summary`, dedupes on the
+  account-scoped `message_id`, and **surfaces actionable mail as `todos`** so it
+  flows into the existing open-loop machinery (fit, briefing). Per-account
+  retention (`full` vs `signals`) keeps bodies local or never-stored. Surfaced
+  via `prefrontal mail` (list/sync/fetch), `POST /webhooks/mail/sync`, and
+  `GET /mail`. *(This is the first concrete slice of the broader Triage agent —
+  see `docs/triage-agent.md` for the source-agnostic generalization.)*
+- **Hyperfocus focus sessions** ✅ — `prefrontal/modules/hyperfocus.py` +
+  `focus_sessions` table: a declared deep-work block with an optional plan and an
+  `aligned` "is this what I meant to do?" bit. Asymmetric by design — it
+  *protects* an aligned block from other nudges while healthy, and only
+  interrupts to gently check alignment once it overruns or to force a break past
+  the hard ceiling. Wired end-to-end via `POST /webhooks/focus/{start,check,end}`
+  and `GET /focus`; all four interventions are `active`.
+- **Todo decomposition (tiny first step)** ✅ — `prefrontal/todos.py` +
+  `todo_decompositions` table: a todo big enough to stall on
+  (≥ `decomposition_threshold`) is broken into a tiny first step
+  (≤ `max_first_step_minutes`) plus collapsed remaining steps — the task
+  initiation lever for the Task Paralysis module (Ollama + heuristic fallback).
+- **Scriptable home-screen widget** ✅ — `deploy/scriptable/` polls `/outings`,
+  `/commitments`, conflicts, and todos over Tailscale and renders a glanceable
+  "right now": the active outing + escalation level, next commitments, and
+  conflict/todo counts; taps open the `/family` view. *(This is the
+  "iOS lock-screen widget" idea from the architecture, now shipped.)*
 - **Commitment geocoding (places → cache → Nominatim)** ✅ —
   `prefrontal/geocode.py` resolves a commitment's free-text `location` to
   `dest_lat`/`dest_lon` so the departure reminder's travel estimate actually
@@ -72,9 +101,9 @@ the first test. Code follow-ups below are optional polish.
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
-  Run via `prefrontal learn`. *(Next: schedule it periodically; add finer
-  `context_key` bucketing than episode type; derive `context_switch` once switch
-  events are captured.)*
+  Run via `prefrontal learn` (scheduled nightly — see step 7 above). *(Next: add
+  finer `context_key` bucketing than episode type; derive `context_switch` once
+  switch events are captured.)*
 - **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
   profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
   returns prioritized coaching prose, falling back to the heuristic when the
@@ -108,11 +137,18 @@ the first test. Code follow-ups below are optional polish.
 ## Known stubs in the current code
 
 - **n8n inbound handlers** — `POST /webhooks/n8n` classifies events via
-  `parse_inbound_event()` but routes none of them to real handlers yet.
+  `parse_inbound_event()` but routes none of them to real handlers yet. The
+  Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/app.py`.)*
-- **Module interventions** — most declared interventions are `status="planned"`.
-  Module 1 (Location-Aware Task Anchor) is the exception: its escalation,
-  location-gating, and auto-close interventions are wired end-to-end.
+- **Module interventions** — three of the five modules are wired end-to-end with
+  `status="active"` interventions: **Location-Aware Task Anchor** (escalation,
+  location-gating, auto-close), **Hyperfocus** (protect/interrupt focus
+  sessions), and **Time Blindness**. The remaining two are still declared stubs:
+  **Task Paralysis** (decomposition exists in `todos.py`, but its `tiny_first_step`
+  / `auto_decompose` / `body_double_nudge` interventions are still `planned`) and
+  **Impulsivity** (`reflective_pause` / `capture_and_defer` / `switch_rate_feedback`
+  all `planned` — see `docs/impulsivity.md`). Run `prefrontal modules -v` for the
+  live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
@@ -184,17 +220,13 @@ ordered by leverage; each is independent but builds on denser capture.
 
 ## Beyond v1 (from the README architecture)
 
-- **iOS lock-screen widget (current outing)** — a Lock Screen / Home Screen
-  widget showing the active outing at a glance: intention, time elapsed vs the
-  stated window, and the escalation level (on track / wrap up / overdue) — so
-  it's visible without opening anything. The data already exists at
-  `GET /outings` (active outings with `intention`, `elapsed_minutes`,
-  `time_window_minutes`, computed `level`, `departure_at`). Likely built with
-  Scriptable (a widget script that polls `/outings` over Tailscale with the
-  token) or a small WidgetKit app; a timeline entry per poll, colored by level,
-  with "—" when nothing is active. Pairs naturally with the `/family` view and
-  the existing iOS Shortcuts.
-- **Triage agent** — classify/prioritize/route inbound signals.
+- **Triage agent** — a source-agnostic classify/prioritize/route step for any
+  inbound signal (mail, calendar change, n8n event, manual capture), discharging
+  the `parse_inbound_event` stub. Specced in
+  [`docs/triage-agent.md`](docs/triage-agent.md). The shipped **mail ingestion**
+  (above) is the first concrete slice — it triages email and routes actionable
+  items to `todos`; the spec generalizes that single path into a reusable
+  `Signal → TriageDecision → apply` core with a `triage_log`.
 - **Coaching agent** — generate reminders/check-ins from the profile (the
   morning briefing is the first slice of this). Specced in
   [`docs/coaching-agent.md`](docs/coaching-agent.md): a tick-driven decision
@@ -205,14 +237,20 @@ ordered by leverage; each is independent but builds on denser capture.
   layer below.
 - **Delivery layer** — first-class Pushover / Ntfy / TTS integrations in Python
   (today delivery is handled in n8n).
-- **Ingestion** — mail monitoring (Google Apps Script digest).
+- **Ingestion** — core mail monitoring has **shipped** (see "Recently shipped":
+  `prefrontal/mail/` with IMAP fetch + n8n/Apps-Script batch sync). Still open:
+  the Google Apps Script work-email digest as an alternative source, and folding
+  ingestion under the general Triage agent (`docs/triage-agent.md`).
 - **Optional Anthropic provider** — keep inference local by default, but add an
   opt-in Anthropic API path (e.g. Claude Haiku for cheap, high-quality
   summaries; a larger model for heavier coaching/triage reasoning), selectable
   per agent as the README describes. The summarizer already takes an injected
   client, so this slots in behind the same interface. Local-first stays the
   default; the cloud path is explicit and configurable.
-- **Multiple users** — today Prefrontal is single-tenant throughout: one
+- **Multiple users** — specced in detail in
+  [`docs/multi-tenant.md`](docs/multi-tenant.md) (shared DB, row-level `user_id`
+  scoping); the sketch below is the summary it supersedes. Today Prefrontal is
+  single-tenant throughout: one
   SQLite DB, a global `state` table (the behavioral profile, `home_radius_m`,
   `time_estimation_bias`, etc.), one `PREFRONTAL_WEBHOOK_SECRET`, and a single
   Pushover/Twilio delivery target in the n8n workflows. Multi-user support would
