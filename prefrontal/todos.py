@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
 
 from prefrontal.integrations.ollama import OllamaError
@@ -359,3 +359,83 @@ def decompose_task(
                 steps = [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS] if isinstance(steps, list) else []
                 return Decomposition(first.strip(), mins, steps, "llm")
     return _heuristic_decomposition(title, max_first_minutes)
+
+
+# --- Avoidance detection (honest prioritization) -----------------------------
+#
+# The anti-shiny mechanism: surface the important thing you keep *not* doing,
+# rather than trusting self-assigned priority (which is gameable). A pure
+# heuristic over data we already have — no new event tracking. An open todo
+# looks avoided when it has sat a while AND isn't a "no time" excuse: older +
+# higher-priority + quicker + nearer-deadline scores higher. Low-priority
+# ("someday") items are exempt so this never nags about genuine maybes.
+
+DEFAULT_AVOIDANCE_MIN_DAYS = 3.0
+
+
+def _parse_ts(ts: Any) -> datetime | None:
+    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp, or ``None``."""
+    try:
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def _days_open(todo: dict[str, Any], now: datetime) -> float | None:
+    created = _parse_ts(todo.get("created_at"))
+    if created is None:
+        return None
+    return max(0.0, (now - created).total_seconds() / 86400.0)
+
+
+def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
+    """How strongly an open todo looks avoided (0.0 = not at all).
+
+    Combines days open, priority, smallness (a quick task you keep skipping has
+    no "no time" excuse), and deadline pressure. Low-priority items score 0.
+    """
+    if (todo.get("status") or "open") != "open":
+        return 0.0
+    priority = todo.get("priority")
+    priority = 1 if priority is None else int(priority)
+    if priority < 1:  # low / "someday" — not avoidance
+        return 0.0
+    days = _days_open(todo, now)
+    if days is None:
+        return 0.0
+    score = days * (1 + priority)  # older and higher-priority ⇒ more avoided
+    estimate = todo.get("estimate_minutes")
+    if estimate is not None and estimate <= 30:
+        score *= 1.5  # quick task left undone is a stronger avoidance signal
+    deadline = _parse_ts(todo.get("deadline"))
+    if deadline is not None:
+        days_to = (deadline - now).total_seconds() / 86400.0
+        if days_to < 0:
+            score *= 3.0  # overdue
+        elif days_to <= 2:
+            score *= 2.0  # imminent
+    return round(score, 1)
+
+
+def avoided_todos(
+    todos: list[dict[str, Any]],
+    now: datetime,
+    *,
+    min_days: float = DEFAULT_AVOIDANCE_MIN_DAYS,
+) -> list[dict[str, Any]]:
+    """Open todos that look avoided, worst first.
+
+    A todo qualifies when it's been open at least ``min_days`` and isn't
+    low-priority. Returns ``{todo, days_open, score}`` dicts sorted by score.
+    """
+    out: list[dict[str, Any]] = []
+    for todo in todos:
+        if (todo.get("status") or "open") != "open":
+            continue
+        days = _days_open(todo, now)
+        score = avoidance_score(todo, now)
+        if days is None or days < min_days or score <= 0:
+            continue
+        out.append({"todo": todo, "days_open": round(days, 1), "score": score})
+    out.sort(key=lambda x: -x["score"])
+    return out

@@ -30,6 +30,7 @@ from prefrontal.commitments import find_conflicts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import free_windows, suggest_for_windows
+from prefrontal.todos import avoided_todos
 
 #: Default available-hours band (UTC hours) for fitting todos into the day.
 DEFAULT_DAY_START_HOUR = 8
@@ -72,6 +73,7 @@ class Briefing:
     slips: dict[str, int] = field(default_factory=dict)
     coaching: dict[str, str] = field(default_factory=dict)
     spare: list[dict[str, Any]] = field(default_factory=list)
+    avoided: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -144,6 +146,12 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
                     }
                 )
 
+    # Avoidance: the important things still open and being skipped.
+    avoided = [
+        {"title": a["todo"]["title"], "days_open": a["days_open"], "todo_id": a["todo"]["id"]}
+        for a in avoided_todos(todos, now)[:3]
+    ]
+
     return Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -152,6 +160,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         slips=dict(slip_counter),
         coaching=coaching,
         spare=spare,
+        avoided=avoided,
     )
 
 
@@ -204,6 +213,13 @@ def render_briefing(briefing: Briefing) -> str:
         total = sum(briefing.slips.values())
         detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
         lines.append(f"**Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
+        lines.append("")
+
+    # Avoidance — the important things you keep skipping.
+    if briefing.avoided:
+        lines.append("**🔴 You keep putting off:**")
+        for a in briefing.avoided:
+            lines.append(f"- {a['title']} — open {a['days_open']:g} days")
         lines.append("")
 
     # Spare time + suggestions.

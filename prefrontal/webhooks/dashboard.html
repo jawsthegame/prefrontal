@@ -67,6 +67,7 @@
   .pri-2 { background: #3a2412; color: var(--firm); }
   .conflict { background: #3a1620; color: var(--call); }
   .possible { background: #3a2f12; color: var(--soft); }
+  .avoiding { background: #3a1620; color: var(--call); }
   .badge.first { background: #16341f; color: var(--good); }
   .firststep { margin-top: 8px; padding: 8px 10px; background: #15231a;
                border-left: 3px solid var(--good); border-radius: 0 6px 6px 0; font-size: 14px; }
@@ -285,7 +286,7 @@ function renderTodos(d) {
       : `<button class="btn-sm" data-action="decompose" data-id="${x.id}">Break it down</button>`;
     return `<div class="row">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
+        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
       </div>
