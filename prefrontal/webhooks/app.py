@@ -79,6 +79,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
+from prefrontal.todos import augment_todo
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -210,7 +211,9 @@ class TodoCreate(BaseModel):
     estimate_minutes: float | None = Field(
         default=None, description="How long it'll take (enables time-fitting)."
     )
-    priority: int = Field(default=1, ge=0, le=3, description="0 low … 3 urgent.")
+    priority: int | None = Field(
+        default=None, ge=0, le=3, description="0 low … 3 urgent. Omit to infer."
+    )
     deadline: str | None = Field(default=None, description="Optional ISO-8601 deadline.")
     energy: str | None = Field(default=None, description="low | medium | high.")
 
@@ -827,26 +830,57 @@ def create_app(
         memory: Annotated[MemoryStore, Depends(get_store)],
         x_prefrontal_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any]:
-        """Add an open todo (an open loop to fit into free time later)."""
+        """Add an open todo, auto-filling any fields you didn't supply.
+
+        Missing ``estimate_minutes``/``priority``/``energy``/``deadline`` are
+        inferred (local model → keyword heuristic → default) so the todo is
+        schedulable and honestly sortable. Supplied values are kept as-is; the
+        response's ``augmented`` map says where each field came from.
+        """
         _verify_token(resolved_settings, x_prefrontal_token)
-        deadline = None
+        # A user-supplied deadline is validated strictly (422 on garbage); an
+        # inferred one is best-effort (dropped if it somehow won't parse).
+        user_deadline = None
         if payload.deadline:
             try:
-                deadline = to_utc(payload.deadline)
+                user_deadline = to_utc(payload.deadline)
             except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Bad deadline: {exc}",
                 ) from exc
+
+        aug = augment_todo(
+            payload.title,
+            estimate_minutes=payload.estimate_minutes,
+            priority=payload.priority,
+            energy=payload.energy,
+            deadline=payload.deadline,
+            client=ollama_client,
+        )
+        deadline = user_deadline
+        if user_deadline is None and aug.deadline:
+            try:
+                deadline = to_utc(aug.deadline)
+            except ValueError:
+                deadline = None
+
         todo_id = memory.add_todo(
             payload.title,
             notes=payload.notes,
-            estimate_minutes=payload.estimate_minutes,
-            priority=payload.priority,
+            estimate_minutes=aug.estimate_minutes,
+            priority=aug.priority,
             deadline=deadline,
-            energy=payload.energy,
+            energy=aug.energy,
         )
-        return {"todo_id": todo_id}
+        return {
+            "todo_id": todo_id,
+            "estimate_minutes": aug.estimate_minutes,
+            "priority": aug.priority,
+            "energy": aug.energy,
+            "deadline": deadline,
+            "augmented": aug.sources,
+        }
 
     @app.get("/todos", tags=["todos"])
     def todos_list(

@@ -142,7 +142,8 @@
     <div class="addrow">
       <input id="todo-title" placeholder="Add a todo…" autocomplete="off" />
       <select id="todo-pri" aria-label="priority">
-        <option value="1" selected>normal</option>
+        <option value="auto" selected>auto</option>
+        <option value="1">normal</option>
         <option value="3">urgent</option>
         <option value="2">high</option>
         <option value="0">low</option>
@@ -332,7 +333,10 @@ document.addEventListener("click", async (e) => {
     if (act === "todo-add") {
       const title = $("#todo-title").value.trim();
       if (!title) return;
-      await post("/todos", { title, priority: Number($("#todo-pri").value) });
+      const pri = $("#todo-pri").value;
+      // "auto" → omit priority so the server infers it (along with estimate/energy).
+      const body = pri === "auto" ? { title } : { title, priority: Number(pri) };
+      await post("/todos", body);
       $("#todo-title").value = "";
     } else if (act === "todo-done") { await post(`/todos/${id}/done`); }
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }

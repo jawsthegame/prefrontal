@@ -6,16 +6,41 @@ and the morning-briefing "spare time" tie-in.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.briefing import build_briefing
 from prefrontal.config import Settings
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
+from prefrontal.todos import (
+    augment_todo,
+    heuristic_deadline,
+    heuristic_energy,
+    heuristic_estimate,
+    heuristic_priority,
+)
+
+
+def _offline_ollama() -> OllamaClient:
+    """An OllamaClient whose calls fail — augment falls back to heuristics."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no server in tests")
+
+    return OllamaClient(transport=httpx.MockTransport(refuse))
+
+
+def _ollama_json(text: str) -> OllamaClient:
+    """An OllamaClient whose generate() returns `text` (the LLM augment path)."""
+    return OllamaClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": text})
+    ))
 
 SECRET = "todo-secret"
 
@@ -118,7 +143,11 @@ def client(store_open):
 def create_app_with(store):
     from prefrontal.webhooks.app import create_app
 
-    return create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    return create_app(
+        store=store,
+        settings=Settings(webhook_secret=SECRET),
+        ollama=_offline_ollama(),
+    )
 
 
 def _auth():
@@ -168,3 +197,52 @@ def test_briefing_suggests_todos_in_spare_time(store):
     store.add_todo("Plan birthday", estimate_minutes=40, priority=2)
     b = build_briefing(store, now=now)
     assert any(s["suggestion"] == "Plan birthday" for s in b.spare)
+
+
+# -- augmentation ------------------------------------------------------------
+
+
+def test_heuristics_fill_fields_from_title():
+    """Keyword heuristics give sensible estimate/priority/energy."""
+    assert heuristic_estimate("Call the dentist") == 10.0
+    assert heuristic_estimate("Draft the Q3 plan") == 45.0
+    assert heuristic_estimate("Wander aimlessly") == 30.0  # default
+    assert heuristic_priority("Pay rent ASAP") == 3
+    assert heuristic_priority("Someday learn guitar") == 0
+    assert heuristic_energy("Email Bob") == "low"
+    assert heuristic_energy("Write the proposal") == "high"
+
+
+def test_heuristic_deadline_relative_terms():
+    """Relative deadlines parse against a reference date (Wed 2026-07-01)."""
+    today = date(2026, 7, 1)  # Wednesday
+    assert heuristic_deadline("ship it tomorrow", today) == "2026-07-02"
+    assert heuristic_deadline("reply by Friday", today) == "2026-07-03"
+    assert heuristic_deadline("call mom", today) is None
+
+
+def test_augment_prefers_stated_then_llm_then_heuristic():
+    """Supplied fields win; else the model; else heuristics."""
+    llm = _ollama_json('{"estimate_minutes": 25, "priority": 2, "energy": "high", "deadline": null}')
+    a = augment_todo("Call the dentist", priority=0, client=llm)
+    assert a.priority == 0 and a.sources["priority"] == "stated"   # stated wins
+    assert a.estimate_minutes == 25.0 and a.sources["estimate_minutes"] == "llm"
+    assert a.energy == "high" and a.sources["energy"] == "llm"
+
+    # No client → heuristics throughout.
+    h = augment_todo("Call the dentist")
+    assert (h.estimate_minutes, h.energy) == (10.0, "low")
+    assert h.sources["estimate_minutes"] == "heuristic"
+
+
+def test_post_todo_augments_missing_fields(client):
+    """A bare title gets an inferred estimate so it becomes fit-able (offline → heuristic)."""
+    r = client.post("/todos", json={"title": "Call the dentist"}, headers=_auth())
+    assert r.status_code == 201
+    body = r.json()
+    assert body["estimate_minutes"] == 10.0
+    assert body["energy"] == "low"
+    assert body["augmented"]["estimate_minutes"] == "heuristic"
+    # And it now shows up in a 15-minute fit (previously impossible with no estimate).
+    fit = client.get("/todos/fit", params={"minutes": 15}, headers=_auth()).json()
+    assert "Call the dentist" in [f["title"] for f in fit["fits"]]
