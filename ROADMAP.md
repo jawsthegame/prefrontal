@@ -48,6 +48,18 @@ the first test. Code follow-ups below are optional polish.
   wall-clock, not time-on-task, so it never pollutes `time_estimation`), with the
   age kept in the episode `notes`. *(Next: capture departure outcomes
   automatically — see "Learning & adaptation" below.)*
+- **Avoidance detection** ✅ — `avoided_todos()` (`prefrontal/todos.py`) scores
+  open loops by how long they've been skipped (age × priority), surfacing the
+  important thing you keep putting off rather than letting it sink down the list.
+  Exposed at `GET /todos/avoided` and woven into the morning briefing's "you keep
+  putting off" line. *(Next input for the coaching agent's `tiny_first_step`
+  picker — see `docs/coaching-agent.md`.)*
+- **Editable todo deadlines + per-step check-offs** ✅ — `POST /todos/{id}/deadline`
+  moves or clears a deadline on an open todo, and
+  `POST /todos/{id}/steps/{step_index}/done` ticks off an individual decomposition
+  step (tracked in `todo_decompositions.done_steps`, index 0 = the first step) so
+  visible progress keeps a decomposed task moving. Both surface in `GET /todos`
+  and the dashboard.
 - **Mail ingestion + triage** ✅ — `prefrontal/mail/` normalizes a batch of
   messages, triages each (Ollama with a deterministic heuristic fallback) into
   `needs_action`/`urgency`/`category`/one-line `summary`, dedupes on the

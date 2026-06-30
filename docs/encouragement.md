@@ -30,6 +30,13 @@ coaching agent the README describes.
   layer next to `briefing.py` / `impact.py`, not as a `Module` subclass. (It
   *reads* signals that modules influence; it doesn't own coaching state the way a
   module does, beyond its own opt-in/threshold keys — §7.)
+  > **Relationship to the coaching agent.** [`docs/coaching-agent.md`](coaching-agent.md)
+  > §9 frames this same layer as one more `evaluate`-style *cue source* inside the
+  > (not-yet-built) coaching agent. This spec ships it **standalone first** — its
+  > own core + `GET /encouragement` — so it can land before that engine exists.
+  > The designs agree on behavior; when the coaching agent lands, `assess_day`
+  > becomes a cue producer so delivery/channel/debounce route through the shared
+  > engine. Either way there is **one** `assess_day`, not two implementations.
 - **No new data sources.** Every input is already in the DB. If a signal isn't
   computed today, it's out of scope (noted in §3).
 - **No new ML.** The trigger and the recovery plan are deterministic; the only
@@ -330,5 +337,3 @@ threads it into the daily briefing.
 - **Drift baseline.** What counts as "above baseline" drift for the modifier — a
   fixed `observed_value` cutoff, or relative to the user's own trailing average?
   Start fixed; revisit once there's real per-user drift history.
-</content>
-</invoke>
