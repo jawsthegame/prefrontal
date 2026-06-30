@@ -72,6 +72,30 @@ CREATE TABLE IF NOT EXISTS outings (
 
 CREATE INDEX IF NOT EXISTS idx_outings_status ON outings (status);
 
+-- Active and historical "focus sessions": a declared block of deep work on a
+-- stated task, used by the Hyperfocus module. Unlike an outing (which escalates
+-- to pull you *back* home), a focus session is asymmetric — it *protects* an
+-- aligned block while it's healthy and only interrupts to (a) gently check
+-- alignment once it overruns its plan, or (b) force a biological break past the
+-- hard ceiling. `aligned` is the protect bit (is this the thing you meant to be
+-- doing?); `planned_minutes` is an optional intended duration; `breadcrumb` and
+-- `outcome` are captured on exit to make re-entry cheap and feed the learning loop.
+CREATE TABLE IF NOT EXISTS focus_sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    intended_task   TEXT    NOT NULL,                  -- what you're getting into
+    planned_minutes REAL,                              -- optional intended duration
+    aligned         BOOLEAN NOT NULL DEFAULT 1,        -- is this the thing you meant to do?
+    started_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status          TEXT    NOT NULL DEFAULT 'active',  -- active | ended | abandoned
+    last_level      TEXT    NOT NULL DEFAULT 'none',    -- highest interrupt already fired
+    breadcrumb      TEXT,                              -- "where I was / next step", set on exit
+    outcome         TEXT,                              -- worth_it | should_have_stopped | pulled_off
+    ended_at        DATETIME,                          -- set when the session is closed
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_status ON focus_sessions (status);
+
 -- Upcoming commitments — the schedule the system reasons about (e.g. for impact
 -- analysis: "running over now puts your 10:30 at risk"). Populated from a
 -- calendar by the sync endpoint, or added manually. `lead_minutes` is the
