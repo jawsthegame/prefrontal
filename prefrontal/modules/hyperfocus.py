@@ -241,6 +241,34 @@ def record_focus_abandoned(store: MemoryStore, closed: dict) -> dict:
     return {"episode_id": episode_id, "outcome": "miss"}
 
 
+def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
+    """Log a focus block the user deliberately switched away from (Impulsivity).
+
+    Distinct from an abandon (a *forgotten* exit): here the user consciously
+    honored a switch-impulse, so the block was real but cut short. ``actual_value``
+    is the time genuinely spent (known, unlike an abandon), and the outcome is
+    ``partial`` — the block happened but didn't run to plan. Feeds
+    ``time_estimation`` like any other focus close.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        closed: The closed (switched) session dict, with ``actual_minutes``.
+
+    Returns:
+        ``{"episode_id": int, "outcome": "partial"}``.
+    """
+    actual = closed.get("actual_minutes")
+    episode_id = store.log_episode(
+        "task",
+        predicted_value=closed.get("planned_minutes"),
+        actual_value=round(actual, 1) if actual is not None else None,
+        acknowledged=True,
+        context=f"focus switched: {closed.get('intended_task')}",
+        outcome="partial",
+    )
+    return {"episode_id": episode_id, "outcome": "partial"}
+
+
 def is_focus_protected(store: MemoryStore) -> bool:
     """Whether an aligned focus block is currently shielding the user from noise.
 

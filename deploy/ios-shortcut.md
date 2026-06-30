@@ -154,9 +154,41 @@ fitting, the briefing, and avoidance like any other open loop.
    were doing."* It titles the raw text for you (local model, with a plain-words
    fallback) and keeps your exact words in the todo's notes.
 
-> Pairs with the "Switching?" reflective-pause flow once that ships; on its own
-> it's already the fastest way to get a distraction out of your head and off
-> your plate without opening anything.
+> Pairs with the "Switching?" reflective-pause flow below; on its own it's
+> already the fastest way to get a distraction out of your head and off your
+> plate without opening anything.
+
+## Shortcut: "Switching?" (Impulsivity — the reflective pause)
+
+The friction tap. When you feel the pull to abandon what you're doing for a
+shinier thing, this re-surfaces the current task, holds for a beat, then lets
+you choose — so the switch is a *decision*, not a reflex. Requires an active
+focus block (declare one with the Hyperfocus "Start focus" shortcut →
+`/webhooks/focus/start`); if none is running, use **Capture** above instead.
+
+1. New shortcut named **Switching?**.
+2. **Get Contents of URL** → `POST http://<your-mac>:8000/webhooks/focus/switch`,
+   the usual token + JSON headers, body `{}` (fires against the active block).
+   - On a `409` (no active block) → **Show Notification** "No focus block
+     running — use Capture instead," and stop.
+3. **Get Dictionary Value** `message` → **Show Notification** (or **Speak Text**):
+   e.g. *"Hold on — you're 20 min into "writing the Q3 report." Does the new
+   thing actually need you now, or can it wait?"*
+4. **Get Dictionary Value** `pause_seconds` → **Wait** that many seconds. (The
+   pause is delivered client-side; the server only advises the length — it's
+   longer early in a block, when you've most to lose.)
+5. **Choose from Menu**: **Return / Capture & defer / Switch anyway**, then
+   `POST /webhooks/focus/resolve` with the matching `action`
+   (`return`/`defer`/`switch`). For **Capture & defer**, add an **Ask for Input**
+   and send `{ "action": "defer", "impulse_text": "Provided Input" }`.
+6. **Confirm back.** **Get Dictionary Value** `confirmation` → **Show
+   Notification** — e.g. *"Parked "reorganize the font folder" for later —
+   staying on "writing the Q3 report.""*
+
+> Splitting the impulse (step 2) from the resolution (step 5) into two requests
+> is deliberate: the impulse is counted the moment you tap, so a connection
+> dropped mid-pause can't strand the block, and the honor-vs-defer ratio it
+> records is what later teaches Prefrontal your switching pattern.
 
 ## Shortcut: "Update location" (the simplest location source)
 

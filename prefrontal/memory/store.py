@@ -1074,6 +1074,45 @@ class MemoryStore:
         )
         self.conn.commit()
 
+    def record_switch_impulse(self, session_id: int) -> bool:
+        """Count one switch-impulse against an active focus session.
+
+        Increments ``switch_impulses`` — the moment the pull to switch was
+        signalled, before it's resolved. The deferral (if any) is counted
+        separately by :meth:`mark_switch_deferred`, so the two-phase
+        switch→resolve flow never double-counts the impulse. No-ops on a
+        closed/absent session.
+
+        Returns:
+            ``True`` if a row was updated.
+        """
+        cur = self.conn.execute(
+            "UPDATE focus_sessions SET switch_impulses = switch_impulses + 1 "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (session_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def mark_switch_deferred(self, session_id: int) -> bool:
+        """Count an already-signalled switch-impulse as captured-and-deferred.
+
+        Increments ``switches_deferred`` only (the impulse itself was counted by
+        :meth:`record_switch_impulse`). Together the two counters give the
+        per-session honor/defer ratio the ``context_switch`` learning pass reads.
+        No-ops on a closed/absent session.
+
+        Returns:
+            ``True`` if a row was updated.
+        """
+        cur = self.conn.execute(
+            "UPDATE focus_sessions SET switches_deferred = switches_deferred + 1 "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (session_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def close_focus_session(
         self,
         session_id: int,
