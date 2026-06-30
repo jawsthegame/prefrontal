@@ -35,6 +35,17 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Commitment geocoding (places → cache → Nominatim)** ✅ —
+  `prefrontal/geocode.py` resolves a commitment's free-text `location` to
+  `dest_lat`/`dest_lon` so the departure reminder's travel estimate actually
+  fires. Layered + local-first: a user-curated `places` alias table
+  (`POST /places`, instant/offline), then a `geocode_cache` (incl. recorded
+  misses), then an **opt-in** Nominatim geocoder
+  (`prefrontal/integrations/nominatim.py`, gated by the `geocoding_enabled`
+  state flag — off by default). Enrichment runs best-effort on calendar sync and
+  manual add, with `POST /commitments/geocode` to backfill. Failures degrade to
+  the `lead_minutes` fallback. *(Next: a CLI for places; reverse-geocode the
+  iOS location ping for nicer context; self-host Nominatim on the mini.)*
 - **Last-known location + travel-aware departure reminders** ✅ —
   `POST /webhooks/location` stores the phone's position (one iOS "Update
   location" automation), so the coffee-shop nudge gates on location **without
@@ -92,11 +103,6 @@ the first test. Code follow-ups below are optional polish.
 - **Module interventions** — most declared interventions are `status="planned"`.
   Module 1 (Location-Aware Task Anchor) is the exception: its escalation,
   location-gating, and auto-close interventions are wired end-to-end.
-- **Departure-reminder destination coords** — the reminder is now real
-  (`/webhooks/departure/check`), but for a *travel-time* estimate (vs. the static
-  `lead_minutes` fallback) the calendar sync must populate `dest_lat`/`dest_lon`.
-  The n8n calendar node still needs a geocode step (or hard-coded coordinates for
-  recurring places). *(`deploy/n8n/calendar-sync.workflow.json`.)*
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 

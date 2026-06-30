@@ -201,6 +201,32 @@ CREATE TABLE IF NOT EXISTS todo_decompositions (
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- User-curated named places — aliases that map a recurring destination to fixed
+-- coordinates without any network geocoding (e.g. "gym", "the office", "mom's").
+-- Checked against a commitment's location/title *before* the geocoder, so the
+-- common destinations resolve instantly and offline. `name` is the normalized
+-- match key; `label` keeps the original spelling for display.
+CREATE TABLE IF NOT EXISTS places (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,   -- normalized match key (lowercased)
+    label      TEXT,                       -- original display name
+    lat        REAL    NOT NULL,
+    lon        REAL    NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Geocode cache — a normalized free-text location string mapped to coordinates
+-- (or a recorded miss: lat/lon NULL). Lets the calendar sync resolve the same
+-- address once instead of re-calling the geocoder every poll, and keeps a
+-- definitive "not found" so a bad address isn't retried forever. Local after the
+-- first lookup; the network geocoder is only consulted on a cache miss.
+CREATE TABLE IF NOT EXISTS geocode_cache (
+    query        TEXT PRIMARY KEY,        -- normalized location string
+    lat          REAL,                     -- NULL = looked up, not found
+    lon          REAL,
+    last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES
@@ -218,4 +244,9 @@ INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES
     ('travel_road_factor',        '1.3',                      'inferred'),
     ('departure_prep_minutes',    '5',                        'inferred'),
     ('departure_heads_up_minutes','30',                       'inferred'),
-    ('departure_soon_minutes',    '10',                       'inferred');
+    ('departure_soon_minutes',    '10',                       'inferred'),
+    -- Opt-in network geocoding (Nominatim) for commitment destinations. Off by
+    -- default: local-first stays the default, and curated `places` + the static
+    -- `lead_minutes` fallback work without it. Set to '1' to allow the calendar
+    -- sync to resolve free-text locations to coordinates.
+    ('geocoding_enabled',         '0',                        'explicit');

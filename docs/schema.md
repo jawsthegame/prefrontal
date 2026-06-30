@@ -77,6 +77,7 @@ Persistent preferences and working memory for the coaching layer.
 | `departure_prep_minutes` | `5` | inferred (buffer added to travel) |
 | `departure_heads_up_minutes` | `30` | inferred (gentle "leave soon" horizon) |
 | `departure_soon_minutes` | `10` | inferred ("get ready" horizon) |
+| `geocoding_enabled` | `0` | explicit (opt-in network geocoding; off by default) |
 
 > **Runtime keys (not seeded).** `POST /webhooks/location` writes the phone's
 > last-known position as `last_location_lat`, `last_location_lon`, and
@@ -114,6 +115,12 @@ also defines:
   buffer is used.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
+- **`places`** — user-curated destination aliases (`name` → `lat`/`lon`, e.g.
+  "gym" → coords), matched against a commitment's location/title before any
+  network geocoding (`prefrontal/geocode.py`, managed via `POST /places`).
+- **`geocode_cache`** — normalized free-text location → coordinates (or a
+  recorded miss, `lat`/`lon` NULL), so the same address resolves once instead of
+  re-calling the geocoder each sync. Populated only when `geocoding_enabled` is on.
 
 ---
 

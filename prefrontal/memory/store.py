@@ -771,6 +771,113 @@ class MemoryStore:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def set_commitment_coords(
+        self, commitment_id: int, lat: float, lon: float
+    ) -> bool:
+        """Set a commitment's destination coordinates. ``True`` if a row changed.
+
+        Used by the geocoding enrichment pass to fill ``dest_lat``/``dest_lon``
+        on a commitment whose location was resolved to a point.
+        """
+        cur = self.conn.execute(
+            "UPDATE commitments SET dest_lat = ?, dest_lon = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (lat, lon, commitment_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def commitments_needing_geocode(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Return active upcoming commitments that have a location but no coords.
+
+        These are the candidates for the geocoding enrichment pass: a free-text
+        ``location`` is present but ``dest_lat``/``dest_lon`` are still unset.
+
+        Args:
+            limit: Maximum number of rows to return (bounds work per pass).
+
+        Returns:
+            A list of commitment dicts ordered by ``start_at`` ascending (soonest
+            first), so the most imminent commitments get coordinates first.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE status = 'active' "
+            "AND start_at >= datetime('now') AND location IS NOT NULL "
+            "AND location != '' AND dest_lat IS NULL "
+            "ORDER BY start_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- places (curated destination aliases) --------------------------------
+
+    def add_place(
+        self, name: str, lat: float, lon: float, *, label: str | None = None
+    ) -> int:
+        """Insert or replace a curated place alias, returning its id.
+
+        ``name`` is the normalized match key (unique); re-adding the same name
+        updates its coordinates in place.
+
+        Args:
+            name: Normalized match key (e.g. ``"gym"``).
+            lat: Latitude in degrees.
+            lon: Longitude in degrees.
+            label: Optional original spelling for display.
+
+        Returns:
+            The place's ``id``.
+        """
+        self.conn.execute(
+            "INSERT INTO places (name, label, lat, lon) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (name) DO UPDATE SET label = excluded.label, "
+            "lat = excluded.lat, lon = excluded.lon",
+            (name, label, lat, lon),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM places WHERE name = ?", (name,)
+        ).fetchone()
+        return int(row["id"])
+
+    def places(self) -> list[dict[str, Any]]:
+        """Return all curated places, longest name first.
+
+        Longest-first ordering lets a matcher prefer the most specific alias
+        (e.g. ``"dentist office"`` before ``"office"``).
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM places ORDER BY length(name) DESC, name ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- geocode cache -------------------------------------------------------
+
+    def get_geocode_cache(self, query: str) -> dict[str, Any] | None:
+        """Return a cached geocode row for ``query``, or ``None`` if not cached.
+
+        A returned row may have ``lat``/``lon`` of ``None`` — a recorded *miss*
+        (the geocoder was asked and found nothing), distinct from "never asked"
+        (``None`` return).
+        """
+        row = self.conn.execute(
+            "SELECT * FROM geocode_cache WHERE query = ?", (query,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def set_geocode_cache(
+        self, query: str, lat: float | None, lon: float | None
+    ) -> None:
+        """Cache a geocode result for ``query`` (``lat``/``lon`` ``None`` = miss)."""
+        self.conn.execute(
+            "INSERT INTO geocode_cache (query, lat, lon, last_updated) "
+            "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (query) DO UPDATE SET lat = excluded.lat, "
+            "lon = excluded.lon, last_updated = CURRENT_TIMESTAMP",
+            (query, lat, lon),
+        )
+        self.conn.commit()
+
     # -- todos (open loops fitted into free time) ----------------------------
 
     def add_todo(
