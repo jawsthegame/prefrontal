@@ -31,8 +31,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from prefrontal.config import Settings
 
 SESSION_COOKIE = "prefrontal_session"
-STATE_COOKIE = "pf_oauth_state"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+STATE_TTL_SECONDS = 600  # 10 min — the OAuth round-trip should be well under this
 
 _AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 _TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -47,29 +47,49 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def sign_session(handle: str, secret: str, *, now: float | None = None) -> str:
-    """Return a signed session token for ``handle`` (``msg.signature``)."""
-    exp = int((now if now is not None else time.time()) + SESSION_TTL_SECONDS)
-    msg = f"{_b64(handle.encode())}.{exp}"
+def _sign(value: str, secret: str, ttl: int, *, now: float | None = None) -> str:
+    """Return ``b64(value).exp.hmac`` — a signed, self-expiring token."""
+    exp = int((now if now is not None else time.time()) + ttl)
+    msg = f"{_b64(value.encode())}.{exp}"
     sig = hmac.new(secret.encode(), msg.encode(), sha256).hexdigest()
     return f"{msg}.{sig}"
 
 
-def verify_session(cookie: str, secret: str, *, now: float | None = None) -> str | None:
-    """Return the handle from a valid, unexpired session cookie, else ``None``."""
-    if not cookie or not secret:
+def _verify(token: str, secret: str, *, now: float | None = None) -> str | None:
+    """Return the signed value from a valid, unexpired token, else ``None``."""
+    if not token or not secret:
         return None
     try:
-        b_handle, exp_str, sig = cookie.split(".")
-        msg = f"{b_handle}.{exp_str}"
-        expected = hmac.new(secret.encode(), msg.encode(), sha256).hexdigest()
+        b_value, exp_str, sig = token.split(".")
+        expected = hmac.new(secret.encode(), f"{b_value}.{exp_str}".encode(), sha256).hexdigest()
         if not hmac.compare_digest(expected, sig):
             return None
         if int(exp_str) < (now if now is not None else time.time()):
             return None
-        return _unb64(b_handle).decode()
+        return _unb64(b_value).decode()
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+def sign_session(handle: str, secret: str, *, now: float | None = None) -> str:
+    """Signed browser-session token carrying the user's handle."""
+    return _sign(handle, secret, SESSION_TTL_SECONDS, now=now)
+
+
+def verify_session(cookie: str, secret: str, *, now: float | None = None) -> str | None:
+    """Return the handle from a valid session cookie, else ``None``."""
+    return _verify(cookie, secret, now=now)
+
+
+def sign_state(secret: str, *, now: float | None = None) -> str:
+    """A short-lived signed CSRF state — no cookie needed, so it survives the
+    cross-site redirect back from Google (Safari/strict cookie policies)."""
+    return _sign(secrets.token_urlsafe(12), secret, STATE_TTL_SECONDS, now=now)
+
+
+def verify_state(state: str, secret: str, *, now: float | None = None) -> bool:
+    """Whether a state token is validly signed and unexpired."""
+    return _verify(state, secret, now=now) is not None
 
 
 def session_user(request: Request) -> dict[str, Any] | None:
@@ -136,31 +156,27 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
     def google_login() -> RedirectResponse:
         if not settings.google_oauth_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Google sign-in is not configured.")
-        state = secrets.token_urlsafe(24)
         params = urlencode(
             {
                 "client_id": settings.google_oauth_client_id,
                 "redirect_uri": _redirect_uri(settings),
                 "response_type": "code",
                 "scope": "openid email",
-                "state": state,
+                # Signed, self-expiring state — verified by signature on the way
+                # back, so no cross-site cookie has to survive the Google redirect.
+                "state": sign_state(settings.session_secret),
                 "access_type": "online",
                 "prompt": "select_account",
             }
         )
-        resp = RedirectResponse(f"{_AUTH_ENDPOINT}?{params}")
-        resp.set_cookie(
-            STATE_COOKIE, state, max_age=600, httponly=True, secure=secure, samesite="lax"
-        )
-        return resp
+        return RedirectResponse(f"{_AUTH_ENDPOINT}?{params}")
 
     @app.get("/auth/google/callback", tags=["auth"])
     def google_callback(request: Request, code: str = "", state: str = "") -> RedirectResponse:
         if not settings.google_oauth_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Google sign-in is not configured.")
-        expected_state = request.cookies.get(STATE_COOKIE, "")
-        if not state or not expected_state or not hmac.compare_digest(state, expected_state):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state.")
+        if not verify_state(state, settings.session_secret):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired sign-in state.")
         if not code:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing authorization code.")
 
@@ -184,7 +200,6 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
             secure=secure,
             samesite="lax",
         )
-        resp.delete_cookie(STATE_COOKIE)
         return resp
 
     @app.post("/auth/logout", tags=["auth"])
