@@ -1,0 +1,79 @@
+{
+  "name": "Prefrontal — Hyperfocus Check (Focus Sessions)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 1 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/focus/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": false,
+        "options": {}
+      },
+      "id": "check-focus",
+      "name": "Check Focus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Flatten the check response into one item per *due* interrupt.\n// `protect` (resp.protect) reports whether aligned hyperfocus is currently\n// shielding the user from other modules' noise — the server already gates\n// the outing poller on it, so nothing to do here but pass interrupts through.\nconst resp = $input.first().json;\nconst due = (resp.active || []).filter((s) => s.fire === true);\nreturn due.map((s) => ({ json: s }));"
+      },
+      "id": "flatten-due",
+      "name": "Due Interrupts Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 1 : 0 }}\n}",
+        "options": {}
+      },
+      "id": "pushover-push",
+      "name": "Pushover Push (check / break)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Check Focus", "type": "main", "index": 0 }]]
+    },
+    "Check Focus": {
+      "main": [[{ "node": "Due Interrupts Only", "type": "main", "index": 0 }]]
+    },
+    "Due Interrupts Only": {
+      "main": [[{ "node": "Pushover Push (check / break)", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

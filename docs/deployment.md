@@ -308,6 +308,32 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
   -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -d '{}' | python3 -m json.tool
 ```
 
+### Hyperfocus (focus sessions)
+
+The Hyperfocus module reuses the same every-minute-poll shape. Import
+[`../deploy/n8n/hyperfocus-check.workflow.json`](../deploy/n8n/hyperfocus-check.workflow.json),
+set the `X-Prefrontal-Token` header and your Pushover token/user, and activate it.
+It polls `POST /webhooks/focus/check` and pushes due interrupts: a normal-priority
+nudge when an aligned block overruns its plan (`check`), and a high-priority push
+for the biological break past the hard ceiling (`break`). Aligned, healthy blocks
+fire nothing — the response's `protect` flag reports when productive hyperfocus is
+being shielded.
+
+```bash
+# Declare a 1-minute focus block, then poll the way n8n does:
+curl -s -X POST http://localhost:8000/webhooks/focus/start \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -H "Content-Type: application/json" \
+  -d '{"intended_task":"test deep work","planned_minutes":1}'
+
+curl -s -X POST http://localhost:8000/webhooks/focus/check \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" | python3 -m json.tool
+
+# End it and see planned-vs-actual logged as an episode:
+curl -s -X POST http://localhost:8000/webhooks/focus/end \
+  -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -H "Content-Type: application/json" \
+  -d '{"outcome":"worth_it","breadcrumb":"pick up at step 3"}' | python3 -m json.tool
+```
+
 ---
 
 ## 9. Verify end to end
