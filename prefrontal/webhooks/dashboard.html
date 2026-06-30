@@ -27,6 +27,7 @@
   header .meta { color: var(--muted); font-size: 13px; }
   header .spacer { flex: 1; }
   button { font-family: inherit; }
+  button:disabled { opacity: .5; cursor: progress; }
   .ghost {
     background: var(--card); color: var(--fg); border: 1px solid var(--line);
     border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; min-height: 36px;
@@ -352,6 +353,9 @@ function start() { load(); clearInterval(timer); timer = setInterval(load, REFRE
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-action]");
   if (!el) return;
+  // Debounce: ignore repeat taps while this CTA's action is in flight.
+  if (el.disabled) return;
+  el.disabled = true;
   const act = el.dataset.action, id = el.dataset.id;
   try {
     if (act === "todo-add") {
@@ -370,6 +374,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     load();
   } catch (_) { /* post() already surfaced the error */ }
+  finally { el.disabled = false; }
 });
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
 
