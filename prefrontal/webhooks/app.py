@@ -96,7 +96,7 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, feed_label
 from prefrontal.memory.summarizer import (
     build_profile,
     cache_is_stale,
@@ -1497,10 +1497,18 @@ def create_app(
             find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
         )
 
+        def side(x: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "id": x["id"],
+                "title": x["title"],
+                "start_at": x["start_at"],
+                "calendar": feed_label(x.get("external_id")),
+            }
+
         def pair(c: Any) -> dict[str, Any]:
             return {
-                "a": {"id": c.a["id"], "title": c.a["title"], "start_at": c.a["start_at"]},
-                "b": {"id": c.b["id"], "title": c.b["title"], "start_at": c.b["start_at"]},
+                "a": side(c.a),
+                "b": side(c.b),
                 "overlap_minutes": c.overlap_minutes,
             }
 

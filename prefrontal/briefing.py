@@ -196,7 +196,8 @@ def render_briefing(briefing: Briefing) -> str:
         if long or len(briefing.today) <= 5:
             for c in briefing.today:
                 mark = " (hard)" if c.get("hardness") == "hard" else ""
-                lines.append(f"- {_time_of(c)} — {c['title']}{mark}")
+                cal = f" · {c['calendar']}" if c.get("calendar") else ""
+                lines.append(f"- {_time_of(c)} — {c['title']}{mark}{cal}")
     lines.append("")
 
     # Conflicts.

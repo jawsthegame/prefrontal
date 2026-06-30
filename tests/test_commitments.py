@@ -20,7 +20,7 @@ from prefrontal.commitments import (
 )
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, feed_label
 from prefrontal.webhooks.app import create_app
 
 SECRET = "cal-secret"
@@ -78,6 +78,30 @@ def test_upsert_inserts_then_updates_by_external_id(store):
     assert created1 is True and created2 is False
     assert cid1 == cid2
     assert store.get_commitment(cid1)["title"] == "Standup (moved)"
+
+
+def test_feed_label_maps_prefix_to_display_name():
+    """The external_id prefix becomes a human calendar label; manual → None."""
+    assert feed_label("personal:abc") == "Personal"
+    assert feed_label("work:xyz") == "Work"
+    assert feed_label("outlook:1") == "Outlook"
+    assert feed_label("family:1") == "Family"
+    assert feed_label("icloud:1") == "Icloud"  # unknown feed: title-cased slug
+    assert feed_label(None) is None
+    assert feed_label("no-prefix-uid") is None
+
+
+def test_commitment_reads_expose_calendar_label(store):
+    """Store reads annotate each commitment with its source calendar."""
+    cid, _ = store.upsert_commitment(
+        title="Swim", start_at=to_utc(_iso(60)), external_id="family:s1"
+    )
+    manual, _ = store.upsert_commitment(title="Dentist", start_at=to_utc(_iso(120)))
+    assert store.get_commitment(cid)["calendar"] == "Family"
+    assert store.get_commitment(manual)["calendar"] is None
+    by_title = {c["title"]: c for c in store.upcoming_commitments()}
+    assert by_title["Swim"]["calendar"] == "Family"
+    assert by_title["Dentist"]["calendar"] is None
 
 
 def test_upcoming_excludes_past(store):
