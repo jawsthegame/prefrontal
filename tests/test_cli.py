@@ -22,11 +22,16 @@ def test_init_db_then_learn_roundtrip(tmp_path, capsys):
     assert main(["init-db", "--db-path", str(db)]) == 0
     assert db.exists()
 
+    # Multi-tenant: `learn` acts on a user, so provision one first (the nightly
+    # pass runs against provisioned users).
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+
     # `learn` on a DB with no episodes is a valid no-op, not an error.
     assert main(["learn", "--db-path", str(db)]) == 0
 
     out = capsys.readouterr().out
-    assert "Recomputed patterns from 0 episodes." in out
+    # Multi-tenant `learn` prefixes each line with the user it acted on.
+    assert "recomputed patterns from 0 episodes." in out
 
 
 def test_build_parser_registers_expected_commands():

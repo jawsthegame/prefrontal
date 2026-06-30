@@ -50,9 +50,15 @@ class Settings:
         db_path: Filesystem path to the SQLite behavioral memory database.
         host: Interface the webhook listener binds to.
         port: TCP port the webhook listener binds to.
-        webhook_secret: Shared secret expected in the ``X-Prefrontal-Token``
-            header on inbound webhooks. An empty string disables auth (only safe
-            on a fully trusted local network).
+        webhook_secret: Operator-bootstrap token. In multi-tenant mode the
+            ``X-Prefrontal-Token`` header carries a *per-user* token resolved to
+            a user; this shared secret is kept only as a bootstrap operator
+            credential — a request bearing it resolves to the first operator user
+            until per-user tokens are provisioned. Empty disables the bootstrap.
+        default_user: Handle of the user that requests with **no token** resolve
+            to (the single-user / trusted-LAN compatibility mode). Empty means a
+            token is always required. Documented as LAN-only, like the old
+            no-auth mode it replaces.
         n8n_webhook_url: Outbound n8n webhook URL. Empty means the n8n client
             runs in no-op/log mode and nothing leaves the host.
         n8n_webhook_token: Optional token sent to n8n on outbound calls.
@@ -84,6 +90,7 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8000
     webhook_secret: str = ""
+    default_user: str = ""
     n8n_webhook_url: str = ""
     n8n_webhook_token: str = ""
     modules: tuple[str, ...] = ()
@@ -96,8 +103,14 @@ class Settings:
 
     @property
     def auth_enabled(self) -> bool:
-        """Whether inbound webhook authentication is enforced."""
-        return bool(self.webhook_secret)
+        """Whether a token is required to resolve a user.
+
+        Multi-tenant: a request must carry a per-user token unless a
+        :attr:`default_user` is configured (the single-user / trusted-LAN
+        compatibility mode), in which case a tokenless request resolves to that
+        user. Auth is therefore "enforced" exactly when no default user is set.
+        """
+        return not self.default_user
 
     @property
     def all_modules_enabled(self) -> bool:
@@ -138,6 +151,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         host=os.environ.get("PREFRONTAL_HOST", "0.0.0.0"),
         port=int(os.environ.get("PREFRONTAL_PORT", "8000")),
         webhook_secret=os.environ.get("PREFRONTAL_WEBHOOK_SECRET", ""),
+        default_user=os.environ.get("PREFRONTAL_DEFAULT_USER", ""),
         n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", ""),
         n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", ""),
         modules=modules,

@@ -22,6 +22,7 @@ from prefrontal.impact import (
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "impact-secret"
 
@@ -92,7 +93,7 @@ def test_impact_phrase_names_top_risk():
 def store():
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

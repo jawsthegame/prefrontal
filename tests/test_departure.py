@@ -26,6 +26,7 @@ from prefrontal.impact import utcnow
 from prefrontal.memory.db import _migrate, init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "departure-secret"
 NOW = datetime(2026, 6, 29, 12, 0, 0)
@@ -163,7 +164,7 @@ def test_location_round_trip():
     """set_location then get_location returns the position with a timestamp."""
     conn = init_db(":memory:")
     try:
-        store = MemoryStore(conn)
+        store = scoped_default(MemoryStore(conn))
         assert store.get_location() is None
         store.set_location(37.77, -122.41, accuracy_m=12.5)
         loc = store.get_location()
@@ -194,7 +195,7 @@ def test_migrate_adds_dest_columns_idempotently():
 def store():
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

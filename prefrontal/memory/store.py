@@ -14,12 +14,23 @@ Rows are returned as plain ``dict``\\ s so callers never have to think about
 :class:`sqlite3.Row`. Writes commit immediately — the access patterns here are
 low-volume, human-paced events, so per-write commits keep the on-disk state
 trustworthy without any meaningful cost.
+
+**Multi-tenant scoping.** A store is constructed bound to a ``user_id`` (via
+:meth:`MemoryStore.scoped`) and structurally injects it into every per-user
+read and write — so no call site can forget a ``WHERE user_id = ?`` and leak one
+user's rows to another. A store with no ``user_id`` (the default) is *unscoped*:
+it may only call the user-management methods (:meth:`create_user`,
+:meth:`get_user_by_token_hash`, :meth:`list_users`, …) and :meth:`each_user`;
+any per-user method raises :class:`RuntimeError` rather than silently scanning
+everyone's data. See ``docs/multi-tenant.md``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
@@ -32,6 +43,49 @@ from prefrontal.memory.db import connect, init_db
 EPISODE_TYPES = ("departure", "task", "checkin", "reminder", "mail")
 #: Allowed values for ``episodes.outcome``.
 OUTCOMES = ("success", "miss", "partial")
+
+#: Coaching-state defaults seeded for every new user at provision time. These
+#: used to live as an ``INSERT OR IGNORE`` seed block in ``schema.sql``; with
+#: per-user state they are written scoped to each user by :meth:`provision_user`
+#: instead, so "a fresh user looks like a fresh install" is one code path.
+DEFAULT_COACHING_STATE: tuple[tuple[str, str, str], ...] = (
+    ("preferred_briefing_format", "short", "explicit"),
+    ("escalation_delay_minutes", "5", "inferred"),
+    ("responsive_hours_start", "08:00", "inferred"),
+    ("responsive_hours_end", "14:00", "inferred"),
+    ("preferred_reminder_channel", "notification", "inferred"),
+    ("time_estimation_bias", "1.4", "inferred"),
+    ("active_escalation_path", "notification,sound,tts", "explicit"),
+    # Departure-reminder tuning (see prefrontal.modules.departure). Travel time
+    # is estimated locally: straight-line distance * road_factor / speed, then
+    # padded by time_estimation_bias and a prep buffer.
+    ("travel_speed_kmh", "30", "inferred"),
+    ("travel_road_factor", "1.3", "inferred"),
+    ("departure_prep_minutes", "5", "inferred"),
+    ("departure_heads_up_minutes", "30", "inferred"),
+    ("departure_soon_minutes", "10", "inferred"),
+    # Opt-in network geocoding (Nominatim) for commitment destinations. Off by
+    # default: local-first stays the default, and curated `places` + the static
+    # `lead_minutes` fallback work without it. Set to '1' to allow the calendar
+    # sync to resolve free-text locations to coordinates.
+    ("geocoding_enabled", "0", "explicit"),
+)
+
+
+def sha256_hex(token: str) -> str:
+    """Return the hex SHA-256 of a token — what we store and compare against.
+
+    Tokens are high-entropy random strings (not human passwords), so a single
+    SHA-256 is the right primitive: fast lookups, no plaintext at rest, and no
+    need for a slow password hash. The raw token is shown once at creation and
+    never stored.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def generate_token() -> str:
+    """Mint a fresh, URL-safe access token (shown once, stored only as a hash)."""
+    return secrets.token_urlsafe(32)
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -97,6 +151,10 @@ class MemoryStore:
     it opens; call :meth:`close` (or use :meth:`open`'s context manager) to
     release them. A store wrapping a caller-supplied connection does not close
     it.
+
+    A store is also bound to a ``user_id`` (or ``None`` for the unscoped
+    user-management store). Use :meth:`scoped` to derive a per-user store that
+    shares the connection(s) but injects its ``user_id`` into every statement.
     """
 
     def __init__(
@@ -104,6 +162,8 @@ class MemoryStore:
         conn: sqlite3.Connection | None = None,
         *,
         connection_factory: Callable[[], sqlite3.Connection] | None = None,
+        user_id: int | None = None,
+        _share_from: MemoryStore | None = None,
     ) -> None:
         """Create a store in single-connection or per-thread mode.
 
@@ -115,11 +175,29 @@ class MemoryStore:
             connection_factory: A zero-argument callable that opens a fresh
                 connection (per-thread mode). Called once per thread; the
                 returned connection is cached for that thread's lifetime.
+            user_id: The user this store is scoped to. ``None`` (the default)
+                leaves it unscoped — only the user-management methods and
+                :meth:`each_user` may be called; per-user methods raise.
+            _share_from: Internal — when set (by :meth:`scoped`), the new store
+                shares the given store's connection machinery rather than owning
+                its own, so a scoped store is a cheap per-request wrapper.
 
         Raises:
             ValueError: If neither or both of ``conn`` and
                 ``connection_factory`` are provided.
         """
+        self.user_id = user_id
+        if _share_from is not None:
+            # Share the source store's connection state verbatim: a scoped store
+            # is a lightweight view that must use the *same* per-thread
+            # connections (and never close them) as the store it came from.
+            self._fixed_conn = _share_from._fixed_conn
+            self._factory = _share_from._factory
+            self._local = _share_from._local
+            self._conns_by_thread = _share_from._conns_by_thread
+            self._conns_lock = _share_from._conns_lock
+            self._owns_conns = False
+            return
         if (conn is None) == (connection_factory is None):
             raise ValueError(
                 "Provide exactly one of conn or connection_factory."
@@ -132,6 +210,30 @@ class MemoryStore:
         # worker threads can be reaped (their fds reclaimed) — see ``conn``.
         self._conns_by_thread: dict[int, sqlite3.Connection] = {}
         self._conns_lock = threading.Lock()
+        self._owns_conns = True
+
+    def scoped(self, user_id: int) -> MemoryStore:
+        """Return a lightweight store bound to ``user_id``, sharing the connection.
+
+        The returned store injects ``user_id`` into every per-user read and
+        write. It shares this store's connection(s) and never closes them, so it
+        is cheap to create per request (the webhook auth layer makes one per
+        call). Connection lifecycle stays with the store this was derived from.
+        """
+        return MemoryStore(user_id=user_id, _share_from=self)
+
+    def _uid(self) -> int:
+        """Return the bound ``user_id``, or raise if the store is unscoped.
+
+        This is the structural leak-guard: a per-user method that reaches an
+        unscoped store fails loudly here rather than silently scanning every
+        user's rows.
+        """
+        if self.user_id is None:
+            raise RuntimeError(
+                "store is not bound to a user — call store.scoped(user_id) first"
+            )
+        return self.user_id
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -210,9 +312,11 @@ class MemoryStore:
         In single-connection mode this closes the wrapped connection. In
         per-thread mode it closes every connection the factory has opened. A
         store wrapping a caller-supplied connection leaves it open (the caller
-        owns it) — use :meth:`open` or :meth:`threaded` for owned lifecycles.
+        owns it) — use :meth:`open` or :meth:`threaded` for owned lifecycles. A
+        scoped store (from :meth:`scoped`) never closes anything; the store it
+        was derived from owns the connections.
         """
-        if self._factory is None:
+        if self._factory is None or not self._owns_conns:
             return
         with self._conns_lock:
             for conn in self._conns_by_thread.values():
@@ -237,6 +341,105 @@ class MemoryStore:
             yield cls(conn)
         finally:
             conn.close()
+
+    # -- users (operator-only; live on the unscoped store) -------------------
+
+    def create_user(
+        self,
+        handle: str,
+        *,
+        display_name: str | None = None,
+        token: str | None = None,
+        is_operator: bool = False,
+    ) -> tuple[dict[str, Any], str]:
+        """Create a user, returning ``(user_row, raw_token)``.
+
+        The raw token is returned **once** (like an API key); only its
+        ``sha256`` is stored. A token is generated if none is supplied. This is
+        an operator-only method and runs on the unscoped store — it does not
+        seed coaching state (see :func:`provision_user`, which wraps it).
+
+        Raises:
+            sqlite3.IntegrityError: If ``handle`` is already taken.
+        """
+        raw_token = token or generate_token()
+        cur = self.conn.execute(
+            "INSERT INTO users (handle, display_name, token_hash, is_operator) "
+            "VALUES (?, ?, ?, ?)",
+            (handle, display_name, sha256_hex(raw_token), 1 if is_operator else 0),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM users WHERE id = ?", (int(cur.lastrowid),)
+        ).fetchone()
+        return dict(row), raw_token
+
+    def get_user(self, handle: str) -> dict[str, Any] | None:
+        """Return a user row by ``handle``, or ``None``."""
+        row = self.conn.execute(
+            "SELECT * FROM users WHERE handle = ?", (handle,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def get_user_by_token_hash(self, token_hash: str) -> dict[str, Any] | None:
+        """Return the user whose ``token_hash`` matches, or ``None``.
+
+        The comparison goes through the indexed lookup; callers should compare
+        the *hash* with :func:`hmac.compare_digest` when they already hold a
+        candidate (see the webhook auth layer) to keep it constant-time.
+        """
+        rows = self.conn.execute("SELECT * FROM users").fetchall()
+        for row in rows:
+            if hmac.compare_digest(row["token_hash"], token_hash):
+                return dict(row)
+        return None
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Return all users (never their tokens), oldest first."""
+        rows = self.conn.execute(
+            "SELECT id, handle, display_name, status, is_operator, created_at "
+            "FROM users ORDER BY id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def each_user(self, *, status: str | None = "active") -> list[dict[str, Any]]:
+        """Return users for the learning/summarizer fan-out, scoped by ``status``.
+
+        Args:
+            status: Only return users with this status (default ``active``);
+                pass ``None`` for every user.
+        """
+        if status is None:
+            rows = self.conn.execute("SELECT * FROM users ORDER BY id ASC").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM users WHERE status = ? ORDER BY id ASC", (status,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_user_status(self, handle: str, status: str) -> bool:
+        """Set a user's ``status`` (``active``/``disabled``). ``True`` if changed."""
+        cur = self.conn.execute(
+            "UPDATE users SET status = ? WHERE handle = ?", (status, handle)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def rotate_user_token(self, handle: str) -> str | None:
+        """Generate and store a new token for ``handle``; return it once.
+
+        Returns ``None`` if no such user exists. The old token stops working
+        immediately (devices holding it must be re-provisioned).
+        """
+        if self.get_user(handle) is None:
+            return None
+        raw_token = generate_token()
+        self.conn.execute(
+            "UPDATE users SET token_hash = ? WHERE handle = ?",
+            (sha256_hex(raw_token), handle),
+        )
+        self.conn.commit()
+        return raw_token
 
     # -- episodes ------------------------------------------------------------
 
@@ -271,6 +474,7 @@ class MemoryStore:
             The auto-incremented ``id`` of the inserted episode.
         """
         columns = [
+            "user_id",
             "episode_type",
             "predicted_value",
             "actual_value",
@@ -281,6 +485,7 @@ class MemoryStore:
             "notes",
         ]
         values: list[Any] = [
+            self._uid(),
             episode_type,
             predicted_value,
             actual_value,
@@ -304,7 +509,8 @@ class MemoryStore:
     def get_episode(self, episode_id: int) -> dict[str, Any] | None:
         """Return a single episode by id, or ``None`` if it does not exist."""
         row = self.conn.execute(
-            "SELECT * FROM episodes WHERE id = ?", (episode_id,)
+            "SELECT * FROM episodes WHERE id = ? AND user_id = ?",
+            (episode_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -318,8 +524,9 @@ class MemoryStore:
             A list of episode dicts ordered by ``timestamp`` descending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM episodes ORDER BY timestamp DESC, id DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM episodes WHERE user_id = ? "
+            "ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -333,7 +540,8 @@ class MemoryStore:
             A list of episode dicts ordered by ``timestamp`` then ``id`` ascending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM episodes ORDER BY timestamp ASC, id ASC"
+            "SELECT * FROM episodes WHERE user_id = ? ORDER BY timestamp ASC, id ASC",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -348,8 +556,9 @@ class MemoryStore:
             recently" section.
         """
         rows = self.conn.execute(
-            "SELECT * FROM episodes WHERE timestamp >= ? ORDER BY timestamp DESC, id DESC",
-            (since,),
+            "SELECT * FROM episodes WHERE user_id = ? AND timestamp >= ? "
+            "ORDER BY timestamp DESC, id DESC",
+            (self._uid(), since),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -366,9 +575,9 @@ class MemoryStore:
             A list of matching episode dicts.
         """
         rows = self.conn.execute(
-            "SELECT * FROM episodes WHERE episode_type = ? "
+            "SELECT * FROM episodes WHERE user_id = ? AND episode_type = ? "
             "ORDER BY timestamp DESC, id DESC LIMIT ?",
-            (episode_type, limit),
+            (self._uid(), episode_type, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -408,10 +617,10 @@ class MemoryStore:
         self.conn.execute(
             """
             INSERT INTO patterns (
-                pattern_type, context_key, observed_value, predicted_value,
+                user_id, pattern_type, context_key, observed_value, predicted_value,
                 variance, sample_size, confidence, last_updated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT (pattern_type, context_key) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, pattern_type, context_key) DO UPDATE SET
                 observed_value  = excluded.observed_value,
                 predicted_value = excluded.predicted_value,
                 variance        = excluded.variance,
@@ -420,6 +629,7 @@ class MemoryStore:
                 last_updated    = CURRENT_TIMESTAMP
             """,
             (
+                self._uid(),
                 pattern_type,
                 context_key,
                 observed_value,
@@ -431,8 +641,9 @@ class MemoryStore:
         )
         self.conn.commit()
         row = self.conn.execute(
-            "SELECT id FROM patterns WHERE pattern_type = ? AND context_key = ?",
-            (pattern_type, context_key),
+            "SELECT id FROM patterns "
+            "WHERE user_id = ? AND pattern_type = ? AND context_key = ?",
+            (self._uid(), pattern_type, context_key),
         ).fetchone()
         return int(row["id"])
 
@@ -449,13 +660,15 @@ class MemoryStore:
         """
         if pattern_type is None:
             rows = self.conn.execute(
-                "SELECT * FROM patterns ORDER BY confidence DESC, id ASC"
+                "SELECT * FROM patterns WHERE user_id = ? "
+                "ORDER BY confidence DESC, id ASC",
+                (self._uid(),),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM patterns WHERE pattern_type = ? "
+                "SELECT * FROM patterns WHERE user_id = ? AND pattern_type = ? "
                 "ORDER BY confidence DESC, id ASC",
-                (pattern_type,),
+                (self._uid(), pattern_type),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -472,7 +685,8 @@ class MemoryStore:
             The stored value, or ``default`` if the key does not exist.
         """
         row = self.conn.execute(
-            "SELECT value FROM coaching_state WHERE key = ?", (key,)
+            "SELECT value FROM coaching_state WHERE user_id = ? AND key = ?",
+            (self._uid(), key),
         ).fetchone()
         return row["value"] if row is not None else default
 
@@ -487,14 +701,14 @@ class MemoryStore:
         """
         self.conn.execute(
             """
-            INSERT INTO coaching_state (key, value, source, last_updated)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT (key) DO UPDATE SET
+            INSERT INTO coaching_state (user_id, key, value, source, last_updated)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, key) DO UPDATE SET
                 value        = excluded.value,
                 source       = excluded.source,
                 last_updated = CURRENT_TIMESTAMP
             """,
-            (key, value, source),
+            (self._uid(), key, value, source),
         )
         self.conn.commit()
 
@@ -506,7 +720,8 @@ class MemoryStore:
             ``last_updated``, ...), convenient for the summarizer.
         """
         rows = self.conn.execute(
-            "SELECT * FROM coaching_state ORDER BY key ASC"
+            "SELECT * FROM coaching_state WHERE user_id = ? ORDER BY key ASC",
+            (self._uid(),),
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
 
@@ -544,7 +759,8 @@ class MemoryStore:
         """
         row = self.conn.execute(
             "SELECT value, last_updated FROM coaching_state "
-            "WHERE key = 'last_location_lat'"
+            "WHERE user_id = ? AND key = 'last_location_lat'",
+            (self._uid(),),
         ).fetchone()
         if row is None:
             return None
@@ -570,7 +786,8 @@ class MemoryStore:
         """
         row = self.conn.execute(
             "SELECT text, source, model, structured, structured_hash, "
-            "generated_at FROM profile_cache WHERE id = 1"
+            "generated_at FROM profile_cache WHERE user_id = ?",
+            (self._uid(),),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -597,9 +814,9 @@ class MemoryStore:
         self.conn.execute(
             """
             INSERT INTO profile_cache (
-                id, text, source, model, structured, structured_hash, generated_at
-            ) VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO UPDATE SET
+                user_id, text, source, model, structured, structured_hash, generated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE SET
                 text            = excluded.text,
                 source          = excluded.source,
                 model           = excluded.model,
@@ -607,7 +824,7 @@ class MemoryStore:
                 structured_hash = excluded.structured_hash,
                 generated_at    = CURRENT_TIMESTAMP
             """,
-            (text, source, model, structured, digest),
+            (self._uid(), text, source, model, structured, digest),
         )
         self.conn.commit()
 
@@ -635,8 +852,10 @@ class MemoryStore:
         Returns:
             The new outing's ``id``.
         """
-        columns = ["intention", "time_window_minutes", "home_lat", "home_lon"]
-        values: list[Any] = [intention, time_window_minutes, home_lat, home_lon]
+        columns = ["user_id", "intention", "time_window_minutes", "home_lat", "home_lon"]
+        values: list[Any] = [
+            self._uid(), intention, time_window_minutes, home_lat, home_lon
+        ]
         if departure_at is not None:
             columns.append("departure_at")
             values.append(departure_at)
@@ -651,7 +870,8 @@ class MemoryStore:
     def get_outing(self, outing_id: int) -> dict[str, Any] | None:
         """Return a single outing by id, or ``None`` if it does not exist."""
         row = self.conn.execute(
-            "SELECT * FROM outings WHERE id = ?", (outing_id,)
+            "SELECT * FROM outings WHERE id = ? AND user_id = ?",
+            (outing_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -666,7 +886,9 @@ class MemoryStore:
         """
         rows = self.conn.execute(
             "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
-            "AS elapsed_minutes FROM outings WHERE status = 'active' ORDER BY id"
+            "AS elapsed_minutes FROM outings WHERE user_id = ? AND status = 'active' "
+            "ORDER BY id",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -674,8 +896,9 @@ class MemoryStore:
         """Return the newest active outing (with ``elapsed_minutes``), or ``None``."""
         row = self.conn.execute(
             "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
-            "AS elapsed_minutes FROM outings WHERE status = 'active' "
-            "ORDER BY id DESC LIMIT 1"
+            "AS elapsed_minutes FROM outings WHERE user_id = ? AND status = 'active' "
+            "ORDER BY id DESC LIMIT 1",
+            (self._uid(),),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -687,7 +910,8 @@ class MemoryStore:
             level: One of ``none``/``soft``/``firm``/``call``.
         """
         self.conn.execute(
-            "UPDATE outings SET last_level = ? WHERE id = ?", (level, outing_id)
+            "UPDATE outings SET last_level = ? WHERE id = ? AND user_id = ?",
+            (level, outing_id, self._uid()),
         )
         self.conn.commit()
 
@@ -706,16 +930,16 @@ class MemoryStore:
         """
         cur = self.conn.execute(
             "UPDATE outings SET status = ?, returned_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND status = 'active'",
-            (status, outing_id),
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (status, outing_id, self._uid()),
         )
         self.conn.commit()
         if cur.rowcount == 0:
             return None
         row = self.conn.execute(
             "SELECT *, (julianday(returned_at) - julianday(departure_at)) * 1440.0 "
-            "AS actual_minutes FROM outings WHERE id = ?",
-            (outing_id,),
+            "AS actual_minutes FROM outings WHERE id = ? AND user_id = ?",
+            (outing_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -729,7 +953,8 @@ class MemoryStore:
             A list of outing dicts ordered by ``id`` descending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM outings ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM outings WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -759,8 +984,10 @@ class MemoryStore:
         Returns:
             The new session's ``id``.
         """
-        columns = ["intended_task", "planned_minutes", "aligned"]
-        values: list[Any] = [intended_task, planned_minutes, 1 if aligned else 0]
+        columns = ["user_id", "intended_task", "planned_minutes", "aligned"]
+        values: list[Any] = [
+            self._uid(), intended_task, planned_minutes, 1 if aligned else 0
+        ]
         if started_at is not None:
             columns.append("started_at")
             values.append(started_at)
@@ -775,7 +1002,8 @@ class MemoryStore:
     def get_focus_session(self, session_id: int) -> dict[str, Any] | None:
         """Return a single focus session by id, or ``None`` if it does not exist."""
         row = self.conn.execute(
-            "SELECT * FROM focus_sessions WHERE id = ?", (session_id,)
+            "SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?",
+            (session_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -790,7 +1018,9 @@ class MemoryStore:
         """
         rows = self.conn.execute(
             "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
-            "AS elapsed_minutes FROM focus_sessions WHERE status = 'active' ORDER BY id"
+            "AS elapsed_minutes FROM focus_sessions "
+            "WHERE user_id = ? AND status = 'active' ORDER BY id",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -798,8 +1028,9 @@ class MemoryStore:
         """Return the newest active focus session (with ``elapsed_minutes``), or ``None``."""
         row = self.conn.execute(
             "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
-            "AS elapsed_minutes FROM focus_sessions WHERE status = 'active' "
-            "ORDER BY id DESC LIMIT 1"
+            "AS elapsed_minutes FROM focus_sessions "
+            "WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+            (self._uid(),),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -811,7 +1042,8 @@ class MemoryStore:
             level: One of ``none``/``check``/``break``.
         """
         self.conn.execute(
-            "UPDATE focus_sessions SET last_level = ? WHERE id = ?", (level, session_id)
+            "UPDATE focus_sessions SET last_level = ? WHERE id = ? AND user_id = ?",
+            (level, session_id, self._uid()),
         )
         self.conn.commit()
 
@@ -843,16 +1075,16 @@ class MemoryStore:
         cur = self.conn.execute(
             "UPDATE focus_sessions SET status = ?, ended_at = CURRENT_TIMESTAMP, "
             "breadcrumb = COALESCE(?, breadcrumb), outcome = COALESCE(?, outcome) "
-            "WHERE id = ? AND status = 'active'",
-            (status, breadcrumb, outcome, session_id),
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (status, breadcrumb, outcome, session_id, self._uid()),
         )
         self.conn.commit()
         if cur.rowcount == 0:
             return None
         row = self.conn.execute(
             "SELECT *, (julianday(ended_at) - julianday(started_at)) * 1440.0 "
-            "AS actual_minutes FROM focus_sessions WHERE id = ?",
-            (session_id,),
+            "AS actual_minutes FROM focus_sessions WHERE id = ? AND user_id = ?",
+            (session_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -866,7 +1098,8 @@ class MemoryStore:
             A list of session dicts ordered by ``id`` descending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM focus_sessions ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM focus_sessions WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -913,7 +1146,8 @@ class MemoryStore:
         """
         if external_id is not None:
             existing = self.conn.execute(
-                "SELECT id FROM commitments WHERE external_id = ?", (external_id,)
+                "SELECT id FROM commitments WHERE user_id = ? AND external_id = ?",
+                (self._uid(), external_id),
             ).fetchone()
             if existing is not None:
                 self.conn.execute(
@@ -921,20 +1155,21 @@ class MemoryStore:
                     "location = ?, dest_lat = ?, dest_lon = ?, lead_minutes = ?, "
                     "hardness = ?, source = ?, kind = ?, kind_source = ?, "
                     "status = 'active', updated_at = CURRENT_TIMESTAMP "
-                    "WHERE external_id = ?",
+                    "WHERE id = ? AND user_id = ?",
                     (title, start_at, end_at, location, dest_lat, dest_lon,
-                     lead_minutes, hardness, source, kind, kind_source, external_id),
+                     lead_minutes, hardness, source, kind, kind_source,
+                     existing["id"], self._uid()),
                 )
                 self.conn.commit()
                 return int(existing["id"]), False
 
         cur = self.conn.execute(
-            "INSERT INTO commitments (external_id, title, start_at, end_at, "
+            "INSERT INTO commitments (user_id, external_id, title, start_at, end_at, "
             "location, dest_lat, dest_lon, lead_minutes, hardness, source, "
             "kind, kind_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (external_id, title, start_at, end_at, location, dest_lat, dest_lon,
-             lead_minutes, hardness, source, kind, kind_source),
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), external_id, title, start_at, end_at, location, dest_lat,
+             dest_lon, lead_minutes, hardness, source, kind, kind_source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True
@@ -942,7 +1177,8 @@ class MemoryStore:
     def get_commitment(self, commitment_id: int) -> dict[str, Any] | None:
         """Return a single commitment by id, or ``None``."""
         row = self.conn.execute(
-            "SELECT * FROM commitments WHERE id = ?", (commitment_id,)
+            "SELECT * FROM commitments WHERE id = ? AND user_id = ?",
+            (commitment_id, self._uid()),
         ).fetchone()
         d = _row_to_dict(row)
         return _with_calendar(d) if d is not None else None
@@ -957,9 +1193,9 @@ class MemoryStore:
             A list of commitment dicts ordered by ``start_at`` ascending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'active' "
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
             "AND start_at >= datetime('now') ORDER BY start_at ASC LIMIT ?",
-            (limit,),
+            (self._uid(), limit),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
@@ -974,9 +1210,9 @@ class MemoryStore:
             A list of commitment dicts (e.g. "today's" commitments for the briefing).
         """
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'active' "
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
             "AND start_at >= ? AND start_at < ? ORDER BY start_at ASC",
-            (start, end),
+            (self._uid(), start, end),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
@@ -984,8 +1220,9 @@ class MemoryStore:
         """Mark a commitment cancelled. Returns ``True`` if a row changed."""
         cur = self.conn.execute(
             "UPDATE commitments SET status = 'cancelled', "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'",
-            (commitment_id,),
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (commitment_id, self._uid()),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -1006,8 +1243,8 @@ class MemoryStore:
         placeholders = ",".join("?" * len(ids))
         rows = self.conn.execute(
             f"SELECT external_id, kind, kind_source FROM commitments "
-            f"WHERE external_id IN ({placeholders})",
-            ids,
+            f"WHERE user_id = ? AND external_id IN ({placeholders})",
+            [self._uid(), *ids],
         ).fetchall()
         return {r["external_id"]: (r["kind"], r["kind_source"]) for r in rows}
 
@@ -1020,8 +1257,8 @@ class MemoryStore:
         """
         self.conn.execute(
             "UPDATE commitments SET kind = ?, kind_source = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (kind, source, commitment_id),
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (kind, source, commitment_id, self._uid()),
         )
         self.conn.commit()
         return self.get_commitment(commitment_id)
@@ -1040,12 +1277,12 @@ class MemoryStore:
         if not norm:
             return
         self.conn.execute(
-            "INSERT INTO kind_feedback (title, display, kind, llm_kind) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (title) DO UPDATE SET display = excluded.display, "
+            "INSERT INTO kind_feedback (user_id, title, display, kind, llm_kind) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, title) DO UPDATE SET display = excluded.display, "
             "kind = excluded.kind, llm_kind = excluded.llm_kind, "
             "updated_at = CURRENT_TIMESTAMP",
-            (norm, display, kind, llm_kind),
+            (self._uid(), norm, display, kind, llm_kind),
         )
         self.conn.commit()
 
@@ -1057,8 +1294,8 @@ class MemoryStore:
         """
         rows = self.conn.execute(
             "SELECT title, display, kind, llm_kind FROM kind_feedback "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+            "WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1072,8 +1309,8 @@ class MemoryStore:
         """
         cur = self.conn.execute(
             "UPDATE commitments SET dest_lat = ?, dest_lon = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (lat, lon, commitment_id),
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (lat, lon, commitment_id, self._uid()),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -1092,11 +1329,11 @@ class MemoryStore:
             first), so the most imminent commitments get coordinates first.
         """
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'active' "
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
             "AND start_at >= datetime('now') AND location IS NOT NULL "
             "AND location != '' AND dest_lat IS NULL "
             "ORDER BY start_at ASC LIMIT ?",
-            (limit,),
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1120,14 +1357,15 @@ class MemoryStore:
             The place's ``id``.
         """
         self.conn.execute(
-            "INSERT INTO places (name, label, lat, lon) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (name) DO UPDATE SET label = excluded.label, "
+            "INSERT INTO places (user_id, name, label, lat, lon) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, name) DO UPDATE SET label = excluded.label, "
             "lat = excluded.lat, lon = excluded.lon",
-            (name, label, lat, lon),
+            (self._uid(), name, label, lat, lon),
         )
         self.conn.commit()
         row = self.conn.execute(
-            "SELECT id FROM places WHERE name = ?", (name,)
+            "SELECT id FROM places WHERE user_id = ? AND name = ?",
+            (self._uid(), name),
         ).fetchone()
         return int(row["id"])
 
@@ -1138,7 +1376,9 @@ class MemoryStore:
         (e.g. ``"dentist office"`` before ``"office"``).
         """
         rows = self.conn.execute(
-            "SELECT * FROM places ORDER BY length(name) DESC, name ASC"
+            "SELECT * FROM places WHERE user_id = ? "
+            "ORDER BY length(name) DESC, name ASC",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1195,9 +1435,9 @@ class MemoryStore:
             The new todo's id.
         """
         cur = self.conn.execute(
-            "INSERT INTO todos (title, notes, estimate_minutes, priority, "
-            "deadline, energy) VALUES (?, ?, ?, ?, ?, ?)",
-            (title, notes, estimate_minutes, priority, deadline, energy),
+            "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
+            "deadline, energy) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), title, notes, estimate_minutes, priority, deadline, energy),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -1205,7 +1445,8 @@ class MemoryStore:
     def get_todo(self, todo_id: int) -> dict[str, Any] | None:
         """Return a single todo by id, or ``None``."""
         row = self.conn.execute(
-            "SELECT * FROM todos WHERE id = ?", (todo_id,)
+            "SELECT * FROM todos WHERE id = ? AND user_id = ?",
+            (todo_id, self._uid()),
         ).fetchone()
         return _row_to_dict(row)
 
@@ -1216,8 +1457,9 @@ class MemoryStore:
             A list of todo dicts with ``status = 'open'``.
         """
         rows = self.conn.execute(
-            "SELECT * FROM todos WHERE status = 'open' "
-            "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC"
+            "SELECT * FROM todos WHERE user_id = ? AND status = 'open' "
+            "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1234,8 +1476,8 @@ class MemoryStore:
         """
         cur = self.conn.execute(
             "UPDATE todos SET deadline = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND status = 'open'",
-            (deadline, todo_id),
+            "WHERE id = ? AND user_id = ? AND status = 'open'",
+            (deadline, todo_id, self._uid()),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -1250,8 +1492,8 @@ class MemoryStore:
         completed = "CURRENT_TIMESTAMP" if status == "done" else "NULL"
         cur = self.conn.execute(
             f"UPDATE todos SET status = ?, completed_at = {completed}, "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'",
-            (status, todo_id),
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND status = 'open'",
+            (status, todo_id, self._uid()),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -1275,8 +1517,10 @@ class MemoryStore:
         keep = set(keep_external_ids)
         namespaces = {e.split(":", 1)[0] for e in keep if ":" in e}
         rows = self.conn.execute(
-            "SELECT id, external_id FROM commitments WHERE source = 'calendar' "
-            "AND status = 'active' AND start_at >= datetime('now')"
+            "SELECT id, external_id FROM commitments "
+            "WHERE user_id = ? AND source = 'calendar' "
+            "AND status = 'active' AND start_at >= datetime('now')",
+            (self._uid(),),
         ).fetchall()
         cancelled = 0
         for row in rows:
@@ -1289,8 +1533,8 @@ class MemoryStore:
                     continue  # belongs to a feed not part of this sync; leave it
             self.conn.execute(
                 "UPDATE commitments SET status = 'cancelled', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (row["id"],),
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+                (row["id"], self._uid()),
             )
             cancelled += 1
         self.conn.commit()
@@ -1301,15 +1545,17 @@ class MemoryStore:
     def dismiss_conflict(self, signature: str) -> None:
         """Record that the user dismissed a possible-conflict pair (idempotent)."""
         self.conn.execute(
-            "INSERT OR IGNORE INTO dismissed_conflicts (signature) VALUES (?)",
-            (signature,),
+            "INSERT OR IGNORE INTO dismissed_conflicts (user_id, signature) "
+            "VALUES (?, ?)",
+            (self._uid(), signature),
         )
         self.conn.commit()
 
     def dismissed_conflicts(self) -> set[str]:
         """Return the set of dismissed possible-conflict signatures."""
         rows = self.conn.execute(
-            "SELECT signature FROM dismissed_conflicts"
+            "SELECT signature FROM dismissed_conflicts WHERE user_id = ?",
+            (self._uid(),),
         ).fetchall()
         return {r["signature"] for r in rows}
 
@@ -1328,10 +1574,14 @@ class MemoryStore:
             A set of ``message_id`` strings.
         """
         if account is None:
-            rows = self.conn.execute("SELECT message_id FROM mail_messages").fetchall()
+            rows = self.conn.execute(
+                "SELECT message_id FROM mail_messages WHERE user_id = ?",
+                (self._uid(),),
+            ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT message_id FROM mail_messages WHERE account = ?", (account,)
+                "SELECT message_id FROM mail_messages WHERE user_id = ? AND account = ?",
+                (self._uid(), account),
             ).fetchall()
         return {r["message_id"] for r in rows}
 
@@ -1369,14 +1619,15 @@ class MemoryStore:
         """
         cur = self.conn.execute(
             "INSERT INTO mail_messages ("
-            "account, message_id, thread_id, sender_name, sender_email, subject, "
-            "received_at, snippet, body, unread, needs_action, urgency, category, "
-            "waiting_on, summary, triage_source, policy, todo_id"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "user_id, account, message_id, thread_id, sender_name, sender_email, "
+            "subject, received_at, snippet, body, unread, needs_action, urgency, "
+            "category, waiting_on, summary, triage_source, policy, todo_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                account, message_id, thread_id, sender_name, sender_email, subject,
-                received_at, snippet, body, unread, needs_action, urgency, category,
-                waiting_on, summary, triage_source, policy, todo_id,
+                self._uid(), account, message_id, thread_id, sender_name,
+                sender_email, subject, received_at, snippet, body, unread,
+                needs_action, urgency, category, waiting_on, summary,
+                triage_source, policy, todo_id,
             ),
         )
         self.conn.commit()
@@ -1393,9 +1644,9 @@ class MemoryStore:
             ``id``) descending.
         """
         rows = self.conn.execute(
-            "SELECT * FROM mail_messages "
+            "SELECT * FROM mail_messages WHERE user_id = ? "
             "ORDER BY (received_at IS NULL), received_at DESC, id DESC LIMIT ?",
-            (limit,),
+            (self._uid(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1412,12 +1663,26 @@ class MemoryStore:
         rows = self.conn.execute(
             "SELECT m.* FROM mail_messages m "
             "LEFT JOIN todos t ON m.todo_id = t.id "
-            "WHERE m.needs_action = 1 "
+            "WHERE m.user_id = ? AND m.needs_action = 1 "
             "AND (m.todo_id IS NULL OR t.status = 'open') "
-            "ORDER BY (m.received_at IS NULL), m.received_at DESC, m.id DESC"
+            "ORDER BY (m.received_at IS NULL), m.received_at DESC, m.id DESC",
+            (self._uid(),),
         ).fetchall()
         return [dict(r) for r in rows]
     # -- Task decompositions -------------------------------------------------
+    #
+    # ``todo_decompositions`` has no ``user_id`` of its own — it hangs off
+    # ``todos`` (ON DELETE CASCADE). It is scoped *through* its parent todo: each
+    # method first checks the todo belongs to this user (:meth:`_owns_todo`), so
+    # one user can never read or edit another user's decomposition by id.
+
+    def _owns_todo(self, todo_id: int) -> bool:
+        """Return whether ``todo_id`` belongs to this scoped user."""
+        row = self.conn.execute(
+            "SELECT 1 FROM todos WHERE id = ? AND user_id = ?",
+            (todo_id, self._uid()),
+        ).fetchone()
+        return row is not None
 
     def set_decomposition(
         self,
@@ -1432,8 +1697,10 @@ class MemoryStore:
 
         Replacing a decomposition leaves ``done_steps`` unset (NULL), which resets
         any per-step progress — the steps themselves changed, so old check-offs no
-        longer apply.
+        longer apply. No-ops if the todo is not this user's.
         """
+        if not self._owns_todo(todo_id):
+            return
         self.conn.execute(
             "INSERT OR REPLACE INTO todo_decompositions "
             "(todo_id, first_step, first_step_minutes, steps, source) "
@@ -1447,7 +1714,10 @@ class MemoryStore:
 
         ``steps`` is decoded to a list of strings and ``done_steps`` to a sorted
         list of completed step indices (0 = ``first_step``, 1..N = ``steps``).
+        Returns ``None`` if the todo is not this user's.
         """
+        if not self._owns_todo(todo_id):
+            return None
         row = self.conn.execute(
             "SELECT first_step, first_step_minutes, steps, source, done_steps "
             "FROM todo_decompositions WHERE todo_id = ?",
@@ -1488,6 +1758,8 @@ class MemoryStore:
             step_index: Which step (``0`` = first step).
             done: ``True`` to mark done, ``False`` to clear it.
         """
+        if not self._owns_todo(todo_id):
+            return False
         row = self.conn.execute(
             "SELECT steps, done_steps FROM todo_decompositions WHERE todo_id = ?",
             (todo_id,),
@@ -1512,3 +1784,64 @@ class MemoryStore:
         )
         self.conn.commit()
         return True
+
+
+def seed_user_state(store: MemoryStore) -> None:
+    """Seed a (scoped) store's user with the default coaching state + module defaults.
+
+    Writes :data:`DEFAULT_COACHING_STATE` and each enabled module's
+    ``default_state`` (via ``Module.seed``) without clobbering any value already
+    present — so calling it twice is safe. This is the single "a fresh user looks
+    like a fresh install" code path that replaces the old global schema seeds.
+
+    Args:
+        store: A store **already scoped** to the user to seed.
+    """
+    existing = store.all_state()
+    for key, value, source in DEFAULT_COACHING_STATE:
+        if key not in existing:
+            store.set_state(key, value, source=source)
+    # Each enabled module seeds its own coaching-state defaults (it calls
+    # set_state on the scoped store, so the keys land under this user). Imported
+    # lazily to keep the memory layer free of a hard dependency on the modules
+    # package and to avoid an import cycle.
+    from prefrontal.modules import enabled_modules
+
+    for module in enabled_modules():
+        module.seed(store)
+
+
+def provision_user(
+    store: MemoryStore,
+    handle: str,
+    *,
+    display_name: str | None = None,
+    token: str | None = None,
+    is_operator: bool = False,
+) -> tuple[dict[str, Any], str]:
+    """Create a user and seed their coaching state, returning ``(user_row, token)``.
+
+    This is the one provisioning path used by the operator CLI, the admin HTTP
+    endpoints, and the single-tenant migration. It creates the user on the
+    unscoped ``store`` (see :meth:`MemoryStore.create_user`), then seeds the
+    per-user coaching defaults and module defaults via :func:`seed_user_state`
+    on a store scoped to the new user. The raw token is returned once.
+
+    Args:
+        store: An **unscoped** store (operator context).
+        handle: The new user's unique handle.
+        display_name: Optional display name shown in nudges/briefings.
+        token: Optional pre-chosen token (a random one is generated otherwise).
+        is_operator: Whether the user may call the admin surface.
+
+    Returns:
+        ``(user_row, raw_token)`` — the token is shown once and never stored.
+    """
+    user, raw_token = store.create_user(
+        handle,
+        display_name=display_name,
+        token=token,
+        is_operator=is_operator,
+    )
+    seed_user_state(store.scoped(user["id"]))
+    return user, raw_token

@@ -101,10 +101,17 @@ def init_db(db_path: str) -> sqlite3.Connection:
     """Create and seed the memory database, returning an open connection.
 
     Applies ``schema.sql`` against ``db_path``. The script is idempotent
-    (``CREATE TABLE IF NOT EXISTS`` plus ``INSERT OR IGNORE`` seed rows), so
-    calling this repeatedly is safe and will not clobber existing data. After
-    the script runs, :func:`_migrate` back-fills any columns added to existing
-    tables since their original definition.
+    (``CREATE TABLE IF NOT EXISTS``), so calling this repeatedly is safe and will
+    not clobber existing data. After the script runs, :func:`_migrate` back-fills
+    any columns added to existing tables since their original definition.
+
+    A database created before multi-tenancy is detected and upgraded in place
+    (a legacy user is created and every per-user row is backfilled to it) so an
+    always-on deployment migrates itself on the next restart. Fresh installs and
+    already-migrated databases skip this — it is a no-op for them. The
+    auto-created legacy user's one-time token is *not* surfaced here; an operator
+    rotates it with ``prefrontal user rotate`` (or runs the explicit
+    ``prefrontal migrate-multi-tenant`` first to capture it).
 
     Args:
         db_path: Filesystem path to the database file (or ``":memory:"``).
@@ -113,6 +120,15 @@ def init_db(db_path: str) -> sqlite3.Connection:
         An open :class:`sqlite3.Connection` with the schema applied.
     """
     conn = connect(db_path)
+    # Bring a pre-multi-tenant database up to the row-scoped schema *before*
+    # applying schema.sql — the new schema's indexes reference ``user_id``, which
+    # a legacy table does not have yet, so the migration must add those columns
+    # first. Imported lazily to avoid an import cycle (migrate imports the store,
+    # which imports this module). A no-op on fresh / already-migrated databases.
+    from prefrontal.memory.migrate import migrate_to_multi_tenant, needs_migration
+
+    if needs_migration(conn):
+        migrate_to_multi_tenant(conn)
     conn.executescript(SCHEMA_PATH.read_text())
     _migrate(conn)
     conn.commit()

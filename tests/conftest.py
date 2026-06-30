@@ -17,6 +17,23 @@ from __future__ import annotations
 import pytest
 
 from prefrontal.integrations.ollama import OllamaError
+from prefrontal.memory.store import MemoryStore, provision_user
+
+#: Default handle every single-user test fixture provisions.
+DEFAULT_HANDLE = "tester"
+
+
+def scoped_default(store: MemoryStore, handle: str = DEFAULT_HANDLE) -> MemoryStore:
+    """Provision ``handle`` on an unscoped store and return a store scoped to it.
+
+    The single helper every existing single-tenant test fixture uses: the suite
+    is multi-tenant now, so a store must be bound to a user before any per-user
+    method works. Provisioning also seeds that user's coaching-state defaults
+    (the per-user replacement for the old global ``schema.sql`` seed block), so a
+    freshly fixtured user has exactly the state the tests expect.
+    """
+    user, _ = provision_user(store, handle, display_name=handle, is_operator=True)
+    return store.scoped(user["id"])
 
 
 class _OfflineOllama:

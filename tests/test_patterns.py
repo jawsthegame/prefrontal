@@ -16,6 +16,7 @@ from prefrontal.memory.patterns import (
     recompute_patterns,
 )
 from prefrontal.memory.store import MemoryStore
+from tests.conftest import scoped_default
 
 
 def _ep(**kw):
@@ -128,7 +129,8 @@ def test_compute_bias_needs_minimum_samples():
 
 def test_recompute_persists_patterns_and_bias():
     """recompute_patterns writes pattern rows and refreshes the bias value."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         for _ in range(4):
             store.log_episode(
                 "departure",
@@ -154,7 +156,8 @@ def test_recompute_persists_patterns_and_bias():
 
 def test_recompute_is_idempotent():
     """Running twice on the same data converges (no duplicate rows)."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         for _ in range(3):
             store.log_episode("task", predicted_value=20, actual_value=30)
         recompute_patterns(store)
@@ -166,7 +169,8 @@ def test_recompute_is_idempotent():
 
 def test_recompute_with_no_episodes():
     """No episodes -> no patterns, bias left as the seeded default."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         summary = recompute_patterns(store)
         assert summary.episodes == 0
         assert summary.patterns == 0

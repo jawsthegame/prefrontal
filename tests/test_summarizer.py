@@ -20,13 +20,14 @@ from prefrontal.memory.summarizer import (
     refresh_profile_cache,
     summarize_profile,
 )
+from tests.conftest import scoped_default
 
 
 @pytest.fixture()
 def store():
     """An in-memory store with the seed coaching state."""
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 # -- Ollama client -----------------------------------------------------------

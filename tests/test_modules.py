@@ -14,6 +14,7 @@ from prefrontal.config import Settings
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
+from tests.conftest import scoped_default
 
 BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
 
@@ -22,7 +23,7 @@ BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
 def store():
     """Yield a MemoryStore backed by a fresh in-memory, schema-initialized DB."""
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 def test_all_builtins_registered():

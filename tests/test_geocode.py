@@ -27,6 +27,7 @@ from prefrontal.integrations.nominatim import GeocoderError, NominatimGeocoder
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "geocode-secret"
 
@@ -89,7 +90,7 @@ def test_match_place_is_whole_phrase_not_substring():
 def store():
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

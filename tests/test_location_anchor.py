@@ -29,6 +29,7 @@ from prefrontal.modules.location_anchor import (
     parse_time_window,
 )
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 
 def _offline_ollama() -> OllamaClient:
@@ -171,7 +172,8 @@ def test_is_abandoned(elapsed, window, ratio, expected):
 
 def test_outing_store_lifecycle():
     """Start -> active (with elapsed) -> close (with actual minutes)."""
-    with MemoryStore.open(":memory:") as store:
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
         oid = store.start_outing(
             "getting coffee", 15.0, departure_at=_utc_minutes_ago(8)
         )
@@ -197,7 +199,7 @@ def store():
     """An in-memory store kept open for the whole test."""
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 

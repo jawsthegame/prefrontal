@@ -22,6 +22,7 @@ from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, feed_label
 from prefrontal.webhooks.app import create_app
+from tests.conftest import scoped_default
 
 SECRET = "cal-secret"
 
@@ -64,7 +65,7 @@ def test_normalize_event_defaults():
 @pytest.fixture()
 def store():
     with MemoryStore.open(":memory:") as s:
-        yield s
+        yield scoped_default(s)
 
 
 def test_upsert_inserts_then_updates_by_external_id(store):
@@ -328,7 +329,7 @@ def test_sync_rejects_bad_batch_atomically(store):
 def store_open():
     conn = init_db(":memory:")
     try:
-        yield MemoryStore(conn)
+        yield scoped_default(MemoryStore(conn))
     finally:
         conn.close()
 
