@@ -10,6 +10,8 @@ Routes:
 - ``GET  /profile`` — the current behavioral profile (for n8n to feed Ollama).
 - ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
 - ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
+- ``POST /webhooks/mail/sync`` — ingest + triage a batch of mail for an account.
+- ``GET  /mail`` — recent triaged mail and the open action items.
 - ``POST /webhooks/outing/start`` — declare an intention + time window.
 - ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
 - ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
@@ -61,6 +63,7 @@ from prefrontal.impact import (
 )
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.ollama import OllamaClient
+from prefrontal.mail import ingest_messages
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
@@ -200,6 +203,22 @@ class ConflictDismiss(BaseModel):
     """Body of ``POST /commitments/conflicts/dismiss`` — a possible-conflict key."""
 
     key: str = Field(description="The possible-conflict's `key` from the conflicts list.")
+
+
+class MailSync(BaseModel):
+    """Body of ``POST /webhooks/mail/sync`` — a batch of messages for one account.
+
+    n8n's Gmail node (or the stdlib IMAP fetcher) posts the current batch; the
+    endpoint normalizes, dedups, triages, and stores them. ``messages`` are
+    loosely-shaped dicts (see ``prefrontal.mail.models.normalize_message``).
+    """
+
+    account: str = Field(description="Logical account name (selects the retention policy).")
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    policy: Literal["full", "signals"] | None = Field(
+        default=None,
+        description="Override the account's configured retention policy for this batch.",
+    )
 
 
 class TodoCreate(BaseModel):
@@ -436,6 +455,67 @@ def create_app(
         if not isinstance(body, dict):
             body = {"value": body}
         return parse_inbound_event(body)
+
+    # -- Mail ingestion ------------------------------------------------------
+
+    @app.post(
+        "/webhooks/mail/sync", status_code=status.HTTP_201_CREATED, tags=["ingestion"]
+    )
+    def mail_sync(
+        payload: MailSync,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Ingest a batch of messages for one account: dedup, triage, store.
+
+        The retention policy comes from the account's configuration
+        (``PREFRONTAL_MAIL_ACCOUNTS``) unless ``policy`` overrides it for this
+        batch. Triage runs on the local Ollama model, falling back to the
+        keyword heuristic if it's unavailable — so a down model never blocks the
+        sync. Re-posting the same messages is idempotent (dedup on message id).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        if not payload.account.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="mail sync requires a non-empty 'account'.",
+            )
+        policy = payload.policy or resolved_settings.policy_for(payload.account)
+        summary = ingest_messages(
+            memory,
+            payload.messages,
+            account=payload.account,
+            policy=policy,
+            client=ollama_client,
+        )
+        return {
+            "account": summary.account,
+            "policy": summary.policy,
+            "received": summary.received,
+            "ingested": summary.ingested,
+            "skipped": summary.skipped,
+            "invalid": summary.invalid,
+            "needs_action": summary.needs_action,
+            "todos_created": summary.todos_created,
+            "triaged_by_llm": summary.triaged_by_llm,
+        }
+
+    @app.get("/mail", tags=["ingestion"])
+    def mail_list(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Read-only snapshot: recent triaged mail and the open action items.
+
+        ``needs_action`` lists messages still awaiting a reply/action (their
+        linked todo is still open); ``recent`` is the latest ingested mail for a
+        dashboard. No side effects — safe to poll.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {
+            "needs_action": memory.mail_needing_action(),
+            "recent": memory.recent_mail(limit=30),
+        }
 
     # -- Location-Aware Task Anchor (Coffee Shop Nudge) ----------------------
 

@@ -11,6 +11,7 @@ Exposes three subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
+- ``prefrontal mail`` — ingest/fetch/list triaged email (list/sync/fetch).
 
 Run ``prefrontal --help`` or ``prefrontal <command> --help`` for details.
 """
@@ -268,6 +269,93 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mail(args: argparse.Namespace) -> int:
+    """Ingest, fetch, or list triaged mail.
+
+    Subcommands:
+
+    - ``list`` — show recently ingested mail and the open action items.
+    - ``sync FILE`` — ingest messages from a JSON file (a list, or an object
+      with a ``messages`` key) for the given ``--account``.
+    - ``fetch`` — pull unread mail for ``--account`` over IMAP using the
+      ``MAIL_IMAP_*_<ACCOUNT>`` env credentials, then ingest it.
+
+    Args:
+        args: Parsed arguments; ``mail_action`` plus action-specific fields.
+
+    Returns:
+        Process exit code (0 on success, 1 on a usage/credential error).
+    """
+    import json
+
+    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.mail import ingest_messages
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+
+    if args.mail_action == "list":
+        with MemoryStore.open(db_path) as store:
+            action_items = store.mail_needing_action()
+            recent = store.recent_mail(limit=20)
+        print(f"Needs action: {len(action_items)}")
+        for m in action_items:
+            who = m.get("sender_name") or m.get("sender_email") or "?"
+            print(f"  [{m.get('urgency', '?')}] {who}: {m.get('subject') or '(no subject)'}")
+        print(f"\nRecent ({len(recent)}):")
+        for m in recent:
+            flag = "*" if m.get("needs_action") else " "
+            print(f" {flag} {m.get('category', '?'):12} {m.get('subject') or '(no subject)'}")
+        return 0
+
+    # `sync` and `fetch` both ingest. Resolve the policy and an Ollama client.
+    account = args.account
+    policy = settings.policy_for(account)
+    client = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+
+    if args.mail_action == "sync":
+        try:
+            data = json.loads(Path(args.file).read_text())
+        except (OSError, ValueError) as exc:
+            print(f"Could not read messages from {args.file}: {exc}", file=sys.stderr)
+            return 1
+        messages = data.get("messages", []) if isinstance(data, dict) else data
+        if not isinstance(messages, list):
+            print(
+                "Expected a JSON list of messages, or an object with 'messages'.",
+                file=sys.stderr,
+            )
+            return 1
+    else:  # fetch
+        from prefrontal.mail.imap import ImapAccount, fetch_unread
+
+        imap = ImapAccount.from_env(account)
+        if imap is None:
+            print(
+                f"No IMAP credentials for account '{account}'. Set "
+                f"MAIL_IMAP_USER_{account.upper()} and MAIL_IMAP_PASSWORD_{account.upper()}.",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            messages = fetch_unread(imap, limit=args.limit)
+        except Exception as exc:  # imaplib raises a variety of errors
+            print(f"IMAP fetch failed: {exc}", file=sys.stderr)
+            return 1
+
+    with MemoryStore.open(db_path) as store:
+        summary = ingest_messages(
+            store, messages, account=account, policy=policy, client=client
+        )
+    print(
+        f"[{summary.account}/{summary.policy}] received {summary.received}, "
+        f"ingested {summary.ingested}, skipped {summary.skipped}, "
+        f"needs-action {summary.needs_action} ({summary.todos_created} todos), "
+        f"{summary.triaged_by_llm} via model."
+    )
+    return 0
+
+
 def _cmd_modules(args: argparse.Namespace) -> int:
     """List available modules and whether each is enabled.
 
@@ -371,6 +459,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("minutes", type=float, help="Minutes of free time you have.")
     p_fit.add_argument("--db-path", default=None, help="Override the database path.")
     p_fit.set_defaults(func=_cmd_fit)
+
+    p_mail = sub.add_parser("mail", help="Ingest/fetch/list triaged email.")
+    p_mail.add_argument("--db-path", default=None, help="Override the database path.")
+    mail_sub = p_mail.add_subparsers(dest="mail_action", required=True)
+    mail_sub.add_parser("list", help="List recent triaged mail and action items.")
+    m_sync = mail_sub.add_parser("sync", help="Ingest messages from a JSON file.")
+    m_sync.add_argument("file", help="Path to a JSON list (or {messages: [...]}).")
+    m_sync.add_argument("--account", required=True, help="Logical account name.")
+    m_fetch = mail_sub.add_parser("fetch", help="Fetch unread over IMAP, then ingest.")
+    m_fetch.add_argument("--account", required=True, help="Logical account name.")
+    m_fetch.add_argument("--limit", type=int, default=50, help="Max unread to fetch.")
+    p_mail.set_defaults(func=_cmd_mail)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(

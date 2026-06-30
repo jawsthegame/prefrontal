@@ -126,6 +126,42 @@ CREATE TABLE IF NOT EXISTS dismissed_conflicts (
     dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Ingested and triaged email. One row per message, deduplicated on the
+-- account-scoped `message_id` so re-syncing the same inbox is idempotent.
+-- Retention is per-account (see config.mail_accounts): a `full`-policy account
+-- stores `snippet`/`body`; a `signals` account stores only subject + sender +
+-- the triage verdict (body/snippet stay NULL and are never even sent to the
+-- model). The triage fields are filled by the Ollama pass (with a heuristic
+-- fallback); `todo_id` links to the open loop created for anything that needs
+-- action. Local-first: nothing here leaves the host.
+CREATE TABLE IF NOT EXISTS mail_messages (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account       TEXT    NOT NULL,                -- logical account name (personal | work | corp)
+    message_id    TEXT    NOT NULL,                -- provider message id, account-scoped unique
+    thread_id     TEXT,                            -- provider thread id (optional)
+    sender_name   TEXT,
+    sender_email  TEXT,
+    subject       TEXT,
+    received_at   DATETIME,                        -- stored normalized to UTC
+    snippet       TEXT,                            -- NULL for signals-policy accounts
+    body          TEXT,                            -- NULL for signals-policy accounts
+    unread        BOOLEAN,
+    needs_action  BOOLEAN NOT NULL DEFAULT 0,      -- triage: does this need a reply / action?
+    urgency       TEXT,                            -- low | normal | high | urgent
+    category      TEXT,                            -- reply | meeting | fyi | newsletter | notification | other
+    waiting_on    TEXT,                            -- who is waiting on the user (free text), if any
+    summary       TEXT,                            -- one-line triage summary
+    triage_source TEXT,                            -- llm | heuristic
+    policy        TEXT    NOT NULL DEFAULT 'full', -- retention policy applied (full | signals)
+    todo_id       INTEGER REFERENCES todos (id),   -- open loop created for a needs-action item
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (account, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mail_account ON mail_messages (account);
+CREATE INDEX IF NOT EXISTS idx_mail_needs_action ON mail_messages (needs_action);
+CREATE INDEX IF NOT EXISTS idx_mail_received ON mail_messages (received_at);
+
 -- Seed rows. INSERT OR IGNORE keeps these as defaults without clobbering any
 -- value the user or agent has since changed.
 INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES

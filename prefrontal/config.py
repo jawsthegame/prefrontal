@@ -63,6 +63,14 @@ class Settings:
         ollama_url: Base URL of the local Ollama server used by the LLM
             summarizer. Local-first: stays on the host by default.
         ollama_model: Ollama model name the summarizer generates with.
+        mail_accounts: Per-account retention policy for ingested mail, mapping a
+            logical account name to ``"full"`` (store subject/sender/snippet/body)
+            or ``"signals"`` (store only subject + sender + the triage verdict;
+            bodies are dropped before storage and never sent to the model). An
+            account not listed here uses :attr:`mail_default_policy`.
+        mail_default_policy: Policy for accounts absent from ``mail_accounts``.
+            Defaults to ``"signals"`` — the conservative choice, so an
+            unconfigured account never stores message bodies by accident.
     """
 
     db_path: str = "prefrontal.db"
@@ -74,6 +82,8 @@ class Settings:
     modules: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+    mail_accounts: tuple[tuple[str, str], ...] = ()
+    mail_default_policy: str = "signals"
 
     @property
     def auth_enabled(self) -> bool:
@@ -84,6 +94,18 @@ class Settings:
     def all_modules_enabled(self) -> bool:
         """Whether every registered module should be enabled (no explicit list)."""
         return not self.modules
+
+    def policy_for(self, account: str) -> str:
+        """Return the retention policy for a mail account.
+
+        Args:
+            account: The logical account name (e.g. ``"personal"``, ``"corp"``).
+
+        Returns:
+            ``"full"`` or ``"signals"`` — the configured policy, or
+            :attr:`mail_default_policy` if the account is not configured.
+        """
+        return dict(self.mail_accounts).get(account, self.mail_default_policy)
 
 
 def load_settings(dotenv_path: str = ".env") -> Settings:
@@ -98,6 +120,10 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     _load_dotenv(dotenv_path)
     raw_modules = os.environ.get("PREFRONTAL_MODULES", "")
     modules = tuple(m.strip() for m in raw_modules.split(",") if m.strip())
+    mail_accounts = _parse_mail_accounts(os.environ.get("PREFRONTAL_MAIL_ACCOUNTS", ""))
+    default_policy = os.environ.get("PREFRONTAL_MAIL_DEFAULT_POLICY", "signals").strip()
+    if default_policy not in ("full", "signals"):
+        default_policy = "signals"
     return Settings(
         db_path=os.environ.get("PREFRONTAL_DB_PATH", "prefrontal.db"),
         host=os.environ.get("PREFRONTAL_HOST", "0.0.0.0"),
@@ -108,7 +134,40 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         modules=modules,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        mail_accounts=mail_accounts,
+        mail_default_policy=default_policy,
     )
+
+
+def _parse_mail_accounts(raw: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``PREFRONTAL_MAIL_ACCOUNTS`` into ``(account, policy)`` pairs.
+
+    The format is a comma-separated list of ``name=policy`` entries, e.g.
+    ``personal=full,work=full,corp=signals``. An entry without ``=`` defaults to
+    the ``full`` policy; an unrecognized policy is coerced to ``signals`` (the
+    safe default), so a typo never silently starts storing corp bodies.
+
+    Args:
+        raw: The raw environment-variable value (may be empty).
+
+    Returns:
+        A tuple of ``(account, policy)`` pairs, suitable for
+        :attr:`Settings.mail_accounts`.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, sep, policy = entry.partition("=")
+        name = name.strip()
+        if not name:
+            continue
+        policy = policy.strip() if sep else "full"
+        if policy not in ("full", "signals"):
+            policy = "signals"
+        pairs.append((name, policy))
+    return tuple(pairs)
 
 
 @lru_cache(maxsize=1)
