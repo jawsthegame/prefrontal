@@ -42,6 +42,23 @@
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align: middle; }
   .dot.warn { background: var(--warn); }
 
+  .days { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 14px; margin: 0 -2px;
+          scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .days::-webkit-scrollbar { display: none; }
+  .day { flex: 0 0 auto; min-width: 56px; padding: 8px 6px 11px; border: 1px solid var(--line);
+         border-radius: 12px; background: #fff; text-align: center; cursor: pointer; position: relative;
+         color: var(--fg); }
+  .day .dow { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .day .dnum { font-size: 19px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .day.sel { background: var(--accent); border-color: var(--accent); }
+  .day.sel .dow, .day.sel .dnum { color: #fff; }
+  .day .has { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%);
+              width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .day.sel .has { background: #fff; }
+  .day-title { font-weight: 600; font-size: 16px; margin: 2px 0 4px; }
+  .item .tag { min-width: 64px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+               color: var(--muted); font-weight: 650; }
+
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 22px; }
   a.linkish { color: var(--muted); font-size: 12px; text-decoration: none; }
 
@@ -68,8 +85,14 @@
   </section>
 
   <section class="card" id="c-today">
-    <p class="label">On the calendar today</p>
+    <p class="label">Still ahead today</p>
     <div class="body"></div>
+  </section>
+
+  <section class="card" id="c-upcoming">
+    <p class="label">Coming up</p>
+    <div class="days" id="day-strip"></div>
+    <div class="body" id="day-detail"></div>
   </section>
 
   <footer>
@@ -92,6 +115,8 @@ const KEY = "prefrontal_token";
 const REFRESH_MS = 30000;
 let token = localStorage.getItem(KEY);
 let timer = null;
+let selectedDay = null;     // YYYY-MM-DD of the day the viewer is browsing
+let upcoming = { commitments: [], todos: [] };
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
@@ -100,6 +125,16 @@ const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 // A stored "YYYY-MM-DD HH:MM:SS" UTC timestamp -> local Date.
 function toDate(ts) { return ts ? new Date(String(ts).replace(" ", "T") + "Z") : null; }
 function clock(d) { return d && !isNaN(d) ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"; }
+
+// Local calendar-day helpers (group/label by the viewer's own day).
+function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function dayKey(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function dayLabel(d, today) {
+  const diff = Math.round((dayStart(d) - dayStart(today)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+}
 
 function gate(msg) {
   token = null; localStorage.removeItem(KEY); clearInterval(timer);
@@ -135,8 +170,15 @@ function renderNow(outings, name) {
 }
 
 function renderToday(briefing) {
-  const items = (briefing.today || []);
-  if (!items.length) return `<p class="empty">Nothing on the calendar today. 🌤️</p>`;
+  // Only what's still ahead: drop anything that has already ended. An event with
+  // an end time counts as past once it ends (so in-progress events still show);
+  // one with only a start counts as past once it's started.
+  const now = Date.now();
+  const items = (briefing.today || []).filter((c) => {
+    const end = toDate(c.end_at || c.start_at);
+    return end && !isNaN(end) && end.getTime() >= now;
+  });
+  if (!items.length) return `<p class="empty">Nothing left on the calendar today. 🌤️</p>`;
   return items.map((c) => {
     const t = clock(toDate(c.start_at));
     const where = c.location ? `<div class="where">${esc(c.location)}</div>` : "";
@@ -145,11 +187,86 @@ function renderToday(briefing) {
   }).join("");
 }
 
+const NDAYS = 14;     // how far ahead the "Coming up" strip looks
+
+// Bucket calendar events + dated todos into local-day keys.
+function buildDayBuckets() {
+  const buckets = {};
+  const add = (key, kind, obj) => { (buckets[key] = buckets[key] || []).push({ kind, ...obj }); };
+  for (const c of (upcoming.commitments || [])) {
+    const d = toDate(c.start_at);
+    if (d && !isNaN(d)) add(dayKey(d), "event", c);
+  }
+  for (const t of (upcoming.todos || [])) {
+    const d = toDate(t.deadline);
+    if (d && !isNaN(d)) add(dayKey(d), "todo", t);
+  }
+  return buckets;
+}
+
+function renderUpcoming() {
+  const today = new Date();
+  const buckets = buildDayBuckets();
+  const keysWithItems = new Set(Object.keys(buckets));
+
+  // Build the next NDAYS day chips starting today.
+  const days = [];
+  for (let i = 0; i < NDAYS; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    days.push({ key: dayKey(d), date: d });
+  }
+  const valid = new Set(days.map((x) => x.key));
+  if (!selectedDay || !valid.has(selectedDay)) {
+    // Default to the soonest upcoming day that actually has something.
+    const firstWith = days.find((x) => keysWithItems.has(x.key));
+    selectedDay = firstWith ? firstWith.key : days[0].key;
+  }
+
+  $("#day-strip").innerHTML = days.map((x) => {
+    const sel = x.key === selectedDay ? " sel" : "";
+    const has = keysWithItems.has(x.key) ? '<span class="has"></span>' : "";
+    const dow = x.date.toLocaleDateString([], { weekday: "short" });
+    return `<button class="day${sel}" data-key="${x.key}" type="button">
+      <div class="dow">${esc(dow)}</div><div class="dnum">${x.date.getDate()}</div>${has}</button>`;
+  }).join("");
+
+  $("#day-strip").querySelectorAll(".day").forEach((el) => {
+    el.onclick = () => { selectedDay = el.getAttribute("data-key"); renderUpcoming(); };
+  });
+
+  const sel = days.find((x) => x.key === selectedDay);
+  const items = (buckets[selectedDay] || []).slice();
+  // Sort by time-of-day; dated todos with no real time sort last within the day.
+  items.sort((a, b) => {
+    const da = toDate(a.kind === "event" ? a.start_at : a.deadline);
+    const db = toDate(b.kind === "event" ? b.start_at : b.deadline);
+    return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+  });
+
+  let body = `<div class="day-title">${esc(dayLabel(sel.date, today))}</div>`;
+  if (!items.length) {
+    body += `<p class="empty">Nothing planned. 🌤️</p>`;
+  } else {
+    body += items.map((it) => {
+      if (it.kind === "event") {
+        const where = it.location ? `<div class="where">${esc(it.location)}</div>` : "";
+        return `<div class="item"><div class="time">${clock(toDate(it.start_at))}</div>
+          <div class="what">${esc(it.title)}${where}</div></div>`;
+      }
+      return `<div class="item"><div class="tag">To-do</div>
+        <div class="what">${esc(it.title)}</div></div>`;
+    }).join("");
+  }
+  $("#day-detail").innerHTML = body;
+}
+
 async function load() {
   if (!token) { $("#gate").style.display = "flex"; return; }
   $("#status").textContent = "updating…";
-  const [outings, briefing] = await Promise.allSettled([api("/outings"), api("/briefing")]);
-  if ([outings, briefing].some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
+  const [outings, briefing, commitments, todos] = await Promise.allSettled([
+    api("/outings"), api("/briefing"), api("/commitments"), api("/todos"),
+  ]);
+  if ([outings, briefing, commitments, todos].some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That code didn't work."); return;
   }
   const name = briefing.status === "fulfilled" ? cap((briefing.value.coaching || {}).user_name || "") : "";
@@ -158,6 +275,15 @@ async function load() {
     ? renderNow(outings.value, name) : `<p class="empty">Couldn't load right now.</p>`;
   $("#c-today .body").innerHTML = briefing.status === "fulfilled"
     ? renderToday(briefing.value) : `<p class="empty">Couldn't load today.</p>`;
+  upcoming = {
+    commitments: commitments.status === "fulfilled" ? (commitments.value.commitments || []) : [],
+    todos: todos.status === "fulfilled" ? (todos.value.todos || []) : [],
+  };
+  if (commitments.status === "fulfilled" || todos.status === "fulfilled") {
+    renderUpcoming();
+  } else {
+    $("#day-detail").innerHTML = `<p class="empty">Couldn't load upcoming days.</p>`;
+  }
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 

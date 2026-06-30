@@ -1,5 +1,5 @@
 {
-  "name": "Prefrontal — Calendar Sync (3 ICS feeds: personal + work + Outlook)",
+  "name": "Prefrontal — Calendar Sync (4 ICS feeds: personal + work + Outlook + family)",
   "nodes": [
     {
       "parameters": {
@@ -78,7 +78,29 @@
       "position": [480, 600]
     },
     {
-      "parameters": { "mode": "append", "numberInputs": 3 },
+      "parameters": {
+        "url": "REPLACE_WITH_FAMILY_GOOGLE_ICS_URL",
+        "options": { "response": { "response": { "responseFormat": "text" } } }
+      },
+      "id": "get-ics-family",
+      "name": "Get Family ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 840],
+      "notes": "Google Calendar → Settings → the family/shared calendar → 'Secret address in iCal format'. NOTE: Google caches this; new events can lag a few hours."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments, namespaced 'family:'.\n// NOTE: TZID-only times are treated as UTC. Prefer a UTC/Z feed.\nconst NS = 'family:';\nconst ME = ['tfleischer@gmail.com', 'tom@vistarmedia.com', 'tom.fleischer@t-mobile.com'];\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}${z ? 'Z' : ''}`;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at && !cur.declined) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'DTSTART') cur.start_at = icsDate(val);\n    else if (name === 'DTEND') cur.end_at = icsDate(val);\n    else if (name === 'ATTENDEE') {\n      const email = val.replace(/^mailto:/i, '').trim().toLowerCase();\n      if (ME.includes(email) && /PARTSTAT=DECLINED/i.test(line.slice(0, idx))) cur.declined = true;\n    }\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));"
+      },
+      "id": "parse-ics-family",
+      "name": "Parse Family ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 840]
+    },
+    {
+      "parameters": { "mode": "append", "numberInputs": 4 },
       "id": "merge",
       "name": "Merge feeds",
       "type": "n8n-nodes-base.merge",
@@ -87,7 +109,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Collect mapped events from every feed, then: (a) keep only the near-term\n// window — raw ICS feeds dump full history; (b) guarantee a title, since ICS\n// events without SUMMARY would 422 the whole batch; (c) DEDUPE across feeds by\n// the bare UID — the same event often appears on more than one calendar\n// (personal mirrors work/Outlook invites), and the per-feed namespace prefix\n// would otherwise make them look distinct. First feed wins (order: personal,\n// work, outlook); the dropped namespace's stale row is pruned on next sync.\nconst now = Date.now();\nconst FROM = now - 60 * 60 * 1000;\nconst TO = now + 36 * 60 * 60 * 1000;\nconst seen = new Set();\nconst events = [];\nfor (const item of $input.all()) {\n  const e = item.json;\n  const t = Date.parse(e.start_at);\n  if (Number.isNaN(t) || t < FROM || t > TO) continue;\n  const uid = String(e.external_id || '').replace(/^[^:]+:/, '');\n  if (uid) { if (seen.has(uid)) continue; seen.add(uid); }\n  events.push({ ...e, title: (e.title && String(e.title).trim()) || '(busy)' });\n}\nreturn [{ json: { events } }];"
+        "jsCode": "// Collect mapped events from every feed, then: (a) keep only the near-term\n// window — raw ICS feeds dump full history; (b) guarantee a title, since ICS\n// events without SUMMARY would 422 the whole batch; (c) DEDUPE across feeds by\n// the bare UID — the same event often appears on more than one calendar\n// (personal mirrors work/Outlook invites), and the per-feed namespace prefix\n// would otherwise make them look distinct. First feed wins (order: personal,\n// work, outlook, family); the dropped namespace's stale row is pruned on next sync.\nconst now = Date.now();\nconst FROM = now - 60 * 60 * 1000;\nconst TO = now + 36 * 60 * 60 * 1000;\nconst seen = new Set();\nconst events = [];\nfor (const item of $input.all()) {\n  const e = item.json;\n  const t = Date.parse(e.start_at);\n  if (Number.isNaN(t) || t < FROM || t > TO) continue;\n  const uid = String(e.external_id || '').replace(/^[^:]+:/, '');\n  if (uid) { if (seen.has(uid)) continue; seen.add(uid); }\n  events.push({ ...e, title: (e.title && String(e.title).trim()) || '(busy)' });\n}\nreturn [{ json: { events } }];"
       },
       "id": "bundle",
       "name": "Bundle events",
@@ -197,7 +219,8 @@
       "main": [[
         { "node": "Get Personal ICS", "type": "main", "index": 0 },
         { "node": "Get Work ICS", "type": "main", "index": 0 },
-        { "node": "Get Outlook ICS", "type": "main", "index": 0 }
+        { "node": "Get Outlook ICS", "type": "main", "index": 0 },
+        { "node": "Get Family ICS", "type": "main", "index": 0 }
       ]]
     },
     "Get Personal ICS": {
@@ -217,6 +240,12 @@
     },
     "Parse Outlook ICS": {
       "main": [[{ "node": "Merge feeds", "type": "main", "index": 2 }]]
+    },
+    "Get Family ICS": {
+      "main": [[{ "node": "Parse Family ICS", "type": "main", "index": 0 }]]
+    },
+    "Parse Family ICS": {
+      "main": [[{ "node": "Merge feeds", "type": "main", "index": 3 }]]
     },
     "Merge feeds": {
       "main": [[{ "node": "Bundle events", "type": "main", "index": 0 }]]

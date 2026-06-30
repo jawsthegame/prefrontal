@@ -6,16 +6,42 @@ and the morning-briefing "spare time" tie-in.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.briefing import build_briefing
 from prefrontal.config import Settings
+from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
+from prefrontal.todos import (
+    augment_todo,
+    decompose_task,
+    heuristic_deadline,
+    heuristic_energy,
+    heuristic_estimate,
+    heuristic_priority,
+)
+
+
+def _offline_ollama() -> OllamaClient:
+    """An OllamaClient whose calls fail — augment falls back to heuristics."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no server in tests")
+
+    return OllamaClient(transport=httpx.MockTransport(refuse))
+
+
+def _ollama_json(text: str) -> OllamaClient:
+    """An OllamaClient whose generate() returns `text` (the LLM augment path)."""
+    return OllamaClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": text})
+    ))
 
 SECRET = "todo-secret"
 
@@ -118,7 +144,11 @@ def client(store_open):
 def create_app_with(store):
     from prefrontal.webhooks.app import create_app
 
-    return create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    return create_app(
+        store=store,
+        settings=Settings(webhook_secret=SECRET),
+        ollama=_offline_ollama(),
+    )
 
 
 def _auth():
@@ -168,3 +198,131 @@ def test_briefing_suggests_todos_in_spare_time(store):
     store.add_todo("Plan birthday", estimate_minutes=40, priority=2)
     b = build_briefing(store, now=now)
     assert any(s["suggestion"] == "Plan birthday" for s in b.spare)
+
+
+# -- augmentation ------------------------------------------------------------
+
+
+def test_heuristics_fill_fields_from_title():
+    """Keyword heuristics give sensible estimate/priority/energy."""
+    assert heuristic_estimate("Call the dentist") == 10.0
+    assert heuristic_estimate("Draft the Q3 plan") == 45.0
+    assert heuristic_estimate("Wander aimlessly") == 30.0  # default
+    assert heuristic_priority("Pay rent ASAP") == 3
+    assert heuristic_priority("Someday learn guitar") == 0
+    assert heuristic_energy("Email Bob") == "low"
+    assert heuristic_energy("Write the proposal") == "high"
+
+
+def test_heuristic_deadline_relative_terms():
+    """Relative deadlines parse against a reference date (Wed 2026-07-01)."""
+    today = date(2026, 7, 1)  # Wednesday
+    assert heuristic_deadline("ship it tomorrow", today) == "2026-07-02"
+    assert heuristic_deadline("reply by Friday", today) == "2026-07-03"
+    assert heuristic_deadline("call mom", today) is None
+
+
+def test_augment_prefers_stated_then_llm_then_heuristic():
+    """Supplied fields win; else the model; else heuristics."""
+    llm = _ollama_json('{"estimate_minutes": 25, "priority": 2, "energy": "high", "deadline": null}')
+    a = augment_todo("Call the dentist", priority=0, client=llm)
+    assert a.priority == 0 and a.sources["priority"] == "stated"   # stated wins
+    assert a.estimate_minutes == 25.0 and a.sources["estimate_minutes"] == "llm"
+    assert a.energy == "high" and a.sources["energy"] == "llm"
+
+    # No client → heuristics throughout.
+    h = augment_todo("Call the dentist")
+    assert (h.estimate_minutes, h.energy) == (10.0, "low")
+    assert h.sources["estimate_minutes"] == "heuristic"
+
+
+def test_post_todo_augments_missing_fields(client):
+    """A bare title gets an inferred estimate so it becomes fit-able (offline → heuristic)."""
+    r = client.post("/todos", json={"title": "Call the dentist"}, headers=_auth())
+    assert r.status_code == 201
+    body = r.json()
+    assert body["estimate_minutes"] == 10.0
+    assert body["energy"] == "low"
+    assert body["augmented"]["estimate_minutes"] == "heuristic"
+    # And it now shows up in a 15-minute fit (previously impossible with no estimate).
+    fit = client.get("/todos/fit", params={"minutes": 15}, headers=_auth()).json()
+    assert "Call the dentist" in [f["title"] for f in fit["fits"]]
+
+
+def test_augment_deadline_prefers_heuristic_over_llm():
+    """For a relative date the exact heuristic wins over the model's guess."""
+    # Model returns a wrong date; "by Friday" heuristic should override it.
+    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-01-01"}')
+    a = augment_todo("File the report by Friday", client=llm, today=date(2026, 7, 1))  # Wed
+    assert a.deadline == "2026-07-03"          # the actual Friday
+    assert a.sources["deadline"] == "heuristic"
+
+
+def test_augment_deadline_falls_back_to_llm_when_heuristic_blank():
+    """When the heuristic finds no relative term, the model's date is used."""
+    llm = _ollama_json('{"estimate_minutes":30,"priority":1,"energy":"low","deadline":"2026-08-15"}')
+    a = augment_todo("Submit taxes before the cutoff", client=llm, today=date(2026, 7, 1))
+    assert a.deadline == "2026-08-15"
+    assert a.sources["deadline"] == "llm"
+
+
+# -- decomposition -----------------------------------------------------------
+
+
+def test_decompose_task_llm_then_heuristic():
+    """The model gives a first step + rest; offline falls back to a verb heuristic."""
+    llm = _ollama_json(
+        '{"first_step":"Open the doc and write one heading","first_step_minutes":3,'
+        '"steps":["Draft section 1","Skim for typos"]}'
+    )
+    d = decompose_task("Write the annual report", client=llm)
+    assert d.first_step == "Open the doc and write one heading"
+    assert d.first_step_minutes == 3.0
+    assert d.steps == ["Draft section 1", "Skim for typos"]
+    assert d.source == "llm"
+
+    h = decompose_task("Write the annual report")  # no client → heuristic
+    assert "doc" in h.first_step.lower() and h.steps == [] and h.source == "heuristic"
+
+
+def test_decompose_clamps_first_step_minutes():
+    """An over-long first-step estimate is clamped to the max."""
+    llm = _ollama_json('{"first_step":"Do it","first_step_minutes":999,"steps":[]}')
+    d = decompose_task("Big thing", max_first_minutes=5, client=llm)
+    assert d.first_step_minutes == 5.0
+
+
+def test_decomposition_store_roundtrip(store):
+    """set/get_decomposition round-trips with steps JSON-decoded."""
+    tid = store.add_todo("Big task", estimate_minutes=90)
+    assert store.get_decomposition(tid) is None
+    store.set_decomposition(
+        tid, first_step="Just open it", first_step_minutes=2, steps=["a", "b"], source="llm"
+    )
+    got = store.get_decomposition(tid)
+    assert got["first_step"] == "Just open it" and got["steps"] == ["a", "b"]
+
+
+def test_post_big_todo_auto_decomposes(client):
+    """A big todo (heuristic estimate ≥ threshold) gets a stored first step."""
+    r = client.post("/todos", json={"title": "Write the project proposal"}, headers=_auth())
+    body = r.json()
+    assert body["estimate_minutes"] >= 30
+    assert body["decomposition"] is not None and body["decomposition"]["first_step"]
+    listed = client.get("/todos", headers=_auth()).json()["todos"]
+    match = next(t for t in listed if t["title"] == "Write the project proposal")
+    assert match["decomposition"]["first_step"]
+
+
+def test_small_todo_no_auto_but_on_demand_and_no_route_collision(client):
+    """A small todo doesn't auto-decompose; the on-demand route works and
+    doesn't collide with done/drop."""
+    r = client.post("/todos", json={"title": "Call Bob"}, headers=_auth())  # ~10 min
+    body = r.json()
+    assert body["decomposition"] is None
+    tid = body["todo_id"]
+
+    d = client.post(f"/todos/{tid}/decompose", headers=_auth())
+    assert d.status_code == 200 and d.json()["decomposition"]["first_step"]
+
+    assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200

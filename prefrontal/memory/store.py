@@ -18,6 +18,7 @@ trustworthy without any meaningful cost.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,7 +27,7 @@ from typing import Any
 from prefrontal.memory.db import connect, init_db
 
 #: Allowed values for ``episodes.episode_type`` (see docs/schema.md).
-EPISODE_TYPES = ("departure", "task", "checkin", "reminder")
+EPISODE_TYPES = ("departure", "task", "checkin", "reminder", "mail")
 #: Allowed values for ``episodes.outcome``.
 OUTCOMES = ("success", "miss", "partial")
 
@@ -757,3 +758,143 @@ class MemoryStore:
             "SELECT signature FROM dismissed_conflicts"
         ).fetchall()
         return {r["signature"] for r in rows}
+
+    # -- mail (ingested + triaged email) -------------------------------------
+
+    def seen_mail_ids(self, account: str | None = None) -> set[str]:
+        """Return the ``message_id``\\ s already ingested, for dedup.
+
+        Args:
+            account: If given, scope to one account's messages; otherwise return
+                ids across all accounts. Dedup is account-scoped (the unique
+                constraint is on ``(account, message_id)``), so callers ingesting
+                one account should pass it.
+
+        Returns:
+            A set of ``message_id`` strings.
+        """
+        if account is None:
+            rows = self.conn.execute("SELECT message_id FROM mail_messages").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT message_id FROM mail_messages WHERE account = ?", (account,)
+            ).fetchall()
+        return {r["message_id"] for r in rows}
+
+    def record_mail(
+        self,
+        *,
+        account: str,
+        message_id: str,
+        policy: str = "full",
+        thread_id: str | None = None,
+        sender_name: str | None = None,
+        sender_email: str | None = None,
+        subject: str | None = None,
+        received_at: str | None = None,
+        snippet: str | None = None,
+        body: str | None = None,
+        unread: bool | None = None,
+        needs_action: bool = False,
+        urgency: str | None = None,
+        category: str | None = None,
+        waiting_on: str | None = None,
+        summary: str | None = None,
+        triage_source: str | None = None,
+        todo_id: int | None = None,
+    ) -> int:
+        """Insert a triaged message and return its row id.
+
+        Dedup is the caller's responsibility (see :meth:`seen_mail_ids`); a
+        duplicate ``(account, message_id)`` raises ``sqlite3.IntegrityError``.
+        Body/snippet should already have been dropped for a ``signals`` account
+        by the normalizer — this method stores exactly what it is given.
+
+        Returns:
+            The new ``mail_messages`` row id.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO mail_messages ("
+            "account, message_id, thread_id, sender_name, sender_email, subject, "
+            "received_at, snippet, body, unread, needs_action, urgency, category, "
+            "waiting_on, summary, triage_source, policy, todo_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                account, message_id, thread_id, sender_name, sender_email, subject,
+                received_at, snippet, body, unread, needs_action, urgency, category,
+                waiting_on, summary, triage_source, policy, todo_id,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def recent_mail(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recently ingested messages, newest first.
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            A list of ``mail_messages`` dicts ordered by ``received_at`` (then
+            ``id``) descending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM mail_messages "
+            "ORDER BY (received_at IS NULL), received_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mail_needing_action(self) -> list[dict[str, Any]]:
+        """Return ingested messages still flagged ``needs_action``, newest first.
+
+        A message stays here until the linked todo is closed; messages whose
+        ``todo_id`` todo is no longer open are excluded, so resolving the open
+        loop clears the mail from the action list.
+
+        Returns:
+            A list of ``mail_messages`` dicts.
+        """
+        rows = self.conn.execute(
+            "SELECT m.* FROM mail_messages m "
+            "LEFT JOIN todos t ON m.todo_id = t.id "
+            "WHERE m.needs_action = 1 "
+            "AND (m.todo_id IS NULL OR t.status = 'open') "
+            "ORDER BY (m.received_at IS NULL), m.received_at DESC, m.id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    # -- Task decompositions -------------------------------------------------
+
+    def set_decomposition(
+        self,
+        todo_id: int,
+        *,
+        first_step: str,
+        first_step_minutes: float | None,
+        steps: list[str],
+        source: str,
+    ) -> None:
+        """Store (or replace) a todo's decomposition. ``steps`` is JSON-encoded."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO todo_decompositions "
+            "(todo_id, first_step, first_step_minutes, steps, source) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (todo_id, first_step, first_step_minutes, json.dumps(steps), source),
+        )
+        self.conn.commit()
+
+    def get_decomposition(self, todo_id: int) -> dict[str, Any] | None:
+        """Return a todo's decomposition (``steps`` decoded), or ``None``."""
+        row = self.conn.execute(
+            "SELECT first_step, first_step_minutes, steps, source "
+            "FROM todo_decompositions WHERE todo_id = ?",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["steps"] = json.loads(d["steps"]) if d["steps"] else []
+        except (ValueError, TypeError):
+            d["steps"] = []
+        return d

@@ -67,6 +67,13 @@
   .pri-2 { background: #3a2412; color: var(--firm); }
   .conflict { background: #3a1620; color: var(--call); }
   .possible { background: #3a2f12; color: var(--soft); }
+  .badge.first { background: #16341f; color: var(--good); }
+  .firststep { margin-top: 8px; padding: 8px 10px; background: #15231a;
+               border-left: 3px solid var(--good); border-radius: 0 6px 6px 0; font-size: 14px; }
+  .steps { margin-top: 6px; }
+  .steps summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+  .steps ol { margin: 6px 0 0; padding-left: 20px; }
+  .steps li { margin: 2px 0; font-size: 13px; color: var(--muted); }
 
   .bar { height: 6px; border-radius: 4px; background: #2a2f3a; margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
@@ -142,7 +149,8 @@
     <div class="addrow">
       <input id="todo-title" placeholder="Add a todo…" autocomplete="off" />
       <select id="todo-pri" aria-label="priority">
-        <option value="1" selected>normal</option>
+        <option value="auto" selected>auto</option>
+        <option value="1">normal</option>
         <option value="3">urgent</option>
         <option value="2">high</option>
         <option value="0">low</option>
@@ -262,16 +270,32 @@ function renderTodos(d) {
   const t = (d.todos || []);
   if (!t.length) return `<div class="empty">No open todos.</div>`;
   const names = ["low", "normal", "high", "urgent"];
-  return t.map((x) => `<div class="row">
-    <div class="main">
-      <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
-      <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
-    </div>
-    <div class="acts">
-      <button class="btn-sm btn-go" data-action="todo-done" data-id="${x.id}">Done</button>
-      <button class="btn-sm btn-x" data-action="todo-drop" data-id="${x.id}">Drop</button>
-    </div>
-  </div>`).join("");
+  return t.map((x) => {
+    const dc = x.decomposition;
+    let step = "";
+    if (dc) {
+      const rest = (dc.steps || []).length
+        ? `<details class="steps"><summary>then ${dc.steps.length} more step${dc.steps.length > 1 ? "s" : ""}</summary>
+             <ol>${dc.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol></details>`
+        : "";
+      step = `<div class="firststep"><span class="badge first">start</span> ${esc(dc.first_step)}</div>${rest}`;
+    }
+    const breakBtn = dc
+      ? `<button class="btn-sm" data-action="decompose" data-id="${x.id}" title="Regenerate first step">↻</button>`
+      : `<button class="btn-sm" data-action="decompose" data-id="${x.id}">Break it down</button>`;
+    return `<div class="row">
+      <div class="main">
+        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span></div>
+        <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${x.deadline ? "due " + fmt(x.deadline) : "no deadline"}${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
+        ${step}
+      </div>
+      <div class="acts">
+        ${breakBtn}
+        <button class="btn-sm btn-go" data-action="todo-done" data-id="${x.id}">Done</button>
+        <button class="btn-sm btn-x" data-action="todo-drop" data-id="${x.id}">Drop</button>
+      </div>
+    </div>`;
+  }).join("");
 }
 function renderCommitments(list, conflicts) {
   const c = (list.commitments || []);
@@ -332,13 +356,17 @@ document.addEventListener("click", async (e) => {
     if (act === "todo-add") {
       const title = $("#todo-title").value.trim();
       if (!title) return;
-      await post("/todos", { title, priority: Number($("#todo-pri").value) });
+      const pri = $("#todo-pri").value;
+      // "auto" → omit priority so the server infers it (along with estimate/energy).
+      const body = pri === "auto" ? { title } : { title, priority: Number(pri) };
+      await post("/todos", body);
       $("#todo-title").value = "";
     } else if (act === "todo-done") { await post(`/todos/${id}/done`); }
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
+    else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     load();
   } catch (_) { /* post() already surfaced the error */ }
 });
