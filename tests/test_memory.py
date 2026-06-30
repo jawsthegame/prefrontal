@@ -12,7 +12,9 @@ import pytest
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 
-# The seven seed rows defined in schema.sql / docs/schema.md.
+# The coaching_state seed rows defined in schema.sql / docs/schema.md. (Modules
+# seed their own additional keys when enabled; these are the schema-level seeds
+# that always exist after init_db.)
 SEED_KEYS = {
     "preferred_briefing_format",
     "escalation_delay_minutes",
@@ -21,6 +23,12 @@ SEED_KEYS = {
     "preferred_reminder_channel",
     "time_estimation_bias",
     "active_escalation_path",
+    "travel_speed_kmh",
+    "travel_road_factor",
+    "departure_prep_minutes",
+    "departure_heads_up_minutes",
+    "departure_soon_minutes",
+    "geocoding_enabled",
 }
 
 
@@ -31,8 +39,8 @@ def store():
         yield s
 
 
-def test_schema_creates_three_tables(store):
-    """init_db should create exactly the episodes, patterns, coaching_state tables."""
+def test_schema_creates_core_tables(store):
+    """init_db should create at least the three core tables (plus feature tables)."""
     rows = store.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
@@ -41,7 +49,7 @@ def test_schema_creates_three_tables(store):
 
 
 def test_seed_rows_present(store):
-    """All seven coaching_state seed rows should exist with known values."""
+    """Every schema-level coaching_state seed row should exist with known values."""
     state = store.all_state()
     assert SEED_KEYS <= set(state)
     assert state["time_estimation_bias"]["value"] == "1.4"
