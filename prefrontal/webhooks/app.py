@@ -138,6 +138,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.scheduling import fit_todos
+from prefrontal.webhooks.oauth import register_oauth_routes, session_user
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     augment_todo,
@@ -499,6 +500,11 @@ def _resolve_user_row(
     settings: Settings = request.app.state.settings
 
     if not token:
+        # Browser surfaces (dashboard/family) carry a Google sign-in session
+        # cookie instead of a token header.
+        cookie_user = session_user(request)
+        if cookie_user is not None:
+            return cookie_user
         if settings.default_user:
             row = store.get_user(settings.default_user)
             if row is not None and row["status"] == "active":
@@ -639,6 +645,10 @@ def create_app(
         summary="Low-friction ingestion for iOS Shortcut and n8n triggers.",
         lifespan=lifespan,
     )
+
+    # Google sign-in for the web surfaces (browser session cookie); the machine
+    # clients keep using per-user tokens. resolve_user accepts either.
+    register_oauth_routes(app, resolved_settings)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

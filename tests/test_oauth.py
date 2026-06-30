@@ -1,0 +1,118 @@
+"""Tests for Google sign-in — the browser session-cookie auth (webhooks/oauth.py).
+
+Machine clients keep their tokens; these cover the human login path: the signed
+session cookie, the login redirect, and the callback's allowlist + cookie issue.
+The Google code-for-email exchange is monkeypatched (no live network).
+"""
+
+from __future__ import annotations
+
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+from fastapi.testclient import TestClient
+
+from prefrontal.config import Settings
+from prefrontal.memory.db import init_db
+from prefrontal.memory.store import MemoryStore, provision_user
+from prefrontal.webhooks import oauth
+from prefrontal.webhooks.app import create_app
+
+SECRET = "sess-secret"
+
+
+def _settings(**kw):
+    base = dict(
+        session_secret=SECRET,
+        google_oauth_client_id="cid",
+        google_oauth_client_secret="csecret",
+        # http so the issued session cookie isn't Secure (the test client is http)
+        oauth_base_url="http://testserver",
+        google_oauth_allowed="tom@example.com=tom",
+    )
+    base.update(kw)
+    return Settings(**base)
+
+
+@pytest.fixture()
+def store():
+    conn = init_db(":memory:")
+    s = MemoryStore(conn)
+    provision_user(s, "tom", display_name="Tom", token="tok-tom", is_operator=True)
+    try:
+        yield s
+    finally:
+        conn.close()
+
+
+@pytest.fixture()
+def client(store):
+    with TestClient(create_app(store=store, settings=_settings())) as c:
+        yield c
+
+
+def _login_state(client) -> str:
+    """Hit /login (sets the state cookie) and return the matching state value."""
+    r = client.get("/auth/google/login", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    loc = r.headers["location"]
+    assert loc.startswith("https://accounts.google.com/o/oauth2/v2/auth")
+    assert "scope=openid+email" in loc or "scope=openid%20email" in loc
+    return parse_qs(urlparse(loc).query)["state"][0]
+
+
+# -- session token -----------------------------------------------------------
+
+
+def test_session_sign_verify_roundtrip():
+    t = oauth.sign_session("tom", SECRET)
+    assert oauth.verify_session(t, SECRET) == "tom"
+    assert oauth.verify_session("not-a-token", SECRET) is None
+    assert oauth.verify_session(t, "wrong-secret") is None
+    assert oauth.verify_session(oauth.sign_session("tom", SECRET, now=0), SECRET) is None  # expired
+
+
+# -- routes ------------------------------------------------------------------
+
+
+def test_login_404_when_oauth_unconfigured(store):
+    with TestClient(create_app(store=store, settings=Settings())) as c:
+        assert c.get("/auth/google/login", follow_redirects=False).status_code == 404
+
+
+def test_callback_allowed_email_signs_in(client, monkeypatch):
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "tom@example.com")
+    state = _login_state(client)
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 303 and cb.headers["location"] == "/dashboard"
+    assert "prefrontal_session" in cb.headers.get("set-cookie", "")
+
+    # The session cookie now authenticates a tokenless request.
+    assert client.get("/todos").status_code == 200
+    # ...and logging out drops it again.
+    client.post("/auth/logout")
+    assert client.get("/todos").status_code == 401
+
+
+def test_callback_rejects_disallowed_email(client, monkeypatch):
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "stranger@example.com")
+    state = _login_state(client)
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 403
+    assert "set-cookie" not in cb.headers or "prefrontal_session" not in cb.headers["set-cookie"]
+
+
+def test_callback_rejects_bad_state(client, monkeypatch):
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "tom@example.com")
+    _login_state(client)  # sets a state cookie
+    cb = client.get("/auth/google/callback?code=abc&state=forged", follow_redirects=False)
+    assert cb.status_code == 400
+
+
+def test_token_header_still_works_alongside_cookie(client):
+    """Machine clients are unaffected: the per-user token still authenticates."""
+    assert client.get("/todos", headers={"X-Prefrontal-Token": "tok-tom"}).status_code == 200
+    assert client.get("/todos").status_code == 401  # no token, no cookie

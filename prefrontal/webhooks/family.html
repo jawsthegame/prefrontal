@@ -72,6 +72,12 @@
   #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
                 background: #fff; color: var(--fg); font-size: 16px; margin-bottom: 12px; }
   #gate button { width: 100%; padding: 13px; min-height: 46px; background: var(--accent); color: #fff; border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: #fff; border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate .tokenfallback input { margin-top: 10px; }
   #gate .err { color: #b03a3a; font-size: 13px; min-height: 16px; margin-bottom: 8px; }
 </style>
 </head>
@@ -105,11 +111,14 @@
 
 <div id="gate">
   <div class="box">
-    <h2>Enter access code</h2>
-    <p>Ask for the household access code. It's saved only on this device.</p>
-    <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save">View today</button>
+    </details>
     <div class="err" id="gate-err"></div>
-    <button id="token-save">View today</button>
   </div>
 </div>
 
@@ -146,7 +155,8 @@ function gate(msg) {
 }
 
 async function api(path) {
-  const r = await fetch(path, { headers: { "X-Prefrontal-Token": token } });
+  // Token header only when set; otherwise the Google session cookie authenticates.
+  const r = await fetch(path, { headers: token ? { "X-Prefrontal-Token": token } : {} });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
@@ -266,7 +276,7 @@ function renderUpcoming() {
 }
 
 async function load() {
-  if (!token) { $("#gate").style.display = "flex"; return; }
+  // Always attempt; a Google session cookie may authenticate. 401 reveals the gate.
   $("#status").textContent = "updating…";
   const [outings, briefing, commitments, todos] = await Promise.allSettled([
     api("/outings"), api("/briefing"), api("/commitments"), api("/todos"),
@@ -304,7 +314,7 @@ $("#token-save").onclick = () => {
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
 
-if (token) start(); else $("#gate").style.display = "flex";
+start();  // try the session cookie (or a saved code); the gate appears only on 401
 </script>
 </body>
 </html>

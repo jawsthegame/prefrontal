@@ -100,6 +100,37 @@ class Settings:
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
+    # Google sign-in for the web surfaces (dashboard/family). Machine clients
+    # (n8n, iOS Shortcuts, the widget) keep using per-user tokens regardless.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    oauth_base_url: str = ""        # public https origin, e.g. https://agent-1.tail8b0a.ts.net
+    session_secret: str = ""        # HMAC key signing the browser session cookie
+    google_oauth_allowed: str = ""  # "email=handle,email2=handle2" allowlist
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        """Whether Google sign-in is fully configured (else the login route 404s)."""
+        return bool(
+            self.google_oauth_client_id
+            and self.google_oauth_client_secret
+            and self.oauth_base_url
+            and self.session_secret
+        )
+
+    @property
+    def oauth_allowed_emails(self) -> dict[str, str]:
+        """Parsed ``email -> user handle`` allowlist (lowercased emails)."""
+        out: dict[str, str] = {}
+        for entry in self.google_oauth_allowed.split(","):
+            entry = entry.strip()
+            if not entry or "=" not in entry:
+                continue
+            email, _, handle = entry.partition("=")
+            email, handle = email.strip().lower(), handle.strip()
+            if email and handle:
+                out[email] = handle
+        return out
 
     @property
     def auth_enabled(self) -> bool:
@@ -166,6 +197,11 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
+        google_oauth_client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
+        google_oauth_client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+        oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),
+        session_secret=os.environ.get("SESSION_SECRET", ""),
+        google_oauth_allowed=os.environ.get("GOOGLE_OAUTH_ALLOWED", ""),
     )
 
 

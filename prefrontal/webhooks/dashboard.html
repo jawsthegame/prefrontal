@@ -135,6 +135,13 @@
   #gate input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--line);
                 background: var(--bg); color: var(--fg); font-size: 16px; margin-bottom: 12px; }
   #gate button { width: 100%; padding: 12px; min-height: 44px; background: var(--accent); color: #0b0d12; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 12px; min-height: 44px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: #0b0d12; border-radius: 8px; font-weight: 700; }
+  #gate .gsi:hover { filter: brightness(1.06); }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+  #gate .tokenfallback input { margin-top: 10px; }
 
   @media (max-width: 520px) {
     .banner { padding: 12px 12px 0; }
@@ -183,11 +190,14 @@
 
 <div id="gate">
   <div class="box">
-    <h2>Enter access token</h2>
-    <p>This is your <code>PREFRONTAL_WEBHOOK_SECRET</code>. It's stored only in this browser.</p>
-    <input id="token-input" type="password" placeholder="X-Prefrontal-Token" autocomplete="off" />
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access token instead</summary>
+      <input id="token-input" type="password" placeholder="X-Prefrontal-Token" autocomplete="off" />
+      <button id="token-save">Open dashboard</button>
+    </details>
     <div class="err" id="gate-err"></div>
-    <button id="token-save">Open dashboard</button>
   </div>
 </div>
 
@@ -238,8 +248,14 @@ function gate(msg) {
   $("#gate").style.display = "flex";
 }
 
+// Auth header only when we have a token; otherwise the Google session cookie
+// (sent automatically, same-origin) does the work. Sending an empty/"null"
+// token header would be treated as an invalid token and skip the cookie path.
+function authHeaders(extra) {
+  return token ? { "X-Prefrontal-Token": token, ...(extra || {}) } : { ...(extra || {}) };
+}
 async function api(path) {
-  const r = await fetch(path, { headers: { "X-Prefrontal-Token": token } });
+  const r = await fetch(path, { headers: authHeaders() });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   const ct = r.headers.get("content-type") || "";
@@ -248,7 +264,7 @@ async function api(path) {
 async function post(path, body) {
   const r = await fetch(path, {
     method: "POST",
-    headers: { "X-Prefrontal-Token": token, "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body || {}),
   });
   if (r.status === 401) { gate("That token was rejected."); throw new Error("401"); }
@@ -360,7 +376,8 @@ function renderCommitments(list, conflicts) {
 }
 
 async function load() {
-  if (!token) { $("#gate").style.display = "flex"; return; }
+  // Always attempt: a Google session cookie can authenticate even with no token.
+  // A 401 below reveals the sign-in gate.
   $("#status").textContent = "refreshing…";
   const results = await Promise.allSettled([
     api("/outings"), api("/todos"), api("/commitments"),
@@ -434,7 +451,7 @@ $("#token-save").onclick = () => {
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 
-if (token) start(); else $("#gate").style.display = "flex";
+start();  // try the session cookie (or a saved token); the gate appears only on 401
 </script>
 </body>
 </html>
