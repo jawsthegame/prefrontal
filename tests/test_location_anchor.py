@@ -294,6 +294,31 @@ def test_start_rejects_blank_intention(client):
     assert resp.status_code == 422
 
 
+def test_start_confirmation_is_exact_for_stated_window(client):
+    """An explicit window yields a confirmation with no 'estimated' hedge."""
+    body = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "lunch", "time_window_minutes": 45},
+        headers=_auth(),
+    ).json()
+    conf = body["confirmation"]
+    assert "lunch" in conf and "45 min" in conf
+    assert "estimated" not in conf  # the window was stated, not guessed
+    assert "~" not in conf
+
+
+def test_start_confirmation_flags_a_guessed_window(client):
+    """An inferred window is read back as estimated so the user can correct it."""
+    body = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "grabbing a coffee"},  # heuristic -> 15 min
+        headers=_auth(),
+    ).json()
+    assert body["time_window_source"] == "heuristic"
+    conf = body["confirmation"]
+    assert "estimated" in conf and "~15 min" in conf
+
+
 def test_check_fires_each_level_once(client, store):
     """Crossing a threshold fires once; the next poll at the same level does not."""
     # 8 minutes into a 15-minute window -> soft (53%).
@@ -343,6 +368,9 @@ def test_return_logs_episode_with_outcome(client, store):
     assert ep["episode_type"] == "task"
     assert ep["predicted_value"] == 10.0
     assert "coffee" in ep["context"]
+    # The read-back names the overrun so a Shortcut can show it verbatim.
+    assert "Welcome back" in body["confirmation"]
+    assert "18 min" in body["confirmation"]
 
 
 def test_check_at_home_passively_closes(client, store):

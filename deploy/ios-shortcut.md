@@ -94,6 +94,24 @@ Declares an intention so Prefrontal can nudge you back. Pairs with the
      window automatically; otherwise add `"time_window_minutes": 15`.
 4. (Optional) include your home coordinates once so distance can be logged:
    `"home_lat": 37.77, "home_lon": -122.41`.
+5. **Confirm back (recommended).** Add **Get Dictionary Value** → key
+   `confirmation` from the URL response, then **Show Notification** with that
+   value. The server returns a ready-made, speakable line — e.g.
+   *"Tracking “grabbing a coffee” for ~15 min (estimated — say “back in N min” to
+   set it exactly). I'll nudge you to head back."* You don't assemble the
+   sentence in Shortcuts; you just show what came back. Crucially, when the
+   window was **guessed** it says so (`~` + "estimated"), so a wrong inference is
+   visible at the tap instead of surfacing later as a mistimed nudge — the exact
+   failure that let a 9:30 "going out" slip by silently before.
+
+> **Why this matters when you're never at the mini:** every tap crosses
+> Tailscale from a roaming phone. Showing the server's `confirmation` turns a
+> silent success into a confirmed one — and pairs with the failure handling
+> below so a dropped connection is loud, not lost. Wrap the **Get Contents of
+> URL** action in an **If** that checks it succeeded; on failure, **Show
+> Notification** "Couldn't reach Prefrontal — tap again when you're back on the
+> tailnet" rather than failing quietly. (`/health` in Safari is the quick
+> connectivity check.)
 
 ## Shortcut: "I'm back"
 
@@ -102,6 +120,11 @@ Closes the active outing and logs intention-vs-actual for learning.
 1. New shortcut named **I'm back**.
 2. **Get Contents of URL** → `POST http://<your-mac>:8000/webhooks/outing/return`,
    same headers, body `{}` (closes the most recent active outing).
+3. **Confirm back (recommended).** Same pattern as "Going out": **Get Dictionary
+   Value** for `confirmation`, then **Show Notification** with it — e.g.
+   *"Welcome back — out 18 min, over the 10 min you planned."* `/webhooks/focus/start`
+   and `/webhooks/focus/end` return the same `confirmation` field, so the
+   Hyperfocus shortcuts get an identical read-back for free.
 
 > The escalating nudges themselves (50% push, 100% push, 150% voice call) are
 > sent by the n8n workflow polling `/webhooks/outing/check` — you don't need a

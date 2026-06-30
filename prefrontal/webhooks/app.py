@@ -220,6 +220,13 @@ class OutingStarted(BaseModel):
             "the text), 'llm'/'heuristic'/'default' (inferred when none stated)."
         ),
     )
+    confirmation: str = Field(
+        default="",
+        description=(
+            "Speakable one-line read-back a thin client (iOS Shortcut) can show "
+            "verbatim — flags an estimated window so the user can correct it."
+        ),
+    )
 
 
 class OutingReturn(BaseModel):
@@ -253,6 +260,10 @@ class FocusStarted(BaseModel):
     intended_task: str
     planned_minutes: float | None
     aligned: bool
+    confirmation: str = Field(
+        default="",
+        description="Speakable one-line read-back a thin client can show verbatim.",
+    )
 
 
 class FocusEnd(BaseModel):
@@ -410,6 +421,62 @@ def _state_float(memory: MemoryStore, key: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _fmt_minutes(value: float | None) -> str:
+    """Render a minutes value without a trailing ``.0`` (30.0 -> "30", 12.5 -> "12.5")."""
+    if value is None:
+        return "?"
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+#: Window sources that mean the user stated the duration; anything else was
+#: guessed by the server (and the confirmation says so, so the user can correct).
+_EXACT_WINDOW_SOURCES = {"explicit", "parsed"}
+
+
+def _outing_started_confirmation(intention: str, minutes: float, source: str) -> str:
+    """One-line, speakable read-back for a started outing — flags a guessed window."""
+    mins = _fmt_minutes(minutes)
+    if source in _EXACT_WINDOW_SOURCES:
+        return f"Tracking “{intention}” for {mins} min — I'll nudge you to head back."
+    return (
+        f"Tracking “{intention}” for ~{mins} min (estimated — say “back in N min” "
+        "to set it exactly). I'll nudge you to head back."
+    )
+
+
+def _outing_return_confirmation(
+    status: str, actual: float | None, window: float | None, outcome: str
+) -> str:
+    """One-line read-back for a closed outing."""
+    if status != "returned":
+        return "Outing closed (abandoned) — no worries, logged it."
+    out = _fmt_minutes(actual)
+    planned = _fmt_minutes(window)
+    verdict = "on time 👍" if outcome == "success" else f"over the {planned} min you planned"
+    return f"Welcome back — out {out} min, {verdict}."
+
+
+def _focus_started_confirmation(task: str, minutes: float | None, aligned: bool) -> str:
+    """One-line read-back for a started focus session."""
+    bits = [f"Focus on “{task}” started"]
+    if minutes is not None:
+        bits.append(f"planned {_fmt_minutes(minutes)} min")
+    bits.append("protected from nudges" if aligned else "not flagged as your intended task")
+    return " — ".join(bits) + "."
+
+
+def _focus_end_confirmation(status: str, actual: float | None, planned: float | None) -> str:
+    """One-line read-back for a closed focus session."""
+    if status != "ended":
+        return "Focus session closed (abandoned) — logged it."
+    out = _fmt_minutes(actual)
+    if planned is not None:
+        return f"Focus ended — {out} min on it (planned {_fmt_minutes(planned)})."
+    return f"Focus ended — {out} min on it."
 
 
 #: Per-user delivery routing keys read from coaching state and returned to n8n
@@ -945,6 +1012,7 @@ def create_app(
             intention=payload.intention,
             time_window_minutes=window,
             time_window_source=source,
+            confirmation=_outing_started_confirmation(payload.intention, window, source),
         )
 
     @app.post("/webhooks/outing/check", tags=["anchor"])
@@ -1103,13 +1171,18 @@ def create_app(
         else:
             recorded = record_outing_abandoned(memory, closed)
         actual = closed.get("actual_minutes")
+        actual = round(actual, 1) if actual is not None else None
+        window = closed.get("time_window_minutes")
         return {
             "outing_id": outing_id,
             "status": payload.status,
-            "actual_minutes": round(actual, 1) if actual is not None else None,
-            "time_window_minutes": closed.get("time_window_minutes"),
+            "actual_minutes": actual,
+            "time_window_minutes": window,
             "outcome": recorded["outcome"],
             "episode_id": recorded["episode_id"],
+            "confirmation": _outing_return_confirmation(
+                payload.status, actual, window, recorded["outcome"]
+            ),
         }
 
     @app.get("/outings", tags=["anchor"])
@@ -1186,6 +1259,9 @@ def create_app(
             intended_task=payload.intended_task.strip(),
             planned_minutes=payload.planned_minutes,
             aligned=payload.aligned,
+            confirmation=_focus_started_confirmation(
+                payload.intended_task.strip(), payload.planned_minutes, payload.aligned
+            ),
         )
 
     @app.post("/webhooks/focus/check", tags=["focus"])
@@ -1314,14 +1390,17 @@ def create_app(
         else:
             recorded = record_focus_abandoned(memory, closed)
         actual = closed.get("actual_minutes")
+        actual = round(actual, 1) if actual is not None else None
+        planned = closed.get("planned_minutes")
         return {
             "session_id": session_id,
             "status": payload.status,
-            "actual_minutes": round(actual, 1) if actual is not None else None,
-            "planned_minutes": closed.get("planned_minutes"),
+            "actual_minutes": actual,
+            "planned_minutes": planned,
             "breadcrumb": closed.get("breadcrumb"),
             "outcome": recorded["outcome"],
             "episode_id": recorded["episode_id"],
+            "confirmation": _focus_end_confirmation(payload.status, actual, planned),
         }
 
     @app.get("/focus", tags=["focus"])
