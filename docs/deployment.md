@@ -348,9 +348,10 @@ n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
 6. **Execute Workflow** once, then toggle **Active**.
 
 Notes:
-- Events are namespaced `personal:…` / `work:…`, so the two feeds are deduped and
-  one calendar's sync never prunes the other's events. Always sync all calendars
-  together (this workflow does) so pruning stays correct.
+- Events are namespaced per feed (`personal:…` / `work:…` / `outlook:…` /
+  `family:…`), so the feeds are deduped and one calendar's sync never prunes
+  another's events. Always sync all calendars together (this workflow does) so
+  pruning stays correct.
 - The ICS parser is minimal (UID/SUMMARY/DTSTART/DTEND/LOCATION) and treats
   TZID-only times as UTC — fine for a UTC/`Z` feed; for local-time feeds prefer a
   community ICS node.
