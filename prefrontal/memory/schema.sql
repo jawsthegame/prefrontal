@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS todos (
     priority         INTEGER NOT NULL DEFAULT 1,    -- 0 low | 1 normal | 2 high | 3 urgent
     deadline         DATETIME,                       -- optional, UTC
     energy           TEXT,                           -- low | medium | high (optional)
+    source           TEXT    NOT NULL DEFAULT 'manual', -- manual | impulse (captured-and-deferred)
     status           TEXT    NOT NULL DEFAULT 'open', -- open | done | dropped
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -123,6 +123,7 @@ from prefrontal.modules.hyperfocus import (
 )
 from prefrontal.modules.hyperfocus import is_abandoned as focus_is_abandoned
 from prefrontal.modules.hyperfocus import level_rank as focus_level_rank
+from prefrontal.modules.impulsivity import infer_capture_title
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
@@ -279,6 +280,29 @@ class FocusEnd(BaseModel):
     )
     breadcrumb: str | None = Field(
         default=None, description="Optional 'where I was / next step' note for cheap re-entry."
+    )
+
+
+class CaptureImpulse(BaseModel):
+    """Body of ``POST /webhooks/impulse/capture`` — park an impulse as a todo."""
+
+    impulse_text: str = Field(
+        description="The raw, half-formed impulse, e.g. 'ooh reorganize the font folder'."
+    )
+    priority: int = Field(
+        default=1, description="0 low / 1 normal / 2 high / 3 urgent (defaults to normal)."
+    )
+
+
+class ImpulseCaptured(BaseModel):
+    """Response after an impulse is parked as a ``source='impulse'`` todo."""
+
+    todo_id: int
+    title: str = Field(description="The cleaned-up title (LLM with heuristic fallback).")
+    raw: str = Field(description="The verbatim impulse text, kept in the todo's notes.")
+    confirmation: str = Field(
+        default="",
+        description="Speakable one-line read-back a thin client can show verbatim.",
     )
 
 
@@ -477,6 +501,11 @@ def _focus_end_confirmation(status: str, actual: float | None, planned: float | 
     if planned is not None:
         return f"Focus ended — {out} min on it (planned {_fmt_minutes(planned)})."
     return f"Focus ended — {out} min on it."
+
+
+def _impulse_captured_confirmation(title: str) -> str:
+    """One-line read-back for a captured-and-deferred impulse."""
+    return f"Parked “{title}” — it's safe in your list. Back to what you were doing."
 
 
 #: Per-user delivery routing keys read from coaching state and returned to n8n
@@ -1223,6 +1252,51 @@ def create_app(
             for o in memory.recent_outings(limit=20)
         ]
         return {"active": active, "recent": recent}
+
+    # -- Impulsivity (capture-and-defer) -------------------------------------
+
+    @app.post(
+        "/webhooks/impulse/capture",
+        response_model=ImpulseCaptured,
+        status_code=status.HTTP_201_CREATED,
+        tags=["impulsivity"],
+    )
+    def impulse_capture(
+        payload: CaptureImpulse,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> ImpulseCaptured:
+        """Park an impulsive idea as a ``source='impulse'`` todo and confirm back.
+
+        The capture-and-defer intervention: when an impulse pulls at your
+        attention, one tap stores it safely so the *fear of forgetting* — the
+        thing that actually drives the switch — is relieved, without abandoning
+        what you were doing. The raw text is kept verbatim in the todo's notes;
+        a clean title is inferred (local LLM, heuristic fallback). It lands in
+        the normal open-loop machinery (fit, briefing, avoidance) as any todo.
+
+        Like ``/outing/start`` this is interactive — an iOS Shortcut waits on it
+        — so titling shares the short inference budget and degrades fast.
+        """
+        memory = ctx.store
+        raw = payload.impulse_text.strip()
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Send a non-empty impulse_text to capture.",
+            )
+        title = infer_capture_title(raw, client=ollama_client) or raw
+        todo_id = memory.add_todo(
+            title,
+            notes=raw,
+            priority=payload.priority,
+            source="impulse",
+        )
+        return ImpulseCaptured(
+            todo_id=todo_id,
+            title=title,
+            raw=raw,
+            confirmation=_impulse_captured_confirmation(title),
+        )
 
     # -- Focus sessions (Hyperfocus) -----------------------------------------
 

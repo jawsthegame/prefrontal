@@ -132,6 +132,32 @@ Closes the active outing and logs intention-vs-actual for learning.
 
 ---
 
+## Shortcut: "Capture" (Impulsivity — capture-and-defer)
+
+The one-tap "park this and get back to it" gesture. When an impulse pulls at
+your attention mid-task, capturing it relieves the *fear of forgetting* — the
+thing that actually drives the switch — so you don't have to act on it now. The
+impulse lands as a normal todo (flagged `source: "impulse"`), so it flows into
+fitting, the briefing, and avoidance like any other open loop.
+
+1. New shortcut named **Capture** (add it to the Lock Screen / Back Tap so it's
+   reachable in one gesture — the whole point is near-zero friction).
+2. **Ask for Input** (Text): "What's pulling at you?"
+3. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/impulse/capture`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):** `{ "impulse_text": "Provided Input" }` — replace
+     the value with the **Provided Input** variable.
+4. **Confirm back.** **Get Dictionary Value** for `confirmation` → **Show
+   Notification**. The server returns a clean, speakable line — e.g. *"Parked
+   "reorganize the reference folder" — it's safe in your list. Back to what you
+   were doing."* It titles the raw text for you (local model, with a plain-words
+   fallback) and keeps your exact words in the todo's notes.
+
+> Pairs with the "Switching?" reflective-pause flow once that ships; on its own
+> it's already the fastest way to get a distraction out of your head and off
+> your plate without opening anything.
+
 ## Shortcut: "Update location" (the simplest location source)
 
 A single automation that tells Prefrontal where you are. It's the one source of

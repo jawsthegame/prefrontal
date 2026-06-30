@@ -78,6 +78,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("source_url", "TEXT"),
     ],
     "todo_decompositions": [("done_steps", "TEXT")],
+    "todos": [("source", "TEXT NOT NULL DEFAULT 'manual'")],
 }
 
 

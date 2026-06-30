@@ -12,9 +12,82 @@ short ``task`` episodes that end without an ``outcome``.
 
 from __future__ import annotations
 
+from typing import Protocol
+
+from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+
+#: Words past this many in the raw impulse get dropped from the heuristic title.
+_CAPTURE_TITLE_MAX_WORDS = 8
+
+#: System prompt for LLM-titling a captured impulse. Kept tight so a local model
+#: returns a clean label, never a paragraph; the heuristic covers it if it doesn't.
+CAPTURE_TITLE_SYSTEM_PROMPT = (
+    "Rewrite the user's raw, half-formed note as a short todo title — an "
+    "imperative phrase of at most 8 words, no quotes, no trailing punctuation. "
+    "Reply with the title only."
+)
+
+
+class _Generator(Protocol):
+    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
+
+    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
+
+
+def heuristic_capture_title(impulse_text: str) -> str:
+    """A clean-ish title from raw impulse text without a model.
+
+    Takes the first few meaningful words and tidies them — the fallback when the
+    LLM is down (mirrors ``location_anchor.heuristic_time_window``'s role). Always
+    returns *something* non-empty for non-blank input so a capture never fails on
+    titling.
+    """
+    words = impulse_text.strip().split()
+    if not words:
+        return "Captured impulse"
+    title = " ".join(words[:_CAPTURE_TITLE_MAX_WORDS])
+    if len(words) > _CAPTURE_TITLE_MAX_WORDS:
+        title += "…"
+    return title[:1].upper() + title[1:]
+
+
+def infer_capture_title(
+    impulse_text: str,
+    *,
+    client: _Generator | None = None,
+    fallback: bool = True,
+) -> str | None:
+    """Title a captured impulse via the local LLM, falling back to the heuristic.
+
+    Mirrors ``infer_time_window``: the model is consulted when a ``client`` is
+    given, and a usable one-line reply wins; otherwise (model absent, erroring,
+    or empty) it degrades to :func:`heuristic_capture_title`.
+
+    Returns:
+        A title string, or ``None`` for blank input (or a model-only miss with
+        ``fallback=False``).
+    """
+    if not impulse_text or not impulse_text.strip():
+        return None
+
+    if client is not None:
+        try:
+            reply = client.generate(impulse_text.strip(), system=CAPTURE_TITLE_SYSTEM_PROMPT)
+        except OllamaError:
+            reply = ""
+        cleaned = " ".join((reply or "").split()).strip().strip("\"'.")
+        if cleaned:
+            words = cleaned.split()
+            if len(words) > _CAPTURE_TITLE_MAX_WORDS:
+                cleaned = " ".join(words[:_CAPTURE_TITLE_MAX_WORDS])
+            return cleaned
+        if not fallback:
+            return None
+
+    return heuristic_capture_title(impulse_text)
 
 
 class ImpulsivityModule(Module):
@@ -43,6 +116,7 @@ class ImpulsivityModule(Module):
                 name="capture_and_defer",
                 description="Log the new impulse to the inbox so it's safe to return to later.",
                 trigger="a captured idea/task during a focus block",
+                status="active",
             ),
             Intervention(
                 name="switch_rate_feedback",

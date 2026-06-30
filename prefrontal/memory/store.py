@@ -1451,6 +1451,7 @@ class MemoryStore:
         priority: int = 1,
         deadline: str | None = None,
         energy: str | None = None,
+        source: str = "manual",
     ) -> int:
         """Insert an open todo and return its id.
 
@@ -1461,14 +1462,17 @@ class MemoryStore:
             priority: 0 low / 1 normal / 2 high / 3 urgent.
             deadline: Optional UTC deadline (``YYYY-MM-DD HH:MM:SS``).
             energy: Optional ``low``/``medium``/``high`` hint.
+            source: Where the todo came from — ``manual`` or ``impulse`` (a
+                captured-and-deferred impulse). Lets surfaces distinguish the
+                impulse inbox from deliberately-added loops.
 
         Returns:
             The new todo's id.
         """
         cur = self.conn.execute(
             "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
-            "deadline, energy) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (self._uid(), title, notes, estimate_minutes, priority, deadline, energy),
+            "deadline, energy, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), title, notes, estimate_minutes, priority, deadline, energy, source),
         )
         self.conn.commit()
         return int(cur.lastrowid)
