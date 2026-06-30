@@ -66,6 +66,7 @@ def ingest_messages(
     policy: str = "full",
     client: OllamaClient | None = None,
     fallback: bool = True,
+    use_model: bool = True,
     create_todos: bool = True,
 ) -> IngestSummary:
     """Normalize, dedup, triage, and persist a batch of raw messages.
@@ -79,6 +80,8 @@ def ingest_messages(
         client: Ollama client for triage. Defaults to one from settings; if the
             model is down, triage falls back to the heuristic (when ``fallback``).
         fallback: Passed through to :func:`triage_message`.
+        use_model: When ``False``, triage every message with the keyword
+            heuristic instead of the model (fast backlog clear).
         create_todos: When ``True`` (default), create a todo for each
             needs-action message and link it on the mail row.
 
@@ -99,7 +102,9 @@ def ingest_messages(
             continue
         seen.add(item.message_id)  # guard against duplicates within one batch
 
-        verdict = triage_message(item, client=client, fallback=fallback)
+        verdict = triage_message(
+            item, client=client, fallback=fallback, use_model=use_model
+        )
 
         todo_id = None
         if create_todos and verdict.needs_action:

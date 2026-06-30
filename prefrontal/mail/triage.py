@@ -86,7 +86,11 @@ def priority_for_urgency(urgency: str | None) -> int:
 
 
 def triage_message(
-    item: MailItem, *, client: OllamaClient | None = None, fallback: bool = True
+    item: MailItem,
+    *,
+    client: OllamaClient | None = None,
+    fallback: bool = True,
+    use_model: bool = True,
 ) -> MailTriage:
     """Triage one message, preferring the local model with a heuristic fallback.
 
@@ -97,6 +101,9 @@ def triage_message(
         fallback: If ``True`` (default), fall back to :func:`_heuristic_triage`
             on any model failure or unparseable output; if ``False``, re-raise
             the underlying :class:`~prefrontal.integrations.ollama.OllamaError`.
+        use_model: If ``False``, skip the model entirely and triage with the
+            keyword heuristic. Useful for clearing a large backlog of existing
+            unread fast, without spinning the model up per message.
 
     Returns:
         A :class:`MailTriage`.
@@ -106,6 +113,9 @@ def triage_message(
             ``fallback`` is ``False``.
     """
     from prefrontal.integrations.ollama import OllamaClient, OllamaError
+
+    if not use_model:
+        return _heuristic_triage(item)
 
     client = client or OllamaClient.from_settings()
     prompt = _build_prompt(item)
