@@ -182,6 +182,32 @@ def test_start_rejects_blank_task(client):
     assert resp.status_code == 422
 
 
+def test_start_confirmation_notes_protection_and_plan(client):
+    """An aligned, planned session reads back as protected with its length."""
+    body = client.post(
+        "/webhooks/focus/start",
+        json={"intended_task": "the API refactor", "planned_minutes": 90},
+        headers=_auth(),
+    ).json()
+    conf = body["confirmation"]
+    assert "the API refactor" in conf
+    assert "90 min" in conf
+    assert "protected" in conf
+
+
+def test_end_confirmation_reports_time(store, client):
+    """Ending reads back actual vs planned for a thin client to show verbatim."""
+    sid = store.start_focus_session(
+        "the refactor", planned_minutes=60, started_at=_utc_minutes_ago(75)
+    )
+    body = client.post(
+        "/webhooks/focus/end", json={"session_id": sid}, headers=_auth()
+    ).json()
+    conf = body["confirmation"]
+    assert "Focus ended" in conf
+    assert "planned 60" in conf
+
+
 def test_check_protects_aligned_block(store, client):
     """An aligned block inside its plan fires nothing and reports protect=true."""
     store.start_focus_session(

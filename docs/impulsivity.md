@@ -1,11 +1,25 @@
 # Impulsivity module — design spec
 
-Status: **proposed**. This is the implementation spec for promoting the
+Status: **partially shipped**. This is the implementation spec for promoting the
 Impulsivity module ([`prefrontal/modules/impulsivity.py`](../prefrontal/modules/impulsivity.py))
 from a declared stub into a wired, end-to-end feature. It supersedes the
 module's three `planned` interventions and the roadmap's "derive `context_switch`
 once switch events are captured" note. If this and the code/roadmap disagree,
 this file wins until the work lands.
+
+> **Shipped so far (2026-06):** the **bare capture-and-defer** path — the §7.3
+> "capture without a switch context" — is live and `capture_and_defer` is now
+> `status="active"`. It lives at **`POST /webhooks/impulse/capture`** (not
+> `/focus/capture` as §7.3 sketched) deliberately, to sidestep the `/focus/*`
+> namespace the shipped Hyperfocus module already owns — see the reality note
+> below. It adds the `todos.source` column (§4.2, via the existing guarded
+> `_ADDED_COLUMNS` migration in `memory/db.py`), the pure title helpers
+> (`heuristic_capture_title` / `infer_capture_title`, §5), and the "Capture" iOS
+> Shortcut (§10), with a speakable `confirmation` read-back. **Not yet built:**
+> the `focus_sessions`-backed switch interception (`/focus/switch`,
+> `/focus/resolve`), the `context_switch` learning loop (§8), `switch_rate_feedback`,
+> and the profile/briefing/dashboard surfaces — all still gated on the
+> Hyperfocus reconciliation below.
 
 > **Reality note (2026-06).** This spec is still **unimplemented** — the
 > Impulsivity module's three interventions remain `status="planned"`. But the
