@@ -16,6 +16,7 @@
 --   todo_decompositions  tiny-first-step breakdown for stall-prone todos
 --   dismissed_conflicts  soft double-bookings the user has waved off
 --   mail_messages        ingested + triaged email, surfaced as action items
+--   profile_cache        single cached LLM profile narrative served by GET /profile
 --   places, geocode_cache  local-first destination resolution for departures
 --
 -- Everything is idempotent: CREATE TABLE IF NOT EXISTS plus INSERT OR IGNORE on
