@@ -7,6 +7,21 @@ module's three `planned` interventions and the roadmap's "derive `context_switch
 once switch events are captured" note. If this and the code/roadmap disagree,
 this file wins until the work lands.
 
+> **Reality note (2026-06).** This spec is still **unimplemented** — the
+> Impulsivity module's three interventions remain `status="planned"`. But the
+> world moved under §2/§4.1: the **Hyperfocus** module has since shipped its own
+> `focus_sessions` table (`schema.sql`), with a *different* shape and purpose —
+> `intended_task` / `aligned` / `breadcrumb` / `outcome` for protect-vs-interrupt
+> deep-work blocks, **not** the `intention` / `switch_impulses` /
+> `switches_deferred` switch-counter this spec sketched. So "create
+> `focus_sessions`" (§4.1) is no longer accurate: that name is taken. Before
+> implementing, reconcile the two — either (a) reuse Hyperfocus's session as the
+> "current task" a switch fires against and add switch counters to it, or
+> (b) give impulsivity a distinct table (e.g. `focus_switches`). Option (a) is
+> likely cleaner (one notion of "the block I'm in") and removes a redundancy;
+> the rest of this spec (capture-and-defer into `todos`, the `context_switch`
+> learning loop, the pure core) stands as written.
+
 It follows the shape of the one fully-wired module today — the **Location-Aware
 Task Anchor** ([`location_anchor.py`](../prefrontal/modules/location_anchor.py)):
 a pure, testable core in the module file; a dedicated table; a small set of
@@ -469,5 +484,3 @@ A `tests/test_impulsivity.py` mirroring `test_location_anchor.py`:
   could *prompt* "looks like you switched apps — capture that?" without blocking.
   Explicitly out of scope here; noted so the declared-switch design doesn't
   preclude it.
-</content>
-</invoke>

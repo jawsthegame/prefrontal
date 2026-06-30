@@ -383,10 +383,14 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 
 ## What's not automated yet
 
-The interventions declared by each module (`prefrontal modules -v`) are mostly
-`planned` — the n8n workflow gives you the proactive reminder loop today, but the
-per-module logic (escalation paths, hyperfocus protect-vs-interrupt, etc.) is
-still to be wired. See `ROADMAP.md` for what's next.
+Three of the five modules are wired end-to-end today — **Location-Aware Task
+Anchor** (the coffee-shop nudge above), **Hyperfocus** (focus sessions, the
+`/webhooks/focus/*` endpoints), and **Time Blindness**. The remaining two —
+**Task Paralysis** and **Impulsivity** — still declare `planned` interventions.
+Run `prefrontal modules -v` for the live status, and see `ROADMAP.md` for what's
+next. (Mail ingestion is also live — `prefrontal mail fetch`/`sync` and
+`POST /webhooks/mail/sync`; an n8n mail-poll workflow can post batches the same
+way the calendar sync does.)
 
 **Schedule the learning pass + summary.** Run these periodically (nightly is
 plenty for one user) via a launchd agent with `StartCalendarInterval`, `cron`, or

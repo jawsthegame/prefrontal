@@ -3,10 +3,20 @@
 -- The canonical, executable definition of the memory layer. The human-readable
 -- companion lives in docs/schema.md; if the two disagree, THIS file wins.
 --
--- Three tables:
+-- Three core tables hold the learning loop:
 --   episodes        raw outcome records, one per agent interaction cycle
---   patterns        derived summaries computed from episodes by the summarizer
+--   patterns        derived summaries computed from episodes by the learn pass
 --   coaching_state  persistent key/value preferences and working memory
+--
+-- Plus feature tables backing the modules and ingestion paths:
+--   outings              Location-Aware Task Anchor blocks (intention + window)
+--   focus_sessions       Hyperfocus deep-work blocks (protect / interrupt)
+--   commitments          synced/manual schedule items (impact + double-booking)
+--   todos                open loops fitted into free windows
+--   todo_decompositions  tiny-first-step breakdown for stall-prone todos
+--   dismissed_conflicts  soft double-bookings the user has waved off
+--   mail_messages        ingested + triaged email, surfaced as action items
+--   places, geocode_cache  local-first destination resolution for departures
 --
 -- Everything is idempotent: CREATE TABLE IF NOT EXISTS plus INSERT OR IGNORE on
 -- the unique coaching_state.key, so applying this file repeatedly is safe.
