@@ -381,7 +381,46 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 
 ---
 
+## 12. Schedule the nightly learning pass
 ## What's not automated yet
+
+The behavioral profile only improves if patterns are recomputed as episodes
+accrue. Run the learning pass on a schedule (nightly is plenty for one user):
+
+```bash
+prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
+prefrontal summarize   # structured profile -> Ollama -> profile.md (prose)
+```
+
+`deploy/learn.sh` chains the two steps (launchd can't run `learn && summarize`
+in one `ProgramArguments`), with timestamped logging, and
+`deploy/com.morningstatic.prefrontal-learn.plist` runs it nightly at 03:30 —
+a *periodic* job (no `KeepAlive`), distinct from the always-on server agent in
+§3.
+
+```bash
+cp deploy/com.morningstatic.prefrontal-learn.plist ~/Library/LaunchAgents/
+# Edit the paths inside both files to match your install:
+#   - learn.sh:  PREFRONTAL_HOME (repo root, so the adjacent .env loads)
+#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME,
+#                Std{Out,Err}Path, and Hour/Minute if 03:30 doesn't suit
+launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-learn.plist
+launchctl start com.morningstatic.prefrontal-learn   # run once now, don't wait
+tail -f ~/Library/Logs/prefrontal.learn.log          # watch it work
+```
+
+`StartCalendarInterval` fires at the wall-clock time daily; if the mini is
+asleep then, launchd runs the job on the next wake. Prefer `cron` or an n8n
+schedule node instead? Either works — they just call the same two commands.
+
+`prefrontal summarize` writes a narrative `profile.md` using the local Ollama
+model from `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it
+falls back to the structured profile, so the file is always written (and
+`learn.sh` treats a summarize failure as non-fatal). The live `GET /profile`
+endpoint always returns the fast structured profile — point agents at the
+generated `profile.md` when you want the prose version.
+
+---
 
 Three of the five modules are wired end-to-end today — **Location-Aware Task
 Anchor** (the coffee-shop nudge above), **Hyperfocus** (focus sessions, the
@@ -392,17 +431,9 @@ next. (Mail ingestion is also live — `prefrontal mail fetch`/`sync` and
 `POST /webhooks/mail/sync`; an n8n mail-poll workflow can post batches the same
 way the calendar sync does.)
 
-**Schedule the learning pass + summary.** Run these periodically (nightly is
-plenty for one user) via a launchd agent with `StartCalendarInterval`, `cron`, or
-an n8n schedule node:
+## What's not automated yet
 
-```bash
-prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
-prefrontal summarize   # structured profile -> Ollama -> profile.md (prose)
-```
-
-`prefrontal summarize` writes a narrative `profile.md` using the local Ollama
-model from `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it
-falls back to the structured profile, so the file is always written. The live
-`GET /profile` endpoint always returns the fast structured profile — point agents
-at the generated `profile.md` when you want the prose version.
+The interventions declared by each module (`prefrontal modules -v`) are mostly
+`planned` — the n8n workflow gives you the proactive reminder loop today, but the
+per-module logic (escalation paths, hyperfocus protect-vs-interrupt, etc.) is
+still to be wired. See `ROADMAP.md` for what's next.

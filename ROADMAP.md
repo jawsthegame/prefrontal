@@ -28,7 +28,10 @@ Ordered path to the first real nudge:
 6. **Dry run** — start an outing with a 1-minute window and confirm: push at
    ~30s (50%), push at ~1m (100%), Twilio call at ~90s (150%), and that
    `/return` (or coming home) logs the episode.
-7. **Schedule learning** — nightly `prefrontal learn && prefrontal summarize`.
+7. **Schedule learning** ✅ — nightly `prefrontal learn && prefrontal summarize`
+   via `deploy/learn.sh` + `deploy/com.morningstatic.prefrontal-learn.plist`
+   (launchd `StartCalendarInterval`, 03:30); see deployment §12. Load it and the
+   profile recalibrates on its own.
 
 Everything above the dry run is configuration; no further code is required for
 the first test. Code follow-ups below are optional polish.
@@ -88,9 +91,9 @@ the first test. Code follow-ups below are optional polish.
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
-  Run via `prefrontal learn`. *(Next: schedule it periodically; add finer
-  `context_key` bucketing than episode type; derive `context_switch` once switch
-  events are captured.)*
+  Run via `prefrontal learn` (scheduled nightly — see step 7 above). *(Next: add
+  finer `context_key` bucketing than episode type; derive `context_switch` once
+  switch events are captured.)*
 - **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
   profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
   returns prioritized coaching prose, falling back to the heuristic when the
