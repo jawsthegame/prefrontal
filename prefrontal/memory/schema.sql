@@ -84,7 +84,9 @@ CREATE TABLE IF NOT EXISTS commitments (
     title        TEXT    NOT NULL,
     start_at     DATETIME NOT NULL,                 -- stored normalized to UTC
     end_at       DATETIME,
-    location     TEXT,
+    location     TEXT,                              -- free-text location (e.g. "123 Main St")
+    dest_lat     REAL,                              -- optional destination coordinates, used to
+    dest_lon     REAL,                              --   estimate travel time for departure reminders
     lead_minutes REAL    NOT NULL DEFAULT 10,       -- travel+prep buffer before start
     hardness     TEXT    NOT NULL DEFAULT 'soft',   -- hard | soft
     source       TEXT    NOT NULL DEFAULT 'calendar', -- calendar | manual
@@ -184,4 +186,12 @@ INSERT OR IGNORE INTO coaching_state (key, value, source) VALUES
     ('responsive_hours_end',      '14:00',                    'inferred'),
     ('preferred_reminder_channel','notification',             'inferred'),
     ('time_estimation_bias',      '1.4',                      'inferred'),
-    ('active_escalation_path',    'notification,sound,tts',   'explicit');
+    ('active_escalation_path',    'notification,sound,tts',   'explicit'),
+    -- Departure-reminder tuning (see prefrontal.modules.departure). Travel time
+    -- is estimated locally: straight-line distance * road_factor / speed, then
+    -- padded by time_estimation_bias and a prep buffer.
+    ('travel_speed_kmh',          '30',                       'inferred'),
+    ('travel_road_factor',        '1.3',                      'inferred'),
+    ('departure_prep_minutes',    '5',                        'inferred'),
+    ('departure_heads_up_minutes','30',                       'inferred'),
+    ('departure_soon_minutes',    '10',                       'inferred');

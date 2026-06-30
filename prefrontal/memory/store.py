@@ -348,6 +348,55 @@ class MemoryStore:
         ).fetchall()
         return {r["key"]: dict(r) for r in rows}
 
+    # -- last-known location -------------------------------------------------
+
+    def set_location(
+        self, lat: float, lon: float, accuracy_m: float | None = None
+    ) -> None:
+        """Record the user's last-known position (from an iOS Shortcut ping).
+
+        Stored in ``coaching_state`` as three keys so it rides the same
+        machinery as every other preference. The freshness timestamp is the
+        ``last_updated`` of the latitude row (see :meth:`get_location`).
+
+        Args:
+            lat: Latitude in degrees.
+            lon: Longitude in degrees.
+            accuracy_m: Optional reported accuracy radius in metres.
+        """
+        self.set_state("last_location_lat", repr(float(lat)), source="explicit")
+        self.set_state("last_location_lon", repr(float(lon)), source="explicit")
+        self.set_state(
+            "last_location_accuracy_m",
+            "" if accuracy_m is None else repr(float(accuracy_m)),
+            source="explicit",
+        )
+
+    def get_location(self) -> dict[str, Any] | None:
+        """Return the last-known position, or ``None`` if none has been recorded.
+
+        Returns:
+            A dict with ``lat``, ``lon``, ``accuracy_m`` (``None`` if unreported),
+            and ``at`` (the UTC timestamp it was last set), or ``None`` when no
+            location has ever been pinged.
+        """
+        row = self.conn.execute(
+            "SELECT value, last_updated FROM coaching_state "
+            "WHERE key = 'last_location_lat'"
+        ).fetchone()
+        if row is None:
+            return None
+        lon = self.get_state("last_location_lon")
+        if lon is None:
+            return None
+        accuracy = self.get_state("last_location_accuracy_m")
+        return {
+            "lat": float(row["value"]),
+            "lon": float(lon),
+            "accuracy_m": float(accuracy) if accuracy else None,
+            "at": row["last_updated"],
+        }
+
     # -- outings (Location-Aware Task Anchor) --------------------------------
 
     def start_outing(
@@ -480,6 +529,8 @@ class MemoryStore:
         external_id: str | None = None,
         end_at: str | None = None,
         location: str | None = None,
+        dest_lat: float | None = None,
+        dest_lon: float | None = None,
         lead_minutes: float = 10.0,
         hardness: str = "soft",
         source: str = "calendar",
@@ -496,7 +547,10 @@ class MemoryStore:
             start_at: UTC start timestamp (``YYYY-MM-DD HH:MM:SS``).
             external_id: Calendar event id, or ``None`` for a manual entry.
             end_at: Optional UTC end timestamp.
-            location: Optional location.
+            location: Optional free-text location.
+            dest_lat: Optional destination latitude (enables travel-time
+                estimation for departure reminders).
+            dest_lon: Optional destination longitude.
             lead_minutes: Travel+prep buffer needed before ``start_at``.
             hardness: ``hard`` or ``soft``.
             source: ``calendar`` or ``manual``.
@@ -511,21 +565,21 @@ class MemoryStore:
             if existing is not None:
                 self.conn.execute(
                     "UPDATE commitments SET title = ?, start_at = ?, end_at = ?, "
-                    "location = ?, lead_minutes = ?, hardness = ?, source = ?, "
-                    "status = 'active', updated_at = CURRENT_TIMESTAMP "
-                    "WHERE external_id = ?",
-                    (title, start_at, end_at, location, lead_minutes, hardness,
-                     source, external_id),
+                    "location = ?, dest_lat = ?, dest_lon = ?, lead_minutes = ?, "
+                    "hardness = ?, source = ?, status = 'active', "
+                    "updated_at = CURRENT_TIMESTAMP WHERE external_id = ?",
+                    (title, start_at, end_at, location, dest_lat, dest_lon,
+                     lead_minutes, hardness, source, external_id),
                 )
                 self.conn.commit()
                 return int(existing["id"]), False
 
         cur = self.conn.execute(
             "INSERT INTO commitments (external_id, title, start_at, end_at, "
-            "location, lead_minutes, hardness, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (external_id, title, start_at, end_at, location, lead_minutes,
-             hardness, source),
+            "location, dest_lat, dest_lon, lead_minutes, hardness, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (external_id, title, start_at, end_at, location, dest_lat, dest_lon,
+             lead_minutes, hardness, source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True

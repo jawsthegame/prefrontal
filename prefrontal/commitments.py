@@ -143,7 +143,8 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         event: A raw event dict. Requires ``title`` and ``start_at``; optional
-            ``external_id``, ``end_at``, ``location``, ``lead_minutes``, ``hard``.
+            ``external_id``, ``end_at``, ``location``, ``dest_lat``, ``dest_lon``,
+            ``lead_minutes``, ``hard``.
 
     Returns:
         Kwargs ready for :meth:`MemoryStore.upsert_commitment`.
@@ -159,12 +160,16 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
 
     end_raw = event.get("end_at")
     lead = event.get("lead_minutes")
+    dest_lat = event.get("dest_lat")
+    dest_lon = event.get("dest_lon")
     return {
         "title": title,
         "start_at": to_utc(event["start_at"]),
         "external_id": event.get("external_id") or None,
         "end_at": to_utc(end_raw) if end_raw else None,
         "location": event.get("location") or None,
+        "dest_lat": float(dest_lat) if dest_lat is not None else None,
+        "dest_lon": float(dest_lon) if dest_lon is not None else None,
         "lead_minutes": float(lead) if lead is not None else 10.0,
         "hardness": "hard" if event.get("hard") else "soft",
         "source": event.get("source") or "calendar",

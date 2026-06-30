@@ -10,12 +10,15 @@ Routes:
 - ``GET  /profile`` — the current behavioral profile (for n8n to feed Ollama).
 - ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
 - ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
+- ``POST /webhooks/location`` — the phone's current position (iOS Shortcut).
+- ``GET  /location`` — the last-known position, for debugging/monitoring.
 - ``POST /webhooks/mail/sync`` — ingest + triage a batch of mail for an account.
 - ``GET  /mail`` — recent triaged mail and the open action items.
 - ``POST /webhooks/outing/start`` — declare an intention + time window.
 - ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
 - ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
 - ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
+- ``POST /webhooks/departure/check`` — n8n polls this for due departure nudges.
 - ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
@@ -55,6 +58,16 @@ from prefrontal.commitments import (
     to_utc,
 )
 from prefrontal.config import Settings, get_settings
+from prefrontal.departure import (
+    DEFAULT_HEADS_UP_MINUTES,
+    DEFAULT_PREP_MINUTES,
+    DEFAULT_ROAD_FACTOR,
+    DEFAULT_SOON_MINUTES,
+    DEFAULT_TRAVEL_SPEED_KMH,
+    build_departure_message,
+    next_departure,
+    plan_departure,
+)
 from prefrontal.impact import (
     analyze_impact,
     at_risk,
@@ -177,6 +190,10 @@ class CalendarEvent(BaseModel):
     external_id: str | None = Field(default=None, description="Calendar event id.")
     end_at: str | None = Field(default=None, description="ISO-8601 end.")
     location: str | None = Field(default=None, description="Event location.")
+    dest_lat: float | None = Field(
+        default=None, description="Destination latitude (enables travel estimation)."
+    )
+    dest_lon: float | None = Field(default=None, description="Destination longitude.")
     lead_minutes: float | None = Field(
         default=None, description="Travel+prep buffer before start (default 10)."
     )
@@ -196,8 +213,22 @@ class CommitmentCreate(BaseModel):
     start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
     end_at: str | None = None
     location: str | None = None
+    dest_lat: float | None = Field(
+        default=None, description="Destination latitude (enables travel estimation)."
+    )
+    dest_lon: float | None = Field(default=None, description="Destination longitude.")
     lead_minutes: float | None = None
     hard: bool = False
+
+
+class LocationPing(BaseModel):
+    """Body of ``POST /webhooks/location`` — the phone's current position."""
+
+    lat: float = Field(description="Current latitude in degrees.")
+    lon: float = Field(description="Current longitude in degrees.")
+    accuracy_m: float | None = Field(
+        default=None, description="Optional reported accuracy radius in metres."
+    )
 
 
 class ConflictDismiss(BaseModel):
@@ -482,6 +513,32 @@ def create_app(
             body = {"value": body}
         return parse_inbound_event(body)
 
+    @app.post("/webhooks/location", tags=["ingestion"])
+    def location_ping(
+        payload: LocationPing,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Record the phone's current position (from an iOS Shortcut).
+
+        This is the single source of "where am I now" for the rest of the
+        system: ``/webhooks/outing/check`` reads it to gate the coffee-shop
+        nudge without a Home Assistant feed, and ``/webhooks/departure/check``
+        reads it to estimate travel time to upcoming commitments. A location
+        automation ("when I leave Home", on a schedule, or one-tap) can POST it.
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        memory.set_location(payload.lat, payload.lon, payload.accuracy_m)
+        return {"stored": True, "lat": payload.lat, "lon": payload.lon}
+
+    @app.get("/location", tags=["ingestion"])
+    def location_get(
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Return the last-known position (or ``{"location": null}`` if unset)."""
+        _verify_token(resolved_settings, x_prefrontal_token)
+        return {"location": memory.get_location()}
     # -- Mail ingestion ------------------------------------------------------
 
     @app.post(
@@ -631,6 +688,13 @@ def create_app(
             body = {}
         cur_lat = body.get("current_lat")
         cur_lon = body.get("current_lon")
+        # Fall back to the phone's last-known position (POSTed to
+        # /webhooks/location) when the poll body carries no explicit coordinates
+        # — so location-gating works without a Home Assistant feed.
+        if cur_lat is None or cur_lon is None:
+            last = memory.get_location()
+            if last is not None:
+                cur_lat, cur_lon = last["lat"], last["lon"]
         name = memory.get_state("user_name", "") or ""
         home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
@@ -826,6 +890,87 @@ def create_app(
             "new_conflict": summary.new_conflict,
             "possible_conflicts": summary.possible_conflicts,
             "new_possible_conflict": summary.new_possible_conflict,
+        }
+
+    @app.post("/webhooks/departure/check", tags=["schedule"])
+    async def departure_check(
+        request: Request,
+        memory: Annotated[MemoryStore, Depends(get_store)],
+        x_prefrontal_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Evaluate upcoming commitments and report whether to nudge a departure.
+
+        n8n polls this on a schedule (the Departure Reminder workflow). For each
+        upcoming commitment it computes a leave-by time: from the phone's
+        last-known location and the commitment's ``dest_lat``/``dest_lon`` when
+        both are known (a local, bias-adjusted travel estimate), otherwise from
+        the commitment's static ``lead_minutes``. The most urgent reminder-worthy
+        commitment is returned; ``fire`` is ``true`` only when its
+        ``(commitment, level)`` pair is new since the last poll, so a standing
+        reminder doesn't re-alert every cycle. Current coordinates may be
+        overridden in the request body (``current_lat``/``current_lon``).
+        """
+        _verify_token(resolved_settings, x_prefrontal_token)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        cur_lat = body.get("current_lat")
+        cur_lon = body.get("current_lon")
+        if cur_lat is None or cur_lon is None:
+            last = memory.get_location()
+            if last is not None:
+                cur_lat, cur_lon = last["lat"], last["lon"]
+
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        name = memory.get_state("user_name", "") or ""
+        plans = [
+            plan_departure(
+                c,
+                current_lat=cur_lat,
+                current_lon=cur_lon,
+                bias=bias,
+                speed_kmh=_state_float(memory, "travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+                road_factor=_state_float(memory, "travel_road_factor", DEFAULT_ROAD_FACTOR),
+                prep_minutes=_state_float(memory, "departure_prep_minutes", DEFAULT_PREP_MINUTES),
+                heads_up_minutes=_state_float(
+                    memory, "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+                ),
+                soon_minutes=_state_float(
+                    memory, "departure_soon_minutes", DEFAULT_SOON_MINUTES
+                ),
+            )
+            for c in memory.upcoming_commitments()
+        ]
+        top = next_departure(plans)
+
+        fire, message, reminder = False, "", None
+        if top is not None:
+            reminder = {
+                "commitment_id": top.commitment["id"],
+                "title": top.commitment["title"],
+                "location": top.commitment.get("location"),
+                "start_at": top.commitment["start_at"],
+                "leave_by": top.leave_by,
+                "minutes_until_leave": top.minutes_until_leave,
+                "travel_minutes": top.travel_minutes,
+                "basis": top.basis,
+                "level": top.level,
+            }
+            signature = f"{top.commitment['id']}:{top.level}"
+            fire = signature != memory.get_state("last_departure_signature", "")
+            if fire:
+                memory.set_state("last_departure_signature", signature, source="inferred")
+                message = build_departure_message(top, name=name)
+
+        return {
+            "fire": fire,
+            "message": message,
+            "reminder": reminder,
+            "location_known": cur_lat is not None and cur_lon is not None,
         }
 
     @app.post(

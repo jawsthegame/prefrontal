@@ -109,12 +109,67 @@ Closes the active outing and logs intention-vs-actual for learning.
 
 ---
 
+## Shortcut: "Update location" (the simplest location source)
+
+A single automation that tells Prefrontal where you are. It's the one source of
+"where am I now" for everything location-aware: it lets the coffee-shop nudge
+stop once you're home **without Home Assistant**, and it powers the departure
+reminder's travel-time estimate (see below).
+
+1. Shortcuts → **Automation** → **+**. Pick a trigger that fits how fresh you
+   want the fix to be — a **Time of Day** that repeats (e.g. every hour), or
+   **Arrive**/**Leave** a place, or a manual one-tap shortcut.
+2. Action **Get Current Location**.
+3. Action **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/location`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):**
+     ```json
+     { "lat": "Latitude", "lon": "Longitude" }
+     ```
+     Replace the `"lat"`/`"lon"` values with the **Latitude** and **Longitude**
+     magic variables from the Get Current Location action. (Optionally add
+     `"accuracy_m"` from **Horizontal Accuracy**.)
+4. **Run Immediately** on (no confirmation tap).
+
+Prefrontal stores only the *latest* position; `GET /location` shows what it has.
+Once this is running, you can leave the coffee-shop poll's `current_lat`/
+`current_lon` as `null` — the server falls back to this last-known fix.
+
+---
+
+## Departure reminders (leave-on-time)
+
+The `departure-reminder` n8n workflow polls `/webhooks/departure/check`, which
+works out *when to leave* for your next commitment and pushes a nudge as that
+moment approaches (a 30-min heads-up, a 10-min "get ready", and a "leave now").
+
+It estimates travel time **locally** — no maps API — from your last-known
+location (the "Update location" shortcut above) to the commitment's
+coordinates, padded by your learned time bias and a prep buffer. For that to
+beat the static `lead_minutes` buffer, give commitments coordinates:
+
+- **Calendar sync** — include `dest_lat`/`dest_lon` per event in the
+  `/webhooks/calendar/sync` body (geocode the event location in n8n, or hard-code
+  for recurring places).
+- **Manual** — `POST /commitments` accepts `dest_lat`/`dest_lon` alongside
+  `title`/`start_at`.
+
+Without coordinates (or without a recent location) it falls back to the
+commitment's `lead_minutes`, so the reminder still fires — just less precisely.
+Tune the estimate with the `travel_speed_kmh`, `travel_road_factor`,
+`departure_prep_minutes`, `departure_heads_up_minutes`, and
+`departure_soon_minutes` coaching-state keys.
+
+---
+
 ## Location source (passive return & gating)
 
 Location is **optional** — without it the anchor escalates purely on elapsed
-time. Wiring it in lets Prefrontal stop nudging once you're actually home. There
-are two tiers; the first is iOS-only and takes five minutes, the second is
-continuous but needs Home Assistant.
+time. Wiring it in lets Prefrontal stop nudging once you're actually home. The
+"Update location" shortcut above is the easiest source; the two tiers below are
+alternatives — Tier 1 is an iOS arrival geofence, Tier 2 is continuous via Home
+Assistant.
 
 ### Tier 1 — iOS arrival geofence (simplest)
 
