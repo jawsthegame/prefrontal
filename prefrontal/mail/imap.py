@@ -51,6 +51,10 @@ class ImapAccount:
         user: Login username (usually the full email address).
         password: Login password or app-password.
         mailbox: Mailbox to read (default ``INBOX``).
+        important_only: When ``True`` and the account is Gmail, only messages
+            Gmail flagged **Important** are fetched (via the ``X-GM-RAW`` search
+            extension). Defaults to ``True`` for Gmail accounts; a no-op for
+            non-Gmail hosts (which don't support the extension).
     """
 
     name: str
@@ -58,6 +62,12 @@ class ImapAccount:
     user: str
     password: str
     mailbox: str = "INBOX"
+    important_only: bool = False
+
+    @property
+    def is_gmail(self) -> bool:
+        """Whether this account talks to Gmail (so Gmail-only search applies)."""
+        return "gmail" in self.host.lower()
 
     @classmethod
     def from_env(cls, name: str, env: dict[str, str] | None = None) -> ImapAccount | None:
@@ -65,8 +75,10 @@ class ImapAccount:
 
         Reads ``MAIL_IMAP_HOST_<NAME>`` (optional, defaults to
         :data:`DEFAULT_IMAP_HOST`), ``MAIL_IMAP_USER_<NAME>`` and
-        ``MAIL_IMAP_PASSWORD_<NAME>`` (both required), and optional
-        ``MAIL_IMAP_MAILBOX_<NAME>``. ``<NAME>`` is the account name uppercased.
+        ``MAIL_IMAP_PASSWORD_<NAME>`` (both required), optional
+        ``MAIL_IMAP_MAILBOX_<NAME>``, and optional
+        ``MAIL_IMAP_IMPORTANT_ONLY_<NAME>`` (defaults to on for Gmail accounts).
+        ``<NAME>`` is the account name uppercased.
 
         Args:
             name: The logical account name.
@@ -81,12 +93,17 @@ class ImapAccount:
         password = env.get(f"MAIL_IMAP_PASSWORD_{key}")
         if not user or not password:
             return None
+        host = env.get(f"MAIL_IMAP_HOST_{key}", DEFAULT_IMAP_HOST)
+        override = _env_bool(env.get(f"MAIL_IMAP_IMPORTANT_ONLY_{key}"))
+        # Default: Gmail accounts consider only Important mail; explicit env wins.
+        important_only = ("gmail" in host.lower()) if override is None else override
         return cls(
             name=name,
-            host=env.get(f"MAIL_IMAP_HOST_{key}", DEFAULT_IMAP_HOST),
+            host=host,
             user=user,
             password=password,
             mailbox=env.get(f"MAIL_IMAP_MAILBOX_{key}", "INBOX"),
+            important_only=important_only,
         )
 
 
@@ -126,7 +143,7 @@ def fetch_unread(
     if imaplib._MAXLINE < _MAXLINE_FLOOR:
         imaplib._MAXLINE = _MAXLINE_FLOOR
 
-    criteria = _unseen_criteria(since_days, now)
+    criteria = _unseen_criteria(since_days, now) + _important_filter(account)
     conn = imaplib.IMAP4_SSL(account.host)
     try:
         conn.login(account.user, account.password)
@@ -166,6 +183,26 @@ def _unseen_criteria(since_days: int | None, now: datetime | None) -> tuple[str,
     ref = now or datetime.now(timezone.utc)
     since = (ref - timedelta(days=since_days)).strftime("%d-%b-%Y")
     return ("UNSEEN", "SINCE", since)
+
+
+def _important_filter(account: ImapAccount) -> tuple[str, ...]:
+    """Gmail Important-only SEARCH terms for an account, or empty.
+
+    Returns ``("X-GM-RAW", '"is:important"')`` for a Gmail account with
+    :attr:`ImapAccount.important_only` (ANDed onto the unseen criteria so only
+    mail Gmail flagged Important comes back), else ``()``. The extension is
+    Gmail-only, so it's never sent to other hosts.
+    """
+    if account.important_only and account.is_gmail:
+        return ("X-GM-RAW", '"is:important"')
+    return ()
+
+
+def _env_bool(value: str | None) -> bool | None:
+    """Parse a truthy/falsey env string, or ``None`` when unset/blank."""
+    if value is None or not value.strip():
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_rfc822(raw_bytes: bytes, account: str) -> dict[str, Any]:
