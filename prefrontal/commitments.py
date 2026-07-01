@@ -23,10 +23,20 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from dateutil.rrule import rrulestr
+
 from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
+
+#: How far ahead recurring events are expanded into concrete occurrences. Mirrors
+#: the n8n bundler's forward window — the schedule only ever holds the near term.
+RECUR_HORIZON_HOURS = 36.0
+
+#: Joins a recurring series' id to a generated occurrence's start stamp, forming a
+#: stable per-occurrence ``external_id`` so repeated polls upsert (never duplicate).
+RECUR_OCCURRENCE_SEP = "::"
 
 #: SQLite-comparable UTC timestamp format (matches ``datetime('now')``).
 _TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -309,12 +319,160 @@ def normalize_event(
     }
 
 
+def _bare_uid(external_id: str) -> str:
+    """Strip the feed namespace (``work:``/``personal:``/…) from an event id.
+
+    Occurrence overrides are matched on the bare UID so a modified instance on
+    one feed suppresses the generated occurrence even if its master was deduped
+    in from a different feed.
+    """
+    return re.sub(r"^[^:]+:", "", external_id)
+
+
+def _aware(value: str, tzid: str | None, default_tz: str) -> datetime | None:
+    """Parse an ICS timestamp to a timezone-aware :class:`datetime`, or ``None``.
+
+    Offset-aware / ``Z`` values keep their own offset; a naive value is localized
+    to ``tzid`` (or ``default_tz``). Unlike :func:`to_utc` this returns the aware
+    object itself, so recurrence math happens in the event's own wall clock —
+    keeping a 7:30 local event at 7:30 across DST rather than drifting an hour.
+    """
+    try:
+        dt = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=resolve_zone(tzid, default_tz))
+
+
+def expand_recurrences(
+    events: list[dict[str, Any]],
+    *,
+    now: datetime,
+    horizon_hours: float = RECUR_HORIZON_HOURS,
+    back_hours: float = 1.0,
+    default_tz: str = "UTC",
+) -> list[dict[str, Any]]:
+    """Expand ``RRULE`` master events into concrete near-term occurrences.
+
+    ICS feeds export an *unmodified* recurring event as a single master VEVENT —
+    its original ``DTSTART`` plus an ``RRULE`` — never a copy per week. So a
+    long-standing weekly event's start sits months in the past and is dropped by
+    any forward window, and it silently never appears. This turns each master
+    into one event per occurrence within ``[now - back_hours, now + horizon]``,
+    honoring ``EXDATE`` skips and suppressing an occurrence that a modified
+    instance (``RECURRENCE-ID``) already stands in for. One-off events and the
+    modified instances themselves pass through untouched.
+
+    Each generated occurrence gets a stable ``external_id`` of
+    ``<master id>::<YYYYMMDDTHHMMSS>``, so repeated polls upsert rather than
+    duplicate it. A master whose ``RRULE`` can't be parsed is skipped, never
+    rejecting the whole batch.
+
+    Args:
+        events: Raw event dicts (as the ICS parser emits them), optionally
+            carrying ``rrule``, ``exdate`` (list), and ``recurrence_id``.
+        now: The reference instant (timezone-aware) the window is measured from.
+        horizon_hours: How far ahead to generate occurrences.
+        back_hours: How far back to include a just-started occurrence.
+        default_tz: Home zone for naive timestamps with no ``tzid``.
+
+    Returns:
+        A new event list with masters replaced by their occurrences.
+    """
+    window_start = now - timedelta(hours=back_hours)
+    window_end = now + timedelta(hours=horizon_hours)
+
+    # Original start instants a modified instance already covers, keyed by bare
+    # UID. dateutil generates occurrences at those original times, so we skip
+    # them and let the moved instance's own (concrete) VEVENT stand in.
+    overrides: dict[str, set[datetime]] = {}
+    for e in events:
+        rid = e.get("recurrence_id")
+        if not rid:
+            continue
+        dt = _aware(rid, e.get("tzid"), default_tz)
+        if dt is not None:
+            key = _bare_uid(e.get("external_id") or "")
+            overrides.setdefault(key, set()).add(dt.astimezone(timezone.utc))
+
+    out: list[dict[str, Any]] = []
+    for e in events:
+        rule_text = e.get("rrule")
+        if not rule_text:
+            out.append(e)  # one-off, or an already-concrete modified instance
+            continue
+        out.extend(
+            _expand_master(e, rule_text, window_start, window_end, overrides, default_tz)
+        )
+    return out
+
+
+def _expand_master(
+    master: dict[str, Any],
+    rule_text: str,
+    window_start: datetime,
+    window_end: datetime,
+    overrides: dict[str, set[datetime]],
+    default_tz: str,
+) -> list[dict[str, Any]]:
+    """Generate the in-window occurrences of one ``RRULE`` master event."""
+    tzid = master.get("tzid")
+    dtstart = _aware(master.get("start_at") or "", tzid, default_tz)
+    if dtstart is None:
+        return []
+    try:
+        rule = rrulestr(rule_text.replace("RRULE:", "", 1), dtstart=dtstart)
+        occurrences = list(rule.between(window_start, window_end, inc=True))
+    except (ValueError, TypeError):
+        return []  # a malformed RRULE must never sink the whole sync
+
+    duration: timedelta | None = None
+    end0 = _aware(master.get("end_at") or "", master.get("end_tzid") or tzid, default_tz)
+    if end0 is not None and end0 > dtstart:
+        duration = end0 - dtstart
+
+    skip = set(overrides.get(_bare_uid(master.get("external_id") or ""), set()))
+    for raw in master.get("exdate") or []:
+        for part in str(raw).split(","):
+            d = _aware(part, tzid, default_tz)
+            if d is not None:
+                skip.add(d.astimezone(timezone.utc))
+
+    base_id = master.get("external_id")
+    results: list[dict[str, Any]] = []
+    for occ in occurrences:
+        if occ.astimezone(timezone.utc) in skip:
+            continue
+        ev = {
+            k: v
+            for k, v in master.items()
+            if k not in ("rrule", "exdate", "recurrence_id")
+        }
+        # The occurrence is offset-aware, so to_utc reads its offset directly and
+        # the (now-redundant) master tzid is cleared.
+        ev["start_at"] = occ.isoformat()
+        ev["tzid"] = None
+        if duration is not None:
+            ev["end_at"] = (occ + duration).isoformat()
+            ev["end_tzid"] = None
+        else:
+            ev["end_at"] = None
+        if base_id:
+            stamp = occ.strftime("%Y%m%dT%H%M%S")
+            ev["external_id"] = f"{base_id}{RECUR_OCCURRENCE_SEP}{stamp}"
+        results.append(ev)
+    return results
+
+
 def sync_calendar(
     store: MemoryStore,
     events: list[dict[str, Any]],
     *,
     classify: Callable[[str], tuple[str, str]] | None = None,
     default_tz: str = "UTC",
+    now: datetime | None = None,
 ) -> SyncSummary:
     """Idempotently sync a batch of calendar events into ``commitments``.
 
@@ -332,6 +490,8 @@ def sync_calendar(
             correction is never overwritten. ``None`` leaves new events ``self``.
         default_tz: Home timezone for interpreting naive event times that arrive
             without their own ``tzid`` (see :func:`to_utc`).
+        now: Reference instant for expanding recurring events (defaults to the
+            current UTC time); injectable for tests.
 
     Returns:
         A :class:`SyncSummary`.
@@ -340,6 +500,12 @@ def sync_calendar(
         ValueError: If any event fails validation (the whole batch is rejected
             before any write, so a bad payload never partially applies).
     """
+    # Turn recurring masters into concrete near-term occurrences before anything
+    # else — a weekly event ships as one long-past-dated master, so this is what
+    # makes today's instance exist at all.
+    events = expand_recurrences(
+        events, now=now or datetime.now(timezone.utc), default_tz=default_tz
+    )
     normalized = [  # validate all up front
         normalize_event(e, default_tz=default_tz) for e in events
     ]

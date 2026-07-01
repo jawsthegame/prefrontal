@@ -383,6 +383,23 @@ class CalendarEvent(BaseModel):
     end_tzid: str | None = Field(
         default=None, description="Source zone for a naive end_at (defaults to tzid)."
     )
+    rrule: str | None = Field(
+        default=None,
+        description=(
+            "ICS RRULE of a recurring master (e.g. 'FREQ=WEEKLY;BYDAY=WE'). "
+            "Expanded server-side into concrete occurrences within the sync window."
+        ),
+    )
+    exdate: list[str] | None = Field(
+        default=None, description="Occurrence start times excluded from the RRULE."
+    )
+    recurrence_id: str | None = Field(
+        default=None,
+        description=(
+            "Original start of a modified single occurrence; suppresses the "
+            "generated occurrence so this instance stands in for it."
+        ),
+    )
     location: str | None = Field(default=None, description="Event location.")
     dest_lat: float | None = Field(
         default=None, description="Destination latitude (enables travel estimation)."
