@@ -81,11 +81,13 @@ the first test. Code follow-ups below are optional polish.
   (≥ `decomposition_threshold`) is broken into a tiny first step
   (≤ `max_first_step_minutes`) plus collapsed remaining steps — the task
   initiation lever for the Task Paralysis module (Ollama + heuristic fallback).
-- **Scriptable home-screen widget** ✅ — `deploy/scriptable/` polls `/outings`,
-  `/commitments`, conflicts, and todos over Tailscale and renders a glanceable
-  "right now": the active outing + escalation level, next commitments, and
-  conflict/todo counts; taps open the `/family` view. *(This is the
-  "iOS lock-screen widget" idea from the architecture, now shipped.)*
+- **Scriptable home-screen & Lock Screen widget** ✅ — `deploy/scriptable/` polls
+  `/outings`, `/commitments`, conflicts, and todos over Tailscale and renders a
+  glanceable "right now": the active outing + escalation level, next commitments,
+  and conflict/todo counts; taps open the `/family` view. One script drives every
+  family: the full Home Screen card (Small/Medium/Large) **and** the iOS 16+ Lock
+  Screen accessory slots (circular / rectangular / inline, monochrome via SF
+  Symbols). *(Realizes the "iOS lock-screen widget" idea from the architecture.)*
 - **Commitment geocoding (places → cache → Nominatim)** ✅ —
   `prefrontal/geocode.py` resolves a commitment's free-text `location` to
   `dest_lat`/`dest_lon` so the departure reminder's travel estimate actually
