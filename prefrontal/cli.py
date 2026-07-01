@@ -495,6 +495,44 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             print("\n(No corrections qualify yet — triage uses the base prompt.)")
         return 0
 
+    if args.mail_action == "retriage":
+        from prefrontal.mail import retriage_messages
+
+        client = (
+            None
+            if args.heuristic
+            else OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+        )
+        with MemoryStore.open(db_path) as unscoped:
+            store = _resolve_user_store(unscoped, args.user)
+            summary = retriage_messages(
+                store,
+                account=args.account,
+                only_needs_action=not args.all_mail,
+                client=client,
+                use_model=not args.heuristic,
+                create_todos=args.create_todos,
+                corrections=learned_corrections(
+                    store,
+                    quick_drop_days=settings.triage_quick_drop_days,
+                    repeat_threshold=settings.triage_repeat_threshold,
+                ),
+                dry_run=args.dry_run,
+            )
+        scope = args.account or "all accounts"
+        lead = "[dry-run] would re-triage" if summary.dry_run else "re-triaged"
+        print(
+            f"[{scope}] {lead} {summary.scanned} message(s): "
+            f"{summary.changed} changed, {summary.cleared} cleared "
+            f"({summary.todos_dropped} todos dropped), "
+            f"{summary.newly_flagged} newly flagged "
+            f"({summary.todos_created} todos created), "
+            f"{summary.triaged_by_llm} via model."
+        )
+        if summary.dry_run:
+            print("Nothing was written. Re-run without --dry-run to apply.")
+        return 0
+
     if args.mail_action == "list":
         with MemoryStore.open(db_path) as unscoped:
             store = _resolve_user_store(unscoped, args.user)
@@ -730,6 +768,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     m_learned.add_argument(
         "--clear", action="store_true", help="Forget all learned corrections."
+    )
+    m_retriage = mail_sub.add_parser(
+        "retriage",
+        help="Re-run triage on already-ingested mail with the current prompt.",
+    )
+    m_retriage.add_argument(
+        "--account", default=None, help="Limit to one account (default: all)."
+    )
+    m_retriage.add_argument(
+        "--all",
+        dest="all_mail",
+        action="store_true",
+        help="Re-triage every stored message, not just current needs-action items "
+        "(can also newly flag previously-cleared mail).",
+    )
+    m_retriage.add_argument(
+        "--heuristic",
+        action="store_true",
+        help="Skip the model; re-triage with the keyword heuristic.",
+    )
+    m_retriage.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing anything.",
+    )
+    m_retriage.add_argument(
+        "--no-todos",
+        dest="create_todos",
+        action="store_false",
+        help="Don't create todos for newly-flagged mail (with --all).",
     )
     m_sync = mail_sub.add_parser("sync", help="Ingest messages from a JSON file.")
     m_sync.add_argument("file", help="Path to a JSON list (or {messages: [...]}).")

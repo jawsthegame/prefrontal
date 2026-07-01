@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings, _parse_account_labels, _parse_mail_accounts
 from prefrontal.integrations.ollama import OllamaClient
-from prefrontal.mail import ingest_messages, normalize_message
+from prefrontal.mail import ingest_messages, normalize_message, retriage_messages
 from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
 from prefrontal.mail.models import normalize_date, parse_sender
 from prefrontal.mail.triage import _heuristic_triage, priority_for_urgency, triage_message
@@ -370,6 +370,118 @@ def test_closing_todo_clears_mail_action_item(store):
     todo_id = store.open_todos()[0]["id"]
     store.close_todo(todo_id, status="done")
     assert store.mail_needing_action() == []
+
+
+# -- re-triage ---------------------------------------------------------------
+
+
+def _flag_verdict() -> dict:
+    return {
+        "needs_action": True,
+        "urgency": "high",
+        "category": "reply",
+        "waiting_on": "Sarah",
+        "summary": "Sarah asks for the Q2 report",
+    }
+
+
+def _noaction_verdict() -> dict:
+    return {
+        "needs_action": False,
+        "urgency": "low",
+        "category": "newsletter",
+        "waiting_on": "",
+        "summary": "Marketing update, no action",
+    }
+
+
+def test_retriage_clears_overflagged_mail_and_drops_todo(store):
+    """A message the new prompt no longer flags is cleared and its todo dropped."""
+    ingest_messages(store, [_msg()], account="personal", client=_ollama_returning(_flag_verdict()))
+    todo_id = store.open_todos()[0]["id"]
+    assert len(store.mail_needing_action()) == 1
+
+    summary = retriage_messages(
+        store, account="personal", client=_ollama_returning(_noaction_verdict())
+    )
+
+    assert summary.scanned == 1
+    assert summary.cleared == 1
+    assert summary.todos_dropped == 1
+    assert store.mail_needing_action() == []
+    assert store.get_todo(todo_id)["status"] == "dropped"
+    row = store.recent_mail()[0]
+    assert row["needs_action"] == 0
+    assert row["category"] == "newsletter"
+
+
+def test_retriage_does_not_record_drop_feedback(store):
+    """Auto-drops from re-triage must NOT pollute learned corrections."""
+    ingest_messages(store, [_msg()], account="personal", client=_ollama_returning(_flag_verdict()))
+    retriage_messages(
+        store, account="personal", client=_ollama_returning(_noaction_verdict())
+    )
+    # The prompt's own judgment isn't user feedback — no correction recorded.
+    assert store.triage_feedback_list() == []
+
+
+def test_retriage_dry_run_writes_nothing(store):
+    """--dry-run reports the change but leaves the row and todo untouched."""
+    ingest_messages(store, [_msg()], account="personal", client=_ollama_returning(_flag_verdict()))
+    todo_id = store.open_todos()[0]["id"]
+
+    summary = retriage_messages(
+        store,
+        account="personal",
+        client=_ollama_returning(_noaction_verdict()),
+        dry_run=True,
+    )
+
+    assert summary.dry_run is True
+    assert summary.cleared == 1
+    assert summary.todos_dropped == 1  # counted, but not performed
+    assert store.get_todo(todo_id)["status"] == "open"
+    assert len(store.mail_needing_action()) == 1
+
+
+def test_retriage_only_needs_action_leaves_cleared_mail_alone(store):
+    """The default scope re-triages only flagged mail, not already-cleared rows."""
+    # One flagged, one not (heuristic newsletter → no action).
+    ingest_messages(store, [_msg()], account="personal", client=_ollama_returning(_flag_verdict()))
+    ingest_messages(
+        store,
+        [_msg(message_id="<m-2@x>", subject="Newsletter", body="unsubscribe here")],
+        account="personal",
+        client=_ollama_returning(_noaction_verdict()),
+    )
+    summary = retriage_messages(
+        store, account="personal", client=_ollama_returning(_noaction_verdict())
+    )
+    assert summary.scanned == 1  # only the flagged one
+
+
+def test_retriage_all_can_newly_flag_and_create_todo(store):
+    """--all re-triages everything and can flag a previously-cleared message."""
+    ingest_messages(
+        store,
+        [_msg(subject="FYI", body="just so you know")],
+        account="personal",
+        client=_ollama_returning(_noaction_verdict()),
+    )
+    assert store.open_todos() == []
+
+    summary = retriage_messages(
+        store,
+        account="personal",
+        only_needs_action=False,
+        client=_ollama_returning(_flag_verdict()),
+    )
+
+    assert summary.scanned == 1
+    assert summary.newly_flagged == 1
+    assert summary.todos_created == 1
+    assert len(store.mail_needing_action()) == 1
+    assert len(store.open_todos()) == 1
 
 
 # -- webhook routes ----------------------------------------------------------

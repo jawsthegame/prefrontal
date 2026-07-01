@@ -164,6 +164,162 @@ def ingest_messages(
     return summary
 
 
+@dataclass
+class RetriageSummary:
+    """Outcome of a :func:`retriage_messages` run.
+
+    Attributes:
+        account: The account re-triaged, or ``None`` for all accounts.
+        scanned: How many stored messages were re-classified.
+        changed: How many got a different verdict (any field).
+        cleared: How many flipped ``needs_action`` True → False (the "junk").
+        newly_flagged: How many flipped False → True (only possible with a
+            full re-triage, i.e. ``only_needs_action=False``).
+        todos_dropped: How many open intake todos were dropped for cleared mail.
+        todos_created: How many todos were created for newly-flagged mail.
+        triaged_by_llm: How many verdicts came from the model (vs the heuristic).
+        dry_run: Whether this run wrote nothing (a preview).
+    """
+
+    account: str | None
+    scanned: int = 0
+    changed: int = 0
+    cleared: int = 0
+    newly_flagged: int = 0
+    todos_dropped: int = 0
+    todos_created: int = 0
+    triaged_by_llm: int = 0
+    dry_run: bool = False
+
+
+def _item_from_row(row: dict[str, Any]) -> MailItem:
+    """Rebuild the :class:`MailItem` for a stored ``mail_messages`` row.
+
+    The row already holds policy-applied content (``signals`` rows have no
+    body/snippet), so this is a straight field copy — no re-normalization.
+    """
+    unread = row.get("unread")
+    return MailItem(
+        account=row["account"],
+        message_id=row["message_id"],
+        policy=row.get("policy") or "full",
+        thread_id=row.get("thread_id"),
+        sender_name=row.get("sender_name"),
+        sender_email=row.get("sender_email"),
+        subject=row.get("subject"),
+        received_at=row.get("received_at"),
+        snippet=row.get("snippet"),
+        body=row.get("body"),
+        unread=bool(unread) if unread is not None else None,
+    )
+
+
+def retriage_messages(
+    store: MemoryStore,
+    *,
+    account: str | None = None,
+    only_needs_action: bool = True,
+    client: OllamaClient | None = None,
+    fallback: bool = True,
+    use_model: bool = True,
+    create_todos: bool = True,
+    corrections: str = "",
+    dry_run: bool = False,
+) -> RetriageSummary:
+    """Re-run triage over already-ingested mail with the current prompt.
+
+    Unlike :func:`ingest_messages`, which dedups and skips seen mail, this
+    re-classifies stored rows in place. It's how a user reaps a prompt change:
+    over-flagged mail that the evolved prompt now considers no-action is cleared
+    and its intake todo dropped, unclutter​ing the action list.
+
+    Todos for cleared mail are dropped via :meth:`~MemoryStore.close_todo`
+    directly — *not* the ``prefrontal todo drop`` path — so they are **not**
+    recorded as triage-drop feedback. A re-triage reflects the prompt's own
+    judgment; feeding it back as user corrections would double-count it.
+
+    Args:
+        store: An open, user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        account: Limit to one account, or ``None`` for all.
+        only_needs_action: When ``True`` (default), only re-triage mail currently
+            flagged ``needs_action`` (can only clear junk). When ``False``,
+            re-triage everything (can also newly flag previously-cleared mail).
+        client: Ollama client for triage (see :func:`ingest_messages`).
+        fallback: Passed through to :func:`triage_message`.
+        use_model: When ``False``, re-triage with the keyword heuristic only.
+        create_todos: When ``True``, create a todo for newly-flagged mail.
+        corrections: Learned-corrections addendum, as in :func:`ingest_messages`.
+        dry_run: When ``True``, compute and count changes but write nothing.
+
+    Returns:
+        A :class:`RetriageSummary`.
+    """
+    rows = store.mail_for_retriage(account=account, only_needs_action=only_needs_action)
+    summary = RetriageSummary(account=account, dry_run=dry_run)
+
+    for row in rows:
+        summary.scanned += 1
+        item = _item_from_row(row)
+        verdict = triage_message(
+            item,
+            client=client,
+            fallback=fallback,
+            use_model=use_model,
+            corrections=corrections,
+        )
+        if verdict.source == "llm":
+            summary.triaged_by_llm += 1
+
+        was_action = bool(row.get("needs_action"))
+        now_action = verdict.needs_action
+        todo_id = row.get("todo_id")
+
+        if was_action and not now_action:
+            summary.cleared += 1
+            if todo_id is not None:
+                existing = store.get_todo(todo_id)
+                if existing is not None and existing.get("status") == "open":
+                    if not dry_run:
+                        store.close_todo(todo_id, status="dropped")
+                    summary.todos_dropped += 1
+        elif now_action and not was_action and create_todos:
+            summary.newly_flagged += 1
+            if dry_run:
+                summary.todos_created += 1
+            else:
+                todo_id = store.add_todo(
+                    _todo_title(item, verdict),
+                    notes=_todo_notes(item, verdict),
+                    priority=verdict.priority,
+                )
+                summary.todos_created += 1
+        elif now_action and not was_action:
+            summary.newly_flagged += 1
+
+        if (
+            now_action != was_action
+            or (row.get("urgency") or None) != (verdict.urgency or None)
+            or (row.get("category") or None) != (verdict.category or None)
+            or (row.get("waiting_on") or "") != (verdict.waiting_on or "")
+            or (row.get("summary") or "") != (verdict.summary or "")
+        ):
+            summary.changed += 1
+
+        if not dry_run:
+            store.update_mail_triage(
+                int(row["id"]),
+                needs_action=now_action,
+                urgency=verdict.urgency,
+                category=verdict.category,
+                waiting_on=verdict.waiting_on,
+                summary=verdict.summary,
+                triage_source=verdict.source,
+                todo_id=todo_id,
+            )
+
+    return summary
+
+
 def _todo_title(item: MailItem, verdict: MailTriage) -> str:
     """Build a concise todo title for a needs-action message."""
     who = item.sender_name or item.sender_email or "sender"
