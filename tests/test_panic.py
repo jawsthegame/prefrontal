@@ -17,7 +17,13 @@ from prefrontal.config import Settings
 from prefrontal.impact import utcnow
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
-from prefrontal.panic import build_panic, render_panic, summarize_panic
+from prefrontal.panic import (
+    build_panic,
+    overwhelm_level,
+    panic_alert_message,
+    render_panic,
+    summarize_panic,
+)
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
@@ -217,6 +223,50 @@ def test_panic_endpoint(store, noon):
     assert body["late"][0]["title"] == "Leave for Dentist"
     assert body["first_step"]
     assert "Panic mode" in body["text"]
+
+
+def test_headline_leads_with_first_step_and_reassures_when_clear(store, noon):
+    """The one-line headline (for one-tap use) folds in the first step, or reassures."""
+    assert "nothing" in build_panic(store, now=noon).headline.lower()  # clear board
+    store.add_todo("Call the plumber", deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    hl = build_panic(store, now=noon).headline
+    assert "Start here:" in hl and "needs you right now" in hl
+
+
+def test_overwhelm_level_needs_a_real_pileup(store, noon):
+    """One late thing is calm; two late, or late + a full plate, is overwhelmed."""
+    # A single overdue todo — not a crisis.
+    store.add_todo("A", deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    assert overwhelm_level(build_panic(store, now=noon)) == "calm"
+    # Second overdue todo tips it over.
+    store.add_todo("B", deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    plan = build_panic(store, now=noon)
+    assert overwhelm_level(plan) == "overwhelmed"
+    assert "2 already late" in panic_alert_message(plan, name="Tom")
+    assert panic_alert_message(plan).startswith("Heads up —")
+
+
+def test_panic_check_edge_triggers_then_stays_quiet(store, noon):
+    """The proactive check fires once on the overwhelm edge, then not on every poll."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    with TestClient(app) as c:
+        h = {"X-Prefrontal-Token": SECRET}
+        first = c.post("/webhooks/panic/check", headers=h).json()
+        assert first["fire"] is True and first["level"] == "overwhelmed"
+        assert first["message"] and first["first_step"]
+        # Same spike on the next poll → no repeat nudge.
+        second = c.post("/webhooks/panic/check", headers=h).json()
+        assert second["fire"] is False and second["level"] == "overwhelmed"
+
+
+def test_panic_check_calm_does_not_fire(store, noon):
+    """A calm plate never nudges."""
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    with TestClient(app) as c:
+        body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert body["fire"] is False and body["level"] == "calm"
 
 
 def test_dashboard_and_family_wire_the_panic_button(store):

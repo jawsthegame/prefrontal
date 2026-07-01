@@ -384,6 +384,35 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 
 ---
 
+## 11a. Panic mode (on-demand + proactive)
+
+The calm morning briefing's opposite number, for when you're overwhelmed and
+frozen: it ranks what's *actually* bearing down now — across calendar, todos,
+and mail — into already-behind / bearing-down-soon / piling-up, and hands back
+**one concrete first step**.
+
+- Preview it now: `prefrontal panic` (add `--llm` for Ollama prose).
+- **On the dashboard / family view:** the "😮‍💨 Panic" / "Feeling overwhelmed?"
+  button opens a focused overlay backed by `GET /panic`. Nothing to configure.
+- **One tap from your phone:** add the **"Panic"** shortcut (see
+  [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md)) — it `GET /panic`s and
+  reads back the `headline` (grounding + first step) in one tap.
+- **Proactive nudge:** import
+  [`../deploy/n8n/panic-check.workflow.json`](../deploy/n8n/panic-check.workflow.json),
+  set the token + Pushover token/user. It polls `POST /webhooks/panic/check`
+  every 20 min and pushes **only when the plate tips into overwhelm**. The server
+  edge-triggers on the level (like the departure signature) and honors a
+  cooldown, so a sustained pile-up nudges once, not every poll.
+- Tune the bar with coaching-state keys (defaults in parentheses):
+  ```
+  # How many "pressing" items (with something already late) counts as overwhelm (3):
+  sqlite3 prefrontal.db "UPDATE coaching_state SET value='4' WHERE key='panic_alert_min_pressing';"
+  # Minutes to stay quiet after an alert, even across a new spike (180):
+  sqlite3 prefrontal.db "UPDATE coaching_state SET value='240' WHERE key='panic_alert_cooldown_minutes';"
+  ```
+
+---
+
 ## 12. Schedule the nightly learning pass
 
 The behavioral profile only improves if patterns are recomputed as episodes
