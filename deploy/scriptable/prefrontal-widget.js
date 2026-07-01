@@ -1,8 +1,17 @@
-// Prefrontal — iOS home-screen widget (Scriptable)
+// Prefrontal — iOS home-screen & Lock Screen widget (Scriptable)
 // ---------------------------------------------------------------------------
 // A glanceable view of "right now": any active outing (with its escalation
 // level), your next commitments today, and conflict/todo counts. Reads the
 // Prefrontal API over Tailscale; tap the widget to open the full family view.
+//
+// One script drives every size. It auto-detects which family iOS is rendering:
+//   • Home Screen — Small / Medium / Large: the full card (header + list + counts).
+//   • Lock Screen — the accessory slots around the clock:
+//       – Rectangular: active outing (or next commitment) + a counts line.
+//       – Circular:    a single glyph + number (elapsed mins / next time / todos).
+//       – Inline:      one line beside the clock (the single most urgent thing).
+//   Lock Screen widgets are rendered monochrome by iOS, so these lean on SF
+//   Symbols + text rather than the dashboard colors.
 //
 // SETUP
 //   1. Install Scriptable (App Store), open it, tap + to add a script, paste this.
@@ -12,8 +21,11 @@
 //      widget to your own outings/commitments/todos, so each person's phone runs
 //      the same script with their own token. If your token is rotated, update it
 //      here.
-//   3. Run once in-app to test. Then long-press the home screen → add a
-//      Scriptable widget (Medium recommended) → choose this script.
+//   3. Run once in-app to test (previews the Medium card). Then add it where you
+//      want it:
+//        • Home Screen: long-press → add a Scriptable widget → choose this script.
+//        • Lock Screen: edit the Lock Screen → tap a widget slot → Scriptable →
+//          choose this script (pick the circular, rectangular, or inline slot).
 //   Works anywhere your phone can reach the mini over Tailscale.
 
 // --- config ---------------------------------------------------------------
@@ -69,9 +81,7 @@ const ok = settled.some((s) => s.status === "fulfilled");
 const family = config.widgetFamily || "medium";
 const small = family === "small";
 const w = new ListWidget();
-w.backgroundColor = C.bg;
-w.setPadding(14, 16, 12, 14);
-w.url = BASE_URL + "/family";
+w.url = BASE_URL + "/family"; // tap opens the family view (after unlock on the Lock Screen)
 w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
 
 function text(stack, s, { color = C.fg, size = 13, bold = false, font } = {}) {
@@ -82,25 +92,122 @@ function text(stack, s, { color = C.fg, size = 13, bold = false, font } = {}) {
   return t;
 }
 
-// header: title + last-updated (or offline)
-const head = w.addStack();
-head.centerAlignContent();
-text(head, "🧠 Prefrontal", { bold: true, size: small ? 13 : 15 });
-head.addSpacer();
-text(head, ok ? new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "offline",
-  { color: ok ? C.muted : C.call, size: 11 });
-w.addSpacer(small ? 6 : 8);
+// An SF Symbol as an image — the right primitive for the monochrome Lock Screen
+// (iOS tints it to match the clock). Returns null-safely if the symbol is absent.
+function symbol(stack, name, size, color = C.fg) {
+  const sym = SFSymbol.named(name);
+  if (!sym) return null;
+  sym.applyFont(Font.systemFont(size));
+  const img = stack.addImage(sym.image);
+  img.imageSize = new Size(size + 3, size + 3);
+  img.tintColor = color;
+  return img;
+}
 
-if (!ok) {
-  text(w, "Can't reach Prefrontal.", { color: C.muted, size: 12 });
-  text(w, "Check Tailscale / token.", { color: C.muted, size: 11 });
-} else {
+// --- shared "right now" summary (used by every family) --------------------
+const active = (outings.active || [])[0];
+const todayCommitments = (commitments.commitments || []).filter((c) => isToday(c.start_at));
+const upcomingList = todayCommitments.length ? todayCommitments : (commitments.commitments || []);
+const nextCommitment = upcomingList[0];
+const hard = (conflicts.conflicts || []).length;
+const poss = (conflicts.possible_conflicts || []).length;
+const open = (todos.todos || []).length;
+
+// ===========================================================================
+// Lock Screen (accessory) families — monochrome, tiny; SF Symbols + text.
+// ===========================================================================
+function renderInline() {
+  // A single line beside the clock: the one most urgent thing.
+  let sym, label;
+  if (!ok) { sym = "wifi.slash"; label = "Prefrontal offline"; }
+  else if (active) { sym = "figure.walk"; label = `${active.intention} · ${active.level}`; }
+  else if (nextCommitment) { sym = "calendar"; label = `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`; }
+  else if (hard) { sym = "exclamationmark.triangle"; label = `${hard} conflict${hard === 1 ? "" : "s"}`; }
+  else { sym = "checklist"; label = `${open} todo${open === 1 ? "" : "s"}`; }
+  symbol(w, sym, 12);
+  text(w, label, { size: 13 });
+}
+
+function renderCircular() {
+  w.addAccessoryWidgetBackground = true;
+  const col = w.addStack();
+  col.layoutVertically();
+  col.centerAlignContent();
+  const top = col.addStack(); top.addSpacer();
+  const bot = col.addStack(); bot.addSpacer();
+  if (!ok) {
+    symbol(top, "wifi.slash", 14); top.addSpacer();
+    text(bot, "—", { size: 13 }); bot.addSpacer();
+  } else if (active) {
+    symbol(top, "figure.walk", 13); top.addSpacer();
+    text(bot, mins(active.elapsed_minutes), { size: 15, bold: true }); bot.addSpacer();
+  } else if (nextCommitment) {
+    text(top, "Next", { size: 9, color: C.muted }); top.addSpacer();
+    text(bot, fmtTime(nextCommitment.start_at), { size: 14, bold: true }); bot.addSpacer();
+  } else {
+    symbol(top, "checklist", 13); top.addSpacer();
+    text(bot, String(open), { size: 15, bold: true }); bot.addSpacer();
+  }
+}
+
+function renderRectangular() {
+  w.addAccessoryWidgetBackground = true;
+  if (!ok) {
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "wifi.slash", 12);
+    text(r, " Prefrontal offline", { size: 13 });
+    return;
+  }
+  if (active) {
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "figure.walk", 12);
+    text(r, " " + active.intention, { size: 13, bold: true });
+    text(w, `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
+      { size: 12, color: C.muted });
+  } else if (nextCommitment) {
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "calendar", 12);
+    text(r, " " + fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
+  } else {
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "checkmark.circle", 12);
+    text(r, " Nothing scheduled", { size: 13 });
+  }
+  // Compact counts line (conflicts surface first when present).
+  const bits = [];
+  if (hard) bits.push(`⚠ ${hard}`);
+  if (poss) bits.push(`~ ${poss}`);
+  bits.push(`✓ ${open}`);
+  text(w, bits.join("   "), { size: 11, color: C.muted });
+}
+
+// ===========================================================================
+// Home Screen (Small / Medium / Large) — the full card.
+// ===========================================================================
+function renderHomeScreen() {
+  w.backgroundColor = C.bg;
+  w.setPadding(14, 16, 12, 14);
+
+  // header: title + last-updated (or offline)
+  const head = w.addStack();
+  head.centerAlignContent();
+  text(head, "🧠 Prefrontal", { bold: true, size: small ? 13 : 15 });
+  head.addSpacer();
+  text(head, ok ? new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "offline",
+    { color: ok ? C.muted : C.call, size: 11 });
+  w.addSpacer(small ? 6 : 8);
+
+  if (!ok) {
+    text(w, "Can't reach Prefrontal.", { color: C.muted, size: 12 });
+    text(w, "Check Tailscale / token.", { color: C.muted, size: 11 });
+    return;
+  }
+
   // Active outing takes priority (time-sensitive).
-  const active = (outings.active || [])[0];
   if (active) {
     const row = w.addStack();
     row.centerAlignContent();
-    const dot = text(row, "● ", { color: LEVEL_COLOR[active.level] || C.none, size: 13 });
+    text(row, "● ", { color: LEVEL_COLOR[active.level] || C.none, size: 13 });
     text(row, active.intention, { bold: true, size: small ? 13 : 14 });
     text(w, `out ${mins(active.elapsed_minutes)} of ${mins(active.time_window_minutes)} · ${active.level}`,
       { color: C.muted, size: 12 });
@@ -108,10 +215,9 @@ if (!ok) {
   }
 
   // Next commitments today.
-  const today = (commitments.commitments || []).filter((c) => isToday(c.start_at));
-  const upcoming = (today.length ? today : (commitments.commitments || [])).slice(0, small ? 1 : (family === "large" ? 6 : 3));
+  const upcoming = upcomingList.slice(0, small ? 1 : (family === "large" ? 6 : 3));
   if (upcoming.length) {
-    if (!active) text(w, today.length ? "Today" : "Next up", { color: C.muted, size: 11, bold: true });
+    if (!active) text(w, todayCommitments.length ? "Today" : "Next up", { color: C.muted, size: 11, bold: true });
     for (const c of upcoming) {
       const r = w.addStack();
       r.centerAlignContent();
@@ -127,9 +233,6 @@ if (!ok) {
     w.addSpacer(8);
     const foot = w.addStack();
     foot.centerAlignContent();
-    const hard = (conflicts.conflicts || []).length;
-    const poss = (conflicts.possible_conflicts || []).length;
-    const open = (todos.todos || []).length;
     if (hard) text(foot, `🔴 ${hard}  `, { color: C.call, size: 12 });
     if (poss) text(foot, `🟡 ${poss}  `, { color: C.soft, size: 12 });
     text(foot, `✓ ${open} todo${open === 1 ? "" : "s"}`, { color: C.muted, size: 12 });
@@ -137,8 +240,19 @@ if (!ok) {
   }
 }
 
+// --- dispatch by family ----------------------------------------------------
+if (family === "accessoryInline") renderInline();
+else if (family === "accessoryCircular") renderCircular();
+else if (family === "accessoryRectangular") renderRectangular();
+else renderHomeScreen();
+
 if (!config.runsInWidget) {
-  small ? await w.presentSmall() : (family === "large" ? await w.presentLarge() : await w.presentMedium());
+  if (family === "accessoryInline") await w.presentAccessoryInline();
+  else if (family === "accessoryCircular") await w.presentAccessoryCircular();
+  else if (family === "accessoryRectangular") await w.presentAccessoryRectangular();
+  else if (small) await w.presentSmall();
+  else if (family === "large") await w.presentLarge();
+  else await w.presentMedium();
 }
 Script.setWidget(w);
 Script.complete();
