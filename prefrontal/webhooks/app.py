@@ -2003,9 +2003,18 @@ def create_app(
     def commitments_list(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """List active upcoming commitments, soonest first."""
+        """List active upcoming commitments, soonest first.
+
+        Each commitment carries a ``calendar`` label and a ``calendar_key`` (the
+        feed slug). The response also echoes the operator-configured ``calendars``
+        label map so the dashboard can render a friendly, colored pill per
+        calendar without hard-coding any feed names or colors.
+        """
         memory = ctx.store
-        return {"commitments": memory.upcoming_commitments()}
+        return {
+            "commitments": memory.upcoming_commitments(),
+            "calendars": resolved_settings.calendar_label_map,
+        }
 
     @app.get("/commitments/conflicts", tags=["schedule"])
     def commitments_conflicts(

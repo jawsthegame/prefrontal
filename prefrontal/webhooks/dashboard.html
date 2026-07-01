@@ -65,9 +65,10 @@
   .lvl-call { background: #3a1620; color: var(--call); }
   .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
   .pill.fyi { background: #1e2a3a; color: #8ab4d8; }
-  /* Account pill: names the mail inbox a todo came from. Solid color + dark text
-     so a bright configured color (orange, magenta) reads clearly. */
-  .pill.acct { font-weight: 700; color: #0b0d12; }
+  /* Account/calendar pill: names the mail inbox a todo came from, or the
+     calendar a commitment belongs to. Solid color + dark text so a bright
+     configured color (orange, magenta, blue) reads clearly. */
+  .pill.acct, .pill.cal { font-weight: 700; color: #0b0d12; }
   /* The exact text appended to the triage prompt on the next sync — the concrete
      impact your drops have on what mail gets flagged. */
   .addendum { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
@@ -369,6 +370,20 @@ function renderTodos(d) {
 }
 function renderCommitments(list, conflicts) {
   const c = (list.commitments || []);
+  // Config-driven calendar pills: the /commitments response maps each feed slug
+  // (calendar_key) to a {label, color}. A commitment whose calendar has no config
+  // entry falls back to its default label as a plain pill — nothing hard-coded.
+  const cals = list.calendars || {};
+  const calPill = (key, label) => {
+    const cfg = key ? cals[key] : null;
+    const text = cfg && cfg.label ? cfg.label : label;
+    if (!text) return "";
+    const color = cfg && cfg.color ? cfg.color : "";
+    const style = color ? ` style="background:${esc(color)}"` : "";
+    const cls = color ? "pill cal" : "pill";
+    const title = label && text !== label ? ` title="calendar: ${esc(label)}"` : "";
+    return ` <span class="${cls}"${style}${title}>${esc(text)}</span>`;
+  };
   const ids = new Set();
   (conflicts.conflicts || []).forEach((p) => { ids.add(p.a.id); ids.add(p.b.id); });
   let html = "";
@@ -386,7 +401,7 @@ function renderCommitments(list, conflicts) {
   if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
   html += c.map((x) => {
     const fyi = x.kind === "fyi";
-    const cal = x.calendar ? ` <span class="pill">${esc(x.calendar)}</span>` : "";
+    const cal = calPill(x.calendar_key, x.calendar);
     const fyiBadge = fyi ? ' <span class="pill fyi" title="Where someone will be — never a conflict">FYI</span>' : "";
     const dbl = (!fyi && ids.has(x.id)) ? ' <span class="pill conflict">double-booked</span>' : "";
     const target = fyi ? "self" : "fyi";

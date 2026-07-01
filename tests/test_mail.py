@@ -18,7 +18,12 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.config import Settings, _parse_account_labels, _parse_mail_accounts
+from prefrontal.config import (
+    Settings,
+    _parse_account_labels,
+    _parse_calendar_labels,
+    _parse_mail_accounts,
+)
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message
 from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
@@ -295,6 +300,28 @@ def test_settings_account_label_map():
         "outlook": {"label": "t-mobile", "color": "magenta"},
     }
     assert Settings().account_label_map == {}
+
+
+def test_parse_calendar_labels():
+    parsed = _parse_calendar_labels(
+        "personal=Personal:blue, work=Vistar:orange, outlook=T-Mobile:magenta"
+    )
+    assert parsed == (
+        ("personal", "Personal", "blue"),
+        ("work", "Vistar", "orange"),
+        ("outlook", "T-Mobile", "magenta"),
+    )
+
+
+def test_settings_calendar_label_map():
+    s = Settings(
+        calendar_labels=(("personal", "Personal", "blue"), ("work", "Vistar", "orange"))
+    )
+    assert s.calendar_label_map == {
+        "personal": {"label": "Personal", "color": "blue"},
+        "work": {"label": "Vistar", "color": "orange"},
+    }
+    assert Settings().calendar_label_map == {}
 
 
 # -- ingest orchestration ----------------------------------------------------
