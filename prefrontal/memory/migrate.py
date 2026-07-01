@@ -51,6 +51,47 @@ _USER_TABLES = (
 )
 
 
+#: Columns added to a table *after* its original definition. ``CREATE TABLE IF
+#: NOT EXISTS`` (in ``schema.sql``) never alters an existing table, so a column
+#: introduced later must be back-filled with ``ALTER TABLE`` on databases created
+#: before it existed. Maps table name -> list of ``(column, type)`` to ensure.
+#: Append here when you add a column to an existing table's ``CREATE TABLE``.
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "commitments": [
+        ("dest_lat", "REAL"),
+        ("dest_lon", "REAL"),
+        ("kind", "TEXT NOT NULL DEFAULT 'self'"),
+        ("kind_source", "TEXT"),
+        ("source_url", "TEXT"),
+    ],
+    "todo_decompositions": [("done_steps", "TEXT")],
+    "todos": [("source", "TEXT NOT NULL DEFAULT 'manual'")],
+    "focus_sessions": [
+        ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
+        ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+}
+
+
+def backfill_added_columns(conn: sqlite3.Connection) -> None:
+    """Back-fill columns added to a table after its original schema (idempotent).
+
+    New seed rows and whole new tables are handled by ``schema.sql`` itself (it
+    is idempotent), but ``CREATE TABLE IF NOT EXISTS`` leaves an existing table's
+    columns untouched. This adds any missing later columns (see
+    :data:`_ADDED_COLUMNS`) so an always-on database upgrades in place. A table
+    that does not exist yet is skipped — ``schema.sql`` will create it at its
+    final shape.
+    """
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table absent (PRAGMA returns no rows) — nothing to alter
+        for name, col_type in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
+
+
 @dataclass(frozen=True)
 class MigrationResult:
     """Outcome of :func:`migrate_to_multi_tenant`.
@@ -357,3 +398,42 @@ def _rebuild_table(
     )
     conn.execute(f"DROP TABLE {table}")
     conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+
+
+def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
+    """Apply every pending schema migration, in order, before ``schema.sql`` runs.
+
+    This is the single entry point for schema evolution — the one ordered ladder
+    that replaces the two ad-hoc mechanisms that used to straddle ``schema.sql``
+    (the multi-tenant upgrade ran before it, the column back-fill after, in
+    :func:`prefrontal.memory.db.init_db`). Every step guards its own
+    applicability, so the ladder is idempotent and safe to run on any database —
+    fresh, legacy single-tenant, or already current.
+
+    Steps, in order:
+
+    1. **Multi-tenant scoping** — :func:`migrate_to_multi_tenant`, a no-op unless
+       the database is a legacy single-tenant one.
+    2. **Added-column back-fill** — :func:`backfill_added_columns`.
+
+    Both steps run *before* ``schema.sql`` is (re)applied: step 1 must, because
+    the new schema's indexes reference ``user_id``; step 2 safely can, because it
+    only alters tables that already exist (fresh tables are created by
+    ``schema.sql`` at their final shape). ``schema.sql`` then fills in any missing
+    tables, indexes, and seed rows.
+
+    Args:
+        conn: An open connection to the database to upgrade.
+
+    Returns:
+        The :class:`MigrationResult` from the multi-tenant step (``migrated``
+        is ``False`` when it was a no-op), so a caller that wants to surface the
+        legacy user's one-time token — the explicit ``prefrontal
+        migrate-multi-tenant`` command — can. :func:`prefrontal.memory.db.init_db`
+        discards it.
+    """
+    result = MigrationResult(migrated=False)
+    if needs_migration(conn):
+        result = migrate_to_multi_tenant(conn)
+    backfill_added_columns(conn)
+    return result

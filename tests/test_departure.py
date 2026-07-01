@@ -23,7 +23,8 @@ from prefrontal.departure import (
     plan_departure,
 )
 from prefrontal.impact import utcnow
-from prefrontal.memory.db import _migrate, init_db
+from prefrontal.memory.db import init_db
+from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -177,14 +178,14 @@ def test_location_round_trip():
 
 
 def test_migrate_adds_dest_columns_idempotently():
-    """_migrate back-fills dest_lat/dest_lon on a pre-existing table, repeatably."""
+    """backfill_added_columns adds dest_lat/dest_lon on a pre-existing table."""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE commitments (id INTEGER PRIMARY KEY, title TEXT)")
-    _migrate(conn)
+    backfill_added_columns(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(commitments)")}
     assert {"dest_lat", "dest_lon"} <= cols
-    _migrate(conn)  # second run is a no-op, not an error
+    backfill_added_columns(conn)  # second run is a no-op, not an error
     conn.close()
 
 

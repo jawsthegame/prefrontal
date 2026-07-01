@@ -65,56 +65,20 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-#: Columns added after a table's original definition. ``CREATE TABLE IF NOT
-#: EXISTS`` never alters an existing table, so columns introduced later must be
-#: back-filled with ``ALTER TABLE`` on databases created before they existed.
-#: Maps table name -> list of ``(column, type)`` that must be present.
-_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "commitments": [
-        ("dest_lat", "REAL"),
-        ("dest_lon", "REAL"),
-        ("kind", "TEXT NOT NULL DEFAULT 'self'"),
-        ("kind_source", "TEXT"),
-        ("source_url", "TEXT"),
-    ],
-    "todo_decompositions": [("done_steps", "TEXT")],
-    "todos": [("source", "TEXT NOT NULL DEFAULT 'manual'")],
-    "focus_sessions": [
-        ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
-        ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
-    ],
-}
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Back-fill columns added after a table's original schema (idempotent).
-
-    New seed rows and tables are handled by ``schema.sql`` itself (it is
-    idempotent), but ``CREATE TABLE IF NOT EXISTS`` leaves an existing table's
-    columns untouched. This adds any missing later columns so an always-on
-    database upgrades in place on the next :func:`init_db`.
-    """
-    for table, columns in _ADDED_COLUMNS.items():
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-        if not existing:
-            continue  # table absent (PRAGMA returns no rows) — nothing to alter
-        for name, col_type in columns:
-            if name not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
-
-
 def init_db(db_path: str) -> sqlite3.Connection:
     """Create and seed the memory database, returning an open connection.
 
-    Applies ``schema.sql`` against ``db_path``. The script is idempotent
-    (``CREATE TABLE IF NOT EXISTS``), so calling this repeatedly is safe and will
-    not clobber existing data. After the script runs, :func:`_migrate` back-fills
-    any columns added to existing tables since their original definition.
+    Runs the ordered migration ladder
+    (:func:`prefrontal.memory.migrate.run_migrations`) and then applies
+    ``schema.sql``. The migrations bring an existing database up to the current
+    shape *before* the schema is (re)applied — a legacy single-tenant database is
+    upgraded in place (a legacy user is created and every per-user row is
+    backfilled to it) and any columns added to existing tables since their
+    original definition are back-filled. Both are idempotent and no-ops on fresh
+    / already-current databases.
 
-    A database created before multi-tenancy is detected and upgraded in place
-    (a legacy user is created and every per-user row is backfilled to it) so an
-    always-on deployment migrates itself on the next restart. Fresh installs and
-    already-migrated databases skip this — it is a no-op for them. The
+    ``schema.sql`` itself is idempotent (``CREATE TABLE IF NOT EXISTS``), so
+    calling this repeatedly is safe and never clobbers existing data. The
     auto-created legacy user's one-time token is *not* surfaced here; an operator
     rotates it with ``prefrontal user rotate`` (or runs the explicit
     ``prefrontal migrate-multi-tenant`` first to capture it).
@@ -126,16 +90,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
         An open :class:`sqlite3.Connection` with the schema applied.
     """
     conn = connect(db_path)
-    # Bring a pre-multi-tenant database up to the row-scoped schema *before*
-    # applying schema.sql — the new schema's indexes reference ``user_id``, which
-    # a legacy table does not have yet, so the migration must add those columns
-    # first. Imported lazily to avoid an import cycle (migrate imports the store,
-    # which imports this module). A no-op on fresh / already-migrated databases.
-    from prefrontal.memory.migrate import migrate_to_multi_tenant, needs_migration
+    # All schema evolution lives in one ordered ladder in the migrate module, run
+    # before schema.sql (the multi-tenant step must precede it — the new schema's
+    # indexes reference ``user_id``). Imported lazily to avoid an import cycle
+    # (migrate imports the store, which imports this module).
+    from prefrontal.memory.migrate import run_migrations
 
-    if needs_migration(conn):
-        migrate_to_multi_tenant(conn)
+    run_migrations(conn)
     conn.executescript(SCHEMA_PATH.read_text())
-    _migrate(conn)
     conn.commit()
     return conn
