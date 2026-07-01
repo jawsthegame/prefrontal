@@ -154,8 +154,8 @@ def build_focus_message(
     if level == "check":
         if aligned:
             return (
-                f"{greeting}, {elapsed} min on '{task}'. Still the thing you "
-                "meant to be doing? Tap to keep going or wrap up."
+                f"{greeting}, {elapsed} min on '{task}'. Still what you meant to "
+                "be doing? Keep going, or open End focus to wrap up."
             )
         return (
             f"{greeting}, you've spent {elapsed} min and you meant to be on "
