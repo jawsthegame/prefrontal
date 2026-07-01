@@ -21,8 +21,10 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import (
     FreeWindow,
     available_now,
+    energy_time_rank,
     fit_todos,
     free_windows,
+    pick_now,
     suggest_for_windows,
     work_window_now,
 )
@@ -174,6 +176,34 @@ def test_available_now_gap_ongoing_and_open():
                 "end_at": _at(now + timedelta(minutes=20))}]
     assert available_now(ongoing, now, horizon) == 0  # in a meeting right now
     assert available_now([], now, horizon) == 90  # nothing on the calendar → full window
+
+
+def test_energy_time_rank_afternoon_prefers_low():
+    """Mornings are energy-neutral; afternoons rank low-energy best."""
+    assert energy_time_rank("high", 9) == energy_time_rank("low", 9) == 0  # morning neutral
+    assert energy_time_rank("low", 15) == 0
+    assert energy_time_rank("medium", 15) == 1
+    assert energy_time_rank("high", 15) == 2
+
+
+def test_pick_now_biases_toward_most_avoided_that_fits():
+    """The most-avoided todo that fits wins, over a shinier quick one."""
+    fits = [
+        {"todo": {"id": 1, "energy": "low"}, "effective_minutes": 10},
+        {"todo": {"id": 2, "energy": "high"}, "effective_minutes": 20},
+    ]
+    pick = pick_now(fits, avoided_ids=[2, 1], local_hour=15)
+    assert (pick["todo"]["id"], pick["reason"]) == (2, "avoided")
+
+
+def test_pick_now_prefers_low_energy_later_when_none_avoided():
+    """With nothing avoided, afternoon prefers low-energy; morning keeps fit order."""
+    fits = [
+        {"todo": {"id": 1, "energy": "high"}, "effective_minutes": 10},
+        {"todo": {"id": 2, "energy": "low"}, "effective_minutes": 20},
+    ]
+    assert pick_now(fits, [], local_hour=15)["todo"]["id"] == 2  # afternoon → low energy
+    assert pick_now(fits, [], local_hour=9)["todo"]["id"] == 1  # morning → fit order kept
 
 
 # -- endpoints ---------------------------------------------------------------
@@ -703,3 +733,21 @@ def test_todos_now_zero_when_busy(client, store_open):
 
 def test_todos_now_requires_auth(client):
     assert client.get("/todos/now").status_code == 401
+
+
+def test_todos_now_surfaces_the_avoided_thing(client, store_open):
+    """A week-old important todo beats a fresh shiny quick one (anti-avoidance)."""
+    _all_day(store_open)
+    client.post("/todos", headers=_auth(),
+                json={"title": "Fun quick thing", "estimate_minutes": 10, "priority": 1})
+    client.post("/todos", headers=_auth(),
+                json={"title": "Call the accountant", "estimate_minutes": 15, "priority": 2})
+    # Age the accountant todo past the avoidance threshold (open ≥ 3 days).
+    store_open.conn.execute(
+        "UPDATE todos SET created_at = datetime('now','-8 days') WHERE title = ?",
+        ("Call the accountant",),
+    )
+    store_open.conn.commit()
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["suggestion"]["title"] == "Call the accountant"
+    assert r["suggestion"]["reason"] == "avoided"

@@ -161,6 +161,71 @@ def available_now(
     return 0.0
 
 
+#: Local hour at/after which we prefer low-energy todos ("later in the day").
+DEFAULT_EVENING_AFTER_HOUR = 14
+_ENERGY_DEMAND = {"low": 0, "medium": 1, "high": 2}
+
+
+def local_hour_of(now: datetime, tz: str) -> int:
+    """The local hour (0–23) for a naive-UTC instant, in timezone ``tz``."""
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return now.replace(tzinfo=timezone.utc).astimezone(zone).hour
+
+
+def energy_time_rank(
+    energy: str | None, local_hour: int, *, evening_after: int = DEFAULT_EVENING_AFTER_HOUR
+) -> int:
+    """Rank (0 = best) of a todo's energy for the time of day.
+
+    In the afternoon we prefer low-energy tasks (higher-demand tasks rank worse,
+    since willpower is thinner); in the morning energy is neutral.
+    """
+    if local_hour < evening_after:
+        return 0
+    return _ENERGY_DEMAND.get((energy or "medium").lower(), 1)
+
+
+def pick_now(
+    fits: list[dict[str, Any]],
+    avoided_ids: list[int],
+    local_hour: int,
+    *,
+    evening_after: int = DEFAULT_EVENING_AFTER_HOUR,
+) -> dict[str, Any] | None:
+    """Choose one todo from :func:`fit_todos` output for "right now".
+
+    Honest prioritization: surface the **most-avoided** todo that fits (fighting
+    the pull toward the shiny/easy thing). If nothing genuinely avoided fits, take
+    the best fit but **prefer low-energy tasks later in the day**.
+
+    Args:
+        fits: :func:`fit_todos` output — ``[{todo, effective_minutes}, …]``.
+        avoided_ids: Todo ids, most-avoided first (from ``avoided_todos``).
+        local_hour: Current local hour (0–23).
+
+    Returns:
+        ``{todo, effective_minutes, reason}`` (``reason`` is ``"avoided"`` or
+        ``"fits"``), or ``None`` when ``fits`` is empty.
+    """
+    if not fits:
+        return None
+    by_id = {f["todo"]["id"]: f for f in fits}
+    for tid in avoided_ids:  # most-avoided first
+        if tid in by_id:
+            return {**by_id[tid], "reason": "avoided"}
+    # Nothing genuinely avoided fits — best fit, low-energy-later preference.
+    # sorted() is stable, so fit_todos' deadline/priority/shortest order is kept
+    # within an equal energy rank.
+    ordered = sorted(
+        fits,
+        key=lambda f: energy_time_rank(f["todo"].get("energy"), local_hour, evening_after=evening_after),
+    )
+    return {**ordered[0], "reason": "fits"}
+
+
 def _fit_key(item: tuple[dict[str, Any], float]) -> tuple:
     """Sort key: soonest deadline, then highest priority, then quickest."""
     todo, effective = item

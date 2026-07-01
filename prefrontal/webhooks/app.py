@@ -167,6 +167,8 @@ from prefrontal.scheduling import (
     DEFAULT_MIN_WINDOW_MINUTES,
     available_now,
     fit_todos,
+    local_hour_of,
+    pick_now,
     work_window_now,
 )
 from prefrontal.todos import (
@@ -2703,19 +2705,25 @@ def create_app(
             result["reason"] = "no free time right now"
             return result
 
+        open_todos = memory.open_todos()
         bias = _state_float(memory, "time_estimation_bias", 1.0)
-        fits = fit_todos(free, memory.open_todos(), bias)
+        fits = fit_todos(free, open_todos, bias)
         if not fits:
             result["reason"] = "nothing fits this window"
             return result
-        top = fits[0]
+        # Honest pick: surface the most-avoided todo that fits; else the best fit,
+        # preferring low-energy tasks later in the day.
+        avoided_ids = [a["todo"]["id"] for a in avoided_todos(open_todos, now)]
+        top = pick_now(fits, avoided_ids, local_hour_of(now, resolved_settings.timezone))
+        t = top["todo"]
         result["suggestion"] = {
-            "todo_id": top["todo"]["id"],
-            "title": top["todo"]["title"],
-            "estimate_minutes": top["todo"].get("estimate_minutes"),
+            "todo_id": t["id"],
+            "title": t["title"],
+            "estimate_minutes": t.get("estimate_minutes"),
             "effective_minutes": top["effective_minutes"],
-            "priority": top["todo"].get("priority"),
-            "energy": top["todo"].get("energy"),
+            "priority": t.get("priority"),
+            "energy": t.get("energy"),
+            "reason": top["reason"],  # "avoided" (been putting it off) | "fits"
         }
         return result
 

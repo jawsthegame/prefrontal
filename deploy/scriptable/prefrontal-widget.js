@@ -121,8 +121,14 @@ const open = (todos.todos || []).length;
 
 // "You have time for one thing" — the single open todo that fits the gap until
 // your next commitment (server-computed, bounded by working hours + a cap).
-const fitSug = fitNow.suggestion; // { title, estimate_minutes, effective_minutes, ... } or null
+const fitSug = fitNow.suggestion; // { title, estimate_minutes, effective_minutes, reason, ... } or null
 const fitFree = Math.round(fitNow.free_minutes || 0);
+// When the pick is something you've been avoiding, frame it as "catch up" (amber)
+// rather than a breezy "free time" (green) — the honest-prioritization nudge.
+const fitAvoided = !!(fitSug && fitSug.reason === "avoided");
+const fitColor = fitAvoided ? C.soft : C.good;
+const fitGlyph = fitAvoided ? "hourglass" : "bolt.fill";
+const fitLead = fitAvoided ? "catch up" : `${fitFree}m free`;
 
 // Most recent nudge the system sent — shown only while still "recent" (last 8h),
 // so a nudge you already acted on doesn't linger on the widget for days.
@@ -145,7 +151,7 @@ function renderInline() {
   if (!ok) { sym = "wifi.slash"; label = "Prefrontal offline"; }
   else if (active) { sym = "figure.walk"; label = `${active.intention} · ${active.level}`; }
   else if (nextCommitment) { sym = "calendar"; label = `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`; }
-  else if (fitSug) { sym = "bolt.fill"; label = `${fitFree}m free · ${fitSug.title}`; }
+  else if (fitSug) { sym = fitGlyph; label = `${fitLead} · ${fitSug.title}`; }
   else if (hard) { sym = "exclamationmark.triangle"; label = `${hard} conflict${hard === 1 ? "" : "s"}`; }
   else { sym = "checklist"; label = `${open} todo${open === 1 ? "" : "s"}`; }
   symbol(w, sym, 12);
@@ -169,7 +175,7 @@ function renderCircular() {
     text(top, "Next", { size: 9, color: C.muted }); top.addSpacer();
     text(bot, fmtTime(nextCommitment.start_at), { size: 14, bold: true }); bot.addSpacer();
   } else if (fitSug) {
-    symbol(top, "bolt.fill", 13); top.addSpacer();
+    symbol(top, fitGlyph, 13); top.addSpacer();
     text(bot, `${fitFree}m`, { size: 15, bold: true }); bot.addSpacer();
   } else {
     symbol(top, "checklist", 13); top.addSpacer();
@@ -197,8 +203,8 @@ function renderRectangular() {
     text(r, " " + fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
   } else if (fitSug) {
     const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "bolt.fill", 12);
-    text(r, ` ${fitFree}m free · ${fitSug.title}`, { size: 13, bold: true });
+    symbol(r, fitGlyph, 12);
+    text(r, ` ${fitLead} · ${fitSug.title}`, { size: 13, bold: true });
   } else if (recentNudge) {
     // Nothing time-sensitive right now — surface the last thing Prefrontal said.
     const r = w.addStack(); r.centerAlignContent();
@@ -270,8 +276,8 @@ function renderHomeScreen() {
     w.addSpacer(6);
     const fr = w.addStack();
     fr.centerAlignContent();
-    if (!symbol(fr, "bolt.fill", 11, C.good)) text(fr, "⚡", { size: 11, color: C.good });
-    text(fr, ` ${fitFree}m free`, { color: C.good, size: 11, bold: true });
+    if (!symbol(fr, fitGlyph, 11, fitColor)) text(fr, fitAvoided ? "⏳" : "⚡", { size: 11, color: fitColor });
+    text(fr, ` ${fitLead}`, { color: fitColor, size: 11, bold: true });
     text(fr, ` · ${fitSug.title}`, { size: 12 });
   }
 
