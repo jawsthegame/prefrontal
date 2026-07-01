@@ -217,3 +217,15 @@ def test_panic_endpoint(store, noon):
     assert body["late"][0]["title"] == "Leave for Dentist"
     assert body["first_step"]
     assert "Panic mode" in body["text"]
+
+
+def test_dashboard_and_family_wire_the_panic_button(store):
+    """Both HTML shells expose a panic entry point backed by /panic."""
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    with TestClient(app) as c:
+        dash = c.get("/dashboard").text
+        fam = c.get("/family").text
+    for page in (dash, fam):
+        assert 'id="panic-btn"' in page
+        assert 'id="panic"' in page  # the overlay
+        assert '"/panic"' in page    # the fetch call

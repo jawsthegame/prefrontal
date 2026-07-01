@@ -844,7 +844,8 @@ def create_app(
         the ``X-Prefrontal-Token`` once (kept in the browser's localStorage) and
         sends it on every fetch to the auth-guarded ``GET`` endpoints
         (``/outings``, ``/todos``, ``/commitments``, ``/briefing``, ``/profile``),
-        which it polls and refreshes. Reachable over Tailscale from any device.
+        which it polls and refreshes. A prominent "Panic" button opens a focused
+        overlay backed by ``/panic``. Reachable over Tailscale from any device.
         """
         return DASHBOARD_HTML
 
@@ -855,8 +856,9 @@ def create_app(
         Like ``/dashboard`` the shell is unauthenticated and carries no data; it
         prompts once for the access code (the ``X-Prefrontal-Token``) and polls
         only the gentle, read-only endpoints (``/outings`` for "right now" and
-        ``/briefing`` for today's plan). No levels, profile, or action buttons —
-        meant for a partner to glance at over Tailscale.
+        ``/briefing`` for today's plan), plus a soft "Feeling overwhelmed?" button
+        that opens a focused ``/panic`` overlay. No levels, profile, or action
+        buttons — meant for a partner to glance at over Tailscale.
         """
         return FAMILY_HTML
 
