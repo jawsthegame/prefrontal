@@ -90,6 +90,13 @@ class Settings:
             ``work`` → an orange "Vistar" pill). Purely cosmetic and operator-set,
             so the account name in the data stays stable while the surface shows a
             friendly name. Accounts absent here render no pill.
+        timezone: IANA name of the deployment's home timezone (e.g.
+            ``"America/New_York"``), used to interpret calendar times that arrive
+            *without* their own zone — a floating/naive ICS time or a manual
+            commitment. Times that carry an explicit offset or ``TZID`` are
+            unaffected (their own zone wins). Defaults to ``"UTC"`` for backward
+            compatibility; set it to your actual zone so unzoned events don't land
+            hours off.
     """
 
     db_path: str = "prefrontal.db"
@@ -107,6 +114,7 @@ class Settings:
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     account_labels: tuple[tuple[str, str, str], ...] = ()
+    timezone: str = "UTC"
     # Triage learns from dropped email todos (see prefrontal/mail/feedback.py). A
     # drop only counts as a "this didn't need action" correction when it's quick
     # (dropped within this many days of arriving) or comes from a sender dropped
@@ -228,6 +236,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         account_labels=account_labels,
+        timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         triage_quick_drop_days=float(
             os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
         ),
