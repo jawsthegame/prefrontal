@@ -57,7 +57,7 @@ import hmac
 import html
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -160,7 +160,17 @@ from prefrontal.panic import (
     panic_alert_message,
     render_panic,
 )
-from prefrontal.scheduling import fit_todos
+from prefrontal.scheduling import (
+    DEFAULT_DAY_END,
+    DEFAULT_DAY_START,
+    DEFAULT_FIT_CAP_MINUTES,
+    DEFAULT_MIN_WINDOW_MINUTES,
+    available_now,
+    fit_todos,
+    local_hour_of,
+    pick_now,
+    work_window_now,
+)
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     augment_todo,
@@ -2645,6 +2655,77 @@ def create_app(
                 for f in fits
             ],
         }
+
+    @app.get("/todos/now", tags=["todos"])
+    def todos_now(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        cap_minutes: float = DEFAULT_FIT_CAP_MINUTES,
+    ) -> dict[str, Any]:
+        """The single best open todo that fits your free time *right now*.
+
+        "Right now" = the gap until your next commitment, bounded by your working
+        hours (``fit_day_start``/``fit_day_end`` in coaching state, default
+        08:30–17:30 local) and capped (so a wide-open evening doesn't offer a
+        multi-hour task). Outside working hours, or with no real gap / nothing
+        that fits, ``suggestion`` is ``null`` (with a ``reason``). Powers the
+        widget's "you have 25 min — knock this out" prompt.
+        """
+        memory = ctx.store
+        now = utcnow()
+        day_start = memory.get_state("fit_day_start", DEFAULT_DAY_START)
+        day_end = memory.get_state("fit_day_end", DEFAULT_DAY_END)
+        within, horizon = work_window_now(
+            now, resolved_settings.timezone,
+            cap_minutes=cap_minutes, day_start=day_start, day_end=day_end,
+        )
+        upcoming = memory.upcoming_commitments(limit=1)
+        result: dict[str, Any] = {
+            "free_minutes": 0,
+            "within_hours": within,
+            "next_commitment": (
+                {"title": upcoming[0]["title"], "start_at": upcoming[0]["start_at"]}
+                if upcoming else None
+            ),
+            "suggestion": None,
+            "reason": None,
+        }
+        if not within:
+            result["reason"] = "outside working hours"
+            return result
+
+        fmt = "%Y-%m-%d %H:%M:%S"
+        # Look back far enough to catch an in-progress (or all-day) commitment
+        # that started before now; free_windows clips it to the [now, horizon] band.
+        commitments = memory.commitments_between(
+            (now - timedelta(hours=26)).strftime(fmt), horizon.strftime(fmt)
+        )
+        free = available_now(commitments, now, horizon)
+        result["free_minutes"] = round(free)
+        if free < DEFAULT_MIN_WINDOW_MINUTES:
+            result["reason"] = "no free time right now"
+            return result
+
+        open_todos = memory.open_todos()
+        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        fits = fit_todos(free, open_todos, bias)
+        if not fits:
+            result["reason"] = "nothing fits this window"
+            return result
+        # Honest pick: surface the most-avoided todo that fits; else the best fit,
+        # preferring low-energy tasks later in the day.
+        avoided_ids = [a["todo"]["id"] for a in avoided_todos(open_todos, now)]
+        top = pick_now(fits, avoided_ids, local_hour_of(now, resolved_settings.timezone))
+        t = top["todo"]
+        result["suggestion"] = {
+            "todo_id": t["id"],
+            "title": t["title"],
+            "estimate_minutes": t.get("estimate_minutes"),
+            "effective_minutes": top["effective_minutes"],
+            "priority": t.get("priority"),
+            "energy": t.get("energy"),
+            "reason": top["reason"],  # "avoided" (been putting it off) | "fits"
+        }
+        return result
 
     # -- Admin: user provisioning (operator-only) ----------------------------
 

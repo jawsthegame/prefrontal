@@ -19,13 +19,20 @@ Two modes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 #: Assumed duration for a commitment with no ``end_at`` when carving windows.
 DEFAULT_EVENT_MINUTES = 30.0
 #: Ignore gaps shorter than this — not worth surfacing.
 DEFAULT_MIN_WINDOW_MINUTES = 10.0
+#: Default working-hours band for "what fits right now" (local time). Outside it
+#: the widget offers nothing; inside, free time is bounded by the day's end.
+DEFAULT_DAY_START = "08:30"
+DEFAULT_DAY_END = "17:30"
+#: Default cap on "free time right now" so an open evening doesn't offer a 3h task.
+DEFAULT_FIT_CAP_MINUTES = 90.0
 
 
 def _parse(ts: str) -> datetime:
@@ -92,6 +99,131 @@ def free_windows(
         if gap >= min_minutes:
             windows.append(FreeWindow(cursor.strftime(fmt), end.strftime(fmt), round(gap, 1)))
     return windows
+
+
+def work_window_now(
+    now: datetime,
+    tz: str,
+    *,
+    cap_minutes: float = DEFAULT_FIT_CAP_MINUTES,
+    day_start: str = DEFAULT_DAY_START,
+    day_end: str = DEFAULT_DAY_END,
+) -> tuple[bool, datetime]:
+    """Bound "free time right now" by working hours and a cap.
+
+    Args:
+        now: The current instant as *naive UTC*.
+        tz: IANA timezone name for the user's local working hours.
+        cap_minutes: Never look further ahead than this (so a wide-open evening
+            doesn't offer a multi-hour task).
+        day_start / day_end: Local ``HH:MM`` working-hours band.
+
+    Returns:
+        ``(within_hours, horizon)``. ``within_hours`` is ``False`` when *now* is
+        outside the local band (nothing should be offered); otherwise ``horizon``
+        is ``min(now + cap, today's local day_end)`` as naive UTC.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    local = now.replace(tzinfo=timezone.utc).astimezone(zone)
+    sh, sm = (int(x) for x in day_start.split(":"))
+    eh, em = (int(x) for x in day_end.split(":"))
+    start_local = local.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end_local = local.replace(hour=eh, minute=em, second=0, microsecond=0)
+    if local < start_local or local >= end_local:
+        return (False, now)
+    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    horizon = min(now + timedelta(minutes=cap_minutes), end_utc)
+    return (True, horizon)
+
+
+def available_now(
+    commitments: list[dict[str, Any]],
+    now: datetime,
+    horizon: datetime,
+    *,
+    default_event_minutes: float = DEFAULT_EVENT_MINUTES,
+) -> float:
+    """Minutes free *starting right now*, until the first commitment or horizon.
+
+    Returns ``0`` when a commitment is in progress (you're busy now) or the
+    horizon is not ahead of now. Both bounds are naive UTC.
+    """
+    if horizon <= now:
+        return 0.0
+    windows = free_windows(
+        commitments, now, horizon, min_minutes=0, default_event_minutes=default_event_minutes
+    )
+    if windows and _parse(windows[0].start) <= now:
+        return windows[0].minutes
+    return 0.0
+
+
+#: Local hour at/after which we prefer low-energy todos ("later in the day").
+DEFAULT_EVENING_AFTER_HOUR = 14
+_ENERGY_DEMAND = {"low": 0, "medium": 1, "high": 2}
+
+
+def local_hour_of(now: datetime, tz: str) -> int:
+    """The local hour (0–23) for a naive-UTC instant, in timezone ``tz``."""
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return now.replace(tzinfo=timezone.utc).astimezone(zone).hour
+
+
+def energy_time_rank(
+    energy: str | None, local_hour: int, *, evening_after: int = DEFAULT_EVENING_AFTER_HOUR
+) -> int:
+    """Rank (0 = best) of a todo's energy for the time of day.
+
+    In the afternoon we prefer low-energy tasks (higher-demand tasks rank worse,
+    since willpower is thinner); in the morning energy is neutral.
+    """
+    if local_hour < evening_after:
+        return 0
+    return _ENERGY_DEMAND.get((energy or "medium").lower(), 1)
+
+
+def pick_now(
+    fits: list[dict[str, Any]],
+    avoided_ids: list[int],
+    local_hour: int,
+    *,
+    evening_after: int = DEFAULT_EVENING_AFTER_HOUR,
+) -> dict[str, Any] | None:
+    """Choose one todo from :func:`fit_todos` output for "right now".
+
+    Honest prioritization: surface the **most-avoided** todo that fits (fighting
+    the pull toward the shiny/easy thing). If nothing genuinely avoided fits, take
+    the best fit but **prefer low-energy tasks later in the day**.
+
+    Args:
+        fits: :func:`fit_todos` output — ``[{todo, effective_minutes}, …]``.
+        avoided_ids: Todo ids, most-avoided first (from ``avoided_todos``).
+        local_hour: Current local hour (0–23).
+
+    Returns:
+        ``{todo, effective_minutes, reason}`` (``reason`` is ``"avoided"`` or
+        ``"fits"``), or ``None`` when ``fits`` is empty.
+    """
+    if not fits:
+        return None
+    by_id = {f["todo"]["id"]: f for f in fits}
+    for tid in avoided_ids:  # most-avoided first
+        if tid in by_id:
+            return {**by_id[tid], "reason": "avoided"}
+    # Nothing genuinely avoided fits — best fit, low-energy-later preference.
+    # sorted() is stable, so fit_todos' deadline/priority/shortest order is kept
+    # within an equal energy rank.
+    ordered = sorted(
+        fits,
+        key=lambda f: energy_time_rank(f["todo"].get("energy"), local_hour, evening_after=evening_after),
+    )
+    return {**ordered[0], "reason": "fits"}
 
 
 def _fit_key(item: tuple[dict[str, Any], float]) -> tuple:
