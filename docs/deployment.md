@@ -229,6 +229,16 @@ To run it always-on, add a launchd agent like the one in step 3 whose
 > sync or a manual `POST /commitments`). Without them the reminder still fires —
 > it just leans on each commitment's `lead_minutes`.
 
+> **One-tap "dismiss" link.** The departure and coffee-nudge workflows put a
+> signed dismiss URL in the Pushover `url` field (`url_title` = "Dismiss
+> reminder" / "Silence nudges"). Tapping it hits `GET /nudge/dismiss` and
+> silences that reminder — a departure commitment stops nudging (a future
+> occurrence re-arms on its own); a coffee outing's escalation is pinned so no
+> further push or 150% call fires, without closing the outing. The link is only
+> minted when both `OAUTH_BASE_URL` (your Tailscale HTTPS origin — the link opens
+> off-box) and `SESSION_SECRET` (signs the link) are set; otherwise the field is
+> blank and Pushover simply shows no button.
+
 This is a starting template — node `typeVersion`s can differ across n8n
 releases, so adjust any node n8n flags on import.
 

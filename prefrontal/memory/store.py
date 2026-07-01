@@ -1653,6 +1653,28 @@ class MemoryStore:
         ).fetchall()
         return {r["signature"] for r in rows}
 
+    def dismiss_departure(self, commitment_id: int) -> None:
+        """Record that the user waved off departure nudges for a commitment.
+
+        Idempotent. Keyed by ``commitment_id``, which is unique per commitment
+        *occurrence* — a future occurrence is a fresh row with a new id, so the
+        reminder re-arms naturally rather than being silenced forever.
+        """
+        self.conn.execute(
+            "INSERT OR IGNORE INTO dismissed_departures (user_id, commitment_id) "
+            "VALUES (?, ?)",
+            (self._uid(), commitment_id),
+        )
+        self.conn.commit()
+
+    def dismissed_departures(self) -> set[int]:
+        """Return the set of commitment ids whose departure nudges were dismissed."""
+        rows = self.conn.execute(
+            "SELECT commitment_id FROM dismissed_departures WHERE user_id = ?",
+            (self._uid(),),
+        ).fetchall()
+        return {r["commitment_id"] for r in rows}
+
     # -- mail (ingested + triaged email) -------------------------------------
 
     def seen_mail_ids(self, account: str | None = None) -> set[str]:
