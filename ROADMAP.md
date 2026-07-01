@@ -297,5 +297,18 @@ ordered by leverage; each is independent but builds on denser capture.
   reassurance with a heuristic fallback. Likely surfaces as a briefing variant
   plus a `GET /encouragement`-style endpoint an n8n flow can deliver. Pairs
   naturally with the coaching agent above.
+- **Native Lock Screen Live Activity (live outing timer)** — the shipped
+  Scriptable widget renders the Lock Screen accessory slots but refreshes only on
+  iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale
+  between refreshes. A true *live* timer that counts up in real time on the Lock
+  Screen (and in the Dynamic Island) needs a native **WidgetKit + ActivityKit
+  Live Activity**, which Scriptable can't provide. This would be a small Swift
+  app: start an Activity on `outing/start` (via a Shortcut or a push), update it
+  as the escalation `level` changes, and end it on return — reading the same
+  `/outings` data and per-user token. Cost is real: it needs Xcode, an Apple
+  Developer account, and building/sideloading the app to the phone, so it's an
+  opt-in upgrade rather than a replacement for the Scriptable widget, which stays
+  the zero-native-code default. *(Deferred by choice; the accessory widget covers
+  the glanceable case today.)*
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
