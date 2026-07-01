@@ -20,7 +20,12 @@ from prefrontal.commitments import (
 )
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
-from prefrontal.memory.store import MemoryStore, commitment_url, feed_label
+from prefrontal.memory.store import (
+    MemoryStore,
+    commitment_url,
+    feed_label,
+    feed_slug,
+)
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
@@ -229,17 +234,30 @@ def test_feed_label_maps_prefix_to_display_name():
     assert feed_label("no-prefix-uid") is None
 
 
+def test_feed_slug_returns_raw_namespace():
+    """The raw external_id prefix, unmapped (the pill lookup key); manual → None."""
+    assert feed_slug("personal:abc") == "personal"
+    assert feed_slug("work:xyz") == "work"
+    assert feed_slug("outlook:1") == "outlook"
+    assert feed_slug("icloud:1") == "icloud"  # not title-cased, unlike feed_label
+    assert feed_slug(None) is None
+    assert feed_slug("no-prefix-uid") is None
+
+
 def test_commitment_reads_expose_calendar_label(store):
-    """Store reads annotate each commitment with its source calendar."""
+    """Store reads annotate each commitment with its source calendar + feed key."""
     cid, _ = store.upsert_commitment(
         title="Swim", start_at=to_utc(_iso(60)), external_id="family:s1"
     )
     manual, _ = store.upsert_commitment(title="Dentist", start_at=to_utc(_iso(120)))
     assert store.get_commitment(cid)["calendar"] == "Family"
+    assert store.get_commitment(cid)["calendar_key"] == "family"
     assert store.get_commitment(manual)["calendar"] is None
+    assert store.get_commitment(manual)["calendar_key"] is None
     by_title = {c["title"]: c for c in store.upcoming_commitments()}
     assert by_title["Swim"]["calendar"] == "Family"
-    assert by_title["Dentist"]["calendar"] is None
+    assert by_title["Swim"]["calendar_key"] == "family"
+    assert by_title["Dentist"]["calendar_key"] is None
 
 
 def test_upcoming_excludes_past(store):
@@ -369,6 +387,36 @@ def test_set_commitment_kind_endpoint_records_feedback(client):
                        json={"kind": "nope"}).status_code == 422
     assert client.post("/commitments/99999/kind", headers=_auth(),
                        json={"kind": "fyi"}).status_code == 404
+
+
+def test_commitments_expose_calendar_key_and_label_map(store_open):
+    """/commitments tags each event with its feed key and echoes the label map."""
+    settings = Settings(
+        webhook_secret=SECRET,
+        calendar_labels=(
+            ("personal", "Personal", "blue"),
+            ("work", "Vistar", "orange"),
+            ("outlook", "T-Mobile", "magenta"),
+        ),
+    )
+    app = create_app(store=store_open, settings=settings)
+    with TestClient(app) as c:
+        c.post(
+            "/webhooks/calendar/sync",
+            headers=_auth(),
+            json={"events": [
+                {"title": "Standup", "start_at": _iso(60), "external_id": "work:s1"},
+            ]},
+        )
+        data = c.get("/commitments", headers=_auth()).json()
+    assert data["calendars"] == {
+        "personal": {"label": "Personal", "color": "blue"},
+        "work": {"label": "Vistar", "color": "orange"},
+        "outlook": {"label": "T-Mobile", "color": "magenta"},
+    }
+    ev = data["commitments"][0]
+    assert ev["calendar_key"] == "work"
+    assert ev["calendar"] == "Work"  # default label; the pill relabels via the map
 
 
 def test_find_conflicts_detects_overlap():

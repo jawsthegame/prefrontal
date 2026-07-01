@@ -90,6 +90,13 @@ class Settings:
             ``work`` → an orange "Vistar" pill). Purely cosmetic and operator-set,
             so the account name in the data stays stable while the surface shows a
             friendly name. Accounts absent here render no pill.
+        calendar_labels: Per-calendar display labels for the dashboard, the exact
+            analogue of ``account_labels`` for commitments: maps a calendar feed
+            slug (the ``external_id`` namespace, e.g. ``personal``/``work``/
+            ``outlook``) to a ``(label, color)`` pair, so a commitment shows a
+            colored pill naming its calendar (e.g. ``work`` → an orange "Vistar"
+            pill). A feed absent here falls back to its default title-cased label
+            with no color.
         timezone: IANA name of the deployment's home timezone (e.g.
             ``"America/New_York"``), used to interpret calendar times that arrive
             *without* their own zone — a floating/naive ICS time or a manual
@@ -114,6 +121,7 @@ class Settings:
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     account_labels: tuple[tuple[str, str, str], ...] = ()
+    calendar_labels: tuple[tuple[str, str, str], ...] = ()
     timezone: str = "UTC"
     # Triage learns from dropped email todos (see prefrontal/mail/feedback.py). A
     # drop only counts as a "this didn't need action" correction when it's quick
@@ -195,6 +203,20 @@ class Settings:
             for account, label, color in self.account_labels
         }
 
+    @property
+    def calendar_label_map(self) -> dict[str, dict[str, str]]:
+        """Calendar feed slug → ``{"label", "color"}`` for dashboard pills.
+
+        Built from :attr:`calendar_labels`. An empty map (the default) means
+        commitments keep their default calendar labels with no color, so the
+        dashboard behaves exactly as before until an operator configures
+        ``PREFRONTAL_CALENDAR_LABELS``.
+        """
+        return {
+            feed: {"label": label, "color": color}
+            for feed, label, color in self.calendar_labels
+        }
+
 
 def load_settings(dotenv_path: str = ".env") -> Settings:
     """Read configuration from the environment and return a fresh ``Settings``.
@@ -211,6 +233,9 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     mail_accounts = _parse_mail_accounts(os.environ.get("PREFRONTAL_MAIL_ACCOUNTS", ""))
     account_labels = _parse_account_labels(
         os.environ.get("PREFRONTAL_ACCOUNT_LABELS", "")
+    )
+    calendar_labels = _parse_calendar_labels(
+        os.environ.get("PREFRONTAL_CALENDAR_LABELS", "")
     )
     default_policy = os.environ.get("PREFRONTAL_MAIL_DEFAULT_POLICY", "signals").strip()
     if default_policy not in ("full", "signals"):
@@ -236,6 +261,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         account_labels=account_labels,
+        calendar_labels=calendar_labels,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         triage_quick_drop_days=float(
             os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
@@ -282,37 +308,59 @@ def _parse_mail_accounts(raw: str) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
-def _parse_account_labels(raw: str) -> tuple[tuple[str, str, str], ...]:
-    """Parse ``PREFRONTAL_ACCOUNT_LABELS`` into ``(account, label, color)`` triples.
+def _parse_label_pills(raw: str) -> tuple[tuple[str, str, str], ...]:
+    """Parse a ``key=label:color`` pill spec into ``(key, label, color)`` triples.
 
-    The format is a comma-separated list of ``account=label:color`` entries, e.g.
+    The format is a comma-separated list of ``key=label:color`` entries, e.g.
     ``work=Vistar:orange,outlook=t-mobile:magenta``. The ``:color`` part is
-    optional (``account=label`` yields an empty color, letting the surface pick a
+    optional (``key=label`` yields an empty color, letting the surface pick a
     default), and the label may itself contain ``:`` — the color is split from the
-    last colon. Entries without ``=`` or with an empty account/label are skipped,
-    so a malformed value degrades to "no pill" rather than raising.
+    last colon. Entries without ``=`` or with an empty key/label are skipped, so a
+    malformed value degrades to "no pill" rather than raising.
+
+    Shared by the mail-account (:func:`_parse_account_labels`) and calendar-feed
+    (:func:`_parse_calendar_labels`) pill configs, which differ only in what the
+    key means.
 
     Args:
         raw: The raw environment-variable value (may be empty).
 
     Returns:
-        A tuple of ``(account, label, color)`` triples, suitable for
-        :attr:`Settings.account_labels`.
+        A tuple of ``(key, label, color)`` triples.
     """
     out: list[tuple[str, str, str]] = []
     for entry in raw.split(","):
         entry = entry.strip()
         if not entry or "=" not in entry:
             continue
-        account, _, spec = entry.partition("=")
-        account = account.strip()
+        key, _, spec = entry.partition("=")
+        key = key.strip()
         label, sep, color = spec.rpartition(":")
         if not sep:  # no ":" — the whole spec is the label, color unset
             label, color = spec, ""
         label, color = label.strip(), color.strip()
-        if account and label:
-            out.append((account, label, color))
+        if key and label:
+            out.append((key, label, color))
     return tuple(out)
+
+
+def _parse_account_labels(raw: str) -> tuple[tuple[str, str, str], ...]:
+    """Parse ``PREFRONTAL_ACCOUNT_LABELS`` into ``(account, label, color)`` triples.
+
+    See :func:`_parse_label_pills` for the format; here the key is the logical
+    mail account name from ``PREFRONTAL_MAIL_ACCOUNTS``.
+    """
+    return _parse_label_pills(raw)
+
+
+def _parse_calendar_labels(raw: str) -> tuple[tuple[str, str, str], ...]:
+    """Parse ``PREFRONTAL_CALENDAR_LABELS`` into ``(feed, label, color)`` triples.
+
+    See :func:`_parse_label_pills` for the format; here the key is the calendar
+    feed slug — the ``external_id`` namespace a synced commitment carries (e.g.
+    ``personal``, ``work``, ``outlook``).
+    """
+    return _parse_label_pills(raw)
 
 
 @lru_cache(maxsize=1)

@@ -124,6 +124,19 @@ def feed_label(external_id: str | None) -> str | None:
     return _FEED_LABELS.get(slug, slug.capitalize())
 
 
+def feed_slug(external_id: str | None) -> str | None:
+    """Return the calendar feed's namespace slug, or ``None`` for a manual event.
+
+    The raw ``external_id`` prefix (``work:UID`` → ``work``), unmapped and
+    lower-level than :func:`feed_label`. It's the stable key a surface uses to
+    look up an operator-configured calendar pill (label + color), so the pretty
+    label can change without the lookup key moving.
+    """
+    if not external_id or ":" not in external_id:
+        return None
+    return external_id.split(":", 1)[0]
+
+
 def commitment_url(commitment: dict[str, Any]) -> str | None:
     """Return a deeplink to a commitment's source event, or ``None``.
 
@@ -150,8 +163,15 @@ def commitment_url(commitment: dict[str, Any]) -> str | None:
 
 
 def _with_calendar(d: dict[str, Any]) -> dict[str, Any]:
-    """Annotate a commitment dict with a ``calendar`` label and source ``url``."""
-    d["calendar"] = feed_label(d.get("external_id"))
+    """Annotate a commitment dict with calendar label/key and source ``url``.
+
+    ``calendar`` is the human label; ``calendar_key`` is the raw feed slug the
+    dashboard uses to look up an operator-configured pill (see
+    :attr:`prefrontal.config.Settings.calendar_labels`).
+    """
+    external_id = d.get("external_id")
+    d["calendar"] = feed_label(external_id)
+    d["calendar_key"] = feed_slug(external_id)
     d["url"] = commitment_url(d)
     return d
 
