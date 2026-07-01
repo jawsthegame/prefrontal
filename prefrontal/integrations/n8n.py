@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from prefrontal.config import Settings, get_settings
+
 
 @dataclass(frozen=True)
 class N8nResult:
@@ -57,6 +59,21 @@ class N8nClient:
         self.webhook_url = webhook_url
         self.token = token
         self.timeout = timeout
+
+    @classmethod
+    def from_settings(cls, settings: Settings | None = None) -> N8nClient:
+        """Build a client from :class:`~prefrontal.config.Settings`.
+
+        Mirrors :meth:`OllamaClient.from_settings` /
+        :meth:`NominatimGeocoder.from_settings` so every integration client has
+        the same construction seam: pass an explicit ``Settings`` (tests, the app
+        factory) or fall back to the process-wide cached settings.
+        """
+        resolved = settings or get_settings()
+        return cls(
+            webhook_url=resolved.n8n_webhook_url,
+            token=resolved.n8n_webhook_token,
+        )
 
     @property
     def enabled(self) -> bool:

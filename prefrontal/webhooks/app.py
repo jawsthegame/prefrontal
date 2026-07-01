@@ -840,10 +840,7 @@ def create_app(
         A configured :class:`fastapi.FastAPI` instance.
     """
     resolved_settings = settings or get_settings()
-    n8n = N8nClient(
-        webhook_url=resolved_settings.n8n_webhook_url,
-        token=resolved_settings.n8n_webhook_token,
-    )
+    n8n = N8nClient.from_settings(resolved_settings)
     # Client used to infer a window when a start states none. Built from settings
     # unless injected (tests pass a mock-transport client to stay offline).
     ollama_client = ollama or OllamaClient(
