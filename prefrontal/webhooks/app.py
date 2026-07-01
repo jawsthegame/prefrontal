@@ -29,6 +29,7 @@ Routes:
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
 - ``GET  /places`` / ``POST /places`` — curated destination aliases for geocoding.
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
+- ``GET  /panic`` — overwhelmed-mode triage: what's on fire now + one first step.
 - ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
 - ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
 - ``GET  /dashboard`` — read-only monitoring UI (self-contained HTML shell).
@@ -147,6 +148,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_abandoned,
     record_outing_return,
 )
+from prefrontal.panic import build_panic, render_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
@@ -2120,6 +2122,43 @@ def create_app(
             "coaching": b.coaching,
             "spare": b.spare,
             "text": render_briefing(b),
+        }
+
+    @app.get("/panic", tags=["schedule"])
+    def panic(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Overwhelmed-mode triage: what's actually on fire now + one first step.
+
+        Where ``/briefing`` is a calm whole-day overview, this ranks only what is
+        bearing down *right now* across calendar, todos, and mail into three
+        buckets (``late`` / ``soon`` / ``piling_up``) and returns a single
+        concrete first action to break the freeze. Fast and model-free; n8n or a
+        Shortcut can deliver the ``text`` directly, or feed it to Ollama for prose.
+        """
+        memory = ctx.store
+
+        def dump(p: Any) -> dict[str, Any]:
+            return {
+                "bucket": p.bucket,
+                "kind": p.kind,
+                "title": p.title,
+                "when": p.when,
+                "source": p.source,
+                "commitment_id": p.commitment_id,
+                "todo_id": p.todo_id,
+            }
+
+        plan = build_panic(memory)
+        return {
+            "date": plan.date,
+            "counts": plan.counts,
+            "first_step": plan.first_step,
+            "first_step_for": plan.first_step_for,
+            "late": [dump(p) for p in plan.late],
+            "soon": [dump(p) for p in plan.soon],
+            "piling_up": [dump(p) for p in plan.piling_up],
+            "text": render_panic(plan),
         }
 
     # -- Todos (open loops fitted into free time) ----------------------------

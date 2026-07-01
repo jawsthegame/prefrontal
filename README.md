@@ -27,6 +27,9 @@ Aggregates personal email accounts into a normalized stream, triages by urgency,
 **Morning briefing**
 A daily digest calibrated to your preferences: what needs attention today, what went cold this week, what's on the calendar.
 
+**Panic mode**
+For the moments you're too overwhelmed to think. On demand, it cuts through everything and answers three questions: what's *actually* on fire right now (calendar, todos, and mail ranked into "already behind" / "bearing down soon" / "piling up", each tagged work vs. home), what you can safely ignore, and — the important part — one concrete, tiny first step to break the freeze. Not the whole plan. Just where to put your hands in the next five minutes.
+
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
 
@@ -93,6 +96,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
+| Panic mode | `prefrontal/panic.py` | ✅ On-demand overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step; `prefrontal panic`, `GET /panic` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
@@ -141,6 +145,10 @@ prefrontal summarize
 
 # Print today's morning briefing (add --llm for friendly prose via Ollama)
 prefrontal briefing
+
+# Overwhelmed and frozen? Triage what's actually on fire + one first step
+# (add --llm for a steadying rewrite via Ollama)
+prefrontal panic
 
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
