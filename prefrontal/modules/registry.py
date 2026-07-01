@@ -75,3 +75,28 @@ def enabled_modules(settings: Settings | None = None) -> list[Module]:
     if resolved.all_modules_enabled:
         return available()
     return [_REGISTRY[k] for k in resolved.modules if k in _REGISTRY]
+
+
+def is_enabled(key: str, settings: Settings | None = None) -> bool:
+    """Return whether the module ``key`` is enabled for the given settings.
+
+    A single-key convenience over :func:`enabled_modules`, used by the
+    intervention entry points (the webhook "check" routes) to suppress a
+    disabled module's proactive nudges — so disabling a module actually turns off
+    its behavior, not just its profile section.
+
+    An empty ``settings.modules`` enables every registered module (the
+    fresh-install default). An unknown or unregistered key is treated as disabled.
+
+    Args:
+        key: The module key to test.
+        settings: Settings to read the module list from. Defaults to
+            :func:`prefrontal.config.get_settings`.
+
+    Returns:
+        ``True`` if the module is registered and enabled.
+    """
+    resolved = settings or get_settings()
+    if key not in _REGISTRY:
+        return False
+    return resolved.all_modules_enabled or key in resolved.modules

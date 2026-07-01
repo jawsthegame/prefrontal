@@ -152,6 +152,7 @@ from prefrontal.modules.location_anchor import (
     record_outing_abandoned,
     record_outing_return,
 )
+from prefrontal.modules.registry import is_enabled as module_enabled
 from prefrontal.panic import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
@@ -1274,6 +1275,11 @@ def create_app(
         (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
         memory = ctx.store
+        # Location-Aware Task Anchor is the module that owns outing escalation.
+        # If it's disabled, this proactive nudge never fires (the module's
+        # interventions are off, not just its profile section).
+        if not module_enabled("location_anchor", resolved_settings):
+            return {"active": [], "skipped": "module_disabled"}
         try:
             body = await request.json()
         except Exception:
@@ -1761,6 +1767,9 @@ def create_app(
         other nudges. A ``break`` is never suppressed.
         """
         memory = ctx.store
+        # Hyperfocus owns focus-session interrupts; disabling it suppresses them.
+        if not module_enabled("hyperfocus", resolved_settings):
+            return {"active": [], "protect": False, "skipped": "module_disabled"}
         name = ctx.user.get("display_name") or ""
         soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
@@ -1997,6 +2006,16 @@ def create_app(
         overridden in the request body (``current_lat``/``current_lon``).
         """
         memory = ctx.store
+        # Departure timing is a Time Blindness intervention; if that module is
+        # off, the proactive departure nudge never fires.
+        if not module_enabled("time_blindness", resolved_settings):
+            return {
+                "fire": False,
+                "message": None,
+                "reminder": None,
+                "location_known": False,
+                "skipped": "module_disabled",
+            }
         try:
             body = await request.json()
         except Exception:
