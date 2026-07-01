@@ -334,6 +334,13 @@ def test_check_fires_each_level_once(client, store):
     assert second["active"][0]["fire"] is False
     assert second["active"][0]["message"] == ""
 
+    # The fired nudge was recorded once and surfaces via GET /nudges.
+    nudges = client.get("/nudges", headers=_auth()).json()["nudges"]
+    assert len(nudges) == 1
+    assert nudges[0]["kind"] == "outing"
+    assert nudges[0]["level"] == "soft"
+    assert nudges[0]["message"] == first["active"][0]["message"]
+
 
 def test_check_reports_call_level_and_distance(client, store):
     """Past 150% returns level 'call'; coords yield a distance annotation."""

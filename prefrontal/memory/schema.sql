@@ -293,6 +293,23 @@ CREATE INDEX IF NOT EXISTS idx_triage_feedback_user ON triage_feedback (user_id,
 CREATE INDEX IF NOT EXISTS idx_triage_feedback_sender
     ON triage_feedback (user_id, sender_email);
 
+-- Log of nudges the system decided to send. The escalation checks
+-- (/webhooks/outing/check and /webhooks/departure/check) each fire a nudge once
+-- per newly-crossed level and hand the message to n8n to deliver; until now that
+-- message was fire-and-forget. Recording it here gives every surface a "what did
+-- Prefrontal last tell me?" feed — the widget shows the most recent one so a
+-- missed notification is still visible at a glance. One row per fired nudge.
+CREATE TABLE IF NOT EXISTS nudges (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    kind       TEXT    NOT NULL,            -- 'outing' | 'departure'
+    level      TEXT,                        -- escalation level at fire time (kind-specific)
+    message    TEXT    NOT NULL,            -- the delivered nudge text
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges (user_id, created_at);
+
 -- Cached LLM profile narrative — the prioritized coaching prose produced by the
 -- summarizer (prefrontal/memory/summarizer.py). Generating it needs an Ollama
 -- (or, later, Anthropic) round-trip, which is too slow to run on every

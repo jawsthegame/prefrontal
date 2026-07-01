@@ -1277,6 +1277,7 @@ def create_app(
                     message = build_message(
                         level, elapsed_minutes=elapsed, window_minutes=window, name=name
                     ) + impact_phrase(risky)
+                    memory.record_nudge(kind="outing", message=message, level=level)
                 outing_status = "active"
 
             results.append(
@@ -1385,6 +1386,23 @@ def create_app(
             for o in memory.recent_outings(limit=20)
         ]
         return {"active": active, "recent": recent}
+
+    @app.get("/nudges", tags=["anchor"])
+    def nudges_list(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        limit: Annotated[
+            int, Query(ge=1, le=50, description="Max nudges to return (newest first).")
+        ] = 5,
+    ) -> dict[str, Any]:
+        """Recently sent nudges, newest first — **no side effects**.
+
+        A read-only "what did Prefrontal last tell me?" feed of the escalation
+        and departure nudges the system decided to send (recorded when they fire
+        in ``/webhooks/outing/check`` and ``/webhooks/departure/check``). The
+        widget and dashboard poll this so a missed push notification is still
+        visible at a glance.
+        """
+        return {"nudges": ctx.store.recent_nudges(limit=limit)}
 
     # -- Impulsivity (capture-and-defer) -------------------------------------
 
@@ -1914,6 +1932,7 @@ def create_app(
             if fire:
                 memory.set_state("last_departure_signature", signature, source="inferred")
                 message = build_departure_message(top, name=name)
+                memory.record_nudge(kind="departure", message=message, level=top.level)
 
         return {
             "fire": fire,

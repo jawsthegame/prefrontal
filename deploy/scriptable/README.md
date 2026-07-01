@@ -2,16 +2,19 @@
 
 `prefrontal-widget.js` is an iOS **home-screen and Lock Screen** widget
 ([Scriptable](https://scriptable.app)) showing a glanceable "right now": any
-active outing with its escalation level, your next commitments today, and
-conflict/todo counts. It reads the Prefrontal API over Tailscale and opens the
-family view (`/family`) when tapped.
+active outing with its escalation level, your next commitments today,
+conflict/todo counts, and the most recent nudge Prefrontal sent (from the last
+8 hours), so a push you missed is still visible. It reads the Prefrontal API
+over Tailscale and opens the family view (`/family`) when tapped.
 
 One script drives every size — it detects which family iOS is rendering:
 
 - **Home Screen** (Small / Medium / Large): the full card — header, active
-  outing, commitment list, and a counts footer.
+  outing, commitment list, a counts footer, and the most recent nudge (Medium /
+  Large).
 - **Lock Screen** (iOS 16+ accessory slots around the clock):
-  - **Rectangular** — active outing (or next commitment) plus a compact counts line.
+  - **Rectangular** — active outing (or next commitment, else the last nudge)
+    plus a compact counts line.
   - **Circular** — one glyph + number (elapsed minutes / next time / open todos).
   - **Inline** — a single line beside the clock (the single most urgent thing).
 
