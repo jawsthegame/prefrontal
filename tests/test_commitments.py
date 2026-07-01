@@ -12,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.commitments import (
+    RECUR_OCCURRENCE_SEP,
+    expand_recurrences,
     find_conflicts,
     is_placeholder_title,
     normalize_event,
@@ -116,6 +118,103 @@ def test_sync_converts_tzid_to_utc(store):
     )
     (got,) = store.upcoming_commitments()
     assert got["start_at"] == "2027-06-28 19:00:00"  # 15:00 EDT → 19:00 UTC
+
+
+# -- recurrence expansion ----------------------------------------------------
+
+# A weekly Wednesday 07:30 America/New_York master, dated long before the window
+# — exactly the shape (Tom Workout) that never surfaced before expansion.
+_WEEKLY_WED = {
+    "title": "Tom Workout",
+    "start_at": "2025-09-10T07:30:00",
+    "end_at": "2025-09-10T08:30:00",
+    "tzid": "America/New_York",
+    "external_id": "personal:wk@google.com",
+    "rrule": "FREQ=WEEKLY;BYDAY=WE",
+}
+
+
+def _wed_noon(month: int) -> datetime:
+    """A Wednesday-noon UTC reference instant in the given 2026 month."""
+    return datetime(2026, month, {7: 1, 1: 7}[month], 12, tzinfo=timezone.utc)
+
+
+def test_expand_weekly_master_yields_todays_occurrence():
+    """A long-past weekly master produces the current week's occurrence, with a
+    stable per-occurrence external_id and the master's duration preserved."""
+    out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York")
+    assert len(out) == 1  # only this Wednesday falls in [now-1h, now+36h]
+    occ = normalize_event(out[0], default_tz="America/New_York")
+    assert occ["start_at"] == "2026-07-01 11:30:00"  # 07:30 EDT → 11:30 UTC
+    assert occ["end_at"] == "2026-07-01 12:30:00"  # 1h duration carried over
+    assert out[0]["external_id"] == (
+        "personal:wk@google.com" + RECUR_OCCURRENCE_SEP + "20260701T073000"
+    )
+
+
+def test_expand_keeps_wall_clock_across_dst():
+    """The same 07:30 local event lands at a different UTC in winter (EST)."""
+    out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(1), default_tz="America/New_York")
+    occ = normalize_event(out[0], default_tz="America/New_York")
+    assert occ["start_at"] == "2026-01-07 12:30:00"  # 07:30 EST → 12:30 UTC
+
+
+# A future Wednesday, so occurrences land ahead of the real clock and survive
+# upcoming_commitments()'s `start_at >= now` filter regardless of test run date.
+_FUTURE_WED = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
+
+
+def test_expand_stable_id_upserts_across_polls(store):
+    """Re-syncing regenerates the identical occurrence id, so it updates in place
+    rather than piling up duplicate rows."""
+    for _ in range(2):
+        sync_calendar(store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED)
+    rows = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    assert len(rows) == 1
+
+
+def test_expand_honors_exdate():
+    """An EXDATE for the current occurrence cancels it (skipped weeks stay skipped)."""
+    master = dict(_WEEKLY_WED, exdate=["20260701T073000"])
+    out = expand_recurrences([master], now=_wed_noon(7), default_tz="America/New_York")
+    assert out == []
+
+
+def test_expand_suppresses_modified_occurrence():
+    """A RECURRENCE-ID instance replaces the generated occurrence for that slot,
+    so a rescheduled week isn't double-booked."""
+    moved = {
+        "title": "Tom Workout",
+        "start_at": "2026-07-01T09:00:00",  # bumped from 07:30
+        "tzid": "America/New_York",
+        "external_id": "personal:wk@google.com",  # same series UID
+        "recurrence_id": "2026-07-01T07:30:00",  # original slot it overrides
+    }
+    out = expand_recurrences([_WEEKLY_WED, moved], now=_wed_noon(7), default_tz="America/New_York")
+    starts = sorted(normalize_event(e, default_tz="America/New_York")["start_at"] for e in out)
+    assert starts == ["2026-07-01 13:00:00"]  # only the moved 09:00 EDT instance
+
+
+def test_expand_passes_through_non_recurring():
+    """Events without an RRULE are returned untouched (no id rewrite)."""
+    plain = {"title": "One-off", "start_at": "2026-07-01T15:00:00Z", "external_id": "work:x"}
+    assert expand_recurrences([plain], now=_wed_noon(7)) == [plain]
+
+
+def test_expand_skips_malformed_rrule_without_failing_batch():
+    """A garbage RRULE drops just that event, never rejecting the whole sync."""
+    bad = dict(_WEEKLY_WED, rrule="FREQ=NONSENSE;BYDAY=??")
+    assert expand_recurrences([bad], now=_wed_noon(7), default_tz="America/New_York") == []
+
+
+def test_sync_expands_recurring_end_to_end(store):
+    """A recurring master synced through the full path lands as a commitment."""
+    summary = sync_calendar(
+        store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED
+    )
+    assert summary.added == 1
+    (got,) = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    assert got["start_at"] == "2026-08-05 11:30:00"  # 07:30 EDT → 11:30 UTC
 
 
 def test_normalize_event_requires_title_and_start():

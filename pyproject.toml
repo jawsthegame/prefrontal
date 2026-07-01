@@ -28,6 +28,10 @@ dependencies = [
     # Ships the IANA tz database so zoneinfo can resolve calendar zones even on
     # hosts without a system tzdata (calendar sync converts TZID times to UTC).
     "tzdata>=2024.1",
+    # Expands recurring calendar events (RRULE) into concrete occurrences — ICS
+    # feeds ship an unmodified repeat as a single past-dated master, so without
+    # this a weekly event never lands in the near-term sync window.
+    "python-dateutil>=2.9",
 ]
 
 [project.optional-dependencies]
