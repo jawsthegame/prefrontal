@@ -367,9 +367,20 @@ class CalendarEvent(BaseModel):
     """One event in a ``POST /webhooks/calendar/sync`` batch."""
 
     title: str = Field(description="Event title.")
-    start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
+    start_at: str = Field(description="ISO-8601 start (offset-aware, UTC, or naive).")
     external_id: str | None = Field(default=None, description="Calendar event id.")
     end_at: str | None = Field(default=None, description="ISO-8601 end.")
+    tzid: str | None = Field(
+        default=None,
+        description=(
+            "Source timezone for a naive start_at/end_at (IANA or Windows name, "
+            "e.g. the ICS DTSTART;TZID=…). Ignored when the timestamp is "
+            "offset-aware."
+        ),
+    )
+    end_tzid: str | None = Field(
+        default=None, description="Source zone for a naive end_at (defaults to tzid)."
+    )
     location: str | None = Field(default=None, description="Event location.")
     dest_lat: float | None = Field(
         default=None, description="Destination latitude (enables travel estimation)."
@@ -1805,7 +1816,10 @@ def create_app(
 
         try:
             summary = sync_calendar(
-                memory, [e.model_dump() for e in payload.events], classify=classify
+                memory,
+                [e.model_dump() for e in payload.events],
+                classify=classify,
+                default_tz=resolved_settings.timezone,
             )
         except ValueError as exc:
             raise HTTPException(
@@ -1923,7 +1937,10 @@ def create_app(
         """
         memory = ctx.store
         try:
-            fields = normalize_event({**payload.model_dump(), "source": "manual"})
+            fields = normalize_event(
+                {**payload.model_dump(), "source": "manual"},
+                default_tz=resolved_settings.timezone,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

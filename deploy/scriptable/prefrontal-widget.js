@@ -49,15 +49,22 @@ function isToday(ts) {
 }
 const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 
-// --- fetch (degrade gracefully if the mini is unreachable) ----------------
+// --- fetch (degrade gracefully, per-call) ---------------------------------
+// Each endpoint falls back to its empty shape independently, so one slow or
+// failing call (say /todos) doesn't blank the whole widget — we still render
+// the outing and commitments that did load. "offline" is reserved for the case
+// where *nothing* came back (mini unreachable / bad token).
 let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] };
-let ok = true;
-try {
-  [outings, commitments, conflicts, todos] = await Promise.all([
-    getJSON("/outings"), getJSON("/commitments"),
-    getJSON("/commitments/conflicts"), getJSON("/todos"),
-  ]);
-} catch (e) { ok = false; }
+const settled = await Promise.allSettled([
+  getJSON("/outings"), getJSON("/commitments"),
+  getJSON("/commitments/conflicts"), getJSON("/todos"),
+]);
+const val = (i, fallback) => (settled[i].status === "fulfilled" ? settled[i].value : fallback);
+outings = val(0, outings);
+commitments = val(1, commitments);
+conflicts = val(2, conflicts);
+todos = val(3, todos);
+const ok = settled.some((s) => s.status === "fulfilled");
 
 const family = config.widgetFamily || "medium";
 const small = family === "small";

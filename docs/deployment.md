@@ -357,9 +357,12 @@ Notes:
   `family:…`), so the feeds are deduped and one calendar's sync never prunes
   another's events. Always sync all calendars together (this workflow does) so
   pruning stays correct.
-- The ICS parser is minimal (UID/SUMMARY/DTSTART/DTEND/LOCATION) and treats
-  TZID-only times as UTC — fine for a UTC/`Z` feed; for local-time feeds prefer a
-  community ICS node.
+- The ICS parser is minimal (UID/SUMMARY/DTSTART/DTEND/LOCATION/TZID). It sends
+  each time as-is with its `TZID`; **Prefrontal resolves the zone to UTC
+  server-side** (IANA names and Windows names like `Eastern Standard Time` both
+  work). A time with no zone (floating, or a manual commitment) is interpreted in
+  `PREFRONTAL_TIMEZONE` — set that to your home zone so unzoned events don't land
+  hours off. Times with an explicit offset or `Z` keep their own zone regardless.
 - Check the result: `GET /commitments` (upcoming) and `GET /commitments/conflicts`
   (overlaps). Add one-offs with `POST /commitments`.
 

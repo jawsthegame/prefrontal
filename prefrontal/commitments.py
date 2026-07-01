@@ -21,11 +21,102 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
+
+#: SQLite-comparable UTC timestamp format (matches ``datetime('now')``).
+_TS_FMT = "%Y-%m-%d %H:%M:%S"
+
+#: Windows/Outlook timezone names → IANA zones. Outlook-published ICS feeds label
+#: ``TZID`` with Windows names (``Eastern Standard Time``) that :mod:`zoneinfo`
+#: can't load directly, so we translate the common ones. A ``TZID`` not covered
+#: here is tried verbatim as an IANA name, then falls back to the deployment's
+#: home timezone — so an unmapped zone degrades to "home" rather than silently
+#: landing hours off in UTC. (Subset of the Unicode CLDR windowsZones mapping.)
+_WINDOWS_TZ = {
+    "Dateline Standard Time": "Etc/GMT+12",
+    "Hawaiian Standard Time": "Pacific/Honolulu",
+    "Alaskan Standard Time": "America/Anchorage",
+    "Pacific Standard Time": "America/Los_Angeles",
+    "Pacific Standard Time (Mexico)": "America/Tijuana",
+    "US Mountain Standard Time": "America/Phoenix",
+    "Mountain Standard Time": "America/Denver",
+    "Mountain Standard Time (Mexico)": "America/Chihuahua",
+    "Central Standard Time": "America/Chicago",
+    "Central Standard Time (Mexico)": "America/Mexico_City",
+    "Canada Central Standard Time": "America/Regina",
+    "Eastern Standard Time": "America/New_York",
+    "Eastern Standard Time (Mexico)": "America/Cancun",
+    "US Eastern Standard Time": "America/Indiana/Indianapolis",
+    "Atlantic Standard Time": "America/Halifax",
+    "Newfoundland Standard Time": "America/St_Johns",
+    "SA Pacific Standard Time": "America/Bogota",
+    "Argentina Standard Time": "America/Argentina/Buenos_Aires",
+    "E. South America Standard Time": "America/Sao_Paulo",
+    "Greenwich Standard Time": "Atlantic/Reykjavik",
+    "GMT Standard Time": "Europe/London",
+    "W. Europe Standard Time": "Europe/Berlin",
+    "Central Europe Standard Time": "Europe/Budapest",
+    "Romance Standard Time": "Europe/Paris",
+    "Central European Standard Time": "Europe/Warsaw",
+    "GTB Standard Time": "Europe/Bucharest",
+    "W. Central Africa Standard Time": "Africa/Lagos",
+    "South Africa Standard Time": "Africa/Johannesburg",
+    "FLE Standard Time": "Europe/Kiev",
+    "Israel Standard Time": "Asia/Jerusalem",
+    "Turkey Standard Time": "Europe/Istanbul",
+    "Arabic Standard Time": "Asia/Baghdad",
+    "Arab Standard Time": "Asia/Riyadh",
+    "Russian Standard Time": "Europe/Moscow",
+    "Iran Standard Time": "Asia/Tehran",
+    "Arabian Standard Time": "Asia/Dubai",
+    "Pakistan Standard Time": "Asia/Karachi",
+    "India Standard Time": "Asia/Kolkata",
+    "Bangladesh Standard Time": "Asia/Dhaka",
+    "SE Asia Standard Time": "Asia/Bangkok",
+    "China Standard Time": "Asia/Shanghai",
+    "Singapore Standard Time": "Asia/Singapore",
+    "W. Australia Standard Time": "Australia/Perth",
+    "Taipei Standard Time": "Asia/Taipei",
+    "Tokyo Standard Time": "Asia/Tokyo",
+    "Korea Standard Time": "Asia/Seoul",
+    "Cen. Australia Standard Time": "Australia/Adelaide",
+    "AUS Central Standard Time": "Australia/Darwin",
+    "E. Australia Standard Time": "Australia/Brisbane",
+    "AUS Eastern Standard Time": "Australia/Sydney",
+    "Tasmania Standard Time": "Australia/Hobart",
+    "New Zealand Standard Time": "Pacific/Auckland",
+    "UTC": "UTC",
+}
+
+
+def _zone(name: str | None) -> ZoneInfo | None:
+    """Load an IANA (or Windows-mapped) zone name, or ``None`` if unresolvable."""
+    if not name:
+        return None
+    name = name.strip()
+    for candidate in (name, _WINDOWS_TZ.get(name)):
+        if not candidate:
+            continue
+        try:
+            return ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return None
+
+
+def resolve_zone(tzid: str | None, default_tz: str) -> ZoneInfo:
+    """Resolve a ``TZID`` to a concrete zone, falling back to the home timezone.
+
+    Tries the ``tzid`` as an IANA name, then via the Windows→IANA map, then the
+    ``default_tz`` (the deployment's home zone), and finally UTC — so an unknown
+    or absent zone degrades predictably instead of raising.
+    """
+    return _zone(tzid) or _zone(default_tz) or ZoneInfo("UTC")
 
 #: Commitment ``kind`` — whether an event is *yours* (something you attend, can
 #: conflict) or *FYI*: just so you know where someone will be (e.g. a partner's
@@ -122,16 +213,28 @@ class Conflict:
     overlap_minutes: float
 
 
-def to_utc(value: str) -> str:
+def to_utc(value: str, tzid: str | None = None, default_tz: str = "UTC") -> str:
     """Normalize an ISO-8601 timestamp to ``YYYY-MM-DD HH:MM:SS`` in UTC.
 
-    Accepts offset-aware (``2026-06-28T10:30:00-07:00``), ``Z``-suffixed, naive
-    (assumed UTC), and date-only (``2026-06-28``, treated as midnight UTC) forms
-    — matching what Google Calendar / CalDAV emit. The output format matches
-    SQLite's ``datetime('now')`` so string comparison Just Works.
+    The output format matches SQLite's ``datetime('now')`` so string comparison
+    Just Works. How the input's zone is determined, in priority order:
+
+    - **Offset-aware** (``2026-06-28T10:30:00-07:00``) or **Z**-suffixed: the
+      embedded offset is authoritative and ``tzid`` is ignored.
+    - **Naive with a** ``tzid``: interpreted in that zone (IANA or a Windows name
+      like ``Eastern Standard Time``) — this is the ICS ``DTSTART;TZID=…`` case.
+    - **Naive without a** ``tzid``: interpreted in ``default_tz`` (the
+      deployment's home timezone). A floating ICS time or a manual entry.
+    - **Date-only** (``2026-06-28``): treated as floating midnight and left as
+      ``… 00:00:00`` — all-day events aren't shifted across a day boundary.
+
+    An unresolvable ``tzid`` falls back to ``default_tz`` (then UTC), so a zone
+    we don't recognize degrades to "home" rather than silently landing hours off.
 
     Args:
         value: An ISO-8601 date or datetime string.
+        tzid: Optional source zone for a naive ``value`` (IANA or Windows name).
+        default_tz: Home zone for a naive ``value`` with no usable ``tzid``.
 
     Returns:
         A normalized UTC timestamp string.
@@ -143,18 +246,30 @@ def to_utc(value: str) -> str:
     # datetime.fromisoformat handles 'Z' as of Python 3.11.
     dt = datetime.fromisoformat(text)
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+        # An explicit offset wins outright; any tzid is redundant/ignored.
+        return dt.astimezone(timezone.utc).replace(tzinfo=None).strftime(_TS_FMT)
+    if len(text) <= 10:
+        # Date-only (all-day): floating midnight, never shifted across a day.
+        return dt.strftime(_TS_FMT)
+    # Naive datetime: attach the source zone and convert to UTC.
+    localized = dt.replace(tzinfo=resolve_zone(tzid, default_tz))
+    return localized.astimezone(timezone.utc).replace(tzinfo=None).strftime(_TS_FMT)
 
 
-def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
+def normalize_event(
+    event: dict[str, Any], *, default_tz: str = "UTC"
+) -> dict[str, Any]:
     """Validate and normalize one inbound calendar/commitment event.
 
     Args:
         event: A raw event dict. Requires ``title`` and ``start_at``; optional
             ``external_id``, ``end_at``, ``location``, ``url`` (a.k.a.
             ``source_url`` / ``html_link``, a deeplink to the source event),
-            ``dest_lat``, ``dest_lon``, ``lead_minutes``, ``hard``.
+            ``dest_lat``, ``dest_lon``, ``lead_minutes``, ``hard``, and
+            ``tzid`` / ``end_tzid`` (source zones for naive ``start_at`` /
+            ``end_at``, as sent by the ICS parser). ``end_tzid`` defaults to
+            ``tzid`` when absent.
+        default_tz: Home timezone for naive timestamps with no ``tzid``.
 
     Returns:
         Kwargs ready for :meth:`MemoryStore.upsert_commitment`.
@@ -172,11 +287,15 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
     lead = event.get("lead_minutes")
     dest_lat = event.get("dest_lat")
     dest_lon = event.get("dest_lon")
+    tzid = event.get("tzid")
+    end_tzid = event.get("end_tzid") or tzid
     return {
         "title": title,
-        "start_at": to_utc(event["start_at"]),
+        "start_at": to_utc(event["start_at"], tzid=tzid, default_tz=default_tz),
         "external_id": event.get("external_id") or None,
-        "end_at": to_utc(end_raw) if end_raw else None,
+        "end_at": (
+            to_utc(end_raw, tzid=end_tzid, default_tz=default_tz) if end_raw else None
+        ),
         "location": event.get("location") or None,
         "source_url": (
             event.get("url") or event.get("source_url") or event.get("html_link")
@@ -195,6 +314,7 @@ def sync_calendar(
     events: list[dict[str, Any]],
     *,
     classify: Callable[[str], tuple[str, str]] | None = None,
+    default_tz: str = "UTC",
 ) -> SyncSummary:
     """Idempotently sync a batch of calendar events into ``commitments``.
 
@@ -210,6 +330,8 @@ def sync_calendar(
             Events already in the store keep their existing ``kind`` — so a
             recurring event isn't re-classified every poll and a user's manual
             correction is never overwritten. ``None`` leaves new events ``self``.
+        default_tz: Home timezone for interpreting naive event times that arrive
+            without their own ``tzid`` (see :func:`to_utc`).
 
     Returns:
         A :class:`SyncSummary`.
@@ -218,7 +340,9 @@ def sync_calendar(
         ValueError: If any event fails validation (the whole batch is rejected
             before any write, so a bad payload never partially applies).
     """
-    normalized = [normalize_event(e) for e in events]  # validate all up front
+    normalized = [  # validate all up front
+        normalize_event(e, default_tz=default_tz) for e in events
+    ]
     existing_kinds = store.kinds_by_external_id(
         {f["external_id"] for f in normalized if f["external_id"]}
     )

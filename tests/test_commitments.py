@@ -39,8 +39,83 @@ def test_to_utc_handles_offset_z_naive_and_date():
     """Offsets are converted to UTC; Z, naive, and date-only all parse."""
     assert to_utc("2026-06-28T10:30:00-07:00") == "2026-06-28 17:30:00"
     assert to_utc("2026-06-28T17:30:00Z") == "2026-06-28 17:30:00"
-    assert to_utc("2026-06-28T17:30:00") == "2026-06-28 17:30:00"
+    assert to_utc("2026-06-28T17:30:00") == "2026-06-28 17:30:00"  # naive → UTC default
     assert to_utc("2026-06-28") == "2026-06-28 00:00:00"
+
+
+def test_to_utc_naive_uses_tzid_iana():
+    """A naive time with an IANA TZID is interpreted in that zone (the ICS case)."""
+    # 10:30 in New York on Jun 28 is EDT (UTC-4) → 14:30 UTC.
+    assert to_utc("2026-06-28T10:30:00", tzid="America/New_York") == "2026-06-28 14:30:00"
+
+
+def test_to_utc_naive_uses_windows_tzid():
+    """A Windows zone name (Outlook feeds) resolves via the Windows→IANA map."""
+    # 09:00 'Pacific Standard Time' on Jun 28 is PDT (UTC-7) → 16:00 UTC.
+    assert to_utc("2026-06-28T09:00:00", tzid="Pacific Standard Time") == "2026-06-28 16:00:00"
+
+
+def test_to_utc_respects_dst():
+    """The same wall-clock time maps to different UTC across DST boundaries."""
+    # Eastern: summer is UTC-4, winter UTC-5.
+    assert to_utc("2026-07-01T12:00:00", tzid="America/New_York") == "2026-07-01 16:00:00"
+    assert to_utc("2026-01-01T12:00:00", tzid="America/New_York") == "2026-01-01 17:00:00"
+
+
+def test_to_utc_offset_aware_ignores_tzid():
+    """An explicit offset wins; a (contradictory) tzid is ignored."""
+    assert (
+        to_utc("2026-06-28T10:30:00-07:00", tzid="America/New_York")
+        == "2026-06-28 17:30:00"
+    )
+
+
+def test_to_utc_naive_falls_back_to_default_tz():
+    """A naive time with no (or unresolvable) tzid uses the home timezone."""
+    assert to_utc("2026-06-28T08:00:00", default_tz="America/Los_Angeles") == "2026-06-28 15:00:00"
+    # An unknown tzid degrades to default_tz rather than silently assuming UTC.
+    assert (
+        to_utc("2026-06-28T08:00:00", tzid="Narnia/Cair_Paravel",
+               default_tz="America/Los_Angeles")
+        == "2026-06-28 15:00:00"
+    )
+
+
+def test_to_utc_date_only_not_shifted_by_default_tz():
+    """All-day (date-only) events stay floating midnight, never shifted a day."""
+    assert to_utc("2026-06-28", default_tz="America/New_York") == "2026-06-28 00:00:00"
+
+
+def test_normalize_event_threads_tzid_and_default_tz():
+    """normalize_event applies tzid/end_tzid, and default_tz for unzoned times."""
+    out = normalize_event(
+        {
+            "title": "Standup",
+            "start_at": "2026-06-28T09:30:00",
+            "end_at": "2026-06-28T10:00:00",
+            "tzid": "America/New_York",
+        },
+    )
+    assert out["start_at"] == "2026-06-28 13:30:00"
+    assert out["end_at"] == "2026-06-28 14:00:00"  # end_tzid defaults to tzid
+    # No tzid → default_tz governs.
+    out2 = normalize_event(
+        {"title": "Call", "start_at": "2026-06-28T09:00:00"},
+        default_tz="America/Chicago",
+    )
+    assert out2["start_at"] == "2026-06-28 14:00:00"  # CDT (UTC-5)
+
+
+def test_sync_converts_tzid_to_utc(store):
+    """A full sync stores TZID events in UTC, so the schedule reads correctly."""
+    sync_calendar(
+        store,
+        [{"title": "1:1", "start_at": "2027-06-28T15:00:00",
+          "tzid": "America/New_York", "external_id": "work:z"}],
+        default_tz="America/New_York",
+    )
+    (got,) = store.upcoming_commitments()
+    assert got["start_at"] == "2027-06-28 19:00:00"  # 15:00 EDT → 19:00 UTC
 
 
 def test_normalize_event_requires_title_and_start():
