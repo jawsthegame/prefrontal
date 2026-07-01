@@ -65,6 +65,38 @@
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 22px; }
   a.linkish { color: var(--muted); font-size: 12px; text-decoration: none; }
 
+  /* A gentle "overwhelmed?" button + a focused overlay: one calm screen with the
+     single first step and the short list of what actually needs doing now. */
+  .panic-open { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
+    padding: 9px 14px; min-height: 40px; border-radius: 999px; cursor: pointer;
+    background: #fbeee6; color: #a5561f; border: 1px solid #e6c3a3; font-size: 15px; font-weight: 600; }
+  .panic-open:hover { border-color: var(--warn); }
+  #panic { position: fixed; inset: 0; z-index: 30; display: none; overflow-y: auto;
+    background: rgba(247,245,241,.92); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+    align-items: flex-start; justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) 16px 32px; }
+  #panic .box { background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 20px 22px 22px; width: min(560px, 100%); box-shadow: 0 20px 60px rgba(0,0,0,.14); }
+  .panic-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .panic-head h2 { margin: 0; font-size: 20px; font-weight: 650; }
+  .panic-head .spacer { flex: 1; }
+  .panic-head button { background: none; border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 14px; min-height: 38px; font-size: 14px; color: var(--fg); cursor: pointer; }
+  .panic-head button:hover { border-color: var(--accent); }
+  .panic-ground { font-size: 17px; line-height: 1.5; margin: 4px 0 16px; }
+  .panic-first { background: #eef5ee; border: 1px solid #cfe3d2; border-radius: 14px;
+    padding: 16px 18px; margin: 0 0 18px; }
+  .panic-first-label { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .6px; color: var(--accent); margin-bottom: 7px; }
+  .panic-first-step { font-size: 18px; line-height: 1.45; }
+  .panic-first-for { font-size: 14px; color: var(--muted); margin-top: 7px; }
+  .panic-sec { margin: 0 0 16px; }
+  .panic-sec-h { font-size: 14px; font-weight: 700; margin: 0 0 4px; }
+  .panic-sec-h.b-late { color: #b03a3a; }
+  .panic-sec-h.b-soon { color: var(--warn); }
+  .panic-sec-h.b-pile { color: #9a7b2f; }
+  .panic-foot { color: var(--muted); font-size: 14px; font-style: italic; margin: 16px 0 0; }
+
   #gate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; padding: 18px; }
   #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 26px; width: min(420px, 100%); }
   #gate h2 { margin: 0 0 6px; font-size: 18px; }
@@ -85,6 +117,7 @@
 <header>
   <h1 id="greeting">🏡 Today</h1>
   <div class="meta" id="status">loading…</div>
+  <button class="panic-open" id="panic-btn" type="button">😮‍💨 Feeling overwhelmed?</button>
 </header>
 
 <div class="wrap">
@@ -107,6 +140,18 @@
   <footer>
     Updates on its own · <a class="linkish" href="/dashboard">full dashboard</a>
   </footer>
+</div>
+
+<div id="panic" role="dialog" aria-modal="true" aria-label="Overwhelmed">
+  <div class="box">
+    <div class="panic-head">
+      <h2>😮‍💨 One thing at a time</h2>
+      <span class="spacer"></span>
+      <button id="panic-refresh" type="button">Refresh</button>
+      <button id="panic-close" type="button">Close</button>
+    </div>
+    <div class="body"><p class="empty">looking at what actually needs you…</p></div>
+  </div>
 </div>
 
 <div id="gate">
@@ -275,6 +320,51 @@ function renderUpcoming() {
   $("#day-detail").innerHTML = body;
 }
 
+// Panic mode: rendered from the structured /panic response so the single first
+// step and the three buckets read clearly, in the family view's calm voice.
+function renderPanic(d) {
+  const counts = d.counts || {};
+  const pressing = counts.pressing || 0;
+  const piling = (d.piling_up || []).length;
+  if (!pressing && !piling) {
+    return `<p class="panic-ground"><strong>Nothing is actually on fire.</strong> Nothing is overdue and nothing needs you in the next couple of hours. The overwhelm is real — but the list is empty. Take a breath.</p>`;
+  }
+  let html = "";
+  html += `<p class="panic-ground">` + (pressing
+    ? `Breathe. <strong>${pressing} thing${pressing > 1 ? "s" : ""} actually need you right now</strong> — that's the whole list. Everything else can wait.`
+    : `Breathe — <strong>nothing has a hard deadline right now.</strong> A few things are piling up, but you're not late on any of them.`) + `</p>`;
+  if (d.first_step) {
+    html += `<div class="panic-first">
+      <div class="panic-first-label">▶ Start here</div>
+      <div class="panic-first-step">${esc(d.first_step)}</div>
+      ${d.first_step_for ? `<div class="panic-first-for">that gets “${esc(d.first_step_for)}” moving</div>` : ""}
+    </div>`;
+  }
+  const sec = (title, cls, items) => {
+    if (!items || !items.length) return "";
+    return `<div class="panic-sec"><div class="panic-sec-h ${cls}">${title} (${items.length})</div>` +
+      items.map((p) => `<div class="item"><div class="what">${esc(p.title)}
+        <div class="where">${esc(p.when)}${p.source ? " · " + esc(p.source) : ""}</div></div></div>`).join("") + `</div>`;
+  };
+  html += sec("🔴 Already behind", "b-late", d.late);
+  html += sec("🟠 Bearing down soon", "b-soon", d.soon);
+  html += sec("🟡 Piling up", "b-pile", d.piling_up);
+  html += `<p class="panic-foot">Do the one thing at the top, then come back and look again.</p>`;
+  return html;
+}
+async function loadPanic() {
+  const body = $("#panic .body");
+  body.innerHTML = `<p class="empty">looking at what actually needs you…</p>`;
+  try {
+    body.innerHTML = renderPanic(await api("/panic"));
+  } catch (err) {
+    if (err && err.code === 401) { closePanic(); gate("That code didn't work."); return; }
+    body.innerHTML = `<p class="empty">Couldn't load — try Refresh.</p>`;
+  }
+}
+function openPanic() { $("#panic").style.display = "flex"; loadPanic(); }
+function closePanic() { $("#panic").style.display = "none"; }
+
 async function load() {
   // Always attempt; a Google session cookie may authenticate. 401 reveals the gate.
   $("#status").textContent = "updating…";
@@ -312,6 +402,11 @@ $("#token-save").onclick = () => {
   start();
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+$("#panic-btn").onclick = openPanic;
+$("#panic-close").onclick = closePanic;
+$("#panic-refresh").onclick = loadPanic;
+$("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanic(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
 
 start();  // try the session cookie (or a saved code); the gate appears only on 401

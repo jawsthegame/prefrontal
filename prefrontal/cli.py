@@ -12,12 +12,13 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal summarize`` — LLM-summarize the profile (Ollama); cache it for
   ``GET /profile`` and write ``profile-<handle>.md``.
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
+- ``prefrontal panic`` — triage what's on fire right now + one first step.
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
 - ``prefrontal mail`` — ingest/fetch/list triaged email (list/sync/fetch).
 
 Multi-tenant: the data commands (``learn``, ``summarize``, ``profile``,
-``briefing``, ``todo``, ``fit``, ``mail``) act on one user, chosen with
+``briefing``, ``panic``, ``todo``, ``fit``, ``mail``) act on one user, chosen with
 ``--user <handle>``; ``learn``/``summarize`` also take ``--all-users`` to fan
 out (the nightly default). A command errors if no user is given and more than
 one exists.
@@ -46,6 +47,7 @@ from prefrontal.memory.summarizer import (
     summarize_profile,
 )
 from prefrontal.modules import available, enabled_modules
+from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import record_todo_closed
 
@@ -358,6 +360,41 @@ def _cmd_briefing(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).write_text(text)
         print(f"Wrote briefing to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
+def _cmd_panic(args: argparse.Namespace) -> int:
+    """Print the panic-mode triage: what's on fire and one first step.
+
+    Unlike the morning briefing (a calm whole-day overview), this ranks only what
+    is bearing down *right now* across calendar, todos, and mail, and hands back a
+    single concrete first action to break the freeze.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if args.llm:
+            result = summarize_panic(store)
+            text = result.text
+            if result.source == "heuristic":
+                print(
+                    "Ollama unavailable; printing the structured panic triage.",
+                    file=sys.stderr,
+                )
+        else:
+            text = render_panic(build_panic(store))
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote panic triage to {args.output}")
     else:
         print(text, end="")
     return 0
@@ -695,6 +732,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_brief.set_defaults(func=_cmd_briefing)
+
+    p_panic = sub.add_parser(
+        "panic", help="Overwhelmed? Triage what's on fire now + one first step."
+    )
+    p_panic.add_argument("--db-path", default=None, help="Override the database path.")
+    p_panic.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_panic.add_argument(
+        "--llm", action="store_true", help="Rewrite as prose via Ollama (falls back)."
+    )
+    p_panic.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_panic.set_defaults(func=_cmd_panic)
 
     p_todo = sub.add_parser("todo", help="Add/list/close open todos (open loops).")
     p_todo.add_argument("--db-path", default=None, help="Override the database path.")

@@ -156,6 +156,34 @@
   #gate .tokenfallback summary { color: var(--muted); font-size: 13px; cursor: pointer; }
   #gate .tokenfallback input { margin-top: 10px; }
 
+  /* Panic mode — a prominent alarm button and a focused, dim-everything overlay
+     so an overwhelmed user sees one screen: the single first step, then the
+     short list of what's actually on fire. */
+  .alarm { background: #2c1620; color: #ffb3c0; border-color: #5a2130; }
+  .alarm:hover { border-color: var(--call); color: #fff; }
+  #panic { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
+    background: rgba(8,9,12,.86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    align-items: flex-start; justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) 16px 32px; }
+  #panic .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px 20px; width: min(620px, 100%); box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+  .panic-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .panic-head h2 { margin: 0; font-size: 18px; }
+  .panic-head .spacer { flex: 1; }
+  .panic-ground { font-size: 16px; line-height: 1.45; margin: 4px 0 14px; }
+  .panic-first { background: #15231a; border: 1px solid #245232; border-radius: 12px;
+    padding: 14px 16px; margin: 0 0 16px; }
+  .panic-first-label { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; color: var(--good); margin-bottom: 6px; }
+  .panic-first-step { font-size: 17px; line-height: 1.45; }
+  .panic-first-for { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .panic-sec { margin: 0 0 14px; }
+  .panic-sec-h { font-size: 13px; font-weight: 700; letter-spacing: .3px; margin: 0 0 2px; }
+  .panic-sec-h.b-late { color: var(--call); }
+  .panic-sec-h.b-soon { color: var(--firm); }
+  .panic-sec-h.b-pile { color: var(--soft); }
+  .panic-foot { color: var(--muted); font-size: 13px; font-style: italic; margin: 16px 0 0; }
+
   @media (max-width: 520px) {
     .banner { padding: 12px 12px 0; }
     .masonry { columns: 1; padding: 12px 12px 24px; }
@@ -170,6 +198,7 @@
   <h1>🧠 Prefrontal</h1>
   <span class="meta" id="status">loading…</span>
   <span class="spacer"></span>
+  <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <button class="ghost" id="refresh">Refresh</button>
   <a class="ghost" href="/family" title="Calm, non-technical family view" style="text-decoration:none">Family view</a>
   <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
@@ -212,6 +241,18 @@
       <button id="token-save">Open dashboard</button>
     </details>
     <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<div id="panic" role="dialog" aria-modal="true" aria-label="Panic mode">
+  <div class="box">
+    <div class="panic-head">
+      <h2>😮‍💨 Panic mode</h2>
+      <span class="spacer"></span>
+      <button class="ghost" id="panic-refresh" title="Recompute">Refresh</button>
+      <button class="ghost" id="panic-close">Close</button>
+    </div>
+    <div class="body"><div class="empty">loading…</div></div>
   </div>
 </div>
 
@@ -466,6 +507,54 @@ function renderTriage(d) {
   return html;
 }
 
+// Panic mode: rendered from the structured /panic response (not the markdown
+// text) so the single first step and the three buckets get first-class emphasis.
+function renderPanic(d) {
+  const counts = d.counts || {};
+  const pressing = counts.pressing || 0;
+  const piling = (d.piling_up || []).length;
+  if (!pressing && !piling) {
+    return `<p class="panic-ground"><strong>Nothing is actually on fire.</strong> No hard deadlines are past, and nothing needs you in the next couple of hours. The overwhelm is real, but the board is empty — take a breath, then pick one small thing you <em>want</em> to move.</p>`;
+  }
+  let html = "";
+  html += `<p class="panic-ground">` + (pressing
+    ? `Breathe. <strong>${pressing} thing${pressing > 1 ? "s" : ""} actually need you right now</strong> — that's the whole list. Everything else can wait.`
+    : `Breathe — <strong>nothing has a hard clock right now.</strong> A few things are piling up, but you're not late on any of them.`) + `</p>`;
+  if (d.first_step) {
+    html += `<div class="panic-first">
+      <div class="panic-first-label">▶ Start here</div>
+      <div class="panic-first-step">${esc(d.first_step)}</div>
+      ${d.first_step_for ? `<div class="panic-first-for">that gets “${esc(d.first_step_for)}” moving</div>` : ""}
+    </div>`;
+  }
+  const sec = (title, cls, items) => {
+    if (!items || !items.length) return "";
+    return `<div class="panic-sec"><div class="panic-sec-h ${cls}">${title} (${items.length})</div>` +
+      items.map((p) => `<div class="row"><div class="main">
+        <div class="title">${esc(p.title)}</div>
+        <div class="sub">${esc(p.when)}${p.source ? " · " + esc(p.source) : ""}</div>
+      </div></div>`).join("") + `</div>`;
+  };
+  html += sec("🔴 Already behind", "b-late", d.late);
+  html += sec("🟠 Bearing down soon", "b-soon", d.soon);
+  html += sec("🟡 Piling up — no clock, but don't forget", "b-pile", d.piling_up);
+  html += `<p class="panic-foot">Do the one thing at the top, then come back and look again.</p>`;
+  return html;
+}
+
+async function loadPanic() {
+  const body = $("#panic .body");
+  body.innerHTML = `<div class="empty">looking at what's actually on fire…</div>`;
+  try {
+    body.innerHTML = renderPanic(await api("/panic"));
+  } catch (err) {
+    if (err && err.code === 401) { closePanic(); gate("That token was rejected."); return; }
+    body.innerHTML = `<div class="err">Couldn't load panic mode — try Refresh.</div>`;
+  }
+}
+function openPanic() { $("#panic").style.display = "flex"; loadPanic(); }
+function closePanic() { $("#panic").style.display = "none"; }
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -536,6 +625,12 @@ document.addEventListener("click", async (e) => {
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
 
 $("#refresh").onclick = load;
+$("#panic-btn").onclick = openPanic;
+$("#panic-close").onclick = closePanic;
+$("#panic-refresh").onclick = loadPanic;
+// Backdrop tap and Escape both dismiss the overlay.
+$("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanic(); });
 $("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
