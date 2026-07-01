@@ -18,6 +18,7 @@
 --   todos                open loops fitted into free windows
 --   todo_decompositions  tiny-first-step breakdown for stall-prone todos
 --   dismissed_conflicts  soft double-bookings the user has waved off
+--   dismissed_departures departure reminders waved off from a notification tap
 --   mail_messages        ingested + triaged email, surfaced as action items
 --   profile_cache        single cached LLM profile narrative served by GET /profile
 --   places, geocode_cache  local-first destination resolution for departures
@@ -207,6 +208,17 @@ CREATE TABLE IF NOT EXISTS dismissed_conflicts (
     signature    TEXT NOT NULL,
     dismissed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, signature)
+);
+
+-- Departure reminders the user waved off from a notification (the one-tap
+-- "dismiss" link on a Pushover nudge). Keyed by commitment_id, which is unique
+-- per occurrence, so a dismissal suppresses that specific reminder while a
+-- future occurrence (a new row/id) re-arms on its own.
+CREATE TABLE IF NOT EXISTS dismissed_departures (
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    commitment_id INTEGER NOT NULL,
+    dismissed_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, commitment_id)
 );
 
 -- Labeled examples that teach the "is this my commitment, or just FYI about

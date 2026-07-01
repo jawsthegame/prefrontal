@@ -52,6 +52,7 @@ serve`` CLI command.
 from __future__ import annotations
 
 import hmac
+import html
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -136,6 +137,7 @@ from prefrontal.modules.impulsivity import (
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
+    LEVELS,
     build_message,
     escalation_level,
     haversine_m,
@@ -155,7 +157,12 @@ from prefrontal.todos import (
     decompose_task,
     record_todo_closed,
 )
-from prefrontal.webhooks.oauth import register_oauth_routes, session_user
+from prefrontal.webhooks.oauth import (
+    register_oauth_routes,
+    session_user,
+    sign_dismiss,
+    verify_dismiss,
+)
 
 #: Maps a one-tap shortcut action to the resulting ``episodes.outcome`` value.
 ACTION_OUTCOME: dict[str, str] = {
@@ -609,6 +616,38 @@ def _delivery_fields(memory: MemoryStore) -> dict[str, Any]:
         "delivery": delivery,
         "delivery_configured": any(v for v in delivery.values()),
     }
+
+
+def _dismiss_url(
+    settings: Settings, handle: str, kind: str, target_id: int
+) -> str:
+    """Build a signed one-tap dismiss link for a nudge, or ``""`` if unavailable.
+
+    Returns ``""`` unless both a public origin (``oauth_base_url``) and a signing
+    key (``session_secret``) are configured — the link is opened from the phone
+    off-box, so it needs the Tailscale HTTPS origin, and it must be signed so a
+    tap can't be forged. n8n drops it into the Pushover ``url`` field.
+    """
+    if not settings.oauth_base_url or not settings.session_secret:
+        return ""
+    token = sign_dismiss(handle, kind, target_id, settings.session_secret)
+    return f"{settings.oauth_base_url}/nudge/dismiss?t={token}"
+
+
+def _dismiss_page(headline: str) -> str:
+    """A tiny self-contained confirmation page shown after a one-tap dismiss."""
+    safe = html.escape(headline)
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Prefrontal</title></head>"
+        "<body style='font-family:-apple-system,system-ui,sans-serif;"
+        "display:flex;min-height:90vh;align-items:center;justify-content:center;"
+        "text-align:center;color:#222;margin:0;padding:1.5rem'>"
+        f"<div><div style='font-size:2.5rem'>✓</div><p style='font-size:1.15rem'>{safe}</p>"
+        "<p style='color:#888;font-size:.9rem'>You can close this page.</p></div>"
+        "</body></html>"
+    )
 
 
 def _decompose_and_store(
@@ -1219,6 +1258,8 @@ def create_app(
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
         name = ctx.user.get("display_name") or ""
+        handle = ctx.user.get("handle") or ""
+        settings: Settings = request.app.state.settings
         home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
         bias = _state_float(memory, "time_estimation_bias", 1.0)
@@ -1294,6 +1335,9 @@ def create_app(
                     "outcome": outcome,
                     "impact": impacts,
                     "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
+                    # One-tap link that silences further escalation for this
+                    # outing (empty unless a public origin + signing key exist).
+                    "dismiss_url": _dismiss_url(settings, handle, "outing", outing["id"]),
                     **delivery,
                 }
             )
@@ -1346,6 +1390,53 @@ def create_app(
                 payload.status, actual, window, recorded["outcome"]
             ),
         }
+
+    @app.get("/nudge/dismiss", response_class=HTMLResponse, tags=["anchor"])
+    def nudge_dismiss(request: Request, t: str = "") -> str:
+        """Silence a nudge from a one-tap link in its Pushover notification.
+
+        The link is opened from the phone as a bare browser GET that carries no
+        ``X-Prefrontal-Token`` header, so it authenticates from the signed ``t``
+        token alone — which embeds the user handle and the target. Idempotent:
+        re-tapping a spent link still renders the confirmation page.
+
+        - ``outing`` — pin the escalation at its ceiling so no further soft/firm/
+          call nudge fires, **without** closing the outing (the user is still
+          out; tapping "I'm back" later still closes it normally).
+        - ``departure`` — record the commitment as dismissed so
+          ``/webhooks/departure/check`` stops nudging for it (a future
+          occurrence is a new commitment id and re-arms on its own).
+        """
+        settings: Settings = request.app.state.settings
+        parsed = verify_dismiss(t, settings.session_secret)
+        if parsed is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This dismiss link is invalid or has expired.",
+            )
+        handle, kind, target_id = parsed
+        root: MemoryStore = request.app.state.store
+        user = root.get_user(handle)
+        if user is None or user["status"] != "active":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user."
+            )
+        memory = root.scoped(user["id"])
+
+        if kind == "outing":
+            outing = memory.get_outing(target_id)
+            if outing is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="No such outing."
+                )
+            memory.set_outing_level(target_id, LEVELS[-1])
+            label = outing.get("intention") or "your outing"
+            headline = f"Nudges silenced for “{label}.”"
+        else:  # "departure"
+            memory.dismiss_departure(target_id)
+            headline = "Departure reminder dismissed."
+
+        return _dismiss_page(headline)
 
     @app.get("/outings", tags=["anchor"])
     def outings_list(
@@ -1876,6 +1967,12 @@ def create_app(
 
         bias = _state_float(memory, "time_estimation_bias", 1.0)
         name = ctx.user.get("display_name") or ""
+        handle = ctx.user.get("handle") or ""
+        settings: Settings = request.app.state.settings
+        # Commitments the user waved off from a notification tap don't get a
+        # departure nudge; excluding them here (rather than after picking the
+        # top) lets the *next* commitment still surface.
+        dismissed = memory.dismissed_departures()
         plans = [
             plan_departure(
                 c,
@@ -1893,6 +1990,7 @@ def create_app(
                 ),
             )
             for c in memory.upcoming_commitments()
+            if c["id"] not in dismissed
         ]
         top = next_departure(plans)
 
@@ -1908,6 +2006,10 @@ def create_app(
                 "travel_minutes": top.travel_minutes,
                 "basis": top.basis,
                 "level": top.level,
+                # One-tap link that dismisses this commitment's departure nudges.
+                "dismiss_url": _dismiss_url(
+                    settings, handle, "departure", top.commitment["id"]
+                ),
             }
             signature = f"{top.commitment['id']}:{top.level}"
             fire = signature != memory.get_state("last_departure_signature", "")

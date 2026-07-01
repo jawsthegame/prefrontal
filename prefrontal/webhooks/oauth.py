@@ -92,6 +92,54 @@ def verify_state(state: str, secret: str, *, now: float | None = None) -> bool:
     return _verify(state, secret, now=now) is not None
 
 
+#: How long a one-tap "dismiss this nudge" link stays valid. A nudge is only
+#: actionable for a short while (an active coffee outing, an imminent departure),
+#: so the link self-expires — it lives in the phone's notification history, and a
+#: short TTL bounds how long a leaked notification could silence a future alert.
+DISMISS_TTL_SECONDS = 12 * 3600
+
+#: Nudge kinds a dismiss link may target. Kept explicit so a forged/garbled
+#: ``kind`` can never reach a handler.
+_DISMISS_KINDS = ("outing", "departure")
+
+
+def sign_dismiss(
+    handle: str, kind: str, target_id: int, secret: str, *, now: float | None = None
+) -> str:
+    """Signed, self-expiring token authorizing a nudge dismissal.
+
+    The token carries the user ``handle`` so the ``GET /nudge/dismiss`` endpoint
+    can resolve the acting user without an ``X-Prefrontal-Token`` header — a
+    Pushover notification tap opens a bare browser GET that sends no header.
+    ``|`` is a safe separator because the value is base64-encoded inside
+    :func:`_sign`.
+    """
+    return _sign(f"{handle}|{kind}|{target_id}", secret, DISMISS_TTL_SECONDS, now=now)
+
+
+def verify_dismiss(
+    token: str, secret: str, *, now: float | None = None
+) -> tuple[str, str, int] | None:
+    """Return ``(handle, kind, target_id)`` from a valid dismiss token, else ``None``.
+
+    ``None`` covers every failure — bad signature, expiry, unknown ``kind``, or a
+    non-integer id — so callers treat any malformed link as simply invalid.
+    """
+    raw = _verify(token, secret, now=now)
+    if raw is None:
+        return None
+    try:
+        handle, kind, target_id = raw.split("|")
+    except ValueError:
+        return None
+    if kind not in _DISMISS_KINDS:
+        return None
+    try:
+        return handle, kind, int(target_id)
+    except ValueError:
+        return None
+
+
 def session_user(request: Request) -> dict[str, Any] | None:
     """Resolve a request's session cookie to an active user row, or ``None``.
 
