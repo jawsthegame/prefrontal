@@ -21,7 +21,12 @@ Either way, triage runs on the local model — message content never leaves the
 host.
 """
 
-from prefrontal.mail.ingest import IngestSummary, ingest_messages
+from prefrontal.mail.ingest import (
+    IngestSummary,
+    RetriageSummary,
+    ingest_messages,
+    retriage_messages,
+)
 from prefrontal.mail.models import MailItem, normalize_message
 from prefrontal.mail.triage import MailTriage, priority_for_urgency, triage_message
 
@@ -33,4 +38,6 @@ __all__ = [
     "priority_for_urgency",
     "IngestSummary",
     "ingest_messages",
+    "RetriageSummary",
+    "retriage_messages",
 ]

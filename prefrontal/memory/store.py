@@ -1777,6 +1777,73 @@ class MemoryStore:
         ).fetchone()
         return _row_to_dict(row)
 
+    def mail_for_retriage(
+        self, *, account: str | None = None, only_needs_action: bool = True
+    ) -> list[dict[str, Any]]:
+        """Return stored messages to re-run triage over, oldest first.
+
+        The re-triage counterpart to :meth:`seen_mail_ids`: rather than dedup new
+        arrivals, this hands back the rows already stored so the current prompt
+        can re-classify them (e.g. after the triage prompt evolved).
+
+        Args:
+            account: If given, scope to one account; otherwise every account.
+            only_needs_action: When ``True`` (default), return only messages
+                currently flagged ``needs_action`` — the ones cluttering the
+                action list. When ``False``, return every stored message (a full
+                re-triage that can also newly flag previously-cleared mail).
+
+        Returns:
+            A list of full ``mail_messages`` dicts (body included) in id order.
+        """
+        clauses = ["user_id = ?"]
+        params: list[Any] = [self._uid()]
+        if account is not None:
+            clauses.append("account = ?")
+            params.append(account)
+        if only_needs_action:
+            clauses.append("needs_action = 1")
+        rows = self.conn.execute(
+            "SELECT * FROM mail_messages WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_mail_triage(
+        self,
+        mail_id: int,
+        *,
+        needs_action: bool,
+        urgency: str | None,
+        category: str | None,
+        waiting_on: str | None,
+        summary: str | None,
+        triage_source: str | None,
+        todo_id: int | None,
+    ) -> bool:
+        """Overwrite a stored message's triage verdict. Returns ``True`` if changed.
+
+        Used by re-triage to fold a fresh verdict back onto an existing row. The
+        message's identity/content columns (sender, subject, body, …) are left
+        untouched — only the derived verdict and its ``todo_id`` link move.
+
+        Args:
+            mail_id: The ``mail_messages`` row id to update.
+            todo_id: The linked todo after reconciliation (unchanged for cleared
+                items, a new id for newly-flagged ones, or ``None``).
+        """
+        cur = self.conn.execute(
+            "UPDATE mail_messages SET needs_action = ?, urgency = ?, category = ?, "
+            "waiting_on = ?, summary = ?, triage_source = ?, todo_id = ? "
+            "WHERE id = ? AND user_id = ?",
+            (
+                needs_action, urgency, category, waiting_on, summary,
+                triage_source, todo_id, mail_id, self._uid(),
+            ),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def mail_accounts_for_todos(self, todo_ids: list[int]) -> dict[int, str]:
         """Map each todo id to the mail account that created it (batch).
 
