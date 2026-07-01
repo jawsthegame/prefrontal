@@ -494,6 +494,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `llama3.1:8b` | Local inference (use `127.0.0.1`, not `localhost`) |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
+| `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Vistar:orange`) |
 | `GEOCODER_URL` | Nominatim | Geocoding endpoint (opt-in) |
 | `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | _(empty)_ | Google sign-in client (off until both set) |
 | `OAUTH_BASE_URL` | _(empty)_ | Public https origin for the OAuth redirect |

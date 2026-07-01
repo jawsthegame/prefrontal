@@ -73,6 +73,38 @@ def test_profile_requires_auth(client):
     assert client.get("/profile").status_code == 401
 
 
+def test_todos_expose_account_and_label_map(store, user_store):
+    """/todos tags each todo with its mail account and echoes the label map."""
+    from prefrontal.mail.ingest import ingest_messages
+
+    # A mail-created todo (linked to the "work" inbox) and a plain manual one.
+    ingest_messages(
+        user_store,
+        [{
+            "message_id": "<m-1@corp>",
+            "from": '"Sarah Lee" <sarah@corp.com>',
+            "subject": "Quick question about the report",
+            "date": "2026-06-28T10:30:00-07:00",
+            "body": "Can you send me the Q2 report?",
+        }],
+        account="work",
+        use_model=False,
+    )
+    manual_id = user_store.add_todo("buy milk")
+
+    settings = Settings(account_labels=(("work", "Vistar", "orange"),))
+    app = create_app(store=store, settings=settings)
+    with TestClient(app) as c:
+        resp = c.get("/todos", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["accounts"] == {"work": {"label": "Vistar", "color": "orange"}}
+    by_id = {t["id"]: t for t in data["todos"]}
+    assert by_id[manual_id]["account"] is None
+    mail_todo = next(t for t in data["todos"] if t["id"] != manual_id)
+    assert mail_todo["account"] == "work"
+
+
 def test_profile_returns_markdown(client):
     """With no narrative cached, /profile falls back to the structured profile."""
     resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})

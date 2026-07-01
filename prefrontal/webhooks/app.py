@@ -2167,17 +2167,27 @@ def create_app(
     def todos_list(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """List open todos with decompositions and an avoidance flag."""
+        """List open todos with decompositions, an avoidance flag, and the mail
+        account each came from.
+
+        Each todo carries an ``account`` (the mail inbox it was ingested from, or
+        ``None`` for manual/impulse todos). The response also echoes the
+        operator-configured ``accounts`` label map so the dashboard can render a
+        friendly, colored pill (e.g. ``work`` → an orange "Vistar" pill) without
+        hard-coding any account names or colors.
+        """
         memory = ctx.store
         todos = memory.open_todos()
         avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
+        accounts = memory.mail_accounts_for_todos([t["id"] for t in todos])
         for todo in todos:
             todo["decomposition"] = memory.get_decomposition(todo["id"])
+            todo["account"] = accounts.get(todo["id"])
             hit = avoided.get(todo["id"])
             todo["avoidance"] = (
                 {"days_open": hit["days_open"], "score": hit["score"]} if hit else None
             )
-        return {"todos": todos}
+        return {"todos": todos, "accounts": resolved_settings.account_label_map}
 
     @app.get("/todos/avoided", tags=["todos"])
     def todos_avoided(

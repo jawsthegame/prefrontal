@@ -1757,6 +1757,30 @@ class MemoryStore:
         ).fetchone()
         return _row_to_dict(row)
 
+    def mail_accounts_for_todos(self, todo_ids: list[int]) -> dict[int, str]:
+        """Map each todo id to the mail account that created it (batch).
+
+        The account is authoritative via the ``mail_messages.todo_id`` link — the
+        same link :meth:`mail_by_todo` uses — so a surface can label a todo with
+        the inbox it came from without re-parsing the todo's notes. Todos with no
+        originating mail (manual/impulse) are simply absent from the result.
+
+        Args:
+            todo_ids: The todo ids to look up (empty is fine).
+
+        Returns:
+            A ``{todo_id: account}`` dict covering only mail-created todos.
+        """
+        if not todo_ids:
+            return {}
+        placeholders = ",".join("?" * len(todo_ids))
+        rows = self.conn.execute(
+            f"SELECT todo_id, account FROM mail_messages "
+            f"WHERE user_id = ? AND todo_id IN ({placeholders})",
+            (self._uid(), *todo_ids),
+        ).fetchall()
+        return {r["todo_id"]: r["account"] for r in rows if r["todo_id"] is not None}
+
     # -- Triage feedback (learned from dropped intake todos) -----------------
 
     def record_triage_drop(
