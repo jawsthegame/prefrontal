@@ -252,8 +252,29 @@ ordered by leverage; each is independent but builds on denser capture.
   `channel_response` + quiet hours + debounce), logging the outcome back as an
   episode. Generalizes the `outing/check` loop and folds in the encouragement
   layer below.
-- **Delivery layer** — first-class Pushover / Ntfy / TTS integrations in Python
-  (today delivery is handled in n8n).
+- **Delivery layer + interactive nudges (ntfy)** — first-class Pushover / Ntfy /
+  TTS integrations in Python (today delivery is handled in n8n). The bigger win
+  is **ntfy action buttons**: unlike Pushover — whose only interactivity is an
+  "open this URL" link — ntfy notifications support inline `http` action buttons
+  that fire a request *directly from the notification*, with no app switch. That
+  makes genuinely one-tap, background nudge responses possible:
+  **"Wrap up" → `POST /webhooks/focus/end`**, **"I'm back" → `/outing/return`**,
+  **"Made it / Missed it" → `/episode`**, and **return / defer / switch** on the
+  reflective pause — all without leaving the app you're in.
+
+  Migrating interactive nudges to ntfy should **clean up the Pushover-era
+  workarounds** adopted while Pushover was the only channel:
+  - the `shortcuts://run-shortcut?name=End%20focus` deep link in
+    `deploy/n8n/hyperfocus-check.workflow.json` — it works but foregrounds the
+    Shortcuts app and strands the user, and it's brittle (hardcodes the exact
+    shortcut name);
+  - nudge copy that tiptoes around Pushover's lack of inline actions (e.g.
+    "…open End focus to wrap up" instead of a real **Wrap up** button);
+  - the two-call `switch` → `resolve` flow and the multi-tap menu shortcuts,
+    which a single inline action button collapses to one tap.
+
+  Local-first stays the default (ntfy is self-hostable). Pairs with the
+  coaching-agent delivery routing and per-user delivery (multi-tenant) below.
 - **Ingestion** — core mail monitoring has **shipped** (see "Recently shipped":
   `prefrontal/mail/` with IMAP fetch + n8n/Apps-Script batch sync). Still open:
   the Google Apps Script work-email digest as an alternative source, and folding
