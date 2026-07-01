@@ -455,14 +455,7 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
 
-        def _state_float(key: str, default: float) -> float:
-            raw = store.get_state(key)
-            try:
-                return float(raw) if raw is not None else default
-            except (TypeError, ValueError):
-                return default
-
-        bias = _state_float("time_estimation_bias", 1.0)
+        bias = store.get_float("time_estimation_bias", 1.0)
         fits = fit_todos(args.minutes, store.open_todos(), bias)
     print(f"With {args.minutes:g} minutes free, you could knock out:")
     if not fits:
