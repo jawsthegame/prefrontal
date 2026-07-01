@@ -68,6 +68,13 @@
   /* Account pill: names the mail inbox a todo came from. Solid color + dark text
      so a bright configured color (orange, magenta) reads clearly. */
   .pill.acct { font-weight: 700; color: #0b0d12; }
+  /* The exact text appended to the triage prompt on the next sync — the concrete
+     impact your drops have on what mail gets flagged. */
+  .addendum { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
+    padding: 8px 10px; background: #1d212b; border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0; font: 12px/1.5 inherit; color: var(--fg); }
+  .subhead { color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: .4px; margin: 2px 0 4px; }
   .src { font-size: 12px; text-decoration: none; color: var(--muted); padding: 0 3px; }
   .src:hover { color: var(--accent); }
   .pri-3 { background: #3a1620; color: var(--call); }
@@ -187,6 +194,7 @@
     </div>
     <div class="body"></div>
   </section>
+  <section class="card" id="c-triage"><h2>Mail triage — learned from drops</h2><div class="body"></div></section>
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
@@ -394,6 +402,55 @@ function renderCommitments(list, conflicts) {
   return html;
 }
 
+// The feedback loop from dropping intake todos: a dropped mail-created todo is a
+// hint triage over-flagged. This panel shows what that has taught triage — most
+// importantly the prompt addendum, the exact text appended on the next sync.
+function renderTriage(d) {
+  const addendum = (d.prompt_addendum || "").trim();
+  const senders = d.senders || [];
+  const recent = d.recent || [];
+  let html = "";
+
+  // The impact on the ingestion check: what actually changes on the next sync.
+  html += addendum
+    ? `<div class="row"><div class="main">
+        <div class="subhead">Injected into the triage prompt on the next sync</div>
+        <div class="sub">This is how your drops change what gets flagged as needing action:</div>
+        <pre class="addendum">${esc(addendum)}</pre>
+      </div></div>`
+    : `<div class="empty">No corrections qualify yet — triage uses the base prompt. Only quick drops (soon after a mail arrives) and repeat-sender drops move it; a one-off slow drop is logged but treated as possible avoidance, not a triage error.</div>`;
+
+  // Repeat-offender senders — treated as no-action hints.
+  if (senders.length) {
+    html += `<div class="row"><div class="main">
+      <div class="subhead">Repeat-dropped senders</div>` +
+      senders.map((s) => {
+        const who = esc(s.sender_name || s.sender_email || "?");
+        return `<div class="sub">${who} <span class="pill">${s.drops} dropped</span></div>`;
+      }).join("") +
+      `</div></div>`;
+  }
+
+  // The raw drop log (newest first), each removable if it was really avoidance.
+  if (recent.length) {
+    html += `<div class="row"><div class="main"><div class="subhead">Recent drops</div></div>
+      <div class="acts"><button class="btn-sm btn-x" data-action="triage-clear" title="Forget every learned correction">Clear all</button></div></div>`;
+    html += recent.slice(0, 15).map((r) => {
+      const who = esc(r.sender_name || r.sender_email || "?");
+      const age = typeof r.days_open === "number" ? r.days_open.toFixed(1) + "d open" : "age unknown";
+      return `<div class="row">
+        <div class="main">
+          <div><span class="title">${who}</span> <span class="pill">${age}</span></div>
+          <div class="sub">${esc(r.subject || "(no subject)")}</div>
+        </div>
+        <div class="acts"><button class="btn-sm" data-action="triage-forget" data-id="${r.id}" title="Forget this correction — it was really avoidance, not a triage error">Forget</button></div>
+      </div>`;
+    }).join("");
+    if (recent.length > 15) html += `<div class="sub" style="padding-top:8px">…and ${recent.length - 15} more.</div>`;
+  }
+  return html;
+}
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -401,15 +458,17 @@ async function load() {
   const results = await Promise.allSettled([
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), api("/profile"),
+    api("/mail/triage/learned"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage] = results;
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
   put("#c-recent", outings, renderRecent);
   put("#c-todos", todos, renderTodos);
+  put("#c-triage", triage, renderTriage);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
     ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
     : `<div class="err">unavailable</div>`;
@@ -453,6 +512,8 @@ document.addEventListener("click", async (e) => {
       await post(`/todos/${id}/deadline`, { deadline: v.trim() || null });
     }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
+    else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
+    else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
     load();
   } catch (_) { /* post() already surfaced the error */ }
   finally { el.disabled = false; }
