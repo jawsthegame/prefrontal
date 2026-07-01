@@ -65,6 +65,9 @@
   .lvl-call { background: #3a1620; color: var(--call); }
   .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
   .pill.fyi { background: #1e2a3a; color: #8ab4d8; }
+  /* Account pill: names the mail inbox a todo came from. Solid color + dark text
+     so a bright configured color (orange, magenta) reads clearly. */
+  .pill.acct { font-weight: 700; color: #0b0d12; }
   .src { font-size: 12px; text-decoration: none; color: var(--muted); padding: 0 3px; }
   .src:hover { color: var(--accent); }
   .pri-3 { background: #3a1620; color: var(--call); }
@@ -304,6 +307,19 @@ function renderTodos(d) {
   const t = (d.todos || []);
   if (!t.length) return `<div class="empty">No open todos.</div>`;
   const names = ["low", "normal", "high", "urgent"];
+  // Config-driven account pills: the /todos response maps each account name to a
+  // {label, color}. A todo's account with no config entry gets a plain pill
+  // naming the account, so nothing is hard-coded here.
+  const accts = d.accounts || {};
+  const acctPill = (account) => {
+    if (!account) return "";
+    const cfg = accts[account];
+    const label = cfg && cfg.label ? cfg.label : account;
+    const color = cfg && cfg.color ? cfg.color : "";
+    const style = color ? ` style="background:${esc(color)}"` : "";
+    const cls = color ? "pill acct" : "pill";
+    return ` <span class="${cls}"${style} title="from ${esc(account)}">${esc(label)}</span>`;
+  };
   return t.map((x) => {
     const dc = x.decomposition;
     let step = "";
@@ -331,7 +347,7 @@ function renderTodos(d) {
     const dueText = x.deadline ? "due " + fmt(x.deadline) : "no deadline";
     return `<div class="row">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
+        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
       </div>

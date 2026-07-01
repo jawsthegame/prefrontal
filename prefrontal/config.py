@@ -84,6 +84,12 @@ class Settings:
         mail_default_policy: Policy for accounts absent from ``mail_accounts``.
             Defaults to ``"signals"`` — the conservative choice, so an
             unconfigured account never stores message bodies by accident.
+        account_labels: Per-account display labels for the dashboard, mapping a
+            logical account name to a ``(label, color)`` pair — so a todo that
+            came from mail shows a colored pill naming the real account (e.g.
+            ``work`` → an orange "Vistar" pill). Purely cosmetic and operator-set,
+            so the account name in the data stays stable while the surface shows a
+            friendly name. Accounts absent here render no pill.
     """
 
     db_path: str = "prefrontal.db"
@@ -100,6 +106,7 @@ class Settings:
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
+    account_labels: tuple[tuple[str, str, str], ...] = ()
     # Triage learns from dropped email todos (see prefrontal/mail/feedback.py). A
     # drop only counts as a "this didn't need action" correction when it's quick
     # (dropped within this many days of arriving) or comes from a sender dropped
@@ -167,6 +174,19 @@ class Settings:
         """
         return dict(self.mail_accounts).get(account, self.mail_default_policy)
 
+    @property
+    def account_label_map(self) -> dict[str, dict[str, str]]:
+        """Account name → ``{"label", "color"}`` for dashboard pills.
+
+        Built from :attr:`account_labels`. An empty map (the default) means no
+        account pills are shown, so the dashboard behaves exactly as before until
+        an operator configures ``PREFRONTAL_ACCOUNT_LABELS``.
+        """
+        return {
+            account: {"label": label, "color": color}
+            for account, label, color in self.account_labels
+        }
+
 
 def load_settings(dotenv_path: str = ".env") -> Settings:
     """Read configuration from the environment and return a fresh ``Settings``.
@@ -181,6 +201,9 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     raw_modules = os.environ.get("PREFRONTAL_MODULES", "")
     modules = tuple(m.strip() for m in raw_modules.split(",") if m.strip())
     mail_accounts = _parse_mail_accounts(os.environ.get("PREFRONTAL_MAIL_ACCOUNTS", ""))
+    account_labels = _parse_account_labels(
+        os.environ.get("PREFRONTAL_ACCOUNT_LABELS", "")
+    )
     default_policy = os.environ.get("PREFRONTAL_MAIL_DEFAULT_POLICY", "signals").strip()
     if default_policy not in ("full", "signals"):
         default_policy = "signals"
@@ -204,6 +227,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
+        account_labels=account_labels,
         triage_quick_drop_days=float(
             os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
         ),
@@ -247,6 +271,39 @@ def _parse_mail_accounts(raw: str) -> tuple[tuple[str, str], ...]:
             policy = "signals"
         pairs.append((name, policy))
     return tuple(pairs)
+
+
+def _parse_account_labels(raw: str) -> tuple[tuple[str, str, str], ...]:
+    """Parse ``PREFRONTAL_ACCOUNT_LABELS`` into ``(account, label, color)`` triples.
+
+    The format is a comma-separated list of ``account=label:color`` entries, e.g.
+    ``work=Vistar:orange,outlook=t-mobile:magenta``. The ``:color`` part is
+    optional (``account=label`` yields an empty color, letting the surface pick a
+    default), and the label may itself contain ``:`` — the color is split from the
+    last colon. Entries without ``=`` or with an empty account/label are skipped,
+    so a malformed value degrades to "no pill" rather than raising.
+
+    Args:
+        raw: The raw environment-variable value (may be empty).
+
+    Returns:
+        A tuple of ``(account, label, color)`` triples, suitable for
+        :attr:`Settings.account_labels`.
+    """
+    out: list[tuple[str, str, str]] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        account, _, spec = entry.partition("=")
+        account = account.strip()
+        label, sep, color = spec.rpartition(":")
+        if not sep:  # no ":" — the whole spec is the label, color unset
+            label, color = spec, ""
+        label, color = label.strip(), color.strip()
+        if account and label:
+            out.append((account, label, color))
+    return tuple(out)
 
 
 @lru_cache(maxsize=1)

@@ -18,7 +18,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.config import Settings, _parse_mail_accounts
+from prefrontal.config import Settings, _parse_account_labels, _parse_mail_accounts
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message
 from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
@@ -269,6 +269,34 @@ def test_settings_policy_for():
     assert s.policy_for("anything-else") == "full"
 
 
+def test_parse_account_labels():
+    parsed = _parse_account_labels(
+        "work=Vistar:orange, outlook=t-mobile:magenta"
+    )
+    assert parsed == (
+        ("work", "Vistar", "orange"),
+        ("outlook", "t-mobile", "magenta"),
+    )
+
+
+def test_parse_account_labels_optional_color_and_skips():
+    # No color -> empty color; missing '=' or empty label/account -> skipped;
+    # a label may itself contain ':' (color is split from the last colon).
+    parsed = _parse_account_labels("plain=Personal, junk, =x, a:b=Foo:red")
+    assert parsed == (("plain", "Personal", ""), ("a:b", "Foo", "red"))
+
+
+def test_settings_account_label_map():
+    s = Settings(
+        account_labels=(("work", "Vistar", "orange"), ("outlook", "t-mobile", "magenta"))
+    )
+    assert s.account_label_map == {
+        "work": {"label": "Vistar", "color": "orange"},
+        "outlook": {"label": "t-mobile", "color": "magenta"},
+    }
+    assert Settings().account_label_map == {}
+
+
 # -- ingest orchestration ----------------------------------------------------
 
 
@@ -303,6 +331,19 @@ def test_ingest_is_idempotent_on_message_id(store):
     # Only one row and one todo despite two ingest passes.
     assert len(store.recent_mail()) == 1
     assert len(store.open_todos()) == 1
+
+
+def test_mail_accounts_for_todos_maps_todo_to_inbox(store):
+    ingest_messages(store, [_msg()], account="work", client=_ollama_down())
+    manual = store.add_todo("buy milk")  # no originating mail
+    todos = store.open_todos()
+    mail_todo = next(t["id"] for t in todos if t["id"] != manual)
+
+    accounts = store.mail_accounts_for_todos([t["id"] for t in todos])
+    assert accounts == {mail_todo: "work"}
+    # Manual todo has no account entry; empty input is a no-op.
+    assert manual not in accounts
+    assert store.mail_accounts_for_todos([]) == {}
 
 
 def test_ingest_signals_policy_stores_no_body(store):
