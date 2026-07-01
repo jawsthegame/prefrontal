@@ -96,7 +96,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
-| Panic mode | `prefrontal/panic.py` | ✅ On-demand overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step; `prefrontal panic`, `GET /panic` |
+| Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one-tap Shortcut) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |

@@ -16,7 +16,8 @@ it tells you to copy/import.
 | `n8n/hyperfocus-check.workflow.json` | Hyperfocus: every-minute poll of `/webhooks/focus/check` → Pushover on a due interrupt (gentle alignment **check**, or a higher-priority biological **break**). Activates the passive interrupts; the reflective-pause + capture flows are interactive and need no workflow. | deployment §9 |
 | `n8n/calendar-sync.workflow.json` | Syncs personal Google Calendar + a work ICS feed into `commitments` (merged, deduped) and fires a Pushover **double-booking alert** on overlaps. | deployment §10 |
 | `n8n/morning-briefing.workflow.json` | Daily 7am: `GET /briefing` → Pushover the digest (today, conflicts, slips, coaching note). | deployment §11 |
-| `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, and the "Going out"/"I'm back" outing shortcuts. | deployment §6 |
+| `n8n/panic-check.workflow.json` | Proactive panic mode: every-20-min poll of `/webhooks/panic/check` → Pushover **only when the plate tips into overwhelm** (server edge-triggers + cooldown, so it nudges once per spike, not every poll). | deployment §11 |
+| `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, the "Going out"/"I'm back" outing shortcuts, and the one-tap **"Panic"** shortcut. | deployment §6 |
 
 Everything here is safe to commit: the plist and workflow contain **placeholders**
 (`REPLACE_WITH_...`, `PUSHOVER_TOKEN`) — no real secrets. Put real values in your

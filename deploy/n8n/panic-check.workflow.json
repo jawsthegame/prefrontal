@@ -1,0 +1,102 @@
+{
+  "name": "Prefrontal — Panic Check (proactive overwhelm nudge)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 20 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 20 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/panic/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-panic",
+      "name": "Check Overwhelm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Continue only when the plate has actually tipped into overwhelm. The server\n// edge-triggers on the level and honors a cooldown, so `fire` is true at most\n// once per spike (not every poll) — no IF/state needed here. Emit one item\n// carrying the ready push message plus the counts, or nothing.\nconst resp = $input.first().json;\nif (!resp || resp.fire !== true) return [];\nreturn [{ json: { message: resp.message, first_step: resp.first_step, level: resp.level, late: (resp.counts || {}).late, pressing: (resp.counts || {}).pressing } }];"
+      },
+      "id": "fire-only",
+      "name": "Overwhelm Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 0\n}",
+        "options": {}
+      },
+      "id": "pushover",
+      "name": "Send Pushover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/n8n",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event\": \"reminder.sent\",\n  \"episode_type\": \"panic\",\n  \"channel\": \"notification\",\n  \"context\": \"proactive overwhelm nudge ({{ $json.late }} late, {{ $json.pressing }} pressing)\"\n}",
+        "options": {}
+      },
+      "id": "log-back",
+      "name": "Log to Prefrontal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Every 20 min": {
+      "main": [[{ "node": "Check Overwhelm", "type": "main", "index": 0 }]]
+    },
+    "Check Overwhelm": {
+      "main": [[{ "node": "Overwhelm Only", "type": "main", "index": 0 }]]
+    },
+    "Overwhelm Only": {
+      "main": [[{ "node": "Send Pushover", "type": "main", "index": 0 }]]
+    },
+    "Send Pushover": {
+      "main": [[{ "node": "Log to Prefrontal", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

@@ -190,6 +190,42 @@ focus block (declare one with the Hyperfocus "Start focus" shortcut →
 > dropped mid-pause can't strand the block, and the honor-vs-defer ratio it
 > records is what later teaches Prefrontal your switching pattern.
 
+## Shortcut: "Panic" (overwhelmed → one first step)
+
+The one-tap "I'm buried and don't know where to start" gesture. It asks
+Prefrontal what's *actually* on fire right now — across calendar, todos, and
+mail — and reads back the single first step to break the freeze. Put it on the
+Lock Screen / Back Tap / Apple Watch so it's reachable the instant the fog hits.
+
+1. New shortcut named **Panic** (😮‍💨).
+2. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/panic`
+   - **Method:** `GET`
+   - **Headers:** `X-Prefrontal-Token` = `<your token>`
+3. **Get Dictionary Value** → key `headline` from the response.
+4. **Show Notification** (or **Speak Text**) with that value. The server returns
+   one ready-made, speakable line — e.g. *"5 things need you right now. Start
+   here: Stop what you're doing and move toward the door right now — grab keys,
+   phone, wallet, and go."* — so you don't assemble anything in Shortcuts. When
+   the plate is clear it reassures instead: *"Nothing's actually on fire right
+   now — take a breath."*
+
+> **Want the whole board, not just the headline?** Skip step 3 and instead
+> **Get Dictionary Value** `text` (the full Markdown triage: already-behind /
+> bearing-down-soon / piling-up), then **Quick Look** it. The `headline` is the
+> zero-friction default; `text` is the "show me everything" variant. There's
+> also `first_step` and `counts` in the same response if you want to build a
+> richer card.
+
+> **Roaming, like the outing shortcuts:** every tap crosses Tailscale from your
+> phone. Wrap **Get Contents of URL** in an **If** that checks it succeeded; on
+> failure **Show Notification** "Couldn't reach Prefrontal — tap again when
+> you're back on the tailnet." (`/health` in Safari is the quick check.)
+
+The escalating *proactive* nudge — a push when you tip into overwhelm without
+tapping anything — is sent by the `panic-check` n8n workflow polling
+`POST /webhooks/panic/check`; you don't need a shortcut for that.
+
 ## Shortcut: "Update location" (the simplest location source)
 
 A single automation that tells Prefrontal where you are. It's the one source of

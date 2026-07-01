@@ -33,7 +33,7 @@ to be explainable rather than precise.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -107,6 +107,8 @@ class PanicPlan:
         first_step_for: The title of the item ``first_step`` addresses.
         counts: ``{"late", "soon", "piling_up", "pressing"}`` counts for the
             grounding line (``pressing`` = late + soon).
+        headline: A single spoken/notification line — grounding + the first step —
+            for a one-tap Shortcut or a proactive push.
     """
 
     date: str
@@ -116,6 +118,7 @@ class PanicPlan:
     first_step: str | None = None
     first_step_for: str | None = None
     counts: dict[str, int] = field(default_factory=dict)
+    headline: str = ""
 
 
 # --- Timestamp parsing -------------------------------------------------------
@@ -429,7 +432,7 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
         "piling_up": len(piling_up),
         "pressing": len(late) + len(soon),
     }
-    return PanicPlan(
+    plan = PanicPlan(
         date=now.strftime("%Y-%m-%d"),
         late=late,
         soon=soon,
@@ -437,6 +440,28 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
         first_step=first_step,
         first_step_for=first_step_for,
         counts=counts,
+    )
+    return replace(plan, headline=_headline(plan))
+
+
+def _headline(plan: PanicPlan) -> str:
+    """One spoken/notification line: grounding + the first step (for one-tap use)."""
+    pressing = plan.counts.get("pressing", 0)
+    if not pressing and not plan.piling_up:
+        return "Nothing's actually on fire right now — take a breath. The board's empty."
+    if plan.first_step:
+        if pressing == 1:
+            lead = "1 thing needs you right now."
+        elif pressing:
+            lead = f"{pressing} things need you right now."
+        else:
+            lead = "Nothing has a hard clock right now."
+        return f"{lead} Start here: {plan.first_step}"
+    # Only piling-up items — no forced first step, just a gentle pointer.
+    top = plan.piling_up[0].title
+    return (
+        f"Nothing's urgent, but a few things are piling up — like {top}. "
+        "Pick one when you're ready."
     )
 
 
@@ -558,3 +583,53 @@ def summarize_panic(
             raise OllamaError("Ollama returned an empty panic summary.")
         return PanicResult(text=rendered, source="heuristic")
     return PanicResult(text=prose, source="llm", model=client.model)
+
+
+# --- Proactive alerting ------------------------------------------------------
+#
+# Panic mode is primarily on-demand, but the worst overwhelm spikes are exactly
+# the moments you *don't* think to open anything. A poller (n8n) can hit
+# ``POST /webhooks/panic/check`` on a cadence; these helpers decide whether the
+# moment warrants an unprompted nudge. The bar is deliberately high — a single
+# late item is normal life, not a crisis — and the endpoint edge-triggers on the
+# level (like the departure reminder's signature) so it fires once when you tip
+# into overwhelm, not on every poll.
+
+#: Default pressing-count at/above which (with something already late) it alerts.
+DEFAULT_ALERT_MIN_PRESSING = 3
+#: Default minutes to stay quiet after an alert, even across a new spike edge.
+DEFAULT_ALERT_COOLDOWN_MINUTES = 180.0
+
+
+def overwhelm_level(plan: PanicPlan, *, min_pressing: int = DEFAULT_ALERT_MIN_PRESSING) -> str:
+    """Classify a plan as ``"overwhelmed"`` or ``"calm"`` for proactive alerting.
+
+    Overwhelmed when either two or more things are already late, or something is
+    late *and* the total pressing count has reached ``min_pressing``. A lone
+    upcoming item — or even one late item on an otherwise clear plate — stays
+    ``calm``: the point is to catch a genuine pile-up, not to nag.
+    """
+    late = plan.counts.get("late", 0)
+    pressing = plan.counts.get("pressing", 0)
+    if late >= 2 or (late >= 1 and pressing >= min_pressing):
+        return "overwhelmed"
+    return "calm"
+
+
+def panic_alert_message(plan: PanicPlan, *, name: str | None = None) -> str:
+    """A short, kind push line for a proactive overwhelm alert.
+
+    Names the shape of the pile-up (late / soon) and leads straight into the
+    single first step, so the notification itself is actionable.
+    """
+    opener = f"Hey {name} — " if name else "Heads up — "
+    late = plan.counts.get("late", 0)
+    soon = plan.counts.get("soon", 0)
+    parts = []
+    if late:
+        parts.append(f"{late} already late")
+    if soon:
+        parts.append(f"{soon} bearing down soon")
+    shape = " and ".join(parts) if parts else "a few things"
+    tail = f" Start here: {plan.first_step}" if plan.first_step else ""
+    return f"{opener}things are stacking up — {shape}. Breathe; it's a short list.{tail}"

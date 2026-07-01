@@ -30,6 +30,7 @@ Routes:
 - ``GET  /places`` / ``POST /places`` — curated destination aliases for geocoding.
 - ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
 - ``GET  /panic`` — overwhelmed-mode triage: what's on fire now + one first step.
+- ``POST /webhooks/panic/check`` — poll for a proactive overwhelm nudge (n8n).
 - ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
 - ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
 - ``GET  /dashboard`` — read-only monitoring UI (self-contained HTML shell).
@@ -55,6 +56,7 @@ from __future__ import annotations
 import hmac
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -148,7 +150,14 @@ from prefrontal.modules.location_anchor import (
     record_outing_abandoned,
     record_outing_return,
 )
-from prefrontal.panic import build_panic, render_panic
+from prefrontal.panic import (
+    DEFAULT_ALERT_COOLDOWN_MINUTES,
+    DEFAULT_ALERT_MIN_PRESSING,
+    build_panic,
+    overwhelm_level,
+    panic_alert_message,
+    render_panic,
+)
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
@@ -538,6 +547,16 @@ def _state_float(memory: MemoryStore, key: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_dt_or_none(ts: str | None) -> Any:
+    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
+    if not ts:
+        return None
+    try:
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
 
 
 def _fmt_minutes(value: float | None) -> str:
@@ -2193,10 +2212,74 @@ def create_app(
             "counts": plan.counts,
             "first_step": plan.first_step,
             "first_step_for": plan.first_step_for,
+            "headline": plan.headline,
             "late": [dump(p) for p in plan.late],
             "soon": [dump(p) for p in plan.soon],
             "piling_up": [dump(p) for p in plan.piling_up],
             "text": render_panic(plan),
+        }
+
+    @app.post("/webhooks/panic/check", tags=["schedule"])
+    def panic_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Poll for a *proactive* overwhelm nudge (for n8n / a scheduler).
+
+        Panic mode is normally on-demand, but the worst spikes are the moments you
+        don't think to open anything. A poller hits this on a cadence; it fires
+        only when the plate genuinely tips into overwhelm (see
+        :func:`~prefrontal.panic.overwhelm_level`), and edge-triggers on the level
+        — like the departure reminder's signature — so a sustained pile-up nudges
+        once, not every poll. A ``panic_alert_cooldown_minutes`` floor keeps it
+        quiet for a while after firing even if the level flaps.
+
+        Returns ``{"fire", "level", "message", "first_step", "counts", "headline"}``.
+        Only ``fire == true`` should be delivered as a push/voice nudge.
+        """
+        memory = ctx.store
+        plan = build_panic(memory)
+
+        try:
+            min_pressing = int(
+                memory.get_state("panic_alert_min_pressing")
+                or DEFAULT_ALERT_MIN_PRESSING
+            )
+        except (TypeError, ValueError):
+            min_pressing = DEFAULT_ALERT_MIN_PRESSING
+        cooldown = _state_float(
+            memory, "panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES
+        )
+
+        level = overwhelm_level(plan, min_pressing=min_pressing)
+        prev = memory.get_state("last_panic_level", "calm")
+        fire = level == "overwhelmed" and prev != "overwhelmed"
+
+        # Cooldown floor: even on a fresh edge, stay quiet if we alerted recently.
+        if fire:
+            last_at = _parse_dt_or_none(memory.get_state("last_panic_alert_at"))
+            if last_at is not None:
+                elapsed = (utcnow() - last_at).total_seconds() / 60.0
+                if elapsed < cooldown:
+                    fire = False
+
+        memory.set_state("last_panic_level", level, source="inferred")
+        message = ""
+        if fire:
+            name = (memory.get_state("user_name") or "").strip() or None
+            message = panic_alert_message(plan, name=name)
+            memory.set_state(
+                "last_panic_alert_at",
+                utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                source="inferred",
+            )
+
+        return {
+            "fire": fire,
+            "level": level,
+            "message": message,
+            "first_step": plan.first_step,
+            "counts": plan.counts,
+            "headline": plan.headline,
         }
 
     # -- Todos (open loops fitted into free time) ----------------------------
