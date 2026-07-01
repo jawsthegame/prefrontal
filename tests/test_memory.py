@@ -142,6 +142,28 @@ def test_coaching_state_round_trip(store):
     assert store.all_state()["preferred_reminder_channel"]["source"] == "explicit"
 
 
+def test_get_float_parses_and_falls_back(store):
+    """get_float parses numeric state and falls back on missing/unparseable values."""
+    assert store.get_float("missing", 1.5) == 1.5  # absent key -> default
+    store.set_state("travel_speed_kmh", "42", source="explicit")
+    assert store.get_float("travel_speed_kmh", 30.0) == 42.0
+    store.set_state("travel_speed_kmh", "not-a-number", source="explicit")
+    assert store.get_float("travel_speed_kmh", 30.0) == 30.0  # bad value -> default
+
+
+def test_get_bool_recognizes_tokens_and_falls_back(store):
+    """get_bool maps known truthy/falsey tokens; unknown/missing -> default."""
+    assert store.get_bool("missing", True) is True  # absent key -> default
+    for token in ("1", "true", "TRUE", "Yes", "on"):
+        store.set_state("flag", token, source="explicit")
+        assert store.get_bool("flag", False) is True
+    for token in ("0", "false", "No", "off"):
+        store.set_state("flag", token, source="explicit")
+        assert store.get_bool("flag", True) is False
+    store.set_state("flag", "maybe", source="explicit")
+    assert store.get_bool("flag", True) is True  # unrecognized -> default
+
+
 def test_build_profile_includes_state_and_bias(store):
     """The profile surfaces coaching preferences and the time-estimation multiplier."""
     profile = build_profile(store)

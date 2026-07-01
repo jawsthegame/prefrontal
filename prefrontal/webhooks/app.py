@@ -555,17 +555,6 @@ class StepDone(BaseModel):
     )
 
 
-def _state_float(memory: MemoryStore, key: str, default: float) -> float:
-    """Read a coaching-state value as a float, falling back on missing/bad data."""
-    raw = memory.get_state(key)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return default
-
-
 def _parse_dt_or_none(ts: str | None) -> Any:
     """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
     if not ts:
@@ -702,8 +691,8 @@ def _decompose_and_store(
     memory: MemoryStore, todo_id: int, title: str, client: Any
 ) -> dict[str, Any]:
     """Generate a todo's first-step decomposition, persist it, and return it."""
-    max_first = _state_float(
-        memory, "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
+    max_first = memory.get_float(
+        "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
     )
     d = decompose_task(title, max_first_minutes=max_first, client=client)
     memory.set_decomposition(
@@ -879,11 +868,7 @@ def create_app(
         geocoder is passed only when the ``geocoding_enabled`` coaching-state flag
         is on, so a fresh install never reaches off-host by default.
         """
-        enabled = (memory.get_state("geocoding_enabled", "0") or "0").strip() in (
-            "1",
-            "true",
-            "True",
-        )
+        enabled = memory.get_bool("geocoding_enabled", False)
         return enrich_commitments(
             memory, geocoder=geocoder_client if enabled else None, limit=limit
         )
@@ -1310,9 +1295,9 @@ def create_app(
         name = ctx.user.get("display_name") or ""
         handle = ctx.user.get("handle") or ""
         settings: Settings = request.app.state.settings
-        home_radius = _state_float(memory, "home_radius_m", DEFAULT_HOME_RADIUS_M)
-        abandon_ratio = _state_float(memory, "abandon_after_ratio", DEFAULT_ABANDON_RATIO)
-        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        home_radius = memory.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
+        abandon_ratio = memory.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        bias = memory.get_float("time_estimation_bias", 1.0)
         commitments = memory.upcoming_commitments()
         delivery = _delivery_fields(memory)
 
@@ -1677,7 +1662,7 @@ def create_app(
             )
             elapsed = (match or {}).get("elapsed_minutes") or 0.0
         memory.record_switch_impulse(session["id"])
-        base = _state_float(memory, "pause_seconds", DEFAULT_PAUSE_SECONDS)
+        base = memory.get_float("pause_seconds", DEFAULT_PAUSE_SECONDS)
         name = ctx.user.get("display_name") or ""
         return SwitchPause(
             session_id=session["id"],
@@ -1780,14 +1765,12 @@ def create_app(
         """
         memory = ctx.store
         name = ctx.user.get("display_name") or ""
-        soft = _state_float(memory, "hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
-        hard = _state_float(memory, "hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
-        abandon_ratio = _state_float(
-            memory, "focus_abandon_after_ratio", DEFAULT_FOCUS_ABANDON_RATIO
+        soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
+        hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
+        abandon_ratio = memory.get_float(
+            "focus_abandon_after_ratio", DEFAULT_FOCUS_ABANDON_RATIO
         )
-        protect_enabled = (
-            memory.get_state("protect_aligned_hyperfocus", "true") or "true"
-        ).lower() == "true"
+        protect_enabled = memory.get_bool("protect_aligned_hyperfocus", True)
 
         results: list[dict[str, Any]] = []
         for session in memory.active_focus_sessions():
@@ -1907,11 +1890,9 @@ def create_app(
         newest first for history.
         """
         memory = ctx.store
-        soft = _state_float(memory, "hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
-        hard = _state_float(memory, "hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
-        protect_enabled = (
-            memory.get_state("protect_aligned_hyperfocus", "true") or "true"
-        ).lower() == "true"
+        soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
+        hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
+        protect_enabled = memory.get_bool("protect_aligned_hyperfocus", True)
         active = []
         for s in memory.active_focus_sessions():
             level = focus_level(
@@ -2033,7 +2014,7 @@ def create_app(
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
 
-        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        bias = memory.get_float("time_estimation_bias", 1.0)
         name = ctx.user.get("display_name") or ""
         handle = ctx.user.get("handle") or ""
         settings: Settings = request.app.state.settings
@@ -2047,14 +2028,14 @@ def create_app(
                 current_lat=cur_lat,
                 current_lon=cur_lon,
                 bias=bias,
-                speed_kmh=_state_float(memory, "travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
-                road_factor=_state_float(memory, "travel_road_factor", DEFAULT_ROAD_FACTOR),
-                prep_minutes=_state_float(memory, "departure_prep_minutes", DEFAULT_PREP_MINUTES),
-                heads_up_minutes=_state_float(
-                    memory, "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+                speed_kmh=memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+                road_factor=memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
+                prep_minutes=memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+                heads_up_minutes=memory.get_float(
+                    "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
                 ),
-                soon_minutes=_state_float(
-                    memory, "departure_soon_minutes", DEFAULT_SOON_MINUTES
+                soon_minutes=memory.get_float(
+                    "departure_soon_minutes", DEFAULT_SOON_MINUTES
                 ),
             )
             for c in memory.upcoming_commitments()
@@ -2358,8 +2339,8 @@ def create_app(
             )
         except (TypeError, ValueError):
             min_pressing = DEFAULT_ALERT_MIN_PRESSING
-        cooldown = _state_float(
-            memory, "panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES
+        cooldown = memory.get_float(
+            "panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES
         )
 
         level = overwhelm_level(plan, min_pressing=min_pressing)
@@ -2445,7 +2426,7 @@ def create_app(
             energy=aug.energy,
         )
         # Big tasks stall on starting — auto-decompose into a tiny first step.
-        threshold = _state_float(memory, "decomposition_threshold_minutes", 30.0)
+        threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
         decomposition = None
         if aug.estimate_minutes >= threshold:
             decomposition = _decompose_and_store(
@@ -2640,7 +2621,7 @@ def create_app(
         realistic length. Great for "I have 20 minutes — what can I knock out?"
         """
         memory = ctx.store
-        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        bias = memory.get_float("time_estimation_bias", 1.0)
         fits = fit_todos(minutes, memory.open_todos(), bias)
         return {
             "available_minutes": minutes,
@@ -2706,7 +2687,7 @@ def create_app(
             return result
 
         open_todos = memory.open_todos()
-        bias = _state_float(memory, "time_estimation_bias", 1.0)
+        bias = memory.get_float("time_estimation_bias", 1.0)
         fits = fit_todos(free, open_todos, bias)
         if not fits:
             result["reason"] = "nothing fits this window"

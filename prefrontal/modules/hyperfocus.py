@@ -285,11 +285,11 @@ def is_focus_protected(store: MemoryStore) -> bool:
         ``True`` if any active session is aligned, protection is enabled, and the
         block is below the hard ceiling.
     """
-    protect_enabled = (store.get_state("protect_aligned_hyperfocus") or "true").lower() == "true"
+    protect_enabled = store.get_bool("protect_aligned_hyperfocus", True)
     if not protect_enabled:
         return False
-    soft = _state_float(store, "hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
-    hard = _state_float(store, "hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
+    soft = store.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
+    hard = store.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
     for session in store.active_focus_sessions():
         if not session.get("aligned"):
             continue
@@ -302,17 +302,6 @@ def is_focus_protected(store: MemoryStore) -> bool:
         if should_protect(level, aligned=True, protect_enabled=True):
             return True
     return False
-
-
-def _state_float(store: MemoryStore, key: str, default: float) -> float:
-    """Read a coaching-state value as a float, falling back to ``default``."""
-    raw = store.get_state(key)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return default
 
 
 def _minutes_between(start: str | None, end: str | None) -> float:
@@ -381,7 +370,7 @@ class HyperfocusModule(Module):
         lines: list[str] = []
         soft = store.get_state("hyperfocus_block_minutes")
         hard = store.get_state("hard_interrupt_minutes")
-        protect = (store.get_state("protect_aligned_hyperfocus") or "true").lower() == "true"
+        protect = store.get_bool("protect_aligned_hyperfocus", True)
         if soft and hard:
             stance = (
                 "Protect aligned hyperfocus" if protect else "Interrupt on the soft cadence"

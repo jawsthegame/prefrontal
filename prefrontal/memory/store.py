@@ -737,6 +737,54 @@ class MemoryStore:
         ).fetchone()
         return row["value"] if row is not None else default
 
+    def get_float(self, key: str, default: float) -> float:
+        """Return a coaching-state value parsed as a float.
+
+        Coaching state is stored as text, so numeric preferences are re-parsed on
+        every read. This is the single typed accessor for that — a missing key or
+        an unparseable value both fall back to ``default`` rather than raising, so
+        a corrupt or hand-edited value can never take down a nudge path.
+
+        Args:
+            key: The preference name.
+            default: Value to return if the key is absent or not a valid float.
+
+        Returns:
+            The stored value as a ``float``, or ``default``.
+        """
+        raw = self.get_state(key)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def get_bool(self, key: str, default: bool) -> bool:
+        """Return a coaching-state value parsed as a boolean.
+
+        Recognizes ``1``/``true``/``yes``/``on`` (case-insensitive) as true and
+        ``0``/``false``/``no``/``off`` as false. A missing key or any
+        unrecognized value falls back to ``default``, so a typo degrades to the
+        safe default rather than silently reading as false.
+
+        Args:
+            key: The preference name.
+            default: Value to return if the key is absent or unrecognized.
+
+        Returns:
+            The stored value as a ``bool``, or ``default``.
+        """
+        raw = self.get_state(key)
+        if raw is None:
+            return default
+        token = raw.strip().lower()
+        if token in ("1", "true", "yes", "on"):
+            return True
+        if token in ("0", "false", "no", "off"):
+            return False
+        return default
+
     def set_state(self, key: str, value: str, source: str = "inferred") -> None:
         """Insert or update a coaching-state preference.
 

@@ -206,7 +206,7 @@ class ImpulsivityModule(Module):
                 f"Insert a **{pause}-second** reflective pause before honoring an "
                 "impulsive context switch."
             )
-        if (store.get_state("capture_then_defer") or "true").lower() == "true":
+        if store.get_bool("capture_then_defer", True):
             lines.append(
                 "Capture new impulses to the inbox and defer them rather than acting "
                 "immediately — the capture itself relieves the urgency."
