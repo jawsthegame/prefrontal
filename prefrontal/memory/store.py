@@ -923,6 +923,127 @@ class MemoryStore:
         )
         self.conn.commit()
 
+    # -- escalating sessions (shared by outings & focus sessions) ------------
+    #
+    # An "escalating session" is a time-boxed row that escalates through severity
+    # levels and eventually closes: outings (Location-Aware Task Anchor) and focus
+    # sessions (Hyperfocus) are two instances of it. Their lifecycles were
+    # duplicated method-for-method; these generic helpers hold the shared CRUD +
+    # elapsed/actual-minutes SQL once, parameterized by table and the timestamp
+    # columns. Table/column names are internal constants, never user input, so the
+    # f-string interpolation is injection-safe. The public per-kind methods below
+    # are thin delegations.
+
+    def _session_start(
+        self,
+        *,
+        table: str,
+        columns: list[str],
+        values: list[Any],
+        ts_col: str,
+        ts_value: str | None,
+    ) -> int:
+        """Insert a session row (scoped to the user) and return its id.
+
+        ``columns``/``values`` are the domain fields; ``user_id`` is prepended
+        automatically. When ``ts_value`` is given it overrides the DB clock for
+        the start timestamp (``ts_col``) — mainly for tests.
+        """
+        cols = ["user_id", *columns]
+        vals: list[Any] = [self._uid(), *values]
+        if ts_value is not None:
+            cols.append(ts_col)
+            vals.append(ts_value)
+        placeholders = ", ".join("?" for _ in cols)
+        cur = self.conn.execute(
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})",
+            vals,
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def _session_get(self, table: str, session_id: int) -> dict[str, Any] | None:
+        """Return a single session row by id, or ``None`` if it does not exist."""
+        row = self.conn.execute(
+            f"SELECT * FROM {table} WHERE id = ? AND user_id = ?",
+            (session_id, self._uid()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def _session_active(self, table: str, started_col: str) -> list[dict[str, Any]]:
+        """Return active sessions with a computed ``elapsed_minutes`` field.
+
+        Elapsed time is computed in SQL against ``CURRENT_TIMESTAMP`` (both
+        timestamps are UTC), so callers never deal with timezones.
+        """
+        rows = self.conn.execute(
+            f"SELECT *, (julianday('now') - julianday({started_col})) * 1440.0 "
+            f"AS elapsed_minutes FROM {table} "
+            "WHERE user_id = ? AND status = 'active' ORDER BY id",
+            (self._uid(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _session_most_recent_active(
+        self, table: str, started_col: str
+    ) -> dict[str, Any] | None:
+        """Return the newest active session (with ``elapsed_minutes``), or ``None``."""
+        row = self.conn.execute(
+            f"SELECT *, (julianday('now') - julianday({started_col})) * 1440.0 "
+            f"AS elapsed_minutes FROM {table} "
+            "WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+            (self._uid(),),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def _session_set_level(self, table: str, session_id: int, level: str) -> None:
+        """Record the highest escalation level that has fired for a session."""
+        self.conn.execute(
+            f"UPDATE {table} SET last_level = ? WHERE id = ? AND user_id = ?",
+            (level, session_id, self._uid()),
+        )
+        self.conn.commit()
+
+    def _session_close(
+        self,
+        *,
+        table: str,
+        started_col: str,
+        closed_col: str,
+        session_id: int,
+        status: str,
+        extra_set: str = "",
+        extra_params: tuple[Any, ...] = (),
+    ) -> dict[str, Any] | None:
+        """Close an active session and return it with a computed ``actual_minutes``.
+
+        ``extra_set``/``extra_params`` let a caller write additional columns in the
+        same UPDATE (e.g. focus sessions' ``COALESCE``-guarded breadcrumb/outcome).
+        Returns ``None`` if the session was not active.
+        """
+        cur = self.conn.execute(
+            f"UPDATE {table} SET status = ?, {closed_col} = CURRENT_TIMESTAMP{extra_set} "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (status, *extra_params, session_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        row = self.conn.execute(
+            f"SELECT *, (julianday({closed_col}) - julianday({started_col})) * 1440.0 "
+            f"AS actual_minutes FROM {table} WHERE id = ? AND user_id = ?",
+            (session_id, self._uid()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def _session_recent(self, table: str, limit: int) -> list[dict[str, Any]]:
+        """Return recent sessions (any status), newest first."""
+        rows = self.conn.execute(
+            f"SELECT * FROM {table} WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (self._uid(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- outings (Location-Aware Task Anchor) --------------------------------
 
     def start_outing(
@@ -947,28 +1068,17 @@ class MemoryStore:
         Returns:
             The new outing's ``id``.
         """
-        columns = ["user_id", "intention", "time_window_minutes", "home_lat", "home_lon"]
-        values: list[Any] = [
-            self._uid(), intention, time_window_minutes, home_lat, home_lon
-        ]
-        if departure_at is not None:
-            columns.append("departure_at")
-            values.append(departure_at)
-        placeholders = ", ".join("?" for _ in columns)
-        cur = self.conn.execute(
-            f"INSERT INTO outings ({', '.join(columns)}) VALUES ({placeholders})",
-            values,
+        return self._session_start(
+            table="outings",
+            columns=["intention", "time_window_minutes", "home_lat", "home_lon"],
+            values=[intention, time_window_minutes, home_lat, home_lon],
+            ts_col="departure_at",
+            ts_value=departure_at,
         )
-        self.conn.commit()
-        return int(cur.lastrowid)
 
     def get_outing(self, outing_id: int) -> dict[str, Any] | None:
         """Return a single outing by id, or ``None`` if it does not exist."""
-        row = self.conn.execute(
-            "SELECT * FROM outings WHERE id = ? AND user_id = ?",
-            (outing_id, self._uid()),
-        ).fetchone()
-        return _row_to_dict(row)
+        return self._session_get("outings", outing_id)
 
     def active_outings(self) -> list[dict[str, Any]]:
         """Return active outings with a computed ``elapsed_minutes`` field.
@@ -979,23 +1089,11 @@ class MemoryStore:
         Returns:
             A list of outing dicts, each including ``elapsed_minutes``.
         """
-        rows = self.conn.execute(
-            "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
-            "AS elapsed_minutes FROM outings WHERE user_id = ? AND status = 'active' "
-            "ORDER BY id",
-            (self._uid(),),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return self._session_active("outings", "departure_at")
 
     def most_recent_active_outing(self) -> dict[str, Any] | None:
         """Return the newest active outing (with ``elapsed_minutes``), or ``None``."""
-        row = self.conn.execute(
-            "SELECT *, (julianday('now') - julianday(departure_at)) * 1440.0 "
-            "AS elapsed_minutes FROM outings WHERE user_id = ? AND status = 'active' "
-            "ORDER BY id DESC LIMIT 1",
-            (self._uid(),),
-        ).fetchone()
-        return _row_to_dict(row)
+        return self._session_most_recent_active("outings", "departure_at")
 
     def set_outing_level(self, outing_id: int, level: str) -> None:
         """Record the highest escalation level that has fired for an outing.
@@ -1004,11 +1102,7 @@ class MemoryStore:
             outing_id: The outing to update.
             level: One of ``none``/``soft``/``firm``/``call``.
         """
-        self.conn.execute(
-            "UPDATE outings SET last_level = ? WHERE id = ? AND user_id = ?",
-            (level, outing_id, self._uid()),
-        )
-        self.conn.commit()
+        self._session_set_level("outings", outing_id, level)
 
     def close_outing(
         self, outing_id: int, status: str = "returned"
@@ -1023,20 +1117,13 @@ class MemoryStore:
             The closed outing dict including ``actual_minutes`` (minutes between
             departure and return), or ``None`` if the outing was not active.
         """
-        cur = self.conn.execute(
-            "UPDATE outings SET status = ?, returned_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'active'",
-            (status, outing_id, self._uid()),
+        return self._session_close(
+            table="outings",
+            started_col="departure_at",
+            closed_col="returned_at",
+            session_id=outing_id,
+            status=status,
         )
-        self.conn.commit()
-        if cur.rowcount == 0:
-            return None
-        row = self.conn.execute(
-            "SELECT *, (julianday(returned_at) - julianday(departure_at)) * 1440.0 "
-            "AS actual_minutes FROM outings WHERE id = ? AND user_id = ?",
-            (outing_id, self._uid()),
-        ).fetchone()
-        return _row_to_dict(row)
 
     def recent_outings(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent outings (any status), newest first.
@@ -1047,11 +1134,7 @@ class MemoryStore:
         Returns:
             A list of outing dicts ordered by ``id`` descending.
         """
-        rows = self.conn.execute(
-            "SELECT * FROM outings WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-            (self._uid(), limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return self._session_recent("outings", limit)
 
     # -- focus sessions (Hyperfocus) -----------------------------------------
 
@@ -1079,28 +1162,17 @@ class MemoryStore:
         Returns:
             The new session's ``id``.
         """
-        columns = ["user_id", "intended_task", "planned_minutes", "aligned"]
-        values: list[Any] = [
-            self._uid(), intended_task, planned_minutes, 1 if aligned else 0
-        ]
-        if started_at is not None:
-            columns.append("started_at")
-            values.append(started_at)
-        placeholders = ", ".join("?" for _ in columns)
-        cur = self.conn.execute(
-            f"INSERT INTO focus_sessions ({', '.join(columns)}) VALUES ({placeholders})",
-            values,
+        return self._session_start(
+            table="focus_sessions",
+            columns=["intended_task", "planned_minutes", "aligned"],
+            values=[intended_task, planned_minutes, 1 if aligned else 0],
+            ts_col="started_at",
+            ts_value=started_at,
         )
-        self.conn.commit()
-        return int(cur.lastrowid)
 
     def get_focus_session(self, session_id: int) -> dict[str, Any] | None:
         """Return a single focus session by id, or ``None`` if it does not exist."""
-        row = self.conn.execute(
-            "SELECT * FROM focus_sessions WHERE id = ? AND user_id = ?",
-            (session_id, self._uid()),
-        ).fetchone()
-        return _row_to_dict(row)
+        return self._session_get("focus_sessions", session_id)
 
     def active_focus_sessions(self) -> list[dict[str, Any]]:
         """Return active focus sessions with a computed ``elapsed_minutes`` field.
@@ -1111,23 +1183,11 @@ class MemoryStore:
         Returns:
             A list of session dicts, each including ``elapsed_minutes``.
         """
-        rows = self.conn.execute(
-            "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
-            "AS elapsed_minutes FROM focus_sessions "
-            "WHERE user_id = ? AND status = 'active' ORDER BY id",
-            (self._uid(),),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return self._session_active("focus_sessions", "started_at")
 
     def most_recent_active_focus_session(self) -> dict[str, Any] | None:
         """Return the newest active focus session (with ``elapsed_minutes``), or ``None``."""
-        row = self.conn.execute(
-            "SELECT *, (julianday('now') - julianday(started_at)) * 1440.0 "
-            "AS elapsed_minutes FROM focus_sessions "
-            "WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
-            (self._uid(),),
-        ).fetchone()
-        return _row_to_dict(row)
+        return self._session_most_recent_active("focus_sessions", "started_at")
 
     def set_focus_session_level(self, session_id: int, level: str) -> None:
         """Record the highest interrupt level that has fired for a session.
@@ -1136,11 +1196,7 @@ class MemoryStore:
             session_id: The session to update.
             level: One of ``none``/``check``/``break``.
         """
-        self.conn.execute(
-            "UPDATE focus_sessions SET last_level = ? WHERE id = ? AND user_id = ?",
-            (level, session_id, self._uid()),
-        )
-        self.conn.commit()
+        self._session_set_level("focus_sessions", session_id, level)
 
     def record_switch_impulse(self, session_id: int) -> bool:
         """Count one switch-impulse against an active focus session.
@@ -1206,21 +1262,16 @@ class MemoryStore:
             The closed session dict including ``actual_minutes`` (minutes between
             start and end), or ``None`` if the session was not active.
         """
-        cur = self.conn.execute(
-            "UPDATE focus_sessions SET status = ?, ended_at = CURRENT_TIMESTAMP, "
-            "breadcrumb = COALESCE(?, breadcrumb), outcome = COALESCE(?, outcome) "
-            "WHERE id = ? AND user_id = ? AND status = 'active'",
-            (status, breadcrumb, outcome, session_id, self._uid()),
+        return self._session_close(
+            table="focus_sessions",
+            started_col="started_at",
+            closed_col="ended_at",
+            session_id=session_id,
+            status=status,
+            extra_set=", breadcrumb = COALESCE(?, breadcrumb), "
+            "outcome = COALESCE(?, outcome)",
+            extra_params=(breadcrumb, outcome),
         )
-        self.conn.commit()
-        if cur.rowcount == 0:
-            return None
-        row = self.conn.execute(
-            "SELECT *, (julianday(ended_at) - julianday(started_at)) * 1440.0 "
-            "AS actual_minutes FROM focus_sessions WHERE id = ? AND user_id = ?",
-            (session_id, self._uid()),
-        ).fetchone()
-        return _row_to_dict(row)
 
     def recent_focus_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent focus sessions (any status), newest first.
@@ -1231,11 +1282,7 @@ class MemoryStore:
         Returns:
             A list of session dicts ordered by ``id`` descending.
         """
-        rows = self.conn.execute(
-            "SELECT * FROM focus_sessions WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-            (self._uid(), limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return self._session_recent("focus_sessions", limit)
 
     # -- commitments (schedule for impact analysis) --------------------------
 
