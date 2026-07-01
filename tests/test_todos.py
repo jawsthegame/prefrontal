@@ -669,18 +669,18 @@ def test_step_done_endpoint(client, store_open):
 
 
 def test_migrate_adds_done_steps_idempotently():
-    """_migrate back-fills done_steps on a pre-existing decomposition table."""
+    """backfill_added_columns back-fills done_steps on a pre-existing table."""
     import sqlite3
 
-    from prefrontal.memory.db import _migrate
+    from prefrontal.memory.migrate import backfill_added_columns
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE todo_decompositions (todo_id INTEGER PRIMARY KEY, first_step TEXT)")
-    _migrate(conn)
+    backfill_added_columns(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(todo_decompositions)")}
     assert "done_steps" in cols
-    _migrate(conn)  # second run is a no-op, not an error
+    backfill_added_columns(conn)  # second run is a no-op, not an error
     conn.close()
 
 

@@ -16,6 +16,7 @@ from prefrontal.memory.migrate import (
     MULTI_TENANT_VERSION,
     is_multi_tenant,
     migrate_to_multi_tenant,
+    run_migrations,
 )
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import (
@@ -355,6 +356,36 @@ def test_migration_backfills_legacy_user():
     assert len(store.open_todos()) == 2
     assert is_multi_tenant(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == MULTI_TENANT_VERSION
+
+
+def test_run_migrations_applies_both_ladder_steps():
+    """The unified ladder runs the multi-tenant step *and* the column back-fill.
+
+    On a legacy DB, `run_migrations` should (1) upgrade to multi-tenant and
+    (2) back-fill columns added later — here `todos.source`, which the legacy
+    schema predates — in a single call, before schema.sql is applied.
+    """
+    conn = _legacy_single_tenant_db()
+    assert "source" not in {r["name"] for r in conn.execute("PRAGMA table_info(todos)")}
+
+    result = run_migrations(conn)
+
+    # Step 1: multi-tenant upgrade happened and is reported for token surfacing.
+    assert result.migrated is True
+    assert result.token
+    assert is_multi_tenant(conn)
+    # Step 2: the later-added column was back-filled by the same call.
+    assert "source" in {r["name"] for r in conn.execute("PRAGMA table_info(todos)")}
+    conn.close()
+
+
+def test_run_migrations_is_noop_on_current_db():
+    """run_migrations reports no multi-tenant work on an already-current database."""
+    conn = init_db(":memory:")
+    try:
+        assert run_migrations(conn).migrated is False
+    finally:
+        conn.close()
 
 
 def test_migration_rebuilds_all_uniqueness_constraints():
