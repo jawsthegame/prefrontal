@@ -18,7 +18,14 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import FreeWindow, fit_todos, free_windows, suggest_for_windows
+from prefrontal.scheduling import (
+    FreeWindow,
+    available_now,
+    fit_todos,
+    free_windows,
+    suggest_for_windows,
+    work_window_now,
+)
 from prefrontal.todos import (
     augment_todo,
     avoidance_score,
@@ -125,6 +132,48 @@ def test_suggest_for_windows_no_double_booking():
     out = suggest_for_windows(windows, todos, bias=1.0)
     assert out[0]["suggestion"]["title"] == "Short"   # only Short fits 20m
     assert out[1]["suggestion"]["title"] == "Long"    # Short used; Long fits 60m
+
+
+# -- "free time right now" bounds --------------------------------------------
+
+TZ = "America/New_York"  # June → EDT (UTC-4)
+
+
+def test_work_window_now_inside_hours_capped():
+    """Inside working hours, horizon = now + cap (when the day-end is further)."""
+    now = datetime(2026, 6, 29, 15, 0, 0)  # 11:00 EDT — inside 08:30–17:30
+    within, horizon = work_window_now(now, TZ, cap_minutes=90)
+    assert within is True
+    assert horizon == now + timedelta(minutes=90)
+
+
+def test_work_window_now_bounded_by_day_end():
+    """Near day-end, the horizon is clipped to the local 17:30, not now+cap."""
+    now = datetime(2026, 6, 29, 21, 0, 0)  # 17:00 EDT — 30 min before 17:30
+    within, horizon = work_window_now(now, TZ, cap_minutes=90)
+    assert within is True
+    assert horizon == datetime(2026, 6, 29, 21, 30, 0)  # 17:30 EDT → 21:30 UTC
+
+
+@pytest.mark.parametrize("hour_utc", [11, 22])  # 07:00 EDT (early) and 18:00 EDT (late)
+def test_work_window_now_outside_hours(hour_utc):
+    """Outside the local band, within=False so nothing is offered."""
+    now = datetime(2026, 6, 29, hour_utc, 0, 0)
+    within, _ = work_window_now(now, TZ, cap_minutes=90)
+    assert within is False
+
+
+def test_available_now_gap_ongoing_and_open():
+    """Free-until-next-commitment; 0 when busy now; full horizon when clear."""
+    now = datetime(2026, 6, 29, 15, 0, 0)
+    horizon = now + timedelta(minutes=90)
+    soon = [{"start_at": _at(now + timedelta(minutes=30)),
+             "end_at": _at(now + timedelta(minutes=60))}]
+    assert available_now(soon, now, horizon) == 30  # free until the 30-min-out meeting
+    ongoing = [{"start_at": _at(now - timedelta(minutes=10)),
+                "end_at": _at(now + timedelta(minutes=20))}]
+    assert available_now(ongoing, now, horizon) == 0  # in a meeting right now
+    assert available_now([], now, horizon) == 90  # nothing on the calendar → full window
 
 
 # -- endpoints ---------------------------------------------------------------
@@ -603,3 +652,54 @@ def test_migrate_adds_done_steps_idempotently():
     assert "done_steps" in cols
     _migrate(conn)  # second run is a no-op, not an error
     conn.close()
+
+
+# -- GET /todos/now (widget's "what fits right now") -------------------------
+
+
+def _all_day(store):
+    """Widen the working-hours band so the endpoint tests aren't clock-dependent."""
+    store.set_state("time_estimation_bias", "1.0")
+    store.set_state("fit_day_start", "00:00")
+    store.set_state("fit_day_end", "23:59")
+
+
+def test_todos_now_suggests_fitting_todo(client, store_open):
+    """A short open todo with an open calendar is surfaced as the pick."""
+    _all_day(store_open)
+    client.post("/todos", headers=_auth(),
+                json={"title": "Reply to landlord", "estimate_minutes": 30})
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["within_hours"] is True
+    assert r["free_minutes"] >= 30
+    assert r["suggestion"]["title"] == "Reply to landlord"
+
+
+def test_todos_now_none_when_nothing_fits(client, store_open):
+    """A todo longer than the (capped) free window yields no suggestion."""
+    _all_day(store_open)
+    client.post("/todos", headers=_auth(),
+                json={"title": "Big project", "estimate_minutes": 300})
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["suggestion"] is None
+    assert r["reason"] == "nothing fits this window"
+
+
+def test_todos_now_zero_when_busy(client, store_open):
+    """A commitment spanning now means no free time, so no suggestion."""
+    _all_day(store_open)
+    now = datetime.utcnow()
+    client.post("/commitments", headers=_auth(), json={
+        "title": "Meeting now",
+        "start_at": _at(now - timedelta(minutes=10)),
+        "end_at": _at(now + timedelta(minutes=30)),
+    })
+    client.post("/todos", headers=_auth(),
+                json={"title": "Quick call", "estimate_minutes": 10})
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["free_minutes"] == 0
+    assert r["reason"] == "no free time right now"
+
+
+def test_todos_now_requires_auth(client):
+    assert client.get("/todos/now").status_code == 401

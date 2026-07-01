@@ -1,9 +1,11 @@
 // Prefrontal — iOS home-screen & Lock Screen widget (Scriptable)
 // ---------------------------------------------------------------------------
 // A glanceable view of "right now": any active outing (with its escalation
-// level), your next commitments today, conflict/todo counts, and the most
-// recent nudge Prefrontal sent (so a missed push is still visible). Reads the
-// Prefrontal API over Tailscale; tap the widget to open the full family view.
+// level), your next commitments today, conflict/todo counts, the most recent
+// nudge Prefrontal sent (so a missed push is still visible), and — when you have
+// an open gap — the one todo that fits it ("25m free · Reply to landlord"), a
+// low-friction initiation nudge. Reads the Prefrontal API over Tailscale; tap
+// the widget to open the full family view.
 //
 // One script drives every size. It auto-detects which family iOS is rendering:
 //   • Home Screen — Small / Medium / Large: the full card (header + list + counts).
@@ -67,10 +69,11 @@ const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 // failing call (say /todos) doesn't blank the whole widget — we still render
 // the outing and commitments that did load. "offline" is reserved for the case
 // where *nothing* came back (mini unreachable / bad token).
-let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] };
+let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] }, fitNow = { free_minutes: 0, suggestion: null };
 const settled = await Promise.allSettled([
   getJSON("/outings"), getJSON("/commitments"),
   getJSON("/commitments/conflicts"), getJSON("/todos"), getJSON("/nudges"),
+  getJSON("/todos/now"),
 ]);
 const val = (i, fallback) => (settled[i].status === "fulfilled" ? settled[i].value : fallback);
 outings = val(0, outings);
@@ -78,6 +81,7 @@ commitments = val(1, commitments);
 conflicts = val(2, conflicts);
 todos = val(3, todos);
 nudges = val(4, nudges);
+fitNow = val(5, fitNow);
 const ok = settled.some((s) => s.status === "fulfilled");
 
 const family = config.widgetFamily || "medium";
@@ -115,6 +119,11 @@ const hard = (conflicts.conflicts || []).length;
 const poss = (conflicts.possible_conflicts || []).length;
 const open = (todos.todos || []).length;
 
+// "You have time for one thing" — the single open todo that fits the gap until
+// your next commitment (server-computed, bounded by working hours + a cap).
+const fitSug = fitNow.suggestion; // { title, estimate_minutes, effective_minutes, ... } or null
+const fitFree = Math.round(fitNow.free_minutes || 0);
+
 // Most recent nudge the system sent — shown only while still "recent" (last 8h),
 // so a nudge you already acted on doesn't linger on the widget for days.
 const NUDGE_MAX_AGE_MIN = 8 * 60;
@@ -136,6 +145,7 @@ function renderInline() {
   if (!ok) { sym = "wifi.slash"; label = "Prefrontal offline"; }
   else if (active) { sym = "figure.walk"; label = `${active.intention} · ${active.level}`; }
   else if (nextCommitment) { sym = "calendar"; label = `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`; }
+  else if (fitSug) { sym = "bolt.fill"; label = `${fitFree}m free · ${fitSug.title}`; }
   else if (hard) { sym = "exclamationmark.triangle"; label = `${hard} conflict${hard === 1 ? "" : "s"}`; }
   else { sym = "checklist"; label = `${open} todo${open === 1 ? "" : "s"}`; }
   symbol(w, sym, 12);
@@ -158,6 +168,9 @@ function renderCircular() {
   } else if (nextCommitment) {
     text(top, "Next", { size: 9, color: C.muted }); top.addSpacer();
     text(bot, fmtTime(nextCommitment.start_at), { size: 14, bold: true }); bot.addSpacer();
+  } else if (fitSug) {
+    symbol(top, "bolt.fill", 13); top.addSpacer();
+    text(bot, `${fitFree}m`, { size: 15, bold: true }); bot.addSpacer();
   } else {
     symbol(top, "checklist", 13); top.addSpacer();
     text(bot, String(open), { size: 15, bold: true }); bot.addSpacer();
@@ -182,6 +195,10 @@ function renderRectangular() {
     const r = w.addStack(); r.centerAlignContent();
     symbol(r, "calendar", 12);
     text(r, " " + fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
+  } else if (fitSug) {
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "bolt.fill", 12);
+    text(r, ` ${fitFree}m free · ${fitSug.title}`, { size: 13, bold: true });
   } else if (recentNudge) {
     // Nothing time-sensitive right now — surface the last thing Prefrontal said.
     const r = w.addStack(); r.centerAlignContent();
@@ -245,6 +262,17 @@ function renderHomeScreen() {
     }
   } else if (!active) {
     text(w, "Nothing scheduled. 🎉", { color: C.muted, size: 13 });
+  }
+
+  // "Time for one thing" — the todo that fits your free window right now. This is
+  // the initiation nudge: one concrete action, sized to the time you actually have.
+  if (fitSug) {
+    w.addSpacer(6);
+    const fr = w.addStack();
+    fr.centerAlignContent();
+    if (!symbol(fr, "bolt.fill", 11, C.good)) text(fr, "⚡", { size: 11, color: C.good });
+    text(fr, ` ${fitFree}m free`, { color: C.good, size: 11, bold: true });
+    text(fr, ` · ${fitSug.title}`, { size: 12 });
   }
 
   // Footer counts: conflicts / possible / todos.
