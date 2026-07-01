@@ -1,7 +1,8 @@
 // Prefrontal — iOS home-screen & Lock Screen widget (Scriptable)
 // ---------------------------------------------------------------------------
 // A glanceable view of "right now": any active outing (with its escalation
-// level), your next commitments today, and conflict/todo counts. Reads the
+// level), your next commitments today, conflict/todo counts, and the most
+// recent nudge Prefrontal sent (so a missed push is still visible). Reads the
 // Prefrontal API over Tailscale; tap the widget to open the full family view.
 //
 // One script drives every size. It auto-detects which family iOS is rendering:
@@ -66,16 +67,17 @@ const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 // failing call (say /todos) doesn't blank the whole widget — we still render
 // the outing and commitments that did load. "offline" is reserved for the case
 // where *nothing* came back (mini unreachable / bad token).
-let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] };
+let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] };
 const settled = await Promise.allSettled([
   getJSON("/outings"), getJSON("/commitments"),
-  getJSON("/commitments/conflicts"), getJSON("/todos"),
+  getJSON("/commitments/conflicts"), getJSON("/todos"), getJSON("/nudges"),
 ]);
 const val = (i, fallback) => (settled[i].status === "fulfilled" ? settled[i].value : fallback);
 outings = val(0, outings);
 commitments = val(1, commitments);
 conflicts = val(2, conflicts);
 todos = val(3, todos);
+nudges = val(4, nudges);
 const ok = settled.some((s) => s.status === "fulfilled");
 
 const family = config.widgetFamily || "medium";
@@ -112,6 +114,18 @@ const nextCommitment = upcomingList[0];
 const hard = (conflicts.conflicts || []).length;
 const poss = (conflicts.possible_conflicts || []).length;
 const open = (todos.todos || []).length;
+
+// Most recent nudge the system sent — shown only while still "recent" (last 8h),
+// so a nudge you already acted on doesn't linger on the widget for days.
+const NUDGE_MAX_AGE_MIN = 8 * 60;
+function ageMinutes(ts) {
+  if (!ts) return Infinity;
+  const d = new Date(String(ts).replace(" ", "T") + "Z"); // stored UTC
+  return isNaN(d) ? Infinity : (Date.now() - d.getTime()) / 60000;
+}
+const latestNudge = (nudges.nudges || [])[0];
+const recentNudge =
+  latestNudge && ageMinutes(latestNudge.created_at) <= NUDGE_MAX_AGE_MIN ? latestNudge : null;
 
 // ===========================================================================
 // Lock Screen (accessory) families — monochrome, tiny; SF Symbols + text.
@@ -168,6 +182,11 @@ function renderRectangular() {
     const r = w.addStack(); r.centerAlignContent();
     symbol(r, "calendar", 12);
     text(r, " " + fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
+  } else if (recentNudge) {
+    // Nothing time-sensitive right now — surface the last thing Prefrontal said.
+    const r = w.addStack(); r.centerAlignContent();
+    symbol(r, "bell", 12);
+    text(r, " " + recentNudge.message, { size: 13 });
   } else {
     const r = w.addStack(); r.centerAlignContent();
     symbol(r, "checkmark.circle", 12);
@@ -237,6 +256,17 @@ function renderHomeScreen() {
     if (poss) text(foot, `🟡 ${poss}  `, { color: C.soft, size: 12 });
     text(foot, `✓ ${open} todo${open === 1 ? "" : "s"}`, { color: C.muted, size: 12 });
     foot.addSpacer();
+  }
+
+  // Most recent nudge — what Prefrontal last told you, so a missed push is still
+  // visible. Small has no room; medium gets one line, large gets up to two.
+  if (recentNudge && !small) {
+    w.addSpacer(6);
+    const nrow = w.addStack();
+    nrow.centerAlignContent();
+    if (!symbol(nrow, "bell.badge", 11, C.accent)) text(nrow, "🔔", { size: 11 });
+    const nt = text(nrow, " " + recentNudge.message, { size: 11, color: C.muted });
+    nt.lineLimit = family === "large" ? 2 : 1;
   }
 }
 

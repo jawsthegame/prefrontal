@@ -261,6 +261,37 @@ def test_departure_check_fires_once_per_level(client, store):
     assert again["reminder"]["level"] == "soon"
 
 
+def test_departure_check_records_nudge_and_lists_it(client, store):
+    """A fired departure nudge is recorded once and surfaces via GET /nudges."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        location="123 Main St", source="manual",
+    )
+    fired = client.post("/webhooks/departure/check", json={}, headers=_auth()).json()
+    assert fired["fire"] is True
+
+    listed = client.get("/nudges", headers=_auth()).json()["nudges"]
+    assert len(listed) == 1
+    assert listed[0]["kind"] == "departure"
+    assert listed[0]["level"] == "soon"
+    assert listed[0]["message"] == fired["message"]
+
+    # A no-fire re-poll (same level) logs no duplicate nudge.
+    client.post("/webhooks/departure/check", json={}, headers=_auth())
+    assert len(client.get("/nudges", headers=_auth()).json()["nudges"]) == 1
+
+
+def test_nudges_endpoint_empty_ordering_and_limit(client, store):
+    """GET /nudges is empty by default, newest-first, and honors the limit param."""
+    assert client.get("/nudges", headers=_auth()).json()["nudges"] == []
+    for i in range(3):
+        store.record_nudge(kind="outing", message=f"m{i}", level="soft")
+    listed = client.get("/nudges", headers=_auth()).json()["nudges"]
+    assert [n["message"] for n in listed] == ["m2", "m1", "m0"]  # newest first
+    assert len(client.get("/nudges?limit=2", headers=_auth()).json()["nudges"]) == 2
+
+
 def test_departure_check_falls_back_to_lead_without_location(client, store):
     """With no known location, the reminder uses lead_minutes (basis='lead')."""
     store.upsert_commitment(
