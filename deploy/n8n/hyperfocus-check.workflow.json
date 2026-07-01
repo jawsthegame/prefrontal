@@ -51,7 +51,7 @@
         "url": "https://api.pushover.net/1/messages.json",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 1 : 0 }}\n}",
+        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 1 : 0 }},\n  \"url\": \"shortcuts://run-shortcut?name=End%20focus\",\n  \"url_title\": \"Wrap up (End focus)\"\n}",
         "options": {}
       },
       "id": "pushover-push",

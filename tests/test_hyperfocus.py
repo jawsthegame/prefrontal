@@ -85,7 +85,9 @@ def test_is_abandoned():
 
 def test_build_focus_message_varies_by_level_and_alignment():
     aligned = build_focus_message("check", task="the refactor", elapsed_minutes=95, aligned=True)
-    assert "Still the thing" in aligned and "the refactor" in aligned
+    assert "Still what you meant" in aligned and "the refactor" in aligned
+    # The check no longer promises a phantom tap action; it points at End focus.
+    assert "End focus" in aligned and "Tap to" not in aligned
     redirect = build_focus_message("check", task="email", elapsed_minutes=95, aligned=False)
     assert "park it" in redirect
     brk = build_focus_message("break", task="x", elapsed_minutes=200, name="Tom")
