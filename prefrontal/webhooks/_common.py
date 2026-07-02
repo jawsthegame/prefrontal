@@ -185,7 +185,7 @@ from prefrontal.todos import (
     normalize_category,
     record_todo_closed,
 )
-from prefrontal.webhooks.notify import nudge_actions
+from prefrontal.webhooks.notify import nudge_actions, panic_actions
 from prefrontal.webhooks.oauth import (
     NUDGE_ACTIONS,
     register_oauth_routes,
@@ -1084,6 +1084,7 @@ __all__ = [
     "normalize_query",
     "nudge_actions",
     "overwhelm_level",
+    "panic_actions",
     "panic_alert_message",
     "parse_inbound_event",
     "parse_time_window",

@@ -269,6 +269,44 @@ def test_panic_check_calm_does_not_fire(store, noon):
     assert body["fire"] is False and body["level"] == "calm"
 
 
+def test_panic_check_fire_carries_first_step_inline_and_a_triage_button(store, noon):
+    """A firing nudge has the first step in its message + a view button to /panic."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    settings = Settings(webhook_secret=SECRET, oauth_base_url="https://agent-1.tail8b0a.ts.net")
+    app = create_app(store=store, settings=settings)
+    with TestClient(app) as c:
+        body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert body["fire"] is True
+    # First step is inline in the delivered message (no app switch needed to start).
+    assert body["first_step"] and body["first_step"] in body["message"]
+    # …and a single one-tap "view" button opens the full triage overlay.
+    assert len(body["actions"]) == 1
+    btn = body["actions"][0]
+    assert btn["action"] == "view"
+    assert btn["url"] == "https://agent-1.tail8b0a.ts.net/dashboard?panic=1"
+
+
+def test_panic_check_action_empty_without_public_origin(store, noon):
+    """No public origin configured → the nudge still fires, just with no button."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    with TestClient(app) as c:
+        body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert body["fire"] is True
+    assert body["actions"] == []
+
+
+def test_dashboard_deep_link_auto_opens_the_triage(store):
+    """The dashboard honors ?panic=1 (the nudge's deep link) by opening the overlay."""
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    with TestClient(app) as c:
+        dash = c.get("/dashboard").text
+    assert 'get("panic") === "1"' in dash  # reads the deep-link param
+    assert "openPanic()" in dash            # …and opens the overlay on auth
+
+
 def test_dashboard_and_family_wire_the_panic_button(store):
     """Both HTML shells expose a panic entry point backed by /panic."""
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))

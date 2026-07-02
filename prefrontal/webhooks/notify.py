@@ -65,6 +65,34 @@ def _http_button(label: str, url: str) -> dict[str, Any]:
     return {"action": "http", "label": label, "url": url, "method": "GET", "clear": True}
 
 
+def _view_button(label: str, url: str) -> dict[str, Any]:
+    """An ntfy ``view`` action button that opens ``url`` on tap.
+
+    Unlike :func:`_http_button` this fires no background request — it just opens
+    the URL (a web page), so it needs no signing. ``clear: false`` keeps the
+    notification around after opening, since viewing isn't resolving.
+    """
+    return {"action": "view", "label": label, "url": url, "clear": False}
+
+
+def panic_actions(base_url: str, *, label: str = "Open triage") -> list[dict[str, Any]]:
+    """Return the ntfy action button for a proactive panic nudge, or ``[]``.
+
+    A single ``view`` button that opens the full panic triage in the dashboard
+    (the ``?panic=1`` deep link auto-opens the overlay), so a proactive overwhelm
+    nudge — which already carries the first step inline — is one tap away from the
+    whole picture. Empty when no public origin is configured; ``view`` needs no
+    signing since it only opens a page (the page itself is auth-gated).
+
+    Args:
+        base_url: Public HTTPS origin (``settings.oauth_base_url``).
+        label: Button label (defaults to "Open triage").
+    """
+    if not base_url:
+        return []
+    return [_view_button(label, f"{base_url}/dashboard?panic=1")]
+
+
 def nudge_actions(
     kind: str,
     target_id: int | None,
