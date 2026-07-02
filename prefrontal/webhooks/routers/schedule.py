@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from prefrontal.webhooks._common import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
+    DEFAULT_DEPARTURE_GRACE_MINUTES,
     DEFAULT_HEADS_UP_MINUTES,
     DEFAULT_PREP_MINUTES,
     DEFAULT_ROAD_FACTOR,
@@ -29,6 +30,7 @@ from prefrontal.webhooks._common import (
     Settings,
     _dismiss_url,
     _parse_dt_or_none,
+    attribute_departure,
     build_briefing,
     build_departure_message,
     build_panic,
@@ -44,6 +46,7 @@ from prefrontal.webhooks._common import (
     panic_alert_message,
     partition_conflicts,
     plan_departure,
+    record_departure_outcome,
     render_briefing,
     render_panic,
     resolve_user,
@@ -215,6 +218,123 @@ def build_router(
             "message": message,
             "reminder": reminder,
             "location_known": cur_lat is not None and cur_lon is not None,
+        }
+
+    @router.post("/webhooks/departure/left", tags=["schedule"])
+    async def departure_left(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Record an actual departure and score it against the leave-by time.
+
+        The outcome mirror of ``/webhooks/departure/check``: an iOS "when I leave
+        Home" automation (or any client) POSTs when the user heads out, and this
+        attributes the departure to the commitment it was for, classifies it
+        on-time vs late against that commitment's computed leave-by, and logs a
+        ``departure`` episode — closing the last big gap in outcome capture (the
+        learning pass finally sees whether departures land on time).
+
+        Body (all optional): ``departed_at`` (``YYYY-MM-DD HH:MM:SS`` / ISO;
+        defaults to now), ``commitment_id`` (force attribution, skipping the
+        matcher), and ``current_lat``/``current_lon`` (else the stored fix) for
+        the travel-based leave-by. Idempotent per commitment occurrence, so a
+        chatty geofence that fires twice logs once.
+        """
+        memory = ctx.store
+        # Departure timing is a Time Blindness intervention; honor the toggle.
+        if not module_enabled("time_blindness", resolved_settings):
+            return {"recorded": False, "skipped": "module_disabled"}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        # Accept the stored "YYYY-MM-DD HH:MM:SS" form or ISO-8601 (what iOS emits,
+        # e.g. "2026-07-02T09:48:00Z"): swap the T separator; the parser's [:19]
+        # slice drops any trailing Z/offset. Defaults to now for a live geofence.
+        raw_departed = body.get("departed_at")
+        if isinstance(raw_departed, str):
+            raw_departed = raw_departed.strip().replace("T", " ", 1)
+        departed_at = _parse_dt_or_none(raw_departed) or utcnow()
+
+        cur_lat = body.get("current_lat")
+        cur_lon = body.get("current_lon")
+        if cur_lat is None or cur_lon is None:
+            last = memory.get_location()
+            if last is not None:
+                cur_lat, cur_lon = last["lat"], last["lon"]
+
+        bias = memory.get_float("time_estimation_bias", 1.0)
+        plans = [
+            plan_departure(
+                c,
+                current_lat=cur_lat,
+                current_lon=cur_lon,
+                bias=bias,
+                speed_kmh=memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+                road_factor=memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
+                prep_minutes=memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+                heads_up_minutes=memory.get_float(
+                    "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+                ),
+                soon_minutes=memory.get_float(
+                    "departure_soon_minutes", DEFAULT_SOON_MINUTES
+                ),
+                now=departed_at,
+            )
+            for c in memory.upcoming_commitments()
+        ]
+
+        forced = body.get("commitment_id")
+        if forced is not None:
+            plan = next((p for p in plans if p.commitment["id"] == forced), None)
+        else:
+            plan = attribute_departure(plans, departed_at)
+
+        if plan is None:
+            return {"recorded": False, "reason": "no_matching_commitment"}
+
+        # Idempotent per commitment occurrence: a geofence can fire twice.
+        signature = f"{plan.commitment['id']}:{plan.commitment['start_at']}"
+        if memory.get_state("last_departure_outcome", "") == signature:
+            return {
+                "recorded": False,
+                "reason": "already_recorded",
+                "commitment_id": plan.commitment["id"],
+            }
+
+        grace = memory.get_float(
+            "departure_grace_minutes", DEFAULT_DEPARTURE_GRACE_MINUTES
+        )
+        recorded = record_departure_outcome(
+            memory, plan, departed_at, grace_minutes=grace
+        )
+        memory.set_state("last_departure_outcome", signature, source="inferred")
+        # They've left — stop any further departure nudges for this commitment.
+        memory.dismiss_departure(plan.commitment["id"])
+
+        title = plan.commitment.get("title") or "your commitment"
+        lateness = recorded["lateness_minutes"]
+        if recorded["outcome"] == "miss":
+            confirmation = (
+                f"Logged — you left for “{title}” about {round(lateness)} min late."
+            )
+        else:
+            spare = round(max(0.0, -lateness))
+            confirmation = (
+                f"Logged — you left for “{title}” on time"
+                + (f" (~{spare} min to spare)." if spare >= 1 else ".")
+                + " Nice."
+            )
+        return {
+            "recorded": True,
+            "confirmation": confirmation,
+            "title": title,
+            "leave_by": plan.leave_by,
+            "departed_at": departed_at.strftime("%Y-%m-%d %H:%M:%S"),
+            **recorded,
         }
 
     @router.post(

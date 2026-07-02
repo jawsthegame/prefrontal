@@ -21,18 +21,32 @@ anchor's soft/firm/call shape:
 - **soon** — leave time is within ``departure_soon_minutes`` (start getting ready).
 - **go** — at or past the leave-by time (head out now, or you're already late).
 
-Pure functions only; the HTTP surface (``/webhooks/departure/check``) wires them
-to live data and handles fire-once dedup.
+The mirror of the *prediction* is the *outcome*: did the user actually leave on
+time? An actual-departure signal — an iOS "when I leave Home" geofence hitting
+``/webhooks/departure/left`` — is attributed to the commitment it was for
+(:func:`attribute_departure`), compared against that commitment's computed
+leave-by (:func:`classify_departure`), and logged as a ``departure`` episode
+(:func:`record_departure_outcome`) so the learning pass finally sees whether
+departures land on time. ``actual_value`` is deliberately left ``None`` (like the
+abandoned-outing and closed-todo captures) so the outcome feeds the ``drift``
+score without polluting the shared ``time_estimation_bias`` — leaving late must
+not *lower* the underestimate multiplier.
+
+Pure functions only; the HTTP surface (``/webhooks/departure/check`` and
+``/webhooks/departure/left``) wires them to live data and handles dedup.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from prefrontal.impact import utcnow
 from prefrontal.modules.location_anchor import haversine_m
+
+if TYPE_CHECKING:
+    from prefrontal.memory.store import MemoryStore
 
 #: Assumed average travel speed (km/h) for the straight-line estimate. A mixed
 #: urban default; tunable via the ``travel_speed_kmh`` coaching-state key.
@@ -260,3 +274,140 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
             )
         return f"{greeting}leave now for {title}{where}{travel}."
     return ""
+
+
+# --- Departure outcome capture (did you actually leave on time?) -------------
+#
+# The prediction above (leave_by / level) is only half the learning loop; the
+# other half is the *outcome*. An actual-departure signal (a "leave Home"
+# geofence) is attributed to the commitment it was for, classified on-time vs
+# late against that commitment's leave_by, and logged as a `departure` episode.
+
+#: Minutes past leave-by tolerated before a departure counts as late.
+DEFAULT_DEPARTURE_GRACE_MINUTES = 3.0
+
+#: How early before leave-by a departure still plausibly belongs to a commitment
+#: (leaving 3 hours before your evening thing isn't "leaving for" it).
+DEFAULT_ATTRIBUTION_EARLY_MINUTES = 120.0
+
+#: How late after start-time a departure still attributes (you left, just late).
+DEFAULT_ATTRIBUTION_LATE_MINUTES = 30.0
+
+
+def attribute_departure(
+    plans: list[DeparturePlan],
+    departed_at: datetime,
+    *,
+    early_minutes: float = DEFAULT_ATTRIBUTION_EARLY_MINUTES,
+    late_minutes: float = DEFAULT_ATTRIBUTION_LATE_MINUTES,
+) -> DeparturePlan | None:
+    """Pick the commitment an actual departure was *for*.
+
+    A departure plausibly belongs to a commitment when it happens inside that
+    commitment's leave window — from ``early_minutes`` before its leave-by to
+    ``late_minutes`` after its start (you can leave late). Among the plausible
+    candidates the soonest-starting one wins: that's the obligation you're
+    heading to. Returns ``None`` when nothing fits, so an errand unrelated to any
+    commitment doesn't get logged as a (trivially on-time) departure.
+
+    Args:
+        plans: Departure plans, typically one per upcoming commitment.
+        departed_at: When the user actually left (naive UTC).
+        early_minutes: Widest lead before leave-by that still attributes.
+        late_minutes: Grace after start-time that still attributes.
+
+    Returns:
+        The matched :class:`DeparturePlan`, or ``None``.
+    """
+    candidates: list[tuple[datetime, DeparturePlan]] = []
+    for p in plans:
+        start = _parse(p.commitment["start_at"])
+        leave_by = _parse(p.leave_by)
+        window_start = leave_by - timedelta(minutes=early_minutes)
+        window_end = start + timedelta(minutes=late_minutes)
+        if window_start <= departed_at <= window_end:
+            candidates.append((start, p))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda sp: sp[0])
+    return candidates[0][1]
+
+
+def classify_departure(
+    plan: DeparturePlan,
+    departed_at: datetime,
+    *,
+    grace_minutes: float = DEFAULT_DEPARTURE_GRACE_MINUTES,
+) -> tuple[str, float]:
+    """Classify an actual departure against its plan's leave-by.
+
+    Args:
+        plan: The matched departure plan.
+        departed_at: When the user actually left (naive UTC).
+        grace_minutes: Minutes past leave-by still counted as on time.
+
+    Returns:
+        ``(outcome, lateness_minutes)`` — ``outcome`` is ``"success"`` (on time)
+        or ``"miss"`` (late); ``lateness_minutes`` is positive when late,
+        negative when the user left with time to spare.
+    """
+    leave_by = _parse(plan.leave_by)
+    lateness = round((departed_at - leave_by).total_seconds() / 60.0, 1)
+    outcome = "miss" if lateness > grace_minutes else "success"
+    return outcome, lateness
+
+
+def record_departure_outcome(
+    store: MemoryStore,
+    plan: DeparturePlan,
+    departed_at: datetime,
+    *,
+    grace_minutes: float = DEFAULT_DEPARTURE_GRACE_MINUTES,
+) -> dict[str, Any]:
+    """Log an actual departure as a ``departure`` episode for pattern tracking.
+
+    Outcome is ``success`` (left on time) or ``miss`` (left late), feeding the
+    ``departure`` ``drift`` score. ``actual_value`` is intentionally ``None`` (as
+    with abandoned outings and closed todos) so it never pollutes the shared
+    ``time_estimation_bias``; the planned buffer is kept in ``predicted_value``
+    and the human detail in ``notes``. The episode is stamped at ``departed_at``.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        plan: The matched departure plan.
+        departed_at: When the user actually left (naive UTC).
+        grace_minutes: Minutes past leave-by still counted as on time.
+
+    Returns:
+        ``{"episode_id", "outcome", "lateness_minutes", "commitment_id"}``.
+    """
+    outcome, lateness = classify_departure(plan, departed_at, grace_minutes=grace_minutes)
+    start = _parse(plan.commitment["start_at"])
+    leave_by = _parse(plan.leave_by)
+    planned_buffer = round((start - leave_by).total_seconds() / 60.0, 1)
+    hhmm = plan.leave_by[11:16]
+    if outcome == "miss":
+        notes = f"left ~{round(lateness)} min late (leave-by {hhmm})"
+    else:
+        spare = round(max(0.0, -lateness))
+        notes = (
+            f"left on time (~{spare} min to spare, leave-by {hhmm})"
+            if spare >= 1
+            else f"left right on time (leave-by {hhmm})"
+        )
+    episode_id = store.log_episode(
+        "departure",
+        predicted_value=planned_buffer,
+        actual_value=None,
+        acknowledged=True,
+        context=f"auto departure: {plan.commitment.get('title') or 'commitment'}",
+        outcome=outcome,
+        notes=notes,
+        timestamp=departed_at.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    return {
+        "episode_id": episode_id,
+        "outcome": outcome,
+        "lateness_minutes": lateness,
+        "commitment_id": plan.commitment.get("id"),
+    }

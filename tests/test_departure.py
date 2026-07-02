@@ -16,11 +16,14 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.departure import (
+    attribute_departure,
     build_departure_message,
+    classify_departure,
     departure_level,
     estimate_travel_minutes,
     next_departure,
     plan_departure,
+    record_departure_outcome,
 )
 from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
@@ -45,6 +48,11 @@ def _commit(start: str, *, dest=None, lead=10.0, title="Dentist", location=None,
         "dest_lon": dest[1] if dest else None,
     }
     return c
+
+
+def _at(base: datetime, minutes: float) -> str:
+    """A UTC timestamp string ``minutes`` after ``base`` (for the pure tests)."""
+    return (base + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # -- pure functions ----------------------------------------------------------
@@ -324,3 +332,85 @@ def test_calendar_sync_persists_destination_coords(client):
     commitments = client.get("/commitments", headers=_auth()).json()["commitments"]
     assert commitments[0]["dest_lat"] == pytest.approx(37.7)
     assert commitments[0]["dest_lon"] == pytest.approx(-122.4)
+
+
+# -- Departure outcome capture (did you actually leave on time?) -------------
+
+
+def test_classify_departure_on_time_late_and_early():
+    """On time within grace, late past it, and early counts as time to spare."""
+    plan = plan_departure(_commit(_at(NOW, 30), lead=10.0), now=NOW)  # leave_by = NOW+20
+    assert classify_departure(plan, NOW + timedelta(minutes=20)) == ("success", 0.0)
+    assert classify_departure(plan, NOW + timedelta(minutes=25)) == ("miss", 5.0)
+    out, late = classify_departure(plan, NOW + timedelta(minutes=15))
+    assert out == "success" and late == -5.0
+
+
+def test_attribute_departure_picks_soonest_and_skips_unrelated():
+    """A departure attributes to the soonest in-window commitment, else None."""
+    a = plan_departure(_commit(_at(NOW, 30), lead=10.0, title="A", cid=1), now=NOW)
+    b = plan_departure(_commit(_at(NOW, 180), lead=10.0, title="B", cid=2), now=NOW)
+    # In both windows → soonest (A) wins.
+    picked = attribute_departure([a, b], NOW + timedelta(minutes=55))
+    assert picked is not None and picked.commitment["id"] == 1
+    # Only B's window → B.
+    picked_b = attribute_departure([a, b], NOW + timedelta(minutes=120))
+    assert picked_b is not None and picked_b.commitment["id"] == 2
+    # Long before anything → unattributable.
+    assert attribute_departure([a, b], NOW - timedelta(hours=4)) is None
+
+
+def test_record_departure_outcome_logs_a_departure_episode(store):
+    """A late departure logs a `departure` miss with actual_value left None."""
+    plan = plan_departure(_commit(_at(NOW, 30), lead=10.0), now=NOW)  # leave_by NOW+20
+    rec = record_departure_outcome(store, plan, NOW + timedelta(minutes=32))
+    assert rec["outcome"] == "miss" and rec["lateness_minutes"] == 12.0
+    ep = store.get_episode(rec["episode_id"])
+    assert ep["episode_type"] == "departure"
+    assert ep["outcome"] == "miss"
+    assert ep["actual_value"] is None  # never pollutes the shared time bias
+    assert ep["predicted_value"] == 10.0  # planned buffer (informational)
+    assert "late" in ep["notes"]
+
+
+def test_departure_left_records_and_is_idempotent(client, store):
+    """POST records the outcome once; a second (chatty geofence) call no-ops."""
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(20), lead_minutes=10.0, source="manual"
+    )  # leave_by ~now+10 → leaving now is ~10 min early → success
+    first = client.post("/webhooks/departure/left", json={}, headers=_auth()).json()
+    assert first["recorded"] is True
+    assert first["outcome"] == "success"
+    assert "on time" in first["confirmation"]
+    again = client.post("/webhooks/departure/left", json={}, headers=_auth()).json()
+    assert again["recorded"] is False and again["reason"] == "already_recorded"
+
+
+def test_departure_left_late_departure_is_a_miss(client, store):
+    """When the leave-by has already passed, leaving now is logged as a miss."""
+    store.upsert_commitment(
+        title="Standup", start_at=_utc(5), lead_minutes=10.0, source="manual"
+    )  # leave_by ~now-5 → already past
+    resp = client.post("/webhooks/departure/left", json={}, headers=_auth()).json()
+    assert resp["recorded"] is True and resp["outcome"] == "miss"
+    assert "late" in resp["confirmation"]
+
+
+def test_departure_left_no_matching_commitment(client):
+    """With nothing on the calendar, a departure isn't attributed (no noise)."""
+    resp = client.post("/webhooks/departure/left", json={}, headers=_auth()).json()
+    assert resp["recorded"] is False and resp["reason"] == "no_matching_commitment"
+
+
+def test_departure_left_skipped_when_module_disabled(store):
+    """Disabling Time Blindness turns off automatic departure capture."""
+    app = create_app(
+        store=store,
+        settings=Settings(webhook_secret=SECRET, modules=("hyperfocus",)),
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(20), lead_minutes=10.0, source="manual"
+    )
+    with TestClient(app) as c:
+        resp = c.post("/webhooks/departure/left", json={}, headers=_auth()).json()
+    assert resp["recorded"] is False and resp["skipped"] == "module_disabled"
