@@ -1,0 +1,71 @@
+{
+  "name": "Prefrontal — Coach Check (unified nudge tick)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 10 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/coach/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"current_lat\": null,\n  \"current_lon\": null\n}",
+        "options": {}
+      },
+      "id": "coach-check",
+      "name": "Coach Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The agent already decided *whether* to fire and *which channel* — one item\n// per returned cue. Map the channel class to an ntfy priority so the delivery\n// respects the escalation the agent chose (digest→low … voice→max). The server\n// deduped/quiet-hours-gated already, so everything here is meant to go out.\nconst PRIORITY = { digest: 1, push: 3, sound: 4, voice: 5 };\nconst cues = ($input.first().json.cues) || [];\nreturn cues.map(c => ({ json: {\n  title: `Prefrontal — ${c.intervention.replace(/_/g, ' ')}`,\n  message: c.text,\n  priority: PRIORITY[c.channel] || 3,\n  channel: c.channel,\n} }));"
+      },
+      "id": "per-cue",
+      "name": "One Item Per Cue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ntfy.sh",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }}\n}",
+        "options": {}
+      },
+      "id": "publish-ntfy",
+      "name": "Publish to ntfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Every 10 min": { "main": [[{ "node": "Coach Check", "type": "main", "index": 0 }]] },
+    "Coach Check": { "main": [[{ "node": "One Item Per Cue", "type": "main", "index": 0 }]] },
+    "One Item Per Cue": { "main": [[{ "node": "Publish to ntfy", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

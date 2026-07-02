@@ -112,6 +112,7 @@ def create_app(
         admin,
         anchor,
         assistant,
+        coaching,
         focus,
         impulsivity,
         ingestion,
@@ -137,6 +138,7 @@ def create_app(
         focus,
         schedule,
         todos,
+        coaching,
         admin,
     ):
         app.include_router(_module.build_router(**_router_deps))
