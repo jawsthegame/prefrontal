@@ -172,6 +172,20 @@ the first test. Code follow-ups below are optional polish.
   departure nudge for that commitment. All in `prefrontal/departure.py` +
   `routers/schedule.py`; covered by `tests/test_departure.py`. This was the last
   big uninstrumented user-touch surface flagged under "Learning & adaptation."
+- **Attend-mode departures (work meetings you don't travel to)** ✅ — most work
+  commitments are attended from wherever you already are (desk / WFH), so a
+  travel-aware "leave now — 25 min travel" nudge for a meeting you'll take on your
+  laptop was pure noise. `departure_mode()` now classifies each commitment: those
+  on an attend-mode feed (`calendar_key` in `attend_calendars`, default `work`)
+  skip travel logic entirely and fire a single short "starts in ~5 min — you're
+  already where you need to be" reminder `work_departure_lead_minutes` before start
+  (`basis="attend"`, no leave/travel copy, no heads_up→soon→go ladder). Two escape
+  hatches restore the travel path for the rare in-person case: a `[commute]`/
+  `[onsite]` tag in a single meeting's title/location, or flagging the whole day
+  in-office via `POST /webhooks/departure/office-day` (a self-expiring toggle, tap
+  it the mornings you commute). Both the check and the outcome (`/left`) surfaces
+  plan the same way. In `prefrontal/departure.py` + `routers/schedule.py`; covered
+  by `tests/test_departure.py`.
 - **Task Paralysis module fully wired** ✅ — the last fully-stubbed module is now
   live, all three interventions `active`. **auto_decompose** breaks any todo over
   `decomposition_threshold_minutes` into a tiny first step at creation
