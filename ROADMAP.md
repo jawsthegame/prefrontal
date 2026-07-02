@@ -48,11 +48,38 @@ the first test. Code follow-ups below are optional polish.
   provisioning (`provision_user`, `POST /admin/users`). `coaching_state`/patterns
   are per-user, so each person learns independently. See `docs/multi-tenant.md`.
   *(This was the big "Beyond v1" item; it's now the default architecture.)*
-- **Panic mode** ✅ — an overwhelm circuit-breaker (`prefrontal/…`, `/panic`
-  endpoints): returns a one-tap headline (the single most important next thing)
-  and a proactive nudge when the day is going sideways. Delivers the
-  get-back-on-track slice of the "encouragement & recovery layer" below, leaving
-  the tone-calibrated reassurance variant as the remaining piece.
+- **Panic mode** ✅ — an overwhelm circuit-breaker for when you're too buried to
+  think. `prefrontal/panic.py`'s deterministic `build_panic()` gathers everything
+  actually bearing down — across calendar, todos, and mail — and ranks it into
+  three buckets: **already behind** (commitments past their safe-departure or a
+  hard meeting underway, overdue todos), **bearing down soon** (departures within
+  ~2h, todos due today, urgent mail), and **piling up** (no hard clock — avoided
+  todos, high-priority mail). Each item is tagged with where it came from
+  (calendar label / inbox account) so work and home pressures sit side by side,
+  and it picks the single most pressing *clocked* item for **one concrete first
+  step**, reusing the Task Paralysis decomposition lever. (`fyi` commitments and
+  already-ended events are excluded; date-only todo deadlines count as end-of-day
+  so "due today" reads as *soon*, not *overdue*.) `render_panic()` emits steadying
+  Markdown with an all-clear path; `summarize_panic()` adds an optional Ollama
+  prose pass with heuristic fallback — the same two-layer shape as the briefing.
+  Reachable four ways:
+  - **On-demand:** `prefrontal panic` (`--llm` for prose) and `GET /panic`
+    (structured buckets + rendered text + a one-line `headline`).
+  - **Dashboard / family view:** a "😮‍💨 Panic" / "Feeling overwhelmed?" button
+    opens a focused, dim-everything overlay with the first step front and center.
+  - **One tap:** a "Panic" iOS Shortcut (`deploy/ios-shortcut.md`) that `GET`s
+    `/panic` and reads back the `headline`.
+  - **Proactive:** `POST /webhooks/panic/check` (+ `deploy/n8n/panic-check.workflow.json`)
+    nudges **only when the plate tips into overwhelm** (`overwhelm_level()`:
+    two-plus already late, or one late with a full plate). It edge-triggers on the
+    level — like the departure signature — so a sustained pile-up nudges once, not
+    every poll, with a cooldown floor. Tunable via the `panic_alert_min_pressing`
+    and `panic_alert_cooldown_minutes` coaching-state keys.
+
+  Endpoints live in `prefrontal/webhooks/routers/schedule.py`; covered by
+  `tests/test_panic.py`. Delivers the get-back-on-track slice of the
+  "encouragement & recovery layer" below, leaving the softer, tone-calibrated
+  daily-recovery variant as the remaining piece.
 - **"What fits right now" (widget)** ✅ — `GET /todos/now` computes the free gap
   until your next commitment (bounded by working hours + a cap) and returns the
   single best-fitting open todo — **biased toward the most-avoided** task and
@@ -178,7 +205,7 @@ the first test. Code follow-ups below are optional polish.
 - **n8n inbound handlers** — `POST /webhooks/n8n` classifies events via
   `parse_inbound_event()` but routes none of them to real handlers yet. The
   Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
-  *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/app.py`.)*
+  *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/routers/ingestion.py`.)*
 - **Module interventions** — four of the five modules now have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
@@ -219,10 +246,11 @@ structured signal — not by model quality or prompt design.** The steps below a
 ordered by leverage; each is independent but builds on denser capture.
 
 1. **Finish dense capture (in progress).** Todo closes now log episodes (above);
-   outings, focus, mail, and the one-tap `POST /episode` endpoint already do. The
+   outings, focus, mail, and the one-tap `POST /webhooks/shortcut` endpoint
+   already do. The
    remaining gap is **automatic departure outcomes** — did the user actually
    leave on time for a commitment? Today that outcome is only captured if the
-   user taps `made_it`/`missed_it` (`POST /episode`); auto-capturing it needs an
+   user taps `made_it`/`missed_it` (`POST /webhooks/shortcut`); auto-capturing it needs an
    actual-departure signal (a geofence exit or the stored location fix in
    `POST /webhooks/location` crossing the home radius), compared against the
    computed leave-by time in `prefrontal/departure.py`. That's a real feature,
@@ -282,7 +310,7 @@ ordered by leverage; each is independent but builds on denser capture.
   that fire a request *directly from the notification*, with no app switch. That
   makes genuinely one-tap, background nudge responses possible:
   **"Wrap up" → `POST /webhooks/focus/end`**, **"I'm back" → `/outing/return`**,
-  **"Made it / Missed it" → `/episode`**, and **return / defer / switch** on the
+  **"Made it / Missed it" → `/webhooks/shortcut`**, and **return / defer / switch** on the
   reflective pause — all without leaving the app you're in.
 
   Migrating interactive nudges to ntfy should **clean up the Pushover-era
