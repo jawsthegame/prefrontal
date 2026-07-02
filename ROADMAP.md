@@ -79,7 +79,13 @@ the first test. Code follow-ups below are optional polish.
   Endpoints live in `prefrontal/webhooks/routers/schedule.py`; covered by
   `tests/test_panic.py`. Delivers the get-back-on-track slice of the
   "encouragement & recovery layer" below, leaving the softer, tone-calibrated
-  daily-recovery variant as the remaining piece.
+  daily-recovery variant as the remaining piece. *(Next: gate the proactive
+  `panic/check` nudge on quiet / responsive hours — it currently fires whenever
+  polled, so an overwhelm push could land at 3am; capture whether the surfaced
+  first step actually got done so overwhelm episodes feed learning — see
+  "measure whether adaptations help" below; and reuse `overwhelm_level()` as one
+  of the triggers for the encouragement layer's detector instead of a separate
+  threshold.)*
 - **"What fits right now" (widget)** ✅ — `GET /todos/now` computes the free gap
   until your next commitment (bounded by working hours + a cap) and returns the
   single best-fitting open todo — **biased toward the most-avoided** task and
@@ -311,7 +317,9 @@ ordered by leverage; each is independent but builds on denser capture.
   makes genuinely one-tap, background nudge responses possible:
   **"Wrap up" → `POST /webhooks/focus/end`**, **"I'm back" → `/outing/return`**,
   **"Made it / Missed it" → `/webhooks/shortcut`**, and **return / defer / switch** on the
-  reflective pause — all without leaving the app you're in.
+  reflective pause — all without leaving the app you're in. The proactive
+  **panic** nudge is a natural fit too: carry the first step inline and an
+  action to open the full `/panic` triage.
 
   Migrating interactive nudges to ntfy should **clean up the Pushover-era
   workarounds** adopted while Pushover was the only channel:
