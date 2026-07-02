@@ -69,6 +69,12 @@
      calendar a commitment belongs to. Solid color + dark text so a bright
      configured color (orange, magenta, blue) reads clearly. */
   .pill.acct, .pill.cal { font-weight: 700; color: #0b0d12; }
+  /* Category chip: clickable (a button), colored by a hash of its label. The
+     "none" variant is the muted "+ category" affordance on an uncategorized todo. */
+  .pill.cat { font-weight: 700; color: #fff; border: none; cursor: pointer; }
+  .pill.cat.none { background: transparent; color: var(--muted); border: 1px dashed #3a4150; font-weight: 400; }
+  .pill.cat:hover { filter: brightness(1.15); }
+  .catlead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   /* The exact text appended to the triage prompt on the next sync — the concrete
      impact your drops have on what mail gets flagged. */
   .addendum { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
@@ -230,6 +236,7 @@
     </div>
     <div class="body"></div>
   </section>
+  <section class="card" id="c-categories"><h2>Todo categories</h2><div class="body"></div></section>
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
@@ -342,6 +349,14 @@ async function post(path, body) {
   return r.json().catch(() => ({}));
 }
 
+// Deterministic pill color from a category label — same label, same hue, no
+// server config. A muted HSL so text stays readable in light and dark.
+function catColor(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h} 45% 42%)`;
+}
+
 function renderOutings(d) {
   const a = (d.active || []);
   if (!a.length) return `<div class="empty">No active outings.</div>`;
@@ -385,6 +400,15 @@ function renderTodos(d) {
     const cls = color ? "pill acct" : "pill";
     return ` <span class="${cls}"${style} title="from ${esc(account)}">${esc(label)}</span>`;
   };
+  // Category chip: a stable color hashed from the label so the same category
+  // always reads the same, without any server-side config. Clicking edits it.
+  const catPill = (id, category) => {
+    const cur = category || "";
+    const label = cur || "+ category";
+    const style = cur ? ` style="background:${catColor(cur)}"` : "";
+    const cls = cur ? "pill cat" : "pill cat none";
+    return ` <button class="${cls}"${style} data-action="todo-category" data-id="${id}" data-category="${esc(cur)}" title="Set category">${esc(label)}</button>`;
+  };
   return t.map((x) => {
     const dc = x.decomposition;
     let step = "";
@@ -412,7 +436,7 @@ function renderTodos(d) {
     const dueText = x.deadline ? "due " + fmt(x.deadline) : "no deadline";
     return `<div class="row">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
+        <div><span class="title">${esc(x.title)}</span> <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
       </div>
@@ -423,6 +447,25 @@ function renderTodos(d) {
       </div>
     </div>`;
   }).join("");
+}
+function renderCategories(d) {
+  const s = (d.stats || []);
+  if (!s.length) return `<div class="empty">No categories yet.</div>`;
+  // avoidance relative to the busiest category, for a simple 0–100% bar.
+  const maxAvoid = Math.max(1, ...s.map((c) => c.avoidance || 0));
+  const capNote = d.at_cap ? ` <span class="badge avoiding">at cap ${d.cap}</span>` : "";
+  const rows = s.map((c) => {
+    const len = c.avg_estimate_minutes != null ? "~" + mins(c.avg_estimate_minutes) : "—";
+    const comp = c.completion_rate != null ? Math.round(c.completion_rate * 100) + "% done" : "—";
+    const av = (c.avoidance || 0);
+    const pct = ((av / maxAvoid) * 100).toFixed(0);
+    return `<div class="row"><div class="main">
+      <div><span class="pill cat" style="background:${catColor(c.category)}">${esc(c.category)}</span>
+        <span class="sub">${c.open} open · ${len} typical · ${comp}</span></div>
+      ${av > 0 ? `<div class="bar" title="avoidance ${av}"><span style="width:${pct}%;background:var(--high)"></span></div>` : ""}
+    </div></div>`;
+  }).join("");
+  return `<div class="catlead">${s.length}/${d.cap} categories in use${capNote}</div>` + rows;
 }
 function renderCommitments(list, conflicts) {
   const c = (list.commitments || []);
@@ -577,16 +620,17 @@ async function load() {
   const results = await Promise.allSettled([
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
-    api("/mail/triage/learned"),
+    api("/mail/triage/learned"), api("/todos/categories"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories] = results;
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
   put("#c-recent", outings, renderRecent);
   put("#c-todos", todos, renderTodos);
+  put("#c-categories", categories, renderCategories);
   put("#c-triage", triage, renderTriage);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
     ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
@@ -635,6 +679,16 @@ document.addEventListener("click", async (e) => {
       const v = prompt("New deadline (YYYY-MM-DD, or YYYY-MM-DD HH:MM). Blank to clear:", cur ? cur.slice(0, 10) : "");
       if (v === null) return; // cancelled — leave it untouched
       await post(`/todos/${id}/deadline`, { deadline: v.trim() || null });
+    }
+    else if (act === "todo-category") {
+      const cur = el.dataset.category || "";
+      // Offer the existing vocabulary so edits converge rather than sprawl.
+      let existing = [];
+      try { existing = (await api("/todos/categories")).categories || []; } catch (_) {}
+      const hint = existing.length ? "\nExisting: " + existing.join(", ") : "";
+      const v = prompt("Category (blank to clear):" + hint, cur);
+      if (v === null) return; // cancelled
+      await post(`/todos/${id}/category`, { category: v.trim() || null });
     }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }

@@ -13,20 +13,24 @@ from prefrontal.webhooks._common import (
     DEFAULT_DAY_START,
     DEFAULT_FIT_CAP_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
+    MAX_CATEGORIES,
     Annotated,
     Any,
     Depends,
     HTTPException,
     ScopedRequest,
     StepDone,
+    TodoCategoryUpdate,
     TodoCreate,
     TodoDeadlineUpdate,
     _decompose_and_store,
     augment_todo,
     available_now,
     avoided_todos,
+    category_stats,
     fit_todos,
     local_hour_of,
+    normalize_category,
     pick_now,
     record_drop_feedback,
     record_todo_closed,
@@ -58,10 +62,11 @@ def build_router(
     ) -> dict[str, Any]:
         """Add an open todo, auto-filling any fields you didn't supply.
 
-        Missing ``estimate_minutes``/``priority``/``energy``/``deadline`` are
-        inferred (local model → keyword heuristic → default) so the todo is
-        schedulable and honestly sortable. Supplied values are kept as-is; the
-        response's ``augmented`` map says where each field came from.
+        Missing ``estimate_minutes``/``priority``/``energy``/``deadline``/
+        ``category`` are inferred (local model → keyword heuristic → default) so
+        the todo is schedulable and honestly sortable. Supplied values are kept
+        as-is; the response's ``augmented`` map says where each field came from.
+        The category is clamped to the user's existing set once it reaches 20.
         """
         memory = ctx.store
         # A user-supplied deadline is validated strictly (422 on garbage); an
@@ -82,6 +87,8 @@ def build_router(
             priority=payload.priority,
             energy=payload.energy,
             deadline=payload.deadline,
+            category=payload.category,
+            existing_categories=memory.todo_categories(),
             client=ollama_client,
         )
         deadline = user_deadline
@@ -98,6 +105,7 @@ def build_router(
             priority=aug.priority,
             deadline=deadline,
             energy=aug.energy,
+            category=aug.category,
         )
         # Big tasks stall on starting — auto-decompose into a tiny first step.
         threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
@@ -112,6 +120,7 @@ def build_router(
             "priority": aug.priority,
             "energy": aug.energy,
             "deadline": deadline,
+            "category": aug.category,
             "augmented": aug.sources,
             "decomposition": decomposition,
         }
@@ -169,6 +178,27 @@ def build_router(
             ]
         }
 
+    @router.get("/todos/categories", tags=["todos"])
+    def todos_categories(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Per-category rollup + the current vocabulary, for the dashboard panel.
+
+        ``stats`` is one entry per category (open/done/dropped counts, the typical
+        estimate = "common execution length", completion rate, and summed
+        avoidance) busiest-first; ``categories`` is the plain vocabulary list
+        (most-common-first) for edit menus; ``cap`` is the ceiling and ``at_cap``
+        says whether a new category can still be coined.
+        """
+        memory = ctx.store
+        categories = memory.todo_categories()
+        return {
+            "stats": category_stats(memory.all_todos(), utcnow()),
+            "categories": categories,
+            "cap": MAX_CATEGORIES,
+            "at_cap": len(categories) >= MAX_CATEGORIES,
+        }
+
     @router.post("/todos/{todo_id}/decompose", tags=["todos"])
     def todo_decompose(
         todo_id: int,
@@ -221,6 +251,42 @@ def build_router(
                 detail=f"Todo {todo_id} is not open.",
             )
         return {"todo_id": todo_id, "deadline": deadline}
+
+    @router.post("/todos/{todo_id}/category", tags=["todos"])
+    def todo_set_category(
+        todo_id: int,
+        payload: TodoCategoryUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) a todo's category — the UI override for the inference.
+
+        ``null``/empty clears it (uncategorized). A value is normalized; a brand
+        new category is only allowed while under the cap of
+        :data:`~prefrontal.todos.MAX_CATEGORIES` — at the cap you must reuse an
+        existing one (409), which is what keeps the derived set bounded. Declared
+        before the ``{action}`` route so "category" isn't read as an action.
+        """
+        memory = ctx.store
+        existing = memory.todo_categories()
+        category = normalize_category(payload.category) if payload.category else None
+        if (
+            category is not None
+            and category not in existing
+            and len(existing) >= MAX_CATEGORIES
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Category limit of {MAX_CATEGORIES} reached — reuse an "
+                    f"existing category instead of creating '{category}'."
+                ),
+            )
+        if not memory.set_todo_category(todo_id, category):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No todo {todo_id}.",
+            )
+        return {"todo_id": todo_id, "category": category}
 
     @router.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
     def todo_step_done(

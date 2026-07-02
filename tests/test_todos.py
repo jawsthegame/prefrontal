@@ -29,14 +29,19 @@ from prefrontal.scheduling import (
     work_window_now,
 )
 from prefrontal.todos import (
+    MAX_CATEGORIES,
     augment_todo,
     avoidance_score,
     avoided_todos,
+    category_stats,
     decompose_task,
+    heuristic_category,
     heuristic_deadline,
     heuristic_energy,
     heuristic_estimate,
     heuristic_priority,
+    normalize_category,
+    resolve_category,
     todo_episode_fields,
 )
 from tests.conftest import scoped_default
@@ -85,6 +90,101 @@ def test_todo_lifecycle(store):
     assert [t["title"] for t in store.open_todos()] == ["Plan birthday"]
     assert store.close_todo(tid) is False  # already closed
     assert store.get_todo(tid)["status"] == "done"
+
+
+# -- categories --------------------------------------------------------------
+
+
+def test_normalize_category_lowercases_and_defaults():
+    assert normalize_category("  Home  Repairs ") == "home repairs"
+    assert normalize_category("") == "other"
+    assert normalize_category(None) == "other"
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("Call the dentist", "communication"),
+        ("Pay the electric bill", "finance"),
+        ("Buy groceries", "errands"),
+        ("Book a doctor appointment", "health"),
+        ("Refactor the auth code", "work"),
+        ("Xyzzy plugh", "other"),
+    ],
+)
+def test_heuristic_category(title, expected):
+    assert heuristic_category(title) == expected
+
+
+def test_resolve_category_allows_new_under_cap():
+    assert resolve_category("finance", ["work", "home"], cap=20) == "finance"
+
+
+def test_resolve_category_clamps_at_cap_to_existing():
+    existing = [f"cat{i}" for i in range(MAX_CATEGORIES)]  # exactly at cap
+    # A novel category can't be coined; falls back to the first (most-common).
+    assert resolve_category("brand-new", existing, cap=MAX_CATEGORIES) == "cat0"
+    # An already-existing one is still allowed at the cap.
+    assert resolve_category("cat5", existing, cap=MAX_CATEGORIES) == "cat5"
+
+
+def test_resolve_category_prefers_other_bucket_at_cap():
+    existing = ["other"] + [f"cat{i}" for i in range(MAX_CATEGORIES - 1)]
+    assert resolve_category("novel", existing, cap=MAX_CATEGORIES) == "other"
+
+
+def test_augment_supplied_category_is_kept_and_clamped():
+    aug = augment_todo("write report", category="Work Stuff", client=None)
+    assert aug.category == "work stuff"
+    assert aug.sources["category"] == "stated"
+
+
+def test_augment_infers_category_via_heuristic_when_offline():
+    aug = augment_todo("call the plumber", client=None)
+    assert aug.category == "communication"
+    assert aug.sources["category"] == "heuristic"
+
+
+def test_augment_uses_llm_category_reusing_existing():
+    client = _ollama_json(
+        '{"estimate_minutes": 20, "priority": 1, "energy": "low", '
+        '"deadline": null, "category": "finance"}'
+    )
+    aug = augment_todo("sort the invoices", existing_categories=["finance", "work"], client=client)
+    assert aug.category == "finance"
+    assert aug.sources["category"] == "llm"
+
+
+def test_augment_llm_new_category_blocked_at_cap():
+    """At the cap, even an LLM-proposed novel category is clamped to existing."""
+    existing = [f"cat{i}" for i in range(MAX_CATEGORIES)]
+    client = _ollama_json(
+        '{"estimate_minutes": 20, "priority": 1, "energy": "low", '
+        '"deadline": null, "category": "shiny-new"}'
+    )
+    aug = augment_todo("do a thing", existing_categories=existing, client=client)
+    assert aug.category in existing
+
+
+def test_category_stats_rollup():
+    now = datetime(2026, 7, 1, 12, 0, 0)
+    old = (now - timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
+    todos = [
+        {"category": "finance", "status": "open", "estimate_minutes": 10,
+         "priority": 2, "created_at": old},
+        {"category": "finance", "status": "done", "estimate_minutes": 20},
+        {"category": "finance", "status": "dropped", "estimate_minutes": None},
+        {"category": None, "status": "open", "estimate_minutes": 30},
+    ]
+    stats = category_stats(todos, now)
+    by_cat = {s["category"]: s for s in stats}
+    fin = by_cat["finance"]
+    assert fin["open"] == 1 and fin["done"] == 1 and fin["dropped"] == 1
+    assert fin["total"] == 3
+    assert fin["avg_estimate_minutes"] == 15.0  # (10 + 20) / 2
+    assert fin["completion_rate"] == 0.5  # 1 done of 2 closed
+    assert fin["avoidance"] > 0  # the 10-day-old open one looks avoided
+    assert by_cat["other"]["open"] == 1  # NULL category bucketed as "other"
 
 
 # -- fitting -----------------------------------------------------------------
@@ -264,6 +364,75 @@ def test_todo_endpoints_require_auth(client):
     assert client.get("/todos").status_code == 401
     assert client.get("/todos/fit", params={"minutes": 10}).status_code == 401
     assert client.post("/todos", json={"title": "x"}).status_code == 401
+
+
+# -- category store + endpoints ----------------------------------------------
+
+
+def test_store_category_roundtrip(store):
+    tid = store.add_todo("Pay rent", category="finance")
+    assert store.get_todo(tid)["category"] == "finance"
+    store.add_todo("Call mom", category="communication")
+    store.add_todo("Pay taxes", category="finance")
+    # Ordered most-common-first: finance (2) before communication (1).
+    assert store.todo_categories() == ["finance", "communication"]
+    assert store.set_todo_category(tid, "home") is True
+    assert store.get_todo(tid)["category"] == "home"
+    assert store.set_todo_category(tid, None) is True
+    assert store.get_todo(tid)["category"] is None
+    assert store.set_todo_category(9999, "x") is False  # no such todo
+
+
+def test_all_todos_includes_closed(store):
+    a = store.add_todo("open one", category="work")
+    b = store.add_todo("done one", category="work")
+    store.close_todo(b, status="done")
+    statuses = {t["title"]: t["status"] for t in store.all_todos()}
+    assert statuses == {"open one": "open", "done one": "done"}
+    assert a  # both present regardless of status
+
+
+def test_create_todo_returns_category(client):
+    r = client.post("/todos", json={"title": "email the team about launch"}, headers=_auth())
+    assert r.status_code == 201
+    # Offline ollama → heuristic: an email task → communication.
+    assert r.json()["category"] == "communication"
+
+
+def test_set_category_endpoint(client):
+    tid = client.post("/todos", json={"title": "thing", "category": "work"},
+                      headers=_auth()).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/category", json={"category": "Home Stuff"}, headers=_auth())
+    assert r.status_code == 200 and r.json()["category"] == "home stuff"
+    # Clear it.
+    r = client.post(f"/todos/{tid}/category", json={"category": None}, headers=_auth())
+    assert r.json()["category"] is None
+    # Unknown todo → 404.
+    assert client.post("/todos/9999/category", json={"category": "x"},
+                       headers=_auth()).status_code == 404
+
+
+def test_set_category_rejects_new_at_cap(client, store_open):
+    # Fill the vocabulary to the cap with distinct categories.
+    for i in range(MAX_CATEGORIES):
+        store_open.add_todo(f"t{i}", category=f"cat{i}")
+    tid = store_open.add_todo("edit me", category="cat0")
+    # A brand-new category is refused (409); reusing an existing one is fine.
+    assert client.post(f"/todos/{tid}/category", json={"category": "brand-new"},
+                       headers=_auth()).status_code == 409
+    assert client.post(f"/todos/{tid}/category", json={"category": "cat3"},
+                       headers=_auth()).status_code == 200
+
+
+def test_categories_endpoint_reports_stats_and_cap(client):
+    client.post("/todos", json={"title": "pay bills", "category": "finance"}, headers=_auth())
+    client.post("/todos", json={"title": "pay rent", "category": "finance"}, headers=_auth())
+    r = client.get("/todos/categories", headers=_auth()).json()
+    assert r["cap"] == MAX_CATEGORIES
+    assert r["at_cap"] is False
+    assert "finance" in r["categories"]
+    fin = next(s for s in r["stats"] if s["category"] == "finance")
+    assert fin["open"] == 2
 
 
 # -- briefing tie-in ---------------------------------------------------------
