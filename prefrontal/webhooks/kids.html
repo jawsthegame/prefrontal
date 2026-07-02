@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Kids · Prefrontal</title>
+<style>
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26;
+    --muted: #8a8578; --accent: #4a7c59; --good: #4a7c59; --warn: #c98a3a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; line-height: 1.45; }
+  header { padding: 20px 18px 8px; }
+  header h1 { margin: 0; font-size: 26px; font-weight: 680; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .meta a { color: var(--accent); text-decoration: none; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 8px 14px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 16px 16px 14px; margin: 12px 0; }
+  .label { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted); }
+  .child-h { font-size: 18px; font-weight: 650; margin: 14px 0 4px; }
+  .cat-h { font-size: 13px; font-weight: 700; color: var(--accent); margin: 10px 0 2px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: var(--muted); min-width: 120px; }
+  .row .v { flex: 1; font-weight: 500; }
+  .row .prov { color: var(--muted); font-size: 12px; }
+  .iconbtn { border: 1px solid var(--line); background: #fff; border-radius: 8px;
+    padding: 3px 8px; cursor: pointer; font-size: 13px; }
+  .iconbtn:hover { border-color: var(--accent); }
+  .iconbtn.del:hover { border-color: #c05353; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: #f1efe8;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; margin: 3px 4px 3px 0; font-size: 14px; }
+  .empty { color: var(--muted); font-style: italic; }
+  .changed { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+  .changed:last-child { border: none; }
+  .changed .who { color: var(--muted); font-size: 12px; }
+  form.inline { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 9px; background: #fff; color: var(--fg); }
+  textarea { width: 100%; min-height: 52px; resize: vertical; }
+  input[type=text], input[type=date], input[type=datetime-local] { min-width: 120px; }
+  .grow { flex: 1; min-width: 140px; }
+  button.primary { background: var(--accent); color: #fff; border: none; border-radius: 9px;
+    padding: 9px 16px; font-weight: 600; cursor: pointer; }
+  button.primary:hover { filter: brightness(1.06); }
+  .hint { color: var(--muted); font-size: 12px; width: 100%; margin-top: -2px; }
+  .appt { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .appt:last-child { border: none; }
+  .appt .when { font-weight: 600; min-width: 130px; }
+  /* assistant */
+  #asst-log { margin-top: 10px; }
+  .asst-reply { font-size: 15px; margin-bottom: 8px; }
+  .act-item { background: #f4f6f4; border: 1px solid #dbe6db; border-radius: 8px; padding: 7px 10px; margin: 4px 0; font-size: 14px; }
+  .asst-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .asst-bar .spacer { flex: 1; }
+  .asst-note, .asst-err { color: var(--muted); font-size: 13px; }
+  .asst-err { color: #b0563a; }
+  .asst-ok { color: var(--good); } .asst-fail { color: #b0563a; }
+  /* gate */
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none; z-index: 40;
+    align-items: center; justify-content: center; padding: 20px; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; }
+  #gate p { color: var(--muted); margin: 0 0 14px; }
+  #gate input { width: 100%; }
+  #gate button { margin-top: 12px; }
+  #gate .err { color: #b0563a; font-size: 14px; min-height: 18px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>👧 Kids</h1>
+  <div class="meta"><span id="status">loading…</span> ·
+    <a href="/family">family view</a> · <a href="/dashboard">dashboard</a></div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card" id="c-assistant">
+    <p class="label">Tell me what changed</p>
+    <form class="inline" id="asst-form">
+      <input class="grow" id="asst-input" type="text" autocomplete="off"
+        placeholder="e.g. Sam's shoe size is 13 · add a dentist appt for Sam next Tue 3pm" />
+      <button class="primary" type="submit">Ask</button>
+    </form>
+    <div id="asst-log"></div>
+  </section>
+
+  <section class="card" id="c-recent">
+    <p class="label">Recently changed</p>
+    <div id="recent"></div>
+  </section>
+
+  <section class="card" id="c-roster">
+    <p class="label">The kids</p>
+    <div id="roster"></div>
+    <form class="inline" id="child-form">
+      <input id="child-name" type="text" placeholder="Add a kid — name" required />
+      <input id="child-bday" type="date" title="Birthday (optional)" />
+      <button class="primary" type="submit">Add</button>
+    </form>
+  </section>
+
+  <section class="card" id="c-facts">
+    <p class="label">Facts</p>
+    <div id="facts"></div>
+    <form class="inline" id="fact-form">
+      <select id="fact-child" title="Which kid"></select>
+      <select id="fact-cat" title="Category"></select>
+      <input id="fact-item" type="text" placeholder="item, e.g. shoe size" required />
+      <input class="grow" id="fact-value" type="text" placeholder="value, e.g. 13" />
+      <button class="primary" type="submit">Save fact</button>
+      <span class="hint">Saving an existing item updates it in place; the ✎ on a row prefills this.</span>
+    </form>
+  </section>
+
+  <section class="card" id="c-agreements">
+    <p class="label">Standing agreements &amp; star charts</p>
+    <div id="agreements"></div>
+    <form class="inline" id="agr-form">
+      <select id="agr-child" title="Which kid"></select>
+      <input id="agr-title" type="text" placeholder="title, e.g. Star chart" required />
+      <select id="agr-kind" title="Kind"></select>
+      <textarea id="agr-body" placeholder="The plan in plain language both parents follow…"></textarea>
+      <input class="grow" id="agr-stars" type="text"
+        placeholder="star thresholds (optional), e.g. 10=small Lego, 30=big Lego" />
+      <button class="primary" type="submit">Save plan</button>
+    </form>
+  </section>
+
+  <section class="card" id="c-appts">
+    <p class="label">Upcoming appointments</p>
+    <div id="appts"></div>
+    <form class="inline" id="appt-form">
+      <input id="appt-title" type="text" placeholder="e.g. Sam dentist" required />
+      <input id="appt-when" type="datetime-local" required />
+      <input class="grow" id="appt-where" type="text" placeholder="location (optional)" />
+      <button class="primary" type="submit">Add appointment</button>
+    </form>
+  </section>
+
+  <div id="no-household" style="display:none" class="card empty">
+    You're not set up in a household yet. An operator can wire you in with
+    <code>prefrontal household add</code> then <code>prefrontal household join</code>.
+  </div>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>🔒 Kids sheet</h2>
+    <p>Enter your access code to view and edit the shared sheet.</p>
+    <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+    <button class="primary" id="token-save">View</button>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+const $ = (s) => document.querySelector(s);
+let token = localStorage.getItem(KEY);
+let vocab = { fact_categories: [], agreement_kinds: [] };
+let children = [];
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function authHeaders(extra) {
+  return token ? { "X-Prefrontal-Token": token, ...(extra || {}) } : { ...(extra || {}) };
+}
+async function api(path) {
+  const r = await fetch(path, { headers: authHeaders() });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (r.status === 404) { const e = new Error("no household"); e.code = 404; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body || {}),
+  });
+  if (r.status === 401) { gate("That code was rejected."); throw new Error("401"); }
+  if (!r.ok) { alert("Couldn't save (HTTP " + r.status + "): " + (await r.text())); throw new Error(path); }
+  return r.json().catch(() => ({}));
+}
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+
+// -- render -------------------------------------------------------------------
+
+function fillSelect(el, opts, { zero } = {}) {
+  const cur = el.value;
+  el.innerHTML = (zero ? `<option value="0">${esc(zero)}</option>` : "") +
+    opts.map((o) => `<option value="${o.value}">${esc(o.label)}</option>`).join("");
+  if (cur) el.value = cur;
+}
+
+function renderRecent(changes) {
+  $("#recent").innerHTML = (changes || []).length
+    ? changes.map((c) => {
+        const meta = [c.who, c.when].filter(Boolean).map(esc).join(" · ");
+        return `<div class="changed">${esc(c.what)}${meta ? ` <span class="who">${meta}</span>` : ""}</div>`;
+      }).join("")
+    : `<div class="empty">No changes yet.</div>`;
+}
+
+function renderRoster() {
+  $("#roster").innerHTML = children.length
+    ? children.map((c) => `<span class="chip">${esc(c.name)}` +
+        `<button class="iconbtn" data-rename="${c.id}" data-name="${esc(c.name)}" title="Rename">✎</button></span>`).join("")
+    : `<div class="empty">No kids added yet — add one below.</div>`;
+}
+
+function renderFacts(per_child) {
+  if (!(per_child || []).length) { $("#facts").innerHTML = `<div class="empty">No facts yet.</div>`; return; }
+  $("#facts").innerHTML = per_child.map((block) => {
+    const cats = block.categories.map((cat) => {
+      const rows = cat.items.map((it) => {
+        const prov = it.updated_by_name ? `<span class="prov">${esc(it.updated_by_name)}</span>` : "";
+        return `<div class="row">
+          <span class="k">${esc(it.item)}</span>
+          <span class="v">${esc(it.value || "—")}</span>${prov}
+          <button class="iconbtn" data-editfact="1" data-child="${block.child_id}"
+            data-cat="${esc(cat.category)}" data-item="${esc(it.item)}" data-value="${esc(it.value || "")}">✎</button>
+          <button class="iconbtn del" data-delfact="1" data-child="${block.child_id}"
+            data-cat="${esc(cat.category)}" data-item="${esc(it.item)}">🗑</button>
+        </div>`;
+      }).join("");
+      return `<div class="cat-h">${esc(cat.label)}</div>${rows}`;
+    }).join("");
+    return `<div class="child-h">${esc(block.child_name)}</div>${cats}`;
+  }).join("");
+}
+
+function renderAgreements(agreements) {
+  $("#agreements").innerHTML = (agreements || []).length
+    ? agreements.map((a) => {
+        const who = a.child_name ? ` — ${esc(a.child_name)}` : "";
+        let stars = "";
+        if (a.structured && Array.isArray(a.structured.thresholds)) {
+          const unit = a.structured.unit || "star";
+          stars = "<div>" + a.structured.thresholds.map((t) =>
+            `${esc(t[unit] != null ? t[unit] : (t.stars != null ? t.stars : t.points))} ${esc(unit)}s → ${esc(t.reward)}`
+          ).join(" · ") + "</div>";
+        }
+        return `<div class="row"><div class="v">
+            <strong>${esc(a.title)}</strong>${who} <span class="prov">${esc(a.kind)}</span>
+            ${a.body ? `<div>${esc(a.body)}</div>` : ""}${stars}
+          </div>
+          <button class="iconbtn del" data-delagr="${a.id}" title="Remove">🗑</button></div>`;
+      }).join("")
+    : `<div class="empty">No standing agreements yet.</div>`;
+}
+
+function renderAppts(upcoming) {
+  $("#appts").innerHTML = (upcoming || []).length
+    ? upcoming.map((ap) => `<div class="appt"><span class="when">${esc(ap.when)}</span>
+        <span class="grow">${esc(ap.title)}${ap.location ? ` · ${esc(ap.location)}` : ""}</span></div>`).join("")
+    : `<div class="empty">No upcoming kid appointments. (Add one below, or sync a calendar event tagged as a kid's.)</div>`;
+}
+
+function refreshDropdowns() {
+  const kidOpts = children.map((c) => ({ value: c.id, label: c.name }));
+  fillSelect($("#fact-child"), kidOpts, { zero: "Household-wide" });
+  fillSelect($("#agr-child"), kidOpts, { zero: "Whole household" });
+  fillSelect($("#fact-cat"), vocab.fact_categories.map((c) => ({ value: c, label: c })));
+  fillSelect($("#agr-kind"), vocab.agreement_kinds.map((k) => ({ value: k, label: k })));
+}
+
+async function loadSheet() {
+  $("#status").textContent = "updating…";
+  let data;
+  try {
+    data = await api("/household/sheet");
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    if (err.code === 404) {
+      $("#wrap").style.display = "block";
+      document.querySelectorAll(".card").forEach((c) => { if (c.id !== "no-household") c.style.display = "none"; });
+      $("#no-household").style.display = "block";
+      $("#status").textContent = "not in a household";
+      return;
+    }
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  $("#gate").style.display = "none";
+  $("#wrap").style.display = "block";
+  const sheet = data.sheet || {};
+  vocab = data.vocab || vocab;
+  children = sheet.children || [];
+  renderRecent(sheet.recently_changed);
+  renderRoster();
+  renderFacts(sheet.per_child);
+  renderAgreements(sheet.agreements);
+  renderAppts(sheet.upcoming);
+  refreshDropdowns();
+  $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// -- plain-English assistant --------------------------------------------------
+
+let pendingActions = [];
+async function askAssistant(msg) {
+  const log = $("#asst-log");
+  log.innerHTML = `<div class="asst-note">thinking…</div>`;
+  let d;
+  try { d = await post("/assistant", { message: msg }); }
+  catch (_) { log.innerHTML = `<div class="asst-err">Assistant unavailable — is a model configured?</div>`; return; }
+  pendingActions = d.actions || [];
+  let html = `<div class="asst-reply">${esc(d.reply || "")}</div>`;
+  if (pendingActions.length) {
+    html += pendingActions.map((a) => `<div class="act-item">${esc(a.summary || a.op)}</div>`).join("") +
+      `<div class="asst-bar"><span class="asst-note">${pendingActions.length} change(s) — review then apply</span>` +
+      `<span class="spacer"></span>` +
+      `<button class="iconbtn" data-asst="discard">Discard</button>` +
+      `<button class="primary" data-asst="apply">Apply</button></div>`;
+  }
+  if (d.errors && d.errors.length) html += `<div class="asst-err">Couldn't do: ${d.errors.map(esc).join("; ")}</div>`;
+  log.innerHTML = html;
+}
+async function applyAssistant() {
+  const d = await post("/assistant/apply", { actions: pendingActions });
+  pendingActions = [];
+  $("#asst-log").innerHTML = `<div class="asst-reply">Applied ${d.applied || 0} of ${(d.results || []).length}.</div>`;
+  await loadSheet();
+}
+
+// -- events -------------------------------------------------------------------
+
+$("#asst-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("#asst-input").value.trim();
+  if (v) { askAssistant(v); $("#asst-input").value = ""; }
+});
+$("#asst-log").addEventListener("click", (e) => {
+  const act = e.target.getAttribute("data-asst");
+  if (act === "apply") applyAssistant();
+  else if (act === "discard") { pendingActions = []; $("#asst-log").innerHTML = ""; }
+});
+
+$("#child-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/children", { name: $("#child-name").value.trim(), birthday: $("#child-bday").value || null });
+  $("#child-name").value = ""; $("#child-bday").value = "";
+  await loadSheet();
+});
+
+$("#roster").addEventListener("click", async (e) => {
+  const id = e.target.getAttribute("data-rename");
+  if (!id) return;
+  const name = prompt("Rename this kid:", e.target.getAttribute("data-name"));
+  if (name && name.trim()) { await post(`/household/children/${id}`, { name: name.trim() }); await loadSheet(); }
+});
+
+$("#fact-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/facts", {
+    child_id: Number($("#fact-child").value),
+    category: $("#fact-cat").value,
+    item: $("#fact-item").value.trim(),
+    value: $("#fact-value").value.trim() || null,
+  });
+  $("#fact-item").value = ""; $("#fact-value").value = "";
+  await loadSheet();
+});
+
+$("#facts").addEventListener("click", async (e) => {
+  const t = e.target;
+  if (t.getAttribute("data-editfact")) {
+    $("#fact-child").value = t.getAttribute("data-child");
+    $("#fact-cat").value = t.getAttribute("data-cat");
+    $("#fact-item").value = t.getAttribute("data-item");
+    $("#fact-value").value = t.getAttribute("data-value");
+    $("#fact-value").focus();
+    $("#c-facts").scrollIntoView({ behavior: "smooth", block: "end" });
+  } else if (t.getAttribute("data-delfact")) {
+    if (!confirm(`Delete "${t.getAttribute("data-item")}"?`)) return;
+    await post("/household/facts/clear", {
+      child_id: Number(t.getAttribute("data-child")),
+      category: t.getAttribute("data-cat"),
+      item: t.getAttribute("data-item"),
+    });
+    await loadSheet();
+  }
+});
+
+function parseStars(raw) {
+  // "10=small Lego, 30=big Lego" -> {unit:'star', earn_only:true, thresholds:[...]}
+  const thresholds = [];
+  for (const part of raw.split(",")) {
+    const m = part.trim().match(/^(\d+)\s*=\s*(.+)$/);
+    if (m) thresholds.push({ stars: Number(m[1]), reward: m[2].trim() });
+  }
+  return thresholds.length ? { unit: "star", earn_only: true, thresholds } : null;
+}
+
+$("#agr-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const structured = parseStars($("#agr-stars").value.trim());
+  await post("/household/agreements", {
+    child_id: Number($("#agr-child").value),
+    title: $("#agr-title").value.trim(),
+    kind: $("#agr-kind").value,
+    body: $("#agr-body").value.trim() || null,
+    structured,
+  });
+  $("#agr-title").value = ""; $("#agr-body").value = ""; $("#agr-stars").value = "";
+  await loadSheet();
+});
+
+$("#agreements").addEventListener("click", async (e) => {
+  const id = e.target.getAttribute("data-delagr");
+  if (id && confirm("Remove this plan?")) { await post(`/household/agreements/${id}/remove`, {}); await loadSheet(); }
+});
+
+$("#appt-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  // datetime-local yields "YYYY-MM-DDTHH:MM" (no zone) → send as local; server applies its tz.
+  await post("/household/appointments", {
+    title: $("#appt-title").value.trim(),
+    start_at: $("#appt-when").value.replace("T", " "),
+    location: $("#appt-where").value.trim() || null,
+  });
+  $("#appt-title").value = ""; $("#appt-when").value = ""; $("#appt-where").value = "";
+  await loadSheet();
+});
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  loadSheet();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) loadSheet(); });
+
+loadSheet();  // try the session cookie / saved code; the gate appears only on 401
+</script>
+</body>
+</html>

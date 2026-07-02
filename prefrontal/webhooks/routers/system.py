@@ -10,6 +10,7 @@ from prefrontal.webhooks._common import (
     APP_VERSION,
     DASHBOARD_HTML,
     FAMILY_HTML,
+    KIDS_HTML,
     HTMLResponse,
 )
 
@@ -56,5 +57,17 @@ def build_router(
         buttons — meant for a partner to glance at over Tailscale.
         """
         return FAMILY_HTML
+
+    @router.get("/kids", response_class=HTMLResponse, tags=["system"])
+    def kids() -> str:
+        """Serve the editable kids dashboard for the shared household sheet.
+
+        Like the other web surfaces the shell is unauthenticated and carries no
+        data; it prompts once for the access code (or rides a Google sign-in
+        session) and then reads ``GET /household/sheet`` and writes through the
+        household endpoints (facts / agreements / children / appointments) and the
+        NL ``/assistant`` box. Reachable over Tailscale from any device.
+        """
+        return KIDS_HTML
 
     return router
