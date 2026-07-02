@@ -1,9 +1,14 @@
 # Encouragement & recovery layer — design spec
 
-Status: **proposed**. This is the implementation spec for the optional
-encouragement & recovery layer. It supersedes the short "Encouragement & recovery
-layer (optional)" sketch in [`ROADMAP.md`](../ROADMAP.md) with concrete signals,
-scoring, API, and wiring detail. If this and the roadmap disagree, this file wins.
+Status: **proposed** (the acute slice already ships as **panic mode**). This is
+the implementation spec for the optional encouragement & recovery layer. Note
+what's *already built*: **panic mode** (`GET /panic`, `POST /webhooks/panic/check`)
+handles the acute-overwhelm case today — a one-tap "most important next thing"
+headline plus a proactive nudge when overwhelm is detected. What this spec adds
+beyond that is the *softer, tone-calibrated daily-recovery* variant (the
+`GET /encouragement`-style surface below is not built yet). It supersedes the
+short "Encouragement & recovery layer (optional)" sketch in
+[`ROADMAP.md`](../ROADMAP.md). If this and the roadmap disagree, this file wins.
 
 ---
 

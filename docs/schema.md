@@ -9,6 +9,15 @@ the individual modules and ingestion paths; they are documented under
 [Additional tables](#additional-tables). A summarizer agent compresses memory
 into a profile document injected into every agent's system prompt.
 
+Prefrontal is **multi-tenant**: one deployment serves several people. A `users`
+table holds identities and tokens, and **every per-user table carries a
+`user_id NOT NULL REFERENCES users(id)`** column (omitted from the per-column
+tables below for brevity, and folded into a composite `UNIQUE`/index where a key
+was previously global — e.g. `coaching_state` is unique on `(user_id, key)`). The
+`MemoryStore` is bound to one user via `.scoped(user_id)`, so every read and
+write is structurally filtered to that user — no call site can leak across
+tenants. See [`multi-tenant.md`](multi-tenant.md).
+
 The canonical, executable definition of this schema lives in
 [`prefrontal/memory/schema.sql`](../prefrontal/memory/schema.sql). This document is the
 human-readable companion — if the two ever disagree, the `.sql` file is the source of truth.
@@ -16,6 +25,22 @@ human-readable companion — if the two ever disagree, the `.sql` file is the so
 ---
 
 ## Tables
+
+### `users`
+Provisioned identities. One deployment serves several people; their rows never
+cross. Managed by `provision_user` / the `prefrontal user` CLI / `POST /admin/users`.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER PK | Auto-increment |
+| `handle` | TEXT UNIQUE | Short operator/CLI name (`tom`, `sam`) |
+| `display_name` | TEXT | Shown in nudges/briefings |
+| `token_hash` | TEXT UNIQUE | `sha256(token)` — the raw token is shown once at creation and never stored |
+| `status` | TEXT | `active`, `disabled` |
+| `is_operator` | BOOLEAN | May call the admin (user-provisioning) endpoints |
+| `created_at` | DATETIME | |
+
+---
 
 ### `episodes`
 Raw outcome records. One row per agent interaction cycle.
@@ -84,6 +109,10 @@ Persistent preferences and working memory for the coaching layer.
 | `departure_soon_minutes` | `10` | inferred ("get ready" horizon) |
 | `geocoding_enabled` | `0` | explicit (opt-in network geocoding; off by default) |
 
+> **Seeded per user, not in `schema.sql`.** These defaults are written when a
+> user is provisioned (`provision_user` in `store.py`), so each person gets their
+> own copy; the `.sql` file no longer carries a seed block.
+
 > **Runtime keys (not seeded).** `POST /webhooks/location` writes the phone's
 > last-known position as `last_location_lat`, `last_location_lon`, and
 > `last_location_accuracy_m`; the latitude row's `last_updated` is its freshness.
@@ -150,6 +179,18 @@ also defines:
   `generated_at`. Written by `prefrontal summarize` (or `GET /profile?refresh=1`)
   and served by `GET /profile`, so the slow model round-trip happens once rather
   than on every poll.
+- **`kind_feedback`** — labeled examples for the "is this my commitment or just
+  an FYI?" classifier: a normalized `title` → confirmed `kind` (`self`/`fyi`),
+  the model's `llm_kind` prediction (for accuracy tracking), keyed
+  `(user_id, title)` so a correction sticks for that title.
+- **`triage_feedback`** — negative corrections for mail triage: when the user
+  drops a mail-derived todo, the sender/subject/summary/category/urgency and the
+  `days_open` at drop time are recorded, so a repeat or quick-drop sender is
+  down-weighted next time (`prefrontal/mail/`).
+- **`nudges`** — a log of nudges the system decided to send (`kind`
+  `outing`/`departure`, escalation `level`, the delivered `message`), so the
+  widget/dashboard can surface "the last thing Prefrontal told you" and a missed
+  push stays visible.
 
 ---
 
