@@ -32,8 +32,18 @@ One script drives every size — it detects which family iOS is rendering:
    - **Lock Screen** — edit the Lock Screen → tap a widget slot → **Scriptable** →
      pick this script (choose the circular, rectangular, or inline slot).
 
-Refreshes every ~15 min (iOS controls exact timing). Every family renders from
-the same script and token.
+**Refresh cadence.** iOS — not the script — decides when a widget actually
+reloads. It hands each widget a limited daily reload budget (roughly 40–70 for a
+widget that's on-screen, fewer when its page is hidden, the phone is locked, or
+Low Power Mode is on) and treats the script's `refreshAfterDate` as the *earliest*
+it may reload, never a guarantee. So the widget asks **adaptively**: about every
+2 min while an outing is escalating or a departure is due, ~5 min for a calm
+active outing, ~10 min when a commitment is within ~90 min, and ~30 min when
+nothing is time-sensitive. Backing off when idle banks the budget so iOS honors
+the tight requests when they matter — a flat short interval overspends the budget
+and gets throttled into *longer*, more irregular gaps. Tune the numbers in the
+`REFRESH` block at the top of the script. Every family renders from the same
+script and token.
 
 **Which token?** On a single-user deploy, `TOKEN` is the `PREFRONTAL_WEBHOOK_SECRET`.
 On a multi-user deploy each person uses **their own per-user token** (the operator

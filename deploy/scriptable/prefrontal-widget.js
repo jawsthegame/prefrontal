@@ -40,7 +40,20 @@
 // --- config ---------------------------------------------------------------
 const BASE_URL = "http://agent-1.tail8b0a.ts.net:8000";
 const TOKEN = "PASTE_YOUR_PREFRONTAL_TOKEN"; // solo: webhook secret · multi-user: your per-user token
-const REFRESH_MINUTES = 15;
+// Adaptive refresh cadence (minutes). iOS budgets widget reloads (~40-70/day for
+// a visible widget) and treats refreshAfterDate as the *earliest* reload, not a
+// promise — so a flat 15 min (96/day) overspends the budget on quiet stretches,
+// and iOS throttles, spacing reloads *further* apart. Instead we ask for a tight
+// interval only while something time-sensitive is live and back off when idle,
+// so the budget is there for the moments that matter. See computeRefreshMinutes.
+const REFRESH = {
+  live: 2, // outing escalating (firm/call) or a departure is due — keep it fresh
+  active: 5, // a calm active outing in progress
+  soon: 10, // a commitment is bearing down (starts within SOON_WINDOW_MIN)
+  idle: 30, // nothing time-sensitive — back off to bank budget for when it matters
+  offline: 10, // couldn't reach the mini — retry before long, but don't hammer
+};
+const SOON_WINDOW_MIN = 90; // "bearing down" horizon for the `soon` cadence
 
 // --- palette (matches the dashboard) --------------------------------------
 const C = {
@@ -94,7 +107,8 @@ const family = config.widgetFamily || "medium";
 const small = family === "small";
 const w = new ListWidget();
 w.url = BASE_URL + "/dashboard"; // tap opens the full dashboard (after unlock on the Lock Screen)
-w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
+// refreshAfterDate is set adaptively near the end, once we know whether anything
+// time-sensitive is live (active outing, due departure, imminent commitment).
 
 function text(stack, s, { color = C.fg, size = 13, bold = false, font, minScale } = {}) {
   const t = stack.addText(s);
@@ -403,6 +417,23 @@ function renderHomeScreen() {
     nt.lineLimit = family === "large" ? 2 : 1;
   }
 }
+
+// --- adaptive refresh hint -------------------------------------------------
+// Ask iOS to reload sooner only when there's live, time-sensitive state; back
+// off when idle so the daily reload budget is banked for those moments. All of
+// `active` / `dueDeparture` / `nextCommitment` are resolved above.
+function computeRefreshMinutes() {
+  if (!ok) return REFRESH.offline; // mini unreachable — retry before long
+  if (active) return active.level === "firm" || active.level === "call" ? REFRESH.live : REFRESH.active;
+  if (dueDeparture) return REFRESH.live; // "leave now" is time-critical
+  if (nextCommitment) {
+    const startMs = new Date(String(nextCommitment.start_at).replace(" ", "T") + "Z").getTime();
+    const minsUntil = (startMs - Date.now()) / 60000;
+    if (!isNaN(minsUntil) && minsUntil >= 0 && minsUntil <= SOON_WINDOW_MIN) return REFRESH.soon;
+  }
+  return REFRESH.idle;
+}
+w.refreshAfterDate = new Date(Date.now() + computeRefreshMinutes() * 60 * 1000);
 
 // --- dispatch by family ----------------------------------------------------
 if (family === "accessoryInline") renderInline();
