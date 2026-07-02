@@ -26,6 +26,8 @@ import math
 import re
 from typing import Protocol
 
+from prefrontal.coaching import CoachContext, Cue
+from prefrontal.impact import analyze_impact, at_risk, impact_phrase, project_free_time
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -325,6 +327,120 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * radius * math.asin(math.sqrt(a))
 
 
+# --- Shared per-outing decision (used by both /outing/check and the agent) ---
+#
+# The decision for one active outing, lifted out of the endpoint so the coaching
+# agent's evaluator and the legacy /webhooks/outing/check endpoint compute it the
+# same way (spec §3/§12 step 2). `evaluate_outing` is pure — it reads the outing
+# dict + context and returns what to do; `apply_outing_evaluation` performs the
+# store writes. Two callers, one decision, no drift.
+
+from dataclasses import dataclass  # noqa: E402 — kept beside its use
+from typing import Any  # noqa: E402
+
+#: Escalation level → coaching urgency (spec §2). The outing ladder maps on so
+#: "escalation is not optional" lives in the agent, not this module.
+OUTING_URGENCY = {"soft": "nudge", "firm": "urgent", "call": "critical"}
+
+#: Escalation level → the declared Intervention.name it realizes.
+_OUTING_INTERVENTION = {"soft": "soft_nudge", "firm": "firm_nudge", "call": "voice_call"}
+
+
+@dataclass(frozen=True)
+class OutingEvaluation:
+    """What one active outing warrants right now (pure; no side effects)."""
+
+    action: str                 # "return" | "abandon" | "active"
+    level: str                  # none/soft/firm/call (meaningful when active)
+    fire: bool                  # a new escalation level was crossed (active only)
+    message: str                # nudge text (fire only)
+    impacts: list[dict[str, Any]]
+    at_home: bool | None
+    distance_m: float | None
+
+
+def evaluate_outing(
+    outing: dict[str, Any],
+    *,
+    cur_lat: float | None,
+    cur_lon: float | None,
+    home_radius: float,
+    abandon_ratio: float,
+    bias: float,
+    commitments: list[dict[str, Any]],
+    name: str = "",
+) -> OutingEvaluation:
+    """Decide what one active outing warrants — the body of the old check loop.
+
+    Pure: computes distance/at-home, whether to passively return or auto-abandon,
+    else the elapsed-time escalation level, whether it's newly crossed (``fire``),
+    the at-risk commitment impacts, and the nudge message. The caller performs the
+    resulting writes via :func:`apply_outing_evaluation`.
+    """
+    elapsed = outing["elapsed_minutes"] or 0.0
+    window = outing["time_window_minutes"]
+
+    distance_m = None
+    if (
+        cur_lat is not None
+        and cur_lon is not None
+        and outing["home_lat"] is not None
+        and outing["home_lon"] is not None
+    ):
+        distance_m = round(haversine_m(outing["home_lat"], outing["home_lon"], cur_lat, cur_lon))
+    at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
+
+    if at_home:
+        return OutingEvaluation("return", "none", False, "", [], at_home, distance_m)
+    if is_abandoned(elapsed, window, abandon_ratio):
+        return OutingEvaluation("abandon", "none", False, "", [], at_home, distance_m)
+
+    level = escalation_level(elapsed, window)
+    fire = level_rank(level) > level_rank(outing["last_level"])
+    impacts: list[dict[str, Any]] = []
+    risky = []
+    if commitments:
+        projected = project_free_time(outing["departure_at"], window, bias)
+        risky = at_risk(analyze_impact(projected, commitments))
+        impacts = [
+            {
+                "commitment_id": i.commitment["id"],
+                "title": i.commitment["title"],
+                "start_at": i.commitment["start_at"],
+                "slack_minutes": i.slack_minutes,
+                "hardness": i.commitment.get("hardness"),
+            }
+            for i in risky
+        ]
+    message = ""
+    if fire:
+        message = build_message(
+            level, elapsed_minutes=elapsed, window_minutes=window, name=name
+        ) + impact_phrase(risky)
+    return OutingEvaluation("active", level, fire, message, impacts, at_home, distance_m)
+
+
+def apply_outing_evaluation(
+    store: MemoryStore, outing: dict[str, Any], ev: OutingEvaluation
+) -> tuple[str, str | None]:
+    """Perform the writes an :class:`OutingEvaluation` implies; return (status, outcome).
+
+    ``return``/``abandon`` close the outing and log the episode; an ``active``
+    outing that ``fire``\\s advances its one-fire level and records the nudge.
+    Idempotent enough that both the endpoint and the agent can call it.
+    """
+    if ev.action == "return":
+        closed = store.close_outing(outing["id"], status="returned")
+        return "returned", record_outing_return(store, closed)["outcome"]
+    if ev.action == "abandon":
+        closed = store.close_outing(outing["id"], status="abandoned")
+        return "abandoned", record_outing_abandoned(store, closed)["outcome"]
+    if ev.fire:
+        store.set_outing_level(outing["id"], ev.level)
+        store.record_nudge(kind="outing", message=ev.message, level=ev.level)
+    return "active", None
+
+
 class LocationAnchorModule(Module):
     """Nudges the user back to a stated mission as their time window elapses."""
 
@@ -377,6 +493,48 @@ class LocationAnchorModule(Module):
                 status="active",
             ),
         ]
+
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """Emit an escalation cue for each active outing that just crossed a level.
+
+        The coaching-agent form of ``/webhooks/outing/check``: it runs the same
+        shared decision (:func:`evaluate_outing`) and side effects
+        (:func:`apply_outing_evaluation` — passive return, auto-abandon, one-fire
+        level advance) per active outing, then turns a newly-fired escalation into
+        a :class:`~prefrontal.coaching.Cue` (level → urgency: soft→nudge,
+        firm→urgent, call→critical). Passive returns / abandons are silent state
+        changes and produce no cue.
+        """
+        home_radius = store.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
+        abandon_ratio = store.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        bias = store.get_float("time_estimation_bias", 1.0)
+        commitments = store.upcoming_commitments()
+        cues: list[Cue] = []
+        for outing in store.active_outings():
+            ev = evaluate_outing(
+                outing,
+                cur_lat=ctx.current_lat,
+                cur_lon=ctx.current_lon,
+                home_radius=home_radius,
+                abandon_ratio=abandon_ratio,
+                bias=bias,
+                commitments=commitments,
+                name=ctx.display_name,
+            )
+            apply_outing_evaluation(store, outing, ev)
+            if ev.action == "active" and ev.fire:
+                cues.append(
+                    Cue(
+                        module=self.key,
+                        intervention=_OUTING_INTERVENTION[ev.level],
+                        urgency=OUTING_URGENCY[ev.level],
+                        text=ev.message,
+                        context_key="outing",
+                        dedup_key=f"outing_escalation:{outing['id']}:{ev.level}",
+                        ref={"outing_id": outing["id"]},
+                    )
+                )
+        return cues
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Summarize recent errand punctuality from closed outings."""

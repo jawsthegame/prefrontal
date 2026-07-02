@@ -29,19 +29,12 @@ from prefrontal.webhooks._common import (
     _nudge_actions,
     _outing_return_confirmation,
     _outing_started_confirmation,
-    analyze_impact,
-    at_risk,
-    build_message,
+    apply_outing_evaluation,
     escalation_level,
-    haversine_m,
-    impact_phrase,
+    evaluate_outing,
     infer_time_window,
-    is_abandoned,
-    is_at_home,
-    level_rank,
     module_enabled,
     parse_time_window,
-    project_free_time,
     record_focus_end,
     record_focus_switched,
     record_outing_abandoned,
@@ -173,74 +166,35 @@ def build_router(
 
         results: list[dict[str, Any]] = []
         for outing in memory.active_outings():
-            elapsed = outing["elapsed_minutes"] or 0.0
-            window = outing["time_window_minutes"]
-
-            distance_m = None
-            if (
-                cur_lat is not None
-                and cur_lon is not None
-                and outing["home_lat"] is not None
-                and outing["home_lon"] is not None
-            ):
-                distance_m = round(
-                    haversine_m(outing["home_lat"], outing["home_lon"], cur_lat, cur_lon)
-                )
-            at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
-
-            level, fire, message, outcome = "none", False, "", None
-            impacts: list[dict[str, Any]] = []
-            if at_home:
-                # Location confirms the user is home — passive return.
-                closed = memory.close_outing(outing["id"], status="returned")
-                outcome = record_outing_return(memory, closed)["outcome"]
-                outing_status = "returned"
-            elif is_abandoned(elapsed, window, abandon_ratio):
-                closed = memory.close_outing(outing["id"], status="abandoned")
-                outcome = record_outing_abandoned(memory, closed)["outcome"]
-                outing_status = "abandoned"
-            else:
-                level = escalation_level(elapsed, window)
-                fire = level_rank(level) > level_rank(outing["last_level"])
-                # Impact analysis: project realistic free-time from the bias and
-                # see which upcoming commitments are now at risk.
-                risky = []
-                if commitments:
-                    projected = project_free_time(outing["departure_at"], window, bias)
-                    risky = at_risk(analyze_impact(projected, commitments))
-                    impacts = [
-                        {
-                            "commitment_id": i.commitment["id"],
-                            "title": i.commitment["title"],
-                            "start_at": i.commitment["start_at"],
-                            "slack_minutes": i.slack_minutes,
-                            "hardness": i.commitment.get("hardness"),
-                        }
-                        for i in risky
-                    ]
-                if fire:
-                    memory.set_outing_level(outing["id"], level)
-                    message = build_message(
-                        level, elapsed_minutes=elapsed, window_minutes=window, name=name
-                    ) + impact_phrase(risky)
-                    memory.record_nudge(kind="outing", message=message, level=level)
-                outing_status = "active"
+            # Shared decision + side effects, identical to the coaching agent's
+            # LocationAnchorModule.evaluate (one source of truth — spec §12 step 2).
+            ev = evaluate_outing(
+                outing,
+                cur_lat=cur_lat,
+                cur_lon=cur_lon,
+                home_radius=home_radius,
+                abandon_ratio=abandon_ratio,
+                bias=bias,
+                commitments=commitments,
+                name=name,
+            )
+            outing_status, outcome = apply_outing_evaluation(memory, outing, ev)
 
             results.append(
                 {
                     "outing_id": outing["id"],
                     "intention": outing["intention"],
-                    "elapsed_minutes": round(elapsed, 1),
-                    "time_window_minutes": window,
-                    "level": level,
-                    "fire": fire,
-                    "message": message,
-                    "distance_m": distance_m,
-                    "at_home": at_home,
+                    "elapsed_minutes": round(outing["elapsed_minutes"] or 0.0, 1),
+                    "time_window_minutes": outing["time_window_minutes"],
+                    "level": ev.level,
+                    "fire": ev.fire,
+                    "message": ev.message,
+                    "distance_m": ev.distance_m,
+                    "at_home": ev.at_home,
                     "status": outing_status,
                     "outcome": outcome,
-                    "impact": impacts,
-                    "hard_conflict": any(i["hardness"] == "hard" for i in impacts),
+                    "impact": ev.impacts,
+                    "hard_conflict": any(i["hardness"] == "hard" for i in ev.impacts),
                     # One-tap link that silences further escalation for this
                     # outing (empty unless a public origin + signing key exist).
                     "dismiss_url": _dismiss_url(settings, handle, "outing", outing["id"]),

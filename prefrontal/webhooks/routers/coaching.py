@@ -66,6 +66,7 @@ def build_router(
             memory,
             now=now,
             timezone=resolved_settings.timezone,
+            display_name=ctx.user.get("display_name") or "",
             current_lat=body.get("current_lat"),
             current_lon=body.get("current_lon"),
         )

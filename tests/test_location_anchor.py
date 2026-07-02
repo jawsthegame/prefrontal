@@ -19,8 +19,10 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.location_anchor import (
     DEFAULT_INFERRED_WINDOW_MINUTES,
+    apply_outing_evaluation,
     build_message,
     escalation_level,
+    evaluate_outing,
     haversine_m,
     heuristic_time_window,
     infer_time_window,
@@ -495,3 +497,62 @@ def test_family_page_served_without_auth(client):
     assert "text/html" in resp.headers["content-type"]
     assert "Right now" in resp.text  # the calm family copy, not the monitor
     assert "X-Prefrontal-Token" in resp.text  # asks for the access code client-side
+
+
+# -- shared per-outing decision (evaluate_outing / apply_outing_evaluation) ---
+
+
+def _outing(**kw):
+    """A minimal active-outing dict for the pure decision function."""
+    base = {
+        "id": 1, "intention": "coffee", "elapsed_minutes": 0.0,
+        "time_window_minutes": 20.0, "last_level": "none",
+        "home_lat": 0.0, "home_lon": 0.0, "departure_at": "2026-07-02 12:00:00",
+    }
+    base.update(kw)
+    return base
+
+
+def test_evaluate_outing_returns_home_when_within_radius():
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=5.0), cur_lat=0.0, cur_lon=0.0, home_radius=100.0,
+        abandon_ratio=3.0, bias=1.0, commitments=[],
+    )
+    assert ev.action == "return" and ev.at_home is True
+
+
+def test_evaluate_outing_abandons_far_past_window():
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=70.0), cur_lat=None, cur_lon=None, home_radius=100.0,
+        abandon_ratio=3.0, bias=1.0, commitments=[],  # 70 > 3×20
+    )
+    assert ev.action == "abandon"
+
+
+def test_evaluate_outing_fires_a_new_level():
+    # 22 min into a 20-min window → past 100% ("firm"), a new level over "none".
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=22.0, last_level="none"), cur_lat=None, cur_lon=None,
+        home_radius=100.0, abandon_ratio=3.0, bias=1.0, commitments=[],
+    )
+    assert ev.action == "active" and ev.level == "firm"
+    assert ev.fire is True and ev.message  # a nudge is due, with text
+    # Already at that level → no re-fire.
+    ev2 = evaluate_outing(
+        _outing(elapsed_minutes=22.0, last_level="firm"), cur_lat=None, cur_lon=None,
+        home_radius=100.0, abandon_ratio=3.0, bias=1.0, commitments=[],
+    )
+    assert ev2.fire is False
+
+
+def test_apply_outing_evaluation_advances_level_and_records(client, store):
+    oid = store.start_outing("coffee", 20.0, home_lat=0.0, home_lon=0.0)
+    outing = next(o for o in store.active_outings() if o["id"] == oid)
+    ev = evaluate_outing(
+        {**outing, "elapsed_minutes": 22.0, "last_level": "none"},
+        cur_lat=None, cur_lon=None, home_radius=100.0, abandon_ratio=3.0,
+        bias=1.0, commitments=[],
+    )
+    status_, outcome = apply_outing_evaluation(store, outing, ev)
+    assert status_ == "active" and outcome is None
+    assert store.get_outing(oid)["last_level"] == "firm"  # one-fire advanced

@@ -197,6 +197,29 @@ def test_task_paralysis_evaluator_prefers_the_decomposition_first_step():
     assert "Find the accountant's number and dial." in cue.text
 
 
+# -- Location anchor evaluator (parity refactor, spec step 2) ----------------
+
+
+def test_location_anchor_evaluator_emits_escalation_cue():
+    """An outing over its window yields a firm→urgent cue and advances last_level."""
+    store = scoped_default(MemoryStore(init_db(":memory:")))
+    oid = store.start_outing("coffee", 20.0, home_lat=0.0, home_lon=0.0)
+    # Backdate departure so ~22 min have elapsed (past 100% → "firm").
+    old = (utcnow() - timedelta(minutes=22)).strftime("%Y-%m-%d %H:%M:%S")
+    store.conn.execute("UPDATE outings SET departure_at = ? WHERE id = ?", (old, oid))
+    store.conn.commit()
+
+    cues = get("location_anchor").evaluate(store, _ctx(now=utcnow()))
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.intervention == "firm_nudge" and cue.urgency == "urgent"
+    assert cue.ref == {"outing_id": oid}
+    assert cue.dedup_key == f"outing_escalation:{oid}:firm"
+    # The shared side-effect advanced the one-fire level, so a second tick is quiet.
+    assert store.get_outing(oid)["last_level"] == "firm"
+    assert get("location_anchor").evaluate(store, _ctx(now=utcnow())) == []
+
+
 # -- POST /webhooks/coach/check ----------------------------------------------
 
 
