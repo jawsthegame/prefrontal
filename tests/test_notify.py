@@ -6,7 +6,7 @@ when the public origin / signing key isn't configured.
 
 from __future__ import annotations
 
-from prefrontal.webhooks.notify import act_url, nudge_actions
+from prefrontal.webhooks.notify import act_url, nudge_actions, panic_actions
 from prefrontal.webhooks.oauth import verify_action
 
 SIGNING = "notify-signing-key"
@@ -57,3 +57,15 @@ def test_nudge_actions_empty_when_unconfigured_or_unknown():
     # No target, or a kind with no buttons → empty.
     assert nudge_actions("outing", None, base_url=BASE, secret=SIGNING, handle="tom") == []
     assert nudge_actions("mystery", 1, base_url=BASE, secret=SIGNING, handle="tom") == []
+
+
+def test_panic_actions_open_the_triage_overlay():
+    """A single unsigned `view` button that deep-links to the dashboard overlay."""
+    actions = panic_actions(BASE)
+    assert len(actions) == 1
+    btn = actions[0]
+    assert btn["action"] == "view"       # opens a page, fires no request → no signing
+    assert btn["label"] == "Open triage"
+    assert btn["url"] == f"{BASE}/dashboard?panic=1"
+    # No public origin → no button (feature simply off), like the signed buttons.
+    assert panic_actions("") == []

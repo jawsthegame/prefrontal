@@ -36,7 +36,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Continue only when the plate has actually tipped into overwhelm. The server\n// edge-triggers on the level and honors a cooldown, so `fire` is true at most\n// once per spike (not every poll) — no IF/state needed here. Emit one item\n// carrying the ready push message plus the counts, or nothing.\nconst resp = $input.first().json;\nif (!resp || resp.fire !== true) return [];\nreturn [{ json: { message: resp.message, first_step: resp.first_step, level: resp.level, late: (resp.counts || {}).late, pressing: (resp.counts || {}).pressing } }];"
+        "jsCode": "// Continue only when the plate has actually tipped into overwhelm. The server\n// edge-triggers on the level and honors a cooldown, so `fire` is true at most\n// once per spike (not every poll) — no IF/state needed here. Emit one item\n// carrying the ready push message (first step is already inline) plus the\n// `actions` — a signed-free ntfy `view` button that opens the full /panic\n// triage — and the counts, or nothing. Empty `actions` (no public origin) just\n// yields a plain notification.\nconst resp = $input.first().json;\nif (!resp || resp.fire !== true) return [];\nreturn [{ json: { message: resp.message, first_step: resp.first_step, level: resp.level, actions: resp.actions || [], late: (resp.counts || {}).late, pressing: (resp.counts || {}).pressing } }];"
       },
       "id": "fire-only",
       "name": "Overwhelm Only",
@@ -47,14 +47,20 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.pushover.net/1/messages.json",
+        "url": "https://ntfy.sh",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer NTFY_TOKEN_OPTIONAL" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 0\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4,\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
-      "id": "pushover",
-      "name": "Send Pushover",
+      "id": "publish-ntfy",
+      "name": "Publish to ntfy (with triage button)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [660, 300]
@@ -89,9 +95,9 @@
       "main": [[{ "node": "Overwhelm Only", "type": "main", "index": 0 }]]
     },
     "Overwhelm Only": {
-      "main": [[{ "node": "Send Pushover", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Publish to ntfy (with triage button)", "type": "main", "index": 0 }]]
     },
-    "Send Pushover": {
+    "Publish to ntfy (with triage button)": {
       "main": [[{ "node": "Log to Prefrontal", "type": "main", "index": 0 }]]
     }
   },

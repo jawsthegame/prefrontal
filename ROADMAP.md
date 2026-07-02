@@ -419,9 +419,15 @@ ordered by leverage; each is independent but builds on denser capture.
     engine's `suppressed`/`record_fired` already gated the decision; this layer
     only routes and sends. Wired into `prefrontal coach --deliver` (a launchd
     tick can now deliver without n8n); covered by `tests/test_delivery.py`.
-  - the proactive **panic** nudge carrying its first step inline + an action to
-    open the full `/panic` triage. *(Still open — now that native delivery
-    exists, this is the natural next slice.)*
+  - **proactive panic nudge — first step inline + open-triage button** ✅ — the
+    overwhelm nudge already carried the first step in its message; it now also
+    returns an `actions` list (`panic_actions`, a signed-free ntfy `view` button)
+    that deep-links to `GET /dashboard?panic=1`, which auto-opens the panic
+    overlay on load. So the nudge delivers the one step to start *and* is one tap
+    from the whole triage. `POST /webhooks/panic/check` returns the buttons (empty
+    unless a public origin is set), and `deploy/n8n/panic-check.workflow.json` now
+    publishes to ntfy with them (retiring its Pushover-only publish). Covered by
+    `tests/test_panic.py` + `tests/test_notify.py`.
 
   Doing this should also **clean up the Pushover-era workarounds** adopted while
   Pushover was the only channel:

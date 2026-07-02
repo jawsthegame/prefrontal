@@ -44,6 +44,7 @@ from prefrontal.webhooks._common import (
     normalize_event,
     normalize_query,
     overwhelm_level,
+    panic_actions,
     panic_alert_message,
     partition_conflicts,
     plan_departure,
@@ -594,8 +595,12 @@ def build_router(
         once, not every poll. A ``panic_alert_cooldown_minutes`` floor keeps it
         quiet for a while after firing even if the level flaps.
 
-        Returns ``{"fire", "level", "message", "first_step", "counts", "headline"}``.
-        Only ``fire == true`` should be delivered as a push/voice nudge.
+        Returns ``{"fire", "level", "message", "first_step", "counts", "headline",
+        "actions"}``. Only ``fire == true`` should be delivered as a push/voice
+        nudge; when it fires, ``actions`` carries a single ntfy ``view`` button
+        that opens the full ``/panic`` triage (the dashboard overlay) — so the
+        nudge delivers the first step inline *and* is one tap from the whole
+        picture. ``actions`` is empty unless firing and a public origin is set.
         """
         memory = ctx.store
         plan = build_panic(memory)
@@ -625,9 +630,13 @@ def build_router(
 
         memory.set_state("last_panic_level", level, source="inferred")
         message = ""
+        actions: list[dict[str, Any]] = []
         if fire:
             name = (memory.get_state("user_name") or "").strip() or None
             message = panic_alert_message(plan, name=name)
+            # A one-tap "Open triage" button so the nudge is not a dead end: it
+            # carries the first step inline, and this opens the full picture.
+            actions = panic_actions(resolved_settings.oauth_base_url)
             memory.set_state(
                 "last_panic_alert_at",
                 utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -641,6 +650,7 @@ def build_router(
             "first_step": plan.first_step,
             "counts": plan.counts,
             "headline": plan.headline,
+            "actions": actions,
         }
 
     # -- Todos (open loops fitted into free time) ----------------------------

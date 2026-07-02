@@ -325,6 +325,10 @@ const KEY = "prefrontal_token";
 const REFRESH_MS = 15000;
 let token = localStorage.getItem(KEY);
 let timer = null;
+// A proactive panic nudge deep-links here with ?panic=1 to open the triage
+// overlay straight away. One-shot: cleared after opening so periodic refreshes
+// (and a manual reload) don't keep reopening it.
+let panicRequested = new URLSearchParams(location.search).get("panic") === "1";
 // Last /todos response, kept so the search box can re-filter client-side
 // without re-fetching (and so the filter survives the periodic refresh).
 let lastTodos = null;
@@ -829,6 +833,12 @@ async function load() {
     $("#profile-updated").textContent = "";
   }
   $("#status").textContent = "updated " + new Date().toLocaleTimeString();
+  // Auth succeeded (no gate). If a panic nudge sent us here, open the triage now.
+  if (panicRequested) {
+    panicRequested = false;
+    history.replaceState(null, "", location.pathname);  // drop ?panic so a reload won't reopen
+    openPanic();
+  }
 }
 
 function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
