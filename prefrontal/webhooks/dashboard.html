@@ -139,6 +139,9 @@
   .md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent);
                    background: #1d212b; color: var(--muted); border-radius: 0 6px 6px 0; }
   details summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
+  #c-triage > details > summary { margin-bottom: 0; list-style-position: inside; }
+  #c-triage > details[open] > summary { margin-bottom: 12px; }
+  #c-triage > details > summary h2 { display: inline; margin: 0; }
   .err { color: var(--call); font-size: 13px; }
 
   #gate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
@@ -224,11 +227,11 @@
     </div>
     <div class="body"></div>
   </section>
-  <section class="card" id="c-triage"><h2>Mail triage — learned from drops</h2><div class="body"></div></section>
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
   <section class="card" id="c-profile"><h2>Behavioral profile</h2><div class="body"></div></section>
+  <section class="card" id="c-triage"><details><summary><h2>Mail triage — learned from drops</h2></summary><div class="body"></div></details></section>
 </main>
 
 <div id="gate">
