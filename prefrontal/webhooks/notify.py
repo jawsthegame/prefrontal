@@ -41,6 +41,11 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Overwhelm nudge — a one-tap confirmation that the surfaced first step got
     # done, so the drift pass learns whether the panic first-step lever works.
     "panic": (("panic_step_done", "✓ Did it"),),
+    # Self-care meal check — confirm you've eaten (silences it for the day) or
+    # ask again in a bit.
+    "meal": (("meal_ate", "✓ Ate"), ("meal_snooze", "Snooze")),
+    # Self-care water check — confirm a drink (defers a full interval) or snooze.
+    "water": (("water_drank", "✓ Drank"), ("water_snooze", "Snooze")),
 }
 
 
@@ -111,8 +116,10 @@ def nudge_actions(
     unconditionally and get no buttons rather than broken ones.
 
     Args:
-        kind: ``"focus"`` | ``"outing"`` | ``"departure"``.
-        target_id: The focus-session / outing / commitment id the buttons act on.
+        kind: a key of :data:`_NUDGE_BUTTONS` (``"focus"`` / ``"outing"`` /
+            ``"departure"`` / ``"pause"`` / ``"panic"`` / ``"meal"``).
+        target_id: The focus-session / outing / commitment / meal id the buttons
+            act on (for ``meal`` a synthetic date-int; the tap acts on "today").
         base_url: Public HTTPS origin (``settings.oauth_base_url``).
         secret: Signing key (``settings.session_secret``).
         handle: The acting user's handle (embedded in the signed token).

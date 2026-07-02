@@ -33,6 +33,9 @@ For the moments you're too overwhelmed to think. On demand, it cuts through ever
 **Encouragement & recovery**
 The counterweight to a system whose job is nudging. When a day genuinely goes rough — a missed hard commitment, a pile of misses — it stops nudging and shifts to reassurance: acknowledges the rough day without judgment, then hands back a concrete plan (what still fits, what's safe to move, and one tiny next step). Opt-in, tone-calibrated, and capped at once a day so it never becomes a pile-on.
 
+**Self-care checks**
+The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** on ntfy, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in.
+
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
 
@@ -44,9 +47,9 @@ iOS Shortcuts integration for one-tap logging. The system meets you where you ar
 ## Challenge-area modules
 
 ADHD presents differently for everyone, so Prefrontal's support behaviors are organized into
-independently enableable **modules** — one per executive-function challenge — rather than a
-single fixed assistant. Enable only the ones that match your profile (an empty config enables
-them all):
+independently enableable **modules** — mostly one per executive-function challenge, plus a
+self-care check for the basic needs a focus state drops — rather than a single fixed
+assistant. Enable only the ones that match your profile (an empty config enables them all):
 
 | Module | `key` | Addresses |
 |---|---|---|
@@ -55,6 +58,7 @@ them all):
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
+| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day) and "drink some water" (to a daily target), re-asked until met (opt-in via the `self_care` key) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
 profile, and declares the interventions it provides. Select a subset with
@@ -109,7 +113,7 @@ Prefrontal is in early development. This repository currently implements the **f
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
-| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 5 modules; 3 wired end-to-end, 2 (task paralysis, impulsivity) still declared stubs |
+| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 6 modules, all wired end-to-end (5 EF challenges + an opt-in Self-Care meal check) |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |

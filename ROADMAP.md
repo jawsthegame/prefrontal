@@ -40,6 +40,29 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Self-care checks — "have you eaten?" + water** ✅ — the cues that deliberately
+  pierce flow (a focus state is exactly when you forget to eat or drink), shipped
+  as a sixth module, `prefrontal/modules/self_care.py`. A small registry of
+  **basic-needs checks** rides the coaching tick (`evaluate()`), unified by a
+  **daily target**: a **meal** is target 1 (from `meal_start_hour`≈11, re-ask
+  every `meal_reask_minutes`≈40 until one "Ate" ends it for the day); **water** is
+  target `water_daily_target`≈6 (from `water_start_hour`≈9, a "drink some water"
+  reminder every `water_interval_minutes`≈90 where each **Drank** counts one and
+  defers a full interval, done once the target's met). Cadence rides a per-interval
+  *bucket* in the `dedup_key` so the engine fires each window once; responsive-hours
+  + debounce come from the engine (no overnight nag). One-tap **Ate/Snooze** and
+  **Drank/Snooze** ride the signed-action path (`meal_*`/`water_*` in
+  `NUDGE_ACTIONS`, `meal`/`water` buttons in `notify.py`, `apply_self_care_action`
+  in `/nudge/act`); progress is plain coaching-state cursors (`*_count` = `date|n`
+  toward the target, `*_snoozed_until`), no schema change. Every confirm/snooze
+  logs a `self_care` episode (seed for the cadence learner below).
+  `/webhooks/coach/check` passes each cue's `actions` through and
+  `deploy/n8n/coach-check.workflow.json` publishes them to ntfy, so the buttons
+  render. **Off by default** — set the `self_care` coaching key to `on` (each check
+  also has its own `meal_enabled`/`water_enabled`). Covered by
+  `tests/test_self_care.py`. *(Next: the adaptive-cadence learner — see "Learning
+  & adaptation" §6; and whether self-care grows into its own basics pack with
+  meds/sleep.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
@@ -388,6 +411,26 @@ ordered by leverage; each is independent but builds on denser capture.
    not learning. Add context-conditioned patterns (bias by task type, by time of
    day, by energy level) — the schema's `context_key` already supports finer
    bucketing — and derive `context_switch` once switch events are captured.
+6. **Adaptive self-care cadence (with an honesty check).** The self-care checks
+   (meal/water) fire on a fixed interval and already log a `self_care` episode on
+   every confirm/snooze. The follow-up is to *learn* the cadence: widen the
+   interval for someone who's genuinely on top of it, keep or tighten it for
+   someone who isn't. The signal is ambiguous, so this needs care rather than a
+   naive "they say yes a lot → back off":
+   - **Honesty check (the key guard).** A reflexive *instant* "yes" right after
+     the reminder is more likely a dismissal than a real confirmation — so a
+     near-zero response latency should be treated skeptically (discounted, or a
+     reason to *keep* presence), not as evidence the person doesn't need the
+     nudge. This means capturing **response latency** (delivery → tap), which in
+     turn means recording when each self-care nudge was *delivered* (extend the
+     coach engine's ack-tracking, today scoped to outing/departure/focus, to the
+     self-care kinds) — the confirm episode already lands; it just needs the
+     paired send-time.
+   - Only trust confirms with a plausible gap; weight snoozes as "too frequent /
+     wrong time" and swept-unanswered as "wrong channel or time" (reuse the
+     `channel_response` sweep). Then adjust the per-check interval within bounds,
+     and — per step 4 — measure whether the adaptation actually reduced misses
+     before trusting it further.
 
 ## Beyond v1 (from the README architecture)
 
@@ -557,24 +600,13 @@ ordered by leverage; each is independent but builds on denser capture.
   shared sheet, v2 = the proactive delta-digest to the other parent. Open:
   household membership/invite model.)*
 
-- **"Have you eaten?" — a self-care nudge that pierces flow.** A recurring
-  check-in that missing a meal is a classic ADHD/hyperfocus failure mode: starting
-  around late morning (~11:00, tunable), ask *"have you eaten?"*; if the answer is
-  no, keep gently re-asking on a cadence **even while a focus session is active** —
-  the one cue that deliberately overrides the Hyperfocus module's protect-the-flow
-  stance, because the whole point is that a flow state is exactly when you forget.
-  Fits the shipped machinery cleanly: a small **self-care cue producer** on the
-  `Module.evaluate` tick engine, with a per-day `coaching_state` cursor
-  (`ate_today` / `last_meal_prompt_at`) so it fires once you confirm and re-nudges
-  on an interval until then. Reuses the interactive-nudge action buttons (one-tap
-  **Ate** / **Snooze 30m** on ntfy, closing the loop like the other `/nudge/act`
-  buttons) and the delivery layer's channel routing. Still respects **responsive
-  hours** (no 2am food nag) and debounce — the same gates the panic check now
-  uses — so "persistent" means every ~30–45 min within the day, not spam. Config:
-  a start hour, a re-ask interval, and an off switch (a `self_care` coaching key,
-  off by default). *(Open: whether it's its own tiny module or a facet of a future
-  self-care/basics pack alongside water/meds/sleep; and whether a confirmed meal
-  logs an episode so the learning loop can notice the days you skip.)*
+- **"Have you eaten?" — a self-care nudge that pierces flow.** ✅ **(shipped — see
+  "Recently shipped")** — the meal check is live as the `self_care` module: from a
+  tunable start hour it re-asks *"have you eaten?"* even mid-focus, with one-tap
+  **Ate** / **Snooze** on ntfy, capped once a day and gated on responsive hours.
+  Off unless the `self_care` coaching key is `on`. *(Still open: whether it becomes
+  a facet of a broader self-care/basics pack alongside water/meds/sleep, and
+  whether a confirmed meal logs an episode so the learning loop notices skip-days.)*
 - **Shopify MCP — record-shop assistant + used-collection buying.** Connect to
   (or self-host) a **Shopify MCP server** so Prefrontal can read the record shop's
   catalog, inventory, and sales, turning the assistant into a genuine shop
