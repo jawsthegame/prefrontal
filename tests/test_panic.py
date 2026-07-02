@@ -333,6 +333,88 @@ def test_panic_check_defers_overwhelm_during_quiet_hours(store, noon):
     assert awake["message"] and awake["first_step"]
 
 
+def test_panic_check_offers_did_it_button_and_captures_the_step(store, noon):
+    """A firing nudge (with signing configured) logs a pending panic episode and a
+    signed 'Did it' button; tapping it resolves the episode to a success."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
+    base = "https://agent-1.tail8b0a.ts.net"
+    settings = Settings(webhook_secret=SECRET, session_secret="sign-key", oauth_base_url=base)
+    app = create_app(store=store, settings=settings)
+    h = {"X-Prefrontal-Token": SECRET}
+    with TestClient(app) as c:
+        body = c.post("/webhooks/panic/check", headers=h).json()
+        assert body["fire"] is True
+        # "Did it" (http, one-tap) comes first, then the "Open triage" view button.
+        assert [a["action"] for a in body["actions"]] == ["http", "view"]
+        did = body["actions"][0]
+        assert did["label"] == "✓ Did it"
+        # A pending panic episode was logged (outcome not yet known).
+        eps = store.episodes_by_type("panic")
+        assert len(eps) == 1 and eps[0]["outcome"] is None
+        # Tapping the signed button resolves it to a success.
+        resp = c.get(did["url"].removeprefix(base))
+    assert resp.status_code == 200
+    eps = store.episodes_by_type("panic")
+    assert eps[0]["outcome"] == "success" and eps[0]["acknowledged"]
+
+
+def test_panic_check_sweeps_unanswered_first_step_to_miss(store, noon):
+    """A first-step nudge left unanswered past its ack window is swept to a miss,
+    so the drift signal reflects steps that didn't happen — not just the taps."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
+    store.set_state("panic_step_ack_window_minutes", "0")  # sweep on the next poll
+    settings = Settings(
+        webhook_secret=SECRET, session_secret="sign-key", oauth_base_url="https://x.ts.net"
+    )
+    app = create_app(store=store, settings=settings)
+    h = {"X-Prefrontal-Token": SECRET}
+    with TestClient(app) as c:
+        first = c.post("/webhooks/panic/check", headers=h).json()
+        assert first["fire"] is True
+        assert store.episodes_by_type("panic")[0]["outcome"] is None
+        # A later poll (edge already consumed, so it won't re-fire) sweeps the
+        # unanswered step to a miss.
+        c.post("/webhooks/panic/check", headers=h)
+    ep = store.episodes_by_type("panic")[0]
+    assert ep["outcome"] == "miss" and not ep["acknowledged"]
+
+
+def test_panic_check_skips_step_capture_without_signing_key(store, noon):
+    """Without a signing key the 'Did it' button can't be delivered, so no pending
+    episode is logged — otherwise every un-ackable nudge would become a false miss."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
+    # oauth_base_url set (view button works) but no session_secret (no signed button).
+    settings = Settings(webhook_secret=SECRET, oauth_base_url="https://x.ts.net")
+    app = create_app(store=store, settings=settings)
+    with TestClient(app) as c:
+        body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert body["fire"] is True
+    assert [a["action"] for a in body["actions"]] == ["view"]  # only the triage link
+    assert store.episodes_by_type("panic") == []
+
+
+def test_panic_step_outcomes_feed_the_drift_pattern(store):
+    """Resolved panic first-step episodes produce a 'panic' drift pattern with no
+    patterns.py changes — closing the overwhelm learning loop."""
+    from prefrontal.memory.patterns import recompute_patterns
+
+    store.log_episode("panic", outcome="success", acknowledged=True, context="a")
+    store.log_episode("panic", outcome="miss", acknowledged=False, context="b")
+    store.log_episode("panic", outcome="success", acknowledged=True, context="c")
+    recompute_patterns(store)
+    drift = [p for p in store.get_patterns("drift") if p["context_key"] == "panic"]
+    assert len(drift) == 1
+    # DRIFT_WEIGHTS: success→0, miss→1; mean of (0, 1, 0) = 1/3 off-track
+    # (stored rounded to a few decimals).
+    assert abs(drift[0]["observed_value"] - (1 / 3)) < 1e-3
+
+
 def test_dashboard_deep_link_auto_opens_the_triage(store):
     """The dashboard honors ?panic=1 (the nudge's deep link) by opening the overlay."""
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))

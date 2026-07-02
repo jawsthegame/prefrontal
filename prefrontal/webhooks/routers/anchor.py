@@ -40,6 +40,7 @@ from prefrontal.webhooks._common import (
     record_outing_abandoned,
     record_outing_return,
     resolve_ack,
+    resolve_panic_step,
     resolve_user,
     status,
     verify_action,
@@ -325,6 +326,7 @@ def build_router(
         - ``focus_end`` — end an active focus session (Wrap up).
         - ``outing_return`` / ``outing_abandon`` — close an outing (I'm back / Abandon).
         - ``made_it`` / ``missed_it`` — log a commitment's departure outcome.
+        - ``panic_step_done`` — resolve an overwhelm first-step nudge as done.
 
         Idempotent: re-tapping a spent button (session/outing already closed) still
         renders a friendly confirmation rather than erroring.
@@ -392,6 +394,13 @@ def build_router(
             if closed is not None:
                 record_focus_switched(memory, closed)
             return _dismiss_page(f"Switched away from “{task}.” Logged it.")
+
+        if action == "panic_step_done":
+            # target_id is the pending panic episode logged when the nudge fired.
+            done = resolve_panic_step(memory, target_id)
+            if not done:
+                return _dismiss_page("Already logged — nice work either way.")
+            return _dismiss_page("Logged — you took the first step. 👏 That's the hard part.")
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)
