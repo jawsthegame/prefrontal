@@ -39,6 +39,7 @@ from prefrontal.webhooks._common import (
     conflict_dismissal_key,
     feed_label,
     find_conflicts,
+    in_quiet_hours,
     module_enabled,
     next_departure,
     normalize_event,
@@ -602,6 +603,13 @@ def build_router(
         once, not every poll. A ``panic_alert_cooldown_minutes`` floor keeps it
         quiet for a while after firing even if the level flaps.
 
+        Outside the user's responsive hours (``responsive_hours_start`` /
+        ``responsive_hours_end``, the same window the coaching engine gates
+        non-critical cues on) the nudge is **deferred, not dropped**: an
+        overwhelm spike at 3am holds until the first poll back inside responsive
+        hours, then fires. So it can't wake you at night, but it also won't
+        silently swallow a genuine pile-up.
+
         Returns ``{"fire", "level", "message", "first_step", "counts", "headline",
         "actions"}``. Only ``fire == true`` should be delivered as a push/voice
         nudge; when it fires, ``actions`` carries a single ntfy ``view`` button
@@ -626,6 +634,23 @@ def build_router(
         level = overwhelm_level(plan, min_pressing=min_pressing)
         prev = memory.get_state("last_panic_level", "calm")
         fire = level == "overwhelmed" and prev != "overwhelmed"
+
+        # Quiet-hours gate: an overwhelm spike outside responsive hours is
+        # *deferred*, not dropped. Return without advancing last_panic_level, so
+        # the edge is preserved and the first poll back in responsive hours still
+        # fires — otherwise a 3am pile-up would silently consume its own edge and
+        # never nudge. (Unlike the cooldown below, which intentionally consumes
+        # the edge so a sustained pile-up nudges once, not every poll.)
+        if fire and in_quiet_hours(memory, utcnow(), resolved_settings.timezone):
+            return {
+                "fire": False,
+                "level": level,
+                "message": "",
+                "first_step": plan.first_step,
+                "counts": plan.counts,
+                "headline": plan.headline,
+                "actions": [],
+            }
 
         # Cooldown floor: even on a fresh edge, stay quiet if we alerted recently.
         if fire:

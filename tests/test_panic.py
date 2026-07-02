@@ -34,6 +34,14 @@ def _at(dt) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _disable_quiet_hours(store) -> None:
+    """Set a degenerate responsive window (start == end = always responsive), so
+    the proactive panic check never *defers* on wall-clock time — these tests
+    exercise the edge/cooldown/button logic, not the quiet-hours gate."""
+    store.set_state("responsive_hours_start", "0")
+    store.set_state("responsive_hours_end", "0")
+
+
 @pytest.fixture()
 def store():
     with MemoryStore.open(":memory:") as s:
@@ -250,6 +258,7 @@ def test_panic_check_edge_triggers_then_stays_quiet(store, noon):
     """The proactive check fires once on the overwhelm edge, then not on every poll."""
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
     with TestClient(app) as c:
         h = {"X-Prefrontal-Token": SECRET}
@@ -273,6 +282,7 @@ def test_panic_check_fire_carries_first_step_inline_and_a_triage_button(store, n
     """A firing nudge has the first step in its message + a view button to /panic."""
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
     settings = Settings(webhook_secret=SECRET, oauth_base_url="https://agent-1.tail8b0a.ts.net")
     app = create_app(store=store, settings=settings)
     with TestClient(app) as c:
@@ -291,11 +301,36 @@ def test_panic_check_action_empty_without_public_origin(store, noon):
     """No public origin configured → the nudge still fires, just with no button."""
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    _disable_quiet_hours(store)
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
     with TestClient(app) as c:
         body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
     assert body["fire"] is True
     assert body["actions"] == []
+
+
+def test_panic_check_defers_overwhelm_during_quiet_hours(store, noon):
+    """Outside responsive hours an overwhelm spike is deferred, not dropped: it
+    doesn't fire now, but the edge is preserved so the first poll back inside
+    responsive hours still nudges (a 3am pile-up can't wake you, but isn't lost)."""
+    from prefrontal.scheduling import local_hour_of
+
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
+    # A responsive window that excludes the current (UTC) hour → we're "asleep".
+    hour = local_hour_of(utcnow(), "UTC")
+    store.set_state("responsive_hours_start", str((hour + 1) % 24))
+    store.set_state("responsive_hours_end", str((hour + 2) % 24))
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET, timezone="UTC"))
+    h = {"X-Prefrontal-Token": SECRET}
+    with TestClient(app) as c:
+        quiet = c.post("/webhooks/panic/check", headers=h).json()
+        assert quiet["fire"] is False and quiet["level"] == "overwhelmed"
+        # Edge preserved (last_panic_level not advanced): opening the window fires.
+        _disable_quiet_hours(store)
+        awake = c.post("/webhooks/panic/check", headers=h).json()
+    assert awake["fire"] is True and awake["level"] == "overwhelmed"
+    assert awake["message"] and awake["first_step"]
 
 
 def test_dashboard_deep_link_auto_opens_the_triage(store):
