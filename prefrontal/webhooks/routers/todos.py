@@ -1,0 +1,387 @@
+"""HTTP routes tagged "todos".
+
+APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
+"""
+from __future__ import annotations
+
+from typing import Literal
+
+from fastapi import APIRouter
+
+from prefrontal.webhooks._common import (
+    DEFAULT_DAY_END,
+    DEFAULT_DAY_START,
+    DEFAULT_FIT_CAP_MINUTES,
+    DEFAULT_MIN_WINDOW_MINUTES,
+    Annotated,
+    Any,
+    Depends,
+    HTTPException,
+    ScopedRequest,
+    StepDone,
+    TodoCreate,
+    TodoDeadlineUpdate,
+    _decompose_and_store,
+    augment_todo,
+    available_now,
+    avoided_todos,
+    fit_todos,
+    local_hour_of,
+    pick_now,
+    record_drop_feedback,
+    record_todo_closed,
+    resolve_user,
+    status,
+    timedelta,
+    to_utc,
+    utcnow,
+    work_window_now,
+)
+
+
+def build_router(
+    *,
+    resolved_settings,
+    n8n,
+    ollama_client,
+    summarizer_client,
+    geocoder_client,
+    _run_geocode,
+) -> APIRouter:
+    """Build the "todos" APIRouter (shared services injected by create_app)."""
+    router = APIRouter()
+
+    @router.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
+    def todo_create(
+        payload: TodoCreate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Add an open todo, auto-filling any fields you didn't supply.
+
+        Missing ``estimate_minutes``/``priority``/``energy``/``deadline`` are
+        inferred (local model → keyword heuristic → default) so the todo is
+        schedulable and honestly sortable. Supplied values are kept as-is; the
+        response's ``augmented`` map says where each field came from.
+        """
+        memory = ctx.store
+        # A user-supplied deadline is validated strictly (422 on garbage); an
+        # inferred one is best-effort (dropped if it somehow won't parse).
+        user_deadline = None
+        if payload.deadline:
+            try:
+                user_deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+
+        aug = augment_todo(
+            payload.title,
+            estimate_minutes=payload.estimate_minutes,
+            priority=payload.priority,
+            energy=payload.energy,
+            deadline=payload.deadline,
+            client=ollama_client,
+        )
+        deadline = user_deadline
+        if user_deadline is None and aug.deadline:
+            try:
+                deadline = to_utc(aug.deadline)
+            except ValueError:
+                deadline = None
+
+        todo_id = memory.add_todo(
+            payload.title,
+            notes=payload.notes,
+            estimate_minutes=aug.estimate_minutes,
+            priority=aug.priority,
+            deadline=deadline,
+            energy=aug.energy,
+        )
+        # Big tasks stall on starting — auto-decompose into a tiny first step.
+        threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
+        decomposition = None
+        if aug.estimate_minutes >= threshold:
+            decomposition = _decompose_and_store(
+                memory, todo_id, payload.title, ollama_client
+            )
+        return {
+            "todo_id": todo_id,
+            "estimate_minutes": aug.estimate_minutes,
+            "priority": aug.priority,
+            "energy": aug.energy,
+            "deadline": deadline,
+            "augmented": aug.sources,
+            "decomposition": decomposition,
+        }
+
+    @router.get("/todos", tags=["todos"])
+    def todos_list(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """List open todos with decompositions, an avoidance flag, and the mail
+        account each came from.
+
+        Each todo carries an ``account`` (the mail inbox it was ingested from, or
+        ``None`` for manual/impulse todos). The response also echoes the
+        operator-configured ``accounts`` label map so the dashboard can render a
+        friendly, colored pill (e.g. ``work`` → an orange "Vistar" pill) without
+        hard-coding any account names or colors.
+        """
+        memory = ctx.store
+        todos = memory.open_todos()
+        avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
+        accounts = memory.mail_accounts_for_todos([t["id"] for t in todos])
+        for todo in todos:
+            todo["decomposition"] = memory.get_decomposition(todo["id"])
+            todo["account"] = accounts.get(todo["id"])
+            hit = avoided.get(todo["id"])
+            todo["avoidance"] = (
+                {"days_open": hit["days_open"], "score": hit["score"]} if hit else None
+            )
+        return {"todos": todos, "accounts": resolved_settings.account_label_map}
+
+    @router.get("/todos/avoided", tags=["todos"])
+    def todos_avoided(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The important todos you keep skipping, worst-avoided first.
+
+        Honest prioritization: surfaces what's been sitting (high enough priority,
+        open a while) so the fun/shiny task doesn't quietly win. Pure heuristic
+        over age/priority/size/deadline — no extra tracking.
+        """
+        memory = ctx.store
+        items = avoided_todos(memory.open_todos(), utcnow())
+        return {
+            "avoided": [
+                {
+                    "todo_id": a["todo"]["id"],
+                    "title": a["todo"]["title"],
+                    "days_open": a["days_open"],
+                    "score": a["score"],
+                    "priority": a["todo"].get("priority"),
+                    "estimate_minutes": a["todo"].get("estimate_minutes"),
+                    "deadline": a["todo"].get("deadline"),
+                }
+                for a in items
+            ]
+        }
+
+    @router.post("/todos/{todo_id}/decompose", tags=["todos"])
+    def todo_decompose(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Break an open todo into a tiny first step (+ remaining steps).
+
+        On-demand counterpart to the auto-decompose on big todos — call it the
+        moment you're about to start something and need a way in. Regenerates
+        and replaces any existing decomposition.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo["status"] != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        decomposition = _decompose_and_store(
+            memory, todo_id, todo["title"], ollama_client
+        )
+        return {"todo_id": todo_id, "decomposition": decomposition}
+
+    @router.post("/todos/{todo_id}/deadline", tags=["todos"])
+    def todo_set_deadline(
+        todo_id: int,
+        payload: TodoDeadlineUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Move (or clear) an open todo's deadline.
+
+        Plans drift — a deadline set at creation or inferred from the title often
+        needs to change. A non-empty ``deadline`` is normalized to UTC (422 on
+        garbage); ``null``/empty clears it. Declared before the ``{action}`` route
+        so "deadline" isn't mistaken for a done/drop action.
+        """
+        memory = ctx.store
+        deadline = None
+        if payload.deadline:
+            try:
+                deadline = to_utc(payload.deadline)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad deadline: {exc}",
+                ) from exc
+        if not memory.update_todo_deadline(todo_id, deadline):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "deadline": deadline}
+
+    @router.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
+    def todo_step_done(
+        todo_id: int,
+        step_index: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        payload: StepDone | None = None,
+    ) -> dict[str, Any]:
+        """Tick a single decomposed step done (or clear it).
+
+        Index ``0`` is the first step and ``1..N`` are the remaining steps.
+        Checking steps off one at a time turns a stalled task into visible
+        progress. Body ``{"done": false}`` un-ticks a step; the body is optional
+        and defaults to marking it done. Returns the refreshed decomposition.
+        """
+        memory = ctx.store
+        done = payload.done if payload is not None else True
+        if not memory.set_step_done(todo_id, step_index, done=done):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no step {step_index}.",
+            )
+        return {
+            "todo_id": todo_id,
+            "step_index": step_index,
+            "done": done,
+            "decomposition": memory.get_decomposition(todo_id),
+        }
+
+    @router.post("/todos/{todo_id}/{action}", tags=["todos"])
+    def todo_close(
+        todo_id: int,
+        action: Literal["done", "drop"],
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mark a todo done or drop it.
+
+        Closing logs a ``task`` episode (done ⇒ ``success``, drop ⇒ ``miss``) so
+        the outcome feeds the learning pass like every other touchpoint — the
+        moment an avoided todo finally resolves is captured, not discarded.
+
+        Dropping additionally feeds the *triage* loop: if the todo came from mail
+        intake, the drop is recorded as a correction (see
+        :func:`prefrontal.mail.feedback.record_drop_feedback`) so a future sync's
+        prompt learns not to repeat that false positive.
+        """
+        memory = ctx.store
+        new_status = "done" if action == "done" else "dropped"
+        if not memory.close_todo(todo_id, status=new_status):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        closed = memory.get_todo(todo_id)
+        episode_id = (
+            record_todo_closed(memory, closed, now=utcnow())["episode_id"]
+            if closed is not None
+            else None
+        )
+        if action == "drop" and closed is not None:
+            record_drop_feedback(memory, todo_id, closed, now=utcnow())
+        return {"todo_id": todo_id, "status": new_status, "episode_id": episode_id}
+
+    @router.get("/todos/fit", tags=["todos"])
+    def todos_fit(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        minutes: float,
+    ) -> dict[str, Any]:
+        """Rank the open todos that fit in ``minutes`` of free time, right now.
+
+        Applies the learned time bias, so a "10-minute" todo is judged at its
+        realistic length. Great for "I have 20 minutes — what can I knock out?"
+        """
+        memory = ctx.store
+        bias = memory.get_float("time_estimation_bias", 1.0)
+        fits = fit_todos(minutes, memory.open_todos(), bias)
+        return {
+            "available_minutes": minutes,
+            "fits": [
+                {
+                    "todo_id": f["todo"]["id"],
+                    "title": f["todo"]["title"],
+                    "estimate_minutes": f["todo"].get("estimate_minutes"),
+                    "effective_minutes": f["effective_minutes"],
+                    "priority": f["todo"].get("priority"),
+                }
+                for f in fits
+            ],
+        }
+
+    @router.get("/todos/now", tags=["todos"])
+    def todos_now(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        cap_minutes: float = DEFAULT_FIT_CAP_MINUTES,
+    ) -> dict[str, Any]:
+        """The single best open todo that fits your free time *right now*.
+
+        "Right now" = the gap until your next commitment, bounded by your working
+        hours (``fit_day_start``/``fit_day_end`` in coaching state, default
+        08:30–17:30 local) and capped (so a wide-open evening doesn't offer a
+        multi-hour task). Outside working hours, or with no real gap / nothing
+        that fits, ``suggestion`` is ``null`` (with a ``reason``). Powers the
+        widget's "you have 25 min — knock this out" prompt.
+        """
+        memory = ctx.store
+        now = utcnow()
+        day_start = memory.get_state("fit_day_start", DEFAULT_DAY_START)
+        day_end = memory.get_state("fit_day_end", DEFAULT_DAY_END)
+        within, horizon = work_window_now(
+            now, resolved_settings.timezone,
+            cap_minutes=cap_minutes, day_start=day_start, day_end=day_end,
+        )
+        upcoming = memory.upcoming_commitments(limit=1)
+        result: dict[str, Any] = {
+            "free_minutes": 0,
+            "within_hours": within,
+            "next_commitment": (
+                {"title": upcoming[0]["title"], "start_at": upcoming[0]["start_at"]}
+                if upcoming else None
+            ),
+            "suggestion": None,
+            "reason": None,
+        }
+        if not within:
+            result["reason"] = "outside working hours"
+            return result
+
+        fmt = "%Y-%m-%d %H:%M:%S"
+        # Look back far enough to catch an in-progress (or all-day) commitment
+        # that started before now; free_windows clips it to the [now, horizon] band.
+        commitments = memory.commitments_between(
+            (now - timedelta(hours=26)).strftime(fmt), horizon.strftime(fmt)
+        )
+        free = available_now(commitments, now, horizon)
+        result["free_minutes"] = round(free)
+        if free < DEFAULT_MIN_WINDOW_MINUTES:
+            result["reason"] = "no free time right now"
+            return result
+
+        open_todos = memory.open_todos()
+        bias = memory.get_float("time_estimation_bias", 1.0)
+        fits = fit_todos(free, open_todos, bias)
+        if not fits:
+            result["reason"] = "nothing fits this window"
+            return result
+        # Honest pick: surface the most-avoided todo that fits; else the best fit,
+        # preferring low-energy tasks later in the day.
+        avoided_ids = [a["todo"]["id"] for a in avoided_todos(open_todos, now)]
+        top = pick_now(fits, avoided_ids, local_hour_of(now, resolved_settings.timezone))
+        t = top["todo"]
+        result["suggestion"] = {
+            "todo_id": t["id"],
+            "title": t["title"],
+            "estimate_minutes": t.get("estimate_minutes"),
+            "effective_minutes": top["effective_minutes"],
+            "priority": t.get("priority"),
+            "energy": t.get("energy"),
+            "reason": top["reason"],  # "avoided" (been putting it off) | "fits"
+        }
+        return result
+
+    # -- Admin: user provisioning (operator-only) ----------------------------
+
+    return router
