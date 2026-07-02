@@ -509,7 +509,8 @@ ordered by leverage; each is independent but builds on denser capture.
   carrying the mental load" legible, and the coaching/briefing layer pushes the
   deltas that matter to the *other* parent ("Sam's shoe size → 13; dentist Tue 3pm
   — you're on pickup"), so it's a load-balancer, not a passive shared note. Ships
-  as the backbone of the **Parent** Context Pack. *(Design leanings: a real
+  as the backbone of the **Parent** Context Pack. Full design:
+  [`docs/household-sheet.md`](docs/household-sheet.md). *(Design leanings: a real
   `household` entity users belong to (cleaner than a shared pseudo-user);
   last-write-wins + provenance over richer merge at this scale; v1 = the visible
   shared sheet, v2 = the proactive delta-digest to the other parent. Open:
