@@ -403,12 +403,25 @@ ordered by leverage; each is independent but builds on denser capture.
   `http` action buttons that fire a request *directly from the notification*,
   with no app switch, so **Wrap up / I'm back / Abandon / Made it / Missed it**
   — and now **Stay on task / Park it / Switch anyway** on the reflective pause —
-  are one background tap. Still open:
-  - **first-class Python Pushover / Ntfy / TTS publishing** — today an n8n node
-    does the publish by reading the `actions` a nudge returns; a native delivery
-    client (routing, quiet hours, debounce) belongs with the coaching agent.
+  are one background tap.
+  - **first-class Python Pushover / Ntfy / TTS publishing** ✅ — a native
+    delivery client (`prefrontal/integrations/delivery.py`) now publishes a
+    coaching `Decision` directly, no n8n publish node required. `NtfyClient` /
+    `PushoverClient` / `TTSClient` (local macOS `say`) are the transports;
+    `DeliveryClient.deliver` maps the engine's channel class
+    (`digest`→held, `push`/`sound`/`voice`) to one, preferring ntfy so the
+    inline action buttons render (Pushover carries the first action as a tap
+    URL). Per-user routing (`resolve_route`) reads `ntfy_topic` /
+    `pushover_user_key` / `tts_enabled` from `coaching_state` over operator
+    defaults in `Settings` (the multi-tenant §6.5 delivery fields); all-empty is
+    the local-first no-op (nothing leaves the box), and a down transport is
+    reported, never raised. Quiet-hours + debounce are **not** re-done here — the
+    engine's `suppressed`/`record_fired` already gated the decision; this layer
+    only routes and sends. Wired into `prefrontal coach --deliver` (a launchd
+    tick can now deliver without n8n); covered by `tests/test_delivery.py`.
   - the proactive **panic** nudge carrying its first step inline + an action to
-    open the full `/panic` triage.
+    open the full `/panic` triage. *(Still open — now that native delivery
+    exists, this is the natural next slice.)*
 
   Doing this should also **clean up the Pushover-era workarounds** adopted while
   Pushover was the only channel:

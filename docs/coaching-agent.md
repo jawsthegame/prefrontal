@@ -62,6 +62,12 @@ replace them):
   `message`/`channel`, send via Pushover/Ntfy/Twilio). A first-class Python
   delivery layer remains "beyond v1" in the roadmap. The coaching agent *chooses*
   the channel; n8n still *sends*.
+  *(Update: the first-class Python delivery layer has since shipped —
+  `prefrontal/integrations/delivery.py`, exercised by `prefrontal coach
+  --deliver`. It's an **addition**, not a replacement: n8n delivery still works,
+  and the engine's channel-choice/suppression contract here is unchanged. The
+  client just gives the box a native, n8n-free path that renders ntfy's action
+  buttons and honors per-user routing (§6.5).)*
 - **No always-on Python scheduler.** Cadence is driven by n8n cron + the existing
   poll model, mirroring `outing/check` and the briefing workflow. The agent is a
   pure decision function plus a thin HTTP/CLI surface — no background threads.
