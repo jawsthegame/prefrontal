@@ -105,6 +105,27 @@ def test_todos_expose_account_and_label_map(store, user_store):
     assert mail_todo["account"] == "work"
 
 
+def test_todos_stuck_surfaces_body_double(client, user_store):
+    """GET /todos/stuck lists a repeat-bailed task with a first step + suggestion."""
+    for _ in range(2):
+        user_store.log_episode(
+            "task", outcome="miss", context="todo dropped: Call the dentist"
+        )
+    resp = client.get("/todos/stuck", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 200
+    stuck = resp.json()["stuck"]
+    assert len(stuck) == 1
+    item = stuck[0]
+    assert item["title"] == "Call the dentist" and item["misses"] == 2
+    assert item["first_step"]  # a concrete tiny first action
+    assert "start-together" in item["suggestion"]
+
+
+def test_todos_stuck_requires_auth(client):
+    """The stuck-tasks endpoint is auth-guarded."""
+    assert client.get("/todos/stuck").status_code == 401
+
+
 def test_todos_deep_link_to_gmail_source(store, user_store):
     """A todo from a Gmail inbox carries a source_url deep link; others don't."""
     from prefrontal.mail.ingest import ingest_messages

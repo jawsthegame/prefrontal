@@ -116,6 +116,18 @@ the first test. Code follow-ups below are optional polish.
   departure nudge for that commitment. All in `prefrontal/departure.py` +
   `routers/schedule.py`; covered by `tests/test_departure.py`. This was the last
   big uninstrumented user-touch surface flagged under "Learning & adaptation."
+- **Task Paralysis module fully wired** ✅ — the last fully-stubbed module is now
+  live, all three interventions `active`. **auto_decompose** breaks any todo over
+  `decomposition_threshold_minutes` into a tiny first step at creation
+  (`POST /todos`); **tiny_first_step** reframes a stalled task on demand
+  (`POST /todos/{id}/decompose`, also fed to panic and `/todos/now`); and
+  **body_double_nudge** is new — `repeat_stalled_tasks()`
+  (`prefrontal/modules/task_paralysis.py`) finds tasks you keep bailing on
+  (≥ `body_double_min_misses` `miss` episodes on the same title, not since
+  resolved) and `GET /todos/stuck` surfaces each with a tiny first step and a
+  start-together suggestion; the profile section names them so the coaching prose
+  stops sending reminders and offers a body-double instead. Covered by
+  `tests/test_modules.py` + `tests/test_webhooks.py`.
 - **Avoidance detection** ✅ — `avoided_todos()` (`prefrontal/todos.py`) scores
   open loops by how long they've been skipped (age × priority), surfacing the
   important thing you keep putting off rather than letting it sink down the list.
@@ -226,16 +238,15 @@ the first test. Code follow-ups below are optional polish.
   `parse_inbound_event()` but routes none of them to real handlers yet. The
   Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/routers/ingestion.py`.)*
-- **Module interventions** — four of the five modules now have `status="active"`
+- **Module interventions** — all five modules now have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
-  Blindness**, and **Impulsivity** (`reflective_pause` + `capture_and_defer` are
-  active; only `switch_rate_feedback` is still `planned` — see
-  `docs/impulsivity.md`). The one fully-stubbed module is **Task Paralysis**: its
-  `tiny_first_step` / `auto_decompose` / `body_double_nudge` interventions are
-  still `planned`, though the decomposition machinery they'll build on already
-  exists in `todos.py`. Run `prefrontal modules -v` for the live per-intervention
-  status.
+  Blindness** (departure timing + outcome capture), **Task Paralysis**
+  (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below), and
+  **Impulsivity** (`reflective_pause` + `capture_and_defer` active). The only
+  intervention still `planned` is Impulsivity's `switch_rate_feedback` (needs
+  captured switch events — see `docs/impulsivity.md`). Run `prefrontal modules
+  -v` for the live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 

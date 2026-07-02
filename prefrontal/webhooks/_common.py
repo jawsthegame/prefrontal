@@ -142,6 +142,11 @@ from prefrontal.modules.location_anchor import (
     record_outing_return,
 )
 from prefrontal.modules.registry import is_enabled as module_enabled
+from prefrontal.modules.task_paralysis import (
+    DEFAULT_BODY_DOUBLE_MIN_MISSES,
+    body_double_message,
+    repeat_stalled_tasks,
+)
 from prefrontal.panic import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
@@ -888,6 +893,7 @@ __all__ = [
     "DEFAULT_ABANDON_RATIO",
     "DEFAULT_ALERT_COOLDOWN_MINUTES",
     "DEFAULT_ALERT_MIN_PRESSING",
+    "DEFAULT_BODY_DOUBLE_MIN_MISSES",
     "DEFAULT_DAY_END",
     "DEFAULT_DAY_START",
     "DEFAULT_FIT_CAP_MINUTES",
@@ -981,6 +987,7 @@ __all__ = [
     "classify_departure",
     "record_departure_outcome",
     "build_focus_message",
+    "body_double_message",
     "build_message",
     "build_panic",
     "build_pause_message",
@@ -1047,6 +1054,7 @@ __all__ = [
     "register_oauth_routes",
     "render_briefing",
     "render_panic",
+    "repeat_stalled_tasks",
     "require_operator",
     "resolve_user",
     "session_user",

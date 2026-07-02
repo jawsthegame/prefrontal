@@ -5,16 +5,99 @@ between "I should do this" and actually beginning. Its signature in the memory
 layer is ``task`` episodes that are never acknowledged or that resolve to
 ``miss`` without ever being started.
 
-This module surfaces initiation friction and declares interventions that lower
-the activation energy to begin (decomposition, body-doubling nudges, tiny first
-steps).
+This module surfaces initiation friction and owns the initiation *policy*. All
+three interventions are wired:
+
+- **auto_decompose** — ``POST /todos`` breaks any todo whose estimate clears
+  ``decomposition_threshold_minutes`` into a tiny first step plus collapsed
+  remaining steps at creation time.
+- **tiny_first_step** — ``POST /todos/{id}/decompose`` (and the panic /
+  ``/todos/now`` surfaces) reframe a stalled task as one <5-minute action.
+- **body_double_nudge** — :func:`repeat_stalled_tasks` finds tasks you keep
+  bailing on (repeated ``miss`` episodes, not since resolved) and surfaces a
+  start-together suggestion (``GET /todos/stuck`` and the profile).
+
+The decomposition machinery itself lives in :mod:`prefrontal.todos`
+(:func:`~prefrontal.todos.decompose_task`); this module owns the thresholds, the
+stall detector, and the profile narrative.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
+from typing import Any
+
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+
+#: A task missed at least this many times (and not since resolved) is treated as
+#: chronically stuck — the signal a solo start isn't working and body-doubling (a
+#: start-together window) is worth offering. Tunable via ``body_double_min_misses``.
+DEFAULT_BODY_DOUBLE_MIN_MISSES = 2
+
+
+def _task_title(context: str | None) -> str | None:
+    """Recover a todo's title from a ``task`` episode's context, or ``None``.
+
+    Todo closes log ``context="todo done|dropped: <title>"`` (see
+    :func:`prefrontal.todos.todo_episode_fields`); other ``task`` episodes
+    (outings) carry no todo title and are ignored here.
+    """
+    if not context:
+        return None
+    for prefix in ("todo done:", "todo dropped:"):
+        if context.startswith(prefix):
+            return context[len(prefix):].strip() or None
+    return None
+
+
+def repeat_stalled_tasks(
+    episodes: list[dict[str, Any]],
+    *,
+    min_misses: int = DEFAULT_BODY_DOUBLE_MIN_MISSES,
+) -> list[dict[str, Any]]:
+    """Find tasks the user keeps bailing on — the body-double signal.
+
+    Groups ``task`` episodes by todo title and flags any title with at least
+    ``min_misses`` ``miss`` outcomes whose *most recent* episode is still a miss
+    — a title that was ultimately completed is considered resolved and dropped,
+    so a since-finished task never nags. Pure and order-independent (recency is
+    decided by episode ``id``).
+
+    Args:
+        episodes: ``task`` episodes (as from ``episodes_by_type("task")``).
+        min_misses: Miss count at/above which a task counts as chronically stuck.
+
+    Returns:
+        ``[{"title", "misses", "attempts"}]``, most-missed first.
+    """
+    by_title: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        title = _task_title(e.get("context"))
+        if title:
+            by_title[title].append(e)
+
+    out: list[dict[str, Any]] = []
+    for title, eps in by_title.items():
+        misses = sum(1 for e in eps if e.get("outcome") == "miss")
+        if misses < min_misses:
+            continue
+        latest = max(eps, key=lambda e: e.get("id") or 0)
+        if latest.get("outcome") == "success":
+            continue  # ultimately done — no longer stuck
+        out.append({"title": title, "misses": misses, "attempts": len(eps)})
+    out.sort(key=lambda x: (-x["misses"], -x["attempts"], x["title"]))
+    return out
+
+
+def body_double_message(title: str, misses: int) -> str:
+    """A start-together suggestion for a task the user keeps abandoning."""
+    return (
+        f"You've bailed on “{title}” {misses} times — this one resists a solo "
+        "start. Schedule a start-together window: 15 minutes, someone (or just a "
+        "timer) alongside you, and only the first tiny step."
+    )
 
 
 class TaskParalysisModule(Module):
@@ -29,25 +112,39 @@ class TaskParalysisModule(Module):
     default_state = {
         "max_first_step_minutes": "5",
         "decomposition_threshold_minutes": "30",
+        "body_double_min_misses": str(DEFAULT_BODY_DOUBLE_MIN_MISSES),
     }
 
     def interventions(self) -> list[Intervention]:
-        """Declare initiation-support interventions."""
+        """Declare initiation-support interventions (all wired)."""
         return [
             Intervention(
                 name="tiny_first_step",
-                description="Reframe a stalled task as a <5-minute concrete first action.",
-                trigger="a task that is due/scheduled but unacknowledged",
+                description=(
+                    "Reframe a stalled task as one <5-minute concrete first "
+                    "action (POST /todos/{id}/decompose; also fed to panic and "
+                    "the /todos/now widget)."
+                ),
+                trigger="on demand, or a task you're about to start",
+                status="active",
             ),
             Intervention(
                 name="auto_decompose",
-                description="Break tasks over the threshold into ordered sub-steps.",
-                trigger="a new task whose estimate exceeds the decomposition threshold",
+                description=(
+                    "Break a task over decomposition_threshold_minutes into a "
+                    "tiny first step + collapsed remaining steps at creation."
+                ),
+                trigger="a new todo whose estimate exceeds the threshold",
+                status="active",
             ),
             Intervention(
                 name="body_double_nudge",
-                description="Offer a scheduled co-working/start-together window.",
+                description=(
+                    "Surface a task you keep bailing on and suggest a "
+                    "start-together window (GET /todos/stuck; named in the profile)."
+                ),
                 trigger="repeated misses on the same task",
+                status="active",
             ),
         ]
 
@@ -68,6 +165,22 @@ class TaskParalysisModule(Module):
                 lines.append(
                     "High stall rate — default to offering a <5-minute first step "
                     "rather than the whole task."
+                )
+            # Body-double signal: name the tasks that keep getting abandoned so the
+            # coaching prose can suggest a start-together window for them.
+            try:
+                min_misses = int(
+                    store.get_state("body_double_min_misses")
+                    or DEFAULT_BODY_DOUBLE_MIN_MISSES
+                )
+            except (TypeError, ValueError):
+                min_misses = DEFAULT_BODY_DOUBLE_MIN_MISSES
+            stuck = repeat_stalled_tasks(tasks, min_misses=min_misses)
+            if stuck:
+                top = ", ".join(f"“{s['title']}” (×{s['misses']})" for s in stuck[:3])
+                lines.append(
+                    f"Keeps bailing on: {top}. A solo start isn't working — offer "
+                    "a body-double / start-together window, not another reminder."
                 )
         step = store.get_state("max_first_step_minutes")
         if step:

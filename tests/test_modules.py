@@ -14,6 +14,7 @@ from prefrontal.config import Settings
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
+from prefrontal.modules.task_paralysis import repeat_stalled_tasks
 from tests.conftest import scoped_default
 
 BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
@@ -94,3 +95,49 @@ def test_task_paralysis_reports_stall_rate(store):
     section = get("task_paralysis").profile_section(store)
     assert section is not None
     assert "stall" in section.lower()
+
+
+def test_task_paralysis_interventions_all_active():
+    """All three initiation interventions are wired (status active)."""
+    ivs = {i.name: i.status for i in get("task_paralysis").interventions()}
+    assert ivs == {
+        "tiny_first_step": "active",
+        "auto_decompose": "active",
+        "body_double_nudge": "active",
+    }
+
+
+def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
+    """Two+ misses on a task flag it; a task later completed drops off."""
+    episodes = [
+        {"id": 1, "context": "todo dropped: Call the dentist", "outcome": "miss"},
+        {"id": 2, "context": "todo dropped: Call the dentist", "outcome": "miss"},
+        {"id": 3, "context": "todo dropped: File taxes", "outcome": "miss"},
+        {"id": 4, "context": "todo dropped: File taxes", "outcome": "miss"},
+        {"id": 5, "context": "todo done: File taxes", "outcome": "success"},
+        {"id": 6, "context": "outing: coffee", "outcome": "miss"},  # not a todo
+    ]
+    stuck = repeat_stalled_tasks(episodes)
+    titles = [s["title"] for s in stuck]
+    assert titles == ["Call the dentist"]  # File taxes resolved; outing ignored
+    assert stuck[0]["misses"] == 2 and stuck[0]["attempts"] == 2
+
+
+def test_repeat_stalled_tasks_respects_min_misses():
+    """A single miss isn't yet a body-double signal."""
+    episodes = [{"id": 1, "context": "todo dropped: Email Sam", "outcome": "miss"}]
+    assert repeat_stalled_tasks(episodes) == []
+    assert repeat_stalled_tasks(episodes, min_misses=1)[0]["title"] == "Email Sam"
+
+
+def test_task_paralysis_profile_names_stuck_tasks(store):
+    """The profile section names a task the user keeps bailing on."""
+    for _ in range(2):
+        store.log_episode(
+            "task", outcome="miss", context="todo dropped: Renew passport"
+        )
+    get("task_paralysis").seed(store)
+    section = get("task_paralysis").profile_section(store)
+    assert section is not None
+    assert "Keeps bailing on" in section
+    assert "Renew passport" in section
