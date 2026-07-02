@@ -140,6 +140,57 @@ Closes the active outing and logs intention-vs-actual for learning.
 
 ---
 
+## Shortcut: "Add Todo" (capture an open loop)
+
+The plainest capture gesture: get a task out of your head and onto the list. You
+supply only the **title** — Prefrontal fills in the rest (estimate, priority,
+energy, and any deadline it can read out of the wording) so the todo lands
+schedulable and honestly sortable without you fiddling with fields. Put it on the
+Lock Screen / Back Tap / Share Sheet so it's a one-tap, one-line gesture.
+
+1. New shortcut named **Add Todo**.
+2. **Ask for Input** (Text): "What's the todo?" Phrase deadlines naturally in the
+   text — "call the dentist tomorrow", "file taxes by Friday", "renew passport
+   next week" — and the server parses the due date out for you.
+3. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/todos`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):** `{ "title": "Provided Input" }` — replace the value
+     with the **Provided Input** variable.
+4. **Confirm back — and surface the first step.** For any task the server
+   estimates at 30 min or more it auto-decomposes it and returns a tiny, concrete
+   **`decomposition.first_step`** — the "just start here" action that breaks
+   inertia. Read it back so the tap that captures the task also tells you how to
+   begin it:
+   - **Get Dictionary Value** `decomposition` from the response → **If** it *has
+     any value*: **Get Dictionary Value** `first_step` from it → **Show
+     Notification** (or **Speak Text**): *"Added. First step: {first_step}"*.
+   - **Otherwise** (a quick task, no decomposition): **Get Dictionary Value**
+     `estimate_minutes` → **Show Notification** *"Added — ~{estimate_minutes} min."*
+   The response also carries an `augmented` map (which fields were inferred vs
+   stated), the resolved `priority`/`energy`, and any parsed `deadline`, if you
+   want to build a richer card.
+5. **Roaming, like the outing/panic shortcuts:** every tap crosses Tailscale from
+   your phone. Wrap **Get Contents of URL** in an **If** that checks it succeeded;
+   on failure **Show Notification** "Couldn't reach Prefrontal — tap again when
+   you're back on the tailnet." (`/health` in Safari is the quick check.)
+
+> **Want to set a field yourself?** Add a **Choose from Menu** before the POST —
+> e.g. "Quick / Normal / Someday" — and send `priority` per branch (`3` / omit /
+> `0`), or an explicit `estimate_minutes`, in the JSON body:
+> `{ "title": "Provided Input", "priority": 0 }`. Anything you send is kept as-is;
+> anything you omit is inferred. Keep the default one-field, though — letting the
+> server infer is the whole point of a zero-friction capture.
+
+> Quick test from the Mac first:
+> ```sh
+> curl -s -X POST http://localhost:8000/todos \
+>   -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" -H "Content-Type: application/json" \
+>   -d '{"title":"draft the Q3 report by Friday"}' | python3 -m json.tool
+> ```
+> A big task like this comes back with an inferred `deadline`, an
+> `estimate_minutes`, the `augmented` sourcing, and a `decomposition.first_step`.
+
 ## Shortcut: "Capture" (Impulsivity — capture-and-defer)
 
 The one-tap "park this and get back to it" gesture. When an impulse pulls at
