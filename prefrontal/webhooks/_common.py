@@ -1,56 +1,26 @@
-"""FastAPI webhook listener for iOS Shortcut and n8n triggers.
+"""Shared surface for the webhook layer's per-tag routers.
 
-This is Prefrontal's ingestion surface. iOS Shortcuts (and anything else that can
-make an HTTP request) POST low-friction outcome reports here, and the listener
-turns them into rows in the behavioral memory layer.
+The routes live in per-tag modules under :mod:`prefrontal.webhooks.routers`, and
+the app is assembled by :func:`prefrontal.webhooks.app.create_app`. This module
+holds everything those routers share, so each router imports from one place
+rather than re-declaring it:
 
-Routes:
+- **Pydantic request/response models** (``ShortcutPayload``, ``TodoCreate``, …).
+- **Request dependencies & identity** — :class:`ScopedRequest`, :func:`get_store`,
+  :func:`resolve_user`, :func:`require_operator`. Authentication resolves the
+  ``X-Prefrontal-Token`` header to a user (its ``sha256`` is matched against the
+  ``users`` table) and scopes the request to them, so one person never sees
+  another's data. ``PREFRONTAL_DEFAULT_USER`` lets tokenless requests resolve to
+  one user (single-user / trusted-LAN mode); the legacy
+  ``PREFRONTAL_WEBHOOK_SECRET`` still works as a bootstrap operator token.
+- **Small formatting/URL helpers** shared across routers (nudge read-backs,
+  dismiss links, ``_delivery_fields``) and a couple of constants
+  (``DASHBOARD_HTML``, ``APP_VERSION``, …).
+- A wide **re-export of names** the routers use (stdlib/FastAPI/pydantic plus the
+  domain functions), kept in ``__all__`` so the routers' explicit imports resolve
+  from here.
 
-- ``GET  /health`` — liveness probe, no auth.
-- ``GET  /profile`` — the behavioral profile; serves the cached LLM narrative
-  (``?refresh=1`` to regenerate, ``?format=structured`` for the raw input).
-- ``POST /webhooks/shortcut`` — one-tap outcome logging from an iOS Shortcut.
-- ``POST /webhooks/n8n`` — inbound events pushed by an n8n workflow.
-- ``POST /webhooks/location`` — the phone's current position (iOS Shortcut).
-- ``GET  /location`` — the last-known position, for debugging/monitoring.
-- ``POST /webhooks/mail/sync`` — ingest + triage a batch of mail for an account.
-- ``GET  /mail`` — recent triaged mail and the open action items.
-- ``POST /webhooks/outing/start`` — declare an intention + time window.
-- ``POST /webhooks/outing/check`` — n8n polls this for due escalation nudges.
-- ``POST /webhooks/outing/return`` — close an outing; logs intention vs actual.
-- ``POST /webhooks/focus/start`` — declare a focus session (task + optional plan).
-- ``POST /webhooks/focus/check`` — n8n polls this for due interrupts + protect state.
-- ``POST /webhooks/focus/end`` — close a session; logs planned vs actual.
-- ``GET  /focus`` — read-only snapshot of focus sessions (active + recent).
-- ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
-- ``POST /webhooks/departure/check`` — n8n polls this for due departure nudges.
-- ``POST /webhooks/departure/left`` — record an actual departure (leave-Home
-  geofence) and score it on-time vs late against the computed leave-by.
-- ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
-- ``POST /commitments/geocode`` — backfill destination coords for commitments.
-- ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
-- ``GET  /places`` / ``POST /places`` — curated destination aliases for geocoding.
-- ``GET  /briefing`` — today's morning digest (commitments, conflicts, slips).
-- ``GET  /panic`` — overwhelmed-mode triage: what's on fire now + one first step.
-- ``POST /webhooks/panic/check`` — poll for a proactive overwhelm nudge (n8n).
-- ``GET/POST /todos`` (+ ``/todos/{id}/done|drop``) — open loops to fit into time.
-- ``GET  /todos/fit?minutes=N`` — open todos that fit a free block right now.
-- ``GET  /dashboard`` — read-only monitoring UI (self-contained HTML shell).
-- ``GET  /family`` — calm, non-technical family view (right now + today).
-
-Authentication resolves the ``X-Prefrontal-Token`` header to a **user** (see
-:func:`resolve_user`): the token's ``sha256`` is matched against the ``users``
-table and the request is scoped to that user, so one person never sees another's
-data. iOS Shortcuts can set custom headers, so this stays low-friction. A
-deployment may set ``PREFRONTAL_DEFAULT_USER`` so tokenless requests resolve to
-one user (the single-user / trusted-LAN compatibility mode), and the legacy
-``PREFRONTAL_WEBHOOK_SECRET`` still works as a bootstrap operator token until
-per-user tokens are provisioned.
-
-The app is built by :func:`create_app`, a factory so tests can inject an
-in-memory store. Importing :data:`app` builds a default instance from the
-environment for ``uvicorn prefrontal.webhooks.app:app`` and the ``prefrontal
-serve`` CLI command.
+It deliberately holds no routes and no ``create_app`` — see ``app.py`` for those.
 """
 
 from __future__ import annotations

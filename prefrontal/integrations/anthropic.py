@@ -8,8 +8,10 @@ Claude for more reliable structured parsing, with Ollama staying as the fallback
 It deliberately mirrors :class:`~prefrontal.integrations.ollama.OllamaClient`'s
 tiny surface — ``generate(prompt, *, system=None) -> str`` and ``available()`` —
 so the two are interchangeable behind the ``_Generator`` protocol callers already
-use. Downstream code (the assistant, the todo augmenter) asks for JSON-only text
-and parses it the same way regardless of which backend answered.
+use. Today only the dashboard assistant selects this backend (Claude when
+available, else Ollama); the todo augmenter/decomposer still run on the local
+model. Whichever backend answers, the reply is parsed the same way (see
+:mod:`prefrontal.llm_json`).
 
 The official ``anthropic`` SDK is an *optional* dependency (``pip install
 prefrontal[anthropic]``); it is imported lazily so the base install stays

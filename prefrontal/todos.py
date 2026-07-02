@@ -162,6 +162,20 @@ def heuristic_energy(title: str) -> str:
     return "medium"
 
 
+def normalize_energy(value: Any) -> str | None:
+    """Return a valid energy level (one of :data:`ENERGY_LEVELS`) or ``None``.
+
+    The single validation point for the field — mirrors :func:`normalize_category`.
+    Lowercases/strips a value and accepts it only if it's a known level; anything
+    else (a model or API caller sending an out-of-vocabulary string) returns
+    ``None`` so the caller infers a level rather than storing garbage.
+    """
+    if not isinstance(value, str):
+        return None
+    norm = value.strip().lower()
+    return norm if norm in ENERGY_LEVELS else None
+
+
 def normalize_category(value: str | None) -> str:
     """Canonicalize a category label: lowercase, single-spaced, length-capped.
 
@@ -275,9 +289,9 @@ def _coerce_llm(raw: dict[str, Any]) -> dict[str, Any]:
     pri = raw.get("priority")
     if isinstance(pri, int) and not isinstance(pri, bool) and 0 <= pri <= 3:
         out["priority"] = pri
-    energy = raw.get("energy")
-    if isinstance(energy, str) and energy.lower() in ENERGY_LEVELS:
-        out["energy"] = energy.lower()
+    energy = normalize_energy(raw.get("energy"))
+    if energy:
+        out["energy"] = energy
     deadline = raw.get("deadline")
     if isinstance(deadline, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", deadline.strip()):
         out["deadline"] = deadline.strip()
@@ -351,6 +365,10 @@ def augment_todo(
     today = today or date.today()
     existing_categories = existing_categories or []
     sources: dict[str, str] = {}
+    # A supplied energy is only trusted if it's a real level; an out-of-vocabulary
+    # value is dropped to None here so it's inferred rather than stored verbatim
+    # (and so it correctly counts as a field the model should fill).
+    energy = normalize_energy(energy) if energy is not None else None
     needs_model = None in (estimate_minutes, priority, energy, category) or not deadline
     llm = (
         _llm_fields(
