@@ -126,6 +126,10 @@ class Settings:
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
+    #: Logical account names that are Gmail inboxes (resolved from IMAP host
+    #: config at load time; see :func:`prefrontal.mail.imap.gmail_account_names`).
+    #: Surfaces use this to decide whether a todo can deep-link to its source mail.
+    gmail_accounts: frozenset[str] = frozenset()
     account_labels: tuple[tuple[str, str, str], ...] = ()
     calendar_labels: tuple[tuple[str, str, str], ...] = ()
     timezone: str = "UTC"
@@ -204,6 +208,14 @@ class Settings:
         """
         return dict(self.mail_accounts).get(account, self.mail_default_policy)
 
+    def is_gmail_account(self, account: str | None) -> bool:
+        """Whether ``account`` is a Gmail inbox (so its todos can deep-link to mail).
+
+        Backed by :attr:`gmail_accounts`, resolved from IMAP host config at load
+        time. ``None``/unknown accounts (manual and impulse todos) are not Gmail.
+        """
+        return bool(account) and account in self.gmail_accounts
+
     @property
     def account_label_map(self) -> dict[str, dict[str, str]]:
         """Account name → ``{"label", "color"}`` for dashboard pills.
@@ -264,6 +276,12 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     default_policy = os.environ.get("PREFRONTAL_MAIL_DEFAULT_POLICY", "signals").strip()
     if default_policy not in ("full", "signals"):
         default_policy = "signals"
+    # Classify the configured account universe (retention policies + label pills)
+    # into Gmail vs not, so surfaces can deep-link Gmail-sourced todos.
+    from prefrontal.mail.imap import gmail_account_names
+
+    account_names = {a for a, _ in mail_accounts} | {a for a, _, _ in account_labels}
+    gmail_accounts = gmail_account_names(tuple(account_names))
     return Settings(
         db_path=os.environ.get("PREFRONTAL_DB_PATH", "prefrontal.db"),
         host=os.environ.get("PREFRONTAL_HOST", "0.0.0.0"),
@@ -286,6 +304,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
+        gmail_accounts=gmail_accounts,
         account_labels=account_labels,
         calendar_labels=calendar_labels,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",

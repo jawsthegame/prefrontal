@@ -134,6 +134,26 @@ def commitment_url(commitment: dict[str, Any]) -> str | None:
     return None
 
 
+def gmail_message_url(message_id: str | None) -> str | None:
+    """Return a Gmail deep link to the message with this RFC822 ``Message-ID``.
+
+    Prefrontal stores the message's ``Message-ID`` header (e.g.
+    ``<CAF…@mail.gmail.com>``), not a Gmail API id, so we can't build a bare
+    ``#all/<id>`` permalink. Gmail's ``rfc822msgid:`` search operator matches
+    that header exactly, and searching for it lands on the one message — the
+    canonical way to deep-link when all you have is the RFC822 id. The angle
+    brackets aren't part of the id, so they're stripped before encoding.
+
+    Returns ``None`` for a missing/blank id. Only used for accounts already
+    known to be Gmail (see :meth:`Settings.is_gmail_account`); the result is a
+    fixed ``https://`` origin, safe to drop straight into an ``href``.
+    """
+    mid = (message_id or "").strip().strip("<>").strip()
+    if not mid:
+        return None
+    return "https://mail.google.com/mail/u/0/#search/rfc822msgid:" + quote_plus(mid)
+
+
 def _with_calendar(d: dict[str, Any]) -> dict[str, Any]:
     """Annotate a commitment dict with calendar label/key and source ``url``.
 

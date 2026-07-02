@@ -105,6 +105,46 @@ def test_todos_expose_account_and_label_map(store, user_store):
     assert mail_todo["account"] == "work"
 
 
+def test_todos_deep_link_to_gmail_source(store, user_store):
+    """A todo from a Gmail inbox carries a source_url deep link; others don't."""
+    from prefrontal.mail.ingest import ingest_messages
+
+    ingest_messages(
+        user_store,
+        [{
+            "message_id": "<m-9@corp>",
+            "from": '"Sarah Lee" <sarah@corp.com>',
+            "subject": "Quick question about the report",
+            "date": "2026-06-28T10:30:00-07:00",
+            "body": "Can you send me the Q2 report?",
+        }],
+        account="work",
+        use_model=False,
+    )
+    manual_id = user_store.add_todo("buy milk")
+
+    # "work" configured as a Gmail inbox -> its todo deep-links to the message.
+    settings = Settings(gmail_accounts=frozenset({"work"}))
+    app = create_app(store=store, settings=settings)
+    with TestClient(app) as c:
+        data = c.get("/todos", headers={"X-Prefrontal-Token": SECRET}).json()
+    by_id = {t["id"]: t for t in data["todos"]}
+    mail_todo = next(t for t in data["todos"] if t["id"] != manual_id)
+    assert mail_todo["source_url"] == (
+        "https://mail.google.com/mail/u/0/#search/rfc822msgid:m-9%40corp"
+    )
+    # Manual todos never have a mail source.
+    assert by_id[manual_id]["source_url"] is None
+
+    # With no Gmail account configured, the same mail todo gets no deep link.
+    settings = Settings()
+    app = create_app(store=store, settings=settings)
+    with TestClient(app) as c:
+        data = c.get("/todos", headers={"X-Prefrontal-Token": SECRET}).json()
+    mail_todo = next(t for t in data["todos"] if t["id"] != manual_id)
+    assert mail_todo["source_url"] is None
+
+
 def test_profile_returns_markdown(client):
     """With no narrative cached, /profile falls back to the structured profile."""
     resp = client.get("/profile", headers={"X-Prefrontal-Token": SECRET})

@@ -27,7 +27,12 @@ from prefrontal.config import (
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message, retriage_messages
 from prefrontal.mail.feedback import learned_denylist
-from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
+from prefrontal.mail.imap import (
+    ImapAccount,
+    _important_filter,
+    _unseen_criteria,
+    gmail_account_names,
+)
 from prefrontal.mail.models import MailItem, normalize_date, parse_sender
 from prefrontal.mail.triage import (
     MailTriage,
@@ -281,6 +286,26 @@ def test_settings_policy_for():
     assert s.policy_for("anything-else") == "full"
 
 
+def test_settings_is_gmail_account():
+    s = Settings(gmail_accounts=frozenset({"personal"}))
+    assert s.is_gmail_account("personal") is True
+    assert s.is_gmail_account("work") is False
+    assert s.is_gmail_account(None) is False
+
+
+def test_load_settings_resolves_gmail_accounts(monkeypatch):
+    """load_settings classifies the configured account universe by IMAP host."""
+    from prefrontal.config import load_settings
+
+    monkeypatch.setenv("PREFRONTAL_MAIL_ACCOUNTS", "personal=full,work=signals")
+    monkeypatch.setenv("MAIL_IMAP_HOST_WORK", "imap.corp.com")  # opt work out of Gmail
+    monkeypatch.delenv("MAIL_IMAP_HOST_PERSONAL", raising=False)
+    s = load_settings()
+    # personal defaults to the Gmail host; work is pointed elsewhere.
+    assert "personal" in s.gmail_accounts
+    assert "work" not in s.gmail_accounts
+
+
 def test_parse_account_labels():
     parsed = _parse_account_labels(
         "work=Vistar:orange, outlook=t-mobile:magenta"
@@ -378,6 +403,50 @@ def test_mail_accounts_for_todos_maps_todo_to_inbox(store):
     # Manual todo has no account entry; empty input is a no-op.
     assert manual not in accounts
     assert store.mail_accounts_for_todos([]) == {}
+
+
+def test_mail_sources_for_todos_returns_account_and_ids(store):
+    ingest_messages(
+        store,
+        [_msg(message_id="<m-42@example.com>", threadId="thread-abc")],
+        account="work",
+        client=_ollama_down(),
+    )
+    manual = store.add_todo("buy milk")  # no originating mail
+    todos = store.open_todos()
+    mail_todo = next(t["id"] for t in todos if t["id"] != manual)
+
+    sources = store.mail_sources_for_todos([t["id"] for t in todos])
+    assert sources[mail_todo] == {
+        "account": "work",
+        "message_id": "<m-42@example.com>",
+        "thread_id": "thread-abc",
+    }
+    # Manual todo has no mail source; empty input is a no-op.
+    assert manual not in sources
+    assert store.mail_sources_for_todos([]) == {}
+
+
+def test_gmail_account_names_classifies_by_host():
+    """An account is Gmail when its resolved IMAP host is Gmail (default = Gmail)."""
+    env = {"MAIL_IMAP_HOST_WORK": "imap.corp.com"}  # personal has no host -> default
+    gmail = gmail_account_names(("personal", "work"), env=env)
+    assert gmail == frozenset({"personal"})
+    assert gmail_account_names((), env=env) == frozenset()
+
+
+def test_gmail_message_url_builds_rfc822msgid_search():
+    from prefrontal.memory.store import gmail_message_url
+
+    url = gmail_message_url("<CAF+abc@mail.gmail.com>")
+    # Angle brackets are stripped; the id is URL-encoded into an rfc822msgid search.
+    assert url == (
+        "https://mail.google.com/mail/u/0/#search/"
+        "rfc822msgid:CAF%2Babc%40mail.gmail.com"
+    )
+    assert gmail_message_url(None) is None
+    assert gmail_message_url("   ") is None
+    assert gmail_message_url("<>") is None
 
 
 def test_ingest_signals_policy_stores_no_body(store):
