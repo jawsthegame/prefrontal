@@ -24,7 +24,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from prefrontal.coaching import CoachContext, Cue
 
 
 class ModuleStore(Protocol):
@@ -120,6 +123,18 @@ class Module(ABC):
 
         Returns:
             A list of :class:`Intervention` declarations. Defaults to empty.
+        """
+        return []
+
+    def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
+        """Return the coaching cues due right now, given memory + context.
+
+        The coaching agent (:mod:`prefrontal.coaching`) calls this on each tick to
+        ask "anything to say?" A module reads the store and may advance its own
+        one-fire state, but must **not** deliver — it only returns
+        :class:`~prefrontal.coaching.Cue`\\s; whether/how to send them (channel,
+        debounce, quiet hours) is the agent's job. Defaults to none, so a module
+        lights up its coaching by filling this in — nothing else to wire.
         """
         return []
 

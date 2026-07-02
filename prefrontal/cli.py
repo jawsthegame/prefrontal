@@ -12,6 +12,7 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal summarize`` — LLM-summarize the profile (Ollama); cache it for
   ``GET /profile`` and write ``profile-<handle>.md``.
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
+- ``prefrontal coach`` — run one coaching tick: what's due + on which channel.
 - ``prefrontal panic`` — triage what's on fire right now + one first step.
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
@@ -34,6 +35,12 @@ from pathlib import Path
 
 from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
+from prefrontal.coaching import (
+    build_context,
+    collect_cues,
+    decide,
+    record_fired,
+)
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
 from prefrontal.mail.imap import DEFAULT_UNSEEN_WINDOW_DAYS
@@ -366,6 +373,45 @@ def _cmd_briefing(args: argparse.Namespace) -> int:
         print(f"Wrote briefing to {args.output}")
     else:
         print(text, end="")
+    return 0
+
+
+def _cmd_coach(args: argparse.Namespace) -> int:
+    """Run one coaching tick and print the decisions (or cues with --dry-run).
+
+    Asks every enabled module "anything due right now?" and applies channel
+    choice + suppression (quiet hours + debounce). ``--dry-run`` shows the raw
+    cues *before* suppression/channel choice and never records a fire, so it's
+    safe to run repeatedly while debugging. Without it, fired decisions are
+    stamped for debounce so the same cue won't repeat next tick.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``dry_run``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        now = utcnow()
+        ctx = build_context(store, now=now, timezone=settings.timezone)
+        modules = enabled_modules(settings)
+        cues = collect_cues(store, modules, ctx)
+        if args.dry_run:
+            if not cues:
+                print("No cues due.")
+            for c in cues:
+                print(f"[{c.urgency}] {c.module}/{c.intervention}: {c.text}")
+            return 0
+        decisions = decide(store, cues, ctx)
+        if not decisions:
+            print(f"Nothing to say right now ({len(cues)} cue(s) held).")
+            return 0
+        for d in decisions:
+            print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
+        record_fired(store, decisions, now)
     return 0
 
 
@@ -781,6 +827,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_brief.set_defaults(func=_cmd_briefing)
+
+    p_coach = sub.add_parser(
+        "coach", help="Run one coaching tick: what's due, on which channel."
+    )
+    p_coach.add_argument("--db-path", default=None, help="Override the database path.")
+    p_coach.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_coach.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show cues before suppression/channel choice; record nothing.",
+    )
+    p_coach.set_defaults(func=_cmd_coach)
 
     p_panic = sub.add_parser(
         "panic", help="Overwhelmed? Triage what's on fire now + one first step."
