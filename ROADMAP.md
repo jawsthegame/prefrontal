@@ -472,5 +472,25 @@ ordered by leverage; each is independent but builds on denser capture.
   context axis. *(Open: precedence when Packs overlap — two setting the same
   category/window need merge rules; and the co-parent/household bits imply
   **shared/household scope**, beyond today's per-user multi-tenancy.)*
+- **Shared household sheet — co-parent facts, agreements & load-balancing.**
+  The first concrete driver for **household scope** (the open question on Context
+  Packs above): today all data is strictly per-user (`store.scoped(user_id)`), but
+  co-parents need shared read/write. Add a household-scoped store of **facts**
+  (per-kid key/values — shirt/shoe size, allergies, teacher, pediatrician) and
+  **agreements** (standing behavior plans — rewards, consistency rules, routines),
+  each stamped `updated_by`/`updated_at`. Render it into the existing **family
+  view** as a single visible sheet (*kids' facts · standing agreements · upcoming
+  appts · recently changed*), reusing the `profile`/`profile_cache` render pattern
+  rather than building a new UI. Edit it in plain English through the shipped
+  **NL assistant** — extend `ALLOWED_OPS` with `set_fact`/`set_agreement`;
+  appointments reuse commitments + the `child` `kind`. The point is **balancing
+  invisible load**: provenance makes "who's carrying the mental load" legible, and
+  the coaching/briefing layer pushes the deltas that matter to the *other* parent
+  ("Sam's shoe size → 13; dentist Tue 3pm — you're on pickup"), so it's a
+  load-balancer, not a passive shared note. Ships as the backbone of the **Parent**
+  Context Pack. *(Design leanings: a real `household` entity users belong to
+  (cleaner than a shared pseudo-user); last-write-wins + provenance over richer
+  merge at this scale; v1 = the visible shared sheet, v2 = the proactive
+  delta-digest to the other parent. Open: household membership/invite model.)*
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
