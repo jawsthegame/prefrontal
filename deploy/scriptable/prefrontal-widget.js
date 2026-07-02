@@ -5,7 +5,7 @@
 // nudge Prefrontal sent (so a missed push is still visible), and — when you have
 // an open gap — the one todo that fits it ("25m free · Reply to landlord"), a
 // low-friction initiation nudge. Reads the Prefrontal API over Tailscale; tap
-// the widget to open the full family view.
+// the widget to open the full dashboard.
 //
 // One script drives every size. It auto-detects which family iOS is rendering:
 //   • Home Screen — Small / Medium / Large: the full card (header + list + counts).
@@ -93,14 +93,17 @@ const ok = settled.some((s) => s.status === "fulfilled");
 const family = config.widgetFamily || "medium";
 const small = family === "small";
 const w = new ListWidget();
-w.url = BASE_URL + "/family"; // tap opens the family view (after unlock on the Lock Screen)
+w.url = BASE_URL + "/dashboard"; // tap opens the full dashboard (after unlock on the Lock Screen)
 w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
 
-function text(stack, s, { color = C.fg, size = 13, bold = false, font } = {}) {
+function text(stack, s, { color = C.fg, size = 13, bold = false, font, minScale } = {}) {
   const t = stack.addText(s);
   t.textColor = color;
   t.font = font || (bold ? Font.boldSystemFont(size) : Font.systemFont(size));
   t.lineLimit = 1;
+  // Let iOS shrink the text to fit its slot instead of clipping/overflowing —
+  // essential in the tiny circular accessory, where e.g. a time runs off the edge.
+  if (minScale) t.minimumScaleFactor = minScale;
   return t;
 }
 
@@ -163,11 +166,16 @@ const recentNudge =
 //   todos / free    → the todo that fits your free window, else open count
 // ===========================================================================
 
-// A short clock label that fits a circular slot ("2:30", not "2:30 PM").
+// A short clock label that fits a circular slot: "2:30", no AM/PM and no 24h
+// zero-padding, so it stays narrow. Ambiguity is fine on a Lock Screen glance —
+// the next commitment is nearly always within the coming few hours.
 function fmtTimeShort(ts) {
   if (!ts) return "";
   const d = new Date(String(ts).replace(" ", "T") + "Z");
-  return isNaN(d) ? ts : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: false });
+  if (isNaN(d)) return ts;
+  let h = d.getHours() % 12;
+  if (h === 0) h = 12;
+  return `${h}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 // A due departure ("leave now") arrives as the most recent *departure* nudge;
@@ -200,7 +208,9 @@ function facetUrgent() {
     color: C.call,
   };
   if (dueDeparture) return {
-    glyph: "arrow.right.circle.fill", value: "go", label: dueDeparture.message,
+    // Circular shows just glyph + value, so a walking figure + "now" reads as
+    // "leave now"; the full "leave now for …" text is the label (inline/rect).
+    glyph: "figure.walk", value: "now", label: dueDeparture.message,
     sub: dueDeparture.message, color: C.call,
   };
   return null;
@@ -271,7 +281,9 @@ function renderCircular() {
   }
   const f = pickFacet();
   symbol(top, f.glyph, 15); top.addSpacer();
-  text(bot, f.value, { size: 17, bold: true }); bot.addSpacer();
+  // Auto-shrink so a wider value (a time like "12:30") fits the circle instead
+  // of running off the edge; short values ("5", "go") still render at full size.
+  text(bot, f.value, { size: 16, bold: true, minScale: 0.5 }); bot.addSpacer();
 }
 
 function renderRectangular() {
