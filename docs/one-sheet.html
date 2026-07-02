@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Prefrontal one-sheet. Source of truth for docs/one-sheet.pdf.
+  Regenerate the PDF (Chromium/Chrome headless):
+    chrome --headless=new --no-pdf-header-footer \
+      --print-to-pdf=docs/one-sheet.pdf file://$PWD/docs/one-sheet.html
+-->
+<style>
+  @page { size: Letter; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root{
+    --ink:#16203a; --muted:#565f74; --line:#e3e6ef;
+    --brand:#4338ca; --brand2:#6d5ae0;
+    --today:#15803d; --next:#b45309;
+    --quote-bg:#f3f4fb; --card:#fafbfe;
+  }
+  html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); font-size:10.6px; line-height:1.44; width:8.5in; }
+  .page{ padding:0.34in 0.56in 0.26in; }
+
+  header{ display:flex; align-items:flex-end; justify-content:space-between;
+    border-bottom:3px solid var(--brand); padding-bottom:10px; }
+  .brand{ font-size:36px; font-weight:800; letter-spacing:-0.8px; color:var(--brand); line-height:1; }
+  .tag{ font-size:13px; color:var(--muted); margin-top:5px; font-weight:500; }
+  .meta{ text-align:right; font-size:9.5px; color:var(--muted); line-height:1.5; }
+  .meta b{ color:var(--ink); }
+
+  .lede{ display:flex; gap:18px; margin-top:10px; align-items:stretch; }
+  .lede .big{ flex:1.9; display:flex; flex-direction:column; justify-content:center; }
+  .lede h2{ font-size:15.5px; font-weight:750; letter-spacing:-0.3px; line-height:1.28; }
+  .lede p{ color:var(--muted); margin-top:6px; font-size:10.8px; }
+  .lede .hook{ color:var(--brand); font-weight:700; }
+  .pillars{ flex:1; display:flex; flex-direction:column; gap:7px; justify-content:center;
+    background:var(--card); border:1px solid var(--line); border-radius:9px; padding:11px 13px; }
+  .pillar b{ display:block; font-size:10.6px; color:var(--ink); }
+  .pillar span{ color:var(--muted); font-size:9.9px; }
+
+  h3.sec{ font-size:9.6px; text-transform:uppercase; letter-spacing:1.4px; font-weight:800;
+    margin:11px 0 7px; display:flex; align-items:center; gap:8px; }
+  h3.sec::after{ content:""; flex:1; height:1.5px; background:var(--line); }
+  .sec.today{ color:var(--today); } .sec.next{ color:var(--next); } .sec.tech{ color:var(--brand); }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:10px 11px 11px; border-top:3px solid var(--today); }
+  .card .t{ font-weight:750; font-size:11.4px; letter-spacing:-0.1px; }
+  .card .t .ico{ margin-right:5px; }
+  .quote{ background:var(--quote-bg); border-left:3px solid var(--brand2);
+    border-radius:0 6px 6px 0; padding:6px 8px; margin:6px 0; color:#333a4d;
+    font-size:9.9px; line-height:1.38; font-style:italic; }
+  .impact{ font-size:9.9px; color:var(--muted); }
+  .impact b{ color:var(--today); font-style:normal; }
+
+  .banner{ margin-top:8px; background:linear-gradient(90deg,#edf0fd,#f6f4fe);
+    border:1px solid #dde0f6; border-radius:9px; padding:10px 15px;
+    display:flex; gap:13px; align-items:center; }
+  .banner .k{ font-size:11px; font-weight:800; color:var(--brand); white-space:nowrap; }
+  .banner .v{ font-size:10.4px; color:#39415a; }
+  .banner .v b{ color:var(--ink); }
+
+  .alsolive{ margin-top:8px; font-size:10px; color:var(--muted); }
+  .alsolive b{ color:var(--today); text-transform:uppercase; letter-spacing:0.8px; font-size:9px; }
+  .pill{ display:inline-block; background:var(--today-bg,#eef7f0); color:#166534;
+    border:1px solid #cfe8d6; border-radius:20px; padding:1.5px 9px; margin:3px 4px 0 0; font-size:9.6px; }
+
+  .next-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px 22px; }
+  .ni{ font-size:10.4px; padding-left:16px; position:relative; color:var(--muted); line-height:1.4; }
+  .ni::before{ content:"\2192"; position:absolute; left:0; color:var(--next); font-weight:800; }
+  .ni b{ color:var(--ink); }
+
+  .tech-box{ background:#141b30; color:#c8cee0; border-radius:9px; padding:11px 15px; }
+  .tech-box p{ font-size:10.1px; line-height:1.48; color:#c8cee0; }
+  .tech-box p b{ color:#fff; }
+  .tech-box .flow{ color:#93a3ff; font-weight:700; }
+  .chips{ margin-top:8px; display:flex; flex-wrap:wrap; gap:5px; }
+  .chip{ font-size:8.8px; background:#26304d; color:#b2bcda; border-radius:5px; padding:3px 8px;
+    font-family:"SF Mono",Consolas,monospace; }
+
+  footer{ margin-top:9px; display:flex; justify-content:space-between; align-items:center;
+    border-top:1px solid var(--line); padding-top:8px; font-size:9.2px; color:var(--muted); }
+  footer b{ color:var(--ink); }
+  .dot{ margin:0 6px; color:#c7ccda; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div>
+      <div class="brand">Prefrontal</div>
+      <div class="tag">The executive-function assistant that learns how <i>you</i> actually work.</div>
+    </div>
+    <div class="meta">
+      <b>Self-hosted &middot; local-first</b><br>
+      Runs on your network, always on<br>
+      Open source (MIT) &middot; live &amp; in daily use
+    </div>
+  </header>
+
+  <div class="lede">
+    <div class="big">
+      <h2>Most productivity tools assume you'll remember to use them.</h2>
+      <p>Prefrontal doesn't. It watches your context — location, calendar, time of day, recent
+      activity — decides on its own when to speak up, and nudges through the channel you'll actually
+      notice. Then it learns from whether the nudge <i>worked</i>.
+      <span class="hook">It gets better the longer you use it.</span></p>
+    </div>
+    <div class="pillars">
+      <div class="pillar"><b>🧠 Learns from what worked</b><span>Not another to-do list — a model of you.</span></div>
+      <div class="pillar"><b>👆 One tap, or it fails</b><span>If logging is harder than ignoring, it's useless.</span></div>
+      <div class="pillar"><b>🔒 Your data stays home</b><span>Nothing leaves your network unless you say so.</span></div>
+    </div>
+  </div>
+
+  <h3 class="sec today">✓ What it does today — live, with a concrete example</h3>
+  <div class="grid">
+    <div class="card">
+      <div class="t"><span class="ico">⏰</span>Departure reminders</div>
+      <div class="quote">"2:14 — leave in 6 min for the 2:45 dentist. Traffic's heavy."</div>
+      <div class="impact">Factors in real traffic, then escalates <b>push → sound → phone call</b> until you answer. <b>On time, no nagging.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">🔔</span>Nudges that decide themselves</div>
+      <div class="quote">It picks the moment, the words, and the channel — and you tap "Wrap up" or "I'm back" right from the lock screen.</div>
+      <div class="impact">A coaching engine, quiet hours and all. <b>A coach, not an alarm clock.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">🧯</span>Panic mode</div>
+      <div class="quote">Frozen? One tap → what's <i>actually</i> on fire, what to ignore, and one 5-minute first step.</div>
+      <div class="impact">Just where to put your hands next — not the whole plan. <b>Breaks the freeze.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">🎯</span>Hyperfocus guard</div>
+      <div class="quote">Three hours down a rabbit hole? A gentle check. Deep in the <i>right</i> thing? It shields you from every other ping.</div>
+      <div class="impact"><b>Protects good focus, interrupts the costly kind.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">✅</span>The right task, right now</div>
+      <div class="quote">"20 min free at 4pm — knock out 'call the pharmacy.'" Short, low-energy, and the thing you keep dodging.</div>
+      <div class="impact">Matches effort to your energy and the clock. <b>Not a guilt-list.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">💬</span>Edit your day in plain English</div>
+      <div class="quote">"Bump the dentist call to urgent and drop the dry cleaning." — Done.</div>
+      <div class="impact">Type it how you'd say it; it previews, you confirm. <b>No forms.</b></div>
+    </div>
+  </div>
+
+  <div class="alsolive">
+    <b>Also live&nbsp;→</b>
+    <span class="pill">Mail triaged to a short action list</span>
+    <span class="pill">Morning briefing</span>
+    <span class="pill">Bad-day recovery mode</span>
+    <span class="pill">One-tap lock-screen replies (ntfy)</span>
+    <span class="pill">Multiple users, each learns on their own</span>
+  </div>
+
+  <div class="banner">
+    <div class="k">It quietly learns →</div>
+    <div class="v">your <b>real</b> departure lag, <b>which reminders you ignore after 3pm</b>, when you tend to go quiet,
+    how much you underestimate time — and tunes its timing, wording, and channel to <b>you</b>. Miss a reminder? That's data too.</div>
+  </div>
+
+  <h3 class="sec next">→ Where it's going next</h3>
+  <div class="next-grid">
+    <div class="ni"><b>Context Packs.</b> Role-based bundles — <i>Parent</i>, <i>Caregiver</i>, <i>New job</i> — that pre-wire the primitives for a whole life situation.</div>
+    <div class="ni"><b>Shared co-parent sheet.</b> One household sheet both parents edit in plain English — sizes, appts, behavior plans — to balance the invisible load.</div>
+    <div class="ni"><b>One intake for everything.</b> Mail, a calendar change, a quick thought — captured, sorted, and routed the same way.</div>
+    <div class="ni"><b>Sharper learning.</b> Per-situation time drift, learned channel response, tuned quiet hours.</div>
+    <div class="ni"><b>First-class delivery.</b> Native Pushover / ntfy / TTS publishing (today it routes through n8n).</div>
+    <div class="ni"><b>Live lock-screen timer.</b> A real countdown for an active outing, in the Dynamic Island.</div>
+  </div>
+
+  <h3 class="sec tech">⚙ Under the hood — for the curious</h3>
+  <div class="tech-box">
+    <p>A system of small, single-purpose agents over a <b>local SQLite behavioral memory</b> — the core everything
+    learns into. <span class="flow">Capture → triage → memory → coaching → delivery.</span> A <b>coaching tick engine</b>
+    asks each module "anything due?" and picks the channel; a <b>FastAPI</b> surface takes one-tap input from
+    <b>iOS Shortcuts</b>; <b>n8n</b> orchestrates; <b>Ollama</b> runs inference on-device (optional <b>Claude</b> per
+    task); reminders escalate over <b>Pushover / ntfy / TTS</b> with one-tap action buttons; everything's reachable
+    over <b>Tailscale</b>, multi-user. Switch on only the ADHD modules that fit your profile.</p>
+    <div class="chips">
+      <span class="chip">Python 3.10+</span><span class="chip">FastAPI</span><span class="chip">SQLite</span>
+      <span class="chip">Ollama</span><span class="chip">Anthropic (optional)</span><span class="chip">n8n</span>
+      <span class="chip">iOS Shortcuts</span><span class="chip">Tailscale</span><span class="chip">ntfy / Pushover</span>
+      <span class="chip">MIT license</span>
+    </div>
+  </div>
+
+  <footer>
+    <div><b>Prefrontal</b> — built with lived executive-function experience, not against it.</div>
+    <div>Local-first <span class="dot">•</span> escalation is not optional <span class="dot">•</span> learn from failure, not just success</div>
+  </footer>
+
+</div>
+</body>
+</html>
