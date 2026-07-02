@@ -48,16 +48,22 @@ the first test. Code follow-ups below are optional polish.
   `suppressed` (quiet hours + per-`dedup_key` debounce, no schema change — a
   `coach_fired:*` coaching-state stamp), and `decide`. `Module.evaluate(store,
   ctx)` is the new opt-in hook (default `[]`), and **Task Paralysis** is the first
-  producer: its `evaluate` fires a `tiny_first_step` nudge over the worst-avoided
-  open todo (reusing `avoided_todos` + the stored decomposition). Run one tick
-  with `prefrontal coach` (`--dry-run` to see cues pre-suppression), or poll
-  **`POST /webhooks/coach/check`** — the tick endpoint that fans over every
-  enabled module and returns each fire-worthy cue with its chosen channel, deduped
-  so a standing cue won't repeat (`deploy/n8n/coach-check.workflow.json` delivers
-  them via ntfy at a channel-matched priority). Covered by `tests/test_coaching.py`.
-  This is steps 1 + 3 + the Task Paralysis evaluator of the spec's rollout; the
-  `outing/check` parity refactor, LLM phrasing, and outcome-logging correlation
-  remain (see "Coaching agent" below).
+  producers: **Task Paralysis** fires a `tiny_first_step` nudge over the
+  worst-avoided open todo (reusing `avoided_todos` + the stored decomposition),
+  and **Location Anchor** now emits the outing escalation cues (soft→nudge /
+  firm→urgent / call→critical) through the same engine — its per-outing decision
+  and side effects were lifted into a shared `evaluate_outing` /
+  `apply_outing_evaluation` that `/webhooks/outing/check` and the evaluator both
+  call, so the legacy endpoint is byte-identical (the full suite is the parity
+  net) and there's one source of truth. Run one tick with `prefrontal coach`
+  (`--dry-run` to see cues pre-suppression), or poll **`POST /webhooks/coach/check`**
+  — the tick endpoint that fans over every enabled module and returns each
+  fire-worthy cue with its chosen channel, deduped so a standing cue won't repeat
+  (`deploy/n8n/coach-check.workflow.json` delivers them via ntfy at a
+  channel-matched priority). Covered by `tests/test_coaching.py` +
+  `tests/test_location_anchor.py`. This is steps 1 + 2 + 3 + both evaluators of
+  the spec's rollout; LLM phrasing and outcome-logging correlation remain (see
+  "Coaching agent" below).
 - **Interactive nudge action buttons (ntfy)** ✅ — one-tap, background nudge
   responses with no app switch. `sign_action`/`verify_action`
   (`prefrontal/webhooks/oauth.py`) extend the signed one-tap-link mechanism from
@@ -362,17 +368,18 @@ ordered by leverage; each is independent but builds on denser capture.
   (above) is the first concrete slice — it triages email and routes actionable
   items to `todos`; the spec generalizes that single path into a reusable
   `Signal → TriageDecision → apply` core with a `triage_log`.
-- **Coaching agent** — **the engine core + tick endpoint have shipped** (see
-  "Recently shipped": `prefrontal/coaching.py` + `Module.evaluate` + the Task
-  Paralysis evaluator + `prefrontal coach` + `POST /webhooks/coach/check`).
-  Specced in [`docs/coaching-agent.md`](docs/coaching-agent.md): a tick-driven
-  decision engine that asks each module's `evaluate()` hook "what's due?", then
-  decides whether to fire, what to say, and on which channel (learned
+- **Coaching agent** — **the engine, tick endpoint, and both v1 evaluators have
+  shipped** (see "Recently shipped": `prefrontal/coaching.py` + `Module.evaluate`
+  + Task Paralysis & Location Anchor evaluators + `prefrontal coach` +
+  `POST /webhooks/coach/check`; `outing/check` now shares the engine's
+  `evaluate_outing`). Specced in [`docs/coaching-agent.md`](docs/coaching-agent.md):
+  a tick-driven decision engine that asks each module's `evaluate()` hook "what's
+  due?", then decides whether to fire, what to say, and on which channel (learned
   `channel_response` + quiet hours + debounce), logging the outcome back as an
-  episode. Still open (spec §12 rollout): refactoring `outing/check`'s loop into
-  `LocationAnchorModule.evaluate` for parity (step 2); the optional LLM phrasing
-  pass on ambient/digest cues (step 5); outcome-logging correlation ids (§8); and
-  folding in the encouragement layer below (§9).
+  episode. Still open (spec §12 rollout): the optional LLM phrasing pass on
+  ambient/digest cues (step 5); outcome-logging correlation ids (§8); and folding
+  in the encouragement layer below (§9). *(Next: deprecate `outing/check` once
+  `coach/check` has run clean for a while — spec §13.)*
 - **Delivery layer + interactive nudges (ntfy)** — **the action-button core has
   shipped** (see "Recently shipped": signed `/nudge/act` + the `actions` fields
   on the outing/focus/departure nudges). Unlike Pushover — whose only

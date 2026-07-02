@@ -94,6 +94,7 @@ class CoachContext:
 
     now: datetime                       # naive UTC, like impact.utcnow()
     timezone: str = "UTC"
+    display_name: str = ""              # the acting user's name, for message greetings
     responsive_start: int = DEFAULT_RESPONSIVE_START
     responsive_end: int = DEFAULT_RESPONSIVE_END
     debounce_minutes: float = DEFAULT_DEBOUNCE_MINUTES
@@ -121,6 +122,7 @@ def build_context(
     *,
     now: datetime,
     timezone: str = "UTC",
+    display_name: str = "",
     current_lat: float | None = None,
     current_lon: float | None = None,
 ) -> CoachContext:
@@ -128,6 +130,7 @@ def build_context(
     return CoachContext(
         now=now,
         timezone=timezone,
+        display_name=display_name,
         responsive_start=int(store.get_float("responsive_hours_start", DEFAULT_RESPONSIVE_START)),
         responsive_end=int(store.get_float("responsive_hours_end", DEFAULT_RESPONSIVE_END)),
         debounce_minutes=store.get_float("coach_debounce_minutes", DEFAULT_DEBOUNCE_MINUTES),
