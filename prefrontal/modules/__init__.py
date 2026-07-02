@@ -10,6 +10,8 @@ assistant. Each module targets one challenge:
 - :mod:`prefrontal.modules.impulsivity` — friction before impulsive switches.
 - :mod:`prefrontal.modules.location_anchor` — escalating nudges back to a stated
   intention as its time window elapses (the "Coffee Shop Nudge").
+- :mod:`prefrontal.modules.self_care` — basic-needs check (v1: "have you eaten?")
+  that deliberately pierces a focus block; opt-in.
 
 Importing this package registers all built-in modules with
 :mod:`prefrontal.modules.registry`. Enable a subset via ``PREFRONTAL_MODULES``
@@ -25,6 +27,7 @@ from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after
     hyperfocus,
     impulsivity,
     location_anchor,
+    self_care,
     task_paralysis,
     time_blindness,
 )

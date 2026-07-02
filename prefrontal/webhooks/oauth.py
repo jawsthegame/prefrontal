@@ -153,6 +153,8 @@ NUDGE_ACTIONS = (
     "switch_defer",    # reflective pause → park the pull as a todo, stay put
     "switch_switch",   # reflective pause → switch away (close block as switched)
     "panic_step_done", # overwhelm nudge → the surfaced first step got done
+    "meal_ate",        # self-care meal check → confirmed eaten today
+    "meal_snooze",     # self-care meal check → ask again in a bit
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

@@ -35,7 +35,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// The agent already decided *whether* to fire and *which channel* — one item\n// per returned cue. Map the channel class to an ntfy priority so the delivery\n// respects the escalation the agent chose (digest→low … voice→max). The server\n// deduped/quiet-hours-gated already, so everything here is meant to go out.\nconst PRIORITY = { digest: 1, push: 3, sound: 4, voice: 5 };\nconst cues = ($input.first().json.cues) || [];\nreturn cues.map(c => ({ json: {\n  title: `Prefrontal — ${c.intervention.replace(/_/g, ' ')}`,\n  message: c.text,\n  priority: PRIORITY[c.channel] || 3,\n  channel: c.channel,\n} }));"
+        "jsCode": "// The agent already decided *whether* to fire and *which channel* — one item\n// per returned cue. Map the channel class to an ntfy priority so the delivery\n// respects the escalation the agent chose (digest→low … voice→max). The server\n// deduped/quiet-hours-gated already, so everything here is meant to go out.\n// A cue may also carry signed one-tap `actions` (e.g. the meal check's Ate /\n// Snooze); pass them through so ntfy renders the background buttons. Empty for\n// cues without buttons — a plain notification.\nconst PRIORITY = { digest: 1, push: 3, sound: 4, voice: 5 };\nconst cues = ($input.first().json.cues) || [];\nreturn cues.map(c => ({ json: {\n  title: `Prefrontal — ${c.intervention.replace(/_/g, ' ')}`,\n  message: c.text,\n  priority: PRIORITY[c.channel] || 3,\n  channel: c.channel,\n  actions: c.actions || [],\n} }));"
       },
       "id": "per-cue",
       "name": "One Item Per Cue",
@@ -49,7 +49,7 @@
         "url": "https://ntfy.sh",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }}\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }},\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",

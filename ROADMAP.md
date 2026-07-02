@@ -40,6 +40,24 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **"Have you eaten?" self-care nudge** ✅ — a meal check that deliberately
+  pierces flow (the one cue allowed to interrupt a focus block, because a flow
+  state is exactly when you forget to eat). Shipped as a sixth module,
+  `prefrontal/modules/self_care.py`: its `evaluate()` rides the coaching tick, so
+  from `meal_start_hour` (default 11) it emits a `nudge` cue and re-asks every
+  `meal_reask_minutes` (default 40) until confirmed — cadence via a per-interval
+  *bucket* in the `dedup_key`, so the engine's fire-once-per-key guard gives the
+  re-ask rhythm for free, and responsive-hours + debounce come from the engine (no
+  overnight nag). One-tap **Ate** / **Snooze** ride the shipped signed-action path
+  (`meal_ate`/`meal_snooze` in `NUDGE_ACTIONS`, `meal` buttons in `notify.py`,
+  handled in `/nudge/act`); `ate_today` caps it at once a day and
+  `meal_snoozed_until` holds it off after a Snooze — both plain coaching-state
+  keys, no schema change. `/webhooks/coach/check` now passes each cue's `actions`
+  through (and `deploy/n8n/coach-check.workflow.json` publishes them to ntfy), so
+  the buttons render. **Off by default** — set the `self_care` coaching key to
+  `on`. Covered by `tests/test_self_care.py`. *(Open, per the original design: a
+  confirmed meal could log an episode so the learning loop notices skip-days; and
+  whether self-care becomes its own basics pack alongside water/meds/sleep.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
@@ -557,24 +575,13 @@ ordered by leverage; each is independent but builds on denser capture.
   shared sheet, v2 = the proactive delta-digest to the other parent. Open:
   household membership/invite model.)*
 
-- **"Have you eaten?" — a self-care nudge that pierces flow.** A recurring
-  check-in that missing a meal is a classic ADHD/hyperfocus failure mode: starting
-  around late morning (~11:00, tunable), ask *"have you eaten?"*; if the answer is
-  no, keep gently re-asking on a cadence **even while a focus session is active** —
-  the one cue that deliberately overrides the Hyperfocus module's protect-the-flow
-  stance, because the whole point is that a flow state is exactly when you forget.
-  Fits the shipped machinery cleanly: a small **self-care cue producer** on the
-  `Module.evaluate` tick engine, with a per-day `coaching_state` cursor
-  (`ate_today` / `last_meal_prompt_at`) so it fires once you confirm and re-nudges
-  on an interval until then. Reuses the interactive-nudge action buttons (one-tap
-  **Ate** / **Snooze 30m** on ntfy, closing the loop like the other `/nudge/act`
-  buttons) and the delivery layer's channel routing. Still respects **responsive
-  hours** (no 2am food nag) and debounce — the same gates the panic check now
-  uses — so "persistent" means every ~30–45 min within the day, not spam. Config:
-  a start hour, a re-ask interval, and an off switch (a `self_care` coaching key,
-  off by default). *(Open: whether it's its own tiny module or a facet of a future
-  self-care/basics pack alongside water/meds/sleep; and whether a confirmed meal
-  logs an episode so the learning loop can notice the days you skip.)*
+- **"Have you eaten?" — a self-care nudge that pierces flow.** ✅ **(shipped — see
+  "Recently shipped")** — the meal check is live as the `self_care` module: from a
+  tunable start hour it re-asks *"have you eaten?"* even mid-focus, with one-tap
+  **Ate** / **Snooze** on ntfy, capped once a day and gated on responsive hours.
+  Off unless the `self_care` coaching key is `on`. *(Still open: whether it becomes
+  a facet of a broader self-care/basics pack alongside water/meds/sleep, and
+  whether a confirmed meal logs an episode so the learning loop notices skip-days.)*
 - **Shopify MCP — record-shop assistant + used-collection buying.** Connect to
   (or self-host) a **Shopify MCP server** so Prefrontal can read the record shop's
   catalog, inventory, and sales, turning the assistant into a genuine shop

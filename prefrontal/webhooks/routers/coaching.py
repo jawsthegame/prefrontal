@@ -34,6 +34,13 @@ from prefrontal.webhooks._common import (
     resolve_user,
     utcnow,
 )
+from prefrontal.webhooks.notify import nudge_actions
+
+#: Coaching ``context_key`` → (ntfy button ``kind``, ``cue.ref`` key holding the
+#: target id), for cues whose tick delivery should carry one-tap action buttons.
+#: Only cues listed here get ``actions``; others deliver as plain text. (The
+#: per-module check endpoints attach their own buttons; this is the fan-over path.)
+_CUE_ACTION_KIND = {"meal": ("meal", "target")}
 
 
 def build_router(
@@ -107,6 +114,22 @@ def build_router(
         # Track the interactive nudges we're handing off so a later tap (or the
         # next sweep) can log which channel landed — the input to choose_channel.
         note_delivered(memory, decisions, now)
+        handle = ctx.user.get("handle") or ""
+
+        def _actions(d) -> list[dict[str, Any]]:
+            """One-tap ntfy buttons for a cue whose kind is in _CUE_ACTION_KIND."""
+            kind_ref = _CUE_ACTION_KIND.get(d.cue.context_key)
+            if not kind_ref or not handle:
+                return []
+            kind, ref_key = kind_ref
+            return nudge_actions(
+                kind,
+                (d.cue.ref or {}).get(ref_key),
+                base_url=resolved_settings.oauth_base_url,
+                secret=resolved_settings.session_secret,
+                handle=handle,
+            )
+
         return {
             "cues": [
                 {
@@ -119,6 +142,7 @@ def build_router(
                     "context_key": d.cue.context_key,
                     "dedup_key": d.cue.dedup_key,
                     "ref": d.cue.ref,
+                    "actions": _actions(d),
                 }
                 for d in decisions
             ]

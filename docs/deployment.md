@@ -529,9 +529,15 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
 - Preview: `prefrontal coach` (add `--dry-run` to see cues before suppression).
 - Deliver: import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json),
   set the token + ntfy topic. It polls `POST /webhooks/coach/check` and publishes
-  each returned cue to ntfy at a priority matching the agent's chosen channel.
-  Today it surfaces the Task Paralysis "tiny first step" nudge and the outing
-  escalation cues; new module coaching lights up as each `evaluate()` is filled in.
+  each returned cue to ntfy at a priority matching the agent's chosen channel,
+  passing through any signed one-tap `actions` a cue carries (so ntfy renders the
+  background buttons). Today it surfaces the Task Paralysis "tiny first step"
+  nudge, the outing escalation cues, and — when enabled — the **Self-Care meal
+  check** ("have you eaten?" with one-tap Ate / Snooze). Turn the meal check on by
+  setting the `self_care` coaching key to `on` (tune `meal_start_hour`,
+  `meal_reask_minutes`, `meal_snooze_minutes`); it re-asks until you confirm, even
+  during a focus block, and stops for the day once you tap Ate. New module
+  coaching lights up as each `evaluate()` is filled in.
 
 ---
 
@@ -561,12 +567,14 @@ with a get-back-on-track plan instead of another reminder (`docs/encouragement.m
 
 ## What's not automated yet
 
-All five modules are wired end-to-end today — **Location-Aware Task Anchor** (the
+All six modules are wired end-to-end today — **Location-Aware Task Anchor** (the
 coffee-shop nudge above), **Hyperfocus** (focus sessions, `/webhooks/focus/*`),
 **Time Blindness** (departure timing + outcome capture), **Task Paralysis**
-(auto-decompose, tiny first step, body-double), and **Impulsivity**
+(auto-decompose, tiny first step, body-double), **Impulsivity**
 (`reflective_pause` + `capture_and_defer`; only `switch_rate_feedback` is still
-planned). The coaching agent (§15) now fans over all of them, and the
+planned), and **Self-Care** (the opt-in "have you eaten?" meal check — set the
+`self_care` coaching key to `on`, delivered through the coaching tick §15 with
+one-tap Ate/Snooze). The coaching agent (§15) now fans over all of them, and the
 encouragement layer (§16) handles rough days. Run `prefrontal modules -v` for the
 live status, and see `ROADMAP.md` for what's next. (Mail ingestion is also live —
 `prefrontal mail fetch`/`sync` and `POST /webhooks/mail/sync`; see §13.)
