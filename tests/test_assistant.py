@@ -78,6 +78,58 @@ def test_interpret_unparseable_reply_yields_empty():
     assert (reply, raw) == ("", [])
 
 
+# --- plan (reply honesty) -------------------------------------------------
+
+
+def test_plan_suppresses_confident_reply_when_all_actions_dropped(memory):
+    """A confident model reply is replaced by the honest fallback when every
+    proposed edit fails validation — otherwise the user is told an edit is
+    coming that will never happen ("said it would update a todo, but didn't")."""
+    memory.add_todo("Call dentist", priority=1)  # id 1; model targets a bogus id
+    client = _FakeClient(
+        json.dumps(
+            {
+                "reply": "Done — I've bumped the dentist call to urgent.",
+                "actions": [{"op": "set_priority", "todo_id": 999, "priority": 3}],
+            }
+        )
+    )
+    result = assistant.plan("make the dentist call urgent", memory, client=client)
+    assert result.actions == []
+    assert result.errors  # the dropped action is reported
+    assert "Done" not in result.reply
+    assert result.reply == "I couldn't turn that into an edit I can make."
+
+
+def test_plan_keeps_informational_reply_with_no_actions(memory):
+    """A reply with no actions *and no errors* is a legitimate answer (e.g. the
+    user asked a question) — it must not be clobbered by the fallback."""
+    memory.add_todo("Call dentist", priority=1)
+    client = _FakeClient(
+        json.dumps({"reply": "You have 1 open todo: call the dentist.", "actions": []})
+    )
+    result = assistant.plan("what's on my plate?", memory, client=client)
+    assert result.actions == []
+    assert result.errors == []
+    assert result.reply == "You have 1 open todo: call the dentist."
+
+
+def test_plan_keeps_reply_when_actions_are_valid(memory):
+    """When the model proposes a valid edit, its reply is preserved verbatim."""
+    tid = memory.add_todo("Call dentist", priority=1)
+    client = _FakeClient(
+        json.dumps(
+            {
+                "reply": "I'll bump the dentist call to urgent.",
+                "actions": [{"op": "set_priority", "todo_id": tid, "priority": 3}],
+            }
+        )
+    )
+    result = assistant.plan("make the dentist call urgent", memory, client=client)
+    assert len(result.actions) == 1
+    assert result.reply == "I'll bump the dentist call to urgent."
+
+
 # --- validation -----------------------------------------------------------
 
 
