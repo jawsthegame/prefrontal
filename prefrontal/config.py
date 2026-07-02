@@ -129,6 +129,14 @@ class Settings:
     account_labels: tuple[tuple[str, str, str], ...] = ()
     calendar_labels: tuple[tuple[str, str, str], ...] = ()
     timezone: str = "UTC"
+    # Suggestion time windows: when a todo may be proposed into free time. The
+    # off-zone is a hard local band nothing is ever suggested inside (default
+    # 22:00-06:00 overnight); `todo_windows` maps a todo *category* or *source*
+    # to a narrower "HH:MM-HH:MM" band (e.g. work=09:00-17:00). Empty values fall
+    # back to the built-in defaults in `prefrontal.scheduling`; coaching-state may
+    # override per user at runtime. See `WindowConfig.build`.
+    todo_offzone: str = ""
+    todo_windows: tuple[tuple[str, str], ...] = ()
     # Triage learns from dropped email todos (see prefrontal/mail/feedback.py). A
     # drop only counts as a "this didn't need action" correction when it's quick
     # (dropped within this many days of arriving) or comes from a sender dropped
@@ -223,6 +231,16 @@ class Settings:
             for feed, label, color in self.calendar_labels
         }
 
+    @property
+    def todo_window_map(self) -> dict[str, str]:
+        """Category/source key → ``"HH:MM-HH:MM"`` window, from :attr:`todo_windows`.
+
+        Fed to :meth:`prefrontal.scheduling.WindowConfig.build` as the env layer.
+        An empty map (the default) means only the built-in category defaults apply
+        until an operator sets ``PREFRONTAL_TODO_WINDOWS``.
+        """
+        return {key: spec for key, spec in self.todo_windows}
+
 
 def load_settings(dotenv_path: str = ".env") -> Settings:
     """Read configuration from the environment and return a fresh ``Settings``.
@@ -271,6 +289,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         account_labels=account_labels,
         calendar_labels=calendar_labels,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
+        todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
+        todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),
         triage_quick_drop_days=float(
             os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
         ),
@@ -369,6 +389,35 @@ def _parse_calendar_labels(raw: str) -> tuple[tuple[str, str, str], ...]:
     ``personal``, ``work``, ``outlook``).
     """
     return _parse_label_pills(raw)
+
+
+def _parse_todo_windows(raw: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``PREFRONTAL_TODO_WINDOWS`` into ``(key, "HH:MM-HH:MM")`` pairs.
+
+    The format is a comma-separated list of ``key=HH:MM-HH:MM`` entries, e.g.
+    ``work=09:00-17:00,home=06:00-22:00``. The key is a todo category or source.
+    Entries without ``=`` or with an empty key are skipped; the *value* is passed
+    through verbatim (validated later by
+    :func:`prefrontal.scheduling.parse_window`), so a malformed range degrades to
+    "use the default" rather than raising here.
+
+    Args:
+        raw: The raw environment-variable value (may be empty).
+
+    Returns:
+        A tuple of ``(key, window_spec)`` pairs, suitable for
+        :attr:`Settings.todo_windows`.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        key, _, spec = entry.partition("=")
+        key, spec = key.strip().lower(), spec.strip()
+        if key and spec:
+            pairs.append((key, spec))
+    return tuple(pairs)
 
 
 @lru_cache(maxsize=1)

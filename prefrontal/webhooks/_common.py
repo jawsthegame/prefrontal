@@ -180,9 +180,13 @@ from prefrontal.scheduling import (
     DEFAULT_FIT_CAP_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
     available_now,
+    filter_suggestible,
     fit_todos,
+    local_datetime,
     local_hour_of,
+    parse_window,
     pick_now,
+    window_config_for,
     work_window_now,
 )
 from prefrontal.todos import (
@@ -556,6 +560,13 @@ class TodoCreate(BaseModel):
     category: str | None = Field(
         default=None, description="Topic (short label). Omit to infer; capped at 20."
     )
+    time_window: str | None = Field(
+        default=None,
+        description=(
+            'Optional per-todo suggestion window "HH:MM-HH:MM" (local), overriding '
+            "the category/source/default window. Omit to use the category's window."
+        ),
+    )
 
 
 class TodoDeadlineUpdate(BaseModel):
@@ -573,6 +584,18 @@ class TodoCategoryUpdate(BaseModel):
     category: str | None = Field(
         default=None,
         description="New category label, or null to clear it (uncategorized).",
+    )
+
+
+class TodoWindowUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/window`` — set or clear a todo's time window."""
+
+    time_window: str | None = Field(
+        default=None,
+        description=(
+            'New suggestion window "HH:MM-HH:MM" (local), or null to clear it so the '
+            "todo falls back to its category window."
+        ),
     )
 
 
@@ -946,6 +969,7 @@ __all__ = [
     "TodoCategoryUpdate",
     "TodoCreate",
     "TodoDeadlineUpdate",
+    "TodoWindowUpdate",
     "TriageForget",
     "UserCreate",
     "_DELIVERY_KEYS",
@@ -969,6 +993,7 @@ __all__ = [
     "at_risk",
     "augment_todo",
     "available_now",
+    "filter_suggestible",
     "avoided_todos",
     "build_briefing",
     "build_departure_message",
@@ -1009,6 +1034,7 @@ __all__ = [
     "learned_denylist",
     "level_rank",
     "load_cached_summary",
+    "local_datetime",
     "local_hour_of",
     "module_enabled",
     "next_departure",
@@ -1019,6 +1045,7 @@ __all__ = [
     "panic_alert_message",
     "parse_inbound_event",
     "parse_time_window",
+    "parse_window",
     "partition_conflicts",
     "pause_seconds",
     "pick_now",
@@ -1050,5 +1077,6 @@ __all__ = [
     "utcnow",
     "validate_actions",
     "verify_dismiss",
+    "window_config_for",
     "work_window_now",
 ]

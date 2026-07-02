@@ -9,8 +9,6 @@ from typing import Literal
 from fastapi import APIRouter
 
 from prefrontal.webhooks._common import (
-    DEFAULT_DAY_END,
-    DEFAULT_DAY_START,
     DEFAULT_FIT_CAP_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
     MAX_CATEGORIES,
@@ -23,14 +21,18 @@ from prefrontal.webhooks._common import (
     TodoCategoryUpdate,
     TodoCreate,
     TodoDeadlineUpdate,
+    TodoWindowUpdate,
     _decompose_and_store,
     augment_todo,
     available_now,
     avoided_todos,
     category_stats,
+    filter_suggestible,
     fit_todos,
+    local_datetime,
     local_hour_of,
     normalize_category,
+    parse_window,
     pick_now,
     record_drop_feedback,
     record_todo_closed,
@@ -39,8 +41,27 @@ from prefrontal.webhooks._common import (
     timedelta,
     to_utc,
     utcnow,
+    window_config_for,
     work_window_now,
 )
+
+
+def _validated_window(spec: str | None) -> str | None:
+    """Return a normalized ``"HH:MM-HH:MM"`` window, or ``None`` for an empty spec.
+
+    Raises 422 on a non-empty but malformed spec so a bad per-todo override is
+    rejected at the edge rather than silently ignored downstream.
+    """
+    if spec is None or not spec.strip():
+        return None
+    parsed = parse_window(spec)
+    if parsed is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'Bad time_window: {spec!r} — expected "HH:MM-HH:MM".',
+        )
+    start, end = parsed
+    return f"{start // 60:02d}:{start % 60:02d}-{end // 60:02d}:{end % 60:02d}"
 
 
 def build_router(
@@ -80,6 +101,8 @@ def build_router(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Bad deadline: {exc}",
                 ) from exc
+        # A per-todo window override is validated strictly (422 on garbage).
+        time_window = _validated_window(payload.time_window)
 
         aug = augment_todo(
             payload.title,
@@ -106,6 +129,7 @@ def build_router(
             deadline=deadline,
             energy=aug.energy,
             category=aug.category,
+            time_window=time_window,
         )
         # Big tasks stall on starting — auto-decompose into a tiny first step.
         threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
@@ -288,6 +312,29 @@ def build_router(
             )
         return {"todo_id": todo_id, "category": category}
 
+    @router.post("/todos/{todo_id}/window", tags=["todos"])
+    def todo_set_window(
+        todo_id: int,
+        payload: TodoWindowUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) a todo's per-todo suggestion window override.
+
+        A value is validated as ``"HH:MM-HH:MM"`` (422 otherwise) and overrides
+        the category/source/default window used when deciding whether the todo is
+        suggestible right now; ``null``/empty clears it so the category window
+        applies. Only open todos are editable (404 otherwise). Declared before the
+        ``{action}`` route so "window" isn't read as an action.
+        """
+        memory = ctx.store
+        time_window = _validated_window(payload.time_window)
+        if not memory.set_todo_window(todo_id, time_window):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "time_window": time_window}
+
     @router.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
     def todo_step_done(
         todo_id: int,
@@ -384,17 +431,20 @@ def build_router(
     ) -> dict[str, Any]:
         """The single best open todo that fits your free time *right now*.
 
-        "Right now" = the gap until your next commitment, bounded by your working
-        hours (``fit_day_start``/``fit_day_end`` in coaching state, default
-        08:30–17:30 local) and capped (so a wide-open evening doesn't offer a
-        multi-hour task). Outside working hours, or with no real gap / nothing
-        that fits, ``suggestion`` is ``null`` (with a ``reason``). Powers the
-        widget's "you have 25 min — knock this out" prompt.
+        "Right now" = the gap until your next commitment, bounded by your waking
+        hours (the off-zone's complement — nothing is offered inside the off-zone,
+        default 22:00–06:00 local) and capped (so a wide-open evening doesn't
+        offer a multi-hour task). Candidates are further filtered to those whose
+        suggestion window (per-todo → category → source → default) includes the
+        current local time, so a focus-hours task isn't surfaced at 9pm. Outside
+        waking hours, or with no real gap / nothing that fits *and belongs now*,
+        ``suggestion`` is ``null`` (with a ``reason``). Powers the widget's "you
+        have 25 min — knock this out" prompt.
         """
         memory = ctx.store
         now = utcnow()
-        day_start = memory.get_state("fit_day_start", DEFAULT_DAY_START)
-        day_end = memory.get_state("fit_day_end", DEFAULT_DAY_END)
+        window_config = window_config_for(resolved_settings, memory)
+        day_start, day_end = window_config.awake_band()
         within, horizon = work_window_now(
             now, resolved_settings.timezone,
             cap_minutes=cap_minutes, day_start=day_start, day_end=day_end,
@@ -411,7 +461,7 @@ def build_router(
             "reason": None,
         }
         if not within:
-            result["reason"] = "outside working hours"
+            result["reason"] = "outside waking hours"
             return result
 
         fmt = "%Y-%m-%d %H:%M:%S"
@@ -426,7 +476,9 @@ def build_router(
             result["reason"] = "no free time right now"
             return result
 
-        open_todos = memory.open_todos()
+        # Only todos whose window includes now (off-zone already excluded above).
+        now_local = local_datetime(now, resolved_settings.timezone)
+        open_todos = filter_suggestible(memory.open_todos(), now_local, window_config)
         bias = memory.get_float("time_estimation_bias", 1.0)
         fits = fit_todos(free, open_todos, bias)
         if not fits:

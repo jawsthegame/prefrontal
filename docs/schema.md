@@ -155,7 +155,11 @@ also defines:
   existing category unless genuinely novel and under the cap, and the dashboard
   can override it (`POST /todos/{id}/category`). The rollup that drives the
   dashboard's Categories panel (counts, typical estimate, completion rate,
-  avoidance) is `category_stats` in `prefrontal/todos.py`.
+  avoidance) is `category_stats` in `prefrontal/todos.py`. A todo may only be
+  *suggested* at appropriate times: an optional `time_window` (`"HH:MM-HH:MM"`
+  local) overrides the window otherwise chosen by its category/source, and a hard
+  global off-zone (default 22:00–06:00) applies to everything — see `WindowConfig`
+  in `prefrontal/scheduling.py` and `POST /todos/{id}/window`.
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).

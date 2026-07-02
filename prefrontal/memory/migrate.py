@@ -68,6 +68,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "todos": [
         ("source", "TEXT NOT NULL DEFAULT 'manual'"),
         ("category", "TEXT"),
+        ("time_window", "TEXT"),
     ],
     "focus_sessions": [
         ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),

@@ -20,12 +20,18 @@ from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import (
     FreeWindow,
+    WindowConfig,
     available_now,
     energy_time_rank,
+    filter_suggestible,
     fit_todos,
     free_windows,
+    parse_window,
     pick_now,
+    resolve_window,
     suggest_for_windows,
+    todo_allowed_at,
+    window_config_for,
     work_window_now,
 )
 from prefrontal.todos import (
@@ -887,9 +893,10 @@ def test_todos_now_suggests_fitting_todo(client, store_open, monkeypatch):
     assert r["suggestion"]["title"] == "Reply to landlord"
 
 
-def test_todos_now_none_when_nothing_fits(client, store_open):
+def test_todos_now_none_when_nothing_fits(client, store_open, monkeypatch):
     """A todo longer than the (capped) free window yields no suggestion."""
     _all_day(store_open)
+    _freeze_todos_now_clock(monkeypatch)
     client.post("/todos", headers=_auth(),
                 json={"title": "Big project", "estimate_minutes": 300})
     r = client.get("/todos/now", headers=_auth()).json()
@@ -897,14 +904,15 @@ def test_todos_now_none_when_nothing_fits(client, store_open):
     assert r["reason"] == "nothing fits this window"
 
 
-def test_todos_now_zero_when_busy(client, store_open):
+def test_todos_now_zero_when_busy(client, store_open, monkeypatch):
     """A commitment spanning now means no free time, so no suggestion."""
     _all_day(store_open)
-    now = datetime.utcnow()
+    _freeze_todos_now_clock(monkeypatch)
+    # Build the commitment around the frozen clock so it spans "now".
     client.post("/commitments", headers=_auth(), json={
         "title": "Meeting now",
-        "start_at": _at(now - timedelta(minutes=10)),
-        "end_at": _at(now + timedelta(minutes=30)),
+        "start_at": _at(_FROZEN_NOON - timedelta(minutes=10)),
+        "end_at": _at(_FROZEN_NOON + timedelta(minutes=30)),
     })
     client.post("/todos", headers=_auth(),
                 json={"title": "Quick call", "estimate_minutes": 10})
@@ -936,3 +944,152 @@ def test_todos_now_surfaces_the_avoided_thing(client, store_open, monkeypatch):
     r = client.get("/todos/now", headers=_auth()).json()
     assert r["suggestion"]["title"] == "Call the accountant"
     assert r["suggestion"]["reason"] == "avoided"
+
+
+# -- Suggestion time windows -------------------------------------------------
+
+
+def _mins(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def test_parse_window_valid_wrapping_and_malformed():
+    """`parse_window` accepts HH:MM-HH:MM (wrap allowed) and rejects garbage."""
+    assert parse_window("09:00-17:00") == (540, 1020)
+    assert parse_window("22:00-06:00") == (1320, 360)  # wraps midnight
+    assert parse_window("06:00-06:00") is None          # empty span
+    assert parse_window("9-17") is None                  # not HH:MM
+    assert parse_window("25:00-26:00") is None           # out of range
+    assert parse_window(None) is None
+
+
+def test_window_config_build_layers_and_awake_band():
+    """State overrides env overrides built-in; awake band is the off-zone's complement."""
+    config = WindowConfig.build(
+        env_offzone="23:00-05:00",
+        env_windows={"work": "08:00-16:00", "custom": "10:00-11:00"},
+        state_offzone="22:00-06:00",       # state wins over env
+        state_windows={"work": "09:00-17:00"},  # state wins over env
+    )
+    assert config.offzone == (_mins("22:00"), _mins("06:00"))
+    assert config.windows["work"] == (_mins("09:00"), _mins("17:00"))
+    assert config.windows["custom"] == (_mins("10:00"), _mins("11:00"))  # env-only key kept
+    assert config.windows["home"] == (_mins("06:00"), _mins("22:00"))    # built-in default kept
+    assert config.awake_band() == ("06:00", "22:00")
+
+
+def test_window_config_build_ignores_malformed():
+    """A malformed override falls back to the lower-precedence value, not a raise."""
+    config = WindowConfig.build(env_offzone="nonsense", state_windows={"work": "oops"})
+    assert config.offzone == parse_window("22:00-06:00")   # built-in default
+    assert config.windows["work"] == (_mins("09:00"), _mins("17:00"))  # built-in default
+
+
+def test_resolve_window_precedence():
+    """per-todo override → category → source → default."""
+    config = WindowConfig.build(env_windows={"impulse": "12:00-13:00"})
+    # per-todo override wins over everything
+    assert resolve_window(
+        {"time_window": "05:00-06:00", "category": "work", "source": "impulse"}, config
+    ) == (_mins("05:00"), _mins("06:00"))
+    # category before source
+    assert resolve_window({"category": "work", "source": "impulse"}, config) == (
+        _mins("09:00"), _mins("17:00"),
+    )
+    # source when category is unknown
+    assert resolve_window({"category": "nope", "source": "impulse"}, config) == (
+        _mins("12:00"), _mins("13:00"),
+    )
+    # default when neither matches (the full waking band)
+    assert resolve_window({"category": "other", "source": "manual"}, config) == (
+        _mins("06:00"), _mins("22:00"),
+    )
+
+
+def test_todo_allowed_at_offzone_is_a_hard_gate():
+    """Off-zone blocks even a todo whose own window would otherwise include the time."""
+    config = WindowConfig.build()  # off-zone 22:00-06:00, default 06:00-22:00
+    anytime = {"category": "home"}  # home window 06:00-22:00
+    assert todo_allowed_at(anytime, datetime(2026, 6, 15, 12, 0), config) is True
+    assert todo_allowed_at(anytime, datetime(2026, 6, 15, 3, 0), config) is False  # off-zone
+    # A work todo is out-of-window in the evening but in-window midday.
+    work = {"category": "work"}  # 09:00-17:00
+    assert todo_allowed_at(work, datetime(2026, 6, 15, 20, 0), config) is False
+    assert todo_allowed_at(work, datetime(2026, 6, 15, 10, 0), config) is True
+
+
+def test_filter_suggestible_drops_out_of_window():
+    """`filter_suggestible` keeps order and drops out-of-window todos."""
+    config = WindowConfig.build()
+    todos = [{"id": 1, "category": "work"}, {"id": 2, "category": "home"}]
+    kept = filter_suggestible(todos, datetime(2026, 6, 15, 20, 0), config)
+    assert [t["id"] for t in kept] == [2]  # work excluded at 8pm
+
+
+def test_suggest_for_windows_respects_config():
+    """With config+tz, a focus-hours todo isn't proposed for an evening gap."""
+    config = WindowConfig.build()
+    # A window at 20:00 UTC (local, tz=UTC) — evening.
+    windows = [FreeWindow("2026-06-15 20:00:00", "2026-06-15 21:00:00", 60.0)]
+    work_todo = [{"id": 1, "estimate_minutes": 30, "category": "work"}]
+    out = suggest_for_windows(windows, work_todo, config=config, tz="UTC")
+    assert out[0]["suggestion"] is None  # work not allowed at 8pm
+    # Without config it ranks purely by fit (legacy behavior).
+    out_legacy = suggest_for_windows(windows, work_todo)
+    assert out_legacy[0]["suggestion"]["id"] == 1
+
+
+def test_window_config_for_reads_settings_and_state(store):
+    """`window_config_for` layers coaching-state over Settings env config."""
+    settings = Settings(
+        todo_offzone="21:00-07:00",
+        todo_windows=(("work", "10:00-16:00"),),
+    )
+    store.set_state("todo_offzone", "20:00-08:00")       # state wins
+    store.set_state("todo_window:work", "11:00-15:00")   # state wins
+    config = window_config_for(settings, store)
+    assert config.offzone == parse_window("20:00-08:00")
+    assert config.windows["work"] == parse_window("11:00-15:00")
+
+
+def test_todo_window_endpoint_set_clear_and_validation(client, store_open):
+    """POST /todos/{id}/window sets, clears, and 422s on a malformed window."""
+    tid = client.post("/todos", headers=_auth(), json={
+        "title": "Water the plants", "estimate_minutes": 10,
+        "time_window": "06:00-22:00",
+    }).json()["todo_id"]
+    assert store_open.get_todo(tid)["time_window"] == "06:00-22:00"
+    # Override it via the dedicated endpoint.
+    r = client.post(f"/todos/{tid}/window", headers=_auth(),
+                    json={"time_window": "07:30-09:30"})
+    assert r.status_code == 200
+    assert store_open.get_todo(tid)["time_window"] == "07:30-09:30"
+    # Malformed → 422, value unchanged.
+    assert client.post(f"/todos/{tid}/window", headers=_auth(),
+                       json={"time_window": "nope"}).status_code == 422
+    # Clear it.
+    client.post(f"/todos/{tid}/window", headers=_auth(), json={"time_window": None})
+    assert store_open.get_todo(tid)["time_window"] is None
+
+
+def test_todos_now_respects_category_window(client, store_open, monkeypatch):
+    """At 8pm, a focus-hours todo is withheld while an anytime one is surfaced."""
+    _freeze_todos_now_clock(monkeypatch, when=datetime(2026, 6, 15, 20, 0, 0))
+    client.post("/todos", headers=_auth(),
+                json={"title": "Draft the report", "estimate_minutes": 30})  # -> work 09-17
+    client.post("/todos", headers=_auth(),
+                json={"title": "Make coffee", "estimate_minutes": 10})       # -> other/default
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["suggestion"]["title"] == "Make coffee"
+
+
+def test_todos_now_off_zone_offers_nothing(client, store_open, monkeypatch):
+    """Inside the off-zone the widget is closed regardless of what fits."""
+    _freeze_todos_now_clock(monkeypatch, when=datetime(2026, 6, 15, 23, 0, 0))
+    client.post("/todos", headers=_auth(),
+                json={"title": "Make coffee", "estimate_minutes": 10})
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["within_hours"] is False
+    assert r["suggestion"] is None
+    assert r["reason"] == "outside waking hours"
