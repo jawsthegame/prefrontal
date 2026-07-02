@@ -5,13 +5,15 @@ a stub and what's planned next, so the gap between "scaffolded" and "finished"
 stays visible to contributors. (See also `prefrontal modules -v` for per-module
 intervention status.)
 
-## ⭐ Priority: first real-world test (Module 1 live on the mini)
+## ✅ Deployed and running (Module 1 live on the mini)
 
-The code for an end-to-end Coffee Shop Nudge is **done and tested** — outing
-endpoints, time escalation, location-gating, abandoned auto-close, passive
-return, and the learning + summarizer passes. The only remaining work is
-**operational** (on the Mac mini); see `docs/deployment.md` for the full runbook.
-Ordered path to the first real nudge:
+Prefrontal is **live on the Mac mini and in daily use** — real outings, calendar
+sync, mail triage, the widget, and the nightly learn pass all run against a
+multi-tenant deployment. The end-to-end Coffee Shop Nudge (outing endpoints, time
+escalation, location-gating, abandoned auto-close, passive return, and the
+learning + summarizer passes) is done and exercised in the wild. The original
+bring-up runbook is kept below for reference / a fresh deploy (see
+`docs/deployment.md`):
 
 1. **Stand up Prefrontal** — clone, `pip install -e .`, set a strong
    `PREFRONTAL_WEBHOOK_SECRET` in `.env`, `prefrontal init-db`, load the launchd
@@ -38,6 +40,25 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Multi-tenant (multiple users)** ✅ — one deployment now serves several people.
+  A `users` table with per-user tokens (`sha256(token)`, shown once like an API
+  key) and a `user_id` foreign key on every user-owned table; a `MemoryStore`
+  bound to one user via `.scoped(user_id)` so no read/write can forget the scope;
+  request resolution (`resolve_user` → `ScopedRequest`) and operator-only
+  provisioning (`provision_user`, `POST /admin/users`). `coaching_state`/patterns
+  are per-user, so each person learns independently. See `docs/multi-tenant.md`.
+  *(This was the big "Beyond v1" item; it's now the default architecture.)*
+- **Panic mode** ✅ — an overwhelm circuit-breaker (`prefrontal/…`, `/panic`
+  endpoints): returns a one-tap headline (the single most important next thing)
+  and a proactive nudge when the day is going sideways. Delivers the
+  get-back-on-track slice of the "encouragement & recovery layer" below, leaving
+  the tone-calibrated reassurance variant as the remaining piece.
+- **"What fits right now" (widget)** ✅ — `GET /todos/now` computes the free gap
+  until your next commitment (bounded by working hours + a cap) and returns the
+  single best-fitting open todo — **biased toward the most-avoided** task and
+  **preferring low-energy tasks later in the day** (honest prioritization, not the
+  shiny thing). The Scriptable widget shows it on the home screen and all three
+  Lock Screen accessories ("25m free · <todo>", or "catch up" for an avoided one).
 - **Todo outcome capture** ✅ — closing a todo now logs a `task` episode (done ⇒
   `success`, drop ⇒ `miss`) via `record_todo_closed()` in `prefrontal/todos.py`,
   wired into `POST /todos/{id}/{action}` and `prefrontal todo done/drop`. This
@@ -82,9 +103,10 @@ the first test. Code follow-ups below are optional polish.
   (≤ `max_first_step_minutes`) plus collapsed remaining steps — the task
   initiation lever for the Task Paralysis module (Ollama + heuristic fallback).
 - **Scriptable home-screen & Lock Screen widget** ✅ — `deploy/scriptable/` polls
-  `/outings`, `/commitments`, conflicts, and todos over Tailscale and renders a
-  glanceable "right now": the active outing + escalation level, next commitments,
-  and conflict/todo counts; taps open the `/family` view. One script drives every
+  `/outings`, `/commitments`, conflicts, todos, and `/todos/now` over Tailscale
+  and renders a glanceable "right now": the active outing + escalation level, next
+  commitments, conflict/todo counts, and the one todo that fits your current free
+  window; taps open the `/family` view. One script drives every
   family: the full Home Screen card (Small/Medium/Large) **and** the iOS 16+ Lock
   Screen accessory slots (circular / rectangular / inline, monochrome via SF
   Symbols). *(Realizes the "iOS lock-screen widget" idea from the architecture.)*
@@ -148,8 +170,8 @@ the first test. Code follow-ups below are optional polish.
   `free_windows()` over the schedule and `fit_todos()` that ranks what fits a gap
   (bias-adjusted). `GET/POST /todos`, `GET /todos/fit?minutes=N`,
   `prefrontal todo`/`fit`, and a "spare time" section in the morning briefing.
-  *(Next: multi-suggestion per window; auto-schedule a todo into a window as a
-  commitment; energy-aware fitting.)*
+  Energy-aware fitting shipped in the `/todos/now` picker (above). *(Next:
+  multi-suggestion per window; auto-schedule a todo into a window as a commitment.)*
 
 ## Known stubs in the current code
 
@@ -157,15 +179,16 @@ the first test. Code follow-ups below are optional polish.
   `parse_inbound_event()` but routes none of them to real handlers yet. The
   Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/app.py`.)*
-- **Module interventions** — three of the five modules are wired end-to-end with
-  `status="active"` interventions: **Location-Aware Task Anchor** (escalation,
-  location-gating, auto-close), **Hyperfocus** (protect/interrupt focus
-  sessions), and **Time Blindness**. The remaining two are still declared stubs:
-  **Task Paralysis** (decomposition exists in `todos.py`, but its `tiny_first_step`
-  / `auto_decompose` / `body_double_nudge` interventions are still `planned`) and
-  **Impulsivity** (`reflective_pause` / `capture_and_defer` / `switch_rate_feedback`
-  all `planned` — see `docs/impulsivity.md`). Run `prefrontal modules -v` for the
-  live per-intervention status.
+- **Module interventions** — four of the five modules now have `status="active"`
+  interventions: **Location-Aware Task Anchor** (escalation, location-gating,
+  auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
+  Blindness**, and **Impulsivity** (`reflective_pause` + `capture_and_defer` are
+  active; only `switch_rate_feedback` is still `planned` — see
+  `docs/impulsivity.md`). The one fully-stubbed module is **Task Paralysis**: its
+  `tiny_first_step` / `auto_decompose` / `body_double_nudge` interventions are
+  still `planned`, though the decomposition machinery they'll build on already
+  exists in `todos.py`. Run `prefrontal modules -v` for the live per-intervention
+  status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
@@ -285,25 +308,6 @@ ordered by leverage; each is independent but builds on denser capture.
   per agent as the README describes. The summarizer already takes an injected
   client, so this slots in behind the same interface. Local-first stays the
   default; the cloud path is explicit and configurable.
-- **Multiple users** — specced in detail in
-  [`docs/multi-tenant.md`](docs/multi-tenant.md) (shared DB, row-level `user_id`
-  scoping); the sketch below is the summary it supersedes. Today Prefrontal is
-  single-tenant throughout: one
-  SQLite DB, a global `state` table (the behavioral profile, `home_radius_m`,
-  `time_estimation_bias`, etc.), one `PREFRONTAL_WEBHOOK_SECRET`, and a single
-  Pushover/Twilio delivery target in the n8n workflows. Multi-user support would
-  require: a `users` table and a `user_id` foreign key on the per-user tables
-  (`episodes`, `outings`, `commitments`, `todos`, and the `state`/patterns rows,
-  which would become per-user); per-user auth (a token or key per user rather
-  than one shared secret) and request scoping so every endpoint resolves the
-  caller; per-user delivery routing (each user's own Pushover/Twilio/Shortcut
-  identifiers, so a nudge goes to the right phone); and per-user learning so the
-  pattern pass and summarizer compute a profile per user instead of globally.
-  The pure cores (escalation, impact, scheduling, summarizer) are already
-  user-agnostic and would carry over unchanged; the work is in the storage
-  layer, auth, and delivery. *(Open design question: separate DB-per-user vs. a
-  shared DB with row-level scoping — the latter is simpler to operate and is the
-  likely default.)*
 - **Encouragement & recovery layer (optional)** — when a day is going badly,
   shift tone from nudging to reassurance. A detector watches the signals already
   computed — the briefing's "what slipped", rising `drift`, a missed *hard*
@@ -317,7 +321,9 @@ ordered by leverage; each is independent but builds on denser capture.
   recommendation logic are deterministic; the Ollama summarizer phrases the
   reassurance with a heuristic fallback. Likely surfaces as a briefing variant
   plus a `GET /encouragement`-style endpoint an n8n flow can deliver. Pairs
-  naturally with the coaching agent above.
+  naturally with the coaching agent above. *(Partly shipped: **panic mode**
+  (above) already handles the acute overwhelm case with a one-tap headline; what
+  remains here is the softer, tone-calibrated daily-recovery variant.)*
 - **Native Lock Screen Live Activity (live outing timer)** — the shipped
   Scriptable widget renders the Lock Screen accessory slots but refreshes only on
   iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale
