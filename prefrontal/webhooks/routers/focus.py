@@ -20,6 +20,7 @@ from prefrontal.webhooks._common import (
     ScopedRequest,
     _focus_end_confirmation,
     _focus_started_confirmation,
+    _nudge_actions,
     build_focus_message,
     focus_is_abandoned,
     focus_level,
@@ -164,6 +165,17 @@ def build_router(
                     "protect": protect,
                     "status": session_status,
                     "outcome": outcome,
+                    # One-tap ntfy button: Wrap up (empty if unconfigured / closed).
+                    "actions": (
+                        _nudge_actions(
+                            resolved_settings,
+                            ctx.user.get("handle") or "",
+                            "focus",
+                            session["id"],
+                        )
+                        if session_status == "active"
+                        else []
+                    ),
                 }
             )
         return {"active": results, "protect": any(r["protect"] for r in results)}

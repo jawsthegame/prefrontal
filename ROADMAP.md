@@ -40,6 +40,20 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Interactive nudge action buttons (ntfy)** ✅ — one-tap, background nudge
+  responses with no app switch. `sign_action`/`verify_action`
+  (`prefrontal/webhooks/oauth.py`) extend the signed one-tap-link mechanism from
+  *dismiss* to an allowlisted action set, and `GET /nudge/act` runs the tapped
+  action through the same close/record logic as its full endpoint: **Wrap up**
+  (focus end), **I'm back** / **Abandon** (outing close), **Made it** / **Missed
+  it** (departure outcome). `prefrontal/webhooks/notify.py` builds the ntfy
+  `http` action-button specs, and the outing/focus/departure check endpoints
+  return them as an `actions` list (empty unless a public origin + signing key
+  are set) for a "publish to ntfy" delivery node
+  (`deploy/n8n/interactive-nudge-ntfy.workflow.json`). Idempotent per button;
+  covered by `tests/test_notify.py` + `tests/test_nudge_act.py`. This is the
+  action-button core of the "Delivery layer + interactive nudges" item below;
+  first-class Python publishing and the pause's return/defer/switch remain.
 - **Multi-tenant (multiple users)** ✅ — one deployment now serves several people.
   A `users` table with per-user tokens (`sha256(token)`, shown once like an API
   key) and a `user_id` foreign key on every user-owned table; a `MemoryStore`
@@ -336,20 +350,23 @@ ordered by leverage; each is independent but builds on denser capture.
   `channel_response` + quiet hours + debounce), logging the outcome back as an
   episode. Generalizes the `outing/check` loop and folds in the encouragement
   layer below.
-- **Delivery layer + interactive nudges (ntfy)** — first-class Pushover / Ntfy /
-  TTS integrations in Python (today delivery is handled in n8n). The bigger win
-  is **ntfy action buttons**: unlike Pushover — whose only interactivity is an
-  "open this URL" link — ntfy notifications support inline `http` action buttons
-  that fire a request *directly from the notification*, with no app switch. That
-  makes genuinely one-tap, background nudge responses possible:
-  **"Wrap up" → `POST /webhooks/focus/end`**, **"I'm back" → `/outing/return`**,
-  **"Made it / Missed it" → `/webhooks/shortcut`**, and **return / defer / switch** on the
-  reflective pause — all without leaving the app you're in. The proactive
-  **panic** nudge is a natural fit too: carry the first step inline and an
-  action to open the full `/panic` triage.
+- **Delivery layer + interactive nudges (ntfy)** — **the action-button core has
+  shipped** (see "Recently shipped": signed `/nudge/act` + the `actions` fields
+  on the outing/focus/departure nudges). Unlike Pushover — whose only
+  interactivity is an "open this URL" link — ntfy notifications support inline
+  `http` action buttons that fire a request *directly from the notification*,
+  with no app switch, so **Wrap up / I'm back / Abandon / Made it / Missed it**
+  are now one background tap. Still open:
+  - **first-class Python Pushover / Ntfy / TTS publishing** — today an n8n node
+    does the publish by reading the `actions` a nudge returns; a native delivery
+    client (routing, quiet hours, debounce) belongs with the coaching agent.
+  - **return / defer / switch** on the impulsivity reflective pause — its
+    two-call `switch` → `resolve` flow needs its own action wiring.
+  - the proactive **panic** nudge carrying its first step inline + an action to
+    open the full `/panic` triage.
 
-  Migrating interactive nudges to ntfy should **clean up the Pushover-era
-  workarounds** adopted while Pushover was the only channel:
+  Doing this should also **clean up the Pushover-era workarounds** adopted while
+  Pushover was the only channel:
   - the `shortcuts://run-shortcut?name=End%20focus` deep link in
     `deploy/n8n/hyperfocus-check.workflow.json` — it works but foregrounds the
     Shortcuts app and strands the user, and it's brittle (hardcodes the exact

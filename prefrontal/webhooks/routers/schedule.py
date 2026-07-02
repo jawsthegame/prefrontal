@@ -29,6 +29,7 @@ from prefrontal.webhooks._common import (
     ScopedRequest,
     Settings,
     _dismiss_url,
+    _nudge_actions,
     _parse_dt_or_none,
     attribute_departure,
     build_briefing,
@@ -203,6 +204,10 @@ def build_router(
                 "level": top.level,
                 # One-tap link that dismisses this commitment's departure nudges.
                 "dismiss_url": _dismiss_url(
+                    settings, handle, "departure", top.commitment["id"]
+                ),
+                # One-tap ntfy buttons: Made it / Missed it (empty if unconfigured).
+                "actions": _nudge_actions(
                     settings, handle, "departure", top.commitment["id"]
                 ),
             }

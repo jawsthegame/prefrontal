@@ -17,6 +17,7 @@ it tells you to copy/import.
 | `n8n/calendar-sync.workflow.json` | Syncs personal Google Calendar + a work ICS feed into `commitments` (merged, deduped) and fires a Pushover **double-booking alert** on overlaps. | deployment §10 |
 | `n8n/morning-briefing.workflow.json` | Daily 7am: `GET /briefing` → Pushover the digest (today, conflicts, slips, coaching note). | deployment §11 |
 | `n8n/panic-check.workflow.json` | Proactive panic mode: every-20-min poll of `/webhooks/panic/check` → Pushover **only when the plate tips into overwhelm** (server edge-triggers + cooldown, so it nudges once per spike, not every poll). | deployment §11 |
+| `n8n/interactive-nudge-ntfy.workflow.json` | **One-tap ntfy action buttons**: polls `/webhooks/outing/check` and publishes to ntfy with the signed `actions` the endpoint returns (I'm back / Abandon), so a tap fires `GET /nudge/act` in the background — no app switch. Departure (Made it / Missed it) and focus (Wrap up) follow the same shape. | deployment §14 |
 | `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, the "Going out"/"I'm back" outing shortcuts, and the one-tap **"Panic"** shortcut. | deployment §6 |
 
 Everything here is safe to commit: the plist and workflow contain **placeholders**

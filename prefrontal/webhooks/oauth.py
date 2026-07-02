@@ -140,6 +140,60 @@ def verify_dismiss(
         return None
 
 
+#: Interactive nudge actions a one-tap ntfy button may invoke — the "act on this
+#: nudge without opening the app" set, distinct from the passive ``dismiss``.
+#: Kept explicit so a forged/garbled action can never reach a handler.
+NUDGE_ACTIONS = (
+    "focus_end",      # "Wrap up" — end an active focus session
+    "outing_return",  # "I'm back" — close an outing as returned
+    "outing_abandon", # "Abandon" — close an outing as abandoned
+    "made_it",        # made a commitment on time
+    "missed_it",      # missed / ran late for a commitment
+)
+
+#: One-tap action links share the dismiss TTL — a nudge is only actionable for a
+#: short while, and a short life bounds a leaked notification's blast radius.
+ACTION_TTL_SECONDS = DISMISS_TTL_SECONDS
+
+
+def sign_action(
+    handle: str, action: str, target_id: int, secret: str, *, now: float | None = None
+) -> str:
+    """Signed, self-expiring token authorizing a one-tap nudge action.
+
+    Like :func:`sign_dismiss` but for the *interactive* actions an ntfy button
+    fires (wrap up, I'm back, made it …). Carries the ``handle`` so
+    ``GET /nudge/act`` resolves the acting user with no ``X-Prefrontal-Token``
+    header — a notification tap is a bare background GET. ``|`` is safe because
+    the value is base64-encoded inside :func:`_sign`.
+    """
+    return _sign(f"{handle}|{action}|{target_id}", secret, ACTION_TTL_SECONDS, now=now)
+
+
+def verify_action(
+    token: str, secret: str, *, now: float | None = None
+) -> tuple[str, str, int] | None:
+    """Return ``(handle, action, target_id)`` from a valid action token, else ``None``.
+
+    ``None`` covers every failure — bad signature, expiry, an action outside
+    :data:`NUDGE_ACTIONS`, or a non-integer id — so a malformed link is simply
+    inert rather than dangerous.
+    """
+    raw = _verify(token, secret, now=now)
+    if raw is None:
+        return None
+    try:
+        handle, action, target_id = raw.split("|")
+    except ValueError:
+        return None
+    if action not in NUDGE_ACTIONS:
+        return None
+    try:
+        return handle, action, int(target_id)
+    except ValueError:
+        return None
+
+
 def session_user(request: Request) -> dict[str, Any] | None:
     """Resolve a request's session cookie to an active user row, or ``None``.
 

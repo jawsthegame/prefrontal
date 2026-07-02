@@ -26,6 +26,7 @@ from prefrontal.webhooks._common import (
     _delivery_fields,
     _dismiss_page,
     _dismiss_url,
+    _nudge_actions,
     _outing_return_confirmation,
     _outing_started_confirmation,
     analyze_impact,
@@ -41,10 +42,12 @@ from prefrontal.webhooks._common import (
     module_enabled,
     parse_time_window,
     project_free_time,
+    record_focus_end,
     record_outing_abandoned,
     record_outing_return,
     resolve_user,
     status,
+    verify_action,
     verify_dismiss,
 )
 
@@ -240,6 +243,8 @@ def build_router(
                     # One-tap link that silences further escalation for this
                     # outing (empty unless a public origin + signing key exist).
                     "dismiss_url": _dismiss_url(settings, handle, "outing", outing["id"]),
+                    # One-tap ntfy buttons: I'm back / Abandon (empty if unconfigured).
+                    "actions": _nudge_actions(settings, handle, "outing", outing["id"]),
                     **delivery,
                 }
             )
@@ -339,6 +344,74 @@ def build_router(
             headline = "Departure reminder dismissed."
 
         return _dismiss_page(headline)
+
+    @router.get("/nudge/act", response_class=HTMLResponse, tags=["anchor"])
+    def nudge_act(request: Request, t: str = "") -> str:
+        """Act on a nudge from a one-tap ntfy button — no app switch, no header.
+
+        The button is an ntfy ``http`` action firing a background GET whose signed
+        ``t`` embeds the user handle and target, so it authenticates without an
+        ``X-Prefrontal-Token`` header (like ``/nudge/dismiss``). Each action runs
+        the same close/record logic as its full endpoint:
+
+        - ``focus_end`` — end an active focus session (Wrap up).
+        - ``outing_return`` / ``outing_abandon`` — close an outing (I'm back / Abandon).
+        - ``made_it`` / ``missed_it`` — log a commitment's departure outcome.
+
+        Idempotent: re-tapping a spent button (session/outing already closed) still
+        renders a friendly confirmation rather than erroring.
+        """
+        settings: Settings = request.app.state.settings
+        parsed = verify_action(t, settings.session_secret)
+        if parsed is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This action link is invalid or has expired.",
+            )
+        handle, action, target_id = parsed
+        root: MemoryStore = request.app.state.store
+        user = root.get_user(handle)
+        if user is None or user["status"] != "active":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user."
+            )
+        memory = root.scoped(user["id"])
+
+        if action == "focus_end":
+            closed = memory.close_focus_session(target_id, status="ended")
+            if closed is None:
+                return _dismiss_page("That focus session is already wrapped up.")
+            record_focus_end(memory, closed, outcome=None, breadcrumb=None)
+            label = closed.get("intention") or closed.get("task") or "your session"
+            return _dismiss_page(f"Wrapped up “{label}.” Nice work.")
+
+        if action in ("outing_return", "outing_abandon"):
+            status_ = "returned" if action == "outing_return" else "abandoned"
+            closed = memory.close_outing(target_id, status=status_)
+            if closed is None:
+                return _dismiss_page("That outing is already closed.")
+            if status_ == "returned":
+                record_outing_return(memory, closed)
+                return _dismiss_page("Welcome back — outing logged.")
+            record_outing_abandoned(memory, closed)
+            return _dismiss_page("Outing closed. No worries.")
+
+        # made_it / missed_it — log a commitment's departure outcome.
+        commitment = memory.get_commitment(target_id)
+        title = (commitment or {}).get("title") or "your commitment"
+        made = action == "made_it"
+        memory.log_episode(
+            "departure",
+            acknowledged=True,
+            context=f"commitment: {title}",
+            outcome="success" if made else "miss",
+            notes=f"one-tap: {'made it' if made else 'missed it'}",
+        )
+        memory.dismiss_departure(target_id)
+        return _dismiss_page(
+            f"Logged — you made it to “{title}.” 🎯" if made
+            else f"Logged — ran late for “{title}.” It happens."
+        )
 
     @router.get("/outings", tags=["anchor"])
     def outings_list(
