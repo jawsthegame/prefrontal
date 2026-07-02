@@ -9,10 +9,13 @@
 //
 // One script drives every size. It auto-detects which family iOS is rendering:
 //   • Home Screen — Small / Medium / Large: the full card (header + list + counts).
-//   • Lock Screen — the accessory slots around the clock:
-//       – Rectangular: active outing (or next commitment) + a counts line.
-//       – Circular:    a single glyph + number (elapsed mins / next time / todos).
-//       – Inline:      one line beside the clock (the single most urgent thing).
+//   • Lock Screen — the tiny accessory slots around the clock. Each slot shows
+//     ONE facet (a glyph + a short value), because iOS caps the size. Set a
+//     widget's Parameter to pin it to a facet, or leave it blank for "auto":
+//       focus/outing · next · alert/urgent · todos/free   (see PARAM below)
+//     So you can place several: e.g. circular "focus" + circular "next" + an
+//     inline "alert". Rectangular shows the same facet with a second context
+//     line; circular shows the glyph + value; inline is one line by the clock.
 //   Lock Screen widgets are rendered monochrome by iOS, so these lean on SF
 //   Symbols + text rather than the dashboard colors.
 //
@@ -29,6 +32,9 @@
 //        • Home Screen: long-press → add a Scriptable widget → choose this script.
 //        • Lock Screen: edit the Lock Screen → tap a widget slot → Scriptable →
 //          choose this script (pick the circular, rectangular, or inline slot).
+//          Tap the added widget again to set its Parameter (focus / next /
+//          alert / todos) so that slot shows just that facet. Add more slots for
+//          more facets. Leave the Parameter blank to auto-pick the top one.
 //   Works anywhere your phone can reach the mini over Tailscale.
 
 // --- config ---------------------------------------------------------------
@@ -144,98 +150,164 @@ const recentNudge =
 
 // ===========================================================================
 // Lock Screen (accessory) families — monochrome, tiny; SF Symbols + text.
+// ---------------------------------------------------------------------------
+// A Lock Screen accessory slot is minuscule and iOS caps its size, so each one
+// shows exactly ONE facet: a glyph + a short value. One script backs every
+// slot — set a widget's Parameter (edit the Lock Screen → tap the slot →
+// Scriptable → Parameter) to pin it to a facet, or leave it blank for "auto"
+// (the most pressing facet right now). This lets you place several dedicated
+// widgets: e.g. a circular "focus" beside a circular "next", an inline "alert".
+//   focus / outing  → active outing progress (elapsed of window)
+//   next            → next commitment (start time)
+//   alert / urgent  → conflicts or a due departure ("leave now")
+//   todos / free    → the todo that fits your free window, else open count
 // ===========================================================================
+
+// A short clock label that fits a circular slot ("2:30", not "2:30 PM").
+function fmtTimeShort(ts) {
+  if (!ts) return "";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d) ? ts : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: false });
+}
+
+// A due departure ("leave now") arrives as the most recent *departure* nudge;
+// it already self-expires at the meeting's start, so a live one is genuinely due.
+const dueDeparture = recentNudge && recentNudge.kind === "departure" ? recentNudge : null;
+
+// Each facet resolves to { glyph, value (circular), label (inline/rect), sub
+// (rect 2nd line), color }, or null when it has nothing to show right now.
+function facetInProgress() {
+  if (!active) return null;
+  return {
+    glyph: "figure.walk", value: mins(active.elapsed_minutes), label: `${active.intention} · ${active.level}`,
+    sub: `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
+    color: LEVEL_COLOR[active.level] || C.fg,
+  };
+}
+function facetNext() {
+  if (!nextCommitment) return null;
+  return {
+    glyph: "calendar", value: fmtTimeShort(nextCommitment.start_at),
+    label: `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`,
+    sub: nextCommitment.title, color: C.fg,
+  };
+}
+function facetUrgent() {
+  if (hard) return {
+    glyph: "exclamationmark.triangle.fill", value: String(hard),
+    label: dueDeparture ? dueDeparture.message : `${hard} conflict${hard === 1 ? "" : "s"}`,
+    sub: dueDeparture ? dueDeparture.message : `${hard} calendar conflict${hard === 1 ? "" : "s"}`,
+    color: C.call,
+  };
+  if (dueDeparture) return {
+    glyph: "arrow.right.circle.fill", value: "go", label: dueDeparture.message,
+    sub: dueDeparture.message, color: C.call,
+  };
+  return null;
+}
+function facetTodos() {
+  if (fitSug) return {
+    glyph: fitGlyph, value: `${fitFree}m`, label: `${fitLead} · ${fitSug.title}`,
+    sub: fitSug.title, color: fitColor,
+  };
+  return {
+    glyph: "checklist", value: String(open), label: `${open} todo${open === 1 ? "" : "s"}`,
+    sub: `${open} open`, color: C.fg,
+  };
+}
+
+// A calm "nothing here" facet when a *pinned* slot has no live data.
+function emptyFacet(kind) {
+  const clear = { color: C.muted };
+  if (kind === "focus" || kind === "outing") return { glyph: "figure.walk", value: "—", label: "No outing", sub: "not out", ...clear };
+  if (kind === "next") return { glyph: "calendar", value: "—", label: "Nothing scheduled", sub: "clear", ...clear };
+  if (kind === "alert" || kind === "urgent") return { glyph: "checkmark.circle", value: "0", label: "All clear", sub: "nothing urgent", ...clear };
+  return { glyph: "checklist", value: String(open), label: `${open} todo${open === 1 ? "" : "s"}`, sub: `${open} open`, ...clear };
+}
+
+const FACET_BY_PARAM = {
+  focus: facetInProgress, outing: facetInProgress, "in-progress": facetInProgress,
+  next: facetNext, commitment: facetNext,
+  alert: facetUrgent, urgent: facetUrgent, conflicts: facetUrgent,
+  todos: facetTodos, todo: facetTodos, free: facetTodos,
+};
+
+// Set once at the top: the widget's Parameter, lowercased ("" = auto).
+const PARAM = ((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
+
+// Resolve the facet to show. A pinned slot always shows its facet (falling back
+// to a calm empty state); an unpinned slot shows the most pressing one, with
+// `urgentFirst` so the single-line inline slot leads with what needs attention.
+function pickFacet(urgentFirst = false) {
+  if (PARAM && FACET_BY_PARAM[PARAM]) return FACET_BY_PARAM[PARAM]() || emptyFacet(PARAM);
+  const order = urgentFirst
+    ? [facetUrgent, facetInProgress, facetNext, facetTodos]
+    : [facetInProgress, facetUrgent, facetNext, facetTodos];
+  for (const f of order) { const r = f(); if (r) return r; }
+  return facetTodos();
+}
+
 function renderInline() {
-  // A single line beside the clock: the one most urgent thing.
-  let sym, label;
-  if (!ok) { sym = "wifi.slash"; label = "Prefrontal offline"; }
-  else if (active) { sym = "figure.walk"; label = `${active.intention} · ${active.level}`; }
-  else if (nextCommitment) { sym = "calendar"; label = `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`; }
-  else if (fitSug) { sym = fitGlyph; label = `${fitLead} · ${fitSug.title}`; }
-  else if (hard) { sym = "exclamationmark.triangle"; label = `${hard} conflict${hard === 1 ? "" : "s"}`; }
-  else { sym = "checklist"; label = `${open} todo${open === 1 ? "" : "s"}`; }
-  symbol(w, sym, 12);
-  text(w, label, { size: 13 });
+  // One line beside the clock: the single thing that most needs a glance.
+  if (!ok) { symbol(w, "wifi.slash", 12); text(w, "Prefrontal offline", { size: 13 }); return; }
+  const f = pickFacet(true);
+  symbol(w, f.glyph, 12);
+  text(w, f.label, { size: 13 });
 }
 
 function renderCircular() {
+  // A single glyph over a single value — big enough to read at arm's length.
   w.addAccessoryWidgetBackground = true;
+  w.setPadding(0, 0, 0, 0);
   const col = w.addStack();
   col.layoutVertically();
   col.centerAlignContent();
   const top = col.addStack(); top.addSpacer();
   const bot = col.addStack(); bot.addSpacer();
   if (!ok) {
-    symbol(top, "wifi.slash", 14); top.addSpacer();
-    text(bot, "—", { size: 13 }); bot.addSpacer();
-  } else if (active) {
-    symbol(top, "figure.walk", 13); top.addSpacer();
-    text(bot, mins(active.elapsed_minutes), { size: 15, bold: true }); bot.addSpacer();
-  } else if (nextCommitment) {
-    text(top, "Next", { size: 9, color: C.muted }); top.addSpacer();
-    text(bot, fmtTime(nextCommitment.start_at), { size: 14, bold: true }); bot.addSpacer();
-  } else if (fitSug) {
-    symbol(top, fitGlyph, 13); top.addSpacer();
-    text(bot, `${fitFree}m`, { size: 15, bold: true }); bot.addSpacer();
-  } else {
-    symbol(top, "checklist", 13); top.addSpacer();
-    text(bot, String(open), { size: 15, bold: true }); bot.addSpacer();
+    symbol(top, "wifi.slash", 15); top.addSpacer();
+    text(bot, "—", { size: 15 }); bot.addSpacer();
+    return;
   }
+  const f = pickFacet();
+  symbol(top, f.glyph, 15); top.addSpacer();
+  text(bot, f.value, { size: 17, bold: true }); bot.addSpacer();
 }
 
 function renderRectangular() {
+  // Icon-forward and minimal: a bold headline (glyph + label) over one muted
+  // context line. No counts clutter — this slot shows one facet, like the others.
   w.addAccessoryWidgetBackground = true;
-  // Reclaim the slot. iOS gives the rectangular accessory a fixed (short) height
+  // Reclaim the slot: iOS gives the rectangular accessory a fixed, short height
   // and draws our background across all of it, but Scriptable's default
-  // ListWidget insets otherwise cluster the content into a small central band —
-  // the widget looks like it only fills half the slot. Zero the padding and let
-  // a full-height vertical stack lay the lines out from the top.
+  // ListWidget insets otherwise cluster the content into a small central band
+  // (the "only fills half the slot" look). Zero the padding, then a full-height
+  // vertical stack lays the lines out from the top.
   w.setPadding(0, 1, 0, 1);
   const col = w.addStack();
   col.layoutVertically();
   col.spacing = 1;
-
-  // One line: SF Symbol + text, stretched to the full width so it left-aligns
-  // across the slot instead of hugging the centre.
-  const line = (glyph, s, opts) => {
+  const rowLine = (glyph, s, opts) => {
     const r = col.addStack();
     r.centerAlignContent();
-    symbol(r, glyph, 12);
+    symbol(r, glyph, 13, opts && opts.color);
     text(r, " " + s, opts);
     r.addSpacer();
   };
 
   if (!ok) {
-    line("wifi.slash", "Prefrontal offline", { size: 13 });
+    rowLine("wifi.slash", "Prefrontal offline", { size: 14, bold: true });
     col.addSpacer();
     return;
   }
-  if (active) {
-    line("figure.walk", active.intention, { size: 13, bold: true });
+  const f = pickFacet();
+  rowLine(f.glyph, f.label, { size: 14, bold: true, color: f.color });
+  if (f.sub) {
     const sub = col.addStack(); sub.centerAlignContent();
-    text(sub, `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
-      { size: 12, color: C.muted });
+    text(sub, f.sub, { size: 12, color: C.muted });
     sub.addSpacer();
-  } else if (nextCommitment) {
-    line("calendar", fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
-  } else if (fitSug) {
-    line(fitGlyph, `${fitLead} · ${fitSug.title}`, { size: 13, bold: true });
-  } else if (recentNudge) {
-    // Nothing time-sensitive right now — surface the last thing Prefrontal said.
-    line("bell", recentNudge.message, { size: 13 });
-  } else {
-    line("checkmark.circle", "Nothing scheduled", { size: 13 });
   }
-  // Compact counts line (conflicts surface first when present).
-  const bits = [];
-  if (hard) bits.push(`⚠ ${hard}`);
-  if (poss) bits.push(`~ ${poss}`);
-  bits.push(`✓ ${open}`);
-  const cnt = col.addStack(); cnt.centerAlignContent();
-  text(cnt, bits.join("   "), { size: 11, color: C.muted });
-  cnt.addSpacer();
-  // Push everything to the top so short content fills from the top edge rather
-  // than floating in the middle of the slot.
+  // Push content to the top edge so it fills the slot from the top down.
   col.addSpacer();
 }
 
