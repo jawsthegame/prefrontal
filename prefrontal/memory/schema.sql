@@ -333,7 +333,12 @@ CREATE TABLE IF NOT EXISTS nudges (
     kind       TEXT    NOT NULL,            -- 'outing' | 'departure'
     level      TEXT,                        -- escalation level at fire time (kind-specific)
     message    TEXT    NOT NULL,            -- the delivered nudge text
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- When this nudge stops being relevant, so a surface can hide a stale one.
+    -- NULL means no expiry (the flat age cap on the surface is the only bound).
+    -- A departure nudge sets it to the commitment's start_at: "leave now" is
+    -- pointless once the meeting has started, so it must not linger for hours.
+    expires_at DATETIME
 );
 
 CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges (user_id, created_at);

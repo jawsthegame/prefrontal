@@ -285,10 +285,36 @@ def test_departure_check_records_nudge_and_lists_it(client, store):
     assert listed[0]["kind"] == "departure"
     assert listed[0]["level"] == "soon"
     assert listed[0]["message"] == fired["message"]
+    # The nudge expires at the meeting's start, so it stops surfacing once the
+    # meeting has begun rather than lingering on the widget for hours.
+    assert listed[0]["expires_at"] == fired["reminder"]["start_at"]
 
     # A no-fire re-poll (same level) logs no duplicate nudge.
     client.post("/webhooks/departure/check", json={}, headers=_auth())
     assert len(client.get("/nudges", headers=_auth()).json()["nudges"]) == 1
+
+
+def test_recent_nudges_hides_expired(store):
+    """recent_nudges omits a nudge whose expires_at has passed; NULL never expires."""
+    store.record_nudge(kind="departure", message="stale", level="go", expires_at=_utc(-90))
+    store.record_nudge(kind="departure", message="live", level="go", expires_at=_utc(20))
+    store.record_nudge(kind="outing", message="no-expiry", level="soft")
+
+    messages = [n["message"] for n in store.recent_nudges()]
+    assert "stale" not in messages  # its meeting started 90 min ago
+    assert {"live", "no-expiry"} <= set(messages)
+
+
+def test_migrate_adds_nudges_expires_at_idempotently():
+    """backfill_added_columns adds expires_at on a pre-existing nudges table."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE nudges (id INTEGER PRIMARY KEY, message TEXT)")
+    backfill_added_columns(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nudges)")}
+    assert "expires_at" in cols
+    backfill_added_columns(conn)  # second run is a no-op, not an error
+    conn.close()
 
 
 def test_nudges_endpoint_empty_ordering_and_limit(client, store):
