@@ -153,9 +153,12 @@ const fitColor = fitAvoided ? C.soft : C.good;
 const fitGlyph = fitAvoided ? "hourglass" : "bolt.fill";
 const fitLead = fitAvoided ? "catch up" : `${fitFree}m free`;
 
-// Most recent nudge the system sent — shown only while still "recent" (last 8h),
-// so a nudge you already acted on doesn't linger on the widget for days.
-const NUDGE_MAX_AGE_MIN = 8 * 60;
+// Most recent nudge the system sent — shown only while still "recent", so one
+// you already acted on doesn't linger. The server now expires nudges (an outing
+// nudge defaults to ~2h, a departure to its meeting start), so /nudges already
+// drops stale ones; this client cap is a secondary bound for any legacy row that
+// predates the server default and so came back with a NULL expiry.
+const NUDGE_MAX_AGE_MIN = 2 * 60;
 function ageMinutes(ts) {
   if (!ts) return Infinity;
   const d = new Date(String(ts).replace(" ", "T") + "Z"); // stored UTC
