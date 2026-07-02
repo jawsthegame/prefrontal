@@ -5,7 +5,7 @@
 // nudge Prefrontal sent (so a missed push is still visible), and — when you have
 // an open gap — the one todo that fits it ("25m free · Reply to landlord"), a
 // low-friction initiation nudge. Reads the Prefrontal API over Tailscale; tap
-// the widget to open the full family view.
+// the widget to open the full dashboard.
 //
 // One script drives every size. It auto-detects which family iOS is rendering:
 //   • Home Screen — Small / Medium / Large: the full card (header + list + counts).
@@ -93,7 +93,7 @@ const ok = settled.some((s) => s.status === "fulfilled");
 const family = config.widgetFamily || "medium";
 const small = family === "small";
 const w = new ListWidget();
-w.url = BASE_URL + "/family"; // tap opens the family view (after unlock on the Lock Screen)
+w.url = BASE_URL + "/dashboard"; // tap opens the full dashboard (after unlock on the Lock Screen)
 w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
 
 function text(stack, s, { color = C.fg, size = 13, bold = false, font, minScale } = {}) {
@@ -208,7 +208,9 @@ function facetUrgent() {
     color: C.call,
   };
   if (dueDeparture) return {
-    glyph: "arrow.right.circle.fill", value: "go", label: dueDeparture.message,
+    // Circular shows just glyph + value, so a walking figure + "now" reads as
+    // "leave now"; the full "leave now for …" text is the label (inline/rect).
+    glyph: "figure.walk", value: "now", label: dueDeparture.message,
     sub: dueDeparture.message, color: C.call,
   };
   return null;
