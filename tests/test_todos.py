@@ -49,6 +49,7 @@ from prefrontal.todos import (
     heuristic_estimate,
     heuristic_priority,
     normalize_category,
+    normalize_energy,
     resolve_category,
     todo_episode_fields,
 )
@@ -162,6 +163,29 @@ def test_resolve_category_clamps_at_cap_to_existing():
 def test_resolve_category_prefers_other_bucket_at_cap():
     existing = ["other"] + [f"cat{i}" for i in range(MAX_CATEGORIES - 1)]
     assert resolve_category("novel", existing, cap=MAX_CATEGORIES) == "other"
+
+
+def test_normalize_energy():
+    """Known levels are accepted case-insensitively; anything else is None."""
+    assert normalize_energy("HIGH") == "high"
+    assert normalize_energy(" low ") == "low"
+    assert normalize_energy("banana") is None
+    assert normalize_energy("") is None
+    assert normalize_energy(None) is None
+    assert normalize_energy(5) is None
+
+
+def test_augment_keeps_valid_supplied_energy():
+    aug = augment_todo("write report", energy="High", client=None)
+    assert aug.energy == "high"
+    assert aug.sources["energy"] == "stated"
+
+
+def test_augment_rejects_out_of_vocab_supplied_energy():
+    """An invalid supplied energy is inferred, never stored verbatim."""
+    aug = augment_todo("email Bob", energy="banana", client=None)
+    assert aug.energy in ("low", "medium", "high")  # inferred, not "banana"
+    assert aug.sources["energy"] == "heuristic"
 
 
 def test_augment_supplied_category_is_kept_and_clamped():
