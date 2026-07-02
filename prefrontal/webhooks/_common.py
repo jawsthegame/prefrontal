@@ -206,6 +206,8 @@ ACTION_OUTCOME: dict[str, str] = {
 DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
 #: The calm, read-only family view (a friendly subset of the dashboard).
 FAMILY_HTML = (Path(__file__).with_name("family.html")).read_text(encoding="utf-8")
+#: The editable kids dashboard for the shared household sheet.
+KIDS_HTML = (Path(__file__).with_name("kids.html")).read_text(encoding="utf-8")
 
 
 class ShortcutPayload(BaseModel):
@@ -550,6 +552,62 @@ class HouseholdMember(BaseModel):
     """Body of ``POST /admin/households/{id}/members`` — add a user (operator-only)."""
 
     handle: str = Field(description="Handle of the user to put into the household.")
+
+
+class ChildCreate(BaseModel):
+    """Body of ``POST /household/children`` — add a kid to the roster."""
+
+    name: str = Field(description="The child's name (unique within the household).")
+    birthday: str | None = Field(default=None, description="Optional ISO date (YYYY-MM-DD).")
+
+
+class ChildRename(BaseModel):
+    """Body of ``POST /household/children/{id}`` — rename / set birthday."""
+
+    name: str = Field(description="The child's new name.")
+    birthday: str | None = Field(default=None, description="Optional ISO date; omit to keep.")
+
+
+class FactSet(BaseModel):
+    """Body of ``POST /household/facts`` — upsert one per-kid (or household-wide) fact."""
+
+    category: str = Field(description="One of the controlled fact categories.")
+    item: str = Field(description="The field, e.g. 'shoe size' (normalized).")
+    value: str | None = Field(default=None, description="Free-text value; null clears the value.")
+    child_id: int = Field(default=0, description="A children.id, or 0 for household-wide.")
+
+
+class FactClear(BaseModel):
+    """Body of ``POST /household/facts/clear`` — delete one fact."""
+
+    category: str = Field(description="The fact's category.")
+    item: str = Field(description="The fact's item.")
+    child_id: int = Field(default=0, description="A children.id, or 0 for household-wide.")
+
+
+class AgreementSet(BaseModel):
+    """Body of ``POST /household/agreements`` — upsert a standing plan."""
+
+    title: str = Field(description="Plan title (unique per child within the household).")
+    body: str | None = Field(default=None, description="The plan in plain language.")
+    kind: str = Field(default="consistency", description="reward | consistency | routine.")
+    child_id: int = Field(default=0, description="A children.id, or 0 for the whole household.")
+    structured: dict[str, Any] | None = Field(
+        default=None, description="Optional star/points chart JSON (thresholds → rewards)."
+    )
+
+
+class AppointmentCreate(BaseModel):
+    """Body of ``POST /household/appointments`` — add a kid appointment.
+
+    Stored as a ``kind='child'`` commitment on the acting parent's calendar, which
+    the shared sheet then surfaces in its 'upcoming' section.
+    """
+
+    title: str = Field(description="e.g. 'Sam dentist'.")
+    start_at: str = Field(description="ISO-8601 start (local unless offset-aware).")
+    end_at: str | None = Field(default=None, description="Optional ISO-8601 end.")
+    location: str | None = Field(default=None, description="Optional location.")
 
 
 class TodoCreate(BaseModel):
@@ -961,11 +1019,18 @@ __all__ = [
     "FocusEnd",
     "FocusStart",
     "FocusStarted",
+    "AgreementSet",
+    "AppointmentCreate",
+    "ChildCreate",
+    "ChildRename",
+    "FactClear",
+    "FactSet",
     "HTMLResponse",
     "HTTPException",
     "Header",
     "HouseholdCreate",
     "HouseholdMember",
+    "KIDS_HTML",
     "INFER_TIMEOUT_SECONDS",
     "ImpulseCaptured",
     "KINDS",

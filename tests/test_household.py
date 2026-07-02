@@ -154,8 +154,7 @@ def test_render_sections_and_provenance(store, dana, alex):
         updated_by=dana_id,
         child_id=sam,
         structured=(
-            '{"unit":"star","earn_only":true,'
-            '"thresholds":[{"stars":10,"reward":"small Lego"}]}'
+            '{"unit":"star","earn_only":true,"thresholds":[{"stars":10,"reward":"small Lego"}]}'
         ),
     )
     text = render_sheet(build_sheet(dana, now=NOW))
@@ -371,6 +370,121 @@ def test_operator_endpoints_reject_non_operator_and_bad_ids(client):
         ).status_code
         == 404
     )
+
+
+# --- write endpoints (the /kids dashboard's inline forms) --------------------
+
+
+def test_write_endpoints_full_flow_and_sharing(client):
+    """Direct-form writes by one parent are visible on the other's sheet."""
+    # roster
+    r = client.post(
+        "/household/children",
+        json={"name": "Sam", "birthday": "2016-05-02"},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 201
+    sam = r.json()["id"]
+    assert (
+        client.post(
+            f"/household/children/{sam}", json={"name": "Samuel"}, headers=_h("alex-tok")
+        ).status_code
+        == 200
+    )
+    # facts (Dana writes, Alex sees + clears)
+    assert (
+        client.post(
+            "/household/facts",
+            json={"child_id": sam, "category": "sizes", "item": "Shoe Size", "value": "13"},
+            headers=_h("dana-tok"),
+        ).status_code
+        == 200
+    )
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()["sheet"]
+    assert sheet["counts"]["facts"] == 1
+    assert (
+        client.post(
+            "/household/facts/clear",
+            json={"child_id": sam, "category": "sizes", "item": "shoe size"},
+            headers=_h("alex-tok"),
+        ).json()["removed"]
+        is True
+    )
+    # agreement with a star chart, then remove
+    r = client.post(
+        "/household/agreements",
+        json={
+            "child_id": sam,
+            "title": "Star chart",
+            "kind": "reward",
+            "body": "stars",
+            "structured": {"unit": "star", "thresholds": [{"stars": 10, "reward": "lego"}]},
+        },
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    aid = r.json()["id"]
+    assert (
+        client.post(f"/household/agreements/{aid}/remove", json={}, headers=_h("alex-tok")).json()[
+            "removed"
+        ]
+        is True
+    )
+    # appointment (kind='child' commitment on the caller's calendar)
+    r = client.post(
+        "/household/appointments",
+        json={"title": "Sam dentist", "start_at": "2026-07-07 15:00", "location": "Dr Lin"},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 201 and r.json()["created"] is True
+
+
+def test_write_endpoints_validate(client):
+    assert (
+        client.post(
+            "/household/facts",
+            json={"category": "nope", "item": "x", "value": "y"},
+            headers=_h("dana-tok"),
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/household/agreements", json={"title": "P", "kind": "bogus"}, headers=_h("dana-tok")
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/household/appointments",
+            json={"title": "x", "start_at": "not-a-date"},
+            headers=_h("dana-tok"),
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/household/agreements/{999}/remove", json={}, headers=_h("dana-tok")
+        ).status_code
+        == 404
+    )
+
+
+def test_write_endpoints_are_member_guarded(client):
+    """A user in no household gets 404 from every write route, not a 500."""
+    for path, body in [
+        ("/household/children", {"name": "X"}),
+        ("/household/facts", {"category": "sizes", "item": "x", "value": "y"}),
+        ("/household/facts/clear", {"category": "sizes", "item": "x"}),
+        ("/household/agreements", {"title": "P"}),
+        ("/household/appointments", {"title": "x", "start_at": "2026-07-07 15:00"}),
+    ]:
+        assert client.post(path, json=body, headers=_h("lee-tok")).status_code == 404
+
+
+def test_kids_page_and_family_link_serve(client):
+    assert client.get("/kids").status_code == 200
+    assert "/kids" in client.get("/family").text
 
 
 # --- migration ---------------------------------------------------------------

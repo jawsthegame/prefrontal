@@ -141,6 +141,26 @@ class HouseholdRepo:
         ).fetchone()
         return int(row["id"])
 
+    def rename_child(self, child_id: int, *, name: str, birthday: str | None = None) -> bool:
+        """Rename a child (and optionally set a birthday). ``True`` if a row changed.
+
+        Scoped to the household so one household can't rename another's kid. A
+        ``birthday`` of ``None`` leaves the stored birthday untouched.
+        """
+        if birthday is None:
+            cur = self.conn.execute(
+                "UPDATE children SET name = ? WHERE id = ? AND household_id = ?",
+                (name.strip(), child_id, self._household_id()),
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE children SET name = ?, birthday = ? "
+                "WHERE id = ? AND household_id = ?",
+                (name.strip(), birthday, child_id, self._household_id()),
+            )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def children(self) -> list[dict[str, Any]]:
         """The household's children (id/name/birthday), ordered by name."""
         rows = self.conn.execute(

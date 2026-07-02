@@ -127,7 +127,11 @@ def test_recovery_first_step_from_most_avoided_todo(store):
 
 
 def test_recovery_defers_only_soft_commitments(store):
-    now = utcnow()
+    # Pin to a fixed midday: after the 09:00 hard commitment (so it reads as a
+    # missed-hard signal → the day is "rough") but before the 15:00 soft one (the
+    # defer filter only suggests commitments with start_at >= now). With a bare
+    # utcnow() the test flakes once the wall clock passes 15:00 UTC.
+    now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
     _hard_commitment(store, now, title="Dentist")  # hard → never deferred
     store.upsert_commitment(
         title="Optional coffee", start_at=_at(now, hour=15, minute=0, second=0, microsecond=0),
