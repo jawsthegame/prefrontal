@@ -384,8 +384,16 @@ def _resolve_child(action: dict[str, Any], household: dict[str, Any]) -> tuple[i
     A missing/zero ``child`` means household-wide (:data:`HOUSEHOLD_WIDE`). A given
     id must match a child in the snapshot, so the model can't attach a fact to a
     kid who doesn't exist.
+
+    Accepts the model's ``child`` key *or* the ``child_id`` key that
+    :meth:`ValidatedAction.to_wire` emits — the ``/assistant`` → preview →
+    ``/assistant/apply`` round-trip echoes the wire action back verbatim, so
+    re-validation must read the same key it wrote. (``_require_todo`` /
+    ``_require_commitment`` already read their emitted ``*_id`` keys; child
+    resolution was the lone asymmetry, which silently reassigned every per-child
+    fact/agreement to the household on apply.)
     """
-    raw = action.get("child")
+    raw = action.get("child", action.get("child_id"))
     if raw is None:
         return HOUSEHOLD_WIDE, "the household"
     cid = _as_int(raw)
