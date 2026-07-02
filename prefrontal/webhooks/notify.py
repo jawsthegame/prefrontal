@@ -38,6 +38,9 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("switch_defer", "Park it"),
         ("switch_switch", "Switch anyway"),
     ),
+    # Overwhelm nudge — a one-tap confirmation that the surfaced first step got
+    # done, so the drift pass learns whether the panic first-step lever works.
+    "panic": (("panic_step_done", "✓ Did it"),),
 }
 
 

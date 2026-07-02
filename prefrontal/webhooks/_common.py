@@ -154,10 +154,14 @@ from prefrontal.modules.task_paralysis import (
 from prefrontal.panic import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
+    DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
     build_panic,
     overwhelm_level,
     panic_alert_message,
+    record_panic_step_sent,
     render_panic,
+    resolve_panic_step,
+    sweep_pending_panic_steps,
 )
 from prefrontal.scheduling import (
     DEFAULT_DAY_END,
@@ -995,6 +999,7 @@ __all__ = [
     "DEFAULT_ABANDON_RATIO",
     "DEFAULT_ALERT_COOLDOWN_MINUTES",
     "DEFAULT_ALERT_MIN_PRESSING",
+    "DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES",
     "DEFAULT_BODY_DOUBLE_MIN_MISSES",
     "DEFAULT_DAY_END",
     "DEFAULT_DAY_START",
@@ -1153,6 +1158,9 @@ __all__ = [
     "overwhelm_level",
     "panic_actions",
     "panic_alert_message",
+    "record_panic_step_sent",
+    "resolve_panic_step",
+    "sweep_pending_panic_steps",
     "parse_inbound_event",
     "parse_time_window",
     "parse_window",

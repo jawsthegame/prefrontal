@@ -633,3 +633,61 @@ def panic_alert_message(plan: PanicPlan, *, name: str | None = None) -> str:
     shape = " and ".join(parts) if parts else "a few things"
     tail = f" Start here: {plan.first_step}" if plan.first_step else ""
     return f"{opener}things are stacking up — {shape}. Breathe; it's a short list.{tail}"
+
+
+# --- First-step outcome capture ---------------------------------------------
+# Did surfacing one tiny first step during overwhelm actually get it done? A
+# fired nudge logs a *pending* "panic" episode; a one-tap "Did it" resolves it to
+# success, and an unanswered one is swept to a miss so the learning loop sees the
+# steps that DIDN'T happen too — otherwise the drift signal would be success-only.
+
+#: Episode type for overwhelm first-step outcomes (also in EPISODE_TYPES).
+PANIC_EPISODE_TYPE = "panic"
+
+#: Default minutes to wait for a "Did it" tap before counting the step a miss.
+DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES = 180.0
+
+
+def record_panic_step_sent(
+    store: MemoryStore, plan: PanicPlan, *, now: datetime | None = None
+) -> int:
+    """Log a *pending* panic episode for a fired nudge's first step; return its id.
+
+    The id is what the one-tap "Did it" button signs against
+    (:func:`resolve_panic_step`); until it resolves the episode has a NULL
+    ``outcome`` and is invisible to the drift pass. Caller should only invoke this
+    when a resolvable button will actually be delivered (a public origin + signing
+    key), so an unresolvable nudge never becomes a phantom miss.
+    """
+    when = (now or utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+    return store.log_episode(
+        PANIC_EPISODE_TYPE,
+        acknowledged=False,
+        context=f"overwhelm first step: {plan.first_step_for or '?'}",
+        notes=plan.first_step,
+        timestamp=when,
+    )
+
+
+def resolve_panic_step(store: MemoryStore, episode_id: int) -> bool:
+    """Mark a pending panic first-step episode done (a one-tap "Did it"); True if it changed."""
+    return store.set_episode_outcome(episode_id, outcome="success", acknowledged=True)
+
+
+def sweep_pending_panic_steps(
+    store: MemoryStore,
+    now: datetime,
+    *,
+    window_minutes: float = DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
+) -> int:
+    """Sweep panic first-step nudges left unanswered past the window into a miss.
+
+    Balances the drift signal: without this only taps ("Did it") would ever be
+    recorded, so ``panic`` drift would read as always-on-track. Returns the count
+    swept. Mirrors :func:`prefrontal.coaching.sweep_stale_nudges`.
+    """
+    cutoff = (now - timedelta(minutes=window_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    stale = store.pending_episodes(PANIC_EPISODE_TYPE, before=cutoff)
+    for ep in stale:
+        store.set_episode_outcome(ep["id"], outcome="miss", acknowledged=False)
+    return len(stale)
