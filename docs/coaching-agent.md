@@ -1,15 +1,17 @@
 # Coaching agent — design spec
 
-Status: **partially built** (rollout §12 steps 1 + the Task Paralysis evaluator).
-Shipped: the pure engine (`prefrontal/coaching.py` — `Cue`, `CoachContext`,
-`Decision`, `collect_cues`, `choose_channel`, `suppressed`/debounce+quiet-hours,
-`decide`), the per-module `evaluate()` hook (`modules/base.py`, default `[]`), the
-`TaskParalysisModule.evaluate` producer (fires `tiny_first_step` over the
-worst-avoided todo), and a `prefrontal coach [--dry-run]` CLI. **Not yet built:**
-`POST /webhooks/coach/check` (§7), the `outing/check` → `LocationAnchorModule.
-evaluate` parity refactor (§3/§12 step 2), the optional LLM phrasing pass (§5),
-outcome-logging correlation ids (§8), and the encouragement layer (§9) — those
-code names remain intended design. This is the implementation spec
+Status: **partially built** (rollout §12 steps 1 + 3 + the Task Paralysis
+evaluator). Shipped: the pure engine (`prefrontal/coaching.py` — `Cue`,
+`CoachContext`, `Decision`, `collect_cues`, `choose_channel`,
+`suppressed`/debounce+quiet-hours, `decide`), the per-module `evaluate()` hook
+(`modules/base.py`, default `[]`), the `TaskParalysisModule.evaluate` producer
+(fires `tiny_first_step` over the worst-avoided todo), a `prefrontal coach
+[--dry-run]` CLI, and the **`POST /webhooks/coach/check`** tick endpoint (§7) with
+its `deploy/n8n/coach-check.workflow.json` delivery workflow. **Not yet built:**
+the `outing/check` → `LocationAnchorModule.evaluate` parity refactor (§3/§12 step
+2), the optional LLM phrasing pass (§5), outcome-logging correlation ids (§8),
+and the encouragement layer (§9) — those code names remain intended design. This
+is the implementation spec
 for the **Coaching Agent** —
 the component in the README architecture that sits between the memory layer and
 the delivery layer and turns *what Prefrontal knows* into *the right message, on

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from fastapi.testclient import TestClient
+
 from prefrontal.coaching import (
     CoachContext,
     Cue,
@@ -17,10 +19,15 @@ from prefrontal.coaching import (
     record_fired,
     suppressed,
 )
+from prefrontal.config import Settings
+from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.modules import get
+from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
+
+SECRET = "coach-secret"
 
 NOON = datetime(2026, 7, 2, 12, 0, 0)  # inside the default 8–22 responsive window
 
@@ -188,3 +195,52 @@ def test_task_paralysis_evaluator_prefers_the_decomposition_first_step():
     )
     cue = get("task_paralysis").evaluate(store, _ctx())[0]
     assert "Find the accountant's number and dial." in cue.text
+
+
+# -- POST /webhooks/coach/check ----------------------------------------------
+
+
+def _http_store_with_avoided_todo():
+    """An unscoped store (for create_app) whose one user has an avoided todo."""
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "tester", display_name="T", token=SECRET, is_operator=True)
+    scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+    # Always-responsive window so the tick isn't flakily suppressed by wall-clock.
+    scoped.set_state("responsive_hours_start", "0", source="explicit")
+    scoped.set_state("responsive_hours_end", "0", source="explicit")
+    tid = scoped.add_todo("Call the accountant", priority=2)
+    old = (utcnow() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    scoped.conn.execute("UPDATE todos SET created_at = ? WHERE id = ?", (old, tid))
+    scoped.conn.commit()
+    return conn, unscoped
+
+
+def test_coach_check_requires_auth():
+    conn = init_db(":memory:")
+    try:
+        app = create_app(store=MemoryStore(conn), settings=Settings(webhook_secret=SECRET))
+        with TestClient(app) as c:
+            assert c.post("/webhooks/coach/check", json={}).status_code == 401
+    finally:
+        conn.close()
+
+
+def test_coach_check_fires_a_cue_then_debounces():
+    conn, unscoped = _http_store_with_avoided_todo()
+    try:
+        app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET))
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": SECRET}
+            first = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
+            assert len(first) == 1
+            cue = first[0]
+            assert cue["module"] == "task_paralysis"
+            assert cue["intervention"] == "tiny_first_step"
+            assert cue["channel"] == "push" and cue["fire"] is True
+            assert "Call the accountant" in cue["text"]
+            # Recorded as fired → the same cue is debounced on the next poll.
+            second = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
+            assert second == []
+    finally:
+        conn.close()

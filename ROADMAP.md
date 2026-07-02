@@ -50,10 +50,14 @@ the first test. Code follow-ups below are optional polish.
   ctx)` is the new opt-in hook (default `[]`), and **Task Paralysis** is the first
   producer: its `evaluate` fires a `tiny_first_step` nudge over the worst-avoided
   open todo (reusing `avoided_todos` + the stored decomposition). Run one tick
-  with `prefrontal coach` (`--dry-run` to see cues pre-suppression). Covered by
-  `tests/test_coaching.py`. This is steps 1 + the Task Paralysis evaluator of the
-  spec's rollout; the HTTP endpoint, the `outing/check` parity refactor, LLM
-  phrasing, and outcome-logging correlation remain (see "Coaching agent" below).
+  with `prefrontal coach` (`--dry-run` to see cues pre-suppression), or poll
+  **`POST /webhooks/coach/check`** — the tick endpoint that fans over every
+  enabled module and returns each fire-worthy cue with its chosen channel, deduped
+  so a standing cue won't repeat (`deploy/n8n/coach-check.workflow.json` delivers
+  them via ntfy at a channel-matched priority). Covered by `tests/test_coaching.py`.
+  This is steps 1 + 3 + the Task Paralysis evaluator of the spec's rollout; the
+  `outing/check` parity refactor, LLM phrasing, and outcome-logging correlation
+  remain (see "Coaching agent" below).
 - **Interactive nudge action buttons (ntfy)** ✅ — one-tap, background nudge
   responses with no app switch. `sign_action`/`verify_action`
   (`prefrontal/webhooks/oauth.py`) extend the signed one-tap-link mechanism from
@@ -358,14 +362,14 @@ ordered by leverage; each is independent but builds on denser capture.
   (above) is the first concrete slice — it triages email and routes actionable
   items to `todos`; the spec generalizes that single path into a reusable
   `Signal → TriageDecision → apply` core with a `triage_log`.
-- **Coaching agent** — **the engine core has shipped** (see "Recently shipped":
-  `prefrontal/coaching.py` + `Module.evaluate` + the Task Paralysis evaluator +
-  `prefrontal coach`). Specced in [`docs/coaching-agent.md`](docs/coaching-agent.md):
-  a tick-driven decision engine that asks each module's `evaluate()` hook "what's
-  due?", then decides whether to fire, what to say, and on which channel (learned
+- **Coaching agent** — **the engine core + tick endpoint have shipped** (see
+  "Recently shipped": `prefrontal/coaching.py` + `Module.evaluate` + the Task
+  Paralysis evaluator + `prefrontal coach` + `POST /webhooks/coach/check`).
+  Specced in [`docs/coaching-agent.md`](docs/coaching-agent.md): a tick-driven
+  decision engine that asks each module's `evaluate()` hook "what's due?", then
+  decides whether to fire, what to say, and on which channel (learned
   `channel_response` + quiet hours + debounce), logging the outcome back as an
-  episode. Still open (spec §12 rollout): the `POST /webhooks/coach/check`
-  endpoint + n8n workflow (step 3); refactoring `outing/check`'s loop into
+  episode. Still open (spec §12 rollout): refactoring `outing/check`'s loop into
   `LocationAnchorModule.evaluate` for parity (step 2); the optional LLM phrasing
   pass on ambient/digest cues (step 5); outcome-logging correlation ids (§8); and
   folding in the encouragement layer below (§9).
