@@ -10,7 +10,9 @@ from fastapi import APIRouter
 
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.webhooks._common import (
+    DEFAULT_BODY_DOUBLE_MIN_MISSES,
     DEFAULT_FIT_CAP_MINUTES,
+    DEFAULT_MAX_FIRST_STEP_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
     MAX_CATEGORIES,
     Annotated,
@@ -28,7 +30,9 @@ from prefrontal.webhooks._common import (
     augment_todo,
     available_now,
     avoided_todos,
+    body_double_message,
     category_stats,
+    decompose_task,
     filter_suggestible,
     fit_todos,
     format_window,
@@ -39,6 +43,7 @@ from prefrontal.webhooks._common import (
     pick_now,
     record_drop_feedback,
     record_todo_closed,
+    repeat_stalled_tasks,
     resolve_user,
     status,
     timedelta,
@@ -210,6 +215,48 @@ def build_router(
                     "deadline": a["todo"].get("deadline"),
                 }
                 for a in items
+            ]
+        }
+
+    @router.get("/todos/stuck", tags=["todos"])
+    def todos_stuck(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Tasks you keep bailing on, with a start-together (body-double) nudge.
+
+        The Task Paralysis ``body_double_nudge`` intervention: repeated ``miss``
+        episodes on the same task mean a solo start isn't working. Each entry
+        pairs the stall count with one tiny heuristic first step and a
+        start-together suggestion — surfacing what a plain reminder won't fix.
+        A task that was ultimately completed drops off (see
+        :func:`~prefrontal.modules.task_paralysis.repeat_stalled_tasks`).
+        """
+        memory = ctx.store
+        try:
+            min_misses = int(
+                memory.get_state("body_double_min_misses")
+                or DEFAULT_BODY_DOUBLE_MIN_MISSES
+            )
+        except (TypeError, ValueError):
+            min_misses = DEFAULT_BODY_DOUBLE_MIN_MISSES
+        stuck = repeat_stalled_tasks(
+            memory.episodes_by_type("task", limit=200), min_misses=min_misses
+        )
+        max_first = memory.get_float(
+            "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
+        )
+        return {
+            "stuck": [
+                {
+                    "title": s["title"],
+                    "misses": s["misses"],
+                    "attempts": s["attempts"],
+                    "first_step": decompose_task(
+                        s["title"], max_first_minutes=max_first
+                    ).first_step,
+                    "suggestion": body_double_message(s["title"], s["misses"]),
+                }
+                for s in stuck
             ]
         }
 
