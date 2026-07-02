@@ -51,26 +51,8 @@ class _FakeClient:
 # --- JSON extraction ------------------------------------------------------
 
 
-def test_extract_json_plain_object():
-    assert assistant._extract_json('{"reply":"ok","actions":[]}') == {
-        "reply": "ok",
-        "actions": [],
-    }
-
-
-def test_extract_json_fenced_and_trailing_prose():
-    text = 'Sure!\n```json\n{"reply":"hi","actions":[]}\n```\nAnything else?'
-    assert assistant._extract_json(text) == {"reply": "hi", "actions": []}
-
-
-def test_extract_json_bare_array():
-    assert assistant._extract_json('[{"op":"drop_todo","todo_id":1}]') == [
-        {"op": "drop_todo", "todo_id": 1}
-    ]
-
-
-def test_extract_json_garbage_returns_none():
-    assert assistant._extract_json("I can't help with that.") is None
+# JSON extraction moved to prefrontal.llm_json (shared with the todo augmenter /
+# decomposer); see tests/test_llm_json.py.
 
 
 # --- interpret ------------------------------------------------------------

@@ -14,13 +14,13 @@ injected, and explicitly-supplied fields are always kept as-is.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
 from prefrontal.integrations.ollama import OllamaError
+from prefrontal.llm_json import extract_json_object
 
 if TYPE_CHECKING:
     from prefrontal.memory.store import MemoryStore
@@ -303,14 +303,7 @@ def _llm_fields(
         )
     except OllamaError:
         return {}
-    match = re.search(r"\{.*\}", reply or "", re.DOTALL)
-    if not match:
-        return {}
-    try:
-        parsed = json.loads(match.group())
-    except (ValueError, TypeError):
-        return {}
-    return _coerce_llm(parsed) if isinstance(parsed, dict) else {}
+    return _coerce_llm(extract_json_object(reply))
 
 
 def augment_todo(
@@ -500,28 +493,23 @@ def decompose_task(
             )
         except OllamaError:
             reply = ""
-        match = re.search(r"\{.*\}", reply or "", re.DOTALL)
-        if match:
-            try:
-                raw = json.loads(match.group())
-            except (ValueError, TypeError):
-                raw = {}
-            first = raw.get("first_step") if isinstance(raw, dict) else None
-            if isinstance(first, str) and first.strip():
-                mins = raw.get("first_step_minutes")
-                mins = (
-                    float(mins)
-                    if isinstance(mins, (int, float)) and not isinstance(mins, bool)
-                    else max_first_minutes
-                )
-                mins = max(MIN_ESTIMATE_MINUTES, min(mins, max_first_minutes))
-                steps = raw.get("steps")
-                steps = (
-                    [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS]
-                    if isinstance(steps, list)
-                    else []
-                )
-                return Decomposition(first.strip(), mins, steps, "llm")
+        raw = extract_json_object(reply)
+        first = raw.get("first_step")
+        if isinstance(first, str) and first.strip():
+            mins = raw.get("first_step_minutes")
+            mins = (
+                float(mins)
+                if isinstance(mins, (int, float)) and not isinstance(mins, bool)
+                else max_first_minutes
+            )
+            mins = max(MIN_ESTIMATE_MINUTES, min(mins, max_first_minutes))
+            steps = raw.get("steps")
+            steps = (
+                [str(s).strip() for s in steps if str(s).strip()][:_MAX_STEPS]
+                if isinstance(steps, list)
+                else []
+            )
+            return Decomposition(first.strip(), mins, steps, "llm")
     return _heuristic_decomposition(title, max_first_minutes)
 
 

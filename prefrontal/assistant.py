@@ -30,7 +30,6 @@ falls back to Ollama.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -38,6 +37,7 @@ from typing import Any, Protocol
 from prefrontal.commitments import to_utc
 from prefrontal.integrations.anthropic import AnthropicError
 from prefrontal.integrations.ollama import OllamaError
+from prefrontal.llm_json import extract_json
 from prefrontal.todos import (
     ENERGY_LEVELS,
     MAX_ESTIMATE_MINUTES,
@@ -205,46 +205,6 @@ def _possible_conflicts(memory: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _extract_json(text: str) -> dict[str, Any] | list[Any] | None:
-    """Pull the first JSON object/array out of a model reply (tolerant of fences).
-
-    Tries the whole string first, then a ```json fenced block, then a
-    brace/bracket-matched span. Returns ``None`` if nothing parses.
-    """
-    text = text.strip()
-    if not text:
-        return None
-    for candidate in _json_candidates(text):
-        try:
-            return json.loads(candidate)
-        except (json.JSONDecodeError, ValueError):
-            continue
-    return None
-
-
-def _json_candidates(text: str) -> list[str]:
-    """Yield progressively looser JSON substrings to attempt parsing."""
-    candidates = [text]
-    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence:
-        candidates.append(fence.group(1))
-    # First balanced {...} or [...] span, whichever appears first.
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = text.find(opener)
-        if start == -1:
-            continue
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == opener:
-                depth += 1
-            elif text[i] == closer:
-                depth -= 1
-                if depth == 0:
-                    candidates.append(text[start : i + 1])
-                    break
-    return candidates
-
-
 def interpret(
     message: str,
     snapshot: dict[str, Any],
@@ -271,7 +231,7 @@ def interpret(
         raw = client.generate(prompt, system=ASSISTANT_SYSTEM)
     except _CLIENT_ERRORS:
         return "", []
-    parsed = _extract_json(raw)
+    parsed = extract_json(raw)
     if isinstance(parsed, list):
         return "", [a for a in parsed if isinstance(a, dict)]
     if isinstance(parsed, dict):

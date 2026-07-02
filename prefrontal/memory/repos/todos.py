@@ -81,6 +81,28 @@ class TodosRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def _update_todo_field(
+        self, todo_id: int, column: str, value: Any, *, open_only: bool = True
+    ) -> bool:
+        """Set one column on a todo, touching ``updated_at``. Returns ``True`` if changed.
+
+        The single-field todo setters below are all the same one-column update; this
+        is the one place that SQL lives. ``open_only`` (the default) restricts the
+        write to open todos — a closed todo's deadline/priority/estimate/title/window
+        is moot; ``set_todo_category`` passes ``False`` because recategorizing a
+        finished todo still corrects the historical rollup. ``column`` is always an
+        internal literal (never caller/user input), so the f-string interpolation is
+        injection-safe, exactly like the escalating-session helpers.
+        """
+        open_clause = " AND status = 'open'" if open_only else ""
+        cur = self.conn.execute(
+            f"UPDATE todos SET {column} = ?, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE id = ? AND user_id = ?{open_clause}",
+            (value, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def update_todo_deadline(self, todo_id: int, deadline: str | None) -> bool:
         """Set (or clear) an open todo's deadline. Returns ``True`` if it changed.
 
@@ -92,13 +114,7 @@ class TodosRepo:
             todo_id: The todo to update.
             deadline: A UTC deadline (``YYYY-MM-DD HH:MM:SS``), or ``None`` to clear it.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET deadline = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'open'",
-            (deadline, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "deadline", deadline)
 
     def set_todo_priority(self, todo_id: int, priority: int) -> bool:
         """Set an open todo's priority (0 low … 3 urgent). Returns ``True`` if changed.
@@ -111,13 +127,7 @@ class TodosRepo:
             todo_id: The todo to update.
             priority: 0 low / 1 normal / 2 high / 3 urgent.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET priority = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'open'",
-            (priority, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "priority", priority)
 
     def set_todo_estimate(self, todo_id: int, estimate_minutes: float | None) -> bool:
         """Set (or clear) an open todo's minute estimate. Returns ``True`` if changed.
@@ -130,13 +140,7 @@ class TodosRepo:
             todo_id: The todo to update.
             estimate_minutes: Realistic minutes, or ``None`` to clear it.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET estimate_minutes = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'open'",
-            (estimate_minutes, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "estimate_minutes", estimate_minutes)
 
     def set_todo_title(self, todo_id: int, title: str) -> bool:
         """Rename an open todo. Returns ``True`` if it changed.
@@ -149,13 +153,7 @@ class TodosRepo:
             todo_id: The todo to update.
             title: The new title.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET title = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'open'",
-            (title, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "title", title)
 
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
@@ -180,13 +178,7 @@ class TodosRepo:
         the historical rollup. The caller (``augment_todo`` / the endpoint) is
         responsible for clamping to the cap; this just writes the value.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET category = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ?",
-            (category, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "category", category, open_only=False)
 
     def set_todo_window(self, todo_id: int, time_window: str | None) -> bool:
         """Set (or clear) a todo's per-todo suggestion window. Returns ``True`` if changed.
@@ -198,13 +190,7 @@ class TodosRepo:
         todo's window is moot), matching :meth:`update_todo_deadline`. The caller is
         responsible for validating the format; this just writes the value.
         """
-        cur = self.conn.execute(
-            "UPDATE todos SET time_window = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ? AND user_id = ? AND status = 'open'",
-            (time_window, todo_id, self._uid()),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "time_window", time_window)
 
     def todo_categories(self) -> list[str]:
         """Distinct categories in use, most-common first (drives cap + hints).

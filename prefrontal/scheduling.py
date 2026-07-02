@@ -338,6 +338,15 @@ def _minutes_to_hhmm(minute: int) -> str:
     return f"{minute // 60:02d}:{minute % 60:02d}"
 
 
+def format_window(start_minute: int, end_minute: int) -> str:
+    """Format a ``(start, end)`` minutes pair as ``"HH:MM-HH:MM"``.
+
+    The inverse of :func:`parse_window`; the canonical way to render a normalized
+    window so callers (e.g. the todo-window endpoint) don't re-derive the format.
+    """
+    return f"{_minutes_to_hhmm(start_minute)}-{_minutes_to_hhmm(end_minute)}"
+
+
 def parse_window(spec: str | None) -> tuple[int, int] | None:
     """Parse a ``"HH:MM-HH:MM"`` window into ``(start_min, end_min)``, or ``None``.
 
