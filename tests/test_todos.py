@@ -694,9 +694,22 @@ def _all_day(store):
     store.set_state("fit_day_end", "23:59")
 
 
-def test_todos_now_suggests_fitting_todo(client, store_open):
+#: A fixed "now" for the /todos/now tests. Widening the day band alone isn't
+#: enough: the free window is the gap from *now* to day-end, so a run late in the
+#: real UTC day left <30 min and flaked. Freezing the endpoint's clock to midday
+#: makes the remaining window deterministic (~12h, capped at DEFAULT_FIT_CAP).
+_FROZEN_NOON = datetime(2026, 6, 15, 12, 0, 0)
+
+
+def _freeze_todos_now_clock(monkeypatch, when=_FROZEN_NOON):
+    """Pin the ``/todos/now`` route's ``utcnow()`` to a fixed instant."""
+    monkeypatch.setattr("prefrontal.webhooks.routers.todos.utcnow", lambda: when)
+
+
+def test_todos_now_suggests_fitting_todo(client, store_open, monkeypatch):
     """A short open todo with an open calendar is surfaced as the pick."""
     _all_day(store_open)
+    _freeze_todos_now_clock(monkeypatch)
     client.post("/todos", headers=_auth(),
                 json={"title": "Reply to landlord", "estimate_minutes": 30})
     r = client.get("/todos/now", headers=_auth()).json()
@@ -735,17 +748,20 @@ def test_todos_now_requires_auth(client):
     assert client.get("/todos/now").status_code == 401
 
 
-def test_todos_now_surfaces_the_avoided_thing(client, store_open):
+def test_todos_now_surfaces_the_avoided_thing(client, store_open, monkeypatch):
     """A week-old important todo beats a fresh shiny quick one (anti-avoidance)."""
     _all_day(store_open)
+    _freeze_todos_now_clock(monkeypatch)
     client.post("/todos", headers=_auth(),
                 json={"title": "Fun quick thing", "estimate_minutes": 10, "priority": 1})
     client.post("/todos", headers=_auth(),
                 json={"title": "Call the accountant", "estimate_minutes": 15, "priority": 2})
-    # Age the accountant todo past the avoidance threshold (open ≥ 3 days).
+    # Age the accountant todo past the avoidance threshold (open ≥ 3 days),
+    # relative to the frozen clock so age is deterministic (8 days before now).
+    aged = (_FROZEN_NOON - timedelta(days=8)).strftime("%Y-%m-%d %H:%M:%S")
     store_open.conn.execute(
-        "UPDATE todos SET created_at = datetime('now','-8 days') WHERE title = ?",
-        ("Call the accountant",),
+        "UPDATE todos SET created_at = ? WHERE title = ?",
+        (aged, "Call the accountant"),
     )
     store_open.conn.commit()
     r = client.get("/todos/now", headers=_auth()).json()
