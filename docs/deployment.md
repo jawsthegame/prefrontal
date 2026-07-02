@@ -146,6 +146,23 @@ curl -s http://localhost:11434/api/generate \
 n8n calls this endpoint; Prefrontal itself does not (in this setup). Pick a model
 that fits the mini's RAM — `llama3.1:8b` is a good default on 16GB+.
 
+### Optional: Claude for the dashboard assistant
+
+The dashboard's assistant chat box (natural-language edits to todos/commitments)
+parses with the local Ollama model by default — no extra setup. For more reliable
+parsing you can opt into Claude: install the extra and set a key.
+
+```bash
+pip install -e '.[anthropic]'          # adds the official anthropic SDK
+# in .env:
+#   ANTHROPIC_API_KEY=sk-ant-...        # enables Claude for the assistant
+#   ANTHROPIC_MODEL=claude-opus-4-8     # optional; this is the default
+```
+
+When the key is set the assistant prefers Claude and falls back to Ollama if it's
+unreachable; with no key it stays fully local. The key is only ever sent on
+outbound calls to Anthropic — no other data leaves the host because of this.
+
 ---
 
 ## 5. Tailscale (remote access)

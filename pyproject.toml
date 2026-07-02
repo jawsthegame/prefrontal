@@ -40,6 +40,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
+# Opt-in cloud reasoning for the dashboard assistant. Local-first by default: the
+# base install stays network-free and uses Ollama; install this extra and set
+# ANTHROPIC_API_KEY to let the assistant use Claude (Ollama remains the fallback).
+anthropic = [
+    "anthropic>=0.40",
+]
 
 [project.scripts]
 prefrontal = "prefrontal.cli:main"

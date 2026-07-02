@@ -94,6 +94,63 @@ class TodosRepo:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def set_todo_priority(self, todo_id: int, priority: int) -> bool:
+        """Set an open todo's priority (0 low … 3 urgent). Returns ``True`` if changed.
+
+        Like :meth:`update_todo_deadline`, only open todos are editable, so this
+        no-ops on a closed or absent todo. The natural-language assistant uses
+        this to honor "bump the dentist call to urgent"; callers clamp the value.
+
+        Args:
+            todo_id: The todo to update.
+            priority: 0 low / 1 normal / 2 high / 3 urgent.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET priority = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open'",
+            (priority, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_todo_estimate(self, todo_id: int, estimate_minutes: float | None) -> bool:
+        """Set (or clear) an open todo's minute estimate. Returns ``True`` if changed.
+
+        A better estimate changes whether — and where — the todo fits into free
+        time, so the assistant surfaces this for "that'll only take 10 minutes".
+        Only open todos are editable; ``None`` clears the estimate.
+
+        Args:
+            todo_id: The todo to update.
+            estimate_minutes: Realistic minutes, or ``None`` to clear it.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET estimate_minutes = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open'",
+            (estimate_minutes, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_todo_title(self, todo_id: int, title: str) -> bool:
+        """Rename an open todo. Returns ``True`` if it changed.
+
+        Only open todos are editable (a closed todo's wording is history). Used by
+        the assistant for "reword that todo to …". Callers should reject blank
+        titles before calling.
+
+        Args:
+            todo_id: The todo to update.
+            title: The new title.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET title = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open'",
+            (title, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 
