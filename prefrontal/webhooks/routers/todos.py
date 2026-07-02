@@ -8,6 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 
+from prefrontal.memory.store import gmail_message_url
 from prefrontal.webhooks._common import (
     DEFAULT_FIT_CAP_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
@@ -165,10 +166,19 @@ def build_router(
         memory = ctx.store
         todos = memory.open_todos()
         avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
-        accounts = memory.mail_accounts_for_todos([t["id"] for t in todos])
+        sources = memory.mail_sources_for_todos([t["id"] for t in todos])
         for todo in todos:
             todo["decomposition"] = memory.get_decomposition(todo["id"])
-            todo["account"] = accounts.get(todo["id"])
+            src = sources.get(todo["id"]) or {}
+            account = src.get("account")
+            todo["account"] = account
+            # Deep-link back to the source email, but only for Gmail inboxes —
+            # the link is a Gmail rfc822msgid search, meaningless elsewhere.
+            todo["source_url"] = (
+                gmail_message_url(src.get("message_id"))
+                if resolved_settings.is_gmail_account(account)
+                else None
+            )
             hit = avoided.get(todo["id"])
             todo["avoidance"] = (
                 {"days_open": hit["days_open"], "score": hit["score"]} if hit else None

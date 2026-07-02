@@ -227,6 +227,40 @@ class MailRepo:
         ).fetchall()
         return {r["todo_id"]: r["account"] for r in rows if r["todo_id"] is not None}
 
+    def mail_sources_for_todos(self, todo_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Map each todo id to its originating mail's ``account``/ids (batch).
+
+        The richer companion to :meth:`mail_accounts_for_todos`: alongside the
+        account it also returns the provider ``message_id`` and ``thread_id``,
+        which a surface turns into a deep link back to the source email (e.g. a
+        Gmail ``rfc822msgid:`` search). Uses the same ``mail_messages.todo_id``
+        link, so todos with no originating mail are simply absent.
+
+        Args:
+            todo_ids: The todo ids to look up (empty is fine).
+
+        Returns:
+            A ``{todo_id: {"account", "message_id", "thread_id"}}`` dict covering
+            only mail-created todos.
+        """
+        if not todo_ids:
+            return {}
+        placeholders = ",".join("?" * len(todo_ids))
+        rows = self.conn.execute(
+            f"SELECT todo_id, account, message_id, thread_id FROM mail_messages "
+            f"WHERE user_id = ? AND todo_id IN ({placeholders})",
+            (self._uid(), *todo_ids),
+        ).fetchall()
+        return {
+            r["todo_id"]: {
+                "account": r["account"],
+                "message_id": r["message_id"],
+                "thread_id": r["thread_id"],
+            }
+            for r in rows
+            if r["todo_id"] is not None
+        }
+
     def record_triage_drop(
         self,
         *,

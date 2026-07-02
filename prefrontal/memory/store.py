@@ -40,6 +40,7 @@ from prefrontal.memory._helpers import (
     feed_label,
     feed_slug,
     generate_token,
+    gmail_message_url,
     sha256_hex,
 )
 from prefrontal.memory.db import connect, init_db
@@ -58,6 +59,7 @@ __all__ = [
     "feed_label",
     "feed_slug",
     "commitment_url",
+    "gmail_message_url",
     "generate_token",
     "sha256_hex",
     "seed_user_state",

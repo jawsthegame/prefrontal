@@ -107,6 +107,36 @@ class ImapAccount:
         )
 
 
+def gmail_account_names(
+    names: tuple[str, ...] | list[str], env: dict[str, str] | None = None
+) -> frozenset[str]:
+    """Return which of ``names`` are Gmail inboxes, by the same rule as an account.
+
+    An account is Gmail when its resolved IMAP host contains ``gmail`` — the
+    exact test :attr:`ImapAccount.is_gmail` applies. The host comes from
+    ``MAIL_IMAP_HOST_<NAME>`` (name uppercased), defaulting to
+    :data:`DEFAULT_IMAP_HOST` (which *is* Gmail). So an account with no explicit
+    host — including one fed purely by n8n's Gmail node, which sets no IMAP env —
+    counts as Gmail; point ``MAIL_IMAP_HOST_<NAME>`` at a non-Gmail server to opt
+    a non-Gmail inbox out. This is the single source of truth for Gmail-ness,
+    shared by the IMAP fetcher and the deep-link surfaces.
+
+    Args:
+        names: The logical account names to classify (e.g. from configured
+            retention policies / label pills).
+        env: Environment mapping (defaults to ``os.environ``).
+
+    Returns:
+        The subset of ``names`` that resolve to a Gmail host.
+    """
+    env = env if env is not None else dict(os.environ)
+    return frozenset(
+        name
+        for name in names
+        if "gmail" in env.get(f"MAIL_IMAP_HOST_{name.upper()}", DEFAULT_IMAP_HOST).lower()
+    )
+
+
 def fetch_unread(
     account: ImapAccount,
     *,
