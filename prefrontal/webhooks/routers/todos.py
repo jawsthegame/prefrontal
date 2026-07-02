@@ -31,6 +31,7 @@ from prefrontal.webhooks._common import (
     category_stats,
     filter_suggestible,
     fit_todos,
+    format_window,
     local_datetime,
     local_hour_of,
     normalize_category,
@@ -62,8 +63,7 @@ def _validated_window(spec: str | None) -> str | None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f'Bad time_window: {spec!r} — expected "HH:MM-HH:MM".',
         )
-    start, end = parsed
-    return f"{start // 60:02d}:{start % 60:02d}-{end // 60:02d}:{end % 60:02d}"
+    return format_window(*parsed)
 
 
 def build_router(
