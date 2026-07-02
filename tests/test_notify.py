@@ -43,6 +43,12 @@ def test_nudge_actions_per_kind():
     dep = nudge_actions("departure", 9, base_url=BASE, secret=SIGNING, handle="tom")
     assert [b["label"] for b in dep] == ["Made it", "Missed it"]
 
+    pause = nudge_actions("pause", 5, base_url=BASE, secret=SIGNING, handle="tom")
+    assert [b["label"] for b in pause] == ["Stay on task", "Park it", "Switch anyway"]
+    assert verify_action(pause[2]["url"].split("t=", 1)[1], SIGNING) == (
+        "tom", "switch_switch", 5,
+    )
+
 
 def test_nudge_actions_empty_when_unconfigured_or_unknown():
     # No origin / secret → no buttons (feature simply off).

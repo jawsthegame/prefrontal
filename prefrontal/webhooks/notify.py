@@ -31,6 +31,13 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     "focus": (("focus_end", "Wrap up"),),
     "outing": (("outing_return", "I'm back"), ("outing_abandon", "Abandon")),
     "departure": (("made_it", "Made it"), ("missed_it", "Missed it")),
+    # Reflective pause — resolve the pull to switch in one tap (was a second
+    # /focus/resolve call plus a multi-tap menu).
+    "pause": (
+        ("switch_return", "Stay on task"),
+        ("switch_defer", "Park it"),
+        ("switch_switch", "Switch anyway"),
+    ),
 }
 
 

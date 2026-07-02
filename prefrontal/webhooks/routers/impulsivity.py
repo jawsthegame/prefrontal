@@ -20,6 +20,7 @@ from prefrontal.webhooks._common import (
     SwitchResolve,
     SwitchResolved,
     _impulse_captured_confirmation,
+    _nudge_actions,
     _switch_resolved_confirmation,
     build_pause_message,
     infer_capture_title,
@@ -144,6 +145,14 @@ def build_router(
             pause_seconds=pause_seconds(elapsed, session.get("planned_minutes"), base),
             message=build_pause_message(session["intended_task"], elapsed, name=name),
             options=list(SWITCH_ACTIONS),
+            # One-tap ntfy buttons that resolve the pause without leaving the app:
+            # Stay on task / Park it / Switch anyway (empty if unconfigured).
+            actions=_nudge_actions(
+                resolved_settings,
+                ctx.user.get("handle") or "",
+                "pause",
+                session["id"],
+            ),
         )
 
     @router.post(
