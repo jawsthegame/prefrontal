@@ -43,6 +43,7 @@ from prefrontal.webhooks._common import (
     parse_time_window,
     project_free_time,
     record_focus_end,
+    record_focus_switched,
     record_outing_abandoned,
     record_outing_return,
     resolve_user,
@@ -395,6 +396,30 @@ def build_router(
                 return _dismiss_page("Welcome back — outing logged.")
             record_outing_abandoned(memory, closed)
             return _dismiss_page("Outing closed. No worries.")
+
+        if action in ("switch_return", "switch_defer", "switch_switch"):
+            # Resolve a reflective pause in one tap (mirrors /webhooks/focus/resolve;
+            # the impulse was already counted when the pause fired). The buttons
+            # ride on the SwitchPause response, so the session is the pull's target.
+            session = memory.get_focus_session(target_id)
+            if session is None or session.get("status") != "active":
+                return _dismiss_page("That focus block is already resolved.")
+            task = session.get("intended_task") or "your task"
+            if action == "switch_return":
+                return _dismiss_page(f"Staying on “{task}.” 👊")
+            if action == "switch_defer":
+                memory.add_todo(
+                    f"Come back to what pulled you off “{task}”", source="impulse"
+                )
+                memory.mark_switch_deferred(target_id)
+                return _dismiss_page(
+                    "Parked it as a todo — back to what you were doing. "
+                    "(Rename it later if you like.)"
+                )
+            closed = memory.close_focus_session(target_id, status="switched")
+            if closed is not None:
+                record_focus_switched(memory, closed)
+            return _dismiss_page(f"Switched away from “{task}.” Logged it.")
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)

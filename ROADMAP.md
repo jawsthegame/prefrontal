@@ -46,14 +46,16 @@ the first test. Code follow-ups below are optional polish.
   *dismiss* to an allowlisted action set, and `GET /nudge/act` runs the tapped
   action through the same close/record logic as its full endpoint: **Wrap up**
   (focus end), **I'm back** / **Abandon** (outing close), **Made it** / **Missed
-  it** (departure outcome). `prefrontal/webhooks/notify.py` builds the ntfy
-  `http` action-button specs, and the outing/focus/departure check endpoints
-  return them as an `actions` list (empty unless a public origin + signing key
-  are set) for a "publish to ntfy" delivery node
-  (`deploy/n8n/interactive-nudge-ntfy.workflow.json`). Idempotent per button;
-  covered by `tests/test_notify.py` + `tests/test_nudge_act.py`. This is the
-  action-button core of the "Delivery layer + interactive nudges" item below;
-  first-class Python publishing and the pause's return/defer/switch remain.
+  it** (departure outcome), and **Stay on task** / **Park it** / **Switch
+  anyway** on the impulsivity reflective pause — collapsing its old two-call
+  `switch` → `resolve` menu into a single background tap.
+  `prefrontal/webhooks/notify.py` builds the ntfy `http` action-button specs, and
+  the outing/focus/departure/pause endpoints return them as an `actions` list
+  (empty unless a public origin + signing key are set) for a "publish to ntfy"
+  delivery node (`deploy/n8n/interactive-nudge-ntfy.workflow.json`). Idempotent
+  per button; covered by `tests/test_notify.py` + `tests/test_nudge_act.py`. This
+  is the action-button core of the "Delivery layer + interactive nudges" item
+  below; first-class Python publishing remains.
 - **Multi-tenant (multiple users)** ✅ — one deployment now serves several people.
   A `users` table with per-user tokens (`sha256(token)`, shown once like an API
   key) and a `user_id` foreign key on every user-owned table; a `MemoryStore`
@@ -356,12 +358,11 @@ ordered by leverage; each is independent but builds on denser capture.
   interactivity is an "open this URL" link — ntfy notifications support inline
   `http` action buttons that fire a request *directly from the notification*,
   with no app switch, so **Wrap up / I'm back / Abandon / Made it / Missed it**
-  are now one background tap. Still open:
+  — and now **Stay on task / Park it / Switch anyway** on the reflective pause —
+  are one background tap. Still open:
   - **first-class Python Pushover / Ntfy / TTS publishing** — today an n8n node
     does the publish by reading the `actions` a nudge returns; a native delivery
     client (routing, quiet hours, debounce) belongs with the coaching agent.
-  - **return / defer / switch** on the impulsivity reflective pause — its
-    two-call `switch` → `resolve` flow needs its own action wiring.
   - the proactive **panic** nudge carrying its first step inline + an action to
     open the full `/panic` triage.
 
@@ -373,8 +374,9 @@ ordered by leverage; each is independent but builds on denser capture.
     shortcut name);
   - nudge copy that tiptoes around Pushover's lack of inline actions (e.g.
     "…open End focus to wrap up" instead of a real **Wrap up** button);
-  - the two-call `switch` → `resolve` flow and the multi-tap menu shortcuts,
-    which a single inline action button collapses to one tap.
+  - the two-call `switch` → `resolve` flow and the multi-tap menu shortcuts —
+    **done for ntfy**: the pause's Stay / Park it / Switch anyway are now single
+    inline buttons (the Shortcuts menu path remains for the Pushover fallback).
 
   Local-first stays the default (ntfy is self-hostable). Pairs with the
   coaching-agent delivery routing and per-user delivery (multi-tenant) below.

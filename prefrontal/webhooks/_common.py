@@ -370,6 +370,13 @@ class SwitchPause(BaseModel):
     )
     message: str
     options: list[str] = Field(description="Resolutions the client should present.")
+    actions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Signed one-tap ntfy action buttons (Stay / Park it / Switch anyway); "
+            "empty unless a public origin + signing key are configured."
+        ),
+    )
 
 
 class SwitchResolve(BaseModel):

@@ -144,11 +144,14 @@ def verify_dismiss(
 #: nudge without opening the app" set, distinct from the passive ``dismiss``.
 #: Kept explicit so a forged/garbled action can never reach a handler.
 NUDGE_ACTIONS = (
-    "focus_end",      # "Wrap up" — end an active focus session
-    "outing_return",  # "I'm back" — close an outing as returned
-    "outing_abandon", # "Abandon" — close an outing as abandoned
-    "made_it",        # made a commitment on time
-    "missed_it",      # missed / ran late for a commitment
+    "focus_end",       # "Wrap up" — end an active focus session
+    "outing_return",   # "I'm back" — close an outing as returned
+    "outing_abandon",  # "Abandon" — close an outing as abandoned
+    "made_it",         # made a commitment on time
+    "missed_it",       # missed / ran late for a commitment
+    "switch_return",   # reflective pause → stay on the current focus block
+    "switch_defer",    # reflective pause → park the pull as a todo, stay put
+    "switch_switch",   # reflective pause → switch away (close block as switched)
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

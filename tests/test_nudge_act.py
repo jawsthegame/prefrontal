@@ -168,6 +168,41 @@ def test_act_made_it_and_missed_it_log_departure_outcome(client, store):
     assert cid in store.dismissed_departures()
 
 
+def test_focus_switch_pause_includes_resolve_actions(client, store):
+    sid = store.start_focus_session("the API refactor", planned_minutes=25.0)
+    pause = client.post(
+        "/webhooks/focus/switch", json={"session_id": sid}, headers=_auth()
+    ).json()
+    assert [a["label"] for a in pause["actions"]] == [
+        "Stay on task", "Park it", "Switch anyway"
+    ]
+    token = pause["actions"][0]["url"].split("t=", 1)[1]
+    assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, "switch_return", sid)
+
+
+def test_act_switch_return_keeps_the_block(client, store):
+    sid = store.start_focus_session("deep work", planned_minutes=25.0)
+    resp = client.get(f"/nudge/act?t={sign_action(DEFAULT_HANDLE, 'switch_return', sid, SIGNING)}")
+    assert resp.status_code == 200 and "Staying on" in resp.text
+    assert store.get_focus_session(sid)["status"] == "active"  # unchanged
+
+
+def test_act_switch_defer_parks_a_todo_and_stays(client, store):
+    sid = store.start_focus_session("deep work", planned_minutes=25.0)
+    resp = client.get(f"/nudge/act?t={sign_action(DEFAULT_HANDLE, 'switch_defer', sid, SIGNING)}")
+    assert resp.status_code == 200 and "Parked it" in resp.text
+    assert store.get_focus_session(sid)["status"] == "active"  # still on the block
+    parked = [t for t in store.open_todos() if t.get("source") == "impulse"]
+    assert len(parked) == 1
+
+
+def test_act_switch_switch_closes_the_block(client, store):
+    sid = store.start_focus_session("deep work", planned_minutes=25.0)
+    resp = client.get(f"/nudge/act?t={sign_action(DEFAULT_HANDLE, 'switch_switch', sid, SIGNING)}")
+    assert resp.status_code == 200 and "Switched away" in resp.text
+    assert store.get_focus_session(sid)["status"] == "switched"
+
+
 def test_act_rejects_bad_token(client):
     assert client.get("/nudge/act?t=garbage").status_code == 400
     assert client.get("/nudge/act").status_code == 400
