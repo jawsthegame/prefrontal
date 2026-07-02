@@ -39,6 +39,16 @@ PRAGMA foreign_keys = ON;
 -- cross. Tokens are never stored in plaintext — only sha256(token), shown once
 -- at creation like an API key. `handle` is the stable CLI/operator identifier;
 -- `display_name` is what appears in nudges ("Tom, you said 15 min…").
+-- Households — the second scope alongside per-user. Two co-parents belong to the
+-- same household and share its rows (facts, agreements, roster); this is the
+-- deliberate exception to strict per-user scoping. A user belongs to 0 or 1
+-- household (v1). See docs/household-sheet.md.
+CREATE TABLE IF NOT EXISTS households (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     handle       TEXT    NOT NULL UNIQUE,        -- short login-ish name: 'tom', 'sam'
@@ -46,6 +56,10 @@ CREATE TABLE IF NOT EXISTS users (
     token_hash   TEXT    NOT NULL UNIQUE,         -- sha256(token); raw token never stored
     status       TEXT    NOT NULL DEFAULT 'active', -- active | disabled
     is_operator  BOOLEAN NOT NULL DEFAULT 0,      -- may call admin endpoints
+    -- The household this user co-parents in, or NULL (not in one). A later-added
+    -- column, so it rides the migrate.py back-fill (nullable, no data migration);
+    -- the household tables key on it. See docs/household-sheet.md.
+    household_id INTEGER REFERENCES households(id),
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -390,6 +404,66 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
     lon          REAL,
     last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- == Shared household sheet (the Parent Context Pack backbone) ================
+--
+-- These three tables are household-scoped (household_id NOT NULL), NOT user-
+-- scoped: two co-parents in one household see the same rows. Reached through the
+-- household-scoped store methods (repos/household.py), which inject
+-- `WHERE household_id = ?` the way the per-user methods inject `WHERE user_id`.
+--
+-- child_id convention: SQLite treats NULLs as distinct in a UNIQUE constraint,
+-- which would let duplicate household-wide rows through. So household-wide
+-- facts/agreements use the sentinel child_id = 0 (children.id is a positive
+-- AUTOINCREMENT, so 0 never collides with a real child). See docs/household-sheet.md.
+
+-- The kids roster: stable identity only (name + birthday). Everything else about
+-- a child is a fact (household_facts), not a column here.
+CREATE TABLE IF NOT EXISTS children (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    name         TEXT NOT NULL,
+    birthday     DATE,
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_children_household ON children (household_id);
+
+-- The categorized key/value grid — sizes, routines, food/allergies, health,
+-- school, contacts. Every write carries provenance (updated_by/updated_at): the
+-- raw material for making invisible load legible and for the v2 delta digest.
+CREATE TABLE IF NOT EXISTS household_facts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    child_id     INTEGER NOT NULL DEFAULT 0,       -- children.id, or 0 = household-wide
+    category     TEXT NOT NULL,                    -- controlled vocab (see FACT_CATEGORIES)
+    item         TEXT NOT NULL,                    -- normalized field, e.g. "shoe size"
+    value        TEXT,                             -- free text, e.g. "13"
+    updated_by   INTEGER REFERENCES users(id),     -- provenance — who last set it
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, child_id, category, item)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_facts ON household_facts (household_id, child_id);
+
+-- Standing behaviour plans both parents follow (so the kids get one answer, not
+-- two). Light structure: a plain-language `body` plus an optional `structured`
+-- JSON for star/points charts (thresholds -> rewards, earn-only rules).
+CREATE TABLE IF NOT EXISTS household_agreements (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    child_id     INTEGER NOT NULL DEFAULT 0,       -- children.id, or 0 = whole household
+    title        TEXT NOT NULL,
+    kind         TEXT NOT NULL DEFAULT 'consistency',  -- reward | consistency | routine
+    body         TEXT,                             -- the plan in plain language (Markdown)
+    structured   TEXT,                             -- optional JSON, e.g. star thresholds
+    updated_by   INTEGER REFERENCES users(id),
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, child_id, title)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_agreements ON household_agreements (household_id, child_id);
 
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each

@@ -38,6 +38,13 @@ from prefrontal.commitments import to_utc
 from prefrontal.integrations.anthropic import AnthropicError
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.llm_json import extract_json
+from prefrontal.memory.repos.household import (
+    AGREEMENT_KINDS,
+    FACT_CATEGORIES,
+    HOUSEHOLD_WIDE,
+    normalize_fact_category,
+    normalize_fact_item,
+)
 from prefrontal.todos import (
     ENERGY_LEVELS,
     MAX_ESTIMATE_MINUTES,
@@ -62,6 +69,13 @@ ALLOWED_OPS = frozenset(
         "add_commitment",
         "cancel_commitment",
         "dismiss_conflict",
+        # Shared household sheet (docs/household-sheet.md §5). Only usable when the
+        # caller is in a household — the snapshot omits the household context
+        # otherwise, and these validators drop with a reason.
+        "set_fact",
+        "clear_fact",
+        "set_agreement",
+        "remove_agreement",
     }
 )
 
@@ -134,7 +148,17 @@ ASSISTANT_SYSTEM = (
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
     '- {"op":"dismiss_conflict","key":str}\n\n'
-    "priority: 0 low, 1 normal, 2 high, 3 urgent. If the user asks for something "
+    "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
+    "If (and ONLY if) the snapshot has a \"household\" object, these shared "
+    "co-parent sheet ops are also available. Resolve a kid's name to an id from "
+    "\"household.children\"; omit \"child\" (or use 0) for a household-wide fact. "
+    "\"category\" MUST be one of \"household.fact_categories\":\n"
+    '- {"op":"set_fact","category":str,"item":str,"value":str,"child":int?}\n'
+    '- {"op":"clear_fact","category":str,"item":str,"child":int?}\n'
+    '- {"op":"set_agreement","title":str,"body":str,'
+    '"kind":"reward"|"consistency"|"routine"?,"child":int?,"structured":object?}\n'
+    '- {"op":"remove_agreement","agreement_id":int}\n\n'
+    "If the user asks for something "
     "you cannot express with these ops, leave actions empty and say so in reply. "
     "If nothing needs doing, return an empty actions list."
 )
@@ -176,7 +200,34 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
         for c in memory.upcoming_commitments(limit=25)
     ]
     conflicts = _possible_conflicts(memory)
-    return {"todos": todos, "commitments": commitments, "conflicts": conflicts}
+    snapshot = {"todos": todos, "commitments": commitments, "conflicts": conflicts}
+    household = _household_snapshot(memory)
+    if household is not None:
+        snapshot["household"] = household
+    return snapshot
+
+
+def _household_snapshot(memory: Any) -> dict[str, Any] | None:
+    """Household context for the shared sheet, or ``None`` if the user is in none.
+
+    Gives the model the roster (so "Sam" resolves to a real ``child`` id), the
+    controlled fact-category vocabulary, and open agreements (so "remove the
+    sticker plan" resolves to a real ``agreement_id``) — the same id-discipline
+    as the todo/commitment snapshot. Omitted entirely for a user with no
+    household, which is the signal the household-op validators key on.
+    """
+    if memory.household_id_or_none() is None:
+        return None
+    return {
+        "children": [
+            {"id": c["id"], "name": c.get("name")} for c in memory.children()
+        ],
+        "fact_categories": list(FACT_CATEGORIES),
+        "agreements": [
+            {"id": a["id"], "title": a.get("title"), "child_id": a.get("child_id")}
+            for a in memory.agreements()
+        ],
+    }
 
 
 def _possible_conflicts(memory: Any) -> list[dict[str, Any]]:
@@ -319,6 +370,78 @@ def _require_commitment(action: dict[str, Any], snapshot: dict[str, Any]) -> tup
     raise _ActionError(f"no upcoming commitment with id {cid}")
 
 
+def _require_household(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the snapshot's household context, or reject (caller isn't a co-parent)."""
+    household = snapshot.get("household")
+    if not isinstance(household, dict):
+        raise _ActionError("you're not set up in a household")
+    return household
+
+
+def _resolve_child(action: dict[str, Any], household: dict[str, Any]) -> tuple[int, str]:
+    """Resolve an optional ``child`` to ``(child_id, label)``.
+
+    A missing/zero ``child`` means household-wide (:data:`HOUSEHOLD_WIDE`). A given
+    id must match a child in the snapshot, so the model can't attach a fact to a
+    kid who doesn't exist.
+    """
+    raw = action.get("child")
+    if raw is None:
+        return HOUSEHOLD_WIDE, "the household"
+    cid = _as_int(raw)
+    if cid is None:
+        raise _ActionError("child must be a child id from the snapshot")
+    if cid == HOUSEHOLD_WIDE:
+        return HOUSEHOLD_WIDE, "the household"
+    for c in household.get("children", []):
+        if c.get("id") == cid:
+            return cid, (c.get("name") or f"child #{cid}")
+    raise _ActionError(f"no child with id {cid}")
+
+
+def _require_agreement(
+    action: dict[str, Any], household: dict[str, Any]
+) -> tuple[int, str]:
+    """Resolve ``agreement_id`` against the snapshot, returning ``(id, title)``."""
+    aid = _as_int(action.get("agreement_id"))
+    if aid is None:
+        raise _ActionError("agreement_id must be an integer")
+    for a in household.get("agreements", []):
+        if a.get("id") == aid:
+            return aid, (a.get("title") or f"agreement #{aid}")
+    raise _ActionError(f"no agreement with id {aid}")
+
+
+def _as_fact_category(value: Any) -> str:
+    """Validate a fact category against the controlled vocab."""
+    cat = normalize_fact_category(value if isinstance(value, str) else None)
+    if cat is None:
+        raise _ActionError(
+            "category must be one of " + ", ".join(FACT_CATEGORIES)
+        )
+    return cat
+
+
+def _as_structured(value: Any) -> str | None:
+    """Validate an optional ``structured`` payload, returning a JSON string or None.
+
+    Accepts an object (serialized) or an already-serialized JSON string; anything
+    that isn't valid JSON is rejected rather than stored as junk the render can't
+    parse.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    if isinstance(value, str):
+        try:
+            json.loads(value)
+        except ValueError:
+            raise _ActionError("structured must be valid JSON") from None
+        return value
+    raise _ActionError("structured must be a JSON object")
+
+
 def _validate_one(action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     """Validate a single raw action, raising :class:`_ActionError` on any problem."""
     op = action.get("op")
@@ -409,6 +532,43 @@ def _validate_one(action: dict[str, Any], snapshot: dict[str, Any]) -> Validated
             raise _ActionError("no dismissable conflict with that key")
         label = keys[key] or key
         return ValidatedAction(op, {"key": key}, f"Dismiss conflict: {label}")
+
+    if op in ("set_fact", "clear_fact"):
+        household = _require_household(snapshot)
+        child_id, who = _resolve_child(action, household)
+        category = _as_fact_category(action.get("category"))
+        item = normalize_fact_item(action.get("item"))
+        if not item:
+            raise _ActionError("item must be a non-empty string")
+        params = {"child_id": child_id, "category": category, "item": item}
+        if op == "clear_fact":
+            return ValidatedAction(op, params, f"Clear {who}'s {item}")
+        value = action.get("value")
+        if value is not None and not isinstance(value, (str, int, float)):
+            raise _ActionError("value must be text")
+        params["value"] = str(value).strip() if value is not None else None
+        shown = params["value"] or "—"
+        return ValidatedAction(op, params, f"Set {who}'s {item} → {shown}")
+
+    if op == "set_agreement":
+        household = _require_household(snapshot)
+        child_id, who = _resolve_child(action, household)
+        title = _as_title(action.get("title"))
+        params = {"child_id": child_id, "title": title}
+        kind = action.get("kind")
+        if kind is not None:
+            if str(kind).lower() not in AGREEMENT_KINDS:
+                raise _ActionError("kind must be reward|consistency|routine")
+            params["kind"] = str(kind).lower()
+        if action.get("body") is not None:
+            params["body"] = _nonblank(action.get("body"), "body")
+        params["structured"] = _as_structured(action.get("structured"))
+        return ValidatedAction(op, params, f"Set plan “{title}” for {who}")
+
+    if op == "remove_agreement":
+        household = _require_household(snapshot)
+        aid, title = _require_agreement(action, household)
+        return ValidatedAction(op, {"agreement_id": aid}, f"Remove plan: “{title}”")
 
     raise _ActionError(f"unsupported action '{op}'")  # pragma: no cover
 
@@ -534,6 +694,33 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "dismiss_conflict":
             memory.dismiss_conflict(p["key"])
             result["ok"] = True
+        elif op == "set_fact":
+            # updated_by is the acting (scoped) user — never model-supplied — so
+            # every LLM-driven edit is attributed (the raw material for the digest).
+            memory.set_fact(
+                category=p["category"],
+                item=p["item"],
+                value=p.get("value"),
+                updated_by=memory.user_id,
+                child_id=p["child_id"],
+            )
+            result["ok"] = True
+        elif op == "clear_fact":
+            result["ok"] = memory.clear_fact(
+                category=p["category"], item=p["item"], child_id=p["child_id"]
+            )
+        elif op == "set_agreement":
+            aid = memory.set_agreement(
+                title=p["title"],
+                body=p.get("body"),
+                kind=p.get("kind", "consistency"),
+                structured=p.get("structured"),
+                updated_by=memory.user_id,
+                child_id=p["child_id"],
+            )
+            result.update(ok=True, detail=f"agreement #{aid}")
+        elif op == "remove_agreement":
+            result["ok"] = memory.remove_agreement(p["agreement_id"])
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except ValueError as exc:  # e.g. to_utc on an unparseable date

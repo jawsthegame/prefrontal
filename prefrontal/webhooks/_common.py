@@ -81,6 +81,7 @@ from prefrontal.departure import (
     record_departure_outcome,
 )
 from prefrontal.geocode import enrich_commitments, normalize_query
+from prefrontal.household import build_sheet, render_sheet
 from prefrontal.impact import (
     analyze_impact,
     at_risk,
@@ -539,6 +540,18 @@ class UserCreate(BaseModel):
     )
 
 
+class HouseholdCreate(BaseModel):
+    """Body of ``POST /admin/households`` — create a household (operator-only)."""
+
+    name: str = Field(description="Household name, e.g. 'The Kims'.")
+
+
+class HouseholdMember(BaseModel):
+    """Body of ``POST /admin/households/{id}/members`` — add a user (operator-only)."""
+
+    handle: str = Field(description="Handle of the user to put into the household.")
+
+
 class TodoCreate(BaseModel):
     """Body of ``POST /todos`` — an open loop to fit into free time."""
 
@@ -951,6 +964,8 @@ __all__ = [
     "HTMLResponse",
     "HTTPException",
     "Header",
+    "HouseholdCreate",
+    "HouseholdMember",
     "INFER_TIMEOUT_SECONDS",
     "ImpulseCaptured",
     "KINDS",
@@ -1023,6 +1038,7 @@ __all__ = [
     "body_double_message",
     "build_message",
     "build_panic",
+    "build_sheet",
     "build_pause_message",
     "build_profile",
     "build_snapshot",
@@ -1089,6 +1105,7 @@ __all__ = [
     "register_oauth_routes",
     "render_briefing",
     "render_panic",
+    "render_sheet",
     "repeat_stalled_tasks",
     "require_operator",
     "resolve_user",

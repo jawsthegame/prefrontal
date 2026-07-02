@@ -134,7 +134,12 @@ def resolve_zone(tzid: str | None, default_tz: str) -> ZoneInfo:
 #: double-booking. See :mod:`prefrontal.classify`.
 KIND_SELF = "self"
 KIND_FYI = "fyi"
-KINDS = (KIND_SELF, KIND_FYI)
+#: A kid's appointment (dentist, doctor, school event). Like ``self`` it's a real
+#: obligation someone must cover, but it belongs to the shared household sheet
+#: (docs/household-sheet.md §3.6) — the sheet surfaces the upcoming ones so both
+#: co-parents see them and "who's on pickup" is legible.
+KIND_CHILD = "child"
+KINDS = (KIND_SELF, KIND_FYI, KIND_CHILD)
 
 #: Placeholder/hold titles that aren't real events. When one of these overlaps a
 #: specifically-titled event (e.g. a work "Block" mirroring a real personal

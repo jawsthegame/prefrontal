@@ -131,6 +131,11 @@
     <div class="body"></div>
   </section>
 
+  <section class="card" id="c-household" style="display:none">
+    <p class="label">The kids — shared sheet</p>
+    <div class="body"></div>
+  </section>
+
   <section class="card" id="c-upcoming">
     <p class="label">Coming up</p>
     <div class="days" id="day-strip"></div>
@@ -365,6 +370,59 @@ async function loadPanic() {
 function openPanic() { $("#panic").style.display = "flex"; loadPanic(); }
 function closePanic() { $("#panic").style.display = "none"; }
 
+// The shared household sheet, rendered from the structured /household/sheet
+// response. Leads with what changed recently (the load-balancing surface — the
+// first thing the other parent sees), then the per-child facts, standing plans,
+// and upcoming kid appointments.
+function renderHousehold(sheet) {
+  let html = "";
+  if ((sheet.recently_changed || []).length) {
+    html += `<div class="day-title">Recently changed</div>`;
+    html += sheet.recently_changed.map((c) => {
+      const meta = [c.who, c.when].filter(Boolean).map(esc).join(" · ");
+      return `<div class="item"><div class="what">${esc(c.what)}` +
+        (meta ? `<div class="where">${meta}</div>` : "") + `</div></div>`;
+    }).join("");
+  }
+  for (const block of (sheet.per_child || [])) {
+    html += `<div class="day-title">${esc(block.child_name)}</div>`;
+    for (const cat of (block.categories || [])) {
+      html += `<div class="item"><div class="what"><strong>${esc(cat.label)}</strong>` +
+        cat.items.map((it) =>
+          `<div class="where">${esc(it.item)}: ${esc(it.value || "—")}</div>`).join("") +
+        `</div></div>`;
+    }
+  }
+  for (const a of (sheet.agreements || [])) {
+    const who = a.child_name ? ` — ${esc(a.child_name)}` : "";
+    html += `<div class="item"><div class="what"><strong>${esc(a.title)}</strong>${who} ` +
+      `<span class="cal">${esc(a.kind)}</span>` +
+      (a.body ? `<div class="where">${esc(a.body)}</div>` : "") + `</div></div>`;
+  }
+  if ((sheet.upcoming || []).length) {
+    html += `<div class="day-title">Upcoming appointments</div>`;
+    html += sheet.upcoming.map((ap) =>
+      `<div class="item"><div class="time">${esc(ap.when)}</div>` +
+      `<div class="what">${esc(ap.title)}` +
+      (ap.location ? `<div class="where">${esc(ap.location)}</div>` : "") +
+      `</div></div>`).join("");
+  }
+  return html || `<p class="empty">Nothing on the sheet yet.</p>`;
+}
+
+async function loadHousehold() {
+  // Only members have a sheet; a 404 (not in a household) just hides the card.
+  const card = $("#c-household");
+  try {
+    const data = await api("/household/sheet");
+    card.querySelector(".body").innerHTML = renderHousehold(data.sheet || {});
+    card.style.display = "";
+  } catch (err) {
+    if (err && err.code === 401) throw err;  // let load() reveal the gate
+    card.style.display = "none";
+  }
+}
+
 async function load() {
   // Always attempt; a Google session cookie may authenticate. 401 reveals the gate.
   $("#status").textContent = "updating…";
@@ -389,6 +447,9 @@ async function load() {
   } else {
     $("#day-detail").innerHTML = `<p class="empty">Couldn't load upcoming days.</p>`;
   }
+  // The shared household sheet is a separate, member-only fetch (hidden on 404).
+  try { await loadHousehold(); }
+  catch (err) { if (err && err.code === 401) { gate("That code didn't work."); return; } }
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
