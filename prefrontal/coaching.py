@@ -170,6 +170,20 @@ def _within_hours(hour: int, start: int, end: int) -> bool:
     return hour >= start or hour < end  # window wraps past midnight
 
 
+def in_quiet_hours(store: Any, now: datetime, tz: str) -> bool:
+    """Whether local time is outside the user's responsive hours (spec §6).
+
+    The same quiet-hours window :func:`suppressed` gates non-critical cues on,
+    factored out so other proactive pollers (panic, encouragement) can defer to
+    responsive hours without assembling a full :class:`CoachContext`. Reads the
+    per-user ``responsive_hours_start`` / ``responsive_hours_end`` state, like
+    :func:`build_context`.
+    """
+    start = int(store.get_float("responsive_hours_start", DEFAULT_RESPONSIVE_START))
+    end = int(store.get_float("responsive_hours_end", DEFAULT_RESPONSIVE_END))
+    return not _within_hours(local_hour_of(now, tz), start, end)
+
+
 def _parse_ts(ts: Any) -> datetime | None:
     try:
         return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")

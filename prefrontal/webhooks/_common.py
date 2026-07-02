@@ -56,7 +56,7 @@ from prefrontal.assistant import (
 )
 from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.classify import classify_kind
-from prefrontal.coaching import resolve_ack
+from prefrontal.coaching import in_quiet_hours, resolve_ack
 from prefrontal.commitments import (
     KINDS,
     conflict_dismissal_key,
@@ -1135,6 +1135,7 @@ __all__ = [
     "infer_capture_title",
     "infer_time_window",
     "ingest_messages",
+    "in_quiet_hours",
     "is_abandoned",
     "is_at_home",
     "learned_corrections",

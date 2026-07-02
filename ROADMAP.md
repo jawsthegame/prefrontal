@@ -543,4 +543,42 @@ ordered by leverage; each is independent but builds on denser capture.
   shared sheet, v2 = the proactive delta-digest to the other parent. Open:
   household membership/invite model.)*
 
+- **"Have you eaten?" — a self-care nudge that pierces flow.** A recurring
+  check-in that missing a meal is a classic ADHD/hyperfocus failure mode: starting
+  around late morning (~11:00, tunable), ask *"have you eaten?"*; if the answer is
+  no, keep gently re-asking on a cadence **even while a focus session is active** —
+  the one cue that deliberately overrides the Hyperfocus module's protect-the-flow
+  stance, because the whole point is that a flow state is exactly when you forget.
+  Fits the shipped machinery cleanly: a small **self-care cue producer** on the
+  `Module.evaluate` tick engine, with a per-day `coaching_state` cursor
+  (`ate_today` / `last_meal_prompt_at`) so it fires once you confirm and re-nudges
+  on an interval until then. Reuses the interactive-nudge action buttons (one-tap
+  **Ate** / **Snooze 30m** on ntfy, closing the loop like the other `/nudge/act`
+  buttons) and the delivery layer's channel routing. Still respects **responsive
+  hours** (no 2am food nag) and debounce — the same gates the panic check now
+  uses — so "persistent" means every ~30–45 min within the day, not spam. Config:
+  a start hour, a re-ask interval, and an off switch (a `self_care` coaching key,
+  off by default). *(Open: whether it's its own tiny module or a facet of a future
+  self-care/basics pack alongside water/meds/sleep; and whether a confirmed meal
+  logs an episode so the learning loop can notice the days you skip.)*
+- **Shopify MCP — record-shop assistant + used-collection buying.** Connect to
+  (or self-host) a **Shopify MCP server** so Prefrontal can read the record shop's
+  catalog, inventory, and sales, turning the assistant into a genuine shop
+  co-pilot rather than a personal-only tool. The near-term win is **buying
+  decisions**: sell-through and stock signals from Shopify inform what to reorder
+  and what's dead weight. The bigger prize is **used collections** — when a lot of
+  used records comes in, help appraise and price it: pull comps, weigh
+  condition/rarity against local sell-through, and flag what's worth buying vs
+  passing. Slots onto the existing MCP tool surface (the assistant already reaches
+  MCP tools via tool-search) and the NL-assistant/triage spine; a batch of
+  candidate purchases is naturally a triage problem (`Signal → TriageDecision →
+  apply`) and the actions land as todos/commitments. Architecturally this is the
+  first **non-ADHD, small-business Context Pack** ("Record Shop") on the
+  orthogonal life-context axis — a Shopify tool registry + shop vocabulary, reusing
+  todos, triage, and delivery. Local-first stays the default; the Shopify
+  connection is explicit and opt-in, like the Anthropic provider path. *(Open:
+  Shopify auth/scopes and whether to run our own MCP server vs. a hosted one;
+  comps data source for used pricing; multi-tenant boundary between shop data and
+  personal data.)*
+
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
