@@ -29,6 +29,7 @@ from prefrontal.departure import (
 from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
 from prefrontal.memory.migrate import backfill_added_columns
+from prefrontal.memory.repos.nudges import DEFAULT_NUDGE_TTL_HOURS
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -374,14 +375,35 @@ def test_departure_check_records_nudge_and_lists_it(client, store):
 
 
 def test_recent_nudges_hides_expired(store):
-    """recent_nudges omits a nudge whose expires_at has passed; NULL never expires."""
+    """recent_nudges omits a nudge whose expires_at has passed; a fresh one stays."""
     store.record_nudge(kind="departure", message="stale", level="go", expires_at=_utc(-90))
     store.record_nudge(kind="departure", message="live", level="go", expires_at=_utc(20))
-    store.record_nudge(kind="outing", message="no-expiry", level="soft")
+    store.record_nudge(kind="outing", message="fresh-outing", level="soft")
 
     messages = [n["message"] for n in store.recent_nudges()]
     assert "stale" not in messages  # its meeting started 90 min ago
-    assert {"live", "no-expiry"} <= set(messages)
+    assert {"live", "fresh-outing"} <= set(messages)
+
+
+def test_record_nudge_defaults_expiry_when_none_given(store):
+    """An outing nudge (no natural end) gets a default TTL so it can't linger.
+
+    Without this, an outing "still on track?" nudge stayed NULL-expiry and
+    lingered on the widget for hours after you were back.
+    """
+    store.record_nudge(kind="outing", message="on track?", level="soft")
+    row = store.recent_nudges()[0]
+    assert row["expires_at"] is not None
+    expiry = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S")
+    expected = utcnow() + timedelta(hours=DEFAULT_NUDGE_TTL_HOURS)
+    assert abs((expiry - expected).total_seconds()) < 120  # ~2h out, within tolerance
+
+
+def test_record_nudge_preserves_explicit_expiry(store):
+    """An explicit expires_at (e.g. a departure's start_at) is not overridden."""
+    start = _utc(15)
+    store.record_nudge(kind="departure", message="leave now", level="go", expires_at=start)
+    assert store.recent_nudges()[0]["expires_at"] == start
 
 
 def test_migrate_adds_nudges_expires_at_idempotently():

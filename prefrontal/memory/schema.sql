@@ -335,9 +335,11 @@ CREATE TABLE IF NOT EXISTS nudges (
     message    TEXT    NOT NULL,            -- the delivered nudge text
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- When this nudge stops being relevant, so a surface can hide a stale one.
-    -- NULL means no expiry (the flat age cap on the surface is the only bound).
-    -- A departure nudge sets it to the commitment's start_at: "leave now" is
-    -- pointless once the meeting has started, so it must not linger for hours.
+    -- Defaults to a couple hours out (DEFAULT_NUDGE_TTL_HOURS) when the caller
+    -- gives none, so an outing "still on track?" doesn't linger for hours after
+    -- you're back. A departure nudge instead sets it to the commitment's
+    -- start_at: "leave now" is pointless once the meeting has started. NULL
+    -- (no expiry) only occurs on legacy rows predating the default.
     expires_at DATETIME
 );
 
