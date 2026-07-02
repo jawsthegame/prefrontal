@@ -16,6 +16,7 @@ from prefrontal.webhooks._common import (
     DEFAULT_ROAD_FACTOR,
     DEFAULT_SOON_MINUTES,
     DEFAULT_TRAVEL_SPEED_KMH,
+    DEFAULT_WORK_LEAD_MINUTES,
     KINDS,
     Annotated,
     Any,
@@ -58,8 +59,58 @@ from prefrontal.webhooks._common import (
     status,
     sweep_pending_panic_steps,
     sync_calendar,
+    timedelta,
     utcnow,
 )
+
+
+def _attend_slugs(memory) -> tuple[str, ...]:
+    """Calendar feed slugs that default to attend mode (from ``attend_calendars``).
+
+    A comma-separated coaching-state string (default ``"work"``) → a lowercased
+    tuple. Falls back to :data:`DEFAULT_ATTEND_SLUGS` when unset or empty.
+    """
+    from prefrontal.departure import DEFAULT_ATTEND_SLUGS
+
+    raw = memory.get_state("attend_calendars", "work") or ""
+    slugs = tuple(s.strip().lower() for s in raw.split(",") if s.strip())
+    return slugs or DEFAULT_ATTEND_SLUGS
+
+
+def _office_day_on(memory) -> bool:
+    """Whether an in-office day is currently flagged (``office_day_until`` in the future).
+
+    The ``/webhooks/departure/office-day`` toggle stores a self-expiring UTC
+    timestamp; while it's in the future, work commitments use the travel-aware
+    "leave now" path instead of the attend-from-here reminder.
+    """
+    until = memory.get_state("office_day_until", "") or ""
+    parsed = _parse_dt_or_none(until)
+    return parsed is not None and parsed > utcnow()
+
+
+def _departure_kwargs(memory) -> dict[str, Any]:
+    """Shared :func:`plan_departure` tuning read from coaching state.
+
+    Both the ``/departure/check`` (prediction) and ``/departure/left`` (outcome)
+    surfaces plan departures the same way; this keeps their parameters in lockstep
+    so a commitment is scored against the same leave-by it was nudged for.
+    """
+    return {
+        "bias": memory.get_float("time_estimation_bias", 1.0),
+        "speed_kmh": memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+        "road_factor": memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
+        "prep_minutes": memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+        "heads_up_minutes": memory.get_float(
+            "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+        ),
+        "soon_minutes": memory.get_float("departure_soon_minutes", DEFAULT_SOON_MINUTES),
+        "work_lead_minutes": memory.get_float(
+            "work_departure_lead_minutes", DEFAULT_WORK_LEAD_MINUTES
+        ),
+        "attend_slugs": _attend_slugs(memory),
+        "office_day": _office_day_on(memory),
+    }
 
 
 def build_router(
@@ -166,7 +217,6 @@ def build_router(
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
 
-        bias = memory.get_float("time_estimation_bias", 1.0)
         name = ctx.user.get("display_name") or ""
         handle = ctx.user.get("handle") or ""
         settings: Settings = request.app.state.settings
@@ -174,21 +224,13 @@ def build_router(
         # departure nudge; excluding them here (rather than after picking the
         # top) lets the *next* commitment still surface.
         dismissed = memory.dismissed_departures()
+        dep_kwargs = _departure_kwargs(memory)
         plans = [
             plan_departure(
                 c,
                 current_lat=cur_lat,
                 current_lon=cur_lon,
-                bias=bias,
-                speed_kmh=memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
-                road_factor=memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
-                prep_minutes=memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
-                heads_up_minutes=memory.get_float(
-                    "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
-                ),
-                soon_minutes=memory.get_float(
-                    "departure_soon_minutes", DEFAULT_SOON_MINUTES
-                ),
+                **dep_kwargs,
             )
             for c in memory.upcoming_commitments()
             if c["id"] not in dismissed
@@ -207,6 +249,7 @@ def build_router(
                 "travel_minutes": top.travel_minutes,
                 "basis": top.basis,
                 "level": top.level,
+                "mode": top.mode,
                 # One-tap link that dismisses this commitment's departure nudges.
                 "dismiss_url": _dismiss_url(
                     settings, handle, "departure", top.commitment["id"]
@@ -236,6 +279,44 @@ def build_router(
             "reminder": reminder,
             "location_known": cur_lat is not None and cur_lon is not None,
         }
+
+    @router.post("/webhooks/departure/office-day", tags=["schedule"])
+    async def departure_office_day(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Flag (or clear) today as an in-office day.
+
+        Work commitments default to an "attend from here" 5-min reminder (you're
+        already where you'll take the meeting). On the mornings you actually commute
+        in, tap this once and every work commitment switches back to the
+        travel-aware "leave now" nudge for the rest of the day.
+
+        Body (all optional): ``on`` (default ``true``; ``false`` clears the flag)
+        and ``hours`` (how long the flag lasts, default 16 — long enough to cover a
+        work day, and self-expiring so a forgotten toggle doesn't leak into
+        tomorrow). Per-meeting exceptions don't need this: a ``[commute]`` tag in a
+        single event's title switches just that one to travel mode.
+        """
+        memory = ctx.store
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        if body.get("on", True) is False:
+            memory.set_state("office_day_until", "", source="user")
+            return {"office_day": False}
+
+        try:
+            hours = float(body.get("hours") or 16.0)
+        except (TypeError, ValueError):
+            hours = 16.0
+        until = (utcnow() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        memory.set_state("office_day_until", until, source="user")
+        return {"office_day": True, "until": until}
 
     @router.post("/webhooks/departure/left", tags=["schedule"])
     async def departure_left(
@@ -283,23 +364,13 @@ def build_router(
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
 
-        bias = memory.get_float("time_estimation_bias", 1.0)
         plans = [
             plan_departure(
                 c,
                 current_lat=cur_lat,
                 current_lon=cur_lon,
-                bias=bias,
-                speed_kmh=memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
-                road_factor=memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
-                prep_minutes=memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
-                heads_up_minutes=memory.get_float(
-                    "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
-                ),
-                soon_minutes=memory.get_float(
-                    "departure_soon_minutes", DEFAULT_SOON_MINUTES
-                ),
                 now=departed_at,
+                **_departure_kwargs(memory),
             )
             for c in memory.upcoming_commitments()
         ]

@@ -21,6 +21,13 @@ anchor's soft/firm/call shape:
 - **soon** — leave time is within ``departure_soon_minutes`` (start getting ready).
 - **go** — at or past the leave-by time (head out now, or you're already late).
 
+Not every commitment is somewhere you travel to. Work meetings are mostly
+attended from wherever you already are (desk / WFH), so a commitment on an
+attend-mode feed (:func:`departure_mode`) skips travel logic entirely: it fires a
+single short "starts soon" reminder ``work_lead_minutes`` before start instead of
+a "leave now" nudge. A ``[commute]`` tag on the meeting, or a flagged in-office
+day, flips it back to the travel path.
+
 The mirror of the *prediction* is the *outcome*: did the user actually leave on
 time? An actual-departure signal — an iOS "when I leave Home" geofence hitting
 ``/webhooks/departure/left`` — is attributed to the commitment it was for
@@ -62,6 +69,20 @@ DEFAULT_PREP_MINUTES = 5.0
 #: Leave-by horizons (minutes) for the two pre-departure nudge levels.
 DEFAULT_HEADS_UP_MINUTES = 30.0
 DEFAULT_SOON_MINUTES = 10.0
+
+#: Lead (minutes) for an **attend-mode** commitment — you're already where you'll
+#: attend it (e.g. a work meeting taken from your desk), so there's nothing to
+#: travel to and a single short "starts soon" reminder is all you want.
+DEFAULT_WORK_LEAD_MINUTES = 5.0
+
+#: Calendar feed slugs (``external_id`` namespaces) whose commitments default to
+#: attend mode — "I'm already where I need to be." Tunable via ``attend_calendars``.
+DEFAULT_ATTEND_SLUGS = ("work",)
+
+#: Case-insensitive tags in a commitment's title/location that force an
+#: attend-mode commitment *back* to travel mode — the rare work meeting you must
+#: physically go to. Bracketed so they can't false-match ordinary words.
+TRAVEL_TAGS = ("[commute]", "[in-person]", "[in person]", "[onsite]", "[on-site]")
 
 #: Departure nudge levels in increasing urgency. Index is the rank.
 LEVELS = ("none", "heads_up", "soon", "go")
@@ -127,6 +148,46 @@ def departure_level(
     return "none"
 
 
+def departure_mode(
+    commitment: dict[str, Any],
+    *,
+    attend_slugs: tuple[str, ...] = DEFAULT_ATTEND_SLUGS,
+    office_day: bool = False,
+) -> str:
+    """Decide whether a commitment is an *attend* or a *travel* departure.
+
+    The default for everything is ``"travel"`` — estimate the trip and nudge the
+    user out the door. Commitments on an attend-mode feed (``calendar_key`` in
+    ``attend_slugs``, e.g. the ``work`` calendar) instead default to ``"attend"``:
+    the user is already where they'll attend (WFH / at their desk), so no travel
+    logic applies and a single short "starts soon" reminder is enough.
+
+    Two things flip an attend-mode commitment back to ``"travel"``:
+
+    - a :data:`TRAVEL_TAGS` marker in its title/location (``[commute]``) — this
+      specific meeting is in person, and
+    - ``office_day`` — the user flagged today as an in-office day, so *all* work
+      commitments want the travel-aware "leave now" nudge again.
+
+    Args:
+        commitment: A commitment dict (uses ``calendar_key``, ``title``, ``location``).
+        attend_slugs: Feed slugs that default to attend mode.
+        office_day: Whether today is flagged as an in-office day.
+
+    Returns:
+        ``"attend"`` or ``"travel"``.
+    """
+    slug = (commitment.get("calendar_key") or "").lower()
+    if slug not in attend_slugs:
+        return "travel"
+    text = f"{commitment.get('title') or ''} {commitment.get('location') or ''}".lower()
+    if any(tag in text for tag in TRAVEL_TAGS):
+        return "travel"
+    if office_day:
+        return "travel"
+    return "attend"
+
+
 @dataclass(frozen=True)
 class DeparturePlan:
     """When (and how urgently) to leave for one commitment.
@@ -137,9 +198,11 @@ class DeparturePlan:
         minutes_until_leave: Minutes from now until ``leave_by`` (negative = late).
         travel_minutes: Bias-adjusted travel estimate, or ``None`` when distance
             could not be computed (fell back to ``lead_minutes``).
-        basis: ``"distance"`` (estimated from coordinates) or ``"lead"`` (used the
-            commitment's static ``lead_minutes``).
+        basis: ``"distance"`` (estimated from coordinates), ``"lead"`` (used the
+            commitment's static ``lead_minutes``), or ``"attend"`` (a fixed short
+            lead — you're already where you'll attend, no travel).
         level: The nudge level — ``none``/``heads_up``/``soon``/``go``.
+        mode: ``"travel"`` (go somewhere) or ``"attend"`` (attend from here).
     """
 
     commitment: dict[str, Any]
@@ -148,6 +211,7 @@ class DeparturePlan:
     travel_minutes: float | None
     basis: str
     level: str
+    mode: str = "travel"
 
 
 def plan_departure(
@@ -161,26 +225,39 @@ def plan_departure(
     prep_minutes: float = DEFAULT_PREP_MINUTES,
     heads_up_minutes: float = DEFAULT_HEADS_UP_MINUTES,
     soon_minutes: float = DEFAULT_SOON_MINUTES,
+    work_lead_minutes: float = DEFAULT_WORK_LEAD_MINUTES,
+    attend_slugs: tuple[str, ...] = DEFAULT_ATTEND_SLUGS,
+    office_day: bool = False,
     now: datetime | None = None,
 ) -> DeparturePlan:
     """Compute the departure plan for a single commitment.
 
-    The leave-by time is ``start_at − buffer``. The buffer is the bias-adjusted
-    travel estimate plus a prep allowance when both the current location and the
-    commitment's destination coordinates are known; otherwise it is the
-    commitment's static ``lead_minutes``.
+    First :func:`departure_mode` decides the shape of the plan:
+
+    - **attend** (e.g. a work meeting you'll take from your desk) — no travel
+      logic. The leave-by is ``start − work_lead_minutes`` and the plan fires a
+      single reminder (level ``go``) once that lead is reached; ``basis`` is
+      ``"attend"``. This is the "I'm already where I need to be" case.
+    - **travel** (the default) — the leave-by is ``start − buffer``, where the
+      buffer is the bias-adjusted travel estimate plus a prep allowance when both
+      the current location and the destination coordinates are known, otherwise
+      the commitment's static ``lead_minutes``. It escalates
+      ``heads_up`` → ``soon`` → ``go`` as the leave-by approaches.
 
     Args:
-        commitment: A commitment dict (needs ``start_at``; uses ``dest_lat``/
-            ``dest_lon`` and ``lead_minutes`` when present).
+        commitment: A commitment dict (needs ``start_at``; uses ``calendar_key``,
+            ``dest_lat``/``dest_lon`` and ``lead_minutes`` when present).
         current_lat: Current latitude, or ``None`` if location is unknown.
         current_lon: Current longitude, or ``None`` if location is unknown.
         bias: ``time_estimation_bias`` multiplier applied to the travel estimate.
         speed_kmh: Assumed average travel speed.
         road_factor: Straight-line → road-distance multiplier.
         prep_minutes: Minutes added to travel for getting out the door.
-        heads_up_minutes: Horizon for the ``heads_up`` level.
-        soon_minutes: Horizon for the ``soon`` level.
+        heads_up_minutes: Horizon for the ``heads_up`` level (travel mode).
+        soon_minutes: Horizon for the ``soon`` level (travel mode).
+        work_lead_minutes: Fixed lead for an attend-mode reminder.
+        attend_slugs: Feed slugs that default to attend mode.
+        office_day: Whether today is flagged as an in-office day (forces travel).
         now: Current naive-UTC time (defaults to :func:`prefrontal.impact.utcnow`).
 
     Returns:
@@ -188,27 +265,38 @@ def plan_departure(
     """
     now = now or utcnow()
     start = _parse(commitment["start_at"])
+    mode = departure_mode(commitment, attend_slugs=attend_slugs, office_day=office_day)
 
-    dest_lat = commitment.get("dest_lat")
-    dest_lon = commitment.get("dest_lon")
-    if (
-        current_lat is not None
-        and current_lon is not None
-        and dest_lat is not None
-        and dest_lon is not None
-    ):
-        distance_m = haversine_m(current_lat, current_lon, dest_lat, dest_lon)
-        travel = estimate_travel_minutes(distance_m, speed_kmh, road_factor) * bias
-        buffer = travel + prep_minutes
-        basis = "distance"
-    else:
+    if mode == "attend":
         travel = None
-        buffer = commitment.get("lead_minutes") or 0.0
-        basis = "lead"
+        buffer = work_lead_minutes
+        basis = "attend"
+    else:
+        dest_lat = commitment.get("dest_lat")
+        dest_lon = commitment.get("dest_lon")
+        if (
+            current_lat is not None
+            and current_lon is not None
+            and dest_lat is not None
+            and dest_lon is not None
+        ):
+            distance_m = haversine_m(current_lat, current_lon, dest_lat, dest_lon)
+            travel = estimate_travel_minutes(distance_m, speed_kmh, road_factor) * bias
+            buffer = travel + prep_minutes
+            basis = "distance"
+        else:
+            travel = None
+            buffer = commitment.get("lead_minutes") or 0.0
+            basis = "lead"
 
     leave_by = start - timedelta(minutes=buffer)
     minutes_until = round((leave_by - now).total_seconds() / 60.0, 1)
-    level = departure_level(minutes_until, heads_up_minutes, soon_minutes)
+    # Attend mode is a single reminder at the lead, not the travel escalation
+    # ladder — you're already there, so heads_up/soon "get ready to leave" is moot.
+    if mode == "attend":
+        level = "go" if minutes_until <= 0 else "none"
+    else:
+        level = departure_level(minutes_until, heads_up_minutes, soon_minutes)
     return DeparturePlan(
         commitment=commitment,
         leave_by=leave_by.strftime("%Y-%m-%d %H:%M:%S"),
@@ -216,6 +304,7 @@ def plan_departure(
         travel_minutes=round(travel, 1) if travel is not None else None,
         basis=basis,
         level=level,
+        mode=mode,
     )
 
 
@@ -255,6 +344,21 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
     )
     greeting = f"Hey {name}, " if name else ""
     minutes = plan.minutes_until_leave
+
+    # Attend mode: no travel, one "starts soon" reminder — never say "leave".
+    if plan.mode == "attend":
+        if plan.level != "go":
+            return ""
+        start = _parse(plan.commitment["start_at"])
+        leave_by = _parse(plan.leave_by)
+        lead = (start - leave_by).total_seconds() / 60.0
+        mins_to_start = max(0, round(lead + minutes))
+        if mins_to_start <= 0:
+            return f"{greeting}{title}{where} is starting now."
+        return (
+            f"{greeting}{title}{where} starts in about {mins_to_start} min — "
+            "you're already where you need to be."
+        )
 
     if plan.level == "heads_up":
         return (
