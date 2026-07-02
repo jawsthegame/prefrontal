@@ -56,6 +56,7 @@ from prefrontal.assistant import (
 )
 from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.classify import classify_kind
+from prefrontal.coaching import resolve_ack
 from prefrontal.commitments import (
     KINDS,
     conflict_dismissal_key,
@@ -1174,6 +1175,7 @@ __all__ = [
     "render_sheet",
     "repeat_stalled_tasks",
     "require_operator",
+    "resolve_ack",
     "resolve_user",
     "session_user",
     "sha256_hex",

@@ -264,3 +264,123 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
+
+
+# --- Outcome loop: learn which channels actually land (spec §8) --------------
+#
+# ``choose_channel`` bumps a cue up a rung when the user reliably *ignores* a
+# channel — but that only works if something feeds the ``channel_response``
+# patterns ``patterns.py`` derives (ack-rate per channel). These helpers close
+# that loop: a delivered interactive nudge is tracked by the (context, target)
+# coordinates a one-tap ack arrives on; a tap records an *acknowledged* outcome,
+# and a nudge that goes unanswered past a window is swept into a *miss*. Both
+# feed ``channel_response``, so the nightly ``learn`` shifts future channel
+# choice. No new learning code — just the episodes the deriver already consumes.
+
+#: Minutes a delivered nudge waits for a tap before it's counted as ignored.
+DEFAULT_ACK_WINDOW_MINUTES = 60.0
+
+#: Contexts whose nudges carry tappable action buttons (so an acknowledgement is
+#: observable), mapped to the ``cue.ref`` key holding the target id. A cue whose
+#: context isn't here has no reliable ack signal, so it's never tracked — counting
+#: it would bias ``channel_response`` toward "always ignored".
+_TRACKABLE_TARGET = {"outing": "outing_id", "departure": "commitment_id", "focus": "session_id"}
+
+
+def _ack_key(context: str, target: Any) -> str:
+    """Coaching-state key tracking a delivered nudge awaiting its outcome."""
+    return f"coach_ack:{context}:{target}"
+
+
+def record_channel_outcome(
+    store: Any, *, channel: str, context: str, acknowledged: bool
+) -> None:
+    """Log one delivered nudge's fate as a ``channel_response``-feeding episode.
+
+    ``patterns.py`` groups episodes by ``channel`` and averages ``acknowledged``
+    into a per-channel ack-rate; ``choose_channel`` reads that back. The channel
+    is the engine's class (``push``/``sound``/``voice``) so it lines up with the
+    floor ``choose_channel`` looks up.
+    """
+    store.log_episode(
+        "reminder",
+        channel=channel,
+        acknowledged=acknowledged,
+        context=f"coach nudge: {context}",
+        outcome="success" if acknowledged else "miss",
+    )
+
+
+def note_delivered(store: Any, decisions: list[Decision], now: datetime) -> None:
+    """Track each interactive nudge just fired, so its outcome can be learned.
+
+    Only cues that carry action buttons (:data:`_TRACKABLE_TARGET`) and go out on
+    an interrupting channel (not ``digest``) are tracked — a buttonless or ambient
+    cue has no observable ack. Keyed by ``(context, target)``, the coordinates a
+    one-tap ack arrives on (see :func:`resolve_ack`).
+    """
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    for d in decisions:
+        if d.channel == "digest":
+            continue
+        target = (d.cue.ref or {}).get(_TRACKABLE_TARGET.get(d.cue.context_key, ""))
+        if target is None:
+            continue
+        store.set_state(
+            _ack_key(d.cue.context_key, target),
+            f"{stamp}|{d.channel}|{d.cue.context_key}",
+            source="inferred",
+        )
+
+
+def resolve_ack(
+    store: Any, context: str, target: Any, *, acknowledged: bool = True
+) -> bool:
+    """Resolve a tracked nudge on a tap: log its channel outcome, clear tracking.
+
+    Called from the one-tap action path (``/nudge/act``) with the same
+    ``(context, target)`` :func:`note_delivered` stamped. Returns ``True`` when a
+    tracked nudge was found (and thus an outcome logged), ``False`` otherwise — so
+    a tap on a nudge the engine didn't originate is a harmless no-op.
+    """
+    raw = store.get_state(_ack_key(context, target))
+    if not raw:
+        return False
+    parts = str(raw).split("|")
+    channel = parts[1] if len(parts) > 1 else ""
+    if channel:
+        record_channel_outcome(store, channel=channel, context=context, acknowledged=acknowledged)
+    store.delete_state(_ack_key(context, target))
+    return True
+
+
+def sweep_stale_nudges(
+    store: Any, now: datetime, *, ack_window_minutes: float = DEFAULT_ACK_WINDOW_MINUTES
+) -> int:
+    """Count nudges unanswered past the window as channel *misses*, and clear them.
+
+    Run once per tick: any tracked nudge older than ``ack_window_minutes`` that
+    was never tapped becomes an ``acknowledged=False`` ``channel_response`` episode
+    (the "you ignored this channel" signal), then its marker is cleared. Returns
+    how many were swept. Safe because taps clear acknowledged nudges first
+    (:func:`resolve_ack`), so what's left really is unanswered.
+    """
+    swept = 0
+    for key, row in store.all_state().items():
+        if not key.startswith("coach_ack:"):
+            continue
+        raw = (row.get("value") if isinstance(row, dict) else row) or ""
+        parts = str(raw).split("|")
+        ts = _parse_ts(parts[0]) if parts and parts[0] else None
+        if ts is None:
+            store.delete_state(key)  # malformed marker — drop it
+            continue
+        if (now - ts).total_seconds() / 60.0 < ack_window_minutes:
+            continue  # still within the ack window — leave it for now
+        channel = parts[1] if len(parts) > 1 else ""
+        context = parts[2] if len(parts) > 2 else ""
+        if channel:
+            record_channel_outcome(store, channel=channel, context=context, acknowledged=False)
+        store.delete_state(key)
+        swept += 1
+    return swept

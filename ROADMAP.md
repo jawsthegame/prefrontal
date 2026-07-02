@@ -392,10 +392,18 @@ ordered by leverage; each is independent but builds on denser capture.
   a tick-driven decision engine that asks each module's `evaluate()` hook "what's
   due?", then decides whether to fire, what to say, and on which channel (learned
   `channel_response` + quiet hours + debounce), logging the outcome back as an
-  episode. Still open (spec §12 rollout): the optional LLM phrasing pass on
-  ambient/digest cues (step 5); outcome-logging correlation ids (§8); and folding
-  in the encouragement layer below (§9). *(Next: deprecate `outing/check` once
-  `coach/check` has run clean for a while — spec §13.)*
+  episode. **Outcome logging (§8) has now shipped** — a delivered interactive
+  nudge is tracked by the `(context, target)` a one-tap ack arrives on
+  (`note_delivered`); a tap through `/nudge/act` records an *acknowledged*
+  `channel_response` episode (`resolve_ack`), and a nudge left unanswered past an
+  ack window is swept into a *miss* (`sweep_stale_nudges`, run each tick). Both
+  feed the per-channel ack-rate `patterns.py` already derives, so the nightly
+  `learn` makes `choose_channel`'s "bump the channel you ignore" real instead of
+  floor-only. `POST /webhooks/coach/ack` is the explicit hook for delivery layers
+  that report their own outcomes; covered end-to-end by `tests/test_coaching.py`.
+  Still open (spec §12 rollout): the optional LLM phrasing pass on ambient/digest
+  cues (step 5); and folding in the encouragement layer below (§9). *(Next:
+  deprecate `outing/check` once `coach/check` has run clean for a while — §13.)*
 - **Delivery layer + interactive nudges (ntfy)** — **the action-button core has
   shipped** (see "Recently shipped": signed `/nudge/act` + the `actions` fields
   on the outing/focus/departure nudges). Unlike Pushover — whose only

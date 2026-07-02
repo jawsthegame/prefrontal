@@ -6,7 +6,17 @@ coaching agent's tick endpoint (``docs/coaching-agent.md`` §7) — the sibling 
 """
 from __future__ import annotations
 
-from prefrontal.coaching import build_context, collect_cues, decide, record_fired
+from prefrontal.coaching import (
+    DEFAULT_ACK_WINDOW_MINUTES,
+    build_context,
+    collect_cues,
+    decide,
+    note_delivered,
+    record_channel_outcome,
+    record_fired,
+    resolve_ack,
+    sweep_stale_nudges,
+)
 from prefrontal.encouragement import (
     already_sent_today,
     assess_day,
@@ -69,6 +79,17 @@ def build_router(
             body = {}
 
         now = utcnow()
+        # Close last round's outcomes first: any nudge delivered earlier that was
+        # never tapped within the ack window becomes a channel "miss", so the
+        # nightly learn can shift channel choice (spec §8). Taps clear their own
+        # marker (see /nudge/act), so what this sweeps really went unanswered.
+        sweep_stale_nudges(
+            memory,
+            now,
+            ack_window_minutes=memory.get_float(
+                "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
+            ),
+        )
         coach_ctx = build_context(
             memory,
             now=now,
@@ -83,6 +104,9 @@ def build_router(
         # Recorded at check time (not on confirmed delivery), matching how
         # outing/check advances last_level when it decides to fire.
         record_fired(memory, decisions, now)
+        # Track the interactive nudges we're handing off so a later tap (or the
+        # next sweep) can log which channel landed — the input to choose_channel.
+        note_delivered(memory, decisions, now)
         return {
             "cues": [
                 {
@@ -99,6 +123,50 @@ def build_router(
                 for d in decisions
             ]
         }
+
+    @router.post("/webhooks/coach/ack", tags=["coaching"])
+    async def coach_ack(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Report a delivered coaching nudge's outcome, feeding channel learning.
+
+        The delivery layer calls this when a nudge is acted on (or explicitly
+        marked ignored), so ``choose_channel`` can learn which channel lands
+        (spec §8). Two shapes:
+
+        - ``{"context", "target", "acknowledged"?}`` — resolve a *tracked*
+          interactive nudge by the coordinates :func:`note_delivered` stamped
+          (the usual path; ``/nudge/act`` calls this internally on a tap).
+          ``acknowledged`` defaults to ``true``. ``resolved`` is ``false`` if no
+          such nudge was tracked (a harmless late/duplicate report).
+        - ``{"channel", "context", "acknowledged"}`` — an explicit outcome for a
+          delivery path that knows the channel directly (e.g. a non-interactive
+          channel with its own read receipt). Always logs.
+
+        Both write a ``channel_response`` episode the nightly ``learn`` folds in.
+        """
+        memory = ctx.store
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        acknowledged = bool(body.get("acknowledged", True))
+        context = body.get("context")
+        target = body.get("target")
+        channel = body.get("channel")
+
+        if context and target is not None:
+            resolved = resolve_ack(memory, str(context), target, acknowledged=acknowledged)
+            return {"resolved": resolved}
+        if channel and context:
+            record_channel_outcome(
+                memory, channel=str(channel), context=str(context), acknowledged=acknowledged
+            )
+            return {"resolved": True}
+        return {"resolved": False, "detail": "need (context, target) or (channel, context)"}
 
     @router.get("/encouragement", tags=["coaching"])
     def encouragement(

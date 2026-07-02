@@ -39,11 +39,24 @@ from prefrontal.webhooks._common import (
     record_focus_switched,
     record_outing_abandoned,
     record_outing_return,
+    resolve_ack,
     resolve_user,
     status,
     verify_action,
     verify_dismiss,
 )
+
+#: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
+#: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).
+#: Actions absent here (the ``switch_*`` pause resolutions) aren't coaching cues,
+#: so they map to no context and :func:`resolve_ack` no-ops.
+_ACT_CONTEXT = {
+    "focus_end": "focus",
+    "outing_return": "outing",
+    "outing_abandon": "outing",
+    "made_it": "departure",
+    "missed_it": "departure",
+}
 
 
 def build_router(
@@ -331,6 +344,11 @@ def build_router(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user."
             )
         memory = root.scoped(user["id"])
+
+        # A tap is an acknowledgement: if the coaching agent delivered this nudge,
+        # record which channel landed (feeds channel_response; spec §8). A no-op
+        # for nudges the engine didn't originate.
+        resolve_ack(memory, _ACT_CONTEXT.get(action, ""), target_id)
 
         if action == "focus_end":
             closed = memory.close_focus_session(target_id, status="ended")

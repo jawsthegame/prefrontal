@@ -9,10 +9,10 @@ producer (the `outing/check` per-outing decision + side effects lifted into a
 shared `evaluate_outing` / `apply_outing_evaluation` that both the endpoint and
 the evaluator call — the legacy endpoint is byte-identical), a `prefrontal coach
 [--dry-run]` CLI, and the **`POST /webhooks/coach/check`** tick endpoint (§7) with
-its `deploy/n8n/coach-check.workflow.json` delivery workflow. **Not yet built:**
-the optional LLM phrasing pass (§5), outcome-logging correlation ids (§8), the
-encouragement layer (§9), and deprecating `outing/check` (§13) — those remain
-intended design. This is the implementation spec
+its `deploy/n8n/coach-check.workflow.json` delivery workflow, and **outcome
+logging that closes the learning loop (§8)**. **Not yet built:** the optional LLM
+phrasing pass (§5), the encouragement layer (§9), and deprecating `outing/check`
+(§13) — those remain intended design. This is the implementation spec
 for the **Coaching Agent** —
 the component in the README architecture that sits between the memory layer and
 the delivery layer and turns *what Prefrontal knows* into *the right message, on
@@ -283,7 +283,18 @@ choice) for debugging and for a cron that prefers CLI over HTTP. Mirrors
 
 ---
 
-## 8. Closing the loop: outcome logging
+## 8. Closing the loop: outcome logging  ✅ *(shipped)*
+
+> **Status:** shipped. `note_delivered` tracks each delivered interactive nudge by
+> the `(context, target)` a one-tap ack arrives on; `resolve_ack` (called from
+> `/nudge/act`, and via `POST /webhooks/coach/ack`) logs an *acknowledged*
+> `channel_response` episode on a tap; `sweep_stale_nudges` (run each tick) logs a
+> *miss* for anything left unanswered past `coach_ack_window_minutes` (default 60).
+> Only button-bearing, non-`digest` cues are tracked, so ack-rate isn't biased by
+> nudges that can't be acknowledged. `record_channel_outcome` is the shared
+> episode writer. Correlation is by `(context, target)` rather than an opaque id,
+> since that's exactly what a tap carries. See `prefrontal/coaching.py` and
+> `tests/test_coaching.py` (including an end-to-end "ignored → learn → bump" test).
 
 Coaching only improves if outcomes come back. Every fired cue is delivered with a
 correlation id; n8n (or an iOS Shortcut tap, the existing `/webhooks/shortcut`

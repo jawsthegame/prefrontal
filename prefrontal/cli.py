@@ -37,10 +37,13 @@ from pathlib import Path
 from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.coaching import (
+    DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
     collect_cues,
     decide,
+    note_delivered,
     record_fired,
+    sweep_stale_nudges,
 )
 from prefrontal.config import get_settings
 from prefrontal.encouragement import (
@@ -507,6 +510,18 @@ def _cmd_coach(args: argparse.Namespace) -> int:
             for c in cues:
                 print(f"[{c.urgency}] {c.module}/{c.intervention}: {c.text}")
             return 0
+        # Close out prior nudges whose ack window lapsed unanswered → channel
+        # "misses" that shift future channel choice (spec §8). Off the dry-run
+        # path so a debug run never mutates outcome state.
+        swept = sweep_stale_nudges(
+            store,
+            now,
+            ack_window_minutes=store.get_float(
+                "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
+            ),
+        )
+        if swept:
+            print(f"({swept} unanswered nudge(s) logged as channel misses)")
         decisions = decide(store, cues, ctx)
         if not decisions:
             print(f"Nothing to say right now ({len(cues)} cue(s) held).")
@@ -516,6 +531,8 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         if args.deliver:
             _deliver_decisions(unscoped, store, decisions, settings)
         record_fired(store, decisions, now)
+        # Track interactive nudges so a tap (or the next sweep) records the channel.
+        note_delivered(store, decisions, now)
     return 0
 
 

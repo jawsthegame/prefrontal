@@ -101,6 +101,18 @@ class StateRepo:
         )
         self.conn.commit()
 
+    def delete_state(self, key: str) -> None:
+        """Remove a coaching-state key if present (a no-op when it isn't).
+
+        Used for transient, self-clearing keys — e.g. the coaching agent's
+        per-nudge delivery markers, cleared once the nudge's outcome is recorded.
+        """
+        self.conn.execute(
+            "DELETE FROM coaching_state WHERE user_id = ? AND key = ?",
+            (self._uid(), key),
+        )
+        self.conn.commit()
+
     def all_state(self) -> dict[str, dict[str, Any]]:
         """Return the entire coaching state keyed by preference name.
 
