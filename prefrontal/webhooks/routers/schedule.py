@@ -11,6 +11,7 @@ from prefrontal.webhooks._common import (
     DEFAULT_ALERT_MIN_PRESSING,
     DEFAULT_DEPARTURE_GRACE_MINUTES,
     DEFAULT_HEADS_UP_MINUTES,
+    DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
     DEFAULT_PREP_MINUTES,
     DEFAULT_ROAD_FACTOR,
     DEFAULT_SOON_MINUTES,
@@ -50,10 +51,12 @@ from prefrontal.webhooks._common import (
     partition_conflicts,
     plan_departure,
     record_departure_outcome,
+    record_panic_step_sent,
     render_briefing,
     render_panic,
     resolve_user,
     status,
+    sweep_pending_panic_steps,
     sync_calendar,
     utcnow,
 )
@@ -612,13 +615,28 @@ def build_router(
 
         Returns ``{"fire", "level", "message", "first_step", "counts", "headline",
         "actions"}``. Only ``fire == true`` should be delivered as a push/voice
-        nudge; when it fires, ``actions`` carries a single ntfy ``view`` button
-        that opens the full ``/panic`` triage (the dashboard overlay) — so the
-        nudge delivers the first step inline *and* is one tap from the whole
-        picture. ``actions`` is empty unless firing and a public origin is set.
+        nudge; when it fires, ``actions`` carries an ntfy ``view`` button that
+        opens the full ``/panic`` triage (the dashboard overlay). If a signing key
+        and public origin are configured it *also* carries a signed **"✓ Did it"**
+        button: tapping it resolves a pending ``panic`` episode to a success, and
+        one left unanswered past ``panic_step_ack_window_minutes`` is swept to a
+        miss — so the drift pass learns whether the surfaced first step actually
+        got done. ``actions`` is empty unless firing and a public origin is set.
         """
         memory = ctx.store
         plan = build_panic(memory)
+
+        # Sweep any earlier overwhelm first-step nudges the user never answered
+        # into a miss, so the learning loop sees the steps that didn't happen too
+        # (not just the "Did it" taps). Independent of firing, so it runs every
+        # poll — including calm ones and quiet-hours deferrals.
+        sweep_pending_panic_steps(
+            memory,
+            utcnow(),
+            window_minutes=memory.get_float(
+                "panic_step_ack_window_minutes", DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES
+            ),
+        )
 
         try:
             min_pressing = int(
@@ -669,6 +687,22 @@ def build_router(
             # A one-tap "Open triage" button so the nudge is not a dead end: it
             # carries the first step inline, and this opens the full picture.
             actions = panic_actions(resolved_settings.oauth_base_url)
+            # When we can deliver a *signed* one-tap button, log a pending "panic"
+            # episode and prepend a "Did it" button, so the drift pass learns
+            # whether the surfaced first step actually got done. Gate on
+            # ack-ability (public origin + signing key): an undeliverable button
+            # must not leave a phantom episode the sweep would count as a miss.
+            ackable = bool(
+                resolved_settings.oauth_base_url and resolved_settings.session_secret
+            )
+            if plan.first_step and ackable:
+                step_id = record_panic_step_sent(memory, plan, now=utcnow())
+                actions = (
+                    _nudge_actions(
+                        resolved_settings, ctx.user.get("handle") or "", "panic", step_id
+                    )
+                    + actions
+                )
             memory.set_state(
                 "last_panic_alert_at",
                 utcnow().strftime("%Y-%m-%d %H:%M:%S"),

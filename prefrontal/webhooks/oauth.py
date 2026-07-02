@@ -152,6 +152,7 @@ NUDGE_ACTIONS = (
     "switch_return",   # reflective pause → stay on the current focus block
     "switch_defer",    # reflective pause → park the pull as a todo, stay put
     "switch_switch",   # reflective pause → switch away (close block as switched)
+    "panic_step_done", # overwhelm nudge → the surfaced first step got done
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

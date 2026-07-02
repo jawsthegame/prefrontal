@@ -77,6 +77,49 @@ class EpisodesRepo:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def set_episode_outcome(
+        self, episode_id: int, *, outcome: str, acknowledged: bool = True
+    ) -> bool:
+        """Resolve a previously-logged episode's ``outcome`` (and ``acknowledged``).
+
+        For episodes logged in a *pending* state (``outcome`` NULL) that resolve
+        later — e.g. a panic first-step nudge marked ``success`` on a one-tap
+        "Did it", or swept to ``miss`` when left unanswered. Scoped to the caller;
+        returns ``True`` if a row changed.
+
+        Args:
+            episode_id: The episode to update.
+            outcome: One of :data:`OUTCOMES`.
+            acknowledged: Whether the user responded (a tap ⇒ ``True``).
+        """
+        cur = self.conn.execute(
+            "UPDATE episodes SET outcome = ?, acknowledged = ? "
+            "WHERE id = ? AND user_id = ?",
+            (outcome, acknowledged, episode_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def pending_episodes(
+        self, episode_type: str, *, before: str
+    ) -> list[dict[str, Any]]:
+        """Return unresolved episodes (``outcome`` NULL) of a type logged at/before ``before``.
+
+        Used to sweep still-open episodes to a terminal outcome once their ack
+        window has passed (see :func:`prefrontal.panic.sweep_pending_panic_steps`).
+
+        Args:
+            episode_type: One of :data:`EPISODE_TYPES`.
+            before: UTC timestamp (``YYYY-MM-DD HH:MM:SS``); inclusive upper bound
+                on ``timestamp`` (lexicographic compare, safe for the fixed format).
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM episodes WHERE user_id = ? AND episode_type = ? "
+            "AND outcome IS NULL AND timestamp <= ? ORDER BY timestamp ASC, id ASC",
+            (self._uid(), episode_type, before),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_episode(self, episode_id: int) -> dict[str, Any] | None:
         """Return a single episode by id, or ``None`` if it does not exist."""
         row = self.conn.execute(
