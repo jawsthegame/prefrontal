@@ -513,8 +513,36 @@ def _cmd_coach(args: argparse.Namespace) -> int:
             return 0
         for d in decisions:
             print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
+        if args.deliver:
+            _deliver_decisions(unscoped, store, decisions, settings)
         record_fired(store, decisions, now)
     return 0
+
+
+def _deliver_decisions(unscoped, store, decisions, settings) -> None:
+    """Publish fired decisions via the native delivery client and print outcomes.
+
+    Resolves the acting user's routing (per-user ``coaching_state`` over operator
+    defaults) and delivers each decision on its chosen channel. Signs the one-tap
+    action buttons with the user's handle so a background tap authenticates.
+    """
+    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+
+    handle = next(
+        (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id), ""
+    )
+    route = resolve_route(store, settings)
+    client = DeliveryClient.from_settings(settings)
+    results = client.deliver_all(
+        decisions,
+        route,
+        base_url=settings.oauth_base_url,
+        secret=settings.session_secret,
+        handle=handle,
+    )
+    for result in results:
+        status = "sent" if result.delivered else "not sent"
+        print(f"  → {result.transport}: {status} ({result.detail})")
 
 
 def _cmd_panic(args: argparse.Namespace) -> int:
@@ -970,6 +998,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show cues before suppression/channel choice; record nothing.",
+    )
+    p_coach.add_argument(
+        "--deliver",
+        action="store_true",
+        help="Actually publish each fired decision via ntfy/Pushover/TTS (else just print).",
     )
     p_coach.set_defaults(func=_cmd_coach)
 

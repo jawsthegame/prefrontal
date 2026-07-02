@@ -124,6 +124,21 @@ class Settings:
     anthropic_model: str = "claude-opus-4-8"
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
+    # Delivery layer — operator *defaults* for the native publishing client
+    # (:mod:`prefrontal.integrations.delivery`). Per-user routing in
+    # ``coaching_state`` (``ntfy_topic``/``pushover_user_key``/… — multi-tenant
+    # §6.5) overrides these; a user with none set falls back here. All empty is
+    # the local-first default: the delivery client no-ops and nothing leaves the
+    # host until a topic/key is configured.
+    ntfy_server: str = "https://ntfy.sh"
+    ntfy_topic: str = ""
+    ntfy_token: str = ""
+    pushover_token: str = ""
+    pushover_user_key: str = ""
+    # Speak ``voice``-channel nudges aloud on the host via macOS ``say``. Off by
+    # default (it only helps when you're at the machine); a per-user
+    # ``tts_enabled`` coaching key overrides this.
+    tts_enabled: bool = False
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     #: Logical account names that are Gmail inboxes (resolved from IMAP host
@@ -302,6 +317,14 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
             "GEOCODER_USER_AGENT",
             "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)",
         ),
+        ntfy_server=os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+        or "https://ntfy.sh",
+        ntfy_topic=os.environ.get("NTFY_TOPIC", ""),
+        ntfy_token=os.environ.get("NTFY_TOKEN", ""),
+        pushover_token=os.environ.get("PUSHOVER_TOKEN", ""),
+        pushover_user_key=os.environ.get("PUSHOVER_USER_KEY", ""),
+        tts_enabled=os.environ.get("PREFRONTAL_TTS_ENABLED", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         gmail_accounts=gmail_accounts,
