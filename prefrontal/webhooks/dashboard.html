@@ -74,6 +74,18 @@
   .pill.cat { font-weight: 700; color: #fff; border: none; cursor: pointer; }
   .pill.cat.none { background: transparent; color: var(--muted); border: 1px dashed #3a4150; font-weight: 400; }
   .pill.cat:hover { filter: brightness(1.15); }
+  .pill.cat .caret { opacity: .65; font-size: 9px; margin-left: 2px; }
+  /* Category picker: a floating popover of the existing category pills, opened
+     by clicking a todo's category pill. */
+  .cat-menu { position: absolute; z-index: 60; background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    display: flex; flex-wrap: wrap; gap: 6px; max-width: 280px; }
+  .cat-menu .cat-opt { position: relative; }
+  .cat-menu .cat-opt.sel { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .cat-menu .cat-act { font-size: 11px; padding: 2px 9px; border-radius: 6px; background: #2a2f3a;
+    color: var(--muted); border: 1px dashed #3a4150; cursor: pointer; font-weight: 400; }
+  .cat-menu .cat-act:hover { color: var(--fg); border-color: #4a5160; }
+  .cat-menu .cat-sep { flex-basis: 100%; height: 0; border-top: 1px solid var(--line); margin: 1px 0; }
   .catlead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   /* The exact text appended to the triage prompt on the next sync — the concrete
      impact your drops have on what mail gets flagged. */
@@ -399,6 +411,71 @@ function catColor(s) {
   return `hsl(${h} 45% 42%)`;
 }
 
+// Category picker popover: a floating menu of the existing category pills,
+// anchored under the clicked pill. Picking one PATCHes the todo; "New…" prompts
+// for a novel label (unless the vocabulary is at its cap); "Clear" uncategorizes.
+let catMenuEl = null;
+function closeCatMenu() {
+  if (!catMenuEl) return;
+  catMenuEl.remove();
+  catMenuEl = null;
+  document.removeEventListener("click", onCatOutside, true);
+}
+function onCatOutside(e) { if (catMenuEl && !catMenuEl.contains(e.target)) closeCatMenu(); }
+
+async function openCategoryMenu(anchor, id, current) {
+  closeCatMenu();
+  let data = {};
+  try { data = await api("/todos/categories"); } catch (_) {}
+  const vocab = data.categories || [];
+  const menu = document.createElement("div");
+  menu.className = "cat-menu";
+  const pick = async (cat) => {
+    closeCatMenu();
+    await post(`/todos/${id}/category`, { category: cat });
+    load();
+  };
+  for (const c of vocab) {
+    const b = document.createElement("button");
+    b.className = "pill cat cat-opt" + (c === current ? " sel" : "");
+    b.style.background = catColor(c);
+    b.textContent = c;
+    b.title = c === current ? "Current category" : `Set to ${c}`;
+    b.onclick = () => pick(c);
+    menu.appendChild(b);
+  }
+  const sep = document.createElement("span");
+  sep.className = "cat-sep";
+  menu.appendChild(sep);
+  if (!data.at_cap) {
+    const nb = document.createElement("button");
+    nb.className = "cat-act";
+    nb.textContent = "＋ New…";
+    nb.onclick = () => {
+      const v = prompt("New category:");
+      if (v && v.trim()) pick(v.trim());
+      else closeCatMenu();
+    };
+    menu.appendChild(nb);
+  }
+  if (current) {
+    const cb = document.createElement("button");
+    cb.className = "cat-act";
+    cb.textContent = "✕ Clear";
+    cb.onclick = () => pick(null);
+    menu.appendChild(cb);
+  }
+  document.body.appendChild(menu);
+  // Anchor under the pill, nudged left if it would overflow the viewport.
+  const r = anchor.getBoundingClientRect();
+  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
+  menu.style.top = `${window.scrollY + r.bottom + 4}px`;
+  menu.style.left = `${window.scrollX + Math.max(8, left)}px`;
+  catMenuEl = menu;
+  // Defer so the click that opened the menu doesn't immediately close it.
+  setTimeout(() => document.addEventListener("click", onCatOutside, true), 0);
+}
+
 function renderOutings(d) {
   const a = (d.active || []);
   if (!a.length) return `<div class="empty">No active outings.</div>`;
@@ -456,13 +533,14 @@ function renderTodos(d) {
     return ` <span class="${cls}"${style} title="from ${esc(account)}">${esc(label)}</span>`;
   };
   // Category chip: a stable color hashed from the label so the same category
-  // always reads the same, without any server-side config. Clicking edits it.
+  // always reads the same, without any server-side config. Clicking opens a
+  // dropdown of the existing categories (with New… / Clear), so edits converge.
   const catPill = (id, category) => {
     const cur = category || "";
     const label = cur || "+ category";
     const style = cur ? ` style="background:${catColor(cur)}"` : "";
     const cls = cur ? "pill cat" : "pill cat none";
-    return ` <button class="${cls}"${style} data-action="todo-category" data-id="${id}" data-category="${esc(cur)}" title="Set category">${esc(label)}</button>`;
+    return ` <button class="${cls}"${style} data-action="todo-category" data-id="${id}" data-category="${esc(cur)}" title="Change category">${esc(label)}<span class="caret">▾</span></button>`;
   };
   return t.map((x) => {
     const dc = x.decomposition;
@@ -787,14 +865,10 @@ document.addEventListener("click", async (e) => {
       await post(`/todos/${id}/deadline`, { deadline: v.trim() || null });
     }
     else if (act === "todo-category") {
-      const cur = el.dataset.category || "";
-      // Offer the existing vocabulary so edits converge rather than sprawl.
-      let existing = [];
-      try { existing = (await api("/todos/categories")).categories || []; } catch (_) {}
-      const hint = existing.length ? "\nExisting: " + existing.join(", ") : "";
-      const v = prompt("Category (blank to clear):" + hint, cur);
-      if (v === null) return; // cancelled
-      await post(`/todos/${id}/category`, { category: v.trim() || null });
+      // Open a dropdown of the existing categories anchored under the pill; the
+      // menu handles the POST + reload itself, so don't fall through to load().
+      openCategoryMenu(el, id, el.dataset.category || "");
+      return;
     }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
@@ -821,7 +895,7 @@ $("#panic-close").onclick = closePanic;
 $("#panic-refresh").onclick = loadPanic;
 // Backdrop tap and Escape both dismiss the overlay.
 $("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanic(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closeCatMenu(); } });
 $("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
