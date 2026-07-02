@@ -185,42 +185,58 @@ function renderCircular() {
 
 function renderRectangular() {
   w.addAccessoryWidgetBackground = true;
+  // Reclaim the slot. iOS gives the rectangular accessory a fixed (short) height
+  // and draws our background across all of it, but Scriptable's default
+  // ListWidget insets otherwise cluster the content into a small central band —
+  // the widget looks like it only fills half the slot. Zero the padding and let
+  // a full-height vertical stack lay the lines out from the top.
+  w.setPadding(0, 1, 0, 1);
+  const col = w.addStack();
+  col.layoutVertically();
+  col.spacing = 1;
+
+  // One line: SF Symbol + text, stretched to the full width so it left-aligns
+  // across the slot instead of hugging the centre.
+  const line = (glyph, s, opts) => {
+    const r = col.addStack();
+    r.centerAlignContent();
+    symbol(r, glyph, 12);
+    text(r, " " + s, opts);
+    r.addSpacer();
+  };
+
   if (!ok) {
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "wifi.slash", 12);
-    text(r, " Prefrontal offline", { size: 13 });
+    line("wifi.slash", "Prefrontal offline", { size: 13 });
+    col.addSpacer();
     return;
   }
   if (active) {
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "figure.walk", 12);
-    text(r, " " + active.intention, { size: 13, bold: true });
-    text(w, `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
+    line("figure.walk", active.intention, { size: 13, bold: true });
+    const sub = col.addStack(); sub.centerAlignContent();
+    text(sub, `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
       { size: 12, color: C.muted });
+    sub.addSpacer();
   } else if (nextCommitment) {
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "calendar", 12);
-    text(r, " " + fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
+    line("calendar", fmtTime(nextCommitment.start_at) + "  " + nextCommitment.title, { size: 13, bold: true });
   } else if (fitSug) {
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, fitGlyph, 12);
-    text(r, ` ${fitLead} · ${fitSug.title}`, { size: 13, bold: true });
+    line(fitGlyph, `${fitLead} · ${fitSug.title}`, { size: 13, bold: true });
   } else if (recentNudge) {
     // Nothing time-sensitive right now — surface the last thing Prefrontal said.
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "bell", 12);
-    text(r, " " + recentNudge.message, { size: 13 });
+    line("bell", recentNudge.message, { size: 13 });
   } else {
-    const r = w.addStack(); r.centerAlignContent();
-    symbol(r, "checkmark.circle", 12);
-    text(r, " Nothing scheduled", { size: 13 });
+    line("checkmark.circle", "Nothing scheduled", { size: 13 });
   }
   // Compact counts line (conflicts surface first when present).
   const bits = [];
   if (hard) bits.push(`⚠ ${hard}`);
   if (poss) bits.push(`~ ${poss}`);
   bits.push(`✓ ${open}`);
-  text(w, bits.join("   "), { size: 11, color: C.muted });
+  const cnt = col.addStack(); cnt.centerAlignContent();
+  text(cnt, bits.join("   "), { size: 11, color: C.muted });
+  cnt.addSpacer();
+  // Push everything to the top so short content fills from the top edge rather
+  // than floating in the middle of the slot.
+  col.addSpacer();
 }
 
 // ===========================================================================
