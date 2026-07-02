@@ -192,6 +192,7 @@ from prefrontal.scheduling import (
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     MAX_CATEGORIES,
+    at_category_cap,
     augment_todo,
     avoided_todos,
     category_stats,
@@ -990,6 +991,7 @@ __all__ = [
     "analyze_impact",
     "assistant_plan_message",
     "asynccontextmanager",
+    "at_category_cap",
     "at_risk",
     "augment_todo",
     "available_now",
