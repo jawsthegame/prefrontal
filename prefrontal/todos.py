@@ -63,6 +63,15 @@ _CATEGORY_HEURISTICS: tuple[tuple[tuple[str, ...], str], ...] = (
      "admin"),
 )
 
+#: The canonical vocabulary of built-in categories — the single source of truth,
+#: derived from the heuristic labels above (insertion-ordered, de-duplicated).
+#: :data:`prefrontal.scheduling.DEFAULT_CATEGORY_WINDOWS` keys against this, so a
+#: renamed/typo'd category can't silently lose its scheduling window. The model
+#: may still coin finer categories at runtime (bounded by :data:`MAX_CATEGORIES`).
+KNOWN_CATEGORIES: tuple[str, ...] = tuple(
+    dict.fromkeys(label for _keywords, label in _CATEGORY_HEURISTICS)
+)
+
 #: Keyword → typical minutes (first match wins; specific before generic).
 _ESTIMATE_HEURISTICS: tuple[tuple[tuple[str, ...], float], ...] = (
     (("call", "phone", "text", "email", "reply", "respond", "message", "ping"), 10.0),
@@ -173,21 +182,37 @@ def heuristic_category(title: str) -> str:
     return DEFAULT_CATEGORY
 
 
+def at_category_cap(
+    candidate: str, existing: list[str], cap: int = MAX_CATEGORIES
+) -> bool:
+    """Whether adding ``candidate`` as a *new* category would exceed ``cap``.
+
+    ``True`` only when the (normalized) candidate is not already among the
+    (normalized) ``existing`` categories *and* the distinct count is already at
+    the ceiling. This is the one place the cap rule lives; both the create-time
+    remap (:func:`resolve_category`) and the update endpoint's reject decide
+    against it, so the two can't drift.
+    """
+    norm = normalize_category(candidate)
+    existing_norm = {normalize_category(c) for c in existing}
+    return norm not in existing_norm and len(existing_norm) >= cap
+
+
 def resolve_category(
     candidate: str, existing: list[str], cap: int = MAX_CATEGORIES
 ) -> str:
     """Clamp a candidate category to the ``cap`` on the distinct set.
 
-    Under the cap, a novel category is allowed (it grows the set). At the cap,
-    the candidate must already be in ``existing``; otherwise it's remapped to
+    Under the cap, a novel category is allowed (it grows the set). At the cap
+    (see :func:`at_category_cap`), the candidate is remapped to
     :data:`DEFAULT_CATEGORY` if that's in use, else the first (most-common)
     existing category, so we never exceed the ceiling. ``existing`` should be
     ordered most-common-first for the fallback to prefer a well-populated bucket.
     """
     norm = normalize_category(candidate)
-    existing_norm = [normalize_category(c) for c in existing]
-    if norm in existing_norm or len(set(existing_norm)) < cap:
+    if not at_category_cap(candidate, existing, cap):
         return norm
+    existing_norm = [normalize_category(c) for c in existing]
     if DEFAULT_CATEGORY in existing_norm:
         return DEFAULT_CATEGORY
     return existing_norm[0] if existing_norm else norm

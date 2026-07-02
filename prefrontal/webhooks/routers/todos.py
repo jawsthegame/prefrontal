@@ -24,6 +24,7 @@ from prefrontal.webhooks._common import (
     TodoDeadlineUpdate,
     TodoWindowUpdate,
     _decompose_and_store,
+    at_category_cap,
     augment_todo,
     available_now,
     avoided_todos,
@@ -303,11 +304,7 @@ def build_router(
         memory = ctx.store
         existing = memory.todo_categories()
         category = normalize_category(payload.category) if payload.category else None
-        if (
-            category is not None
-            and category not in existing
-            and len(existing) >= MAX_CATEGORIES
-        ):
+        if category is not None and at_category_cap(category, existing):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(

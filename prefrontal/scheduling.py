@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from prefrontal.todos import KNOWN_CATEGORIES
+
 #: Assumed duration for a commitment with no ``end_at`` when carving windows.
 DEFAULT_EVENT_MINUTES = 30.0
 #: Ignore gaps shorter than this — not worth surfacing.
@@ -307,6 +309,16 @@ DEFAULT_CATEGORY_WINDOWS: dict[str, str] = {
     "health": "06:00-21:00",        # early workout or evening
     "home": "06:00-22:00",          # any waking hour you're home
 }
+
+# Fail loudly on vocabulary drift: every window must key a real built-in category
+# (see prefrontal.todos.KNOWN_CATEGORIES, the single source of truth). A typo or a
+# renamed category would otherwise silently never apply its window.
+_unknown_windows = set(DEFAULT_CATEGORY_WINDOWS) - set(KNOWN_CATEGORIES)
+if _unknown_windows:
+    raise RuntimeError(
+        f"DEFAULT_CATEGORY_WINDOWS keys not in todos.KNOWN_CATEGORIES: {_unknown_windows}"
+    )
+del _unknown_windows
 
 
 def _hhmm_to_minutes(value: str) -> int | None:

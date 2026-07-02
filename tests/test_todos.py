@@ -35,7 +35,9 @@ from prefrontal.scheduling import (
     work_window_now,
 )
 from prefrontal.todos import (
+    KNOWN_CATEGORIES,
     MAX_CATEGORIES,
+    at_category_cap,
     augment_todo,
     avoidance_score,
     avoided_todos,
@@ -120,6 +122,29 @@ def test_normalize_category_lowercases_and_defaults():
 )
 def test_heuristic_category(title, expected):
     assert heuristic_category(title) == expected
+
+
+def test_category_windows_key_only_known_categories():
+    """The scheduling windows must key real categories (single source of truth).
+
+    Guards against vocabulary drift between todos.KNOWN_CATEGORIES and
+    scheduling.DEFAULT_CATEGORY_WINDOWS — a typo/rename would otherwise silently
+    never apply its window.
+    """
+    from prefrontal.scheduling import DEFAULT_CATEGORY_WINDOWS
+
+    assert set(DEFAULT_CATEGORY_WINDOWS) <= set(KNOWN_CATEGORIES)
+
+
+def test_at_category_cap_matches_resolve_category():
+    """at_category_cap is the one cap rule; resolve_category remaps exactly when it's True."""
+    under = ["work", "home"]
+    assert at_category_cap("finance", under, cap=20) is False
+    at_cap = [f"cat{i}" for i in range(MAX_CATEGORIES)]
+    assert at_category_cap("brand-new", at_cap) is True   # novel + full -> blocked
+    assert at_category_cap("cat5", at_cap) is False        # existing -> always allowed
+    # The predicate normalizes, matching resolve_category's case-insensitivity.
+    assert at_category_cap("CAT5", at_cap) is False
 
 
 def test_resolve_category_allows_new_under_cap():
