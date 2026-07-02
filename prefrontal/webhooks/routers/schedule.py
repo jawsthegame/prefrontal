@@ -1,0 +1,523 @@
+"""HTTP routes tagged "schedule".
+
+APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from prefrontal.webhooks._common import (
+    DEFAULT_ALERT_COOLDOWN_MINUTES,
+    DEFAULT_ALERT_MIN_PRESSING,
+    DEFAULT_HEADS_UP_MINUTES,
+    DEFAULT_PREP_MINUTES,
+    DEFAULT_ROAD_FACTOR,
+    DEFAULT_SOON_MINUTES,
+    DEFAULT_TRAVEL_SPEED_KMH,
+    KINDS,
+    Annotated,
+    Any,
+    CalendarSync,
+    CommitmentCreate,
+    CommitmentKind,
+    ConflictDismiss,
+    Depends,
+    HTTPException,
+    PlaceCreate,
+    Request,
+    ScopedRequest,
+    Settings,
+    _dismiss_url,
+    _parse_dt_or_none,
+    build_briefing,
+    build_departure_message,
+    build_panic,
+    classify_kind,
+    conflict_dismissal_key,
+    feed_label,
+    find_conflicts,
+    module_enabled,
+    next_departure,
+    normalize_event,
+    normalize_query,
+    overwhelm_level,
+    panic_alert_message,
+    partition_conflicts,
+    plan_departure,
+    render_briefing,
+    render_panic,
+    resolve_user,
+    status,
+    sync_calendar,
+    utcnow,
+)
+
+
+def build_router(
+    *,
+    resolved_settings,
+    n8n,
+    ollama_client,
+    summarizer_client,
+    geocoder_client,
+    _run_geocode,
+) -> APIRouter:
+    """Build the "schedule" APIRouter (shared services injected by create_app)."""
+    router = APIRouter()
+
+    @router.post("/webhooks/calendar/sync", tags=["schedule"])
+    def calendar_sync(
+        payload: CalendarSync,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Sync a batch of upcoming calendar events into ``commitments``.
+
+        n8n posts the current window of events on a schedule; this upserts them
+        (by ``external_id``) and prunes calendar events that disappeared. A bad
+        timestamp rejects the whole batch with 422 (never partially applies).
+        """
+        memory = ctx.store
+        # Classify only when Ollama is reachable — one liveness check up front
+        # avoids a slow per-event timeout storm when it's down (new events then
+        # default to 'self', the conservative, conflict-preserving choice).
+        classify = None
+        if ollama_client.available():
+            examples = memory.kind_feedback_examples()
+
+            def classify(title: str) -> tuple[str, str]:
+                return classify_kind(title, client=ollama_client, examples=examples)
+
+        try:
+            summary = sync_calendar(
+                memory,
+                [e.model_dump() for e in payload.events],
+                classify=classify,
+                default_tz=resolved_settings.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        # Fill in destination coordinates for events that arrived with only a
+        # free-text location, so the departure reminder can estimate travel time.
+        # Curated places + the cache are offline; the network geocoder is used
+        # only when geocoding_enabled is on. Best-effort: never blocks the sync.
+        geocoded = _run_geocode(memory)
+        return {
+            "added": summary.added,
+            "updated": summary.updated,
+            "cancelled": summary.cancelled,
+            "upcoming": summary.upcoming,
+            "conflicts": summary.conflicts,
+            "new_conflict": summary.new_conflict,
+            "possible_conflicts": summary.possible_conflicts,
+            "new_possible_conflict": summary.new_possible_conflict,
+            "geocoded": geocoded["resolved"],
+        }
+
+    @router.post("/webhooks/departure/check", tags=["schedule"])
+    async def departure_check(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Evaluate upcoming commitments and report whether to nudge a departure.
+
+        n8n polls this on a schedule (the Departure Reminder workflow). For each
+        upcoming commitment it computes a leave-by time: from the phone's
+        last-known location and the commitment's ``dest_lat``/``dest_lon`` when
+        both are known (a local, bias-adjusted travel estimate), otherwise from
+        the commitment's static ``lead_minutes``. The most urgent reminder-worthy
+        commitment is returned; ``fire`` is ``true`` only when its
+        ``(commitment, level)`` pair is new since the last poll, so a standing
+        reminder doesn't re-alert every cycle. Current coordinates may be
+        overridden in the request body (``current_lat``/``current_lon``).
+        """
+        memory = ctx.store
+        # Departure timing is a Time Blindness intervention; if that module is
+        # off, the proactive departure nudge never fires.
+        if not module_enabled("time_blindness", resolved_settings):
+            return {
+                "fire": False,
+                "message": None,
+                "reminder": None,
+                "location_known": False,
+                "skipped": "module_disabled",
+            }
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        cur_lat = body.get("current_lat")
+        cur_lon = body.get("current_lon")
+        if cur_lat is None or cur_lon is None:
+            last = memory.get_location()
+            if last is not None:
+                cur_lat, cur_lon = last["lat"], last["lon"]
+
+        bias = memory.get_float("time_estimation_bias", 1.0)
+        name = ctx.user.get("display_name") or ""
+        handle = ctx.user.get("handle") or ""
+        settings: Settings = request.app.state.settings
+        # Commitments the user waved off from a notification tap don't get a
+        # departure nudge; excluding them here (rather than after picking the
+        # top) lets the *next* commitment still surface.
+        dismissed = memory.dismissed_departures()
+        plans = [
+            plan_departure(
+                c,
+                current_lat=cur_lat,
+                current_lon=cur_lon,
+                bias=bias,
+                speed_kmh=memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+                road_factor=memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
+                prep_minutes=memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+                heads_up_minutes=memory.get_float(
+                    "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+                ),
+                soon_minutes=memory.get_float(
+                    "departure_soon_minutes", DEFAULT_SOON_MINUTES
+                ),
+            )
+            for c in memory.upcoming_commitments()
+            if c["id"] not in dismissed
+        ]
+        top = next_departure(plans)
+
+        fire, message, reminder = False, "", None
+        if top is not None:
+            reminder = {
+                "commitment_id": top.commitment["id"],
+                "title": top.commitment["title"],
+                "location": top.commitment.get("location"),
+                "start_at": top.commitment["start_at"],
+                "leave_by": top.leave_by,
+                "minutes_until_leave": top.minutes_until_leave,
+                "travel_minutes": top.travel_minutes,
+                "basis": top.basis,
+                "level": top.level,
+                # One-tap link that dismisses this commitment's departure nudges.
+                "dismiss_url": _dismiss_url(
+                    settings, handle, "departure", top.commitment["id"]
+                ),
+            }
+            signature = f"{top.commitment['id']}:{top.level}"
+            fire = signature != memory.get_state("last_departure_signature", "")
+            if fire:
+                memory.set_state("last_departure_signature", signature, source="inferred")
+                message = build_departure_message(top, name=name)
+                memory.record_nudge(kind="departure", message=message, level=top.level)
+
+        return {
+            "fire": fire,
+            "message": message,
+            "reminder": reminder,
+            "location_known": cur_lat is not None and cur_lon is not None,
+        }
+
+    @router.post(
+        "/commitments", status_code=status.HTTP_201_CREATED, tags=["schedule"]
+    )
+    def commitment_create(
+        payload: CommitmentCreate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Add a single commitment manually (source ``manual``).
+
+        If a ``location`` is given without explicit coordinates, a geocode pass
+        runs (curated places + cache always; network geocoder only when
+        ``geocoding_enabled`` is on) so the departure reminder can use travel time.
+        """
+        memory = ctx.store
+        try:
+            fields = normalize_event(
+                {**payload.model_dump(), "source": "manual"},
+                default_tz=resolved_settings.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        commitment_id, _ = memory.upsert_commitment(**fields)
+        if fields.get("dest_lat") is None and fields.get("location"):
+            _run_geocode(memory)
+        commitment = memory.get_commitment(commitment_id)
+        return {
+            "commitment_id": commitment_id,
+            "dest_lat": commitment.get("dest_lat") if commitment else None,
+            "dest_lon": commitment.get("dest_lon") if commitment else None,
+        }
+
+    @router.post("/commitments/geocode", tags=["schedule"])
+    def commitments_geocode(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Run a geocoding pass over commitments missing coordinates.
+
+        Useful for backfilling after enabling geocoding or adding curated places.
+        Curated places + the cache are always consulted; the network geocoder is
+        used only when ``geocoding_enabled`` is on.
+        """
+        memory = ctx.store
+        return _run_geocode(memory)
+
+    @router.post("/places", status_code=status.HTTP_201_CREATED, tags=["schedule"])
+    def place_create(
+        payload: PlaceCreate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Add (or update) a curated place alias used before any geocoding.
+
+        The ``name`` is normalized to a match key; re-posting the same name
+        updates its coordinates. Matched against a commitment's location and
+        title, so "gym" resolves "Gym session" instantly and offline.
+        """
+        memory = ctx.store
+        name = normalize_query(payload.name)
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Place 'name' is empty after normalization.",
+            )
+        place_id = memory.add_place(
+            name, payload.lat, payload.lon, label=payload.label or payload.name
+        )
+        return {"place_id": place_id, "name": name}
+
+    @router.get("/places", tags=["schedule"])
+    def places_list(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """List curated place aliases (most specific name first)."""
+        memory = ctx.store
+        return {"places": memory.places()}
+
+    @router.get("/commitments", tags=["schedule"])
+    def commitments_list(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """List active upcoming commitments, soonest first.
+
+        Each commitment carries a ``calendar`` label and a ``calendar_key`` (the
+        feed slug). The response also echoes the operator-configured ``calendars``
+        label map so the dashboard can render a friendly, colored pill per
+        calendar without hard-coding any feed names or colors.
+        """
+        memory = ctx.store
+        return {
+            "commitments": memory.upcoming_commitments(),
+            "calendars": resolved_settings.calendar_label_map,
+        }
+
+    @router.get("/commitments/conflicts", tags=["schedule"])
+    def commitments_conflicts(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Report overlaps among upcoming commitments, split by firmness.
+
+        ``conflicts`` are firm double-bookings (two real events overlap).
+        ``possible_conflicts`` are soft — a placeholder (Busy/Block/Hold)
+        overlapping a real event — excluding any the user has dismissed; each
+        carries a ``key`` to dismiss it via ``POST /commitments/conflicts/dismiss``.
+        """
+        memory = ctx.store
+        hard, possible = partition_conflicts(
+            find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
+        )
+
+        def side(x: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "id": x["id"],
+                "title": x["title"],
+                "start_at": x["start_at"],
+                "calendar": feed_label(x.get("external_id")),
+            }
+
+        def pair(c: Any) -> dict[str, Any]:
+            return {
+                "a": side(c.a),
+                "b": side(c.b),
+                "overlap_minutes": c.overlap_minutes,
+            }
+
+        return {
+            "conflicts": [pair(c) for c in hard],
+            "possible_conflicts": [
+                {**pair(c), "key": conflict_dismissal_key(c)} for c in possible
+            ],
+        }
+
+    @router.post("/commitments/conflicts/dismiss", tags=["schedule"])
+    def dismiss_possible_conflict(
+        payload: ConflictDismiss,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Dismiss a possible conflict by its ``key`` (from the conflicts list).
+
+        The dismissal sticks across re-syncs but lapses if either event moves or
+        is retitled (the key is derived from start time + title).
+        """
+        memory = ctx.store
+        memory.dismiss_conflict(payload.key)
+        return {"dismissed": payload.key}
+
+    @router.post("/commitments/{commitment_id}/kind", tags=["schedule"])
+    def set_commitment_kind(
+        commitment_id: int,
+        payload: CommitmentKind,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Correct a commitment's kind (``self`` vs ``fyi``).
+
+        Records the correction as feedback (alongside the model's prior verdict)
+        so the classifier's prompt evolves toward the user's judgement, and marks
+        the row ``kind_source='user'`` so a later sync never re-classifies it.
+        """
+        memory = ctx.store
+        kind = payload.kind.strip().lower()
+        if kind not in KINDS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"kind must be one of {KINDS}",
+            )
+        current = memory.get_commitment(commitment_id)
+        if current is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_kind(commitment_id, kind, "user")
+        # Learn from the correction: store the user's label + what was there
+        # before (often the model's verdict) as a few-shot example.
+        memory.record_kind_feedback(
+            current["title"], kind, llm_kind=current.get("kind")
+        )
+        return {"commitment": updated}
+
+    @router.get("/briefing", tags=["schedule"])
+    def briefing(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Return today's morning briefing as structured data plus rendered text.
+
+        n8n can deliver the ``text`` directly, or feed it to Ollama for prose
+        (or call ``prefrontal summarize``-style). Always fast and model-free here.
+        """
+        memory = ctx.store
+        b = build_briefing(memory)
+        return {
+            "date": b.date,
+            "format": b.format,
+            "today": b.today,
+            "conflicts": b.conflicts,
+            "slips": b.slips,
+            "coaching": b.coaching,
+            "spare": b.spare,
+            "text": render_briefing(b),
+        }
+
+    @router.get("/panic", tags=["schedule"])
+    def panic(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Overwhelmed-mode triage: what's actually on fire now + one first step.
+
+        Where ``/briefing`` is a calm whole-day overview, this ranks only what is
+        bearing down *right now* across calendar, todos, and mail into three
+        buckets (``late`` / ``soon`` / ``piling_up``) and returns a single
+        concrete first action to break the freeze. Fast and model-free; n8n or a
+        Shortcut can deliver the ``text`` directly, or feed it to Ollama for prose.
+        """
+        memory = ctx.store
+
+        def dump(p: Any) -> dict[str, Any]:
+            return {
+                "bucket": p.bucket,
+                "kind": p.kind,
+                "title": p.title,
+                "when": p.when,
+                "source": p.source,
+                "commitment_id": p.commitment_id,
+                "todo_id": p.todo_id,
+            }
+
+        plan = build_panic(memory)
+        return {
+            "date": plan.date,
+            "counts": plan.counts,
+            "first_step": plan.first_step,
+            "first_step_for": plan.first_step_for,
+            "headline": plan.headline,
+            "late": [dump(p) for p in plan.late],
+            "soon": [dump(p) for p in plan.soon],
+            "piling_up": [dump(p) for p in plan.piling_up],
+            "text": render_panic(plan),
+        }
+
+    @router.post("/webhooks/panic/check", tags=["schedule"])
+    def panic_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Poll for a *proactive* overwhelm nudge (for n8n / a scheduler).
+
+        Panic mode is normally on-demand, but the worst spikes are the moments you
+        don't think to open anything. A poller hits this on a cadence; it fires
+        only when the plate genuinely tips into overwhelm (see
+        :func:`~prefrontal.panic.overwhelm_level`), and edge-triggers on the level
+        — like the departure reminder's signature — so a sustained pile-up nudges
+        once, not every poll. A ``panic_alert_cooldown_minutes`` floor keeps it
+        quiet for a while after firing even if the level flaps.
+
+        Returns ``{"fire", "level", "message", "first_step", "counts", "headline"}``.
+        Only ``fire == true`` should be delivered as a push/voice nudge.
+        """
+        memory = ctx.store
+        plan = build_panic(memory)
+
+        try:
+            min_pressing = int(
+                memory.get_state("panic_alert_min_pressing")
+                or DEFAULT_ALERT_MIN_PRESSING
+            )
+        except (TypeError, ValueError):
+            min_pressing = DEFAULT_ALERT_MIN_PRESSING
+        cooldown = memory.get_float(
+            "panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES
+        )
+
+        level = overwhelm_level(plan, min_pressing=min_pressing)
+        prev = memory.get_state("last_panic_level", "calm")
+        fire = level == "overwhelmed" and prev != "overwhelmed"
+
+        # Cooldown floor: even on a fresh edge, stay quiet if we alerted recently.
+        if fire:
+            last_at = _parse_dt_or_none(memory.get_state("last_panic_alert_at"))
+            if last_at is not None:
+                elapsed = (utcnow() - last_at).total_seconds() / 60.0
+                if elapsed < cooldown:
+                    fire = False
+
+        memory.set_state("last_panic_level", level, source="inferred")
+        message = ""
+        if fire:
+            name = (memory.get_state("user_name") or "").strip() or None
+            message = panic_alert_message(plan, name=name)
+            memory.set_state(
+                "last_panic_alert_at",
+                utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                source="inferred",
+            )
+
+        return {
+            "fire": fire,
+            "level": level,
+            "message": message,
+            "first_step": plan.first_step,
+            "counts": plan.counts,
+            "headline": plan.headline,
+        }
+
+    # -- Todos (open loops fitted into free time) ----------------------------
+
+    return router
