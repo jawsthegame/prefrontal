@@ -25,6 +25,7 @@ class TodosRepo:
         deadline: str | None = None,
         energy: str | None = None,
         category: str | None = None,
+        time_window: str | None = None,
         source: str = "manual",
     ) -> int:
         """Insert an open todo and return its id.
@@ -38,6 +39,10 @@ class TodosRepo:
             energy: Optional ``low``/``medium``/``high`` hint.
             category: Optional topic (inferred upstream by ``augment_todo``);
                 editable later via :meth:`set_todo_category`.
+            time_window: Optional per-todo suggestion window ``"HH:MM-HH:MM"``
+                (local), overriding the category/source/default window used by
+                :func:`prefrontal.scheduling.todo_allowed_at`. Editable later via
+                :meth:`set_todo_window`.
             source: Where the todo came from — ``manual`` or ``impulse`` (a
                 captured-and-deferred impulse). Lets surfaces distinguish the
                 impulse inbox from deliberately-added loops.
@@ -47,9 +52,10 @@ class TodosRepo:
         """
         cur = self.conn.execute(
             "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
-            "deadline, energy, category, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "deadline, energy, category, time_window, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._uid(), title, notes, estimate_minutes, priority, deadline, energy,
-             category, source),
+             category, time_window, source),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -178,6 +184,24 @@ class TodosRepo:
             "UPDATE todos SET category = ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND user_id = ?",
             (category, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_todo_window(self, todo_id: int, time_window: str | None) -> bool:
+        """Set (or clear) a todo's per-todo suggestion window. Returns ``True`` if changed.
+
+        The value is a local ``"HH:MM-HH:MM"`` range (e.g. ``"06:00-22:00"``) that
+        overrides the category/source/default window when the scheduler decides
+        whether a todo is suggestible right now; ``None`` clears the override so it
+        falls back to its category's window. Only open todos are editable (a closed
+        todo's window is moot), matching :meth:`update_todo_deadline`. The caller is
+        responsible for validating the format; this just writes the value.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET time_window = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open'",
+            (time_window, todo_id, self._uid()),
         )
         self.conn.commit()
         return cur.rowcount > 0

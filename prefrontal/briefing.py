@@ -27,9 +27,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.commitments import find_conflicts
+from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import free_windows, suggest_for_windows
+from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
 from prefrontal.todos import avoided_todos
 
 #: Default available-hours band (UTC hours) for fitting todos into the day.
@@ -134,8 +135,14 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         band_start = max(now, day_start.replace(hour=DEFAULT_DAY_START_HOUR))
         band_end = day_start.replace(hour=DEFAULT_DAY_END_HOUR)
         if band_end > band_start:
+            # Only propose a todo into a window its category/source/off-zone
+            # policy actually allows (e.g. no focus work at 8pm, nothing overnight).
+            settings = get_settings()
+            window_config = window_config_for(settings, store)
             windows = free_windows(today, band_start, band_end)
-            for s in suggest_for_windows(windows, todos, bias):
+            for s in suggest_for_windows(
+                windows, todos, bias, config=window_config, tz=settings.timezone
+            ):
                 pick = s["suggestion"]
                 spare.append(
                     {
