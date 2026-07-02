@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Prefrontal">
+  <title>Prefrontal app icon</title>
+  <defs>
+    <linearGradient id="pf-stroke" x1="0.28" y1="0.02" x2="0.62" y2="1">
+      <stop offset="0"    stop-color="#c6ec4e"/>
+      <stop offset="0.35" stop-color="#66db6e"/>
+      <stop offset="0.7"  stop-color="#2dd4bf"/>
+      <stop offset="1"    stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#141b30"/>
+  <!-- The mark: a continuous-stroke "P" whose bowl reads as two brain folds. -->
+  <g fill="none" stroke="url(#pf-stroke)" stroke-width="60" stroke-linecap="round" stroke-linejoin="round">
+    <!-- left leg -> P arch -> right side -> upper brain fold -->
+    <path d="M 360 892
+             L 360 352
+             C 360 200 474 150 582 168
+             C 700 186 744 274 716 366
+             C 696 434 628 462 566 440
+             C 518 423 504 370 536 350"/>
+    <!-- inner leg -> lower brain fold -->
+    <path d="M 480 892
+             L 480 578
+             C 480 512 552 484 612 514
+             C 672 543 664 606 610 624
+             C 568 637 544 602 570 582"/>
+  </g>
+</svg>
