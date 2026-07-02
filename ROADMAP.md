@@ -440,5 +440,31 @@ ordered by leverage; each is independent but builds on denser capture.
   opt-in upgrade rather than a replacement for the Scriptable widget, which stays
   the zero-native-code default. *(Deferred by choice; the accessory widget covers
   the glanceable case today.)*
+- **Context Packs (a.k.a. Playbooks) — composition over primitives, not new modules.**
+  Challenge-area modules answer *how your ADHD shows up* (time blindness,
+  hyperfocus, impulsivity, …); a **Pack** answers *what life you're managing* —
+  **Parent**, **Caregiver**, **Grad student**, **New job**. Crucially a Pack is
+  **not** a `Module` subclass: modules live on the executive-function-challenge
+  axis, and a role like "parent" is an orthogonal *life-context* axis (a parent
+  still has time blindness — "parent" isn't a peer of "hyperfocus"). It's a higher
+  **composition layer** that (1) switches on a relevant subset of challenge
+  modules, (2) seeds domain vocabulary — commitment `kind`s (today `self`/`fyi`;
+  add e.g. `child`), todo `categories`, default windows — and coaching prefs,
+  (3) registers a few **situation tools** that are thin compositions of existing
+  primitives (todos, commitments, departure, panic, `decompose_task`, the
+  NL-assistant `ALLOWED_OPS` whitelist, delivery), and (4) tailors surfaces like
+  the `family` view. Proactive cues route through the shipped `Module.evaluate`
+  tick engine — a Pack lights up nudges by enabling modules that already evaluate,
+  or by contributing its own cue source. **Example — Parent:** school-run
+  departure (departure + a geocoded `place`), pack-the-bag checklist
+  (`decompose_task`), "who's covering pickup?" (conflict detection + the `kind`
+  classifier over a shared calendar), "kid's home sick → replan the day" (panic +
+  todo re-fit into the changed windows). Deliberately mostly declarative + a small
+  tool registry, so a Pack is cheap to add and shareable ("install the Parent
+  pack") — the same opt-in, modular ethos as challenge modules, on the orthogonal
+  context axis. *(Open: precedence when Packs overlap — two setting the same
+  category/window need merge rules; and the co-parent/household bits imply
+  **shared/household scope**, beyond today's per-user multi-tenancy. Naming TBD —
+  Pack vs Playbook vs Kit.)*
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
