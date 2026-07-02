@@ -19,7 +19,6 @@ from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.self_care import (
-    ATE_TODAY_KEY,
     SNOOZED_UNTIL_KEY,
     SelfCareModule,
     meal_message,
@@ -123,13 +122,24 @@ def test_meal_silent_before_start_hour(store):
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 9, 0, 0))) == []
 
 
-def test_meal_silent_once_eaten_today(store):
+def test_meal_silent_once_target_met(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
-    store.set_state(ATE_TODAY_KEY, "2026-07-02")
+    store.set_state("meal_count", "2026-07-02|1")  # target is 1 — done for the day
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
-    # A new day re-arms it.
+    # A new day re-arms it (the count is date-scoped).
     assert _by_kind(SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 15, 0, 0))), "meal")
+
+
+def test_water_stops_after_daily_target(store):
+    """Water keeps firing until the daily target of confirms is reached."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_enabled", "off")
+    now = _ctx(datetime(2026, 7, 2, 10, 0, 0))
+    store.set_state("water_count", "2026-07-02|5")  # one short of the default 6
+    assert _by_kind(SelfCareModule().evaluate(store, now), "water")
+    store.set_state("water_count", "2026-07-02|6")  # target met
+    assert SelfCareModule().evaluate(store, now) == []
 
 
 def test_meal_silent_while_snoozed(store):
@@ -163,11 +173,15 @@ def test_self_care_actions_in_allowlist():
         assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, action, 20260702)
 
 
-def test_act_meal_ate_marks_eaten(client, store):
+def test_act_meal_ate_counts_and_logs(client, store):
     token = sign_action(DEFAULT_HANDLE, "meal_ate", 20260702, SIGNING)
     resp = client.get(f"/nudge/act?t={token}")
     assert resp.status_code == 200
-    assert store.get_state(ATE_TODAY_KEY) == utcnow().strftime("%Y-%m-%d")
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("meal_count") == f"{today}|1"  # counted toward target 1
+    # The response is logged as a self_care episode (seeds cadence learning).
+    eps = store.episodes_by_type("self_care")
+    assert eps and eps[0]["outcome"] == "confirmed" and "meal" in eps[0]["context"]
 
 
 def test_act_meal_snooze_sets_window(client, store):
@@ -180,17 +194,15 @@ def test_act_meal_snooze_sets_window(client, store):
     assert timedelta(minutes=25) < (parsed - utcnow()) <= timedelta(minutes=31)
 
 
-def test_act_water_drank_defers_a_full_interval(client, store):
-    """A 'Drank' tap pushes the next reminder out ~a full interval (90 min)."""
+def test_act_water_drank_counts_and_defers_a_full_interval(client, store):
+    """A 'Drank' tap counts one and pushes the next reminder ~a full interval out."""
     token = sign_action(DEFAULT_HANDLE, "water_drank", 20260702, SIGNING)
     resp = client.get(f"/nudge/act?t={token}")
     assert resp.status_code == 200
-    until = store.get_state("water_snoozed_until")
-    assert until is not None
-    parsed = datetime.strptime(until, "%Y-%m-%d %H:%M:%S")
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("water_count") == f"{today}|1"  # one of the daily target
+    parsed = datetime.strptime(store.get_state("water_snoozed_until"), "%Y-%m-%d %H:%M:%S")
     assert timedelta(minutes=85) < (parsed - utcnow()) <= timedelta(minutes=91)
-    # A recurring check never stamps a daily "done".
-    assert store.get_state("water_done_today") is None
 
 
 def test_act_water_snooze_is_shorter(client, store):

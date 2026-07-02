@@ -8,24 +8,28 @@ reminder is needed, not suppressed.
 
 It's a small **registry of basic-needs checks**, each riding the coaching-agent
 tick (:meth:`Module.evaluate`) so responsive-hours + debounce come for free (no
-overnight nag). Two ship today, differing only in *mode*:
+overnight nag). Two ship today, differing only in their **daily target**:
 
-- **meal** (``once_daily``) — from ``meal_start_hour`` (default 11), ask "have you
-  eaten?" and re-ask every ``meal_reask_minutes`` until you confirm, then go quiet
-  for the day (``ate_today``). One-tap **Ate** / **Snooze**.
-- **water** (``recurring``) — from ``water_start_hour`` (default 9), a "drink some
-  water" reminder every ``water_interval_minutes`` (default 90), all day. There's
-  no daily "done": a **Drank** tap just pushes the next reminder out a full
-  interval; **Snooze** holds it off briefly.
+- **meal** (target 1) — from ``meal_start_hour`` (default 11), ask "have you
+  eaten?" and re-ask every ``meal_reask_minutes`` until you confirm; one "Ate"
+  meets the target and it goes quiet for the day.
+- **water** (target ``water_daily_target``, default 6) — from ``water_start_hour``
+  (default 9), a "drink some water" reminder every ``water_interval_minutes``
+  (default 90); each **Drank** counts one toward the target and pushes the next
+  reminder out a full interval, and once you hit the target it's done for the day.
 
-Off by default — set the ``self_care`` coaching key to ``on`` (each check can then
-be turned off individually with ``meal_enabled`` / ``water_enabled``).
+So "how many yeses stops it for the day" is just the target: 1 for a meal, N for
+water. Off by default — set the ``self_care`` coaching key to ``on`` (each check
+can then be turned off individually with ``meal_enabled`` / ``water_enabled``).
 
 Cadence without fighting the engine debounce: a cue's ``dedup_key`` carries a
 per-interval *bucket* (which window of the day we're in), so each window fires
 exactly once — the engine's fire-once-per-``dedup_key`` guard gives the re-ask
-rhythm for free. A confirm (``ate_today``) or snooze (``*_snoozed_until``) stops
-or defers it; both are plain coaching-state keys, no schema change.
+rhythm for free. Confirms and snoozes are plain coaching-state cursors
+(``*_count`` = ``date|n`` toward the target, ``*_snoozed_until``), no schema
+change. Every confirm/snooze also logs a ``self_care`` episode so a later
+learning pass can adapt cadence (see ROADMAP — including the honesty check on
+reflexive instant-yeses).
 """
 
 from __future__ import annotations
@@ -40,19 +44,21 @@ from prefrontal.modules.base import Intervention, Module, ModuleStore
 from prefrontal.modules.registry import register
 from prefrontal.scheduling import local_datetime
 
-#: Meal-check defaults (once-a-day: confirm and it stops for the day).
+#: Meal-check defaults (target 1: one "Ate" and it's done for the day).
 DEFAULT_MEAL_START_HOUR = 11
 DEFAULT_MEAL_REASK_MINUTES = 40
 DEFAULT_MEAL_SNOOZE_MINUTES = 30
-#: Water-check defaults (recurring: a sip reminder through the day).
+DEFAULT_MEAL_DAILY_TARGET = 1
+#: Water-check defaults (recurring toward a daily target of glasses).
 DEFAULT_WATER_START_HOUR = 9
 DEFAULT_WATER_INTERVAL_MINUTES = 90
 DEFAULT_WATER_SNOOZE_MINUTES = 30
+DEFAULT_WATER_DAILY_TARGET = 6
 
-#: Meal once-a-day confirm cursor (kept for continuity / external references).
-ATE_TODAY_KEY = "ate_today"
-#: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS").
+#: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
+#: Episode type logged on each self-care response (seeds cadence learning).
+SELF_CARE_EPISODE = "self_care"
 
 
 def meal_message(name: str = "") -> str:
@@ -72,20 +78,21 @@ def water_message(name: str = "") -> str:
 
 @dataclass(frozen=True)
 class BasicCheck:
-    """One basic-needs check the module can produce, declared by config keys.
+    """One basic-needs check, declared by its config keys and daily target.
 
-    ``recurring`` is the mode switch: a ``once_daily`` check (meal) has a
-    ``done_key`` it stamps to go quiet for the rest of the day; a ``recurring``
-    check (water) has none — confirming it just defers the next reminder by a
-    full interval. Everything else (start hour, interval, snooze, buttons) is the
-    same shape, so a new basic (meds, sleep) is one more entry here plus its
-    ntfy buttons.
+    The **target** is the unifying knob: a once-a-day check (meal) is just target
+    1; a recurring one (water) is target N. A confirm counts one toward the day's
+    target and — until the target is met — defers the next reminder a full
+    interval; meeting the target ends the check for the day. Adding a new basic
+    (meds, sleep) is one more entry here plus its ntfy buttons.
     """
 
     key: str                # context_key + ntfy button kind: "meal" | "water"
     intervention: str       # declared Intervention.name
-    recurring: bool         # False = once/day (has done_key); True = all-day
     enabled_key: str        # per-check on/off (under the master self_care switch)
+    count_key: str          # daily-progress cursor: "YYYY-MM-DD|n"
+    target_key: str
+    target_default: int
     snooze_key: str         # cursor: UTC ts we're held off until
     start_hour_key: str
     start_hour_default: int
@@ -96,17 +103,18 @@ class BasicCheck:
     message: Callable[[str], str]
     confirm_action: str     # NUDGE_ACTIONS name for the confirm button
     snooze_action: str      # NUDGE_ACTIONS name for the snooze button
-    confirm_headline: str   # /nudge/act confirmation page copy
-    done_key: str | None = None  # once/day terminal cursor (None for recurring)
+    progress_headline: str  # confirm that isn't yet the target ({count}/{target})
+    done_headline: str      # confirm that meets the target ({count}/{target})
 
 
 CHECKS: tuple[BasicCheck, ...] = (
     BasicCheck(
         key="meal",
         intervention="meal_check",
-        recurring=False,
         enabled_key="meal_enabled",
-        done_key=ATE_TODAY_KEY,
+        count_key="meal_count",
+        target_key="meal_daily_target",
+        target_default=DEFAULT_MEAL_DAILY_TARGET,
         snooze_key=SNOOZED_UNTIL_KEY,
         start_hour_key="meal_start_hour",
         start_hour_default=DEFAULT_MEAL_START_HOUR,
@@ -117,13 +125,16 @@ CHECKS: tuple[BasicCheck, ...] = (
         message=meal_message,
         confirm_action="meal_ate",
         snooze_action="meal_snooze",
-        confirm_headline="Nice — glad you ate. 🍽️ I'll leave you be today.",
+        progress_headline="Nice — that's {count} today. 🍽️",
+        done_headline="Nice — glad you ate. 🍽️ I'll leave you be today.",
     ),
     BasicCheck(
         key="water",
         intervention="water_check",
-        recurring=True,
         enabled_key="water_enabled",
+        count_key="water_count",
+        target_key="water_daily_target",
+        target_default=DEFAULT_WATER_DAILY_TARGET,
         snooze_key="water_snoozed_until",
         start_hour_key="water_start_hour",
         start_hour_default=DEFAULT_WATER_START_HOUR,
@@ -134,7 +145,8 @@ CHECKS: tuple[BasicCheck, ...] = (
         message=water_message,
         confirm_action="water_drank",
         snooze_action="water_snooze",
-        confirm_headline="Nice — hydrated. 💧 I'll remind you again in a bit.",
+        progress_headline="Nice — {count}/{target} today. 💧 I'll remind you again in a bit.",
+        done_headline="That's all {target} for today — nicely done. 💧",
     ),
 )
 
@@ -159,16 +171,39 @@ def _stamp(now: datetime, minutes: int) -> str:
     return (now + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _target(store: ModuleStore, check: BasicCheck) -> int:
+    return max(1, int(store.get_float(check.target_key, check.target_default)))
+
+
+def day_count(store: ModuleStore, check: BasicCheck, today: str) -> int:
+    """How many confirms the user has logged for ``check`` *today* (0 if none).
+
+    The cursor is ``"YYYY-MM-DD|n"``; a date mismatch means a new day, so the
+    count resets to 0 without a nightly job.
+    """
+    raw = store.get_state(check.count_key)
+    if not raw:
+        return 0
+    date, _, n = str(raw).partition("|")
+    if date != today:
+        return 0
+    try:
+        return int(n)
+    except ValueError:
+        return 0
+
+
 def apply_self_care_action(
     store: ModuleStore, action: str, *, now: datetime, today: str
 ) -> str | None:
     """Apply a one-tap self-care action; return the confirmation copy (or ``None``).
 
-    Centralizes the confirm/snooze semantics so ``/nudge/act`` stays thin:
+    Centralizes confirm/snooze semantics so ``/nudge/act`` stays thin:
 
-    - **confirm** on a once-daily check stamps ``done_key`` = today (silent for
-      the day); on a recurring check it defers a *full interval* (you just did it).
-    - **snooze** defers by the check's snooze minutes.
+    - **confirm** counts one toward the day's target and logs a ``self_care``
+      episode; if the target isn't met yet it defers the next reminder a full
+      interval, otherwise the check is done for the day.
+    - **snooze** defers by the check's snooze minutes and logs the response.
 
     Returns ``None`` for an unknown action (so the caller can fall through).
     """
@@ -176,14 +211,32 @@ def apply_self_care_action(
     if check is None:
         return None
     if action == check.confirm_action:
-        if check.recurring:
-            interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
-            store.set_state(check.snooze_key, _stamp(now, interval), source="explicit")
-        else:
-            store.set_state(check.done_key or ATE_TODAY_KEY, today, source="explicit")
-        return check.confirm_headline
+        count = day_count(store, check, today) + 1
+        store.set_state(check.count_key, f"{today}|{count}", source="explicit")
+        target = _target(store, check)
+        store.log_episode(
+            SELF_CARE_EPISODE,
+            acknowledged=True,
+            context=f"{check.key}: confirmed",
+            outcome="confirmed",
+            notes=f"{count}/{target}",
+        )
+        if count >= target:
+            return check.done_headline.format(count=count, target=target)
+        # Not there yet — space the next reminder a full interval out.
+        interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
+        store.set_state(check.snooze_key, _stamp(now, interval), source="explicit")
+        return check.progress_headline.format(count=count, target=target)
+    # snooze
     mins = int(store.get_float(check.snooze_minutes_key, check.snooze_minutes_default))
     store.set_state(check.snooze_key, _stamp(now, mins), source="explicit")
+    store.log_episode(
+        SELF_CARE_EPISODE,
+        acknowledged=True,
+        context=f"{check.key}: snoozed",
+        outcome="snoozed",
+        notes=f"{mins}m",
+    )
     return f"Okay — I'll check back in {mins} min."
 
 
@@ -205,10 +258,12 @@ class SelfCareModule(Module):
         "meal_start_hour": str(DEFAULT_MEAL_START_HOUR),
         "meal_reask_minutes": str(DEFAULT_MEAL_REASK_MINUTES),
         "meal_snooze_minutes": str(DEFAULT_MEAL_SNOOZE_MINUTES),
+        "meal_daily_target": str(DEFAULT_MEAL_DAILY_TARGET),
         "water_enabled": "on",
         "water_start_hour": str(DEFAULT_WATER_START_HOUR),
         "water_interval_minutes": str(DEFAULT_WATER_INTERVAL_MINUTES),
         "water_snooze_minutes": str(DEFAULT_WATER_SNOOZE_MINUTES),
+        "water_daily_target": str(DEFAULT_WATER_DAILY_TARGET),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -228,10 +283,10 @@ class SelfCareModule(Module):
                 name="water_check",
                 description=(
                     "From water_start_hour, a 'drink some water' reminder every "
-                    "water_interval_minutes through the day. One-tap Drank (defers a "
-                    "full interval) / Snooze on ntfy."
+                    "water_interval_minutes until you hit water_daily_target. "
+                    "One-tap Drank (counts one, defers an interval) / Snooze on ntfy."
                 ),
-                trigger="through the day, on an interval",
+                trigger="through the day, on an interval, up to the daily target",
                 status="active",
             ),
         ]
@@ -240,7 +295,7 @@ class SelfCareModule(Module):
         """Fire whichever basic-needs checks are due right now.
 
         Opt-in (``self_care`` == ``on``); each check inert before its start hour,
-        while snoozed, or (once-daily) once confirmed today. The engine adds
+        while snoozed, or once the day's target is met. The engine adds
         responsive-hours + debounce on top, so nothing nags overnight.
         """
         if (store.get_state("self_care", "off") or "off") != "on":
@@ -254,11 +309,11 @@ class SelfCareModule(Module):
         for check in CHECKS:
             if (store.get_state(check.enabled_key, "on") or "on") == "off":
                 continue
-            if check.done_key and store.get_state(check.done_key) == today:
-                continue  # once-daily and already confirmed today
+            if day_count(store, check, today) >= _target(store, check):
+                continue  # hit the day's target already
             snoozed_until = _parse_ts(store.get_state(check.snooze_key))
             if snoozed_until is not None and ctx.now < snoozed_until:
-                continue  # deferred (snooze, or a recurring "just did it")
+                continue  # deferred (snooze, or the interval after a confirm)
 
             start_hour = int(store.get_float(check.start_hour_key, check.start_hour_default))
             interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
@@ -295,10 +350,11 @@ class SelfCareModule(Module):
                 continue
             start = store.get_state(check.start_hour_key) or str(check.start_hour_default)
             every = store.get_state(check.interval_key) or str(check.interval_default)
-            kind = "re-ask" if not check.recurring else "repeat"
+            target = _target(store, check)
+            goal = "" if target == 1 else f" (up to {target}/day)"
             lines.append(
-                f"- {check.key.title()} check on: from {start}:00, {kind} every "
-                f"{every} min — allowed to interrupt a focus block."
+                f"- {check.key.title()} check on: from {start}:00, every {every} min"
+                f"{goal} — allowed to interrupt a focus block."
             )
         return "\n".join(lines) if lines else None
 

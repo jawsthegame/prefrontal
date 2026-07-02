@@ -40,24 +40,29 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
-- **"Have you eaten?" self-care nudge** ✅ — a meal check that deliberately
-  pierces flow (the one cue allowed to interrupt a focus block, because a flow
-  state is exactly when you forget to eat). Shipped as a sixth module,
-  `prefrontal/modules/self_care.py`: its `evaluate()` rides the coaching tick, so
-  from `meal_start_hour` (default 11) it emits a `nudge` cue and re-asks every
-  `meal_reask_minutes` (default 40) until confirmed — cadence via a per-interval
-  *bucket* in the `dedup_key`, so the engine's fire-once-per-key guard gives the
-  re-ask rhythm for free, and responsive-hours + debounce come from the engine (no
-  overnight nag). One-tap **Ate** / **Snooze** ride the shipped signed-action path
-  (`meal_ate`/`meal_snooze` in `NUDGE_ACTIONS`, `meal` buttons in `notify.py`,
-  handled in `/nudge/act`); `ate_today` caps it at once a day and
-  `meal_snoozed_until` holds it off after a Snooze — both plain coaching-state
-  keys, no schema change. `/webhooks/coach/check` now passes each cue's `actions`
-  through (and `deploy/n8n/coach-check.workflow.json` publishes them to ntfy), so
-  the buttons render. **Off by default** — set the `self_care` coaching key to
-  `on`. Covered by `tests/test_self_care.py`. *(Open, per the original design: a
-  confirmed meal could log an episode so the learning loop notices skip-days; and
-  whether self-care becomes its own basics pack alongside water/meds/sleep.)*
+- **Self-care checks — "have you eaten?" + water** ✅ — the cues that deliberately
+  pierce flow (a focus state is exactly when you forget to eat or drink), shipped
+  as a sixth module, `prefrontal/modules/self_care.py`. A small registry of
+  **basic-needs checks** rides the coaching tick (`evaluate()`), unified by a
+  **daily target**: a **meal** is target 1 (from `meal_start_hour`≈11, re-ask
+  every `meal_reask_minutes`≈40 until one "Ate" ends it for the day); **water** is
+  target `water_daily_target`≈6 (from `water_start_hour`≈9, a "drink some water"
+  reminder every `water_interval_minutes`≈90 where each **Drank** counts one and
+  defers a full interval, done once the target's met). Cadence rides a per-interval
+  *bucket* in the `dedup_key` so the engine fires each window once; responsive-hours
+  + debounce come from the engine (no overnight nag). One-tap **Ate/Snooze** and
+  **Drank/Snooze** ride the signed-action path (`meal_*`/`water_*` in
+  `NUDGE_ACTIONS`, `meal`/`water` buttons in `notify.py`, `apply_self_care_action`
+  in `/nudge/act`); progress is plain coaching-state cursors (`*_count` = `date|n`
+  toward the target, `*_snoozed_until`), no schema change. Every confirm/snooze
+  logs a `self_care` episode (seed for the cadence learner below).
+  `/webhooks/coach/check` passes each cue's `actions` through and
+  `deploy/n8n/coach-check.workflow.json` publishes them to ntfy, so the buttons
+  render. **Off by default** — set the `self_care` coaching key to `on` (each check
+  also has its own `meal_enabled`/`water_enabled`). Covered by
+  `tests/test_self_care.py`. *(Next: the adaptive-cadence learner — see "Learning
+  & adaptation" §6; and whether self-care grows into its own basics pack with
+  meds/sleep.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
@@ -406,6 +411,26 @@ ordered by leverage; each is independent but builds on denser capture.
    not learning. Add context-conditioned patterns (bias by task type, by time of
    day, by energy level) — the schema's `context_key` already supports finer
    bucketing — and derive `context_switch` once switch events are captured.
+6. **Adaptive self-care cadence (with an honesty check).** The self-care checks
+   (meal/water) fire on a fixed interval and already log a `self_care` episode on
+   every confirm/snooze. The follow-up is to *learn* the cadence: widen the
+   interval for someone who's genuinely on top of it, keep or tighten it for
+   someone who isn't. The signal is ambiguous, so this needs care rather than a
+   naive "they say yes a lot → back off":
+   - **Honesty check (the key guard).** A reflexive *instant* "yes" right after
+     the reminder is more likely a dismissal than a real confirmation — so a
+     near-zero response latency should be treated skeptically (discounted, or a
+     reason to *keep* presence), not as evidence the person doesn't need the
+     nudge. This means capturing **response latency** (delivery → tap), which in
+     turn means recording when each self-care nudge was *delivered* (extend the
+     coach engine's ack-tracking, today scoped to outing/departure/focus, to the
+     self-care kinds) — the confirm episode already lands; it just needs the
+     paired send-time.
+   - Only trust confirms with a plausible gap; weight snoozes as "too frequent /
+     wrong time" and swept-unanswered as "wrong channel or time" (reuse the
+     `channel_response` sweep). Then adjust the per-check interval within bounds,
+     and — per step 4 — measure whether the adaptation actually reduced misses
+     before trusting it further.
 
 ## Beyond v1 (from the README architecture)
 

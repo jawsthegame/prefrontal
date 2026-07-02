@@ -33,8 +33,8 @@ For the moments you're too overwhelmed to think. On demand, it cuts through ever
 **Encouragement & recovery**
 The counterweight to a system whose job is nudging. When a day genuinely goes rough — a missed hard commitment, a pile of misses — it stops nudging and shifts to reassurance: acknowledges the rough day without judgment, then hands back a concrete plan (what still fits, what's safe to move, and one tiny next step). Opt-in, tone-calibrated, and capped at once a day so it never becomes a pile-on.
 
-**Self-care check**
-The one nudge that's *supposed* to interrupt. In deep focus you forget to eat — so from mid-morning it asks "have you eaten?" and keeps gently re-asking until you confirm, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Snooze** on ntfy, respects your responsive hours, and caps itself once you've confirmed for the day. Opt-in.
+**Self-care checks**
+The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** on ntfy, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in.
 
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
@@ -58,7 +58,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
-| Self-Care | `self_care` | Basic-needs check that pierces flow — "have you eaten?" re-asked until confirmed (opt-in via the `self_care` key) |
+| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day) and "drink some water" (to a daily target), re-asked until met (opt-in via the `self_care` key) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
 profile, and declares the interventions it provides. Select a subset with

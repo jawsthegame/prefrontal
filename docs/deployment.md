@@ -532,12 +532,16 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
   each returned cue to ntfy at a priority matching the agent's chosen channel,
   passing through any signed one-tap `actions` a cue carries (so ntfy renders the
   background buttons). Today it surfaces the Task Paralysis "tiny first step"
-  nudge, the outing escalation cues, and — when enabled — the **Self-Care meal
-  check** ("have you eaten?" with one-tap Ate / Snooze). Turn the meal check on by
-  setting the `self_care` coaching key to `on` (tune `meal_start_hour`,
-  `meal_reask_minutes`, `meal_snooze_minutes`); it re-asks until you confirm, even
-  during a focus block, and stops for the day once you tap Ate. New module
-  coaching lights up as each `evaluate()` is filled in.
+  nudge, the outing escalation cues, and — when enabled — the **Self-Care checks**
+  ("have you eaten?" with one-tap Ate / Snooze, and "drink some water" with Drank /
+  Snooze). Turn them on by setting the `self_care` coaching key to `on`; each is a
+  basic-needs check with a **daily target** — the meal check is target 1 (one Ate
+  ends it for the day; tune `meal_start_hour`, `meal_reask_minutes`), water is
+  `water_daily_target` (default 6; tune `water_start_hour`, `water_interval_minutes`),
+  and each Drank counts one and defers a full interval. Both interrupt a focus
+  block by design, respect responsive hours, and can be toggled individually
+  (`meal_enabled` / `water_enabled`). New module coaching lights up as each
+  `evaluate()` is filled in.
 
 ---
 
