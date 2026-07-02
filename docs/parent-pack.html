@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Prefrontal — Parent Pack sheet. Source of truth for docs/parent-pack.pdf.
+  Regenerate the PDF (Chromium/Chrome headless):
+    chrome --headless=new --no-pdf-header-footer \
+      --print-to-pdf=docs/parent-pack.pdf file://$PWD/docs/parent-pack.html
+-->
+<style>
+  @page { size: Letter; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root{
+    --ink:#16203a; --muted:#565f74; --line:#e3e6ef;
+    --brand:#4338ca; --brand2:#6d5ae0;
+    --today:#15803d; --next:#b45309;
+    --quote-bg:#f3f4fb; --card:#fafbfe;
+  }
+  html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); font-size:10.3px; line-height:1.4; width:8.5in; }
+  .page{ padding:0.28in 0.56in 0.2in; }
+
+  header{ display:flex; align-items:flex-end; justify-content:space-between;
+    border-bottom:3px solid var(--brand); padding-bottom:10px; }
+  .brand{ font-size:34px; font-weight:800; letter-spacing:-0.8px; color:var(--brand); line-height:1; }
+  .brand .sub{ font-weight:650; color:var(--ink); }
+  .tag{ font-size:12.5px; color:var(--muted); margin-top:5px; font-weight:500; }
+  .meta{ text-align:right; font-size:9.5px; color:var(--muted); line-height:1.5; }
+  .meta b{ color:var(--ink); }
+
+  .lede{ display:flex; gap:18px; margin-top:8px; align-items:stretch; }
+  .lede .big{ flex:1.9; display:flex; flex-direction:column; justify-content:center; }
+  .lede h2{ font-size:15px; font-weight:750; letter-spacing:-0.3px; line-height:1.28; }
+  .lede p{ color:var(--muted); margin-top:6px; font-size:10.6px; }
+  .lede .hook{ color:var(--brand); font-weight:700; }
+  .pillars{ flex:1; display:flex; flex-direction:column; gap:7px; justify-content:center;
+    background:var(--card); border:1px solid var(--line); border-radius:9px; padding:11px 13px; }
+  .pillar b{ display:block; font-size:10.4px; color:var(--ink); }
+  .pillar span{ color:var(--muted); font-size:9.7px; }
+
+  h3.sec{ font-size:9.6px; text-transform:uppercase; letter-spacing:1.4px; font-weight:800;
+    margin:8px 0 6px; display:flex; align-items:center; gap:8px; }
+  h3.sec::after{ content:""; flex:1; height:1.5px; background:var(--line); }
+  .sec.today{ color:var(--today); } .sec.next{ color:var(--next); } .sec.tech{ color:var(--brand); }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:8px 10px 9px; border-top:3px solid var(--today); }
+  .card .t{ font-weight:750; font-size:11.2px; letter-spacing:-0.1px; }
+  .card .t .ico{ margin-right:5px; }
+  .quote{ background:var(--quote-bg); border-left:3px solid var(--brand2);
+    border-radius:0 6px 6px 0; padding:6px 8px; margin:6px 0; color:#333a4d;
+    font-size:9.8px; line-height:1.38; font-style:italic; }
+  .impact{ font-size:9.8px; color:var(--muted); }
+  .impact b{ color:var(--today); font-style:normal; }
+
+  .alsolive{ margin-top:8px; font-size:10px; color:var(--muted); }
+  .alsolive b{ color:var(--today); text-transform:uppercase; letter-spacing:0.8px; font-size:9px; }
+  .pill{ display:inline-block; background:#eef7f0; color:#166534;
+    border:1px solid #cfe8d6; border-radius:20px; padding:1.5px 9px; margin:3px 4px 0 0; font-size:9.6px; }
+
+  .next-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px 22px; }
+  .ni{ font-size:10.3px; padding-left:16px; position:relative; color:var(--muted); line-height:1.4; }
+  .ni::before{ content:"\2192"; position:absolute; left:0; color:var(--next); font-weight:800; }
+  .ni b{ color:var(--ink); }
+
+  .banner{ margin-top:7px; background:linear-gradient(90deg,#edf0fd,#f6f4fe);
+    border:1px solid #dde0f6; border-radius:9px; padding:8px 15px;
+    display:flex; gap:13px; align-items:center; }
+  .banner .k{ font-size:11px; font-weight:800; color:var(--brand); white-space:nowrap; }
+  .banner .v{ font-size:10.3px; color:#39415a; }
+  .banner .v b{ color:var(--ink); }
+
+  .tech-box{ margin-top:7px; background:#141b30; color:#c8cee0; border-radius:9px; padding:9px 15px; }
+  .tech-box p{ font-size:10px; line-height:1.48; color:#c8cee0; }
+  .tech-box p b{ color:#fff; }
+  .tech-box .flow{ color:#93a3ff; font-weight:700; }
+  .chips{ margin-top:8px; display:flex; flex-wrap:wrap; gap:5px; }
+  .chip{ font-size:8.8px; background:#26304d; color:#b2bcda; border-radius:5px; padding:3px 8px;
+    font-family:"SF Mono",Consolas,monospace; }
+
+  footer{ margin-top:7px; display:flex; justify-content:space-between; align-items:center;
+    border-top:1px solid var(--line); padding-top:7px; font-size:9.2px; color:var(--muted); }
+  footer b{ color:var(--ink); }
+  .dot{ margin:0 6px; color:#c7ccda; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div>
+      <div class="brand">Parent Pack<span class="sub"> · Prefrontal</span></div>
+      <div class="tag">A Context Pack: the primitives you already have, wired for the shape of parenting.</div>
+    </div>
+    <div class="meta">
+      <b>Composition, not a new app</b><br>
+      Opt-in &middot; shareable &middot; self-hosted<br>
+      Backbone shipping &middot; Pack on the roadmap
+    </div>
+  </header>
+
+  <div class="lede">
+    <div class="big">
+      <h2>Modules answer <i>how your ADHD shows up.</i> A Pack answers <i>what life you're managing.</i></h2>
+      <p>Parenting with ADHD is an executive-function stress test — departures, hand-offs, the invisible
+      inventory of sizes, appointments and who's on pickup. The Parent Pack doesn't add another app; it
+      <b>composes the primitives Prefrontal already runs</b> — departure, panic, task-breakdown, coaching —
+      into the shape of a parent's day, and adds one shared sheet both co-parents keep current.
+      <span class="hook">Turn it on; it wires the rest.</span></p>
+    </div>
+    <div class="pillars">
+      <div class="pillar"><b>🧩 Composition over primitives</b><span>Not a new module — a bundle that wires the ones you have.</span></div>
+      <div class="pillar"><b>⚖️ Balances the invisible load</b><span>Every fact stamped who-set-it, pushed to the other parent.</span></div>
+      <div class="pillar"><b>📦 One tap to install</b><span>Seeds the vocabulary, windows, and tools for "parent."</span></div>
+    </div>
+  </div>
+
+  <h3 class="sec today">✓ What works today — the shipped primitives, in a parent's day</h3>
+  <div class="grid">
+    <div class="card">
+      <div class="t"><span class="ico">🚸</span>School-run departure</div>
+      <div class="quote">"8:02 — leave in 6 min for drop-off. Roadwork on Elm adds 4."</div>
+      <div class="impact">Real traffic, then escalates <b>push → sound → call</b> until you move. <b>Out the door on time.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">🎒</span>Pack the bag, one step at a time</div>
+      <div class="quote">"Library books → gym kit → the permission slip." One move at a time, not the whole scramble.</div>
+      <div class="impact">Task-breakdown turns "get them ready" into the next single action. <b>Beats the freeze.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">🤒</span>Kid's home sick → replan</div>
+      <div class="quote">One tap: what <i>actually</i> has to move today, what to drop, and your one next step.</div>
+      <div class="impact">Panic mode re-fits the day into the hours you suddenly have. <b>No spiral.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">✅</span>The right task in a 20-min gap</div>
+      <div class="quote">"20 min before pickup — call the pediatrician." Short, low-energy, the thing you keep dodging.</div>
+      <div class="impact">Matches effort to the clock you actually have. <b>Not a guilt-list.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">📬</span>School mail, triaged</div>
+      <div class="quote">Permission slip, picture day, dues due Friday → a short action list, not a 40-email inbox.</div>
+      <div class="impact">The three things that need <i>you</i>, surfaced. <b>Nothing slips.</b></div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="ico">💬</span>Edit the day in plain English</div>
+      <div class="quote">"Move Sam's dentist to Thursday and add cleats to the shopping list." — previews, you confirm.</div>
+      <div class="impact">Say it how you'd text it; it validates and shows you first. <b>No forms.</b></div>
+    </div>
+  </div>
+
+  <div class="alsolive">
+    <b>Also today&nbsp;→</b>
+    <span class="pill">Two parents, each learns on their own</span>
+    <span class="pill">Quiet hours &amp; bad-day mode</span>
+    <span class="pill">One-tap lock-screen replies</span>
+    <span class="pill">Runs on your own network</span>
+  </div>
+
+  <h3 class="sec next">→ What the Pack pre-wires (roadmap)</h3>
+  <div class="next-grid">
+    <div class="ni"><b>One-tap setup.</b> Switches on the challenge modules a parent needs and seeds the vocabulary — a <i>child</i> appointment kind, kid-tagged todos, school-run windows.</div>
+    <div class="ni"><b>Situation tools.</b> Thin compositions of the primitives — school-run departure, pack-the-bag checklist, "who's covering pickup?", sick-day replan — no new app, just wiring.</div>
+    <div class="ni"><b>Shared co-parent sheet.</b> Both parents read <i>and write</i> one household sheet in plain English — sizes, routines, allergies, providers, behavior plans, appointments.</div>
+    <div class="ni"><b>Delta digest.</b> Every entry stamped who-set-it-when; the coaching layer pushes the changes that matter to the parent who <i>didn't</i> make them.</div>
+    <div class="ni"><b>Tailored family view.</b> One glanceable sheet — kids' facts · agreements · upcoming appts · recently changed — reusing the profile render, not a new UI.</div>
+    <div class="ni"><b>Shareable.</b> "Install the Parent pack" — the same opt-in, modular ethos as challenge modules, on the orthogonal life-context axis.</div>
+  </div>
+
+  <div class="banner">
+    <div class="k">The shared sheet →</div>
+    <div class="v"><b>Everything you need to step in and help — any time, no asking required.</b> Shoe size, the EpiPen,
+    the sticker plan, who's the dentist — each <b>stamped with who updated it and when</b>, so "who's carrying the
+    mental load" is finally legible, and the deltas get pushed to the other parent instead of living in one head.</div>
+  </div>
+
+  <h3 class="sec tech">⚙ How a Pack works — for the curious</h3>
+  <div class="tech-box">
+    <p>A Pack is a <b>composition layer</b>, not a <span class="flow">Module</span> subclass — modules sit on the
+    executive-function axis, "parent" on the orthogonal <b>life-context</b> axis. It's mostly <b>declarative</b> plus a
+    small tool registry: it (1) enables a subset of challenge modules, (2) seeds domain vocabulary — commitment
+    <b>kinds</b>, todo categories, default windows, (3) registers <b>situation tools</b> that compose shipped
+    primitives — <b>todos, commitments, departure, panic, decompose_task, the NL-assistant whitelist</b> — and
+    (4) tailors the family view. Nudges route through the same <b>coaching tick engine</b>; the co-parent sheet adds a
+    <b>household scope</b> alongside per-user multi-tenancy — two users, one set of rows, every write attributed.</p>
+    <div class="chips">
+      <span class="chip">Context Pack</span><span class="chip">composition layer</span><span class="chip">household scope</span>
+      <span class="chip">facts + agreements</span><span class="chip">provenance (updated_by)</span><span class="chip">NL-assistant ops</span>
+      <span class="chip">reuses departure / panic / decompose</span><span class="chip">coaching tick engine</span><span class="chip">family view</span>
+    </div>
+  </div>
+
+  <footer>
+    <div><b>Parent Pack</b> — the primitives you already have, wired for the shape of parenting.</div>
+    <div>Backbone spec'd: <b>docs/household-sheet.md</b> <span class="dot">•</span> shared sheet first, load-balancing next</div>
+  </footer>
+
+</div>
+</body>
+</html>
