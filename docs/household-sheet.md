@@ -12,9 +12,13 @@ plan) while the other is willing but oblivious. A shared note helps a little; th
 win here is that every entry is **stamped with who set it and when**, and the
 coaching layer **pushes the deltas that matter** to the *other* parent — so the
 sheet is a load-balancer, not a passive doc. The data model is taken directly
-from a real co-parent tracker (the *Kids Info Tracker* spreadsheet), whose own
+from a real co-parent tracker (the *Kids Info Tracker* spreadsheet,
+[`kids-info-tracker-template.xlsx`](kids-info-tracker-template.xlsx)), whose own
 tagline states the goal: *"everything you need to step in and help — any time, no
-asking required."*
+asking required."* Its nine sheets map directly onto the model below: Overview /
+Clothing & Shoes / Schedules / Food & Meals / Health / School → **facts**;
+Behaviour Plans → **agreements**; Key Contacts → a facts facet; Shopping Lists →
+child-tagged todos (v1.1).
 
 This is the concrete driver for **household scope** and the backbone of the
 **Parent** Context Pack (see [`../ROADMAP.md`](../ROADMAP.md)). It builds on
