@@ -40,6 +40,22 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Encouragement & recovery layer** ✅ — the counterweight to a system that
+  nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
+  `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
+  signals (a missed *hard* commitment is the heaviest at 3.0; each `miss`
+  episode 1.0; double-bookings 0.5; a small rising-drift modifier) and flags
+  `rough` past a threshold; `build_recovery()` composes existing logic into a
+  plan — re-fit the rest of the day (`suggest_for_windows`), suggest deferring
+  only *soft* commitments, and one tiny first step over the most-avoided todo
+  (`decompose_task`); `render_encouragement()` writes it warm or plain, and
+  `summarize_encouragement()` adds the optional Ollama prose pass with heuristic
+  fallback. Surfaced at `GET /encouragement` (model-free; `already_sent` reflects
+  a once-per-day cursor advanced by `POST /encouragement/sent`), `prefrontal
+  encourage`, and `deploy/n8n/encouragement.workflow.json`. **Off by default**
+  (the `encouragement` coaching key); auditable `signals`; covered by
+  `tests/test_encouragement.py`. Standalone per `docs/encouragement.md`; the
+  coaching agent can later wrap `assess_day` as one more cue producer.
 - **Coaching agent — engine core + first evaluator** ✅ — the decision engine
   that turns *what Prefrontal knows* into the right nudge (see the full spec,
   `docs/coaching-agent.md`). `prefrontal/coaching.py` holds the pure core:
@@ -47,7 +63,7 @@ the first test. Code follow-ups below are optional polish.
   tick), `choose_channel` (urgency floor → learned `channel_response` bump),
   `suppressed` (quiet hours + per-`dedup_key` debounce, no schema change — a
   `coach_fired:*` coaching-state stamp), and `decide`. `Module.evaluate(store,
-  ctx)` is the new opt-in hook (default `[]`), and **Task Paralysis** is the first
+  ctx)` is the new opt-in hook (default `[]`), with two v1
   producers: **Task Paralysis** fires a `tiny_first_step` nudge over the
   worst-avoided open todo (reusing `avoided_todos` + the stored decomposition),
   and **Location Anchor** now emits the outing escalation cues (soft→nudge /
@@ -418,22 +434,15 @@ ordered by leverage; each is independent but builds on denser capture.
   per agent as the README describes. The summarizer already takes an injected
   client, so this slots in behind the same interface. Local-first stays the
   default; the cloud path is explicit and configurable.
-- **Encouragement & recovery layer (optional)** — when a day is going badly,
-  shift tone from nudging to reassurance. A detector watches the signals already
-  computed — the briefing's "what slipped", rising `drift`, a missed *hard*
-  commitment, repeated outings run long — and, past a threshold, emits an
-  encouraging message that acknowledges the rough day without judgment, then
-  gives concrete get-back-on-track recommendations: re-fit the day's todos into
-  the remaining free windows (`fit_todos()` + free-window logic already exist),
-  suggest deferring or dropping low-priority commitments, and name one small
-  next step. Opt-in and tone-calibrated to the coaching prefs (so it never
-  becomes saccharine for users who don't want it). Local-first: the trigger and
-  recommendation logic are deterministic; the Ollama summarizer phrases the
-  reassurance with a heuristic fallback. Likely surfaces as a briefing variant
-  plus a `GET /encouragement`-style endpoint an n8n flow can deliver. Pairs
-  naturally with the coaching agent above. *(Partly shipped: **panic mode**
-  (above) already handles the acute overwhelm case with a one-tap headline; what
-  remains here is the softer, tone-calibrated daily-recovery variant.)*
+- **Encouragement & recovery layer** ✅ **(shipped — see "Recently shipped")** —
+  the deterministic detector + recovery plan + `GET /encouragement` are live
+  (`prefrontal/encouragement.py`, spec `docs/encouragement.md`), opt-in and
+  tone-calibrated, alongside **panic mode** for the acute-overwhelm case. Two
+  small follow-ons remain: the **morning-briefing tone variant** (spec §6.2 —
+  when the day already looks rough at wake-up, swap the briefing's closing bias
+  nag for the encouragement acknowledgement) and, once the assessment is trusted,
+  wrapping `assess_day` as a **coaching-agent cue producer** so its delivery
+  routes through the shared engine (coaching-agent spec §9 — one `assess_day`).
 - **Native Lock Screen Live Activity (live outing timer)** — the shipped
   Scriptable widget renders the Lock Screen accessory slots but refreshes only on
   iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale

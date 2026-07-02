@@ -13,6 +13,7 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
   ``GET /profile`` and write ``profile-<handle>.md``.
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
 - ``prefrontal coach`` — run one coaching tick: what's due + on which channel.
+- ``prefrontal encourage`` — print today's recovery message if the day's rough.
 - ``prefrontal panic`` — triage what's on fire right now + one first step.
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
@@ -42,6 +43,12 @@ from prefrontal.coaching import (
     record_fired,
 )
 from prefrontal.config import get_settings
+from prefrontal.encouragement import (
+    assess_day,
+    build_recovery,
+    render_encouragement,
+    summarize_encouragement,
+)
 from prefrontal.impact import utcnow
 from prefrontal.mail.imap import DEFAULT_UNSEEN_WINDOW_DAYS
 from prefrontal.memory.db import init_db
@@ -371,6 +378,52 @@ def _cmd_briefing(args: argparse.Namespace) -> int:
     if args.output:
         Path(args.output).write_text(text)
         print(f"Wrote briefing to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
+def _cmd_encourage(args: argparse.Namespace) -> int:
+    """Print today's encouragement/recovery message when the day's gone rough.
+
+    Deterministic by default (``--llm`` for warmer Ollama prose, falling back).
+    Prints a plain note when the day isn't rough (or the layer is off), so it's
+    safe to run against the live DB for testing the trigger without n8n.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``, ``user``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if args.llm:
+            result = summarize_encouragement(store)
+            text = result.text
+            if not result.rough:
+                print("Today isn't reading as rough — nothing to send.")
+                return 0
+            if result.source == "heuristic":
+                print(
+                    "Ollama unavailable; printing the deterministic message.",
+                    file=sys.stderr,
+                )
+        else:
+            now = utcnow()
+            assessment = assess_day(store, now=now)
+            if not assessment.rough:
+                reason = "layer is off" if not assessment.enabled else "not a rough day"
+                print(f"Today isn't reading as rough ({reason}) — nothing to send.")
+                return 0
+            text = render_encouragement(
+                assessment, build_recovery(store, assessment, now=now)
+            )
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote encouragement to {args.output}")
     else:
         print(text, end="")
     return 0
@@ -827,6 +880,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_brief.set_defaults(func=_cmd_briefing)
+
+    p_encourage = sub.add_parser(
+        "encourage", help="Print today's recovery message if the day's gone rough."
+    )
+    p_encourage.add_argument("--db-path", default=None, help="Override the database path.")
+    p_encourage.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_encourage.add_argument(
+        "--llm", action="store_true", help="Rewrite as prose via Ollama (falls back)."
+    )
+    p_encourage.add_argument(
+        "-o", "--output", default=None, help="Write to a file instead of stdout."
+    )
+    p_encourage.set_defaults(func=_cmd_encourage)
 
     p_coach = sub.add_parser(
         "coach", help="Run one coaching tick: what's due, on which channel."

@@ -1,13 +1,16 @@
 # Encouragement & recovery layer — design spec
 
-Status: **proposed** (the acute slice already ships as **panic mode**). This is
-the implementation spec for the optional encouragement & recovery layer. Note
-what's *already built*: **panic mode** (`GET /panic`, `POST /webhooks/panic/check`)
-handles the acute-overwhelm case today — a one-tap "most important next thing"
-headline plus a proactive nudge when overwhelm is detected. What this spec adds
-beyond that is the *softer, tone-calibrated daily-recovery* variant (the
-`GET /encouragement`-style surface below is not built yet). It supersedes the
-short "Encouragement & recovery layer (optional)" sketch in
+Status: **built** (steps 1–4 of §11). Shipped: the standalone core
+(`prefrontal/encouragement.py` — `assess_day`, `build_recovery`,
+`render_encouragement`, `summarize_encouragement`, the debounce cursor), the
+`GET /encouragement` + `POST /encouragement/sent` surface, the `prefrontal
+encourage` CLI, and `deploy/n8n/encouragement.workflow.json`; covered by
+`tests/test_encouragement.py`, off by default (the `encouragement` key). The
+acute-overwhelm case ships separately as **panic mode** (`GET /panic`,
+`POST /webhooks/panic/check`). **Not yet built:** the morning-briefing tone
+variant (§6.2, step 5) and wrapping `assess_day` as a coaching-agent cue producer
+(coaching-agent §9). This is the implementation spec for the layer; it supersedes
+the short "Encouragement & recovery layer" sketch in
 [`ROADMAP.md`](../ROADMAP.md). If this and the roadmap disagree, this file wins.
 
 ---
