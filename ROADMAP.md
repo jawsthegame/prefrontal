@@ -40,6 +40,20 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Coaching agent — engine core + first evaluator** ✅ — the decision engine
+  that turns *what Prefrontal knows* into the right nudge (see the full spec,
+  `docs/coaching-agent.md`). `prefrontal/coaching.py` holds the pure core:
+  `Cue`/`CoachContext`/`Decision`, `collect_cues` (one bad module can't sink the
+  tick), `choose_channel` (urgency floor → learned `channel_response` bump),
+  `suppressed` (quiet hours + per-`dedup_key` debounce, no schema change — a
+  `coach_fired:*` coaching-state stamp), and `decide`. `Module.evaluate(store,
+  ctx)` is the new opt-in hook (default `[]`), and **Task Paralysis** is the first
+  producer: its `evaluate` fires a `tiny_first_step` nudge over the worst-avoided
+  open todo (reusing `avoided_todos` + the stored decomposition). Run one tick
+  with `prefrontal coach` (`--dry-run` to see cues pre-suppression). Covered by
+  `tests/test_coaching.py`. This is steps 1 + the Task Paralysis evaluator of the
+  spec's rollout; the HTTP endpoint, the `outing/check` parity refactor, LLM
+  phrasing, and outcome-logging correlation remain (see "Coaching agent" below).
 - **Interactive nudge action buttons (ntfy)** ✅ — one-tap, background nudge
   responses with no app switch. `sign_action`/`verify_action`
   (`prefrontal/webhooks/oauth.py`) extend the signed one-tap-link mechanism from
@@ -344,14 +358,17 @@ ordered by leverage; each is independent but builds on denser capture.
   (above) is the first concrete slice — it triages email and routes actionable
   items to `todos`; the spec generalizes that single path into a reusable
   `Signal → TriageDecision → apply` core with a `triage_log`.
-- **Coaching agent** — generate reminders/check-ins from the profile (the
-  morning briefing is the first slice of this). Specced in
-  [`docs/coaching-agent.md`](docs/coaching-agent.md): a tick-driven decision
-  engine that asks each module's new `evaluate()` hook "what's due?", then
-  decides whether to fire, what to say, and on which channel (learned
+- **Coaching agent** — **the engine core has shipped** (see "Recently shipped":
+  `prefrontal/coaching.py` + `Module.evaluate` + the Task Paralysis evaluator +
+  `prefrontal coach`). Specced in [`docs/coaching-agent.md`](docs/coaching-agent.md):
+  a tick-driven decision engine that asks each module's `evaluate()` hook "what's
+  due?", then decides whether to fire, what to say, and on which channel (learned
   `channel_response` + quiet hours + debounce), logging the outcome back as an
-  episode. Generalizes the `outing/check` loop and folds in the encouragement
-  layer below.
+  episode. Still open (spec §12 rollout): the `POST /webhooks/coach/check`
+  endpoint + n8n workflow (step 3); refactoring `outing/check`'s loop into
+  `LocationAnchorModule.evaluate` for parity (step 2); the optional LLM phrasing
+  pass on ambient/digest cues (step 5); outcome-logging correlation ids (§8); and
+  folding in the encouragement layer below (§9).
 - **Delivery layer + interactive nudges (ntfy)** — **the action-button core has
   shipped** (see "Recently shipped": signed `/nudge/act` + the `actions` fields
   on the outing/focus/departure nudges). Unlike Pushover — whose only

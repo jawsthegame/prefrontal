@@ -27,9 +27,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+from prefrontal.todos import avoided_todos
 
 #: A task missed at least this many times (and not since resolved) is treated as
 #: chronically stuck — the signal a solo start isn't working and body-doubling (a
@@ -146,6 +148,43 @@ class TaskParalysisModule(Module):
                 trigger="repeated misses on the same task",
                 status="active",
             ),
+        ]
+
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """Fire ``tiny_first_step`` over the todo you're most avoiding.
+
+        The coaching agent's producer for initiation friction: pick the
+        worst-avoided open todo (``avoided_todos`` — age × priority, honest
+        prioritization over the shiny thing) and reframe it as one <5-minute first
+        action, preferring the stored decomposition's first step when it exists.
+        One ``nudge`` cue, deduped per todo so it won't nag every tick.
+        """
+        avoided = avoided_todos(store.open_todos(), ctx.now)
+        if not avoided:
+            return []
+        top = avoided[0]
+        todo = top["todo"]
+        decomp = store.get_decomposition(todo["id"])
+        first = (decomp or {}).get("first_step")
+        opener = (
+            f"Start tiny: {first}"
+            if first
+            else f"Start tiny — set a 5-minute timer and just open “{todo['title']}.”"
+        )
+        text = (
+            f"You keep putting off “{todo['title']}” ({round(top['days_open'])}d and "
+            f"counting). {opener}"
+        )
+        return [
+            Cue(
+                module=self.key,
+                intervention="tiny_first_step",
+                urgency="nudge",
+                text=text,
+                context_key="todo",
+                dedup_key=f"tiny_first_step:{todo['id']}",
+                ref={"todo_id": todo["id"]},
+            )
         ]
 
     def profile_section(self, store: MemoryStore) -> str | None:
