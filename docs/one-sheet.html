@@ -85,6 +85,41 @@
     border-top:1px solid var(--line); padding-top:8px; font-size:9.2px; color:var(--muted); }
   footer b{ color:var(--ink); }
   .dot{ margin:0 6px; color:#c7ccda; }
+
+  /* ---- page 2: modules by target dysfunction ---- */
+  .sheet2{ break-before:page; }
+  .p2-intro{ margin-top:11px; display:flex; gap:18px; align-items:stretch; }
+  .p2-intro .lead{ flex:2; }
+  .p2-intro h2{ font-size:15px; font-weight:750; letter-spacing:-0.3px; line-height:1.3; }
+  .p2-intro p{ color:var(--muted); margin-top:6px; font-size:10.6px; }
+  .p2-intro .aside{ flex:1; background:var(--card); border:1px solid var(--line);
+    border-radius:9px; padding:10px 13px; display:flex; flex-direction:column; justify-content:center; }
+  .p2-intro .aside b{ font-size:10.2px; color:var(--ink); }
+  .p2-intro .aside span{ font-size:9.7px; color:var(--muted); }
+  .legend{ margin-top:5px; font-size:9px; color:var(--muted); }
+  .badge{ display:inline-block; border-radius:20px; padding:0.5px 7px; font-size:8.2px;
+    font-weight:700; text-transform:uppercase; letter-spacing:0.6px; vertical-align:middle; }
+  .badge.on{ background:#eef7f0; color:#166534; border:1px solid #cfe8d6; }
+  .badge.soon{ background:#fdf3e7; color:#b45309; border:1px solid #f2ddc0; }
+
+  .mods{ margin-top:9px; display:flex; flex-direction:column; gap:8px; }
+  .mod{ display:flex; gap:0; background:var(--card); border:1px solid var(--line);
+    border-radius:9px; overflow:hidden; }
+  .mod .dys{ flex:0 0 1.68in; padding:9px 12px; border-right:1px solid var(--line);
+    display:flex; flex-direction:column; justify-content:center; }
+  .mod .dys .ef{ font-size:11.6px; font-weight:800; letter-spacing:-0.2px; line-height:1.16; color:var(--accent,var(--brand)); }
+  .mod .dys .name{ font-size:9.7px; color:var(--muted); margin-top:3px; }
+  .mod .dys .name .ico{ margin-right:4px; }
+  .mod .dys code{ display:inline-block; margin-top:5px; font-family:"SF Mono",Consolas,monospace;
+    font-size:8.4px; background:#eef0f7; color:#4a5270; border-radius:4px; padding:1px 5px; }
+  .mod .body{ flex:1; padding:9px 13px; }
+  .mod .chl{ font-size:9.9px; color:#333a4d; line-height:1.36; }
+  .mod .chl b{ color:var(--accent,var(--brand)); font-weight:700; }
+  .mod .rows{ margin-top:6px; display:grid; grid-template-columns:1fr 1.55fr; gap:5px 14px; }
+  .mod .r .lbl{ font-size:8.1px; text-transform:uppercase; letter-spacing:0.7px; font-weight:800; color:var(--muted); }
+  .mod .r p{ font-size:9.5px; color:var(--muted); line-height:1.34; margin-top:1px; }
+  .mod .r p b{ color:var(--ink); font-weight:650; font-style:normal; }
+  .mod .shows p{ font-style:italic; color:#4b5265; }
 </style>
 </head>
 <body>
@@ -195,6 +230,121 @@
   <footer>
     <div><b>Prefrontal</b> — built with lived executive-function experience, not against it.</div>
     <div>Local-first <span class="dot">•</span> escalation is not optional <span class="dot">•</span> learn from failure, not just success</div>
+  </footer>
+
+</div>
+
+<div class="page sheet2">
+
+  <header>
+    <div>
+      <div class="brand">The modules</div>
+      <div class="tag">One executive-function challenge each — a primitive aimed at a specific dysfunction.</div>
+    </div>
+    <div class="meta">
+      <b>Switch on only what fits you</b><br>
+      Each module is opt-in, per user<br>
+      All five are live today
+    </div>
+  </header>
+
+  <div class="p2-intro">
+    <div class="lead">
+      <h2>ADHD isn't one thing — so Prefrontal isn't one nudge.</h2>
+      <p>Executive function fails in distinct ways: you lose the feel of time, you can't start, you can't
+      stop, you switch on impulse. Each module targets <i>one</i> of those failure modes with its own
+      trigger and its own intervention — built on the same shared behavioral memory, so they learn together.</p>
+    </div>
+    <div class="aside">
+      <b>Why split it up?</b>
+      <span>A single "reminder" can't tell paralysis from hyperfocus. Naming the dysfunction lets each
+      response be the right one.</span>
+      <div class="legend"><span class="badge on">live</span> shipping &nbsp; <span class="badge soon">soon</span> planned</div>
+    </div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod" style="--accent:#0369a1">
+      <div class="dys">
+        <div class="ef">Time perception &amp; estimation</div>
+        <div class="name"><span class="ico">⏰</span>Time Blindness</div>
+        <code>time_blindness</code>
+      </div>
+      <div class="body">
+        <div class="chl">Difficulty <b>sensing elapsed time and estimating duration</b> — chronic underestimation of how long tasks and travel really take, and departures that slip late.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>"Five more minutes" becomes forty; you leave for the 2:45 appointment at 2:40 because it <i>feels</i> close.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p><b>Corrects your estimates</b> from your real history, <b>pads departures</b> with a learned buffer, and <b>calls out elapsed time</b> mid-task <span class="badge soon">soon</span>.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" style="--accent:#7c3aed">
+      <div class="dys">
+        <div class="ef">Task initiation</div>
+        <div class="name"><span class="ico">🧊</span>Task Paralysis</div>
+        <code>task_paralysis</code>
+      </div>
+      <div class="body">
+        <div class="chl">Difficulty <b>initiating tasks despite intent</b> — the work stalls before it ever begins, especially when it's large or ambiguous.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>You know exactly what to do and still can't start; the draft sits open, untouched, for an hour.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p>Shrinks it to a <b>5-minute first step</b>, <b>auto-decomposes</b> the big/vague thing into moves, and offers a <b>body-double check-in</b>.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" style="--accent:#15803d">
+      <div class="dys">
+        <div class="ef">Focus regulation</div>
+        <div class="name"><span class="ico">🎯</span>Hyperfocus</div>
+        <code>hyperfocus</code>
+      </div>
+      <div class="body">
+        <div class="chl">Intense sustained focus — a <b>strength when aimed right</b>, a <b>liability when misdirected</b> or when it overruns basic needs and commitments.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>Three hours into a side rabbit-hole; the real deadline and lunch both slid by unnoticed.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p><b>Protects</b> the window when focus is on-target, <b>checks alignment</b> when it may be off, enforces <b>biological breaks</b>, and <b>auto-closes</b> abandoned sessions.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" style="--accent:#b45309">
+      <div class="dys">
+        <div class="ef">Response inhibition</div>
+        <div class="name"><span class="ico">⚡</span>Impulsivity</div>
+        <code>impulsivity</code>
+      </div>
+      <div class="body">
+        <div class="chl">Acting before reflecting — <b>abrupt context switches and snap decisions</b> that pull attention off the intended task.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>A ping pulls you into a new tab, then a chore, then something else — the original task never comes back.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p>Inserts a <b>reflective pause</b> before a snap switch, <b>captures the distraction to defer</b> it, and <b>surfaces your switch rate</b> <span class="badge soon">soon</span>.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" style="--accent:#be185d">
+      <div class="dys">
+        <div class="ef">Prospective memory, out in the world</div>
+        <div class="name"><span class="ico">📍</span>Location-Aware Task Anchor</div>
+        <code>location_anchor</code>
+      </div>
+      <div class="body">
+        <div class="chl">Leaving with a short, stated intention and <b>losing track of time in the field</b> — errands that quietly stretch well past when you meant to be back.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>"Just running to the store" turns into a two-hour loop of unplanned stops.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p>Escalating field nudges — <b>soft</b> at your stated time, <b>firm</b> when you're over, a <b>voice call</b> if you go far past — all <b>gated</b> by actually being on-site.</p></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <div>Same primitive, five aims — <b>each module names the dysfunction it treats.</b></div>
+    <div>Opt-in per user <span class="dot">•</span> shared memory <span class="dot">•</span> learns which nudge works for <i>you</i></div>
   </footer>
 
 </div>
