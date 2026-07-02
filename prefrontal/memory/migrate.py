@@ -74,6 +74,11 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
         ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    # The shared household sheet's second scope: a nullable pointer from a user to
+    # the household they co-parent in (added after the users table shipped). No FK
+    # in the ALTER (SQLite can't add a column-level REFERENCES via ALTER), which is
+    # fine — schema.sql declares it on fresh installs.
+    "users": [("household_id", "INTEGER")],
 }
 
 

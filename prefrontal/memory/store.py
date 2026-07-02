@@ -45,6 +45,7 @@ from prefrontal.memory._helpers import (
 )
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.repos.episodes import EpisodesRepo
+from prefrontal.memory.repos.household import HouseholdRepo
 from prefrontal.memory.repos.mail import MailRepo
 from prefrontal.memory.repos.nudges import NudgesRepo
 from prefrontal.memory.repos.patterns import PatternsRepo
@@ -78,6 +79,7 @@ class MemoryStore(
     TodosRepo,
     MailRepo,
     NudgesRepo,
+    HouseholdRepo,
 ):
     """A high-level, dict-returning interface to the Prefrontal memory tables.
 

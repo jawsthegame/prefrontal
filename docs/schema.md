@@ -38,6 +38,7 @@ cross. Managed by `provision_user` / the `prefrontal user` CLI / `POST /admin/us
 | `token_hash` | TEXT UNIQUE | `sha256(token)` — the raw token is shown once at creation and never stored |
 | `status` | TEXT | `active`, `disabled` |
 | `is_operator` | BOOLEAN | May call the admin (user-provisioning) endpoints |
+| `household_id` | INTEGER NULL → `households(id)` | The household this user co-parents in, or NULL (not in one). The **second scope** — see the household tables below. A later-added column (rides the migrate.py back-fill). |
 | `created_at` | DATETIME | |
 
 ---
@@ -202,6 +203,46 @@ also defines:
   `outing`/`departure`, escalation `level`, the delivered `message`), so the
   widget/dashboard can surface "the last thing Prefrontal told you" and a missed
   push stays visible.
+
+---
+
+## Shared household sheet (household-scoped)
+
+The backbone of the **Parent** Context Pack (full design:
+[`household-sheet.md`](household-sheet.md)). Unlike every table above — each
+scoped to one `user_id` — these are scoped to a **household**: two co-parents
+belong to one household (`users.household_id`) and see the *same* rows. The
+`MemoryStore` household methods (`prefrontal/memory/repos/household.py`) inject
+`WHERE household_id = ?` the way the per-user methods inject `WHERE user_id`, and
+a user in no household raises rather than reading across households. Rendered into
+the `/family` view by `prefrontal/household.py`; edited in plain English via the
+assistant's `set_fact`/`clear_fact`/`set_agreement`/`remove_agreement` ops.
+
+**`child_id` convention:** household-wide (not per-kid) facts/agreements use the
+sentinel `child_id = 0` — SQLite treats NULLs as distinct in a UNIQUE constraint,
+so a NULL would let duplicate household-wide rows through. A real child is a
+positive `children.id`.
+
+- **`households`** — the household entity (`id`, `name`, `created_at`). Membership
+  is operator-set in v1 (`create_household` / `set_user_household`, surfaced via
+  `prefrontal household add/join` and `POST /admin/households`).
+- **`children`** — the roster: stable identity only (`household_id`, `name`,
+  `birthday`), `UNIQUE (household_id, name)`. Everything else about a child is a
+  fact, not a column.
+- **`household_facts`** — the categorized key/value grid: `child_id` (0 =
+  household-wide), `category` (a controlled vocab — `sizes`, `routine`, `food`,
+  `health`, `school`, `contact`), normalized `item`, free-text `value`, and
+  provenance (`updated_by`/`updated_at`). `UNIQUE (household_id, child_id,
+  category, item)` — writes upsert in place and re-stamp who touched it (the raw
+  material for the v2 delta digest).
+- **`household_agreements`** — standing behaviour plans: `title`, `kind`
+  (`reward`/`consistency`/`routine`), plain-language `body`, an optional
+  `structured` JSON for star/points charts (thresholds → rewards, earn-only), and
+  provenance. `UNIQUE (household_id, child_id, title)`.
+
+Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
+`kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
+"upcoming" section.
 
 ---
 

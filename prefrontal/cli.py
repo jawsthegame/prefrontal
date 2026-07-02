@@ -49,6 +49,7 @@ from prefrontal.encouragement import (
     render_encouragement,
     summarize_encouragement,
 )
+from prefrontal.household import build_sheet, render_sheet
 from prefrontal.impact import utcnow
 from prefrontal.mail.imap import DEFAULT_UNSEEN_WINDOW_DAYS
 from prefrontal.memory.db import init_db
@@ -173,6 +174,54 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 print(f"No such user '{args.handle}'.", file=sys.stderr)
                 return 1
             print(f"Disabled '{args.handle}'.")
+    return 0
+
+
+def _cmd_household(args: argparse.Namespace) -> int:
+    """Manage the shared household (operator-set membership in v1).
+
+    ``add`` creates a household; ``join`` puts a user into one; ``show`` prints the
+    rendered shared sheet for a member. Membership is operator-set (see
+    docs/household-sheet.md §8) — one parent wires both users in once.
+
+    Args:
+        args: Parsed arguments; ``household_action`` plus action-specific fields.
+
+    Returns:
+        Process exit code (0 on success, 1 on a not-found/usage error).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        if args.household_action == "add":
+            hid = store.create_household(args.name)
+            print(f"Created household '{args.name}' (id {hid}).")
+            print(f"Add members: prefrontal household join <handle> --household {hid}")
+        elif args.household_action == "join":
+            try:
+                changed = store.set_user_household(args.handle, args.household)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            if not changed:
+                print(f"No such user '{args.handle}'.", file=sys.stderr)
+                return 1
+            print(f"Put '{args.handle}' in household {args.household}.")
+        elif args.household_action == "leave":
+            if not store.set_user_household(args.handle, None):
+                print(f"No such user '{args.handle}'.", file=sys.stderr)
+                return 1
+            print(f"Removed '{args.handle}' from their household.")
+        elif args.household_action == "show":
+            scoped = _resolve_user_store(store, args.user)
+            if scoped.household_id_or_none() is None:
+                print(
+                    "That user isn't in a household. Create one with "
+                    "`prefrontal household add`, then `... join`.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(render_sheet(build_sheet(scoped)), end="")
     return 0
 
 
@@ -809,6 +858,24 @@ def build_parser() -> argparse.ArgumentParser:
     u_disable = user_sub.add_parser("disable", help="Disable a user's access.")
     u_disable.add_argument("handle", help="The user's handle.")
     p_user.set_defaults(func=_cmd_user)
+
+    p_house = sub.add_parser(
+        "household", help="Manage the shared household sheet (add/join/leave/show)."
+    )
+    p_house.add_argument("--db-path", default=None, help="Override the database path.")
+    house_sub = p_house.add_subparsers(dest="household_action", required=True)
+    h_add = house_sub.add_parser("add", help="Create a household (prints its id).")
+    h_add.add_argument("name", help="Household name, e.g. 'The Kims'.")
+    h_join = house_sub.add_parser("join", help="Put a user into a household.")
+    h_join.add_argument("handle", help="The user's handle.")
+    h_join.add_argument(
+        "--household", type=int, required=True, help="Household id (from `household add`)."
+    )
+    h_leave = house_sub.add_parser("leave", help="Remove a user from their household.")
+    h_leave.add_argument("handle", help="The user's handle.")
+    h_show = house_sub.add_parser("show", help="Print the rendered shared sheet.")
+    h_show.add_argument("--user", default=None, help="Handle of a household member.")
+    p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(
         "migrate-multi-tenant",

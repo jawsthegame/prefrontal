@@ -10,6 +10,8 @@ from prefrontal.webhooks._common import (
     Annotated,
     Any,
     Depends,
+    HouseholdCreate,
+    HouseholdMember,
     HTTPException,
     ScopedRequest,
     UserCreate,
@@ -96,5 +98,43 @@ def build_router(
                 status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
             )
         return {"handle": handle, "status": "disabled"}
+
+    # -- household membership (operator-set in v1; see docs/household-sheet.md §8)
+
+    @router.post(
+        "/admin/households", status_code=status.HTTP_201_CREATED, tags=["admin"]
+    )
+    def admin_create_household(
+        payload: HouseholdCreate,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Create a household, returning its id. Wire members in with the next route."""
+        hid = request.app.state.store.create_household(payload.name)
+        return {"id": hid, "name": payload.name}
+
+    @router.post("/admin/households/{household_id}/members", tags=["admin"])
+    def admin_add_household_member(
+        household_id: int,
+        payload: HouseholdMember,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Put a user into ``household_id`` (both co-parents share its rows)."""
+        store = request.app.state.store
+        try:
+            changed = store.set_user_household(payload.handle, household_id)
+        except ValueError as exc:  # unknown household id
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from None
+        if not changed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+            )
+        return {
+            "household_id": household_id,
+            "members": store.household_members(household_id),
+        }
 
     return router
