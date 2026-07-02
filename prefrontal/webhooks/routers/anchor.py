@@ -4,15 +4,9 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from datetime import timedelta
-
 from fastapi import APIRouter
 
-from prefrontal.modules.self_care import (
-    ATE_TODAY_KEY,
-    DEFAULT_MEAL_SNOOZE_MINUTES,
-    SNOOZED_UNTIL_KEY,
-)
+from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
 from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks._common import (
     DEFAULT_ABANDON_RATIO,
@@ -336,7 +330,8 @@ def build_router(
         - ``outing_return`` / ``outing_abandon`` — close an outing (I'm back / Abandon).
         - ``made_it`` / ``missed_it`` — log a commitment's departure outcome.
         - ``panic_step_done`` — resolve an overwhelm first-step nudge as done.
-        - ``meal_ate`` / ``meal_snooze`` — confirm/snooze the self-care meal check.
+        - ``meal_ate`` / ``meal_snooze`` / ``water_drank`` / ``water_snooze`` —
+          confirm/snooze a self-care basic-needs check.
 
         Idempotent: re-tapping a spent button (session/outing already closed) still
         renders a friendly confirmation rather than erroring.
@@ -412,17 +407,14 @@ def build_router(
                 return _dismiss_page("Already logged — nice work either way.")
             return _dismiss_page("Logged — you took the first step. 👏 That's the hard part.")
 
-        if action in ("meal_ate", "meal_snooze"):
-            # The meal check has no entity id — it acts on "today", so we recompute
-            # the local date at tap time rather than trusting the synthetic target.
-            today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
-            if action == "meal_ate":
-                memory.set_state(ATE_TODAY_KEY, today, source="explicit")
-                return _dismiss_page("Nice — glad you ate. 🍽️ I'll leave you be today.")
-            snooze_min = int(memory.get_float("meal_snooze_minutes", DEFAULT_MEAL_SNOOZE_MINUTES))
-            until = (utcnow() + timedelta(minutes=snooze_min)).strftime("%Y-%m-%d %H:%M:%S")
-            memory.set_state(SNOOZED_UNTIL_KEY, until, source="explicit")
-            return _dismiss_page(f"Okay — I'll check back in {snooze_min} min.")
+        if action in SELF_CARE_ACTIONS:
+            # A self-care check has no entity id — it acts on "now"/"today", so we
+            # recompute the local date at tap time rather than trust the synthetic
+            # target. apply_self_care_action owns the confirm/snooze semantics.
+            now = utcnow()
+            today = local_datetime(now, settings.timezone).strftime("%Y-%m-%d")
+            headline = apply_self_care_action(memory, action, now=now, today=today)
+            return _dismiss_page(headline or "Done.")
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)

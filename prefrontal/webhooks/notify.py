@@ -44,6 +44,8 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Self-care meal check — confirm you've eaten (silences it for the day) or
     # ask again in a bit.
     "meal": (("meal_ate", "✓ Ate"), ("meal_snooze", "Snooze")),
+    # Self-care water check — confirm a drink (defers a full interval) or snooze.
+    "water": (("water_drank", "✓ Drank"), ("water_snooze", "Snooze")),
 }
 
 

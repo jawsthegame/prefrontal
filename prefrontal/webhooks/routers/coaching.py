@@ -40,7 +40,7 @@ from prefrontal.webhooks.notify import nudge_actions
 #: target id), for cues whose tick delivery should carry one-tap action buttons.
 #: Only cues listed here get ``actions``; others deliver as plain text. (The
 #: per-module check endpoints attach their own buttons; this is the fan-over path.)
-_CUE_ACTION_KIND = {"meal": ("meal", "target")}
+_CUE_ACTION_KIND = {"meal": ("meal", "target"), "water": ("water", "target")}
 
 
 def build_router(

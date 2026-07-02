@@ -1,9 +1,9 @@
-"""Tests for the self-care module — the "have you eaten?" meal check.
+"""Tests for the self-care module — the meal ("have you eaten?") + water checks.
 
 Covers the cue producer (:class:`~prefrontal.modules.self_care.SelfCareModule`)
-on the coaching tick, the one-tap **Ate** / **Snooze** actions via
-``GET /nudge/act``, and that ``/webhooks/coach/check`` surfaces the meal cue with
-its signed action buttons.
+on the coaching tick for both the once-daily meal check and the recurring water
+check, the one-tap actions via ``GET /nudge/act`` (Ate / Snooze / Drank), and
+that ``/webhooks/coach/check`` surfaces the cues with their signed buttons.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from prefrontal.modules.self_care import (
     SNOOZED_UNTIL_KEY,
     SelfCareModule,
     meal_message,
+    water_message,
 )
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action, verify_action
@@ -65,12 +66,17 @@ def _ctx(now: datetime, *, name: str = "") -> CoachContext:
     return CoachContext(now=now, timezone="UTC", display_name=name)
 
 
+def _by_kind(cues, context_key):
+    return next((c for c in cues if c.context_key == context_key), None)
+
+
 # -- module.evaluate ---------------------------------------------------------
 
 
-def test_meal_message_greets_by_name():
+def test_messages_greet_by_name():
     assert meal_message("Tom").startswith("Tom, quick check")
     assert meal_message().startswith("Quick check")
+    assert water_message("Tom").startswith("Tom, hydration check")
 
 
 def test_off_by_default(store):
@@ -79,8 +85,16 @@ def test_off_by_default(store):
     assert SelfCareModule().evaluate(store, ctx) == []
 
 
-def test_fires_when_due(store):
+def test_both_checks_fire_when_enabled(store):
+    """With the master on, meal + water both fire in their windows."""
     store.set_state("self_care", "on")
+    cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom"))
+    assert {c.context_key for c in cues} == {"meal", "water"}
+
+
+def test_meal_fires_when_due(store):
+    store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
     cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom"))
     assert len(cues) == 1
     cue = cues[0]
@@ -92,32 +106,46 @@ def test_fires_when_due(store):
     assert cue.ref["target"] == 20260702
 
 
-def test_silent_before_start_hour(store):
+def test_water_is_recurring_and_starts_earlier(store):
+    """Water fires from 9:00 (before the meal window) and has no daily 'done'."""
     store.set_state("self_care", "on")
-    # 09:00 is before the default 11:00 start.
+    store.set_state("meal_enabled", "off")
+    # 10:00 — after water's 9:00 start but before the meal's 11:00.
+    cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 10, 0, 0)))
+    assert [c.context_key for c in cues] == ["water"]
+    assert cues[0].intervention == "water_check"
+
+
+def test_meal_silent_before_start_hour(store):
+    store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
+    # 09:00 is before the default 11:00 meal start.
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 9, 0, 0))) == []
 
 
-def test_silent_once_eaten_today(store):
+def test_meal_silent_once_eaten_today(store):
     store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
     store.set_state(ATE_TODAY_KEY, "2026-07-02")
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
     # A new day re-arms it.
-    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 15, 0, 0)))
+    assert _by_kind(SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 15, 0, 0))), "meal")
 
 
-def test_silent_while_snoozed(store):
+def test_meal_silent_while_snoozed(store):
     store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
     now = datetime(2026, 7, 2, 15, 0, 0)
     store.set_state(SNOOZED_UNTIL_KEY, (now + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S"))
     assert SelfCareModule().evaluate(store, _ctx(now)) == []
     # Past the snooze it fires again.
-    assert SelfCareModule().evaluate(store, _ctx(now + timedelta(minutes=25)))
+    assert _by_kind(SelfCareModule().evaluate(store, _ctx(now + timedelta(minutes=25))), "meal")
 
 
 def test_reask_bucket_advances_dedup_key(store):
     """Same re-ask window → same dedup_key; a later window → a new one."""
     store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
     mod = SelfCareModule()
     k1 = mod.evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0)))[0].dedup_key
     k2 = mod.evaluate(store, _ctx(datetime(2026, 7, 2, 15, 20, 0)))[0].dedup_key
@@ -129,8 +157,8 @@ def test_reask_bucket_advances_dedup_key(store):
 # -- one-tap actions ---------------------------------------------------------
 
 
-def test_meal_actions_in_allowlist():
-    for action in ("meal_ate", "meal_snooze"):
+def test_self_care_actions_in_allowlist():
+    for action in ("meal_ate", "meal_snooze", "water_drank", "water_snooze"):
         token = sign_action(DEFAULT_HANDLE, action, 20260702, SIGNING)
         assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, action, 20260702)
 
@@ -152,18 +180,56 @@ def test_act_meal_snooze_sets_window(client, store):
     assert timedelta(minutes=25) < (parsed - utcnow()) <= timedelta(minutes=31)
 
 
+def test_act_water_drank_defers_a_full_interval(client, store):
+    """A 'Drank' tap pushes the next reminder out ~a full interval (90 min)."""
+    token = sign_action(DEFAULT_HANDLE, "water_drank", 20260702, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200
+    until = store.get_state("water_snoozed_until")
+    assert until is not None
+    parsed = datetime.strptime(until, "%Y-%m-%d %H:%M:%S")
+    assert timedelta(minutes=85) < (parsed - utcnow()) <= timedelta(minutes=91)
+    # A recurring check never stamps a daily "done".
+    assert store.get_state("water_done_today") is None
+
+
+def test_act_water_snooze_is_shorter(client, store):
+    token = sign_action(DEFAULT_HANDLE, "water_snooze", 20260702, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200
+    parsed = datetime.strptime(store.get_state("water_snoozed_until"), "%Y-%m-%d %H:%M:%S")
+    assert timedelta(minutes=25) < (parsed - utcnow()) <= timedelta(minutes=31)
+
+
 # -- coach/check delivery ----------------------------------------------------
+
+
+def _always_on(store):
+    store.set_state("self_care", "on")
+    store.set_state("meal_start_hour", "0")  # any time of day qualifies
+    store.set_state("water_start_hour", "0")
+    store.set_state("responsive_hours_start", "0")  # always responsive (no quiet-hours skip)
+    store.set_state("responsive_hours_end", "0")
 
 
 def test_coach_check_surfaces_meal_cue_with_actions(client, store):
     """The tick returns the meal cue with one-tap Ate / Snooze buttons."""
-    store.set_state("self_care", "on")
-    store.set_state("meal_start_hour", "0")  # any time of day qualifies
-    store.set_state("responsive_hours_start", "0")  # always responsive (no quiet-hours skip)
-    store.set_state("responsive_hours_end", "0")
+    _always_on(store)
+    store.set_state("water_enabled", "off")
     cues = client.post("/webhooks/coach/check", json={}, headers=_auth()).json()["cues"]
-    meal = next(c for c in cues if c["module"] == "self_care")
-    assert meal["context_key"] == "meal"
+    meal = next(c for c in cues if c["context_key"] == "meal")
+    assert meal["module"] == "self_care"
     assert [a["label"] for a in meal["actions"]] == ["✓ Ate", "Snooze"]
     token = meal["actions"][0]["url"].split("t=", 1)[1]
     assert verify_action(token, SIGNING)[1] == "meal_ate"
+
+
+def test_coach_check_surfaces_water_cue_with_actions(client, store):
+    """The tick returns the water cue with one-tap Drank / Snooze buttons."""
+    _always_on(store)
+    store.set_state("meal_enabled", "off")
+    cues = client.post("/webhooks/coach/check", json={}, headers=_auth()).json()["cues"]
+    water = next(c for c in cues if c["context_key"] == "water")
+    assert [a["label"] for a in water["actions"]] == ["✓ Drank", "Snooze"]
+    token = water["actions"][0]["url"].split("t=", 1)[1]
+    assert verify_action(token, SIGNING)[1] == "water_drank"
