@@ -80,6 +80,30 @@ class NudgesRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def expire_nudges(self, kind: str) -> int:
+        """Immediately expire this user's still-live nudges of a given kind.
+
+        Called when the thing a nudge was about is resolved — closing an outing
+        expires its "still on track?" so it clears from every surface at once,
+        the moment you're back, instead of aging out on the default TTL hours
+        later. Only touches nudges not already expired, so it never revives or
+        rewrites a stale row.
+
+        Args:
+            kind: The nudge kind to expire (e.g. ``"outing"``).
+
+        Returns:
+            The number of nudges expired.
+        """
+        cur = self.conn.execute(
+            "UPDATE nudges SET expires_at = datetime('now') "
+            "WHERE user_id = ? AND kind = ? "
+            "AND (expires_at IS NULL OR expires_at > datetime('now'))",
+            (self._uid(), kind),
+        )
+        self.conn.commit()
+        return int(cur.rowcount)
+
     # -- Task decompositions -------------------------------------------------
     #
     # ``todo_decompositions`` has no ``user_id`` of its own — it hangs off

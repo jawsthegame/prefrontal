@@ -195,13 +195,20 @@ class SessionsRepo:
             The closed outing dict including ``actual_minutes`` (minutes between
             departure and return), or ``None`` if the outing was not active.
         """
-        return self._session_close(
+        closed = self._session_close(
             table="outings",
             started_col="departure_at",
             closed_col="returned_at",
             session_id=outing_id,
             status=status,
         )
+        # The outing is over, so its "still on track?" nudge is moot — expire it
+        # now (every surface reads only unexpired nudges) rather than letting it
+        # linger on the default TTL. Only when a close actually happened, not a
+        # re-close of an already-closed outing.
+        if closed is not None:
+            self.expire_nudges("outing")
+        return closed
 
     def recent_outings(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent outings (any status), newest first.

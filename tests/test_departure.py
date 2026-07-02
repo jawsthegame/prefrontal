@@ -406,6 +406,35 @@ def test_record_nudge_preserves_explicit_expiry(store):
     assert store.recent_nudges()[0]["expires_at"] == start
 
 
+def test_close_outing_expires_its_nudge(store):
+    """Closing an outing clears its "still on track?" nudge immediately.
+
+    The default TTL bounds a nudge to a couple hours; closing the outing it was
+    about should retire it the moment you're back, not hours later. A departure
+    nudge (different kind) is untouched.
+    """
+    outing_id = store.start_outing("getting coffee", 15.0)
+    store.record_nudge(kind="outing", message="still on track?", level="soft")
+    store.record_nudge(kind="departure", message="leave now", level="go", expires_at=_utc(20))
+    assert {"still on track?", "leave now"} <= {n["message"] for n in store.recent_nudges()}
+
+    store.close_outing(outing_id, status="returned")
+
+    messages = {n["message"] for n in store.recent_nudges()}
+    assert "still on track?" not in messages  # cleared on return
+    assert "leave now" in messages  # a departure nudge is left alone
+
+
+def test_close_outing_when_not_active_leaves_nudges(store):
+    """Re-closing an already-closed outing doesn't touch live outing nudges."""
+    outing_id = store.start_outing("getting coffee", 15.0)
+    store.close_outing(outing_id, status="returned")
+    store.record_nudge(kind="outing", message="fresh after return", level="soft")
+
+    store.close_outing(outing_id, status="returned")  # no active outing to close
+    assert "fresh after return" in {n["message"] for n in store.recent_nudges()}
+
+
 def test_migrate_adds_nudges_expires_at_idempotently():
     """backfill_added_columns adds expires_at on a pre-existing nudges table."""
     conn = sqlite3.connect(":memory:")
