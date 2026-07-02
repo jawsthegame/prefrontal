@@ -447,7 +447,7 @@ ordered by leverage; each is independent but builds on denser capture.
   opt-in upgrade rather than a replacement for the Scriptable widget, which stays
   the zero-native-code default. *(Deferred by choice; the accessory widget covers
   the glanceable case today.)*
-- **Context Packs (a.k.a. Playbooks) — composition over primitives, not new modules.**
+- **Context Packs — composition over primitives, not new modules.**
   Challenge-area modules answer *how your ADHD shows up* (time blindness,
   hyperfocus, impulsivity, …); a **Pack** answers *what life you're managing* —
   **Parent**, **Caregiver**, **Grad student**, **New job**. Crucially a Pack is
@@ -471,7 +471,6 @@ ordered by leverage; each is independent but builds on denser capture.
   pack") — the same opt-in, modular ethos as challenge modules, on the orthogonal
   context axis. *(Open: precedence when Packs overlap — two setting the same
   category/window need merge rules; and the co-parent/household bits imply
-  **shared/household scope**, beyond today's per-user multi-tenancy. Naming TBD —
-  Pack vs Playbook vs Kit.)*
+  **shared/household scope**, beyond today's per-user multi-tenancy.)*
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.
