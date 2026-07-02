@@ -178,9 +178,12 @@ from prefrontal.scheduling import (
 )
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
+    MAX_CATEGORIES,
     augment_todo,
     avoided_todos,
+    category_stats,
     decompose_task,
+    normalize_category,
     record_todo_closed,
 )
 from prefrontal.webhooks.oauth import (
@@ -541,6 +544,9 @@ class TodoCreate(BaseModel):
     )
     deadline: str | None = Field(default=None, description="Optional ISO-8601 deadline.")
     energy: str | None = Field(default=None, description="low | medium | high.")
+    category: str | None = Field(
+        default=None, description="Topic (short label). Omit to infer; capped at 20."
+    )
 
 
 class TodoDeadlineUpdate(BaseModel):
@@ -549,6 +555,15 @@ class TodoDeadlineUpdate(BaseModel):
     deadline: str | None = Field(
         default=None,
         description="New ISO-8601 deadline, or null to clear it entirely.",
+    )
+
+
+class TodoCategoryUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/category`` — set or clear a todo's category."""
+
+    category: str | None = Field(
+        default=None,
+        description="New category label, or null to clear it (uncategorized).",
     )
 
 
@@ -873,6 +888,7 @@ __all__ = [
     "LEVELS",
     "Literal",
     "LocationPing",
+    "MAX_CATEGORIES",
     "MailSync",
     "MemoryStore",
     "N8nClient",
@@ -896,6 +912,7 @@ __all__ = [
     "SwitchPause",
     "SwitchResolve",
     "SwitchResolved",
+    "TodoCategoryUpdate",
     "TodoCreate",
     "TodoDeadlineUpdate",
     "TriageForget",
@@ -929,6 +946,7 @@ __all__ = [
     "build_pause_message",
     "build_profile",
     "cache_is_stale",
+    "category_stats",
     "classify_kind",
     "conflict_dismissal_key",
     "dataclass",
@@ -960,6 +978,7 @@ __all__ = [
     "local_hour_of",
     "module_enabled",
     "next_departure",
+    "normalize_category",
     "normalize_event",
     "normalize_query",
     "overwhelm_level",

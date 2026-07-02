@@ -49,7 +49,11 @@ from prefrontal.memory.summarizer import (
 from prefrontal.modules import available, enabled_modules
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
-from prefrontal.todos import record_todo_closed
+from prefrontal.todos import (
+    heuristic_category,
+    record_todo_closed,
+    resolve_category,
+)
 
 
 def _resolve_user_store(store: MemoryStore, handle: str | None) -> MemoryStore:
@@ -414,20 +418,26 @@ def _cmd_todo(args: argparse.Namespace) -> int:
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
         if args.todo_action == "add":
+            # Category: explicit flag, else an offline keyword guess — always
+            # clamped to the cap against the user's existing set (no LLM here).
+            candidate = args.category or heuristic_category(args.title)
+            category = resolve_category(candidate, store.todo_categories())
             todo_id = store.add_todo(
                 args.title,
                 estimate_minutes=args.minutes,
                 priority=args.priority,
                 energy=args.energy,
+                category=category,
             )
-            print(f"Added todo #{todo_id}: {args.title}")
+            print(f"Added todo #{todo_id} [{category}]: {args.title}")
         elif args.todo_action == "list":
             todos = store.open_todos()
             if not todos:
                 print("No open todos.")
             for t in todos:
                 est = f" ~{t['estimate_minutes']:g}m" if t.get("estimate_minutes") else ""
-                print(f"#{t['id']} [P{t['priority']}]{est} {t['title']}")
+                cat = f" ({t['category']})" if t.get("category") else ""
+                print(f"#{t['id']} [P{t['priority']}]{est}{cat} {t['title']}")
         elif args.todo_action in ("done", "drop"):
             status_ = "done" if args.todo_action == "done" else "dropped"
             if store.close_todo(args.todo_id, status=status_):
@@ -794,6 +804,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--priority", type=int, default=1, choices=[0, 1, 2, 3], help="0 low … 3 urgent."
     )
     t_add.add_argument("--energy", default=None, help="low | medium | high.")
+    t_add.add_argument(
+        "--category", default=None, help="Topic label. Omit to infer (keyword guess)."
+    )
     todo_sub.add_parser("list", help="List open todos.")
     t_done = todo_sub.add_parser("done", help="Mark a todo done.")
     t_done.add_argument("todo_id", type=int)

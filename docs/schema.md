@@ -149,6 +149,13 @@ also defines:
   buffer is used.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
+  Each carries an inferred, editable `category` (a short topic label). The
+  canonical set is *derived* — there's no registry table; it's `SELECT DISTINCT
+  category` — and capped at 20 (`MAX_CATEGORIES`): `augment_todo` reuses an
+  existing category unless genuinely novel and under the cap, and the dashboard
+  can override it (`POST /todos/{id}/category`). The rollup that drives the
+  dashboard's Categories panel (counts, typical estimate, completion rate,
+  avoidance) is `category_stats` in `prefrontal/todos.py`.
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).

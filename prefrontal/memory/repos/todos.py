@@ -24,6 +24,7 @@ class TodosRepo:
         priority: int = 1,
         deadline: str | None = None,
         energy: str | None = None,
+        category: str | None = None,
         source: str = "manual",
     ) -> int:
         """Insert an open todo and return its id.
@@ -35,6 +36,8 @@ class TodosRepo:
             priority: 0 low / 1 normal / 2 high / 3 urgent.
             deadline: Optional UTC deadline (``YYYY-MM-DD HH:MM:SS``).
             energy: Optional ``low``/``medium``/``high`` hint.
+            category: Optional topic (inferred upstream by ``augment_todo``);
+                editable later via :meth:`set_todo_category`.
             source: Where the todo came from — ``manual`` or ``impulse`` (a
                 captured-and-deferred impulse). Lets surfaces distinguish the
                 impulse inbox from deliberately-added loops.
@@ -44,8 +47,9 @@ class TodosRepo:
         """
         cur = self.conn.execute(
             "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
-            "deadline, energy, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (self._uid(), title, notes, estimate_minutes, priority, deadline, energy, source),
+            "deadline, energy, category, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), title, notes, estimate_minutes, priority, deadline, energy,
+             category, source),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -105,6 +109,49 @@ class TodosRepo:
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def set_todo_category(self, todo_id: int, category: str | None) -> bool:
+        """Set (or clear) a todo's category. Returns ``True`` if a row changed.
+
+        Editable at any status — recategorizing a finished todo still corrects
+        the historical rollup. The caller (``augment_todo`` / the endpoint) is
+        responsible for clamping to the cap; this just writes the value.
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET category = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ?",
+            (category, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def todo_categories(self) -> list[str]:
+        """Distinct categories in use, most-common first (drives cap + hints).
+
+        Ordered by frequency so :func:`prefrontal.todos.augment_todo` can offer
+        the model the user's real vocabulary and, at the cap, fall back to a
+        well-populated bucket. Excludes NULL/blank.
+        """
+        rows = self.conn.execute(
+            "SELECT category FROM todos "
+            "WHERE user_id = ? AND category IS NOT NULL AND TRIM(category) != '' "
+            "GROUP BY category ORDER BY COUNT(*) DESC, category ASC",
+            (self._uid(),),
+        ).fetchall()
+        return [r["category"] for r in rows]
+
+    def all_todos(self) -> list[dict[str, Any]]:
+        """Return every todo for this user (any status), newest first.
+
+        Used for the category rollup (:func:`prefrontal.todos.category_stats`),
+        which needs closed todos too for completion rates. Personal-scale, so an
+        unpaginated read is fine.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM todos WHERE user_id = ? ORDER BY id DESC",
+            (self._uid(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def _owns_todo(self, todo_id: int) -> bool:
         """Return whether ``todo_id`` belongs to this scoped user."""

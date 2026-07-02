@@ -32,6 +32,37 @@ MAX_ESTIMATE_MINUTES = 480.0
 
 ENERGY_LEVELS = ("low", "medium", "high")
 
+#: Ceiling on the number of distinct categories in use. The set is derived from
+#: ``todos.category`` (no registry table); inference reuses existing categories
+#: and only coins a new one while under this cap — so the vocabulary stays small
+#: enough to be a useful grouping (and legible in the dashboard) rather than
+#: sprawling into a near-unique tag per todo.
+MAX_CATEGORIES = 20
+
+#: The bucket used when nothing else fits (and the fallback target at the cap).
+DEFAULT_CATEGORY = "other"
+
+#: Keyword → category for the offline/heuristic fallback (first match wins). The
+#: labels are intentionally few and broad so the heuristic alone stays well under
+#: :data:`MAX_CATEGORIES`; the model may still coin finer ones when available.
+_CATEGORY_HEURISTICS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("call", "phone", "email", "text", "reply", "respond", "message", "ping"),
+     "communication"),
+    (("pay", "bill", "invoice", "venmo", "transfer", "bank", "tax", "budget", "refund"),
+     "finance"),
+    (("doctor", "dentist", "gym", "workout", "medication", "health", "therapy"),
+     "health"),
+    (("buy", "order", "pick up", "grab", "return", "drop off", "shop", "groceries", "errand"),
+     "errands"),
+    (("clean", "tidy", "organize", "laundry", "dishes", "repair", "fix", "yard", "home"),
+     "home"),
+    (("read", "study", "learn", "research", "course"), "learning"),
+    (("write", "draft", "report", "design", "code", "review", "deploy", "ticket", "work"),
+     "work"),
+    (("schedule", "book", "rsvp", "confirm", "sign up", "file", "submit", "renew", "form"),
+     "admin"),
+)
+
 #: Keyword → typical minutes (first match wins; specific before generic).
 _ESTIMATE_HEURISTICS: tuple[tuple[tuple[str, ...], float], ...] = (
     (("call", "phone", "text", "email", "reply", "respond", "message", "ping"), 10.0),
@@ -78,6 +109,7 @@ class AugmentedTodo:
     priority: int
     energy: str
     deadline: str | None  # ISO date (YYYY-MM-DD) or None
+    category: str  # normalized, capped at MAX_CATEGORIES distinct
     sources: dict[str, str]  # field -> "stated" | "llm" | "heuristic"
 
 
@@ -121,6 +153,46 @@ def heuristic_energy(title: str) -> str:
     return "medium"
 
 
+def normalize_category(value: str | None) -> str:
+    """Canonicalize a category label: lowercase, single-spaced, length-capped.
+
+    Returns :data:`DEFAULT_CATEGORY` for empty/blank input so a category column
+    is never an empty string. Keeps labels short (≤ 30 chars) so the derived set
+    stays legible.
+    """
+    norm = re.sub(r"\s+", " ", (value or "").strip().lower())
+    return norm[:30] if norm else DEFAULT_CATEGORY
+
+
+def heuristic_category(title: str) -> str:
+    """Guess a broad category from task keywords, else :data:`DEFAULT_CATEGORY`."""
+    t = _norm(title)
+    for keywords, category in _CATEGORY_HEURISTICS:
+        if _matches(t, keywords):
+            return category
+    return DEFAULT_CATEGORY
+
+
+def resolve_category(
+    candidate: str, existing: list[str], cap: int = MAX_CATEGORIES
+) -> str:
+    """Clamp a candidate category to the ``cap`` on the distinct set.
+
+    Under the cap, a novel category is allowed (it grows the set). At the cap,
+    the candidate must already be in ``existing``; otherwise it's remapped to
+    :data:`DEFAULT_CATEGORY` if that's in use, else the first (most-common)
+    existing category, so we never exceed the ceiling. ``existing`` should be
+    ordered most-common-first for the fallback to prefer a well-populated bucket.
+    """
+    norm = normalize_category(candidate)
+    existing_norm = [normalize_category(c) for c in existing]
+    if norm in existing_norm or len(set(existing_norm)) < cap:
+        return norm
+    if DEFAULT_CATEGORY in existing_norm:
+        return DEFAULT_CATEGORY
+    return existing_norm[0] if existing_norm else norm
+
+
 def heuristic_deadline(title: str, today: date) -> str | None:
     """Parse a relative deadline ('tomorrow', 'by Friday') → ISO date, or None."""
     t = _norm(title)
@@ -148,8 +220,25 @@ _SYSTEM = (
     "realistic minutes to do it>, \"priority\": <0 low, 1 normal, 2 high, 3 "
     "urgent>, \"energy\": \"low\"|\"medium\"|\"high\" (mental effort), "
     "\"deadline\": \"YYYY-MM-DD\" or null (only if the title clearly implies a "
-    "due date)}."
+    "due date), \"category\": \"<short 1-2 word lowercase topic, e.g. finance, "
+    "errands, health, work>\"}."
 )
+
+
+def _category_guidance(existing: list[str], cap: int) -> str:
+    """Steer the model to reuse the user's categories and respect the cap."""
+    if not existing:
+        return ""
+    listed = ", ".join(existing)
+    if len(existing) >= cap:
+        return (
+            f" For \"category\" you MUST pick the best fit from this existing list "
+            f"(the limit of {cap} is reached, do not invent a new one): {listed}."
+        )
+    return (
+        f" For \"category\", strongly prefer reusing one of the user's existing "
+        f"categories: {listed}. Only coin a new one if none genuinely fit."
+    )
 
 
 def _coerce_llm(raw: dict[str, Any]) -> dict[str, Any]:
@@ -167,14 +256,25 @@ def _coerce_llm(raw: dict[str, Any]) -> dict[str, Any]:
     deadline = raw.get("deadline")
     if isinstance(deadline, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", deadline.strip()):
         out["deadline"] = deadline.strip()
+    category = raw.get("category")
+    if isinstance(category, str) and category.strip():
+        out["category"] = normalize_category(category)
     return out
 
 
-def _llm_fields(title: str, today: date, client: _Generator) -> dict[str, Any]:
+def _llm_fields(
+    title: str,
+    today: date,
+    client: _Generator,
+    *,
+    existing_categories: list[str] | None = None,
+    category_cap: int = MAX_CATEGORIES,
+) -> dict[str, Any]:
     """Ask the model for all fields at once; return the usable subset (or {})."""
+    system = _SYSTEM + _category_guidance(existing_categories or [], category_cap)
     try:
         reply = client.generate(
-            f"Title: {title}\nToday: {today.isoformat()}", system=_SYSTEM
+            f"Title: {title}\nToday: {today.isoformat()}", system=system
         )
     except OllamaError:
         return {}
@@ -195,22 +295,35 @@ def augment_todo(
     priority: int | None = None,
     energy: str | None = None,
     deadline: str | None = None,
+    category: str | None = None,
+    existing_categories: list[str] | None = None,
+    category_cap: int = MAX_CATEGORIES,
     client: _Generator | None = None,
     today: date | None = None,
 ) -> AugmentedTodo:
     """Fill in whichever todo fields weren't supplied.
 
-    For estimate/priority/energy: the model's value (one JSON call covering all
-    of them) if usable, else a keyword heuristic / default. **Deadline is the
-    exception** — the exact heuristic is tried first (its weekday math is more
-    reliable than the model's date arithmetic) and the model is only a fallback
-    for phrasing the heuristic can't parse. Supplied values are kept verbatim and
-    marked ``stated``; ``deadline`` counts as supplied only when non-empty.
+    For estimate/priority/energy/category: the model's value (one JSON call
+    covering all of them) if usable, else a keyword heuristic / default.
+    **Deadline is the exception** — the exact heuristic is tried first (its
+    weekday math is more reliable than the model's date arithmetic) and the model
+    is only a fallback for phrasing the heuristic can't parse. Supplied values are
+    kept verbatim and marked ``stated``; ``deadline`` counts as supplied only when
+    non-empty.
+
+    Category is always clamped to ``category_cap`` distinct values via
+    :func:`_resolve_category`: a novel category is allowed only while under the
+    cap, so the derived set (from ``existing_categories``) can't sprawl. A
+    supplied category is normalized and still clamped — the ceiling holds even
+    for explicit values.
 
     Args:
         title: The todo text.
-        estimate_minutes/priority/energy/deadline: User-supplied values, or
-            ``None`` to infer.
+        estimate_minutes/priority/energy/deadline/category: User-supplied values,
+            or ``None`` to infer.
+        existing_categories: The user's current categories, ideally ordered
+            most-common-first (drives both the model hint and the cap fallback).
+        category_cap: Max distinct categories (defaults to :data:`MAX_CATEGORIES`).
         client: An Ollama-like client; ``None`` skips the model (heuristics only).
         today: Reference date for deadline math (defaults to today).
 
@@ -218,9 +331,20 @@ def augment_todo(
         An :class:`AugmentedTodo` with resolved fields and a ``sources`` map.
     """
     today = today or date.today()
+    existing_categories = existing_categories or []
     sources: dict[str, str] = {}
-    needs_model = None in (estimate_minutes, priority, energy) or not deadline
-    llm = _llm_fields(title, today, client) if (client is not None and needs_model) else {}
+    needs_model = None in (estimate_minutes, priority, energy, category) or not deadline
+    llm = (
+        _llm_fields(
+            title,
+            today,
+            client,
+            existing_categories=existing_categories,
+            category_cap=category_cap,
+        )
+        if (client is not None and needs_model)
+        else {}
+    )
 
     def resolve(field: str, supplied: Any, heuristic: Any) -> Any:
         if supplied is not None:
@@ -235,6 +359,10 @@ def augment_todo(
     est = resolve("estimate_minutes", estimate_minutes, lambda: heuristic_estimate(title))
     pri = resolve("priority", priority, lambda: heuristic_priority(title))
     energy_val = resolve("energy", energy, lambda: heuristic_energy(title))
+    # Category resolves like the others, then is clamped to the cap regardless of
+    # source (a stated value can't smuggle in a 21st category).
+    raw_category = resolve("category", category, lambda: heuristic_category(title))
+    category_val = resolve_category(raw_category, existing_categories, category_cap)
 
     # Deadline ordering differs from the other fields: the heuristic's weekday
     # math is exact ("by Friday" → the right date), whereas the model sometimes
@@ -251,7 +379,7 @@ def augment_todo(
         else:
             dl, sources["deadline"] = None, "heuristic"
 
-    return AugmentedTodo(est, pri, energy_val, dl, sources)
+    return AugmentedTodo(est, pri, energy_val, dl, category_val, sources)
 
 
 # --- Decomposition (the initiation lever) ------------------------------------
@@ -449,6 +577,86 @@ def avoided_todos(
             continue
         out.append({"todo": todo, "days_open": round(days, 1), "score": score})
     out.sort(key=lambda x: -x["score"])
+    return out
+
+
+# --- Category rollup (grouping → trends) -------------------------------------
+#
+# The derived-set view of categories: no registry table, so "the categories in
+# use" and their trends are computed from the todos themselves. Feeds the
+# dashboard's Categories panel — how many open per topic, the typical length
+# (mean estimate) for planning, how often a topic is finished vs dropped, and how
+# avoided it looks right now. These are the "common execution length" and
+# "avoidance trend" signals that later phases fold into the coaching strategy.
+
+
+def category_stats(
+    todos: list[dict[str, Any]], now: datetime
+) -> list[dict[str, Any]]:
+    """Per-category rollup over a user's todos (open + closed), busiest first.
+
+    Args:
+        todos: All of the user's todos (any status), each a store dict.
+        now: Reference time for avoidance scoring.
+
+    Returns:
+        One dict per category with ``category``, ``open``/``done``/``dropped``/
+        ``total`` counts, ``avg_estimate_minutes`` (mean estimate — the "typical
+        length", or ``None`` if none carry one), ``completion_rate`` (done ÷
+        closed, or ``None`` if nothing is closed yet), and ``avoidance`` (summed
+        :func:`avoidance_score` over the open todos). Sorted by open count, then
+        total, descending.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for todo in todos:
+        cat = normalize_category(todo.get("category"))
+        g = groups.setdefault(
+            cat,
+            {
+                "category": cat,
+                "open": 0,
+                "done": 0,
+                "dropped": 0,
+                "total": 0,
+                "_est_sum": 0.0,
+                "_est_n": 0,
+                "avoidance": 0.0,
+            },
+        )
+        g["total"] += 1
+        status = (todo.get("status") or "open").lower()
+        if status == "done":
+            g["done"] += 1
+        elif status == "dropped":
+            g["dropped"] += 1
+        else:
+            g["open"] += 1
+            g["avoidance"] += avoidance_score(todo, now)
+        estimate = todo.get("estimate_minutes")
+        if isinstance(estimate, (int, float)) and not isinstance(estimate, bool):
+            g["_est_sum"] += float(estimate)
+            g["_est_n"] += 1
+
+    out: list[dict[str, Any]] = []
+    for g in groups.values():
+        closed = g["done"] + g["dropped"]
+        out.append(
+            {
+                "category": g["category"],
+                "open": g["open"],
+                "done": g["done"],
+                "dropped": g["dropped"],
+                "total": g["total"],
+                "avg_estimate_minutes": (
+                    round(g["_est_sum"] / g["_est_n"], 1) if g["_est_n"] else None
+                ),
+                "completion_rate": (
+                    round(g["done"] / closed, 2) if closed else None
+                ),
+                "avoidance": round(g["avoidance"], 1),
+            }
+        )
+    out.sort(key=lambda x: (-x["open"], -x["total"]))
     return out
 
 
