@@ -108,7 +108,11 @@ from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages
-from prefrontal.mail.feedback import learned_corrections, record_drop_feedback
+from prefrontal.mail.feedback import (
+    learned_corrections,
+    learned_denylist,
+    record_drop_feedback,
+)
 from prefrontal.memory.store import MemoryStore, feed_label, provision_user, sha256_hex
 from prefrontal.memory.summarizer import (
     build_profile,
@@ -1122,6 +1126,10 @@ def create_app(
                 quick_drop_days=resolved_settings.triage_quick_drop_days,
                 repeat_threshold=resolved_settings.triage_repeat_threshold,
             ),
+            denylisted_senders=learned_denylist(
+                memory,
+                repeat_threshold=resolved_settings.triage_repeat_threshold,
+            ),
         )
         return {
             "account": summary.account,
@@ -1132,6 +1140,7 @@ def create_app(
             "invalid": summary.invalid,
             "needs_action": summary.needs_action,
             "todos_created": summary.todos_created,
+            "todos_suppressed": summary.todos_suppressed,
             "triaged_by_llm": summary.triaged_by_llm,
         }
 

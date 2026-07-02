@@ -26,9 +26,16 @@ from prefrontal.config import (
 )
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.mail import ingest_messages, normalize_message, retriage_messages
+from prefrontal.mail.feedback import learned_denylist
 from prefrontal.mail.imap import ImapAccount, _important_filter, _unseen_criteria
-from prefrontal.mail.models import normalize_date, parse_sender
-from prefrontal.mail.triage import _heuristic_triage, priority_for_urgency, triage_message
+from prefrontal.mail.models import MailItem, normalize_date, parse_sender
+from prefrontal.mail.triage import (
+    MailTriage,
+    _heuristic_triage,
+    priority_for_urgency,
+    suppress_todo_reason,
+    triage_message,
+)
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.app import create_app
@@ -576,3 +583,135 @@ def test_mail_sync_rejects_blank_account(client):
         headers={"X-Prefrontal-Token": SECRET},
     )
     assert resp.status_code == 422
+
+
+# -- todo-creation suppression (mail-triage false-positive gate) --------------
+
+
+def _item(sender_email="sarah@example.com", sender_name="Sarah", subject="Q?"):
+    return MailItem(
+        account="personal",
+        message_id="<x@example.com>",
+        sender_name=sender_name,
+        sender_email=sender_email,
+        subject=subject,
+    )
+
+
+def test_suppress_reason_allows_a_real_reply():
+    """A direct reply from a real person still creates a todo (returns None)."""
+    verdict = MailTriage(needs_action=True, category="reply")
+    assert suppress_todo_reason(_item(), verdict) is None
+
+
+@pytest.mark.parametrize(
+    "sender_email",
+    [
+        "no-reply@vistarmedia.com",
+        "noreply@service.com",
+        "notifications@github.com",
+        "DoNotReply@bank.com",
+    ],
+)
+def test_suppress_reason_blocks_no_reply_style_senders(sender_email):
+    """no-reply / notifications senders never spawn a todo, even if flagged."""
+    verdict = MailTriage(needs_action=True, category="reply")
+    assert suppress_todo_reason(_item(sender_email=sender_email), verdict) == (
+        "no-reply-sender"
+    )
+
+
+@pytest.mark.parametrize("category", ["notification", "newsletter", "fyi"])
+def test_suppress_reason_blocks_informational_categories(category):
+    """Informational categories are recorded but don't become open loops."""
+    verdict = MailTriage(needs_action=True, category=category)
+    reason = suppress_todo_reason(_item(), verdict)
+    assert reason == f"non-actionable-category:{category}"
+
+
+def test_suppress_reason_blocks_denylisted_sender():
+    """A learned repeat-dropped sender is hard-suppressed by exact address."""
+    verdict = MailTriage(needs_action=True, category="reply")
+    deny = frozenset({"spam@vendor.com"})
+    assert (
+        suppress_todo_reason(
+            _item(sender_email="spam@vendor.com"), verdict, denylisted_senders=deny
+        )
+        == "denylisted-sender"
+    )
+    # A sender not on the list is unaffected.
+    assert (
+        suppress_todo_reason(
+            _item(sender_email="real@vendor.com"), verdict, denylisted_senders=deny
+        )
+        is None
+    )
+
+
+def test_ingest_suppresses_todo_for_no_reply_sender_but_keeps_record(store):
+    """A no-reply sender the model flags is recorded + needs_action, no todo."""
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "normal", "category": "reply", "summary": "x"}
+    )
+    msg = _msg(
+        message_id="<vistar-1@x>", **{"from": "Vistar <no-reply@vistarmedia.com>"}
+    )
+    summary = ingest_messages(store, [msg], account="personal", client=client)
+
+    assert summary.needs_action == 1  # still flagged on the record
+    assert summary.todos_created == 0  # but no open loop
+    assert summary.todos_suppressed == 1
+    assert store.open_todos() == []
+
+    # Mail-record-only: still visible in /mail's needs-action view, todo unset.
+    action_items = store.mail_needing_action()
+    assert len(action_items) == 1
+    assert action_items[0]["todo_id"] is None
+
+
+def test_ingest_honors_denylisted_senders(store):
+    """A denylisted sender is gated out of todo creation at ingest."""
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "high", "category": "reply", "summary": "x"}
+    )
+    msg = _msg(message_id="<d-1@x>", **{"from": "Spam <spam@vendor.com>"})
+    summary = ingest_messages(
+        store,
+        [msg],
+        account="personal",
+        client=client,
+        denylisted_senders=frozenset({"spam@vendor.com"}),
+    )
+    assert summary.todos_created == 0
+    assert summary.todos_suppressed == 1
+    assert store.open_todos() == []
+
+
+def test_learned_denylist_needs_repeat_drops(store):
+    """learned_denylist returns only senders dropped >= repeat_threshold times."""
+    for i in range(2):
+        store.record_triage_drop(
+            todo_id=None,
+            message_id=f"<r-{i}@x>",
+            sender_email="repeat@vendor.com",
+            sender_name="Repeat",
+            subject="s",
+            summary="s",
+            category="reply",
+            urgency="normal",
+            days_open=0.1,
+        )
+    store.record_triage_drop(
+        todo_id=None,
+        message_id="<solo@x>",
+        sender_email="solo@vendor.com",
+        sender_name="Solo",
+        subject="s",
+        summary="s",
+        category="reply",
+        urgency="normal",
+        days_open=0.1,
+    )
+    deny = learned_denylist(store, repeat_threshold=2)
+    assert "repeat@vendor.com" in deny
+    assert "solo@vendor.com" not in deny

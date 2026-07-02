@@ -487,7 +487,7 @@ def _cmd_mail(args: argparse.Namespace) -> int:
 
     from prefrontal.integrations.ollama import OllamaClient
     from prefrontal.mail import ingest_messages
-    from prefrontal.mail.feedback import learned_corrections
+    from prefrontal.mail.feedback import learned_corrections, learned_denylist
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path
@@ -547,6 +547,9 @@ def _cmd_mail(args: argparse.Namespace) -> int:
                     quick_drop_days=settings.triage_quick_drop_days,
                     repeat_threshold=settings.triage_repeat_threshold,
                 ),
+                denylisted_senders=learned_denylist(
+                    store, repeat_threshold=settings.triage_repeat_threshold
+                ),
                 dry_run=args.dry_run,
             )
         scope = args.account or "all accounts"
@@ -556,7 +559,8 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             f"{summary.changed} changed, {summary.cleared} cleared "
             f"({summary.todos_dropped} todos dropped), "
             f"{summary.newly_flagged} newly flagged "
-            f"({summary.todos_created} todos created), "
+            f"({summary.todos_created} todos created, "
+            f"{summary.todos_suppressed} suppressed), "
             f"{summary.triaged_by_llm} via model."
         )
         if summary.dry_run:
@@ -629,11 +633,15 @@ def _cmd_mail(args: argparse.Namespace) -> int:
                 quick_drop_days=settings.triage_quick_drop_days,
                 repeat_threshold=settings.triage_repeat_threshold,
             ),
+            denylisted_senders=learned_denylist(
+                store, repeat_threshold=settings.triage_repeat_threshold
+            ),
         )
     print(
         f"[{summary.account}/{summary.policy}] received {summary.received}, "
         f"ingested {summary.ingested}, skipped {summary.skipped}, "
-        f"needs-action {summary.needs_action} ({summary.todos_created} todos), "
+        f"needs-action {summary.needs_action} "
+        f"({summary.todos_created} todos, {summary.todos_suppressed} suppressed), "
         f"{summary.triaged_by_llm} via model."
     )
     return 0
