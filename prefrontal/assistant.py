@@ -135,6 +135,10 @@ ASSISTANT_SYSTEM = (
     "matching id from the snapshot — NEVER invent an id that is not listed.\n\n"
     "Reply with ONLY a JSON object, no prose, no markdown fences:\n"
     '{"reply": "<one short sentence to the user>", "actions": [ ...actions ]}\n\n'
+    "Your actions are only a PROPOSAL — nothing is saved until the user reviews "
+    "them and taps Apply. So the reply must describe what you WILL do once applied "
+    "(e.g. \"I'll bump the dentist call to urgent\"), and must NEVER claim it is "
+    "already done (no \"Done\", no \"I've bumped …\").\n\n"
     "Each action is an object with an \"op\" and its fields. Allowed ops:\n"
     '- {"op":"add_todo","title":str,"estimate_minutes":int?,"priority":0-3?,'
     '"energy":"low"|"medium"|"high"?,"deadline":"YYYY-MM-DD"?}\n'
@@ -619,7 +623,13 @@ def plan(message: str, memory: Any, *, client: _Generator) -> AssistantPlan:
     snapshot = build_snapshot(memory)
     reply, raw_actions = interpret(message, snapshot, client=client)
     actions, errors = validate_actions(raw_actions, snapshot)
-    if not reply:
+    # Fall back to the honest, deterministic acknowledgement when the model gave
+    # no reply, OR when it *tried* to edit but every action was dropped in
+    # validation: keeping a confident model reply ("I'll bump that to urgent")
+    # there would tell the user an edit is coming that will never happen. A reply
+    # with no actions and no errors is a legitimate informational answer — leave
+    # it be.
+    if not reply or (errors and not actions):
         reply = _default_reply(actions, errors)
     return AssistantPlan(reply=reply, actions=actions, errors=errors)
 
