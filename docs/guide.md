@@ -447,14 +447,17 @@ token client-side).
 | `POST /commitments/{id}/kind` | Set `self` vs `fyi` |
 | `POST /todos` · `GET /todos` | Add (auto-augmented) / list (with decomposition + avoidance) |
 | `GET /todos/fit?minutes=N` | Todos that fit a free block |
+| `GET /todos/now` | The one todo that fits your free time right now (avoidance-biased, low-energy-later) |
 | `GET /todos/avoided` | Important todos you keep skipping |
 | `POST /todos/{id}/decompose` | First step + remaining steps |
 | `POST /todos/{id}/steps/{i}/done` | Tick a decomposed step |
 | `POST /todos/{id}/deadline` | Move or clear a deadline |
 | `POST /todos/{id}/done` · `/drop` | Complete / drop (logs an episode) |
 | `GET /briefing` | Today's digest (structured + rendered text) |
+| `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
 | `POST /places` · `GET /places` | Curated location aliases |
 | `POST /webhooks/mail/sync` · `GET /mail` | Ingest mail / recent + action items |
+| `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
 | `GET /dashboard` · `GET /family` | Web surfaces (no auth on the shell) |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |

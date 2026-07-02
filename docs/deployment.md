@@ -466,16 +466,51 @@ tail -f ~/Library/Logs/prefrontal.learn.log          # watch it work
 asleep then, launchd runs the job on the next wake. Prefer `cron` or an n8n
 schedule node instead? Either works — they just call the same two commands.
 
+## 13. Schedule periodic mail fetch (optional)
+
+If you triage email through Prefrontal, run the built-in mail fetch on a timer
+(the mail analogue of §12). `deploy/mail-fetch.sh` pulls and syncs a batch;
+`deploy/com.morningstatic.prefrontal-mail.plist` runs it on an interval via
+launchd.
+
+```bash
+cp deploy/com.morningstatic.prefrontal-mail.plist ~/Library/LaunchAgents/
+# Edit the paths inside mail-fetch.sh + the plist to match your install
+# (PREFRONTAL_HOME, ProgramArguments[0], Std{Out,Err}Path, and the interval),
+# then load it:
+launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-mail.plist
+```
+
+(Alternatively an n8n Gmail/IMAP workflow can POST batches to
+`/webhooks/mail/sync` — the same shape as the calendar sync.)
+
+## 14. Multiple users (optional)
+
+One deployment can serve several people (full design in
+[`multi-tenant.md`](multi-tenant.md)). Provision each with the CLI — it prints
+their token **once**:
+
+```bash
+prefrontal user add sam --display-name "Sam"   # prints Sam's token — save it
+prefrontal user list                           # never prints tokens
+prefrontal user rotate sam                      # new token; the old one stops working
+```
+
+Each person pastes their own token into their Shortcuts / widget, and the server
+scopes every request to that user. Solo installs can skip this — the single
+`PREFRONTAL_WEBHOOK_SECRET` (or `PREFRONTAL_DEFAULT_USER`) keeps the one-user path
+working. The `/admin/users` endpoints do the same over HTTP for an operator token.
 
 ---
 
 ## What's not automated yet
 
-Three of the five modules are wired end-to-end today — **Location-Aware Task
+Four of the five modules are wired end-to-end today — **Location-Aware Task
 Anchor** (the coffee-shop nudge above), **Hyperfocus** (focus sessions, the
-`/webhooks/focus/*` endpoints), and **Time Blindness**. The remaining two —
-**Task Paralysis** and **Impulsivity** — still declare `planned` interventions.
-Run `prefrontal modules -v` for the live status, and see `ROADMAP.md` for what's
-next. (Mail ingestion is also live — `prefrontal mail fetch`/`sync` and
-`POST /webhooks/mail/sync`; an n8n mail-poll workflow can post batches the same
-way the calendar sync does.)
+`/webhooks/focus/*` endpoints), **Time Blindness**, and **Impulsivity**
+(`reflective_pause` + `capture_and_defer` are active; only `switch_rate_feedback`
+is planned). The one fully-stubbed module is **Task Paralysis** (its
+initiation interventions are still `planned`, though the decomposition machinery
+they build on exists). Run `prefrontal modules -v` for the live status, and see
+`ROADMAP.md` for what's next. (Mail ingestion is also live — `prefrontal mail
+fetch`/`sync` and `POST /webhooks/mail/sync`; see §13.)

@@ -1,9 +1,14 @@
-# Multi-tenant Prefrontal — design spec
+# Multi-tenant Prefrontal — design + reference
 
-Status: **proposed**. This is the implementation spec for turning Prefrontal from
-single-tenant into a multi-user system. It supersedes the short "Multiple users"
-sketch in [`ROADMAP.md`](../ROADMAP.md) with concrete schema, API, and migration
-detail. If this and the roadmap disagree, this file wins.
+Status: **shipped**. Multi-tenancy is built and live — a `users` table with
+per-user tokens, a `user_id` scope on every per-user table, a `MemoryStore` bound
+to one user via `.scoped(user_id)`, `resolve_user`/`ScopedRequest` request
+scoping, operator provisioning (`provision_user`, `prefrontal user …`,
+`POST /admin/users`), and the `prefrontal migrate-multi-tenant` migration. This
+doc now doubles as the reference for that implementation; the sections below are
+written as the design that was carried out (past tense where it once read as a
+proposal). It supersedes the short "Multiple users" note that was in
+[`ROADMAP.md`](../ROADMAP.md).
 
 ---
 
@@ -36,7 +41,7 @@ delivered to A's phone, not B's.
 ## 2. Decision: shared DB, row-level scoping
 
 The open question in the roadmap was **DB-per-user** vs **shared DB with a
-`user_id` column**. We choose **shared DB with row-level scoping**.
+`user_id` column**. We chose (and shipped) **shared DB with row-level scoping**.
 
 | | Shared DB + `user_id` (chosen) | DB-per-user |
 |---|---|---|

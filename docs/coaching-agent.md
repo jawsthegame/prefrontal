@@ -1,6 +1,11 @@
 # Coaching agent — design spec
 
-Status: **proposed**. This is the implementation spec for the **Coaching Agent** —
+Status: **proposed** (only the morning briefing ships today). The tick-driven
+engine, the per-module `evaluate()` hook, and the `Cue`/`Decision`/
+`/webhooks/coach/check` surfaces described below are **not yet built** — the code
+names in this doc are the intended design, not existing symbols. The one shipped
+slice is the morning briefing (`GET /briefing`). This is the implementation spec
+for the **Coaching Agent** —
 the component in the README architecture that sits between the memory layer and
 the delivery layer and turns *what Prefrontal knows* into *the right message, on
 the right channel, at the right moment*. It supersedes the one-line "Coaching
