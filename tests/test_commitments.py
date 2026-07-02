@@ -709,12 +709,25 @@ def test_is_placeholder_title(title, expected):
     assert is_placeholder_title(title) is expected
 
 
+#: Fixed base for _clash(), captured once at import. The possible-conflict
+#: dismissal key includes each event's start_at, and a test re-syncs the same
+#: clash after dismissing it; deriving both syncs from one frozen base makes their
+#: timestamps byte-identical, so a wall-clock tick between the syncs can't shift
+#: the key and resurface a dismissed conflict. (Was a rare intermittent flake.)
+#: Still comfortably in the future, so the events stay "upcoming".
+_CLASH_BASE = datetime.now(timezone.utc)
+
+
 def _clash():
-    """A real event overlapping a placeholder, on different feeds."""
+    """A real event overlapping a placeholder, on different feeds (stable times)."""
+
+    def at(delta_minutes: float) -> str:
+        return (_CLASH_BASE + timedelta(minutes=delta_minutes)).isoformat()
+
     return [
-        {"title": "Dentist", "start_at": _iso(60), "end_at": _iso(120),
+        {"title": "Dentist", "start_at": at(60), "end_at": at(120),
          "external_id": "personal:d"},
-        {"title": "Busy", "start_at": _iso(75), "end_at": _iso(135),
+        {"title": "Busy", "start_at": at(75), "end_at": at(135),
          "external_id": "work:b"},
     ]
 
