@@ -13,11 +13,15 @@ from fastapi.testclient import TestClient
 from prefrontal.coaching import (
     CoachContext,
     Cue,
+    Decision,
     choose_channel,
     collect_cues,
     decide,
+    note_delivered,
     record_fired,
+    resolve_ack,
     suppressed,
+    sweep_stale_nudges,
 )
 from prefrontal.config import Settings
 from prefrontal.impact import utcnow
@@ -39,6 +43,7 @@ class _FakeStore:
         self._patterns = patterns or []
         self._state = dict(state or {})
         self._floats = floats or {}
+        self.episodes = []
 
     def get_patterns(self, pattern_type=None):
         return [
@@ -54,6 +59,16 @@ class _FakeStore:
 
     def get_float(self, key, default):
         return self._floats.get(key, default)
+
+    def delete_state(self, key):
+        self._state.pop(key, None)
+
+    def all_state(self):
+        return {k: {"value": v} for k, v in self._state.items()}
+
+    def log_episode(self, episode_type, **kw):
+        self.episodes.append({"episode_type": episode_type, **kw})
+        return len(self.episodes)
 
 
 def _ctx(**kw) -> CoachContext:
@@ -134,6 +149,94 @@ def test_decide_drops_suppressed_and_record_fired_stamps():
     assert [d.cue.dedup_key for d in decisions] == ["fresh"]
     record_fired(store, decisions, NOON)
     assert store.get_state("coach_fired:fresh") is not None
+
+
+# -- outcome loop: channel_response learning (spec §8) ------------------------
+
+
+def _outing_cue(outing_id=7):
+    return Cue(
+        module="location_anchor", intervention="outing_firm", urgency="urgent",
+        text="still out?", context_key="outing",
+        dedup_key=f"outing_escalation:{outing_id}:firm", ref={"outing_id": outing_id},
+    )
+
+
+def test_note_delivered_tracks_only_button_bearing_interrupting_nudges():
+    store = _FakeStore()
+    decisions = [
+        Decision(cue=_outing_cue(7), channel="push", text="x"),          # tracked
+        Decision(cue=_cue(dedup="t"), channel="push", text="y"),         # todo: no buttons
+        Decision(cue=_outing_cue(9), channel="digest", text="z"),        # digest: no interrupt
+    ]
+    note_delivered(store, decisions, NOON)
+    keys = sorted(k for k in store._state if k.startswith("coach_ack:"))
+    assert keys == ["coach_ack:outing:7"]  # only the interactive, non-digest cue
+    assert store._state["coach_ack:outing:7"].split("|")[1] == "push"
+
+
+def test_resolve_ack_logs_acknowledged_and_clears_marker():
+    store = _FakeStore()
+    note_delivered(store, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON)
+    assert resolve_ack(store, "outing", 7) is True
+    assert store.episodes == [{
+        "episode_type": "reminder", "channel": "sound", "acknowledged": True,
+        "context": "coach nudge: outing", "outcome": "success",
+    }]
+    assert "coach_ack:outing:7" not in store._state       # marker cleared
+    assert resolve_ack(store, "outing", 7) is False        # nothing left → no-op
+
+
+def test_sweep_logs_unacked_as_miss_after_window_but_leaves_fresh_ones():
+    store = _FakeStore()
+    note_delivered(store, [Decision(cue=_outing_cue(1), channel="push", text="x")], NOON)
+    note_delivered(
+        store, [Decision(cue=_outing_cue(2), channel="push", text="y")],
+        NOON - timedelta(minutes=90),  # delivered long ago → past the ack window
+    )
+    swept = sweep_stale_nudges(store, NOON, ack_window_minutes=60.0)
+    assert swept == 1  # only the stale one
+    assert store.episodes == [{
+        "episode_type": "reminder", "channel": "push", "acknowledged": False,
+        "context": "coach nudge: outing", "outcome": "miss",
+    }]
+    assert "coach_ack:outing:2" not in store._state   # swept marker cleared
+    assert "coach_ack:outing:1" in store._state        # fresh one still pending
+
+
+def test_loop_closes_ignored_channel_bumps_after_learn():
+    """End-to-end: ignored push nudges → learn → choose_channel bumps push→sound.
+
+    The whole point of §8: deliveries that go unanswered teach the agent to stop
+    using that channel. Proven against a real store + the real pattern recompute.
+    """
+    from prefrontal.coaching import record_channel_outcome
+    from prefrontal.memory.patterns import recompute_patterns
+
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        push_cue = _cue("nudge")  # floors at push
+        # Before any history, a push cue stays on push.
+        assert choose_channel(store, push_cue, _ctx()) == "push"
+        # Five delivered push nudges, all ignored (the sweep's verdict).
+        for _ in range(5):
+            record_channel_outcome(store, channel="push", context="outing", acknowledged=False)
+        recompute_patterns(store)
+        # Now push is a channel the user reliably ignores → the cue bumps a rung.
+        assert choose_channel(store, push_cue, _ctx()) == "sound"
+
+
+def test_loop_acknowledged_channel_does_not_bump():
+    """The mirror: a channel that gets acknowledged keeps being used."""
+    from prefrontal.coaching import record_channel_outcome
+    from prefrontal.memory.patterns import recompute_patterns
+
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for _ in range(5):
+            record_channel_outcome(store, channel="push", context="outing", acknowledged=True)
+        recompute_patterns(store)
+        assert choose_channel(store, _cue("nudge"), _ctx()) == "push"  # no bump
 
 
 def test_collect_cues_isolates_a_broken_module():
@@ -265,5 +368,87 @@ def test_coach_check_fires_a_cue_then_debounces():
             # Recorded as fired → the same cue is debounced on the next poll.
             second = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
             assert second == []
+    finally:
+        conn.close()
+
+
+def _http_store():
+    """A bare unscoped store (for create_app) with one operator user."""
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "tester", display_name="T", token=SECRET, is_operator=True)
+    return conn, unscoped
+
+
+def test_coach_ack_explicit_channel_logs_outcome():
+    """The explicit outcome hook writes a channel_response episode (spec §8)."""
+    conn, unscoped = _http_store()
+    try:
+        app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET))
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": SECRET}
+            body = c.post(
+                "/webhooks/coach/ack",
+                json={"channel": "push", "context": "outing", "acknowledged": False},
+                headers=hdr,
+            ).json()
+            assert body["resolved"] is True
+        scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+        eps = [e for e in scoped.all_episodes() if e.get("channel") == "push"]
+        assert len(eps) == 1 and eps[0]["acknowledged"] == 0  # False, stored as 0
+    finally:
+        conn.close()
+
+
+def test_coach_ack_resolves_a_tracked_nudge_by_context_and_target():
+    """The (context,target) hook resolves a delivered nudge marker and logs it."""
+    conn, unscoped = _http_store()
+    try:
+        scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+        # Simulate a nudge the engine delivered on 'sound' for outing 7.
+        note_delivered(
+            scoped, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON
+        )
+        app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET))
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": SECRET}
+            body = c.post(
+                "/webhooks/coach/ack",
+                json={"context": "outing", "target": 7},  # acknowledged defaults True
+                headers=hdr,
+            ).json()
+            assert body["resolved"] is True
+            # A duplicate/late report finds nothing left → resolved False.
+            again = c.post(
+                "/webhooks/coach/ack", json={"context": "outing", "target": 7}, headers=hdr
+            ).json()
+            assert again["resolved"] is False
+        eps = [e for e in scoped.all_episodes() if e.get("channel") == "sound"]
+        assert len(eps) == 1 and eps[0]["acknowledged"] == 1  # True
+    finally:
+        conn.close()
+
+
+def test_nudge_act_tap_records_the_delivered_channel():
+    """A one-tap outing action resolves the tracked nudge → a channel_response ack."""
+    from prefrontal.webhooks.notify import act_url
+
+    conn, unscoped = _http_store()
+    try:
+        signing = "act-signing"
+        scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+        oid = scoped.start_outing(intention="Coffee", time_window_minutes=30)
+        note_delivered(
+            scoped, [Decision(cue=_outing_cue(oid), channel="sound", text="x")], NOON
+        )
+        settings = Settings(webhook_secret=SECRET, session_secret=signing,
+                            oauth_base_url="https://x.ts.net")
+        app = create_app(store=unscoped, settings=settings)
+        with TestClient(app) as c:
+            url = act_url("https://x.ts.net", "tester", "outing_return", oid, signing)
+            token = url.split("t=", 1)[1]
+            assert c.get("/nudge/act", params={"t": token}).status_code == 200
+        eps = [e for e in scoped.all_episodes() if e.get("channel") == "sound"]
+        assert len(eps) == 1 and eps[0]["acknowledged"] == 1  # tap = acknowledged
     finally:
         conn.close()
