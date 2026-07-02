@@ -24,6 +24,8 @@ Routes:
 - ``GET  /focus`` — read-only snapshot of focus sessions (active + recent).
 - ``POST /webhooks/calendar/sync`` — n8n syncs upcoming calendar events.
 - ``POST /webhooks/departure/check`` — n8n polls this for due departure nudges.
+- ``POST /webhooks/departure/left`` — record an actual departure (leave-Home
+  geofence) and score it on-time vs late against the computed leave-by.
 - ``GET  /commitments`` / ``POST /commitments`` — list / manually add a commitment.
 - ``POST /commitments/geocode`` — backfill destination coords for commitments.
 - ``GET  /commitments/conflicts`` — double-bookings among upcoming commitments.
@@ -95,14 +97,18 @@ from prefrontal.commitments import (
 )
 from prefrontal.config import Settings, get_settings
 from prefrontal.departure import (
+    DEFAULT_DEPARTURE_GRACE_MINUTES,
     DEFAULT_HEADS_UP_MINUTES,
     DEFAULT_PREP_MINUTES,
     DEFAULT_ROAD_FACTOR,
     DEFAULT_SOON_MINUTES,
     DEFAULT_TRAVEL_SPEED_KMH,
+    attribute_departure,
     build_departure_message,
+    classify_departure,
     next_departure,
     plan_departure,
+    record_departure_outcome,
 )
 from prefrontal.geocode import enrich_commitments, normalize_query
 from prefrontal.impact import (
@@ -915,6 +921,7 @@ __all__ = [
     "DEFAULT_FIT_CAP_MINUTES",
     "DEFAULT_FOCUS_ABANDON_RATIO",
     "DEFAULT_HARD_INTERRUPT_MINUTES",
+    "DEFAULT_DEPARTURE_GRACE_MINUTES",
     "DEFAULT_HEADS_UP_MINUTES",
     "DEFAULT_HOME_RADIUS_M",
     "DEFAULT_MAX_FIRST_STEP_MINUTES",
@@ -991,12 +998,15 @@ __all__ = [
     "assistant_plan_message",
     "asynccontextmanager",
     "at_risk",
+    "attribute_departure",
     "augment_todo",
     "available_now",
     "filter_suggestible",
     "avoided_todos",
     "build_briefing",
     "build_departure_message",
+    "classify_departure",
+    "record_departure_outcome",
     "build_focus_message",
     "build_message",
     "build_panic",

@@ -100,8 +100,22 @@ the first test. Code follow-ups below are optional polish.
   moment an avoided task finally resolves — was thrown away. It feeds the `task`
   `drift` score; `actual_value` stays `None` (a todo's created→closed span is
   wall-clock, not time-on-task, so it never pollutes `time_estimation`), with the
-  age kept in the episode `notes`. *(Next: capture departure outcomes
-  automatically — see "Learning & adaptation" below.)*
+  age kept in the episode `notes`. *(Departure outcomes are now captured too —
+  see the next entry.)*
+- **Automatic departure-outcome capture** ✅ — the mirror of the departure
+  *reminder*: did you actually leave on time? A "leave Home" iOS geofence hits
+  `POST /webhooks/departure/left`, which attributes the departure to the
+  commitment you were heading to (`attribute_departure` — the soonest one whose
+  leave window you're in), scores it on-time vs late against that commitment's
+  computed leave-by (`classify_departure`, with a `departure_grace_minutes`
+  tolerance), and logs a `departure` episode (`record_departure_outcome`). Like
+  the abandoned-outing and closed-todo captures, `actual_value` is left `None` so
+  it feeds the `departure` `drift` score without polluting the shared
+  `time_estimation_bias` (leaving late must not *lower* the underestimate
+  multiplier). Idempotent per commitment occurrence, and it silences any pending
+  departure nudge for that commitment. All in `prefrontal/departure.py` +
+  `routers/schedule.py`; covered by `tests/test_departure.py`. This was the last
+  big uninstrumented user-touch surface flagged under "Learning & adaptation."
 - **Avoidance detection** ✅ — `avoided_todos()` (`prefrontal/todos.py`) scores
   open loops by how long they've been skipped (age × priority), surfacing the
   important thing you keep putting off rather than letting it sink down the list.
@@ -251,17 +265,19 @@ The honest constraint is that **learning quality is capped by observable,
 structured signal — not by model quality or prompt design.** The steps below are
 ordered by leverage; each is independent but builds on denser capture.
 
-1. **Finish dense capture (in progress).** Todo closes now log episodes (above);
-   outings, focus, mail, and the one-tap `POST /webhooks/shortcut` endpoint
-   already do. The
-   remaining gap is **automatic departure outcomes** — did the user actually
-   leave on time for a commitment? Today that outcome is only captured if the
-   user taps `made_it`/`missed_it` (`POST /webhooks/shortcut`); auto-capturing it needs an
-   actual-departure signal (a geofence exit or the stored location fix in
-   `POST /webhooks/location` crossing the home radius), compared against the
-   computed leave-by time in `prefrontal/departure.py`. That's a real feature,
-   not a one-liner — hence its own line item rather than folding into the todo
-   work.
+1. **Finish dense capture (largely done).** Todo closes, outings, focus, mail,
+   the one-tap `POST /webhooks/shortcut` endpoint, and now **automatic departure
+   outcomes** all log episodes. Departure capture closed the last big gap — did
+   the user actually leave on time for a commitment? A "leave Home" geofence hits
+   `POST /webhooks/departure/left`, which attributes the departure to the
+   commitment it was for (`attribute_departure`), scores it on-time vs late
+   against the computed leave-by (`classify_departure`), and logs a `departure`
+   episode (`record_departure_outcome`) — `actual_value` left `None` so it feeds
+   `drift` without polluting the shared `time_estimation_bias`. *(Next: derive
+   the same signal passively from the stored location fix in
+   `POST /webhooks/location` crossing the home radius, so it works without a
+   dedicated geofence automation — needs a stored home coordinate + a prior-fix
+   edge check; the geofence path above is the reliable default.)*
 2. **LLM-as-sensor, not LLM-as-author.** Add a path that turns *unstructured*
    signal (a free-text note, a conversation, an observed behavior) into
    *candidate* episodes or `coaching_state` updates — e.g. "I always blow off

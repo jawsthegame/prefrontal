@@ -350,6 +350,32 @@ Tune the estimate with the `travel_speed_kmh`, `travel_road_factor`,
 `departure_prep_minutes`, `departure_heads_up_minutes`, and
 `departure_soon_minutes` coaching-state keys.
 
+### Automation: "Leaving Home" (did you actually leave on time?)
+
+The reminder above is the *prediction*; this captures the *outcome* — so
+Prefrontal finally learns whether you leave on time, the way it already learns
+from outings, todos, and mail. It's the exact mirror of the "I'm back" arrival
+geofence below (Tier 1), just on the way out.
+
+1. Shortcuts → **Automation** → **+** → **Leave** a location → choose **Home**.
+2. Action **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/departure/left`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):** `{}` — the server defaults the departure time to
+     now and attributes it to the commitment you're heading to. (Optionally send
+     `{ "departed_at": "<ISO8601>" }` or `{ "commitment_id": 123 }` to be explicit.)
+3. Turn **Run Immediately** on (no confirmation tap).
+4. (Optional) **Confirm back.** **Get Dictionary Value** `confirmation` → **Show
+   Notification** — e.g. *"Logged — you left for “Dentist” on time (~8 min to
+   spare). Nice."* or *"…about 12 min late."*
+
+The server figures out which commitment the departure was for (the soonest one
+whose leave window you're in), scores it against the computed leave-by, and logs
+it as a `departure` episode — success if you left on time, a miss if late. It's
+idempotent per commitment, so a geofence that fires twice logs once, and it also
+silences any pending departure nudge for that commitment (you've left). If you
+weren't heading to anything, it records nothing rather than inventing an episode.
+
 ---
 
 ## Location source (passive return & gating)
