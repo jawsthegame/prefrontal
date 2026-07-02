@@ -1,9 +1,9 @@
 # Prefrontal — brand mark
 
-A hand-authored vector interpretation of the Prefrontal icon: a single
-continuous stroke that reads at once as a **P** (Prefrontal), a **cortex in
-profile** (the two curls are brain folds), and — because it's drawn as one
-unbroken line — the product idea of a single connected system.
+The Prefrontal icon: a single continuous stroke that reads at once as a **P**
+(Prefrontal), a **cortex in profile** (the bowl is a two-gyrus brain), and —
+because it's drawn as one unbroken line — the product idea of a single connected
+system.
 
 ## Files
 
@@ -11,28 +11,43 @@ unbroken line — the product idea of a single connected system.
 |---|---|
 | `prefrontal-app-icon.svg` | Primary mark on the rounded-square (app-icon) field. **Source of truth.** |
 | `prefrontal-favicon.svg` | Same mark on a round field, for favicons / avatars. **Source of truth.** |
+| `prefrontal-lockup.svg` | Horizontal lockup — icon + "Prefrontal" wordmark (Space Grotesk, embedded). **Recommended lockup.** |
 | `favicon.ico` | Multi-size ICO (16/32/48/256) packed from the round mark. |
 | `png/prefrontal-app-icon-{16…1024}.png` | Rasterized app-icon ladder. |
 | `png/favicon-{16,32,48,256}.png` | Rasterized round-mark ladder. |
 
-The two SVGs are the only things to edit by hand; every PNG and the `.ico` are
+The three SVGs are the only things to edit by hand; every PNG and the `.ico` are
 generated from them (see **Regenerating** below).
 
 ## Palette
 
 | Token | Value | Use |
 |---|---|---|
-| Field navy | `#141b30` | Background. Matches the `tech-box` in `docs/one-sheet` / `docs/parent-pack`. |
-| Gradient (top→bottom) | `#c6ec4e` → `#66db6e` → `#2dd4bf` → `#38bdf8` | Lime → green → teal → cyan, along the stroke. |
+| Field navy | `#061A3D` | Icon background; dark surfaces. |
+| Lime | `#A7F07A` | Gradient stop 0 (top of the stroke). |
+| Teal / mint | `#43E6C2` | Gradient stop ~0.55. |
+| Blue | `#2AA7FF` | Gradient stop 1 (bottom of the stroke). |
+| Near-white | `#F8FAFC` | Wordmark / mark on dark surfaces. |
 
-Stroke: width `60` on a `1024` viewBox (~5.9%), round caps and joins — the
+Stroke: width `66` on a `1024` viewBox (~6.4%), round caps and joins — the
 rounding is load-bearing for the soft, continuous feel and for legibility when
-the mark is scaled down.
+the mark is scaled down. The stroke gradient runs lime → teal → blue,
+top-to-bottom.
 
-> Note: the collateral (`docs/one-sheet`, `docs/parent-pack`) currently leads
-> with indigo `#4338ca` as the brand accent, which the mark does not use.
-> Aligning the two palettes (indigo vs. this navy + green→cyan) is an open brand
-> decision, deliberately left untouched here.
+**Wordmark:** Space Grotesk (weight 600 for the lockup). It's
+[SIL Open Font License](https://fonts.google.com/specimen/Space+Grotesk); the
+latin subset is embedded as a base64 `@font-face` in `prefrontal-lockup.svg` and
+in the doc headers so the PDFs render without a network fetch.
+
+### How it's applied in the docs
+
+The one-sheet and parent-pack headers now carry the icon + a Space Grotesk
+wordmark. Per a deliberate "keep the existing palette" call, those sheets still
+use their **semantic** colors — green = *today*, amber = *roadmap*, indigo =
+brand/tech — so the wordmark there stays indigo rather than navy. The **mark
+itself** uses the official navy + green→blue everywhere. A full realign of the
+collateral to the navy + green→cyan system (retiring indigo) is a possible
+future pass, not done here.
 
 ## Regenerating the rasters
 
