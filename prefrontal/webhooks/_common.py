@@ -182,10 +182,13 @@ from prefrontal.todos import (
     normalize_category,
     record_todo_closed,
 )
+from prefrontal.webhooks.notify import nudge_actions
 from prefrontal.webhooks.oauth import (
+    NUDGE_ACTIONS,
     register_oauth_routes,
     session_user,
     sign_dismiss,
+    verify_action,
     verify_dismiss,
 )
 
@@ -725,6 +728,24 @@ def _dismiss_url(
     return f"{settings.oauth_base_url}/nudge/dismiss?t={token}"
 
 
+def _nudge_actions(
+    settings: Settings, handle: str, kind: str, target_id: int | None
+) -> list[dict[str, Any]]:
+    """Signed ntfy one-tap action buttons for a nudge (``[]`` when unconfigured).
+
+    A thin settings-aware wrapper over
+    :func:`prefrontal.webhooks.notify.nudge_actions`, so routers can attach an
+    ``actions`` list to a nudge response for a "publish to ntfy" delivery node.
+    """
+    return nudge_actions(
+        kind,
+        target_id,
+        base_url=settings.oauth_base_url,
+        secret=settings.session_secret,
+        handle=handle,
+    )
+
+
 def _dismiss_page(headline: str) -> str:
     """A tiny self-contained confirmation page shown after a one-tap dismiss."""
     safe = html.escape(headline)
@@ -940,6 +961,7 @@ __all__ = [
     "PlaceCreate",
     "PlainTextResponse",
     "Query",
+    "NUDGE_ACTIONS",
     "Request",
     "Response",
     "SWITCH_ACTIONS",
@@ -963,6 +985,7 @@ __all__ = [
     "_delivery_fields",
     "_dismiss_page",
     "_dismiss_url",
+    "_nudge_actions",
     "_fmt_minutes",
     "_focus_end_confirmation",
     "_focus_started_confirmation",
@@ -1032,6 +1055,7 @@ __all__ = [
     "normalize_category",
     "normalize_event",
     "normalize_query",
+    "nudge_actions",
     "overwhelm_level",
     "panic_alert_message",
     "parse_inbound_event",
@@ -1068,6 +1092,7 @@ __all__ = [
     "to_utc",
     "utcnow",
     "validate_actions",
+    "verify_action",
     "verify_dismiss",
     "window_config_for",
     "work_window_now",
