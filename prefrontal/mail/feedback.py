@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 _SENDER_LIMIT = 8
 _EXAMPLE_LIMIT = 6
 
+#: Upper bound on the hard denylist. Far larger than the prompt-hint limit: the
+#: denylist is a deterministic gate (not text fed to a model), so it costs
+#: nothing to carry every repeat-offender and we don't want to silently truncate.
+_DENYLIST_LIMIT = 500
+
 
 def _parse_ts(value: Any) -> datetime | None:
     """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp to naive UTC, or ``None``."""
@@ -120,3 +125,26 @@ def learned_corrections(
         for q in quick
     ]
     return build_corrections_block(senders, examples)
+
+
+def learned_denylist(
+    store: MemoryStore,
+    *,
+    repeat_threshold: int = 2,
+    limit: int = _DENYLIST_LIMIT,
+) -> frozenset[str]:
+    """Lowercased sender emails to hard-suppress from todo creation.
+
+    The deterministic counterpart to :func:`learned_corrections`: the same
+    repeat-dropped senders (:meth:`MemoryStore.triage_dropped_senders`), but
+    returned as an exact-match set for :func:`prefrontal.mail.triage.
+    suppress_todo_reason` to gate on — so a sender you keep dropping stops
+    producing todos regardless of what the (over-eager) model says, instead of
+    merely being *hinted* at in the prompt. Returns an empty set when no sender
+    has reached ``repeat_threshold`` drops.
+    """
+    return frozenset(
+        (s["sender_email"] or "").strip().lower()
+        for s in store.triage_dropped_senders(min_count=repeat_threshold, limit=limit)
+        if s.get("sender_email")
+    )

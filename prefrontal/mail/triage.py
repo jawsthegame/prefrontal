@@ -132,6 +132,68 @@ def build_corrections_block(
     return "\n".join(lines)
 
 
+#: Sender-address fragments that mark a structurally un-repliable sender. Mail
+#: from one of these never becomes a todo, whatever the model decides — you can't
+#: reply to a no-reply box, and its "action" is almost always a false positive
+#: (see the vistarmedia/github flood that motivated this gate).
+_NO_REPLY_SENDER_MARKERS = (
+    "no-reply",
+    "noreply",
+    "no_reply",
+    "donotreply",
+    "do-not-reply",
+    "do_not_reply",
+    "notifications@",
+    "notification@",
+)
+
+#: Triage categories that are informational, not open loops. A message in one of
+#: these still gets recorded and can still read as ``needs_action`` in ``/mail`` —
+#: it just doesn't spawn a todo. Keeps the actionable categories (``reply``,
+#: ``meeting``, ``other``) as the only things that clutter the todo list.
+_NON_TODO_CATEGORIES = frozenset({"notification", "newsletter", "fyi"})
+
+
+def suppress_todo_reason(
+    item: MailItem,
+    verdict: MailTriage,
+    *,
+    denylisted_senders: frozenset[str] = frozenset(),
+) -> str | None:
+    """Why this message should *not* spawn a todo, or ``None`` to allow one.
+
+    A deterministic gate layered *over* the triage verdict, because the local
+    model over-flags automated mail and a soft prompt hint doesn't reliably stop
+    it. This never touches the mail record or its ``needs_action`` flag — the
+    message still surfaces in ``/mail``; it just doesn't create an open-loop todo.
+
+    Suppressed when any of:
+
+    - the sender is in ``denylisted_senders`` (learned repeat-droppers — see
+      :func:`prefrontal.mail.feedback.learned_denylist`);
+    - the sender address looks structurally un-repliable
+      (:data:`_NO_REPLY_SENDER_MARKERS`);
+    - the category is informational (:data:`_NON_TODO_CATEGORIES`).
+
+    Args:
+        item: The message under review.
+        verdict: Its triage verdict.
+        denylisted_senders: Lowercased sender emails to hard-suppress.
+
+    Returns:
+        A short machine-readable reason string, or ``None`` if a todo is allowed.
+    """
+    addr = (item.sender_email or "").strip().lower()
+    haystack = f"{addr} {(item.sender or '').lower()}"
+    if addr and addr in denylisted_senders:
+        return "denylisted-sender"
+    if any(marker in haystack for marker in _NO_REPLY_SENDER_MARKERS):
+        return "no-reply-sender"
+    if verdict.category in _NON_TODO_CATEGORIES:
+        return f"non-actionable-category:{verdict.category}"
+    return None
+
+
 def triage_message(
     item: MailItem,
     *,

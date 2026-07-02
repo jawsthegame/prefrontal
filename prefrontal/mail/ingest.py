@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.mail.models import MailItem, normalize_message
-from prefrontal.mail.triage import MailTriage, triage_message
+from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_message
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
@@ -42,6 +42,10 @@ class IngestSummary:
         invalid: How many were dropped for lacking a usable id.
         needs_action: How many ingested messages were flagged needing action.
         todos_created: How many todos were created for needs-action items.
+        todos_suppressed: How many needs-action items were gated out of todo
+            creation (no-reply/notification sender, informational category, or a
+            learned repeat-dropped sender). They are still recorded and still
+            read as ``needs_action`` in ``/mail`` — they just don't spawn a todo.
         triaged_by_llm: How many verdicts came from the model (vs the heuristic).
         message_ids: The ids of the newly ingested messages, in order.
     """
@@ -54,6 +58,7 @@ class IngestSummary:
     invalid: int = 0
     needs_action: int = 0
     todos_created: int = 0
+    todos_suppressed: int = 0
     triaged_by_llm: int = 0
     message_ids: list[str] = field(default_factory=list)
 
@@ -69,6 +74,7 @@ def ingest_messages(
     use_model: bool = True,
     create_todos: bool = True,
     corrections: str = "",
+    denylisted_senders: frozenset[str] = frozenset(),
 ) -> IngestSummary:
     """Normalize, dedup, triage, and persist a batch of raw messages.
 
@@ -89,6 +95,10 @@ def ingest_messages(
             :func:`prefrontal.mail.feedback.learned_corrections`) appended to the
             triage system prompt, so triage adapts to the user's Drop feedback.
             Passed through to :func:`triage_message`; empty = base prompt.
+        denylisted_senders: Lowercased sender emails whose mail must not create a
+            todo even when triaged ``needs_action`` (see
+            :func:`prefrontal.mail.feedback.learned_denylist`). A deterministic
+            gate over the verdict; the message is still recorded.
 
     Returns:
         An :class:`IngestSummary`.
@@ -117,12 +127,17 @@ def ingest_messages(
 
         todo_id = None
         if create_todos and verdict.needs_action:
-            todo_id = store.add_todo(
-                _todo_title(item, verdict),
-                notes=_todo_notes(item, verdict),
-                priority=verdict.priority,
-            )
-            summary.todos_created += 1
+            if suppress_todo_reason(
+                item, verdict, denylisted_senders=denylisted_senders
+            ) is None:
+                todo_id = store.add_todo(
+                    _todo_title(item, verdict),
+                    notes=_todo_notes(item, verdict),
+                    priority=verdict.priority,
+                )
+                summary.todos_created += 1
+            else:
+                summary.todos_suppressed += 1
 
         store.record_mail(
             account=account,
@@ -177,6 +192,8 @@ class RetriageSummary:
             full re-triage, i.e. ``only_needs_action=False``).
         todos_dropped: How many open intake todos were dropped for cleared mail.
         todos_created: How many todos were created for newly-flagged mail.
+        todos_suppressed: How many newly-flagged messages were gated out of todo
+            creation by :func:`prefrontal.mail.triage.suppress_todo_reason`.
         triaged_by_llm: How many verdicts came from the model (vs the heuristic).
         dry_run: Whether this run wrote nothing (a preview).
     """
@@ -188,6 +205,7 @@ class RetriageSummary:
     newly_flagged: int = 0
     todos_dropped: int = 0
     todos_created: int = 0
+    todos_suppressed: int = 0
     triaged_by_llm: int = 0
     dry_run: bool = False
 
@@ -224,6 +242,7 @@ def retriage_messages(
     use_model: bool = True,
     create_todos: bool = True,
     corrections: str = "",
+    denylisted_senders: frozenset[str] = frozenset(),
     dry_run: bool = False,
 ) -> RetriageSummary:
     """Re-run triage over already-ingested mail with the current prompt.
@@ -249,6 +268,8 @@ def retriage_messages(
         use_model: When ``False``, re-triage with the keyword heuristic only.
         create_todos: When ``True``, create a todo for newly-flagged mail.
         corrections: Learned-corrections addendum, as in :func:`ingest_messages`.
+        denylisted_senders: Sender emails to gate out of todo creation, as in
+            :func:`ingest_messages`.
         dry_run: When ``True``, compute and count changes but write nothing.
 
     Returns:
@@ -282,9 +303,15 @@ def retriage_messages(
                     if not dry_run:
                         store.close_todo(todo_id, status="dropped")
                     summary.todos_dropped += 1
-        elif now_action and not was_action and create_todos:
+        elif now_action and not was_action:
             summary.newly_flagged += 1
-            if dry_run:
+            suppressed = suppress_todo_reason(
+                item, verdict, denylisted_senders=denylisted_senders
+            ) is not None
+            if not create_todos or suppressed:
+                if suppressed:
+                    summary.todos_suppressed += 1
+            elif dry_run:
                 summary.todos_created += 1
             else:
                 todo_id = store.add_todo(
@@ -293,8 +320,6 @@ def retriage_messages(
                     priority=verdict.priority,
                 )
                 summary.todos_created += 1
-        elif now_action and not was_action:
-            summary.newly_flagged += 1
 
         if (
             now_action != was_action
