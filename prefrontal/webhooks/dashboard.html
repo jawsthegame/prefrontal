@@ -133,6 +133,11 @@
     padding: 0 16px; min-height: 38px; border-radius: 8px; background: var(--accent);
     color: #0b0d12; border: none; font-weight: 700; cursor: pointer;
   }
+  .searchrow { margin-bottom: 12px; }
+  .searchrow input {
+    width: 100%; padding: 9px 11px; border-radius: 8px; min-height: 38px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
+  }
 
   /* lightweight markdown */
   .md h3 { font-size: 14px; margin: 14px 0 6px; }
@@ -265,6 +270,9 @@
       </select>
       <button class="add" data-action="todo-add">Add</button>
     </div>
+    <div class="searchrow">
+      <input id="todo-search" type="search" placeholder="Search todos…" autocomplete="off" aria-label="Search todos" />
+    </div>
     <div class="body"></div>
   </section>
   <section class="card" id="c-categories"><h2>Todo categories</h2><div class="body"></div></section>
@@ -305,6 +313,9 @@ const KEY = "prefrontal_token";
 const REFRESH_MS = 15000;
 let token = localStorage.getItem(KEY);
 let timer = null;
+// Last /todos response, kept so the search box can re-filter client-side
+// without re-fetching (and so the filter survives the periodic refresh).
+let lastTodos = null;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
@@ -413,6 +424,19 @@ function renderRecent(d) {
     <div><span class="title">${esc(o.intention)}</span> <span class="pill">${o.status}</span></div>
     <div class="sub">window ${mins(o.time_window_minutes)} · left ${fmt(o.departure_at)} · back ${fmt(o.returned_at)}</div>
   </div></div>`).join("");
+}
+// Paint the todos card from the cached response, applying the search filter.
+// Kept separate from renderTodos so a keystroke re-filters without a re-fetch.
+function paintTodos() {
+  const body = $("#c-todos .body");
+  if (!lastTodos) { body.innerHTML = `<div class="err">unavailable</div>`; return; }
+  const q = ($("#todo-search").value || "").trim().toLowerCase();
+  if (!q) { body.innerHTML = renderTodos(lastTodos); return; }
+  const hit = (x) => [x.title, x.category, x.account].some((v) => String(v || "").toLowerCase().includes(q));
+  const matched = (lastTodos.todos || []).filter(hit);
+  body.innerHTML = matched.length
+    ? renderTodos({ ...lastTodos, todos: matched })
+    : `<div class="empty">No todos match “${esc(q)}”.</div>`;
 }
 function renderTodos(d) {
   const t = (d.todos || []);
@@ -709,7 +733,8 @@ async function load() {
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
   put("#c-recent", outings, renderRecent);
-  put("#c-todos", todos, renderTodos);
+  lastTodos = todos.status === "fulfilled" ? todos.value : null;
+  paintTodos();
   put("#c-categories", categories, renderCategories);
   put("#c-triage", triage, renderTriage);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
@@ -786,6 +811,7 @@ document.addEventListener("click", async (e) => {
   finally { el.disabled = false; }
 });
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
+$("#todo-search").addEventListener("input", paintTodos);
 $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
 
 $("#refresh").onclick = load;
