@@ -520,14 +520,53 @@ working. The `/admin/users` endpoints do the same over HTTP for an operator toke
 
 ---
 
+## 15. Coaching agent (unified nudge tick)
+
+The coaching agent (`docs/coaching-agent.md`) is one poll that fans over every
+enabled module — it asks each "anything due?", picks a channel (urgency floor →
+learned `channel_response` bump), and suppresses on quiet hours + debounce.
+
+- Preview: `prefrontal coach` (add `--dry-run` to see cues before suppression).
+- Deliver: import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json),
+  set the token + ntfy topic. It polls `POST /webhooks/coach/check` and publishes
+  each returned cue to ntfy at a priority matching the agent's chosen channel.
+  Today it surfaces the Task Paralysis "tiny first step" nudge and the outing
+  escalation cues; new module coaching lights up as each `evaluate()` is filled in.
+
+---
+
+## 16. Encouragement (rough-day recovery, opt-in)
+
+The counterweight to nudging: when a day genuinely goes rough, one warm message
+with a get-back-on-track plan instead of another reminder (`docs/encouragement.md`).
+
+- **Off by default** — enable per user via coaching-state keys (defaults shown):
+  ```
+  # Master switch (off ⇒ /encouragement always returns rough:false):
+  sqlite3 prefrontal.db "UPDATE coaching_state SET value='on' WHERE key='encouragement';"
+  # Rough-score threshold (a missed hard commitment = 3.0 trips it alone):
+  sqlite3 prefrontal.db "INSERT OR REPLACE INTO coaching_state(user_id,key,value,source) \
+    SELECT id,'encouragement_threshold','3.0','explicit' FROM users LIMIT 1;"
+  # Tone: 'warm' (reassuring) or 'plain' (matter-of-fact, no affect words):
+  sqlite3 prefrontal.db "INSERT OR REPLACE INTO coaching_state(user_id,key,value,source) \
+    SELECT id,'encouragement_tone','warm','explicit' FROM users LIMIT 1;"
+  ```
+- Preview: `prefrontal encourage` (add `--llm` for warmer Ollama prose).
+- Deliver: import [`../deploy/n8n/encouragement.workflow.json`](../deploy/n8n/encouragement.workflow.json).
+  It polls `GET /encouragement` a few times an afternoon and, on a rough & unsent
+  day, pushes the message to ntfy **once**, then `POST /encouragement/sent` stamps
+  the day (a `last_encouragement_date` cursor caps it at one per day).
+
+---
+
 ## What's not automated yet
 
-Four of the five modules are wired end-to-end today — **Location-Aware Task
-Anchor** (the coffee-shop nudge above), **Hyperfocus** (focus sessions, the
-`/webhooks/focus/*` endpoints), **Time Blindness**, and **Impulsivity**
-(`reflective_pause` + `capture_and_defer` are active; only `switch_rate_feedback`
-is planned). The one fully-stubbed module is **Task Paralysis** (its
-initiation interventions are still `planned`, though the decomposition machinery
-they build on exists). Run `prefrontal modules -v` for the live status, and see
-`ROADMAP.md` for what's next. (Mail ingestion is also live — `prefrontal mail
-fetch`/`sync` and `POST /webhooks/mail/sync`; see §13.)
+All five modules are wired end-to-end today — **Location-Aware Task Anchor** (the
+coffee-shop nudge above), **Hyperfocus** (focus sessions, `/webhooks/focus/*`),
+**Time Blindness** (departure timing + outcome capture), **Task Paralysis**
+(auto-decompose, tiny first step, body-double), and **Impulsivity**
+(`reflective_pause` + `capture_and_defer`; only `switch_rate_feedback` is still
+planned). The coaching agent (§15) now fans over all of them, and the
+encouragement layer (§16) handles rough days. Run `prefrontal modules -v` for the
+live status, and see `ROADMAP.md` for what's next. (Mail ingestion is also live —
+`prefrontal mail fetch`/`sync` and `POST /webhooks/mail/sync`; see §13.)

@@ -1,0 +1,87 @@
+{
+  "name": "Prefrontal — Encouragement (rough-day recovery, once/day)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "hours", "hoursInterval": 3 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 3h (afternoon/evening)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8000/encouragement",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-encouragement",
+      "name": "Check Encouragement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Deliver only on a genuinely rough day that hasn't already been acknowledged\n// today — the server caps this at once/day via last_encouragement_date, and the\n// read never advances the cursor, so we stamp it ourselves after delivering.\nconst r = $input.first().json;\nif (!r || r.rough !== true || r.already_sent === true) return [];\nreturn [{ json: { message: r.text } }];"
+      },
+      "id": "rough-only",
+      "name": "Rough & Unsent Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ntfy.sh",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — rough day\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 2\n}",
+        "options": {}
+      },
+      "id": "publish-ntfy",
+      "name": "Publish to ntfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/encouragement/sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "stamp-sent",
+      "name": "Stamp Sent (once/day)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Every 3h (afternoon/evening)": { "main": [[{ "node": "Check Encouragement", "type": "main", "index": 0 }]] },
+    "Check Encouragement": { "main": [[{ "node": "Rough & Unsent Only", "type": "main", "index": 0 }]] },
+    "Rough & Unsent Only": { "main": [[{ "node": "Publish to ntfy", "type": "main", "index": 0 }]] },
+    "Publish to ntfy": { "main": [[{ "node": "Stamp Sent (once/day)", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {}
+}

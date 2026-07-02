@@ -7,6 +7,13 @@ coaching agent's tick endpoint (``docs/coaching-agent.md`` §7) — the sibling 
 from __future__ import annotations
 
 from prefrontal.coaching import build_context, collect_cues, decide, record_fired
+from prefrontal.encouragement import (
+    already_sent_today,
+    assess_day,
+    build_recovery,
+    mark_sent_today,
+    render_encouragement,
+)
 from prefrontal.modules import enabled_modules
 from prefrontal.webhooks._common import (
     Annotated,
@@ -92,5 +99,50 @@ def build_router(
                 for d in decisions
             ]
         }
+
+    @router.get("/encouragement", tags=["coaching"])
+    def encouragement(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Today's recovery message when the day's gone rough (model-free read).
+
+        Pure and fast like ``/briefing``: assesses today's signals, and when
+        ``rough`` builds a get-back-on-track plan (re-fit / defer / one small
+        step) and renders it. ``already_sent`` reflects the once-per-day debounce
+        cursor — the read never advances it, so a poller can check freely; call
+        ``POST /encouragement/sent`` after actually delivering. Inert (``rough:
+        false``) unless the ``encouragement`` coaching key is ``on``.
+        """
+        memory = ctx.store
+        now = utcnow()
+        assessment = assess_day(memory, now=now)
+        plan = build_recovery(memory, assessment, now=now)
+        return {
+            "date": assessment.date,
+            "rough": assessment.rough,
+            "rough_score": assessment.rough_score,
+            "already_sent": already_sent_today(memory, now=now),
+            "signals": assessment.signals,
+            "plan": {
+                "refit": plan.refit,
+                "defer": plan.defer,
+                "first_step": plan.first_step,
+            },
+            "text": render_encouragement(assessment, plan),
+        }
+
+    @router.post("/encouragement/sent", tags=["coaching"])
+    def encouragement_sent(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Stamp today as delivered so a later poll won't re-send (the §5 cursor).
+
+        The delivering client (n8n) calls this only *after* a successful push, so
+        the cursor reflects real delivery — keeping the read pure and capping
+        encouragements at one per day.
+        """
+        now = utcnow()
+        mark_sent_today(ctx.store, now=now)
+        return {"already_sent": True, "date": now.strftime("%Y-%m-%d")}
 
     return router

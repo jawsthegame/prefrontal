@@ -30,6 +30,9 @@ A daily digest calibrated to your preferences: what needs attention today, what 
 **Panic mode**
 For the moments you're too overwhelmed to think. On demand, it cuts through everything and answers three questions: what's *actually* on fire right now (calendar, todos, and mail ranked into "already behind" / "bearing down soon" / "piling up", each tagged work vs. home), what you can safely ignore, and — the important part — one concrete, tiny first step to break the freeze. Not the whole plan. Just where to put your hands in the next five minutes.
 
+**Encouragement & recovery**
+The counterweight to a system whose job is nudging. When a day genuinely goes rough — a missed hard commitment, a pile of misses — it stops nudging and shifts to reassurance: acknowledges the rough day without judgment, then hands back a concrete plan (what still fits, what's safe to move, and one tiny next step). Opt-in, tone-calibrated, and capped at once a day so it never becomes a pile-on.
+
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
 
@@ -97,6 +100,8 @@ Prefrontal is in early development. This repository currently implements the **f
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
 | Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one-tap Shortcut) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
+| Coaching agent | `prefrontal/coaching.py` | ✅ Tick engine — fans over every module's `evaluate()`, picks channel (urgency floor → learned bump), suppresses on quiet hours + debounce; `prefrontal coach`, `POST /webhooks/coach/check` |
+| Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. `prefrontal encourage`, `GET /encouragement` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
