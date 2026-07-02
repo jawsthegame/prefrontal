@@ -256,6 +256,40 @@ def test_assistant_agreement_round_trip(dana):
     assert dana.agreements() == []
 
 
+def test_per_child_association_survives_wire_round_trip(dana):
+    """The /assistant → preview → /assistant/apply echo must not drop the child.
+
+    The dashboard echoes the wire actions (``to_wire()``, which emits ``child_id``)
+    back to /assistant/apply verbatim, where they are re-validated. Regression for
+    the ``_resolve_child`` asymmetry that read ``child`` but wrote ``child_id`` —
+    the second validation silently defaulted every per-child fact/agreement to the
+    household (child_id 0) despite a preview that said otherwise.
+    """
+    sam = dana.add_child(name="Sam")
+    snap = build_snapshot(dana)
+    # First pass: the model's raw op uses the ``child`` key.
+    planned, _ = validate_actions(
+        [
+            {"op": "set_fact", "category": "sizes", "item": "shoe size",
+             "value": "13", "child": sam},
+            {"op": "set_agreement", "title": "Star chart", "kind": "reward",
+             "body": "stars", "child": sam},
+        ],
+        snap,
+    )
+    assert all(a.params["child_id"] == sam for a in planned)
+    # Echo the wire form back through validation, exactly as the client does.
+    wire = [a.to_wire() for a in planned]
+    assert all("child_id" in w and "child" not in w for w in wire)
+    reapplied, errors = validate_actions(wire, snap)
+    assert not errors
+    assert [a.params["child_id"] for a in reapplied] == [sam, sam]
+    execute_actions(dana, reapplied)
+    # The fact and the agreement land on Sam, not the household.
+    assert dana.facts()[0]["child_id"] == sam
+    assert dana.agreements()[0]["child_id"] == sam
+
+
 def test_household_ops_rejected_for_non_member(lee):
     snap = build_snapshot(lee)
     actions, errors = validate_actions(
