@@ -74,6 +74,14 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from prefrontal.assistant import (
+    build_snapshot,
+    execute_actions,
+    validate_actions,
+)
+from prefrontal.assistant import (
+    plan as assistant_plan_message,
+)
 from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.classify import classify_kind
 from prefrontal.commitments import (
@@ -104,6 +112,7 @@ from prefrontal.impact import (
     project_free_time,
     utcnow,
 )
+from prefrontal.integrations.anthropic import AnthropicClient
 from prefrontal.integrations.n8n import N8nClient, parse_inbound_event
 from prefrontal.integrations.nominatim import NominatimGeocoder
 from prefrontal.integrations.ollama import OllamaClient
@@ -575,6 +584,25 @@ class StepDone(BaseModel):
     )
 
 
+class AssistantMessage(BaseModel):
+    """Body of ``POST /assistant`` — a natural-language editing request."""
+
+    message: str = Field(description="Free-text ask, e.g. 'bump the dentist call to urgent'.")
+
+
+class AssistantApply(BaseModel):
+    """Body of ``POST /assistant/apply`` — the proposed actions to execute.
+
+    The client echoes back the ``actions`` returned by ``POST /assistant``. They
+    are re-validated against the *current* store before executing, so a stale or
+    tampered action simply drops rather than acting on the wrong row.
+    """
+
+    actions: list[dict[str, Any]] = Field(
+        default_factory=list, description="Wire-format actions from POST /assistant."
+    )
+
+
 def _parse_dt_or_none(ts: str | None) -> Any:
     """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
     if not ts:
@@ -844,7 +872,10 @@ __all__ = [
     "ACTION_OUTCOME",
     "APP_VERSION",
     "Annotated",
+    "AnthropicClient",
     "Any",
+    "AssistantApply",
+    "AssistantMessage",
     "BaseModel",
     "CalendarEvent",
     "CalendarSync",
@@ -933,6 +964,7 @@ __all__ = [
     "_resolve_user_row",
     "_switch_resolved_confirmation",
     "analyze_impact",
+    "assistant_plan_message",
     "asynccontextmanager",
     "at_risk",
     "augment_todo",
@@ -945,6 +977,7 @@ __all__ = [
     "build_panic",
     "build_pause_message",
     "build_profile",
+    "build_snapshot",
     "cache_is_stale",
     "category_stats",
     "classify_kind",
@@ -954,6 +987,7 @@ __all__ = [
     "decompose_task",
     "enrich_commitments",
     "escalation_level",
+    "execute_actions",
     "feed_label",
     "find_conflicts",
     "fit_todos",
@@ -1014,6 +1048,7 @@ __all__ = [
     "timedelta",
     "to_utc",
     "utcnow",
+    "validate_actions",
     "verify_dismiss",
     "work_window_now",
 ]

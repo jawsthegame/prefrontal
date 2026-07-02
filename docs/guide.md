@@ -354,13 +354,38 @@ curl -sX POST "$PF/mail/triage/learned/forget" -H "X-Prefrontal-Token: $TOK" -d 
 
 ---
 
+## Assistant — natural-language edits
+
+The dashboard chat box turns a plain-English message into concrete edits to your
+own data. Say "reschedule the standup to 3pm, mark the dentist call done, and
+lower the taxes todo to normal" and it resolves each reference to a real item and
+proposes the matching actions. Two steps, on purpose:
+
+- **`POST /assistant`** interprets the message against a snapshot of your open
+  todos, upcoming commitments, and dismissable conflicts, and returns a
+  *proposed* action list — **nothing is written**. Supported ops cover todos
+  (add / complete / drop / set priority / set estimate / rename / set deadline),
+  commitments (add / cancel), and dismissing a possible conflict.
+- **`POST /assistant/apply`** executes actions you confirm. They're re-validated
+  against your current data first, so an item that moved since it was proposed is
+  skipped rather than mis-edited.
+
+Two guardrails make this safe: a **strict op whitelist** (the assistant can't run
+anything outside the list above) and **id resolution from your own snapshot** (it
+can only touch items that actually exist in your scoped data — never a
+hallucinated or someone else's row). Parsing uses **Claude** when an
+`ANTHROPIC_API_KEY` is set, otherwise the local Ollama model (local-first by
+default); the response says which `provider` answered.
+
 ## Surfaces: dashboard, family view, and widget
 
 - **`GET /dashboard`** — your full read-and-act monitoring page: active outings
   (with escalation level), todos (with first-steps and avoidance badges),
   commitments + conflicts, the briefing, and your profile. Add/complete todos,
-  close outings, dismiss conflicts. Open it over Tailscale; it asks for your
-  token once and remembers it.
+  close outings, dismiss conflicts. It also has an **assistant chat box**: type
+  a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
+  todo") and it proposes the concrete edits, which you review and one-tap Apply.
+  Open it over Tailscale; it asks for your token once and remembers it.
 - **`GET /family`** — a calm, read-only, jargon-free view for a partner:
   "right now" status and today's plan. No levels, no buttons.
 - **Scriptable widget** ([`../deploy/scriptable/`](../deploy/scriptable)) — a
@@ -453,6 +478,8 @@ token client-side).
 | `POST /todos/{id}/steps/{i}/done` | Tick a decomposed step |
 | `POST /todos/{id}/deadline` | Move or clear a deadline |
 | `POST /todos/{id}/done` · `/drop` | Complete / drop (logs an episode) |
+| `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
+| `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
 | `GET /briefing` | Today's digest (structured + rendered text) |
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
 | `POST /places` · `GET /places` | Curated location aliases |

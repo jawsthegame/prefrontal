@@ -10,6 +10,7 @@ from __future__ import annotations
 from prefrontal.webhooks._common import (
     APP_VERSION,
     INFER_TIMEOUT_SECONDS,
+    AnthropicClient,
     FastAPI,
     MemoryStore,
     N8nClient,
@@ -28,6 +29,7 @@ def create_app(
     store: MemoryStore | None = None,
     settings: Settings | None = None,
     ollama: OllamaClient | None = None,
+    anthropic: AnthropicClient | None = None,
     geocoder: NominatimGeocoder | None = None,
 ) -> FastAPI:
     """Build and return the Prefrontal webhook application.
@@ -57,6 +59,10 @@ def create_app(
     # heavier call than the snappy window inference above. Reuses an injected
     # client in tests so the refresh path stays offline.
     summarizer_client = ollama or OllamaClient.from_settings(resolved_settings)
+    # Optional Claude client for the dashboard assistant. Local-first: only used
+    # when an API key is configured (``available()``), otherwise the assistant
+    # falls back to the local Ollama client.
+    anthropic_client = anthropic or AnthropicClient.from_settings(resolved_settings)
     # Forward-geocoder for commitment destinations. Built from settings unless
     # injected (tests pass a stub). Only consulted when the runtime
     # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.
@@ -105,6 +111,7 @@ def create_app(
     from prefrontal.webhooks.routers import (
         admin,
         anchor,
+        assistant,
         focus,
         impulsivity,
         ingestion,
@@ -133,6 +140,11 @@ def create_app(
         admin,
     ):
         app.include_router(_module.build_router(**_router_deps))
+    # The assistant router needs one extra service (the Claude client), so it's
+    # included separately rather than through the shared-deps loop above.
+    app.include_router(
+        assistant.build_router(**_router_deps, anthropic_client=anthropic_client)
+    )
     return app
 
 

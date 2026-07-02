@@ -153,6 +153,25 @@
   }
   .err { color: var(--call); font-size: 13px; }
 
+  /* dashboard assistant — natural-language edits with a review-then-apply step */
+  #c-assistant .addrow { margin-bottom: 0; }
+  .asst-log { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .asst-log:empty { display: none; }
+  .asst-reply { background: #1d212b; border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0; padding: 9px 12px; font-size: 14px; }
+  .asst-actions { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .act-item { padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+  .act-item:first-child { border-top: none; }
+  .asst-bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px;
+    background: #12151c; border-top: 1px solid var(--line); }
+  .asst-bar .spacer { flex: 1; }
+  .asst-apply { padding: 0 16px; min-height: 34px; border-radius: 8px; background: var(--good);
+    color: #0b0d12; border: none; font-weight: 700; cursor: pointer; }
+  .asst-note { color: var(--muted); font-size: 13px; }
+  .asst-err { color: var(--soft); font-size: 13px; }
+  .asst-ok { color: var(--good); font-weight: 700; }
+  .asst-fail { color: var(--call); font-weight: 700; }
+
   #gate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
   #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; width: min(420px, 100%); }
   #gate h2 { margin: 0 0 6px; font-size: 16px; }
@@ -218,6 +237,18 @@
 
 <div class="banner">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
+</div>
+
+<div class="banner">
+  <section class="card" id="c-assistant">
+    <h2>Assistant — ask for changes</h2>
+    <div class="addrow">
+      <input id="asst-input" autocomplete="off"
+        placeholder="e.g. bump the dentist call to urgent and drop the dry-cleaning todo" />
+      <button class="add" data-action="asst-send">Ask</button>
+    </div>
+    <div class="asst-log" id="asst-log"></div>
+  </section>
 </div>
 
 <main class="masonry">
@@ -613,6 +644,55 @@ async function loadPanic() {
 function openPanic() { $("#panic").style.display = "flex"; loadPanic(); }
 function closePanic() { $("#panic").style.display = "none"; }
 
+// Dashboard assistant: ask → review proposed actions → Apply. Nothing is written
+// until Apply, and the server re-validates on apply, so a stale/edited action is
+// dropped rather than acting on the wrong row.
+let pendingActions = [];
+async function askAssistant() {
+  const input = $("#asst-input");
+  const msg = input.value.trim();
+  if (!msg) return;
+  const log = $("#asst-log");
+  log.innerHTML = `<div class="asst-note">thinking…</div>`;
+  let d;
+  try {
+    d = await post("/assistant", { message: msg });
+  } catch (_) {
+    log.innerHTML = `<div class="err">Assistant unavailable — is a model configured?</div>`;
+    return;
+  }
+  pendingActions = d.actions || [];
+  let html = `<div class="asst-reply">${esc(d.reply || "")}</div>`;
+  if (pendingActions.length) {
+    const n = pendingActions.length;
+    html += `<div class="asst-actions">` +
+      pendingActions.map((a) => `<div class="act-item">${esc(a.summary || a.op)}</div>`).join("") +
+      `<div class="asst-bar"><span class="asst-note">${n} change${n !== 1 ? "s" : ""} — review before applying</span>` +
+      `<span class="spacer"></span>` +
+      `<button class="btn-sm" data-action="asst-discard">Discard</button>` +
+      `<button class="asst-apply" data-action="asst-apply">Apply</button></div></div>`;
+  }
+  if (d.errors && d.errors.length) {
+    html += `<div class="asst-err">Couldn't do: ${d.errors.map(esc).join("; ")}</div>`;
+  }
+  log.innerHTML = html;
+  input.value = "";
+}
+function renderApplied(d) {
+  const results = d.results || [];
+  let html = `<div class="asst-reply">Applied ${d.applied || 0} of ${results.length}.</div>`;
+  if (results.length) {
+    html += `<div class="asst-actions">` + results.map((r) =>
+      `<div class="act-item"><span class="${r.ok ? "asst-ok" : "asst-fail"}">${r.ok ? "✓" : "✗"}</span> ` +
+      `${esc(r.summary || r.op)}${r.detail ? ` <span class="asst-note">— ${esc(r.detail)}</span>` : ""}</div>`
+    ).join("") + `</div>`;
+  }
+  if (d.errors && d.errors.length) {
+    html += `<div class="asst-err">Skipped: ${d.errors.map(esc).join("; ")}</div>`;
+  }
+  $("#asst-log").innerHTML = html;
+}
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -693,11 +773,20 @@ document.addEventListener("click", async (e) => {
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
     else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
+    else if (act === "asst-send") { await askAssistant(); return; }
+    else if (act === "asst-discard") { pendingActions = []; $("#asst-log").innerHTML = ""; return; }
+    else if (act === "asst-apply") {
+      if (!pendingActions.length) return;
+      renderApplied(await post("/assistant/apply", { actions: pendingActions }));
+      pendingActions = [];
+      // fall through to load() so the cards reflect the applied changes
+    }
     load();
   } catch (_) { /* post() already surfaced the error */ }
   finally { el.disabled = false; }
 });
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
+$("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
 
 $("#refresh").onclick = load;
 $("#panic-btn").onclick = openPanic;

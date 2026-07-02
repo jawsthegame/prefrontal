@@ -116,6 +116,12 @@ class Settings:
     modules: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+    # Optional Claude/Anthropic provider for the dashboard assistant. Local-first:
+    # empty key means the assistant uses the local Ollama model. When set, the
+    # assistant prefers Claude for natural-language parsing and Ollama remains the
+    # fallback. The key never leaves the host except on outbound Anthropic calls.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-8"
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     mail_accounts: tuple[tuple[str, str], ...] = ()
@@ -251,6 +257,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         modules=modules,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
         geocoder_url=os.environ.get(
             "GEOCODER_URL", "https://nominatim.openstreetmap.org/search"
         ),
