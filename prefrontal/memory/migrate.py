@@ -74,6 +74,9 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
         ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    # Departure nudges expire at their commitment's start_at so a stale "leave
+    # now" doesn't linger on the widget for hours (added after nudges shipped).
+    "nudges": [("expires_at", "DATETIME")],
     # The shared household sheet's second scope: a nullable pointer from a user to
     # the household they co-parent in (added after the users table shipped). No FK
     # in the ALTER (SQLite can't add a column-level REFERENCES via ALTER), which is

@@ -217,7 +217,14 @@ def build_router(
             if fire:
                 memory.set_state("last_departure_signature", signature, source="inferred")
                 message = build_departure_message(top, name=name)
-                memory.record_nudge(kind="departure", message=message, level=top.level)
+                # Expire the nudge at the meeting's start: "leave now" is moot
+                # once it has begun, so the widget won't show it for hours after.
+                memory.record_nudge(
+                    kind="departure",
+                    message=message,
+                    level=top.level,
+                    expires_at=top.commitment["start_at"],
+                )
 
         return {
             "fire": fire,
