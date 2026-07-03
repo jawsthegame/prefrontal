@@ -8,6 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 
+from prefrontal.memory.patterns import resolve_bias
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.webhooks._common import (
     DEFAULT_BODY_DOUBLE_MIN_MISSES,
@@ -533,7 +534,9 @@ def build_router(
         # Only todos whose window includes now (off-zone already excluded above).
         now_local = local_datetime(now, resolved_settings.timezone)
         open_todos = filter_suggestible(memory.open_todos(), now_local, window_config)
-        bias = memory.get_float("time_estimation_bias", 1.0)
+        # Context-conditioned (§5): calibrate with *this hour's* learned bias, so a
+        # morning gap is sized by morning history — falls back to the global bias.
+        bias = resolve_bias(memory, local_hour=now_local.hour)
         fits = fit_todos(free, open_todos, bias)
         if not fits:
             result["reason"] = "nothing fits this window"

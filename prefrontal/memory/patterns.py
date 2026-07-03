@@ -38,8 +38,10 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from datetime import timezone as _timezone
 from statistics import fmean
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
@@ -71,12 +73,46 @@ DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
 DEFAULT_HALF_LIFE_DAYS = 30.0
 
 
+#: Time-of-day bands for context-conditioned learning (learning §5). The learned
+#: time-estimation bias is computed per band as well as globally, because the same
+#: person often mis-estimates very differently across the day (morning admin vs
+#: afternoon deep work). ``resolve_bias`` prefers the band for the moment a
+#: prediction is being made, falling back to the global multiplier.
+TIME_OF_DAY_BANDS = ("morning", "afternoon", "evening")
+
+
+def time_of_day_band(hour: int) -> str:
+    """Map a local hour (0–23) to a coarse band (:data:`TIME_OF_DAY_BANDS`)."""
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    return "evening"  # 17:00–05:00 (evenings + the quiet overnight tail)
+
+
 def _parse_ts(ts: Any) -> datetime | None:
     """Parse a stored episode timestamp (``YYYY-MM-DD HH:MM:SS``), else ``None``."""
     try:
         return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         return None
+
+
+def _local_hour(ts: Any, timezone: str) -> int | None:
+    """Local wall-clock hour of a stored (naive-UTC) episode timestamp, or ``None``.
+
+    Episodes are stored in UTC; the band a task *felt* like it happened in is the
+    user's local hour, so we localize before bucketing. An unknown zone degrades
+    to UTC rather than dropping the episode.
+    """
+    dt = _parse_ts(ts)
+    if dt is None:
+        return None
+    try:
+        zone = ZoneInfo(timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = _timezone.utc
+    return dt.replace(tzinfo=_timezone.utc).astimezone(zone).hour
 
 
 def decay_weight(ts: Any, now: datetime, half_life_days: float | None) -> float:
@@ -142,6 +178,7 @@ class PatternRunSummary:
     by_type: dict[str, int] = field(default_factory=dict)
     bias: float | None = None
     calibration: BiasCalibration | None = None
+    band_bias: dict[str, float] = field(default_factory=dict)
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -239,6 +276,59 @@ def compute_bias(
     return round(total_act / total_pred, 2)
 
 
+def compute_bias_by_band(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+    timezone: str = "UTC",
+) -> dict[str, float]:
+    """Recompute the time-estimation bias **per time-of-day band** (learning §5).
+
+    Buckets each predicted/actual episode by the local hour it occurred in, then
+    runs the same recency-weighted :func:`compute_bias` within each band. A band
+    with too few pairs (``< MIN_BIAS_SAMPLES``) is simply omitted, so we only
+    condition where there's enough signal to trust — everything else keeps
+    falling back to the global multiplier.
+
+    Returns:
+        ``{band: multiplier}`` for the bands that cleared the sample floor.
+    """
+    now = now or utcnow()
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+            continue
+        hour = _local_hour(e.get("timestamp"), timezone)
+        if hour is not None:
+            groups[time_of_day_band(hour)].append(e)
+    out: dict[str, float] = {}
+    for band, eps in groups.items():
+        band_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
+        if band_bias is not None:
+            out[band] = band_bias
+    return out
+
+
+def resolve_bias(store: MemoryStore, *, local_hour: int | None = None) -> float:
+    """The time-estimation multiplier to apply, preferring the time-of-day band.
+
+    When ``local_hour`` is given and a band-specific bias has been learned for it,
+    that wins; otherwise this falls back to the global ``time_estimation_bias``,
+    then to ``1.0``. Consumers that know *when* a prediction applies (e.g. the
+    "what fits right now" picker) pass the local hour to get context-conditioned
+    calibration; those that don't keep the global behavior unchanged.
+    """
+    if local_hour is not None:
+        banded = store.get_state(f"time_estimation_bias:{time_of_day_band(local_hour)}")
+        if banded:
+            try:
+                return float(banded)
+            except ValueError:
+                pass
+    return store.get_float("time_estimation_bias", 1.0)
+
+
 def bias_calibration(
     episodes: list[dict[str, Any]],
     *,
@@ -302,6 +392,7 @@ def recompute_patterns(
     *,
     confidence_k: float = DEFAULT_CONFIDENCE_K,
     update_bias: bool = True,
+    timezone: str = "UTC",
 ) -> PatternRunSummary:
     """Recompute every pattern from the full episode history and persist it.
 
@@ -336,10 +427,18 @@ def recompute_patterns(
 
     bias: float | None = None
     calibration: BiasCalibration | None = None
+    band_bias: dict[str, float] = {}
     if update_bias:
         bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
             store.set_state("time_estimation_bias", str(bias), source="inferred")
+        # Context-conditioned (§5): a per-time-of-day multiplier where there's
+        # enough signal, so a morning estimate is calibrated by morning history.
+        band_bias = compute_bias_by_band(
+            episodes, now=now, half_life_days=half_life_days, timezone=timezone
+        )
+        for band, value in band_bias.items():
+            store.set_state(f"time_estimation_bias:{band}", str(value), source="inferred")
         # Close the loop: does that bias actually improve subsequent estimates?
         # Persist the verdict so the profile and CLI can surface a bad adaptation.
         calibration = bias_calibration(episodes)
@@ -357,6 +456,7 @@ def recompute_patterns(
         by_type=dict(Counter(r.pattern_type for r in results)),
         bias=bias,
         calibration=calibration,
+        band_bias=band_bias,
     )
 
 
