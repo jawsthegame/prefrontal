@@ -70,6 +70,9 @@
     cursor: pointer; font-size: 13px; user-select: none; }
   .day.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .preset { color: var(--accent); cursor: pointer; font-size: 12px; margin-right: 8px; }
+  #digest-toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    font-size: 13px; color: var(--muted); cursor: pointer; }
+  #recent-new { color: var(--accent); font-weight: 600; font-size: 14px; margin-bottom: 8px; }
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
@@ -111,7 +114,12 @@
 
   <section class="card" id="c-recent">
     <p class="label">Recently changed</p>
+    <div id="recent-new"></div>
     <div id="recent"></div>
+    <label id="digest-toggle" title="A gentle daily nudge with just the things your co-parent changed">
+      <input type="checkbox" id="digest-enabled" />
+      🔔 Nudge me daily when my co-parent updates the sheet
+    </label>
   </section>
 
   <section class="card" id="c-roster">
@@ -249,6 +257,13 @@ function renderRecent(changes) {
         return `<div class="changed">${esc(c.what)}${meta ? ` <span class="who">${meta}</span>` : ""}</div>`;
       }).join("")
     : `<div class="empty">No changes yet.</div>`;
+}
+
+function renderDigest(d) {
+  d = d || { enabled: false, unseen: 0 };
+  $("#digest-enabled").checked = !!d.enabled;
+  $("#recent-new").textContent = d.unseen > 0
+    ? `✨ ${d.unseen} new since you last looked` : "";
 }
 
 function renderRoster() {
@@ -419,6 +434,7 @@ async function loadSheet() {
   vocab = data.vocab || vocab;
   children = sheet.children || [];
   renderRecent(sheet.recently_changed);
+  renderDigest(data.digest);
   renderRoster();
   renderFacts(sheet.per_child);
   agreements = sheet.agreements || [];
@@ -585,6 +601,10 @@ $("#agreements").addEventListener("click", async (e) => {
     await post(`/household/agreements/${saveId}/prompt`, body);
     await loadSheet();
   }
+});
+
+$("#digest-enabled").addEventListener("change", async (e) => {
+  await post("/household/digest", { enabled: e.target.checked });
 });
 
 // Check-in day is a single choice — tapping a day selects just that one.

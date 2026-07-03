@@ -1,0 +1,42 @@
+{
+  "name": "Prefrontal — Delta Digest (daily catch-up, opt-in)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "hours", "hoursInterval": 3 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 3 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/household/digest/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_A_HOUSEHOLD_MEMBERS_TOKEN" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "digest-check",
+      "name": "Digest Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    }
+  ],
+  "connections": {
+    "Every 3 hours": { "main": [[{ "node": "Digest Check", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "Opt-in daily 'what changed since you looked' digest for the token owner's household. The endpoint pushes each parent the OTHER parent's unseen facts/agreements/star changes on their own route, at most once per ~day (it self-suppresses when there's nothing new or the parent was digested recently), so a frequent poll like every 3h is fine — it just catches new activity promptly. Opening /kids (or tapping 'Caught up') marks the sheet seen and clears the backlog. Use a household member's per-user token so delivery resolves that household."
+  }
+}

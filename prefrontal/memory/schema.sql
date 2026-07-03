@@ -53,7 +53,11 @@ CREATE TABLE IF NOT EXISTS households (
     checkin_enabled      INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
     checkin_day          INTEGER,                     -- 0=Mon … 6=Sun
     checkin_time         TEXT,                        -- "HH:MM" local
-    checkin_last_sent_at DATETIME                     -- weekly dedup (see week_key)
+    checkin_last_sent_at DATETIME,                    -- weekly dedup (see week_key)
+    -- Opt-in daily "delta digest": push each parent the OTHER parent's changes
+    -- they haven't seen yet. Off by default. Per-parent "seen"/"digested" stamps
+    -- live in coaching_state (household_seen_at / household_digested_at).
+    digest_enabled       INTEGER NOT NULL DEFAULT 0   -- 0/1, opt-in
 );
 
 CREATE TABLE IF NOT EXISTS users (

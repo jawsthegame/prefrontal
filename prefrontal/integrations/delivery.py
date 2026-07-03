@@ -75,6 +75,7 @@ _CONTEXT_KIND = {
     "water": "water",
     "star": "star",
     "checkin": "load",
+    "digest": "digest",
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -84,6 +85,7 @@ _KIND_TARGET = {
     "water": "target",
     "star": "agreement_id",
     "load": "target",
+    "digest": "target",
 }
 
 
@@ -483,6 +485,55 @@ def household_checkin_notice(message: str, *, channel: str = "push") -> Decision
         ref={"target": 0},
     )
     return Decision(cue=cue, channel=channel, text=message)
+
+
+def household_digest_notice(message: str, *, channel: str = "push") -> Decision:
+    """A daily delta-digest push with a one-tap "Caught up" button.
+
+    Carries ``context_key="digest"`` so :meth:`DeliveryClient.deliver` attaches the
+    signed *Caught up 👍* button (``notify.py``); tapping it marks the sheet seen
+    at ``/nudge/act`` so the parent isn't re-nudged about the same changes.
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="delta_digest",
+        urgency="ambient",
+        text=message,
+        context_key="digest",
+        dedup_key="household_digest",
+        ref={"target": 0},
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
+def deliver_to_member(
+    store: Any,
+    decision: Decision,
+    *,
+    handle: str,
+    settings: Settings | None = None,
+    client: DeliveryClient | None = None,
+    base_url: str = "",
+    secret: str = "",
+) -> dict[str, Any]:
+    """Deliver one decision to a single member on their own route (not the whole household).
+
+    ``store`` must be scoped to that member (so :func:`resolve_route` reads their
+    routing). Used by the delta digest, which is personalized per parent rather
+    than fanned to everyone. Never raises — returns a per-member outcome dict.
+    """
+    resolved = settings or get_settings()
+    client = client or DeliveryClient.from_settings(resolved)
+    route = resolve_route(store, resolved)
+    result = client.deliver(decision, route, base_url=base_url, secret=secret, handle=handle)
+    return {
+        "handle": handle,
+        "transport": result.transport,
+        "delivered": result.delivered,
+        "detail": result.detail,
+    }
 
 
 def deliver_to_household(

@@ -94,6 +94,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("checkin_day", "INTEGER"),
         ("checkin_time", "TEXT"),
         ("checkin_last_sent_at", "DATETIME"),
+        ("digest_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ],
 }
 

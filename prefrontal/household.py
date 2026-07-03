@@ -695,6 +695,71 @@ def checkin_summary(responses: list[str]) -> str:
     )
 
 
+# --- daily delta digest (pure) -----------------------------------------------
+#
+# The active half of load-balancing (spec §7): push each parent the *other*
+# parent's changes they haven't seen. "Seen" is when they last opened the sheet
+# (household_seen_at); "digested" is when we last told them (household_digested_at).
+# The diff below is filtered by both — so a parent is never told about their own
+# edits, nor told twice — and stays silent when there's nothing new.
+
+#: The once-a-day cap: a sweep can run more often, but a parent gets at most one
+#: digest per this many hours.
+MIN_DIGEST_INTERVAL_HOURS = 20
+
+
+def unseen_changes(
+    store: MemoryStore, *, viewer_id: int, since: str = ""
+) -> list[dict[str, Any]]:
+    """The other parent's sheet changes newer than ``since`` and not made by ``viewer_id``.
+
+    Unions the provenance-carrying, household-shared writes — facts, agreements,
+    and star grants — keeping only rows whose stored timestamp string sorts after
+    ``since`` (``""`` = everything) and that the viewer did not author. Newest first.
+    """
+    out: list[dict[str, Any]] = []
+    for f in store.facts():
+        at = str(f.get("updated_at") or "")
+        if f.get("updated_by") != viewer_id and at > since:
+            out.append({"what": _fact_what(f), "who": f.get("updated_by_name"), "at": at})
+    for a in store.agreements():
+        at = str(a.get("updated_at") or "")
+        if a.get("updated_by") != viewer_id and at > since:
+            out.append(
+                {"what": f"{a['title']} (plan)", "who": a.get("updated_by_name"), "at": at}
+            )
+    for g in store.recent_star_awards(limit=50):
+        at = str(g.get("created_at") or "")
+        if g.get("awarded_by") != viewer_id and at > since:
+            out.append({"what": _star_grant_what(g), "who": g.get("awarded_by_name"), "at": at})
+    out.sort(key=lambda c: c["at"], reverse=True)
+    return out
+
+
+def digest_message(changes: list[dict[str, Any]], *, max_items: int = 6) -> str:
+    """A warm "here's what you missed" digest from the other parent's changes."""
+    lines = ["💛 A few things your co-parent updated since you last looked:"]
+    for c in changes[:max_items]:
+        who = f" ({c['who']})" if c.get("who") else ""
+        lines.append(f"• {c['what']}{who}")
+    extra = len(changes) - min(len(changes), max_items)
+    if extra > 0:
+        lines.append(f"…and {extra} more on the sheet.")
+    return "\n".join(lines)
+
+
+def digest_interval_ok(
+    last_digested: Any, now: datetime, *, min_hours: int = MIN_DIGEST_INTERVAL_HOURS
+) -> bool:
+    """Whether enough time has passed since the last digest (the once-a-day cap)."""
+    if not last_digested:
+        return True
+    last = _parse_dt(last_digested)
+    if last is None:
+        return True
+    return (now - last).total_seconds() >= min_hours * 3600
+
+
 # --- render ------------------------------------------------------------------
 
 
