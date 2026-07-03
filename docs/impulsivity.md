@@ -40,20 +40,15 @@ this file wins until the work lands.
 > `switch_rate_feedback` (§10 briefing line, still `planned`), the upgraded
 > profile section (§9), and the dashboard "In focus" card.
 
-> **Reality note (2026-06).** This spec is still **unimplemented** — the
-> Impulsivity module's three interventions remain `status="planned"`. But the
-> world moved under §2/§4.1: the **Hyperfocus** module has since shipped its own
-> `focus_sessions` table (`schema.sql`), with a *different* shape and purpose —
-> `intended_task` / `aligned` / `breadcrumb` / `outcome` for protect-vs-interrupt
-> deep-work blocks, **not** the `intention` / `switch_impulses` /
-> `switches_deferred` switch-counter this spec sketched. So "create
-> `focus_sessions`" (§4.1) is no longer accurate: that name is taken. Before
-> implementing, reconcile the two — either (a) reuse Hyperfocus's session as the
-> "current task" a switch fires against and add switch counters to it, or
-> (b) give impulsivity a distinct table (e.g. `focus_switches`). Option (a) is
-> likely cleaner (one notion of "the block I'm in") and removes a redundancy;
-> the rest of this spec (capture-and-defer into `todos`, the `context_switch`
-> learning loop, the pure core) stands as written.
+> **Reality note (updated).** Mostly **shipped** — see the "Shipped so far" note
+> above. `reflective_pause` and `capture_and_defer` are `status="active"`; only
+> `switch_rate_feedback` remains `planned` (it needs the accumulated switch
+> history). Option (a) from the original reconciliation won: rather than a new
+> `focus_sessions` table, the Hyperfocus session is the "current block" a switch
+> fires against, and the switch counters (`switch_impulses` / `switches_deferred`)
+> live **on `focus_sessions`**. Capture-and-defer lands in `todos` as designed;
+> the `context_switch` learning loop that feeds `switch_rate_feedback` is the
+> remaining piece.
 
 It follows the shape of the one fully-wired module today — the **Location-Aware
 Task Anchor** ([`location_anchor.py`](../prefrontal/modules/location_anchor.py)):
@@ -340,7 +335,7 @@ Body: `{ "session_id": int | null, "action": "return"|"defer"|"switch",
   deliberately. The closed session logs its episodes (§8).
 
 A bare **capture without a switch context** is also useful (an impulse arrives
-when no block is running). `POST /webhooks/focus/capture` `{ "impulse_text" }`
+when no block is running). `POST /webhooks/impulse/capture` `{ "impulse_text" }`
 creates the `source='impulse'` todo directly — the same logic 7.3/defer reuses.
 
 ### 7.4 `POST /webhooks/focus/end` and `GET /focus`

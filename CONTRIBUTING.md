@@ -12,30 +12,42 @@ future-us alike.
 prefrontal/
 ├── prefrontal/                # the Python package
 │   ├── config.py              # environment-driven Settings (see .env.example)
-│   ├── cli.py                 # `prefrontal` console script: init-db | serve | learn |
-│   │                          #   profile | summarize | briefing | todo | fit | mail | modules
+│   ├── cli.py                 # `prefrontal` console script: init-db | serve | user | learn | summarize |
+│   │                          #   profile | briefing | todo | fit | mail | coach | encourage | panic |
+│   │                          #   crunch | note | proposals | household | modules | migrate-multi-tenant
 │   ├── memory/                # the SQLite behavioral memory layer (the core)
-│   │   ├── schema.sql         # canonical schema (episodes, patterns, coaching_state + feature tables)
+│   │   ├── schema.sql         # canonical schema (per-user + household tables)
 │   │   ├── db.py              # connection management + init_db()
-│   │   ├── store.py           # MemoryStore: the read/write API over the tables
+│   │   ├── migrate.py         # multi-tenant rebuild + added-column back-fill ladder
+│   │   ├── store.py           # MemoryStore: the read/write API (composed from repos/)
+│   │   ├── repos/             # per-concern repo mixins (episodes, todos, schedule, household, proposals, …)
 │   │   ├── patterns.py        # learn pass: episodes -> derived patterns + time-estimation bias
 │   │   └── summarizer.py      # build_profile() + summarize_profile() (Ollama, heuristic fallback)
 │   ├── webhooks/              # FastAPI listener for iOS Shortcut / n8n triggers
-│   │   └── app.py             # routes: /health, /webhooks/{shortcut,n8n,outing,focus,mail,calendar}/*, ...
-│   ├── modules/              # challenge-area modules (one per EF difficulty)
+│   │   ├── app.py             # create_app(): assembles the routers below
+│   │   ├── routers/           # one APIRouter per tag: admin, anchor, assistant, coaching, focus,
+│   │   │                      #   household, impulsivity, ingestion, memory, schedule, system, todos
+│   │   ├── _common.py         # shared deps/schemas · notify.py · oauth.py
+│   ├── modules/              # challenge-area modules
 │   │   ├── base.py            # Module ABC + Intervention dataclass
 │   │   ├── registry.py        # register / available / enabled_modules
-│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor
-│   ├── mail/                  # mail ingestion: normalize -> triage -> surface as todos
-│   ├── integrations/          # external systems: n8n, ollama, nominatim (geocoder)
+│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor, self_care
+│   ├── mail/                  # mail ingestion: normalize -> triage -> surface as todos (incl. imap.py)
+│   ├── integrations/          # external systems: n8n, ollama, anthropic, nominatim, delivery (ntfy/Pushover/TTS)
+│   ├── coaching.py            # the coaching tick engine (fans over modules' evaluate())
+│   ├── encouragement.py       # rough-day tone shift + recovery plan
+│   ├── panic.py               # overwhelm triage: what's on fire + one first step
+│   ├── household.py           # shared co-parent sheet render + star/checkin/digest logic
+│   ├── assistant.py           # natural-language edits (validate -> preview -> confirm)
+│   ├── sensor.py              # LLM-as-sensor: free text -> pending proposals
 │   ├── briefing.py            # morning digest (build + optional Ollama prose)
 │   ├── commitments.py         # calendar sync + double-booking detection
-│   ├── scheduling.py          # free-window + todo time-fitting
+│   ├── scheduling.py          # free-window + todo time-fitting (windows, domains, guardrails)
 │   ├── todos.py               # open loops, augmentation, tiny-first-step decomposition
 │   ├── impact.py              # at-risk-commitment projection from the learned bias
 │   ├── departure.py           # travel-aware "when to leave" reminders
 │   └── geocode.py             # places -> cache -> opt-in Nominatim resolution
-├── docs/                      # schema.md + design specs (triage, coaching, impulsivity, multi-tenant)
+├── docs/                      # schema.md, whitepaper.md, household-sheet.md + design specs; brand/
 ├── deploy/                    # launchd plist, n8n workflows, iOS Shortcuts, Scriptable widget
 ├── tests/                     # pytest suite (memory, webhooks, modules, ...)
 ├── pyproject.toml             # build, dependencies, tooling config

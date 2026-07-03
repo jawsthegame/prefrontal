@@ -40,6 +40,24 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Parent pack / shared household sheet** ✅ — the co-parent surface shipped end
+  to end (`prefrontal/household.py`, `webhooks/routers/household.py`,
+  `memory/repos/household.py`; the `/kids` dashboard + `/family` glance;
+  `prefrontal household add|join|leave|show|invite|redeem|star|prompt-check|
+  checkin-check|digest-check|balance|shopping`). It carries: a real **household
+  scope** (`households` + `users.household_id`), **facts** & **agreements**,
+  **star charts** with goals + dual-parent congratulation and scheduled award
+  prompts, a shared **shopping list**, the objective **load-balance view**, the
+  daily **delta digest** (push what your co-parent changed), an optional weekly
+  **mental-load check-in**, **single-parent** support (load-balancing gated), and
+  **self-serve invites** (create/redeem/revoke). n8n workflows drive the sweeps
+  (`star-prompt-check`, `checkin-check`, `digest-check`). Full design:
+  [`docs/household-sheet.md`](docs/household-sheet.md).
+- **LLM-as-sensor — free text → candidate updates** ✅ — `prefrontal/sensor.py`
+  reads a plain note ("I always blow off admin on Mondays") and *proposes*
+  allowlisted `coaching_state`/episode candidates that land as **pending**
+  `proposals` rows; only a human accept applies them (`source=llm_inferred`).
+  `prefrontal note` / `prefrontal proposals list|accept|reject`.
 - **Work/life guardrails — per-account domains + time bands** ✅ — a todo now
   carries a life **domain** (`work`/`home`/…) that resolves to a time band and
   **outranks its category**, so a work email that triages as "communication" is
@@ -351,15 +369,16 @@ the first test. Code follow-ups below are optional polish.
   `parse_inbound_event()` but routes none of them to real handlers yet. The
   Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/routers/ingestion.py`.)*
-- **Module interventions** — all five modules now have `status="active"`
+- **Module interventions** — all six modules now have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
   Blindness** (departure timing + outcome capture), **Task Paralysis**
-  (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below), and
-  **Impulsivity** (`reflective_pause` + `capture_and_defer` active). The only
-  intervention still `planned` is Impulsivity's `switch_rate_feedback` (needs
-  captured switch events — see `docs/impulsivity.md`). Run `prefrontal modules
-  -v` for the live per-intervention status.
+  (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below),
+  **Impulsivity** (`reflective_pause` + `capture_and_defer` active), and
+  **Self-Care** (`meal_check` + `water_check` basic-needs nudges, opt-in). The
+  only intervention still `planned` is Impulsivity's `switch_rate_feedback`
+  (needs captured switch events — see `docs/impulsivity.md`). Run `prefrontal
+  modules -v` for the live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
@@ -613,7 +632,7 @@ ordered by leverage; each is independent but builds on denser capture.
   (3) registers a few **situation tools** that are thin compositions of existing
   primitives (todos, commitments, departure, panic, `decompose_task`, the
   NL-assistant `ALLOWED_OPS` whitelist, delivery), and (4) tailors surfaces like
-  the `family` view. Proactive cues route through the shipped `Module.evaluate`
+  the `/kids` household dashboard. Proactive cues route through the shipped `Module.evaluate`
   tick engine — a Pack lights up nudges by enabling modules that already evaluate,
   or by contributing its own cue source. **Example — Parent:** school-run
   departure (departure + a geocoded `place`), pack-the-bag checklist
@@ -622,13 +641,16 @@ ordered by leverage; each is independent but builds on denser capture.
   todo re-fit into the changed windows). Deliberately mostly declarative + a small
   tool registry, so a Pack is cheap to add and shareable ("install the Parent
   pack") — the same opt-in, modular ethos as challenge modules, on the orthogonal
-  context axis. *(Open: precedence when Packs overlap — two setting the same
-  category/window need merge rules; and the co-parent/household bits imply
-  **shared/household scope**, beyond today's per-user multi-tenancy.)*
+  context axis. *(Shipped so far: the **Parent-pack backbone** — a real household
+  scope, the shared co-parent sheet, star charts, shopping list, delta digest,
+  weekly check-in, self-serve invites, and the `/kids` surface. Still open: a
+  formal `Pack` registry/abstraction, and precedence when Packs overlap — two
+  setting the same category/window need merge rules.)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
-  The first concrete driver for **household scope** (the open question on Context
-  Packs above): today all data is strictly per-user (`store.scoped(user_id)`), but
-  co-parents need shared read/write. The data model comes straight from a real
+  ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
+  `memory/repos/household.py`; `prefrontal household …`) — kept here for the
+  design rationale. The first concrete driver for **household scope**: per-user
+  data is `store.scoped(user_id)`, but co-parents need shared read/write. The data model comes straight from a real
   co-parent tracker (the *Kids Info Tracker* template — its own tagline names the
   goal: *"everything you need to step in and help — any time, no asking
   required"*):
@@ -644,29 +666,28 @@ ordered by leverage; each is independent but builds on denser capture.
     shopping needs** (item · child · size/spec · where to buy · got-it) reuse
     child-tagged **todos** rather than a new list.
 
-  Render it into the existing **family view** as a single visible sheet (*kids'
-  facts · agreements · upcoming appts · recently changed*), reusing the
-  `profile`/`profile_cache` render pattern rather than building a new UI. Edit it
-  in plain English through the shipped **NL assistant** — extend `ALLOWED_OPS`
-  with `set_fact`/`set_agreement`; appointments reuse commitments + the `child`
-  `kind`. The point is **balancing invisible load**: provenance makes "who's
-  carrying the mental load" legible, and the coaching/briefing layer pushes the
-  deltas that matter to the *other* parent ("Sam's shoe size → 13; dentist Tue 3pm
-  — you're on pickup"), so it's a load-balancer, not a passive shared note. Ships
-  as the backbone of the **Parent** Context Pack. Full design:
-  [`docs/household-sheet.md`](docs/household-sheet.md). *(Design leanings: a real
-  `household` entity users belong to (cleaner than a shared pseudo-user);
-  last-write-wins + provenance over richer merge at this scale; v1 = the visible
-  shared sheet, v2 = the proactive delta-digest to the other parent. Open:
-  household membership/invite model.)*
+  It renders at the **`/kids` dashboard** (with a read-only partner glance at
+  `/family`) as a single visible sheet (*kids' facts · agreements · upcoming appts
+  · recently changed*). Edit it in plain English through the **NL assistant**
+  (`set_fact`/`set_agreement` in `ALLOWED_OPS`); appointments reuse commitments +
+  the `child` `kind`. The point is **balancing invisible load**: provenance makes
+  "who's carrying the mental load" legible, and the delta digest pushes the
+  changes that matter to the *other* parent ("Sam's shoe size → 13; dentist Tue 3pm
+  — you're on pickup"), so it's a load-balancer, not a passive shared note. It's
+  the backbone of the **Parent** Context Pack. Full design:
+  [`docs/household-sheet.md`](docs/household-sheet.md). *(Shipped: a real
+  `household` entity users belong to; last-write-wins + provenance; the visible
+  shared sheet **and** the proactive delta-digest, load-balance view, weekly
+  mental-load check-in, shopping list, and self-serve invites.)*
 
 - **"Have you eaten?" — a self-care nudge that pierces flow.** ✅ **(shipped — see
   "Recently shipped")** — the meal check is live as the `self_care` module: from a
   tunable start hour it re-asks *"have you eaten?"* even mid-focus, with one-tap
   **Ate** / **Snooze** on ntfy, capped once a day and gated on responsive hours.
-  Off unless the `self_care` coaching key is `on`. *(Still open: whether it becomes
-  a facet of a broader self-care/basics pack alongside water/meds/sleep, and
-  whether a confirmed meal logs an episode so the learning loop notices skip-days.)*
+  Off unless the `self_care` coaching key is `on`. **Water** shipped alongside meal
+  (`water_check`, to a daily target), confirm/snooze **log `self_care` episodes**,
+  and an adaptive-cadence learner tunes the interval. *(Still open: whether it
+  broadens into a self-care/basics pack alongside meds/sleep.)*
 - **Shopify MCP — record-shop assistant + used-collection buying.** Connect to
   (or self-host) a **Shopify MCP server** so Prefrontal can read the record shop's
   catalog, inventory, and sales, turning the assistant into a genuine shop
