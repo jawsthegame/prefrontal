@@ -7,6 +7,7 @@ dependencies live in :mod:`prefrontal.webhooks._common`.
 """
 from __future__ import annotations
 
+from prefrontal.log import configure_logging
 from prefrontal.webhooks._common import (
     APP_VERSION,
     INFER_TIMEOUT_SECONDS,
@@ -45,6 +46,7 @@ def create_app(
     Returns:
         A configured :class:`fastapi.FastAPI` instance.
     """
+    configure_logging()
     resolved_settings = settings or get_settings()
     n8n = N8nClient.from_settings(resolved_settings)
     # Client used to infer a window when a start states none. Built from settings

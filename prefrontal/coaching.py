@@ -27,7 +27,10 @@ from typing import Any, Protocol
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_ts
+from prefrontal.log import get_logger
 from prefrontal.scheduling import local_hour_of
+
+logger = get_logger(__name__)
 
 # --- Urgency ladder & channel floors -----------------------------------------
 
@@ -159,6 +162,11 @@ def collect_cues(store: Any, modules: list[ModuleLike], ctx: CoachContext) -> li
         try:
             cues.extend(module.evaluate(store, ctx))
         except Exception:  # noqa: BLE001 — isolate a bad evaluator, keep the tick alive
+            logger.warning(
+                "module %r evaluate() raised; skipping it this tick",
+                getattr(module, "key", "?"),
+                exc_info=True,
+            )
             continue
     return cues
 

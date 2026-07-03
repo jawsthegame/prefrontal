@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.clock import parse_ts_strict as _parse
@@ -133,7 +133,7 @@ def work_window_now(
     """
     try:
         zone = ZoneInfo(tz)
-    except Exception:
+    except (ZoneInfoNotFoundError, ValueError):
         zone = ZoneInfo("UTC")
     local = now.replace(tzinfo=timezone.utc).astimezone(zone)
     sh, sm = (int(x) for x in day_start.split(":"))
@@ -178,7 +178,7 @@ def local_datetime(now: datetime, tz: str) -> datetime:
     """A naive-UTC instant as a tz-aware local datetime (falls back to UTC)."""
     try:
         zone = ZoneInfo(tz)
-    except Exception:
+    except (ZoneInfoNotFoundError, ValueError):
         zone = ZoneInfo("UTC")
     return now.replace(tzinfo=timezone.utc).astimezone(zone)
 
