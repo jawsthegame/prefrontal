@@ -216,3 +216,16 @@ def test_profile_surfaces_task_type_bias(store):
     store.set_state(f"{TYPE_BIAS_PREFIX}departure", "1.2", source="inferred")
     out = build_profile(store, modules=[])
     assert "By task type: departure 1.2x, task 1.9x." in out
+
+
+def test_profile_surfaces_energy_and_category_bias(store):
+    from prefrontal.memory.patterns import CATEGORY_BIAS_PREFIX, ENERGY_BIAS_PREFIX
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_state("time_estimation_bias", "1.4", source="inferred")
+    store.set_state(f"{ENERGY_BIAS_PREFIX}high", "2.1", source="inferred")
+    store.set_state(f"{ENERGY_BIAS_PREFIX}low", "1.1", source="inferred")
+    store.set_state(f"{CATEGORY_BIAS_PREFIX}creative", "1.8", source="inferred")
+    out = build_profile(store, modules=[])
+    assert "By energy: high 2.1x, low 1.1x." in out
+    assert "By category: creative 1.8x." in out

@@ -26,6 +26,8 @@ class EpisodesRepo:
         outcome: str | None = None,
         notes: str | None = None,
         timestamp: str | None = None,
+        energy: str | None = None,
+        category: str | None = None,
     ) -> int:
         """Insert a raw outcome record and return its new id.
 
@@ -40,6 +42,9 @@ class EpisodesRepo:
             notes: Optional agent or user annotation.
             timestamp: Optional ISO timestamp; defaults to the DB's
                 ``CURRENT_TIMESTAMP`` when omitted.
+            energy: The task's energy load (``low``/``medium``/``high``) when
+                known, for context-conditioned bias (learning §5).
+            category: The task's category when known, likewise.
 
         Returns:
             The auto-incremented ``id`` of the inserted episode.
@@ -54,6 +59,8 @@ class EpisodesRepo:
             "context",
             "outcome",
             "notes",
+            "energy",
+            "category",
         ]
         values: list[Any] = [
             self._uid(),
@@ -65,6 +72,8 @@ class EpisodesRepo:
             context,
             outcome,
             notes,
+            energy,
+            category,
         ]
         if timestamp is not None:
             columns.append("timestamp")

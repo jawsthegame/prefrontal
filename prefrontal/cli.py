@@ -611,6 +611,12 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             if summary.type_bias:
                 types = ", ".join(f"{t}={v}" for t, v in sorted(summary.type_bias.items()))
                 print(f"[{label}] task-type bias -> {types}")
+            if summary.energy_bias:
+                energies = ", ".join(f"{e}={v}" for e, v in sorted(summary.energy_bias.items()))
+                print(f"[{label}] energy bias -> {energies}")
+            if summary.category_bias:
+                cats = ", ".join(f"{c}={v}" for c, v in sorted(summary.category_bias.items()))
+                print(f"[{label}] category bias -> {cats}")
             cal = summary.calibration
             if cal is not None and cal.status == "ok":
                 verdict = "helping" if cal.helps else "NOT helping — consider a reset"
@@ -1113,7 +1119,7 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
-    from prefrontal.memory.patterns import resolve_bias
+    from prefrontal.memory.patterns import task_bias_resolver
     from prefrontal.scheduling import local_datetime
 
     settings = get_settings()
@@ -1121,11 +1127,12 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
 
-        # "right now" → calibrate with this hour's band bias (§5), then the
-        # task-type bias, else global.
+        # "right now" → calibrate each todo with this hour's band, its energy /
+        # category, then the task-type bias, else global (§5).
         now_hour = local_datetime(utcnow(), settings.timezone).hour
-        bias = resolve_bias(store, local_hour=now_hour, episode_type="task")
-        fits = fit_todos(args.minutes, store.open_todos(), bias)
+        fits = fit_todos(
+            args.minutes, store.open_todos(), bias_fn=task_bias_resolver(store, local_hour=now_hour)
+        )
     print(f"With {args.minutes:g} minutes free, you could knock out:")
     if not fits:
         print("  (nothing with an estimate fits — add estimates with `todo add --minutes`)")

@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 
-from prefrontal.memory.patterns import resolve_bias
+from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.webhooks._common import (
     DEFAULT_BODY_DOUBLE_MIN_MISSES,
@@ -490,8 +490,11 @@ def build_router(
         """
         memory = ctx.store
         now_local = local_datetime(utcnow(), resolved_settings.timezone)
-        bias = resolve_bias(memory, local_hour=now_local.hour, episode_type="task")
-        fits = fit_todos(minutes, memory.open_todos(), bias)
+        fits = fit_todos(
+            minutes,
+            memory.open_todos(),
+            bias_fn=task_bias_resolver(memory, local_hour=now_local.hour),
+        )
         return {
             "available_minutes": minutes,
             "fits": [
@@ -561,10 +564,11 @@ def build_router(
         # Only todos whose window includes now (off-zone already excluded above).
         now_local = local_datetime(now, resolved_settings.timezone)
         open_todos = filter_suggestible(memory.open_todos(), now_local, window_config)
-        # Context-conditioned (§5): calibrate with *this hour's* learned bias, so a
-        # morning gap is sized by morning history — falls back to the global bias.
-        bias = resolve_bias(memory, local_hour=now_local.hour, episode_type="task")
-        fits = fit_todos(free, open_todos, bias)
+        # Context-conditioned (§5): calibrate each todo with *this hour's* band and
+        # its own energy/category, falling back through to the global bias.
+        fits = fit_todos(
+            free, open_todos, bias_fn=task_bias_resolver(memory, local_hour=now_local.hour)
+        )
         if not fits:
             result["reason"] = "nothing fits this window"
             return result

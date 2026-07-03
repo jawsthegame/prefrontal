@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
-from prefrontal.memory.patterns import resolve_bias
+from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
 from prefrontal.todos import avoided_todos
@@ -145,17 +145,16 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
             settings = get_settings()
             window_config = window_config_for(settings, store)
             windows = free_windows(today, band_start, band_end)
-            # Size each spare window with the bias for *its own* time of day (§5):
-            # the 9am gap uses the morning bias, the 4pm gap the afternoon one.
+            # Size each spare window by *its own* time of day and each candidate
+            # by its own energy/category (§5): the 9am gap uses the morning bias,
+            # a heavy todo there is padded by its energy bias, etc.
             for s in suggest_for_windows(
                 windows,
                 todos,
                 bias,
                 config=window_config,
                 tz=settings.timezone,
-                bias_fn=lambda hour: resolve_bias(
-                    store, local_hour=hour, episode_type="task"
-                ),
+                resolver_for_hour=lambda hour: task_bias_resolver(store, local_hour=hour),
             ):
                 pick = s["suggestion"]
                 spare.append(

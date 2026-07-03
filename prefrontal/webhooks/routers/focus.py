@@ -73,6 +73,7 @@ def build_router(
             payload.intended_task.strip(),
             planned_minutes=payload.planned_minutes,
             aligned=payload.aligned,
+            todo_id=payload.todo_id,
         )
         return FocusStarted(
             session_id=session_id,

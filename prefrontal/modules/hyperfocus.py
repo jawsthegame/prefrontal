@@ -169,6 +169,23 @@ def build_focus_message(
     return ""
 
 
+def _todo_tags(store: MemoryStore, closed: dict) -> tuple[str | None, str | None]:
+    """The ``(energy, category)`` of the todo a focus block was working, or ``(None, None)``.
+
+    A session started with a ``todo_id`` carries the task's energy load and
+    category onto its close episode, so the time-estimation bias can condition on
+    them (learning §5). A session with no link (free-text ``intended_task``) or a
+    since-deleted todo simply contributes untagged, exactly as before.
+    """
+    todo_id = closed.get("todo_id")
+    if not todo_id:
+        return (None, None)
+    todo = store.get_todo(todo_id)
+    if not todo:
+        return (None, None)
+    return (todo.get("energy"), todo.get("category"))
+
+
 def record_focus_end(
     store: MemoryStore,
     closed: dict,
@@ -204,6 +221,7 @@ def record_focus_end(
         notes_parts.append(f"rating: {outcome}")
     if breadcrumb:
         notes_parts.append(f"next: {breadcrumb}")
+    energy, category = _todo_tags(store, closed)
     episode_id = store.log_episode(
         "task",
         predicted_value=planned,
@@ -212,6 +230,8 @@ def record_focus_end(
         context=f"focus: {closed.get('intended_task')}",
         outcome=ep_outcome,
         notes="; ".join(notes_parts) or None,
+        energy=energy,
+        category=category,
     )
     return {"episode_id": episode_id, "outcome": ep_outcome}
 
@@ -230,6 +250,7 @@ def record_focus_abandoned(store: MemoryStore, closed: dict) -> dict:
     Returns:
         ``{"episode_id": int, "outcome": "miss"}``.
     """
+    energy, category = _todo_tags(store, closed)
     episode_id = store.log_episode(
         "task",
         predicted_value=closed.get("planned_minutes"),
@@ -237,6 +258,8 @@ def record_focus_abandoned(store: MemoryStore, closed: dict) -> dict:
         acknowledged=False,
         context=f"focus abandoned: {closed.get('intended_task')}",
         outcome="miss",
+        energy=energy,
+        category=category,
     )
     return {"episode_id": episode_id, "outcome": "miss"}
 
@@ -258,6 +281,7 @@ def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
         ``{"episode_id": int, "outcome": "partial"}``.
     """
     actual = closed.get("actual_minutes")
+    energy, category = _todo_tags(store, closed)
     episode_id = store.log_episode(
         "task",
         predicted_value=closed.get("planned_minutes"),
@@ -265,6 +289,8 @@ def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
         acknowledged=True,
         context=f"focus switched: {closed.get('intended_task')}",
         outcome="partial",
+        energy=energy,
+        category=category,
     )
     return {"episode_id": episode_id, "outcome": "partial"}
 

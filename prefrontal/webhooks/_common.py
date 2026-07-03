@@ -309,6 +309,13 @@ class FocusStart(BaseModel):
         default=True,
         description="Whether this is the thing you meant to be doing (the protect bit).",
     )
+    todo_id: int | None = Field(
+        default=None,
+        description=(
+            "Optional id of the todo this block is working. Its energy/category "
+            "tag the close episode so time-estimation bias can condition on them."
+        ),
+    )
 
 
 class FocusStarted(BaseModel):
