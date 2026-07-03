@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from prefrontal.selfupdate import run_restart, run_update
 from prefrontal.webhooks._common import (
     Annotated,
     Any,
@@ -136,5 +137,37 @@ def build_router(
             "household_id": household_id,
             "members": store.household_members(household_id),
         }
+
+    # -- remote update / restart (operator-only, opt-in) -----------------------
+
+    def _require_self_update() -> None:
+        """403 unless remote self-update is explicitly enabled (it runs code)."""
+        if not resolved_settings.self_update_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Remote update is off. Set PREFRONTAL_SELF_UPDATE=on to enable it.",
+            )
+
+    @router.post("/admin/update", tags=["admin"])
+    def admin_update(
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Pull the latest code, reinstall + migrate, then restart the service.
+
+        Operator-only and gated by ``PREFRONTAL_SELF_UPDATE`` — it runs whatever
+        is on the deployed branch. The update runs synchronously (its output is
+        returned); on success the restart is spawned detached so this response
+        flushes before the process is bounced. A failed update skips the restart.
+        """
+        _require_self_update()
+        return run_update(resolved_settings, restart=True)
+
+    @router.post("/admin/restart", tags=["admin"])
+    def admin_restart(
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Restart the service without updating (detached, so this response flushes)."""
+        _require_self_update()
+        return run_restart(resolved_settings)
 
     return router

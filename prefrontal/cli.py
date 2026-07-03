@@ -693,6 +693,40 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_update(args: argparse.Namespace) -> int:
+    """Pull the latest code, reinstall + migrate, then restart the service.
+
+    Runs on the host (the CLI process is separate from the service), so it is
+    always allowed — the ``PREFRONTAL_SELF_UPDATE`` gate only guards the HTTP
+    surface. Prints the update output; the restart is spawned detached.
+    """
+    from prefrontal.selfupdate import run_update
+
+    settings = get_settings()
+    report = run_update(settings, restart=not args.no_restart)
+    up = report["update"]
+    print(f"$ {' '.join(up['cmd'])}")
+    if up["output"]:
+        print(up["output"])
+    if not up["ok"]:
+        print(f"update failed (exit {up['code']}) — restart skipped.", file=sys.stderr)
+        return 1
+    if report["restarted"]:
+        print(f"restart triggered: {' '.join(report['restart']['cmd'])}")
+    else:
+        print("update complete (no restart requested).")
+    return 0
+
+
+def _cmd_restart(args: argparse.Namespace) -> int:
+    """Restart the service without updating (detached restart)."""
+    from prefrontal.selfupdate import run_restart
+
+    report = run_restart(get_settings())
+    print(f"restart triggered: {' '.join(report['restart']['cmd'])}")
+    return 0
+
+
 def _cmd_learn(args: argparse.Namespace) -> int:
     """Recompute derived patterns from accumulated episodes.
 
@@ -1597,6 +1631,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--reload", action="store_true", help="Auto-reload on code changes (development)."
     )
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_update = sub.add_parser(
+        "update", help="Pull the latest code, reinstall + migrate, then restart the service."
+    )
+    p_update.add_argument(
+        "--no-restart", action="store_true", help="Update only; don't restart the service."
+    )
+    p_update.set_defaults(func=_cmd_update)
+
+    p_restart = sub.add_parser("restart", help="Restart the service (no code update).")
+    p_restart.set_defaults(func=_cmd_restart)
 
     p_learn = sub.add_parser(
         "learn", help="Recompute derived patterns from accumulated episodes."

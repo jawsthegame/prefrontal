@@ -572,6 +572,7 @@ token client-side).
 | `POST /auth/logout` | Clear the browser session cookie |
 | `POST /admin/users` · `GET /admin/users` | Provision / list users (operator only) |
 | `POST /admin/users/{handle}/rotate` · `/disable` | Rotate token / disable user |
+| `POST /admin/update` · `/admin/restart` | Pull + reinstall + migrate + restart / restart only (operator; off until `PREFRONTAL_SELF_UPDATE=on`) |
 
 ### CLI (`prefrontal <command>`)
 
@@ -579,6 +580,8 @@ token client-side).
 |---|---|
 | `init-db` | Create the SQLite database (structure only; users seed on `user add`) |
 | `serve` | Run the API (uvicorn); `--host`, `--port` |
+| `update` | Pull latest code, reinstall + migrate, then restart; `--no-restart` |
+| `restart` | Restart the service (no code update) |
 | `user add\|list\|rotate\|disable` | Manage users & tokens |
 | `migrate-multi-tenant` | Upgrade a single-user DB in place |
 | `learn` | Recompute patterns from episodes; `--user`, `--all-users` |
@@ -620,3 +623,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `OAUTH_BASE_URL` | _(empty)_ | Public https origin for the OAuth redirect |
 | `SESSION_SECRET` | _(empty)_ | Signs the browser session cookie (`openssl rand -hex 32`) |
 | `GOOGLE_OAUTH_ALLOWED` | _(empty)_ | `email=handle,…` allowlist of who may sign in |
+| `PREFRONTAL_SELF_UPDATE` | `off` | Enable `POST /admin/update` · `/admin/restart` (operator-only; runs deployed code) |
+| `PREFRONTAL_REPO_DIR` | _(repo root)_ | Where the update runs `git` |
+| `PREFRONTAL_UPDATE_CMD` | `bash deploy/update.sh` | Override the update command |
+| `PREFRONTAL_RESTART_CMD` | `launchctl kickstart -k gui/<uid>/com.morningstatic.prefrontal` | Override the restart command (systemd/docker/etc.) |

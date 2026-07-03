@@ -175,6 +175,14 @@ class Settings:
     oauth_base_url: str = ""        # public https origin, e.g. https://agent-1.tail8b0a.ts.net
     session_secret: str = ""        # HMAC key signing the browser session cookie
     google_oauth_allowed: str = ""  # "email=handle,email2=handle2" allowlist
+    # Remote self-update: pull the latest code + restart the service from an
+    # operator HTTP call (POST /admin/update) or the CLI (`prefrontal update`).
+    # Powerful (it runs whatever is on the branch), so the HTTP surface is OFF
+    # until self_update_enabled is set; the CLI runs on-host and is always allowed.
+    self_update_enabled: bool = False  # gate POST /admin/update|restart
+    self_update_repo_dir: str = ""     # where to run git (default: the repo root)
+    update_cmd: str = ""               # override update cmd (default: bash deploy/update.sh)
+    restart_cmd: str = ""              # override restart cmd (default: launchd kickstart)
 
     @property
     def google_oauth_enabled(self) -> bool:
@@ -364,6 +372,11 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),
         session_secret=os.environ.get("SESSION_SECRET", ""),
         google_oauth_allowed=os.environ.get("GOOGLE_OAUTH_ALLOWED", ""),
+        self_update_enabled=os.environ.get("PREFRONTAL_SELF_UPDATE", "").strip().lower()
+        in ("1", "true", "yes", "on"),
+        self_update_repo_dir=os.environ.get("PREFRONTAL_REPO_DIR", "").strip(),
+        update_cmd=os.environ.get("PREFRONTAL_UPDATE_CMD", "").strip(),
+        restart_cmd=os.environ.get("PREFRONTAL_RESTART_CMD", "").strip(),
     )
 
 
