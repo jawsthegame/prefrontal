@@ -7,18 +7,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from prefrontal.clock import TS_FMT
+from prefrontal.departure import departure_kwargs, evaluate_departure_check
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 from prefrontal.webhooks._common import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
     DEFAULT_DEPARTURE_GRACE_MINUTES,
-    DEFAULT_HEADS_UP_MINUTES,
     DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
-    DEFAULT_PREP_MINUTES,
-    DEFAULT_ROAD_FACTOR,
-    DEFAULT_SOON_MINUTES,
-    DEFAULT_TRAVEL_SPEED_KMH,
-    DEFAULT_WORK_LEAD_MINUTES,
     KINDS,
     Annotated,
     Any,
@@ -37,7 +32,6 @@ from prefrontal.webhooks._common import (
     _parse_dt_or_none,
     attribute_departure,
     build_briefing,
-    build_departure_message,
     build_panic,
     classify_kind,
     conflict_dismissal_key,
@@ -45,7 +39,6 @@ from prefrontal.webhooks._common import (
     find_conflicts,
     in_quiet_hours,
     module_enabled,
-    next_departure,
     normalize_event,
     normalize_query,
     overwhelm_level,
@@ -65,55 +58,6 @@ from prefrontal.webhooks._common import (
     utcnow,
 )
 from prefrontal.webhooks.services import RouterServices
-
-
-def _attend_slugs(memory) -> tuple[str, ...]:
-    """Calendar feed slugs that default to attend mode (from ``attend_calendars``).
-
-    A comma-separated coaching-state string (default ``"work"``) → a lowercased
-    tuple. Falls back to :data:`DEFAULT_ATTEND_SLUGS` when unset or empty.
-    """
-    from prefrontal.departure import DEFAULT_ATTEND_SLUGS
-
-    raw = memory.get_state("attend_calendars", "work") or ""
-    slugs = tuple(s.strip().lower() for s in raw.split(",") if s.strip())
-    return slugs or DEFAULT_ATTEND_SLUGS
-
-
-def _office_day_on(memory) -> bool:
-    """Whether an in-office day is currently flagged (``office_day_until`` in the future).
-
-    The ``/webhooks/departure/office-day`` toggle stores a self-expiring UTC
-    timestamp; while it's in the future, work commitments use the travel-aware
-    "leave now" path instead of the attend-from-here reminder.
-    """
-    until = memory.get_state("office_day_until", "") or ""
-    parsed = _parse_dt_or_none(until)
-    return parsed is not None and parsed > utcnow()
-
-
-def _departure_kwargs(memory) -> dict[str, Any]:
-    """Shared :func:`plan_departure` tuning read from coaching state.
-
-    Both the ``/departure/check`` (prediction) and ``/departure/left`` (outcome)
-    surfaces plan departures the same way; this keeps their parameters in lockstep
-    so a commitment is scored against the same leave-by it was nudged for.
-    """
-    return {
-        "bias": memory.get_float("time_estimation_bias", 1.0),
-        "speed_kmh": memory.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
-        "road_factor": memory.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
-        "prep_minutes": memory.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
-        "heads_up_minutes": memory.get_float(
-            "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
-        ),
-        "soon_minutes": memory.get_float("departure_soon_minutes", DEFAULT_SOON_MINUTES),
-        "work_lead_minutes": memory.get_float(
-            "work_departure_lead_minutes", DEFAULT_WORK_LEAD_MINUTES
-        ),
-        "attend_slugs": _attend_slugs(memory),
-        "office_day": _office_day_on(memory),
-    }
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -208,74 +152,34 @@ def build_router(services: RouterServices) -> APIRouter:
         if not isinstance(body, dict):
             body = {}
 
-        cur_lat = body.get("current_lat")
-        cur_lon = body.get("current_lon")
-        if cur_lat is None or cur_lon is None:
-            last = memory.get_location()
-            if last is not None:
-                cur_lat, cur_lon = last["lat"], last["lon"]
-
         name = ctx.user.get("display_name") or ""
         handle = ctx.user.get("handle") or ""
         settings: Settings = request.app.state.settings
-        # Commitments the user waved off from a notification tap don't get a
-        # departure nudge; excluding them here (rather than after picking the
-        # top) lets the *next* commitment still surface.
-        dismissed = memory.dismissed_departures()
-        dep_kwargs = _departure_kwargs(memory)
-        plans = [
-            plan_departure(
-                c,
-                current_lat=cur_lat,
-                current_lon=cur_lon,
-                **dep_kwargs,
-            )
-            for c in memory.upcoming_commitments()
-            if c["id"] not in dismissed
-        ]
-        top = next_departure(plans)
 
-        fire, message, reminder = False, "", None
-        if top is not None:
+        # The decision (plan → pick → fire/debounce → record) lives in the domain
+        # layer so it's unit-testable and a CLI twin can share it; the router adds
+        # the HTTP-only one-tap decoration below.
+        result = evaluate_departure_check(
+            memory,
+            name=name,
+            current_lat=body.get("current_lat"),
+            current_lon=body.get("current_lon"),
+        )
+        reminder = result.reminder
+        if reminder is not None:
+            cid = reminder["commitment_id"]
             reminder = {
-                "commitment_id": top.commitment["id"],
-                "title": top.commitment["title"],
-                "location": top.commitment.get("location"),
-                "start_at": top.commitment["start_at"],
-                "leave_by": top.leave_by,
-                "minutes_until_leave": top.minutes_until_leave,
-                "travel_minutes": top.travel_minutes,
-                "basis": top.basis,
-                "level": top.level,
-                "mode": top.mode,
+                **reminder,
                 # One-tap link that dismisses this commitment's departure nudges.
-                "dismiss_url": _dismiss_url(
-                    settings, handle, "departure", top.commitment["id"]
-                ),
+                "dismiss_url": _dismiss_url(settings, handle, "departure", cid),
                 # One-tap ntfy buttons: Made it / Missed it (empty if unconfigured).
-                "actions": _nudge_actions(
-                    settings, handle, "departure", top.commitment["id"]
-                ),
+                "actions": _nudge_actions(settings, handle, "departure", cid),
             }
-            signature = f"{top.commitment['id']}:{top.level}"
-            fire = signature != memory.get_state("last_departure_signature", "")
-            if fire:
-                memory.set_state("last_departure_signature", signature, source="inferred")
-                message = build_departure_message(top, name=name)
-                # Expire the nudge at the meeting's start: "leave now" is moot
-                # once it has begun, so the widget won't show it for hours after.
-                memory.record_nudge(
-                    kind="departure",
-                    message=message,
-                    level=top.level,
-                    expires_at=top.commitment["start_at"],
-                )
-
         return {
-            "fire": fire,
-            "message": message,
+            "fire": result.fire,
+            "message": result.message,
             "reminder": reminder,
-            "location_known": cur_lat is not None and cur_lon is not None,
+            "location_known": result.location_known,
         }
 
     @router.post("/webhooks/departure/office-day", tags=["schedule"])
@@ -368,7 +272,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 current_lat=cur_lat,
                 current_lon=cur_lon,
                 now=departed_at,
-                **_departure_kwargs(memory),
+                **departure_kwargs(memory),
             )
             for c in memory.upcoming_commitments()
         ]

@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, parse_ts
 from prefrontal.clock import parse_ts_strict as _parse
 from prefrontal.impact import utcnow
 from prefrontal.modules.location_anchor import haversine_m
@@ -512,3 +512,147 @@ def record_departure_outcome(
         "lateness_minutes": lateness,
         "commitment_id": plan.commitment.get("id"),
     }
+
+
+# --- Orchestration: the departure-check decision (web + CLI share this) ------
+#
+# ``plan_departure``/``next_departure`` above are pure. This is the *decision*
+# the ``/webhooks/departure/check`` endpoint used to inline: read the tuning and
+# current location from the store, plan every upcoming commitment, pick the most
+# urgent, and — debounced by a ``(commitment, level)`` signature so a standing
+# reminder doesn't re-alert every poll — decide whether to fire and record the
+# nudge. Extracted here (like household.run_chores_check) so it is unit-testable
+# and a CLI twin can share one path; the router only body-parses and decorates
+# the reminder with its one-tap HTTP links.
+
+
+def _attend_slugs(store: MemoryStore) -> tuple[str, ...]:
+    """Calendar feed slugs that default to attend mode (from ``attend_calendars``).
+
+    A comma-separated coaching-state string (default ``"work"``) → a lowercased
+    tuple. Falls back to :data:`DEFAULT_ATTEND_SLUGS` when unset or empty.
+    """
+    raw = store.get_state("attend_calendars", "work") or ""
+    slugs = tuple(s.strip().lower() for s in raw.split(",") if s.strip())
+    return slugs or DEFAULT_ATTEND_SLUGS
+
+
+def _office_day_on(store: MemoryStore) -> bool:
+    """Whether an in-office day is currently flagged (``office_day_until`` future).
+
+    The ``/webhooks/departure/office-day`` toggle stores a self-expiring UTC
+    timestamp; while it's in the future, work commitments use the travel-aware
+    "leave now" path instead of the attend-from-here reminder.
+    """
+    parsed = parse_ts(store.get_state("office_day_until", "") or "")
+    return parsed is not None and parsed > utcnow()
+
+
+def departure_kwargs(store: MemoryStore) -> dict[str, Any]:
+    """Shared :func:`plan_departure` tuning read from coaching state.
+
+    Both the prediction (``/departure/check``) and the outcome
+    (``/departure/left``) surfaces plan departures the same way, so a commitment
+    is scored against the same leave-by it was nudged for.
+    """
+    return {
+        "bias": store.get_float("time_estimation_bias", 1.0),
+        "speed_kmh": store.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
+        "road_factor": store.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
+        "prep_minutes": store.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+        "heads_up_minutes": store.get_float(
+            "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
+        ),
+        "soon_minutes": store.get_float("departure_soon_minutes", DEFAULT_SOON_MINUTES),
+        "work_lead_minutes": store.get_float(
+            "work_departure_lead_minutes", DEFAULT_WORK_LEAD_MINUTES
+        ),
+        "attend_slugs": _attend_slugs(store),
+        "office_day": _office_day_on(store),
+    }
+
+
+#: Coaching-state cursor holding the last ``(commitment, level)`` a departure
+#: nudge fired for, so a standing reminder debounces to once per level change.
+LAST_DEPARTURE_SIGNATURE_KEY = "last_departure_signature"
+
+
+@dataclass(frozen=True)
+class DepartureCheck:
+    """The departure-check decision (the HTTP response's model-free core).
+
+    Attributes:
+        fire: Whether a nudge should be delivered now (new ``(commitment, level)``
+            since the last poll).
+        message: The nudge text when ``fire`` (empty otherwise).
+        reminder: The most-urgent reminder-worthy commitment's fields, or ``None``
+            when nothing is due. HTTP-only decoration (dismiss link, action
+            buttons) is added by the router, not here.
+        location_known: Whether current coordinates were available.
+    """
+
+    fire: bool
+    message: str
+    reminder: dict[str, Any] | None
+    location_known: bool
+
+
+def evaluate_departure_check(
+    store: MemoryStore,
+    *,
+    name: str = "",
+    current_lat: float | None = None,
+    current_lon: float | None = None,
+) -> DepartureCheck:
+    """Decide whether to nudge a departure right now, and record it if so.
+
+    Reads current location from the store when coordinates aren't supplied, plans
+    every upcoming (non-dismissed) commitment, picks the most urgent, and fires —
+    debounced by a ``(commitment, level)`` signature — recording the nudge with an
+    expiry at the commitment's start. Pure of HTTP concerns: the caller owns body
+    parsing and any one-tap link decoration.
+    """
+    if current_lat is None or current_lon is None:
+        last = store.get_location()
+        if last is not None:
+            current_lat, current_lon = last["lat"], last["lon"]
+
+    dismissed = store.dismissed_departures()
+    kwargs = departure_kwargs(store)
+    plans = [
+        plan_departure(c, current_lat=current_lat, current_lon=current_lon, **kwargs)
+        for c in store.upcoming_commitments()
+        if c["id"] not in dismissed
+    ]
+    top = next_departure(plans)
+    location_known = current_lat is not None and current_lon is not None
+    if top is None:
+        return DepartureCheck(False, "", None, location_known)
+
+    reminder = {
+        "commitment_id": top.commitment["id"],
+        "title": top.commitment["title"],
+        "location": top.commitment.get("location"),
+        "start_at": top.commitment["start_at"],
+        "leave_by": top.leave_by,
+        "minutes_until_leave": top.minutes_until_leave,
+        "travel_minutes": top.travel_minutes,
+        "basis": top.basis,
+        "level": top.level,
+        "mode": top.mode,
+    }
+    signature = f"{top.commitment['id']}:{top.level}"
+    fire = signature != store.get_state(LAST_DEPARTURE_SIGNATURE_KEY, "")
+    message = ""
+    if fire:
+        store.set_state(LAST_DEPARTURE_SIGNATURE_KEY, signature, source="inferred")
+        message = build_departure_message(top, name=name)
+        # Expire the nudge at the meeting's start: "leave now" is moot once it has
+        # begun, so the widget won't show it for hours after.
+        store.record_nudge(
+            kind="departure",
+            message=message,
+            level=top.level,
+            expires_at=top.commitment["start_at"],
+        )
+    return DepartureCheck(fire, message, reminder, location_known)

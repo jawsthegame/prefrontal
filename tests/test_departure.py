@@ -22,6 +22,7 @@ from prefrontal.departure import (
     departure_level,
     departure_mode,
     estimate_travel_minutes,
+    evaluate_departure_check,
     next_departure,
     plan_departure,
     record_departure_outcome,
@@ -348,6 +349,40 @@ def test_departure_check_fires_once_per_level(client, store):
     again = client.post("/webhooks/departure/check", json={}, headers=_auth()).json()
     assert again["fire"] is False  # same (commitment, level) -> deduped
     assert again["reminder"]["level"] == "soon"
+
+
+def test_evaluate_departure_check_is_usable_without_http(store):
+    """The decision runs on a store directly — no request, no router (§10)."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        location="123 Main St", source="manual",
+    )
+
+    first = evaluate_departure_check(store, name="Sam")
+    assert first.fire is True
+    assert first.reminder is not None
+    assert first.reminder["level"] == "soon"
+    assert first.location_known is True
+    assert "Sam" in first.message
+    # The router-only decoration is NOT added by the domain function.
+    assert "dismiss_url" not in first.reminder
+
+    # Same (commitment, level) on the next tick → deduped, no re-fire.
+    again = evaluate_departure_check(store, name="Sam")
+    assert again.fire is False
+    assert again.reminder["level"] == "soon"
+
+
+def test_evaluate_departure_check_falls_back_to_stored_location(store):
+    """With no coords passed, it reads the last-known location from the store."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0, source="manual",
+    )
+    result = evaluate_departure_check(store)  # no current_lat/lon supplied
+    assert result.location_known is True
+    assert result.reminder is not None
 
 
 def test_departure_check_records_nudge_and_lists_it(client, store):
