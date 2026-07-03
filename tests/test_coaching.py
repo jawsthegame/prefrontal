@@ -239,7 +239,7 @@ def test_loop_acknowledged_channel_does_not_bump():
         assert choose_channel(store, _cue("nudge"), _ctx()) == "push"  # no bump
 
 
-def test_collect_cues_isolates_a_broken_module():
+def test_collect_cues_isolates_a_broken_module(caplog):
     class Boom:
         key = "boom"
 
@@ -252,8 +252,10 @@ def test_collect_cues_isolates_a_broken_module():
         def evaluate(self, store, ctx):
             return [_cue()]
 
-    cues = collect_cues(_FakeStore(), [Boom(), Ok()], _ctx())
+    with caplog.at_level("WARNING"):
+        cues = collect_cues(_FakeStore(), [Boom(), Ok()], _ctx())
     assert len(cues) == 1  # the good module still contributes
+    assert "boom" in caplog.text  # the swallowed failure is logged, not vanished (§8)
 
 
 # -- Task Paralysis evaluator (the first real cue source) --------------------

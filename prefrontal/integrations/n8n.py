@@ -25,6 +25,9 @@ from typing import Any
 import httpx
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.log import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,7 @@ class N8nClient:
                 self.webhook_url, json=body, headers=headers, timeout=self.timeout
             )
         except httpx.HTTPError as exc:  # network down, DNS, timeout, ...
+            logger.warning("n8n request failed: %s", exc)
             return N8nResult(delivered=False, detail=f"n8n request failed: {exc}")
         return N8nResult(
             delivered=resp.is_success,

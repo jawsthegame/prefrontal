@@ -45,11 +45,14 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.log import get_logger
 from prefrontal.webhooks.notify import nudge_actions
 
 if TYPE_CHECKING:  # only a type annotation — importing it at runtime cycles via
     # coaching → scheduling → todos → integrations (this package).
     from prefrontal.coaching import Decision
+
+logger = get_logger(__name__)
 
 #: Notification title every channel shares, so pushes read as one assistant.
 _TITLE = "Prefrontal"
@@ -201,6 +204,7 @@ class NtfyClient:
             ) as client:
                 resp = client.post("/", json=body, headers=headers)
         except httpx.HTTPError as exc:  # network down, DNS, timeout, …
+            logger.warning("ntfy delivery failed: %s", exc)
             return DeliveryResult(transport="ntfy", detail=f"ntfy request failed: {exc}")
         return DeliveryResult(
             transport="ntfy",
@@ -257,6 +261,7 @@ class PushoverClient:
             with httpx.Client(timeout=self.timeout, transport=self._transport) as client:
                 resp = client.post(self.API_URL, data=data)
         except httpx.HTTPError as exc:
+            logger.warning("pushover delivery failed: %s", exc)
             return DeliveryResult(transport="pushover", detail=f"pushover request failed: {exc}")
         return DeliveryResult(
             transport="pushover",
@@ -289,6 +294,7 @@ class TTSClient:
         try:
             subprocess.run([*self.command, message], check=True, timeout=60)
         except (subprocess.SubprocessError, OSError) as exc:
+            logger.warning("tts delivery failed: %s", exc)
             return DeliveryResult(channel="voice", transport="tts", detail=f"tts failed: {exc}")
         return DeliveryResult(
             channel="voice", transport="tts", delivered=True, detail="spoken locally"

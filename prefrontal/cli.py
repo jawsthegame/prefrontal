@@ -56,6 +56,7 @@ from prefrontal.encouragement import (
 )
 from prefrontal.household import build_sheet, render_sheet
 from prefrontal.impact import utcnow
+from prefrontal.log import configure_logging
 from prefrontal.mail.imap import DEFAULT_UNSEEN_WINDOW_DAYS
 from prefrontal.memory.db import init_db
 from prefrontal.memory.migrate import migrate_to_multi_tenant
@@ -2015,6 +2016,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Process exit code.
     """
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
