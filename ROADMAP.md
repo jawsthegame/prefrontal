@@ -612,12 +612,15 @@ ordered by leverage; each is independent but builds on denser capture.
 - **Encouragement & recovery layer** ✅ **(shipped — see "Recently shipped")** —
   the deterministic detector + recovery plan + `GET /encouragement` are live
   (`prefrontal/encouragement.py`, spec `docs/encouragement.md`), opt-in and
-  tone-calibrated, alongside **panic mode** for the acute-overwhelm case. Two
-  small follow-ons remain: the **morning-briefing tone variant** (spec §6.2 —
-  when the day already looks rough at wake-up, swap the briefing's closing bias
-  nag for the encouragement acknowledgement) and, once the assessment is trusted,
-  wrapping `assess_day` as a **coaching-agent cue producer** so its delivery
-  routes through the shared engine (coaching-agent spec §9 — one `assess_day`).
+  tone-calibrated, alongside **panic mode** for the acute-overwhelm case. The
+  **morning-briefing tone variant** (spec §6.2) is now shipped too
+  (`encouragement.briefing_note`, woven into `briefing.py`): the brief closes with
+  a day-shaped line — reassurance on a packed/rough or recently-rough stretch, and
+  a relax-vs-accomplish choice on a wide-open day (`open_day_choice`,
+  `POST /briefing/open-day`, `prefrontal open-day`) — in place of the usual bias
+  nag. One follow-on remains: once the assessment is trusted, wrapping `assess_day`
+  as a **coaching-agent cue producer** so its delivery routes through the shared
+  engine (coaching-agent spec §9 — one `assess_day`).
 - **Native Lock Screen Live Activity (live outing timer)** — the shipped
   Scriptable widget renders the Lock Screen accessory slots but refreshes only on
   iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale

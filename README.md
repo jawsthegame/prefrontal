@@ -25,7 +25,7 @@ Knows where you need to be and when, factors in real-time traffic, and escalates
 Aggregates personal email accounts into a normalized stream, triages by urgency, and surfaces what needs action — without you having to open every inbox.
 
 **Morning briefing**
-A daily digest calibrated to your preferences: what needs attention today, what went cold this week, what's on the calendar.
+A daily digest calibrated to your preferences: what needs attention today, what went cold this week, what's on the calendar. When the encouragement layer is on, it closes with a sentence or two tuned to the shape of the day — steady reassurance on a packed or recently-rough stretch ("you've got this; space things out"), and on a wide-open day a relax-vs-accomplish choice that shapes the plan around your answer.
 
 **Panic mode**
 For the moments you're too overwhelmed to think. On demand, it cuts through everything and answers three questions: what's *actually* on fire right now (calendar, todos, and mail ranked into "already behind" / "bearing down soon" / "piling up", each tagged work vs. home), what you can safely ignore, and — the important part — one concrete, tiny first step to break the freeze. Not the whole plan. Just where to put your hands in the next five minutes.
@@ -103,10 +103,10 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
-| Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); `prefrontal briefing` |
+| Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); closes with a day-shaped encouragement line when the layer's on (packed/rough reassurance, open-day relax-vs-accomplish choice); `prefrontal briefing` |
 | Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one-tap Shortcut) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
 | Coaching agent | `prefrontal/coaching.py` | ✅ Tick engine — fans over every module's `evaluate()`, picks channel (urgency floor → learned bump), suppresses on quiet hours + debounce; `prefrontal coach`, `POST /webhooks/coach/check` |
-| Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. `prefrontal encourage`, `GET /encouragement` |
+| Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. Also woven into the morning brief as a day-shaped closing line (`briefing_note`). `prefrontal encourage` / `open-day`, `GET /encouragement`, `POST /briefing/open-day` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
