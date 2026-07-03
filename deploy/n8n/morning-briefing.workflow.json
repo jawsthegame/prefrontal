@@ -13,15 +13,12 @@
     },
     {
       "parameters": {
-        "url": "http://127.0.0.1:8000/briefing",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/briefing",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "get-briefing",
       "name": "GET /briefing",
       "type": "n8n-nodes-base.httpRequest",
@@ -31,10 +28,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }},\n  \"priority\": 3\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }},\n  \"priority\": 3\n}",
         "options": {}
       },
       "id": "publish-ntfy",
