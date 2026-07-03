@@ -651,6 +651,12 @@ class BalanceConfig(BaseModel):
     )
 
 
+class InviteRedeem(BaseModel):
+    """Body of ``POST /household/invites/redeem`` — join a household with a code."""
+
+    code: str = Field(description="The invite code shared by a co-parent, e.g. 'PLUM-7F2Q'.")
+
+
 class ShoppingAdd(BaseModel):
     """Body of ``POST /household/shopping`` — add a thing to buy."""
 
@@ -1101,6 +1107,7 @@ __all__ = [
     "Header",
     "HouseholdCreate",
     "HouseholdMember",
+    "InviteRedeem",
     "KIDS_HTML",
     "INFER_TIMEOUT_SECONDS",
     "ImpulseCaptured",

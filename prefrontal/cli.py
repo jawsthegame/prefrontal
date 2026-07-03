@@ -238,6 +238,21 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _balance_cli(store, args, settings)
         elif args.household_action == "shopping":
             return _shopping_cli(store, args)
+        elif args.household_action == "invite":
+            scoped = _resolve_user_store(store, args.user)
+            if scoped.household_id_or_none() is None:
+                print("That user isn't in a household.", file=sys.stderr)
+                return 1
+            inv = scoped.create_invite()
+            print(f"Invite code: {inv['code']}  (expires {inv['expires_at']} UTC)")
+            print("Share it, or send: <base-url>/kids?invite=" + inv["code"])
+        elif args.household_action == "redeem":
+            scoped = _resolve_user_store(store, args.user)
+            result = scoped.redeem_invite(args.code)
+            if not result["ok"]:
+                print(result["error"], file=sys.stderr)
+                return 1
+            print(f"Joined household: {result.get('household_name')}")
     return 0
 
 
@@ -1365,6 +1380,13 @@ def build_parser() -> argparse.ArgumentParser:
     h_shop.add_argument("--child", type=int, default=None, help="A children.id (with --add).")
     h_shop.add_argument("--got", type=int, default=None, help="Check off item by id.")
     h_shop.add_argument("--remove", type=int, default=None, help="Remove item by id.")
+    h_inv = house_sub.add_parser(
+        "invite", help="Generate a shareable invite code for your household."
+    )
+    h_inv.add_argument("--user", default=None, help="Handle of a household member.")
+    h_red = house_sub.add_parser("redeem", help="Join a household with an invite code.")
+    h_red.add_argument("code", help="The invite code shared by a co-parent.")
+    h_red.add_argument("--user", default=None, help="Handle of the joining user.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

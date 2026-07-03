@@ -49,7 +49,8 @@ multi-tenancy ([`multi-tenant.md`](multi-tenant.md)), the NL assistant
   family view.
 - No real-time collaboration / operational-transform merge. Household data is
   low-volume and human-paced; **last-write-wins + provenance** is enough.
-- No self-serve invite flow. Household membership is operator-set in v1 (§8).
+- ~~No self-serve invite flow.~~ **Shipped** — a member invites a co-parent with a
+  shareable code/link; the operator path also remains (§8).
 - No per-parent-private fields. Everything in a household is visible to both
   members (that's the point).
 - The proactive **delta digest** to the other parent is **v2** (§7); v1 ships the
@@ -473,15 +474,30 @@ mechanism.
 
 ---
 
-## 8. Household membership (v1: operator-set)
+## 8. Household membership
 
-- `create_household(name) -> id` and `set_user_household(handle, household_id)` on
-  the unscoped (operator) store; surfaced via the `prefrontal` CLI
-  (`prefrontal household add`, `prefrontal household join <handle>`) and an
-  operator endpoint, mirroring `provision_user` / `POST /admin/users`.
-- v1 assumes an operator (one of the parents, or the deployer) wires the two
-  users into one household once. A self-serve invite/accept flow is **open**
-  (§10).
+**Operator path (still supported).** `create_household(name) -> id` and
+`set_user_household(handle, household_id)` on the unscoped (operator) store;
+surfaced via `prefrontal household add` / `join` and the `POST /admin/households`
+endpoints, mirroring `provision_user` / `POST /admin/users`.
+
+**Self-serve path (shipped).** An authenticated user needs no operator to set up:
+
+- `POST /household/create` (`create_own_household`) makes a household and joins
+  the caller — for a user in no household yet (409 if they're already in one).
+- `POST /household/invites` (`create_invite`) mints a short, unambiguous,
+  expiring code (`household_invites`), rendered on `/kids` as both a code and a
+  `…/kids?invite=CODE` link to text the co-parent. `pending_invites` /
+  `revoke_invite` manage outstanding ones.
+- `POST /household/invites/redeem` (`redeem_invite`) joins the caller to the
+  invite's household — one-time, with friendly errors (invalid / used / expired /
+  already in a household). CLI parity: `prefrontal household invite` / `redeem`.
+- Account provisioning stays operator-controlled (you need a user to log in at
+  all); the invite flow is about *household* setup, not account creation.
+
+This combines with the single-parent support (§2): a solo parent self-creates a
+household and everything works; when they later invite a co-parent, the
+load-balancing features light up on their own.
 
 ---
 
@@ -489,7 +505,7 @@ mechanism.
 
 | Area | Change |
 |---|---|
-| `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`/`digest_enabled`/`balance_enabled`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`, `household_shopping`; `users.household_id`. |
+| `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`/`digest_enabled`/`balance_enabled`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`, `household_shopping`, `household_invites`; `users.household_id`. |
 | `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
 | `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, the digest toggle, and the balance view (`get`/`set_balance_enabled`, `contribution_counts`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
@@ -498,7 +514,7 @@ mechanism.
 | `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` + `digest` nudge kinds and their actions (`star_award`/`star_skip`, `load_*`, `digest_seen`); handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
 | `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin` + `digest`, marks seen); star endpoints; `POST /household/{checkin,digest}` + `POST /webhooks/household/{checkin,digest}/check`; the `/kids` star-chart + check-in + digest UI; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check/digest-check/balance/shopping`. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check/digest-check/balance/shopping/invite/redeem`. |
 | `deploy/n8n/*.workflow.json` | Scheduled triggers for the award prompts, the weekly check-in, and the daily digest. |
 | `docs/schema.md` | Document the five new tables + the added column. |
 
@@ -506,8 +522,9 @@ mechanism.
 
 ## 10. Open questions
 
-- **Membership model.** Operator-set (v1) vs. a self-serve invite/accept flow.
-  Can a user belong to more than one household (v1: no)? What happens to a
+- **Membership model.** ~~Operator-set vs. self-serve.~~ **Resolved** — both ship
+  (§8): operator wiring *and* self-serve create + invite-code redeem.
+  Still open: can a user belong to more than one household (v1: no)? What happens to a
   household's rows when a member leaves?
 - **Children identity.** A `children` roster (this spec) vs. a free-text child
   label on facts. The roster is cleaner for appointments and per-child agreements

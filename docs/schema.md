@@ -224,8 +224,10 @@ so a NULL would let duplicate household-wide rows through. A real child is a
 positive `children.id`.
 
 - **`households`** — the household entity (`id`, `name`, `created_at`). Membership
-  is operator-set in v1 (`create_household` / `set_user_household`, surfaced via
-  `prefrontal household add/join` and `POST /admin/households`). Also holds the
+  is either operator-set (`create_household` / `set_user_household`, via
+  `prefrontal household add/join` and `POST /admin/households`) **or self-serve**:
+  a user creates their own (`POST /household/create`) and invites a co-parent with
+  a code (see `household_invites`). Also holds the
   opt-in weekly **mental-load check-in** schedule — `checkin_enabled`,
   `checkin_day` (0=Mon…6=Sun), `checkin_time` (`"HH:MM"`), and `checkin_last_sent_at`
   (weekly dedup by ISO week) — and the opt-in daily **delta digest** toggle
@@ -280,6 +282,11 @@ positive `children.id`.
   adds and checks off; it rides the shared sheet (`build_sheet` → a **Shopping**
   section). A shared checklist, deliberately not per-user `todos`. Available to
   every household (not load-balancing), including a solo one.
+
+- **`household_invites`** — self-serve membership: a short, unique, expiring
+  `code` a member mints (`created_by`) for their household; a co-parent redeems it
+  (`redeemed_by`/`redeemed_at`, one-time) to join with no operator step. Endpoints
+  `POST /household/invites{,/redeem,/{id}/revoke}`; CLI `household invite`/`redeem`.
 
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
