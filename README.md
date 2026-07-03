@@ -111,6 +111,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
+| Behavioral insights UI | `prefrontal/stats.py` · `webhooks/stats.html` | ✅ `GET /stats` — time-estimation bias, follow-through + streak, channel responsiveness; inline SVG/CSS charts over your episodes (shared light/dark theme + nav) |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | LLM-as-sensor | `prefrontal/sensor.py` | ✅ Free text → *candidate* structured updates (allowlisted, `source=llm_inferred`), held pending until you accept; `prefrontal note` / `proposals` |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |

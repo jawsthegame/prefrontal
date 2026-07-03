@@ -6,12 +6,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_VERSION,
     DASHBOARD_HTML,
     FAMILY_HTML,
     KIDS_HTML,
+    STATS_HTML,
+    Annotated,
+    Any,
+    Depends,
     HTMLResponse,
+    ScopedRequest,
+    resolve_user,
 )
 
 
@@ -70,5 +77,23 @@ def build_router(
         NL ``/assistant`` box. Reachable over Tailscale from any device.
         """
         return KIDS_HTML
+
+    @router.get("/stats", response_class=HTMLResponse, tags=["system"])
+    def stats_page() -> str:
+        """Serve the behavioral Insights page — charts over the learning data.
+
+        Self-contained shell (unauthenticated, carries no data); it signs in via
+        Google session or an access code, then reads ``GET /stats/data`` and draws
+        the time-estimation, follow-through, and channel-response charts with
+        inline SVG/CSS. Shares the unified theme + nav.
+        """
+        return STATS_HTML
+
+    @router.get("/stats/data", tags=["system"])
+    def stats_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Aggregated behavioral insights for the signed-in user (JSON for /stats)."""
+        return build_stats(ctx.store)
 
     return router

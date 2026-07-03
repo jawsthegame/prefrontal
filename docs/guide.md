@@ -49,7 +49,7 @@ TOK=your-X-Prefrontal-Token       # see deployment.md / "Users & access"
 - **Daily rhythm** — [Morning briefing](#morning-briefing)
 - **Knowing yourself** — [Profile & learning](#behavioral-profile-and-learning)
 - **Inbox** — [Mail ingestion](#mail-ingestion-and-triage)
-- **Surfaces** — [Dashboard, family view & widget](#surfaces-dashboard-family-view-and-widget)
+- **Surfaces** — [Dashboard, family, kids, insights & widget](#surfaces-dashboard-family-kids-insights-and-widget)
 - **Operating it** — [Users & access](#users-and-access) · [Reference](#reference)
 
 ---
@@ -378,7 +378,7 @@ hallucinated or someone else's row). Parsing uses **Claude** when an
 `ANTHROPIC_API_KEY` is set, otherwise the local Ollama model (local-first by
 default); the response says which `provider` answered.
 
-## Surfaces: dashboard, family view, and widget
+## Surfaces: dashboard, family, kids, insights, and widget
 
 - **`GET /dashboard`** — your full read-and-act monitoring page: active outings
   (with escalation level), todos (with first-steps and avoidance badges),
@@ -387,14 +387,25 @@ default); the response says which `provider` answered.
   a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
   todo") and it proposes the concrete edits, which you review and one-tap Apply.
   Open it over Tailscale; it asks for your token once and remembers it.
-- **`GET /family`** — a calm, read-only, jargon-free view for a partner:
-  "right now" status and today's plan. No levels, no buttons.
+- **`GET /family`** — a calm, read-only *shared household* glance for everyone
+  in the household: kids & facts, standing plans + star progress, the shopping
+  list, upcoming appointments, recent changes, and (if enabled) the load-balance
+  view. No edit forms — those live on `/kids`.
+- **`GET /kids`** — the editable face of the same shared household sheet: add
+  facts, agreements, children and appointments, award stars, and drive it all
+  from a plain-English assistant box.
+- **`GET /stats`** — the behavioral **Insights** page: charts over your learning
+  data — time-estimation accuracy (the bias multiplier, overall and per context),
+  follow-through (success rate, current streak, the success/partial/miss split
+  and a recent sparkline), and channel responsiveness (which nudge channels you
+  actually answer). Drawn with inline SVG/CSS, no external libraries.
 - **Scriptable widget** ([`../deploy/scriptable/`](../deploy/scriptable)) — a
   home-screen glance: outing status dot, next commitments, conflict/todo counts.
   Tapping opens the family view.
 
-All three are reached over Tailscale (e.g. `http://agent-1.tail8b0a.ts.net:8000/dashboard`)
-and authenticate with your `X-Prefrontal-Token`.
+All of these share one light/dark theme and a common top nav, are reached over
+Tailscale (e.g. `http://agent-1.tail8b0a.ts.net:8000/dashboard`), and
+authenticate with your `X-Prefrontal-Token` (or a Google sign-in session).
 
 ---
 
@@ -418,7 +429,7 @@ prefrontal user rotate tom                               # mint a new token (old
 
 Two ways to authenticate, used by different clients:
 
-- **Web pages** (`/dashboard`, `/family`) — **Sign in with Google**. You click the
+- **Web pages** (`/dashboard`, `/family`, `/kids`, `/stats`) — **Sign in with Google**. You click the
   button, approve Google's consent once, and a signed session cookie carries you
   after that (no token to paste). Only emails in the `GOOGLE_OAUTH_ALLOWED`
   allowlist may sign in, each mapped to a user handle.
@@ -492,7 +503,8 @@ token client-side).
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
 | `GET /household/sheet` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping, load-balance, check-in, digest, invites |
 | `POST /webhooks/household/{star-prompts,checkin,digest}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest) |
-| `GET /dashboard` · `GET /family` · `GET /kids` | Web surfaces — dashboard, partner glance, editable household sheet (no auth on the shell) |
+| `GET /dashboard` · `/family` · `/kids` · `/stats` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights (no auth on the shell) |
+| `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |
 | `POST /admin/users` · `GET /admin/users` | Provision / list users (operator only) |
