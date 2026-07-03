@@ -30,10 +30,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
-from prefrontal.modules.base import Intervention, Module
+from prefrontal.modules.base import Intervention, Module, ModuleStore
 from prefrontal.modules.registry import register
 
 #: Interrupt levels in ascending severity. ``none`` is rank 0; an interrupt fires
@@ -281,6 +284,58 @@ def focus_task_from_title(title: str | None) -> str | None:
     return remainder or None
 
 
+# --- Proactive "want to focus?" suggestion (opt-in) --------------------------
+#
+# Even one-tap starting still needs *remembering to tap*. So the coaching tick
+# can gently offer to start a block at a ripe moment — but this is a preference,
+# not a default assist (an unsolicited "go focus" is easy to resent), so it's
+# OFF unless `suggest_focus_start` is `on`. The ripe moment, using only what a
+# module may read: it's the focus-friendly part of the day, no session is
+# running, and you haven't done a focus block yet today. Debounced to once a day.
+
+#: Default local-hour band in which a start is suggested (morning to early-PM,
+#: when deep work tends to land).
+DEFAULT_SUGGEST_START_HOUR = 8
+DEFAULT_SUGGEST_UNTIL_HOUR = 15
+
+
+def should_suggest_focus(
+    *,
+    local_hour: int,
+    start_hour: int,
+    until_hour: int,
+    has_active_session: bool,
+    focused_today: bool,
+) -> bool:
+    """Whether the tick should offer to start a focus block right now (pure).
+
+    ``True`` only in the ``[start_hour, until_hour)`` local band, when nothing is
+    already running and no block has happened yet today — so it reads as "want to
+    get one in?" rather than nagging someone mid-flow or after a good day's focus.
+    """
+    if has_active_session or focused_today:
+        return False
+    return start_hour <= local_hour < until_hour
+
+
+def build_focus_suggestion(name: str = "") -> str:
+    """The gentle offer text; the one-tap start fills in the task when tapped."""
+    lead = f"Hey {name}" if name else "Hey"
+    return (
+        f"{lead} — no focus block yet today. Want to protect one? Tap to start on "
+        "whatever you've been putting off, and I'll shield it from the noise."
+    )
+
+
+def _local(now: datetime, tz: str) -> datetime:
+    """A naive-UTC instant as tz-aware local (falls back to UTC)."""
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return now.replace(tzinfo=timezone.utc).astimezone(zone)
+
+
 def record_focus_end(
     store: MemoryStore,
     closed: dict,
@@ -455,6 +510,11 @@ class HyperfocusModule(Module):
         "hard_interrupt_minutes": str(int(DEFAULT_HARD_INTERRUPT_MINUTES)),
         # Auto-close a session left open past this multiple of the hard ceiling.
         "focus_abandon_after_ratio": str(DEFAULT_FOCUS_ABANDON_RATIO),
+        # Proactive "want to focus?" offer — off by default (a preference, like
+        # self-care), with a focus-friendly local-hour band when it is on.
+        "suggest_focus_start": "off",
+        "focus_suggest_start_hour": str(DEFAULT_SUGGEST_START_HOUR),
+        "focus_suggest_until_hour": str(DEFAULT_SUGGEST_UNTIL_HOUR),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -484,7 +544,59 @@ class HyperfocusModule(Module):
                 trigger="elapsed time exceeds the abandon ratio with no exit tap",
                 status="active",
             ),
+            Intervention(
+                name="suggest_start",
+                description="Gently offer to start a focus block at a ripe moment (opt-in).",
+                trigger="no block yet today, nothing running, in the focus-friendly hours",
+                status="active",
+            ),
         ]
+
+    def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
+        """Offer a one-tap focus start at a ripe moment (opt-in; see should_suggest_focus).
+
+        Interrupts stay on ``/webhooks/focus/check``; this only emits the gentle
+        *start* suggestion, and only when ``suggest_focus_start`` is ``on``.
+        """
+        if (store.get_state("suggest_focus_start", "off") or "off") != "on":
+            return []
+        if store.active_focus_sessions():
+            return []
+        local = _local(ctx.now, ctx.timezone)
+        if not should_suggest_focus(
+            local_hour=local.hour,
+            start_hour=int(store.get_float("focus_suggest_start_hour", DEFAULT_SUGGEST_START_HOUR)),
+            until_hour=int(store.get_float("focus_suggest_until_hour", DEFAULT_SUGGEST_UNTIL_HOUR)),
+            has_active_session=False,
+            focused_today=self._focused_today(store, local.date(), ctx.timezone),
+        ):
+            return []
+        return [
+            Cue(
+                module=self.key,
+                intervention="suggest_start",
+                urgency="nudge",
+                text=build_focus_suggestion(ctx.display_name),
+                context_key="focus",
+                dedup_key=f"focus_suggest:{local.date().isoformat()}",
+                ref={"suggest": "focus_start"},
+            )
+        ]
+
+    @staticmethod
+    def _focused_today(store: ModuleStore, today, tz: str) -> bool:
+        """Whether any focus session already started on ``today`` (local date)."""
+        for session in store.recent_focus_sessions(limit=20):
+            started = session.get("started_at")
+            if not started:
+                continue
+            try:
+                dt = datetime.strptime(str(started)[:19], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            if _local(dt, tz).date() == today:
+                return True
+        return False
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Summarize how hyperfocus is being handled and recent focus blocks."""
