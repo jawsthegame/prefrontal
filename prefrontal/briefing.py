@@ -54,6 +54,9 @@ BRIEFING_SYSTEM_PROMPT = (
 #: How many days back "what slipped" looks.
 SLIP_WINDOW_DAYS = 7
 
+#: How far back the briefing pulls triage ``surface`` items (spec §12: last day).
+SURFACE_WINDOW_HOURS = 24
+
 
 @dataclass(frozen=True)
 class Briefing:
@@ -80,6 +83,7 @@ class Briefing:
     coaching: dict[str, str] = field(default_factory=dict)
     spare: list[dict[str, Any]] = field(default_factory=list)
     avoided: list[dict[str, Any]] = field(default_factory=list)
+    surfaced: list[dict[str, Any]] = field(default_factory=list)
     encouragement: str | None = None
 
 
@@ -173,6 +177,14 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         for a in avoided_todos(todos, now)[:3]
     ]
 
+    # Triage "surface" items — worth seeing once, no core-table write — from the
+    # last day (older ones age out of view without deletion, spec §12).
+    surface_since = (now - timedelta(hours=SURFACE_WINDOW_HOURS)).strftime(fmt)
+    surfaced = [
+        {"title": s["title"], "reason": s["reason"], "source": s["source"]}
+        for s in store.surfaced_triage(surface_since)
+    ]
+
     briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -182,6 +194,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         coaching=coaching,
         spare=spare,
         avoided=avoided,
+        surfaced=surfaced,
     )
 
     # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
@@ -250,6 +263,14 @@ def render_briefing(briefing: Briefing) -> str:
         lines.append("**🔴 You keep putting off:**")
         for a in briefing.avoided:
             lines.append(f"- {a['title']} — open {a['days_open']:g} days")
+        lines.append("")
+
+    # Worth a look — triage surfaced these (seen once, no action taken for you).
+    if briefing.surfaced:
+        lines.append("**📥 Worth a look:**")
+        for s in briefing.surfaced[:5]:
+            src = f" ({s['source']})" if s.get("source") else ""
+            lines.append(f"- {s['title']}{src}")
         lines.append("")
 
     # Spare time + suggestions.
