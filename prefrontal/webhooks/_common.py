@@ -1224,6 +1224,24 @@ def require_operator(
     return ctx
 
 
+def require_member(
+    ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+) -> ScopedRequest:
+    """Like :func:`resolve_user` but also requires the caller be in a household.
+
+    A caller in no household has nothing shared to touch, so household routes
+    404 rather than surfacing the store's raw scope error. Declared as a
+    dependency (not a per-handler call) so it attaches via ``Depends`` and a new
+    household endpoint can't forget the guard.
+    """
+    if ctx.store.household_id_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You're not set up in a household.",
+        )
+    return ctx
+
+
 #: Per-request timeout (seconds) for the hot-path window inference. Kept short:
 #: ``/outing/start`` is interactive (an iOS Shortcut waits on it), so a slow or
 #: unreachable model must degrade to the heuristic fast rather than hang the tap.
@@ -1466,6 +1484,7 @@ __all__ = [
     "render_sheet",
     "repeat_stalled_tasks",
     "require_operator",
+    "require_member",
     "resolve_ack",
     "resolve_user",
     "session_user",
