@@ -393,11 +393,16 @@ ordered by leverage; each is independent but builds on denser capture.
    while widening what can be observed. The summarizer's grounded-prompt +
    heuristic-fallback shape (`prefrontal/memory/summarizer.py`) is the pattern to
    mirror, flipped to emit structured JSON instead of prose.
-3. **Recency weighting / decay.** `compute_patterns()` and `compute_bias()` weigh
-   every episode equally regardless of age, so the profile tracks cumulative
-   history and is slow to follow a person who has *changed*. Add a half-life /
-   exponential decay (older episodes count less) or a sliding window, so a recent
-   shift in behavior moves the bias faster than a year of stale data resists it.
+3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
+   now weigh each episode by an exponential decay on its age (`decay_weight`,
+   `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the
+   estimates faster than a year of stale data resists it. Confidence uses the
+   *effective* sample size (summed weights), so a group of only-stale episodes is
+   trusted less than the same count of fresh ones. Half-life is the
+   `learning_half_life_days` coaching key (default 30d; set `0` to weigh all
+   history equally — the pre-decay behavior). Covered by `tests/test_patterns.py`.
+   *(Next: a sliding-window variant, and per-context half-lives once finer
+   `context_key` bucketing lands.)*
 4. **Close the loop: measure whether adaptations help.** Nothing today verifies
    that a learned value actually improves outcomes — e.g. does applying the 1.4×
    `time_estimation_bias` reduce subsequent `miss` rates? Track prediction error

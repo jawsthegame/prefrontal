@@ -453,6 +453,13 @@ prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
 prefrontal summarize   # profile -> Ollama -> cache (+ profile.md) as prose
 ```
 
+`learn` is **recency-weighted**: each episode counts by an exponential decay on
+its age (half-life `learning_half_life_days`, default 30 days), so the profile
+follows you as your behavior changes instead of being anchored to a year-old
+average. Tune it per user in `coaching_state`
+(`sqlite3 prefrontal.db "INSERT OR REPLACE INTO coaching_state (user_id, key, value, source) VALUES (<uid>, 'learning_half_life_days', '45', 'explicit');"`),
+or set it to `0` to weigh all history equally.
+
 `prefrontal summarize` generates the narrative with the local Ollama model from
 `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it falls back to
 the structured profile, so it always produces something. It **caches** the

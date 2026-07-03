@@ -5,6 +5,14 @@ calibrated, confidence-weighted summaries the coaching layer reasons over and th
 behavioral profile is built from. It is the mechanism behind "it gets better the
 longer you use it" — every recompute folds new outcomes into the estimates.
 
+Estimates are **recency-weighted**: each episode contributes by an exponential
+decay on its age (:func:`decay_weight`, half-life ``learning_half_life_days``,
+default 30d), so the profile *follows* a person whose behavior has changed rather
+than being anchored to their cumulative average. Confidence uses the *effective*
+sample size (the summed weights), so a group of only-stale episodes is trusted
+less than the same count of fresh ones. Set the half-life to ``0`` to weigh all
+history equally (the pre-decay behavior).
+
 It derives the three pattern types we currently have source data for:
 
 - **time_estimation** — predicted vs actual durations, grouped by episode type.
@@ -29,9 +37,10 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from statistics import fmean
+from datetime import datetime
 from typing import Any
 
+from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 
 #: Smoothing constant for the confidence estimator ``n / (n + k)``. With k=5,
@@ -43,6 +52,41 @@ MIN_BIAS_SAMPLES = 3
 
 #: How much each outcome contributes to a drift score (higher = more off-track).
 DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
+
+#: Recency half-life (days) for the learning pass: an episode this old counts
+#: half as much as a fresh one, and the weight halves again every half-life after
+#: that (exponential decay). This is what lets the profile *follow* a person who
+#: has changed rather than being anchored to their cumulative history. Tunable per
+#: user via the ``learning_half_life_days`` coaching key; set it to ``0`` to
+#: disable decay and weigh all history equally (the pre-decay behavior).
+DEFAULT_HALF_LIFE_DAYS = 30.0
+
+
+def _parse_ts(ts: Any) -> datetime | None:
+    """Parse a stored episode timestamp (``YYYY-MM-DD HH:MM:SS``), else ``None``."""
+    try:
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def decay_weight(ts: Any, now: datetime, half_life_days: float | None) -> float:
+    """Exponential recency weight for an episode timestamp, in ``(0, 1]``.
+
+    ``0.5 ** (age_days / half_life_days)`` — 1.0 for a just-now episode, 0.5 at
+    one half-life, 0.25 at two, and so on. Returns ``1.0`` (no decay) when
+    ``half_life_days`` is falsy/≤0, or when the timestamp is missing/unparseable
+    (a missing time shouldn't silently zero out an episode).
+    """
+    if not half_life_days or half_life_days <= 0:
+        return 1.0
+    t = _parse_ts(ts)
+    if t is None:
+        return 1.0
+    age_days = (now - t).total_seconds() / 86400.0
+    if age_days <= 0:
+        return 1.0
+    return 0.5 ** (age_days / half_life_days)
 
 
 @dataclass(frozen=True)
@@ -68,14 +112,16 @@ class PatternRunSummary:
     bias: float | None = None
 
 
-def compute_confidence(n: int, k: float = DEFAULT_CONFIDENCE_K) -> float:
-    """Return a 0–1 confidence that grows with sample size.
+def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
+    """Return a 0–1 confidence that grows with (effective) sample size.
 
     Uses ``n / (n + k)``: zero at no data, rising and asymptotically approaching
-    1.0 as samples accumulate. ``k`` sets how fast trust builds.
+    1.0 as samples accumulate. ``k`` sets how fast trust builds. ``n`` may be a
+    fractional *effective* sample size (the sum of recency weights), so a group
+    of only-stale episodes trusts less than the same count of fresh ones.
 
     Args:
-        n: Number of contributing samples.
+        n: Number of contributing samples (or the summed recency weight).
         k: Smoothing constant (larger ⇒ slower to trust).
 
     Returns:
@@ -86,45 +132,76 @@ def compute_confidence(n: int, k: float = DEFAULT_CONFIDENCE_K) -> float:
     return n / (n + k)
 
 
+def _wmean(pairs: list[tuple[float, float]]) -> float | None:
+    """Weighted mean of ``(value, weight)`` pairs, or ``None`` if no weight."""
+    total_w = sum(w for _, w in pairs)
+    if total_w <= 0:
+        return None
+    return sum(v * w for v, w in pairs) / total_w
+
+
 def compute_patterns(
-    episodes: list[dict[str, Any]], *, confidence_k: float = DEFAULT_CONFIDENCE_K
+    episodes: list[dict[str, Any]],
+    *,
+    confidence_k: float = DEFAULT_CONFIDENCE_K,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
 ) -> list[PatternResult]:
     """Derive all pattern rows from a list of episodes (pure function).
 
     Args:
         episodes: Episode dicts (as returned by the store).
         confidence_k: Smoothing constant passed to :func:`compute_confidence`.
+        now: Reference instant for recency decay (defaults to :func:`utcnow`).
+        half_life_days: Recency half-life; ``None``/``0`` weighs all episodes
+            equally (no decay). :func:`recompute_patterns` supplies the per-user
+            value, so the pure function stays decay-free by default for callers
+            (and tests) that pass a bare episode list.
 
     Returns:
         A list of :class:`PatternResult`, one per ``(pattern_type, context_key)``
         group that has at least one contributing episode.
     """
+    now = now or utcnow()
     results: list[PatternResult] = []
-    results += _time_estimation_patterns(episodes, confidence_k)
-    results += _channel_response_patterns(episodes, confidence_k)
-    results += _drift_patterns(episodes, confidence_k)
+    results += _time_estimation_patterns(episodes, confidence_k, now, half_life_days)
+    results += _channel_response_patterns(episodes, confidence_k, now, half_life_days)
+    results += _drift_patterns(episodes, confidence_k, now, half_life_days)
     return results
 
 
-def compute_bias(episodes: list[dict[str, Any]]) -> float | None:
+def compute_bias(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> float | None:
     """Recompute the global time-estimation bias multiplier (Σactual / Σpredicted).
+
+    Recency-weighted: each pair contributes by its :func:`decay_weight`, so a
+    recent run of on-time estimates pulls the multiplier back faster than a year
+    of old overruns holds it up. The ``MIN_BIAS_SAMPLES`` floor still counts raw
+    pairs, so decay changes the *weighting*, never whether we have enough data.
 
     Args:
         episodes: Episode dicts.
+        now: Reference instant for decay (defaults to :func:`utcnow`).
+        half_life_days: Recency half-life; ``None``/``0`` ⇒ equal weight.
 
     Returns:
         The multiplier rounded to 2 dp (e.g. ``1.4`` ⇒ 40% underestimate), or
         ``None`` if there aren't enough usable pairs to trust it.
     """
-    pairs = [
-        (e["predicted_value"], e["actual_value"])
-        for e in episodes
-        if e.get("predicted_value") and e.get("actual_value") is not None
-    ]
+    now = now or utcnow()
+    pairs: list[tuple[float, float, float]] = []
+    for e in episodes:
+        if e.get("predicted_value") and e.get("actual_value") is not None:
+            w = decay_weight(e.get("timestamp"), now, half_life_days)
+            pairs.append((e["predicted_value"], e["actual_value"], w))
     if len(pairs) < MIN_BIAS_SAMPLES:
         return None
-    total_pred = sum(p for p, _ in pairs)
-    total_act = sum(a for _, a in pairs)
+    total_pred = sum(p * w for p, _, w in pairs)
+    total_act = sum(a * w for _, a, w in pairs)
     if total_pred <= 0:
         return None
     return round(total_act / total_pred, 2)
@@ -151,7 +228,11 @@ def recompute_patterns(
         A :class:`PatternRunSummary` describing what was written.
     """
     episodes = store.all_episodes()
-    results = compute_patterns(episodes, confidence_k=confidence_k)
+    now = utcnow()
+    half_life_days = store.get_float("learning_half_life_days", DEFAULT_HALF_LIFE_DAYS)
+    results = compute_patterns(
+        episodes, confidence_k=confidence_k, now=now, half_life_days=half_life_days
+    )
     for r in results:
         store.upsert_pattern(
             r.pattern_type,
@@ -165,7 +246,7 @@ def recompute_patterns(
 
     bias: float | None = None
     if update_bias:
-        bias = compute_bias(episodes)
+        bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
             store.set_state("time_estimation_bias", str(bias), source="inferred")
 
@@ -181,9 +262,9 @@ def recompute_patterns(
 
 
 def _time_estimation_patterns(
-    episodes: list[dict[str, Any]], k: float
+    episodes: list[dict[str, Any]], k: float, now: datetime, half_life_days: float | None
 ) -> list[PatternResult]:
-    """Mean predicted/actual and variance per episode type."""
+    """Recency-weighted mean predicted/actual and variance per episode type."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
         if e.get("predicted_value") is not None and e.get("actual_value") is not None:
@@ -191,8 +272,11 @@ def _time_estimation_patterns(
 
     results: list[PatternResult] = []
     for context_key, eps in groups.items():
-        observed = fmean(e["actual_value"] for e in eps)
-        predicted = fmean(e["predicted_value"] for e in eps)
+        we = [(e, decay_weight(e.get("timestamp"), now, half_life_days)) for e in eps]
+        observed = _wmean([(e["actual_value"], w) for e, w in we])
+        predicted = _wmean([(e["predicted_value"], w) for e, w in we])
+        if observed is None or predicted is None:
+            continue
         results.append(
             PatternResult(
                 pattern_type="time_estimation",
@@ -201,16 +285,16 @@ def _time_estimation_patterns(
                 predicted_value=round(predicted, 2),
                 variance=round(observed - predicted, 2),
                 sample_size=len(eps),
-                confidence=round(compute_confidence(len(eps), k), 3),
+                confidence=round(compute_confidence(sum(w for _, w in we), k), 3),
             )
         )
     return results
 
 
 def _channel_response_patterns(
-    episodes: list[dict[str, Any]], k: float
+    episodes: list[dict[str, Any]], k: float, now: datetime, half_life_days: float | None
 ) -> list[PatternResult]:
-    """Acknowledgement rate per delivery channel."""
+    """Recency-weighted acknowledgement rate per delivery channel."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
         if e.get("channel") and e.get("acknowledged") is not None:
@@ -218,21 +302,26 @@ def _channel_response_patterns(
 
     results: list[PatternResult] = []
     for context_key, eps in groups.items():
-        ack_rate = fmean(1.0 if e["acknowledged"] else 0.0 for e in eps)
+        we = [(e, decay_weight(e.get("timestamp"), now, half_life_days)) for e in eps]
+        ack_rate = _wmean([(1.0 if e["acknowledged"] else 0.0, w) for e, w in we])
+        if ack_rate is None:
+            continue
         results.append(
             PatternResult(
                 pattern_type="channel_response",
                 context_key=context_key,
                 observed_value=round(ack_rate, 3),
                 sample_size=len(eps),
-                confidence=round(compute_confidence(len(eps), k), 3),
+                confidence=round(compute_confidence(sum(w for _, w in we), k), 3),
             )
         )
     return results
 
 
-def _drift_patterns(episodes: list[dict[str, Any]], k: float) -> list[PatternResult]:
-    """Off-track score per episode type from outcomes."""
+def _drift_patterns(
+    episodes: list[dict[str, Any]], k: float, now: datetime, half_life_days: float | None
+) -> list[PatternResult]:
+    """Recency-weighted off-track score per episode type from outcomes."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
         if e.get("outcome") in DRIFT_WEIGHTS:
@@ -240,14 +329,17 @@ def _drift_patterns(episodes: list[dict[str, Any]], k: float) -> list[PatternRes
 
     results: list[PatternResult] = []
     for context_key, eps in groups.items():
-        score = fmean(DRIFT_WEIGHTS[e["outcome"]] for e in eps)
+        we = [(e, decay_weight(e.get("timestamp"), now, half_life_days)) for e in eps]
+        score = _wmean([(DRIFT_WEIGHTS[e["outcome"]], w) for e, w in we])
+        if score is None:
+            continue
         results.append(
             PatternResult(
                 pattern_type="drift",
                 context_key=context_key,
                 observed_value=round(score, 3),
                 sample_size=len(eps),
-                confidence=round(compute_confidence(len(eps), k), 3),
+                confidence=round(compute_confidence(sum(w for _, w in we), k), 3),
             )
         )
     return results
