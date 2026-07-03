@@ -740,6 +740,18 @@ class TodoWindowUpdate(BaseModel):
     )
 
 
+class TodoDomainUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/domain`` — set or clear a todo's life domain."""
+
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "Life domain (work / home / …) — the work/life guardrail; it outranks "
+            "the category for the time band. Null clears it."
+        ),
+    )
+
+
 class StepDone(BaseModel):
     """Body of ``POST /todos/{id}/steps/{i}/done`` — tick a decomposed step."""
 
@@ -1149,6 +1161,7 @@ __all__ = [
     "SwitchResolved",
     "TodoCategoryUpdate",
     "TodoCreate",
+    "TodoDomainUpdate",
     "TodoDeadlineUpdate",
     "TodoWindowUpdate",
     "TriageForget",

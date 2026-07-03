@@ -25,6 +25,7 @@ from prefrontal.webhooks._common import (
     TodoCategoryUpdate,
     TodoCreate,
     TodoDeadlineUpdate,
+    TodoDomainUpdate,
     TodoWindowUpdate,
     _decompose_and_store,
     at_category_cap,
@@ -389,6 +390,30 @@ def build_router(
                 detail=f"Todo {todo_id} is not open.",
             )
         return {"todo_id": todo_id, "time_window": time_window}
+
+    @router.post("/todos/{todo_id}/domain", tags=["todos"])
+    def todo_set_domain(
+        todo_id: int,
+        payload: TodoDomainUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) a todo's life **domain** (the work/life guardrail).
+
+        The domain (``work``/``home``/…, normalized to lowercase) outranks the
+        category when the scheduler resolves the todo's time band, so a
+        work-mailbox todo stays inside work hours whatever its category.
+        ``null``/empty clears it. Editable at any status (404 if no such todo).
+        Declared before the ``{action}`` route so "domain" isn't read as an action.
+        """
+        memory = ctx.store
+        raw = (payload.domain or "").strip().lower()
+        domain = raw or None
+        if not memory.set_todo_domain(todo_id, domain):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No todo {todo_id}.",
+            )
+        return {"todo_id": todo_id, "domain": domain}
 
     @router.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
     def todo_step_done(

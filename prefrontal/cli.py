@@ -1057,6 +1057,14 @@ def _cmd_todo(args: argparse.Namespace) -> int:
             else:
                 print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)
                 return 1
+        elif args.todo_action == "domain":
+            domain = (args.domain or "").strip().lower() or None
+            if store.set_todo_domain(args.todo_id, domain):
+                shown = domain or "(cleared)"
+                print(f"Todo #{args.todo_id} domain -> {shown}")
+            else:
+                print(f"No todo #{args.todo_id}.", file=sys.stderr)
+                return 1
     return 0
 
 
@@ -1553,6 +1561,11 @@ def build_parser() -> argparse.ArgumentParser:
     t_done.add_argument("todo_id", type=int)
     t_drop = todo_sub.add_parser("drop", help="Drop a todo.")
     t_drop.add_argument("todo_id", type=int)
+    t_domain = todo_sub.add_parser("domain", help="Set/clear a todo's work/home domain.")
+    t_domain.add_argument("todo_id", type=int)
+    t_domain.add_argument(
+        "domain", nargs="?", default=None, help="work / home / … (omit to clear)."
+    )
     p_todo.set_defaults(func=_cmd_todo)
 
     p_fit = sub.add_parser("fit", help="Show todos that fit a block of free time.")
