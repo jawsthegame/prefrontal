@@ -664,14 +664,13 @@ def build_router(services: RouterServices) -> APIRouter:
 
     @router.post("/household/shopping/clear-got", tags=["household"])
     def clear_got_shopping(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Clear every checked-off ("got it") item at once; still-needed rows stay.
 
         The bulk sweep after a shop, so a shared list doesn't accumulate a wall of
         done entries. Idempotent — with nothing checked off it clears ``0``.
         """
-        _require_member(ctx)
         return {"cleared": ctx.store.clear_got_shopping_items()}
 
     @router.post("/household/shopping/{item_id}/remove", tags=["household"])

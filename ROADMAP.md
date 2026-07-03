@@ -394,14 +394,15 @@ the first test. Code follow-ups below are optional polish.
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
   Blindness** (`estimate_correction` + `departure_buffer` — departure timing +
-  outcome capture), **Task Paralysis** (`tiny_first_step` / `auto_decompose` /
-  `body_double_nudge` — see below), **Impulsivity** (`reflective_pause` +
-  `capture_and_defer` active), and **Self-Care** (`meal_check` + `water_check`
-  basic-needs nudges, opt-in). Two interventions are still `planned`:
-  Impulsivity's `switch_rate_feedback` (needs captured switch events — see
-  `docs/impulsivity.md`) and Time Blindness's `elapsed_time_callouts`
-  ("you've been on this N min" during a focus block — not yet wired). Run
-  `prefrontal modules -v` for the live per-intervention status.
+  outcome capture — plus `elapsed_time_callouts`: an opt-in "you've been on this
+  N min" time check fired from `evaluate()` during a focus block, deduped per
+  elapsed bucket, off unless `elapsed_callout_minutes` > 0), **Task Paralysis**
+  (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below),
+  **Impulsivity** (`reflective_pause` + `capture_and_defer` active), and
+  **Self-Care** (`meal_check` + `water_check` basic-needs nudges, opt-in). One
+  intervention is still `planned`: Impulsivity's `switch_rate_feedback` (needs
+  captured switch events — see `docs/impulsivity.md`). Run `prefrontal modules -v`
+  for the live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 

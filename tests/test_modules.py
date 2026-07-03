@@ -7,14 +7,19 @@ sections. Built-in modules are imported for their registration side effects.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 import prefrontal.modules  # noqa: F401  (registers built-in modules on import)
+from prefrontal.coaching import CoachContext
 from prefrontal.config import Settings
+from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
 from prefrontal.modules.task_paralysis import repeat_stalled_tasks
+from prefrontal.modules.time_blindness import TimeBlindnessModule
 from tests.conftest import scoped_default
 
 BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
@@ -108,19 +113,56 @@ def test_task_paralysis_interventions_all_active():
 
 
 def test_time_blindness_intervention_statuses_are_honest():
-    """Estimate correction + departure timing are wired; elapsed-time callouts aren't.
+    """All three time-awareness interventions are now wired.
 
     The status flags must reflect reality (they drive ``prefrontal modules -v``):
     ``departure_buffer`` is delivered by the live departure planner
     (bias-adjusted leave-by + heads_up/soon/go escalation, ``/webhooks/departure``),
-    while ``elapsed_time_callouts`` has no wiring yet, so it stays ``planned``.
+    and ``elapsed_time_callouts`` now fires from :meth:`TimeBlindnessModule.evaluate`
+    on the coaching tick (opt-in via ``elapsed_callout_minutes``).
     """
     ivs = {i.name: i.status for i in get("time_blindness").interventions()}
     assert ivs == {
         "estimate_correction": "active",
         "departure_buffer": "active",
-        "elapsed_time_callouts": "planned",
+        "elapsed_time_callouts": "active",
     }
+
+
+def _started_ago(minutes: float) -> str:
+    return (datetime.utcnow() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_elapsed_callouts_off_by_default(store):
+    """No callout unless the user opts in — even with an active session running."""
+    store.start_focus_session("the refactor", started_at=_started_ago(65))
+    assert TimeBlindnessModule().evaluate(store, CoachContext(now=utcnow())) == []
+
+
+def test_elapsed_callouts_fire_per_bucket_when_enabled(store):
+    store.set_state("elapsed_callout_minutes", "30")
+    store.start_focus_session("the refactor", started_at=_started_ago(65))
+    ctx = CoachContext(now=utcnow(), display_name="Tom")
+    cues = TimeBlindnessModule().evaluate(store, ctx)
+    assert len(cues) == 1
+    c = cues[0]
+    # 65 min elapsed at a 30-min interval → bucket 2, the 60-min mark.
+    assert c.dedup_key == "elapsed_callout:1:2"
+    assert c.ref == {"session_id": 1, "elapsed_minutes": 60}
+    assert c.urgency == "nudge" and c.intervention == "elapsed_time_callouts"
+    assert "60 min" in c.text and "the refactor" in c.text
+
+
+def test_elapsed_callouts_silent_before_first_mark(store):
+    store.set_state("elapsed_callout_minutes", "30")
+    store.start_focus_session("just started", started_at=_started_ago(10))  # < 30
+    assert TimeBlindnessModule().evaluate(store, CoachContext(now=utcnow())) == []
+
+
+def test_elapsed_callout_profile_line_when_enabled(store):
+    store.set_state("elapsed_callout_minutes", "30")
+    section = TimeBlindnessModule().profile_section(store) or ""
+    assert "every **30 min**" in section
 
 
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
