@@ -10,16 +10,38 @@ from __future__ import annotations
 
 import datetime
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.assistant import build_snapshot, execute_actions, validate_actions
 from prefrontal.config import Settings
-from prefrontal.household import build_sheet, render_sheet
+from prefrontal.household import (
+    build_sheet,
+    newly_reached_goals,
+    next_goal,
+    parse_structured,
+    render_sheet,
+    star_congrats_text,
+)
+from prefrontal.integrations.delivery import (
+    DeliveryClient,
+    deliver_to_household,
+    household_notice,
+)
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.webhooks.app import create_app
+
+STAR_CHART = {
+    "unit": "star",
+    "earn_only": True,
+    "thresholds": [
+        {"stars": 5, "reward": "movie night"},
+        {"stars": 10, "reward": "small Lego set"},
+    ],
+}
 
 NOW = datetime.datetime(2026, 7, 2, 12, 0, 0)
 
@@ -485,6 +507,186 @@ def test_write_endpoints_are_member_guarded(client):
 def test_kids_page_and_family_link_serve(client):
     assert client.get("/kids").status_code == 200
     assert "/kids" in client.get("/family").text
+
+
+# --- star tracking: pure goal logic ------------------------------------------
+
+
+def test_newly_reached_goals_only_fires_on_crossing():
+    """A goal reports once — when the total carries across it, not on every award."""
+    # 4 → 6 crosses the 5-star goal (and only that one).
+    reached = newly_reached_goals(STAR_CHART, before=4, after=6)
+    assert [g["count"] for g in reached] == [5]
+    assert reached[0]["reward"] == "movie night"
+    # Already past it → nothing new.
+    assert newly_reached_goals(STAR_CHART, before=6, after=8) == []
+    # A single leap can clear several goals at once (each is its own reward).
+    assert [g["count"] for g in newly_reached_goals(STAR_CHART, 0, 12)] == [5, 10]
+
+
+def test_next_goal_and_congrats_text():
+    assert next_goal(STAR_CHART, 0)["count"] == 5
+    nxt = next_goal(STAR_CHART, 7)
+    assert nxt["count"] == 10 and nxt["remaining"] == 3
+    assert next_goal(STAR_CHART, 10) is None  # all rewards earned
+    goal = newly_reached_goals(STAR_CHART, 4, 5)[0]
+    assert star_congrats_text("Sam", goal) == "🌟 Sam hit 5 stars — reward unlocked: movie night!"
+
+
+def test_goal_logic_tolerates_no_or_bad_structure():
+    assert newly_reached_goals(None, 0, 100) == []
+    assert next_goal(parse_structured(None), 3) is None
+    assert next_goal(parse_structured('{"unit":"point","thresholds":[{"points":3,"reward":"x"}]}'),
+                     1)["reward"] == "x"
+
+
+# --- star tracking: repo -----------------------------------------------------
+
+
+def _star_agreement(scoped, store, *, child_id=0):
+    return scoped.set_agreement(
+        title="Star chart", body="stars", kind="reward",
+        updated_by=store.get_user("dana")["id"], child_id=child_id,
+        structured=__import__("json").dumps(STAR_CHART),
+    )
+
+
+def test_award_stars_accumulates_and_reports_totals(store, dana, alex):
+    """Grants append to a shared ledger; the total is visible to both parents."""
+    aid = _star_agreement(dana, store)
+    dana_id = store.get_user("dana")["id"]
+    r1 = dana.award_stars(agreement_id=aid, delta=3, awarded_by=dana_id)
+    assert (r1["before"], r1["after"]) == (0, 3)
+    r2 = alex.award_stars(agreement_id=aid, delta=2, awarded_by=store.get_user("alex")["id"])
+    assert (r2["before"], r2["after"]) == (3, 5)
+    # Either parent sees the same running total (household-scoped, not per-user).
+    assert dana.star_total(aid) == 5 == alex.star_total(aid)
+    assert alex.star_totals() == {aid: 5}
+
+
+def test_award_stars_rejects_foreign_agreement(store, dana):
+    """Awarding against another household's agreement is a None (→ 404), not a write."""
+    other = store.create_household("Other")
+    store.set_user_household("lee", other)
+    lee = store.scoped(store.get_user("lee")["id"])
+    aid = _star_agreement(dana, store)
+    assert lee.award_stars(agreement_id=aid, delta=1, awarded_by=None) is None
+    assert dana.star_total(aid) == 0  # nothing leaked in
+
+
+def test_star_ledger_and_recent_awards_carry_provenance(store, dana, alex):
+    sam = dana.add_child(name="Sam")
+    aid = _star_agreement(dana, store, child_id=sam)
+    dana.award_stars(agreement_id=aid, delta=1, awarded_by=store.get_user("dana")["id"],
+                     note="made bed")
+    alex.award_stars(agreement_id=aid, delta=2, awarded_by=store.get_user("alex")["id"])
+    ledger = dana.star_ledger(aid)
+    assert [row["awarded_by_name"] for row in ledger] == ["Alex", "Dana"]  # newest first
+    recent = alex.recent_star_awards()
+    assert recent[0]["child_name"] == "Sam"
+    assert recent[0]["agreement_title"] == "Star chart"
+
+
+def test_star_progress_and_grants_render_on_the_sheet(store, dana):
+    sam = dana.add_child(name="Sam")
+    aid = _star_agreement(dana, store, child_id=sam)
+    dana.award_stars(agreement_id=aid, delta=7, awarded_by=store.get_user("dana")["id"])
+    text = render_sheet(build_sheet(dana, now=NOW))
+    assert "7 stars so far" in text
+    assert "3 to go → small Lego set" in text  # next unreached goal
+    assert "Sam · +7⭐ (Star chart)" in text     # the grant on the load surface
+
+
+# --- star tracking: notify both parents --------------------------------------
+
+
+def test_deliver_to_household_reaches_every_member(store):
+    """One notice fans out to both co-parents on their own ntfy topics."""
+    dana = store.scoped(store.get_user("dana")["id"])
+    alex = store.scoped(store.get_user("alex")["id"])
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        sent.append(json.loads(request.read())["topic"])
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    hid = store.get_user("dana")["household_id"]
+    results = deliver_to_household(
+        store, hid, household_notice("🌟 goal!"), settings=Settings(), client=client
+    )
+    assert sorted(sent) == ["alex-topic", "dana-topic"]
+    assert all(r["delivered"] for r in results)
+    assert {r["handle"] for r in results} == {"dana", "alex"}
+
+
+# --- star tracking: endpoint -------------------------------------------------
+
+
+def test_award_endpoint_hits_goal_and_notifies_both_parents(client):
+    """Crossing a reward threshold returns the goal and notifies every member."""
+    r = client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "body": "stars", "structured": STAR_CHART},
+        headers=_h("dana-tok"),
+    )
+    aid = r.json()["id"]
+    # 4 stars — below the first (5-star) goal: nothing fires yet.
+    first = client.post(
+        f"/household/agreements/{aid}/stars", json={"delta": 4}, headers=_h("dana-tok")
+    ).json()
+    assert first["total"] == 4 and first["goals_reached"] == []
+    assert first["next_goal"]["count"] == 5
+    # One more crosses it → goal reached, both parents notified.
+    hit = client.post(
+        f"/household/agreements/{aid}/stars",
+        json={"delta": 1, "note": "cleared the table"},
+        headers=_h("alex-tok"),
+    ).json()
+    assert hit["total"] == 5
+    assert [g["reward"] for g in hit["goals_reached"]] == ["movie night"]
+    assert {n["handle"] for n in hit["notified"]} == {"dana", "alex"}
+    assert hit["next_goal"]["reward"] == "small Lego set"
+
+
+def test_award_endpoint_earn_only_rejects_taking_stars_away(client):
+    r = client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "structured": STAR_CHART},
+        headers=_h("dana-tok"),
+    )
+    aid = r.json()["id"]
+    assert (
+        client.post(
+            f"/household/agreements/{aid}/stars", json={"delta": -1}, headers=_h("dana-tok")
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/household/agreements/{aid}/stars", json={"delta": 0}, headers=_h("dana-tok")
+        ).status_code
+        == 422
+    )
+
+
+def test_award_endpoint_unknown_agreement_and_non_member(client):
+    assert (
+        client.post(
+            "/household/agreements/999/stars", json={"delta": 1}, headers=_h("dana-tok")
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/household/agreements/1/stars", json={"delta": 1}, headers=_h("lee-tok")
+        ).status_code
+        == 404
+    )
 
 
 # --- migration ---------------------------------------------------------------

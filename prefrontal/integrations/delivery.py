@@ -409,3 +409,79 @@ class DeliveryClient:
             self.deliver(d, route, base_url=base_url, secret=secret, handle=handle)
             for d in decisions
         ]
+
+
+def household_notice(message: str, *, channel: str = "push") -> Decision:
+    """A minimal :class:`~prefrontal.coaching.Decision` carrying a plain household push.
+
+    Reuses the coaching cue/decision shape so :meth:`DeliveryClient.deliver` can
+    route it, but the cue's ``context_key`` is unmapped (see ``_CONTEXT_KIND``),
+    so it delivers as a plain notification with no one-tap action buttons — which
+    is exactly right for a "goal reached!" congratulation. ``coaching`` is
+    imported lazily to keep this transport module free of the cycle its
+    ``TYPE_CHECKING`` import already avoids.
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="star_goal",
+        urgency="nudge",
+        text=message,
+        context_key="household",  # unmapped → no action buttons (a plain push)
+        dedup_key="household_notice",
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
+def deliver_to_household(
+    store: Any,
+    household_id: int,
+    decision: Decision,
+    *,
+    settings: Settings | None = None,
+    client: DeliveryClient | None = None,
+) -> list[dict[str, Any]]:
+    """Deliver one decision to **every** member of a household (both co-parents).
+
+    Enumerates the household's members, resolves each member's *own* :class:`Route`
+    (their per-user ntfy topic / Pushover key over the operator defaults), and
+    publishes to each. This is how a shared-sheet event — a reward goal reached —
+    reaches both parents at once, and it is the reusable seam the v2 delta digest
+    will push through too.
+
+    Errors never raise (each :meth:`DeliveryClient.deliver` swallows transport
+    failures), and a member with nothing configured yields a no-op result rather
+    than being skipped — so the returned list is a faithful per-member record.
+
+    Args:
+        store: Any store that can enumerate members (``household_members``) and
+            derive a per-member scoped store (``scoped``) — the app's shared store
+            or a request's scoped one both work.
+        household_id: The household whose members to notify.
+        decision: The decision to publish (build one with :func:`household_notice`).
+        settings: Operator defaults for routing (defaults to :func:`get_settings`).
+        client: A :class:`DeliveryClient` (tests inject one with a mock transport).
+
+    Returns:
+        One dict per active member: ``handle``, ``display_name``, ``transport``,
+        ``delivered``, ``detail``.
+    """
+    resolved = settings or get_settings()
+    client = client or DeliveryClient.from_settings(resolved)
+    out: list[dict[str, Any]] = []
+    for member in store.household_members(household_id):
+        if member.get("status") not in (None, "active"):
+            continue
+        route = resolve_route(store.scoped(member["id"]), resolved)
+        result = client.deliver(decision, route, handle=member["handle"])
+        out.append(
+            {
+                "handle": member["handle"],
+                "display_name": member.get("display_name"),
+                "transport": result.transport,
+                "delivered": result.delivered,
+                "detail": result.detail,
+            }
+        )
+    return out

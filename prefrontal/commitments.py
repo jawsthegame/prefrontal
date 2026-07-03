@@ -136,7 +136,7 @@ KIND_SELF = "self"
 KIND_FYI = "fyi"
 #: A kid's appointment (dentist, doctor, school event). Like ``self`` it's a real
 #: obligation someone must cover, but it belongs to the shared household sheet
-#: (docs/household-sheet.md §3.6) — the sheet surfaces the upcoming ones so both
+#: (docs/household-sheet.md §3.7) — the sheet surfaces the upcoming ones so both
 #: co-parents see them and "who's on pickup" is legible.
 KIND_CHILD = "child"
 KINDS = (KIND_SELF, KIND_FYI, KIND_CHILD)

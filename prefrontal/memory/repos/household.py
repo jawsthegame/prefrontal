@@ -31,7 +31,7 @@ FACT_CATEGORIES: tuple[str, ...] = (
     "food",     # allergies + severity + EpiPen, likes/dislikes
     "health",   # pediatrician / dentist / insurance / meds
     "school",   # teacher / room / activities / pickup
-    "contact",  # role -> name / phone (a facts facet; see docs §3.6)
+    "contact",  # role -> name / phone (a facts facet; see docs §3.7)
 )
 
 #: Human labels for the fact categories, used by the render's section headings.
@@ -300,6 +300,133 @@ class HouseholdRepo:
             ORDER BY a.updated_at DESC, a.id DESC
             """,
             (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- star chart tracking --------------------------------------------------
+    #
+    # An agreement's `structured` JSON declares the goals (thresholds -> rewards);
+    # household_stars is the running earnings. Awarding is a plain ledger insert;
+    # the goal-crossing math lives in prefrontal.household (pure, testable), fed
+    # by the before/after totals award_stars() returns.
+
+    def agreement(self, agreement_id: int) -> dict[str, Any] | None:
+        """One agreement row (scoped to the household), or ``None`` if not found.
+
+        Used by the star-award path to read the chart's ``structured`` goals and
+        ``child_id`` before recording a grant — so a caller can't award against
+        another household's agreement (it simply reads back ``None`` → 404).
+        """
+        row = self.conn.execute(
+            "SELECT id, child_id, title, kind, body, structured "
+            "FROM household_agreements WHERE id = ? AND household_id = ?",
+            (agreement_id, self._household_id()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def award_stars(
+        self,
+        *,
+        agreement_id: int,
+        delta: int,
+        awarded_by: int | None,
+        note: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Record a star grant against an agreement's chart; return before/after totals.
+
+        Returns ``None`` if the agreement isn't in this household (so the caller
+        can 404 rather than writing an orphan ledger row). ``child_id`` is copied
+        from the agreement — never passed in — so the ledger always agrees with
+        the chart it belongs to. The running total is derived (``SUM(delta)``),
+        so a grant is append-only and every award keeps its own provenance.
+        """
+        hid = self._household_id()
+        agr = self.conn.execute(
+            "SELECT child_id FROM household_agreements WHERE id = ? AND household_id = ?",
+            (agreement_id, hid),
+        ).fetchone()
+        if agr is None:
+            return None
+        before = self.star_total(agreement_id)
+        self.conn.execute(
+            """
+            INSERT INTO household_stars
+                (household_id, agreement_id, child_id, delta, note, awarded_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (hid, agreement_id, agr["child_id"], int(delta), note, awarded_by),
+        )
+        self.conn.commit()
+        return {
+            "agreement_id": agreement_id,
+            "child_id": agr["child_id"],
+            "delta": int(delta),
+            "before": before,
+            "after": before + int(delta),
+        }
+
+    def star_total(self, agreement_id: int) -> int:
+        """The running star total for one chart (``SUM(delta)``, 0 if none)."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(delta), 0) AS total FROM household_stars "
+            "WHERE household_id = ? AND agreement_id = ?",
+            (self._household_id(), agreement_id),
+        ).fetchone()
+        return int(row["total"])
+
+    def star_totals(self) -> dict[int, int]:
+        """Running totals for every chart in the household, keyed by ``agreement_id``.
+
+        One grouped query so :func:`prefrontal.household.build_sheet` can show each
+        chart's progress without a per-agreement round-trip.
+        """
+        rows = self.conn.execute(
+            "SELECT agreement_id, COALESCE(SUM(delta), 0) AS total FROM household_stars "
+            "WHERE household_id = ? GROUP BY agreement_id",
+            (self._household_id(),),
+        ).fetchall()
+        return {int(r["agreement_id"]): int(r["total"]) for r in rows}
+
+    def star_ledger(self, agreement_id: int, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Recent grants for one chart (newest first), each with who awarded it."""
+        rows = self.conn.execute(
+            """
+            SELECT s.id, s.delta, s.note, s.created_at, s.child_id,
+                   COALESCE(u.display_name, u.handle) AS awarded_by_name
+            FROM household_stars s
+            LEFT JOIN users u ON u.id = s.awarded_by
+            WHERE s.household_id = ? AND s.agreement_id = ?
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT ?
+            """,
+            (self._household_id(), agreement_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def recent_star_awards(self, *, limit: int = 6) -> list[dict[str, Any]]:
+        """Recent grants across all charts (newest first) for the load surface.
+
+        Joins the chart title, child name, and awarder so the shared sheet's
+        "recently changed" section can show "Sam · +2⭐ (Star chart) · Dana" —
+        making a quietly-carried tracking task visible to the other parent.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT s.delta, s.note, s.created_at, s.child_id,
+                   a.title AS agreement_title,
+                   c.name AS child_name,
+                   COALESCE(u.display_name, u.handle) AS awarded_by_name
+            FROM household_stars s
+            JOIN household_agreements a
+                  ON a.id = s.agreement_id AND a.household_id = s.household_id
+            LEFT JOIN children c
+                  ON c.id = s.child_id AND c.household_id = s.household_id
+            LEFT JOIN users u ON u.id = s.awarded_by
+            WHERE s.household_id = ?
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT ?
+            """,
+            (self._household_id(), limit),
         ).fetchall()
         return [dict(r) for r in rows]
 

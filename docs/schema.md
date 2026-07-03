@@ -239,6 +239,17 @@ positive `children.id`.
   (`reward`/`consistency`/`routine`), plain-language `body`, an optional
   `structured` JSON for star/points charts (thresholds → rewards, earn-only), and
   provenance. `UNIQUE (household_id, child_id, title)`.
+- **`household_stars`** — the star/points **ledger** behind a reward chart: one
+  append-only row per grant (`agreement_id`, `child_id` copied from the chart,
+  `delta`, optional `note`, `awarded_by`/`created_at`). The agreement's
+  `structured` declares the *goals*; this table is the running *earnings* against
+  them (a chart's total is `SUM(delta)` over its `agreement_id`). A grant that
+  carries the total across a threshold "reaches" that goal — the write layer then
+  congratulates and pushes to **both** co-parents (`newly_reached_goals` in
+  `prefrontal/household.py` → `deliver_to_household` in
+  `prefrontal/integrations/delivery.py`). Awarded via
+  `POST /household/agreements/{id}/stars` or `prefrontal household star`; the
+  running total and next reward render on the shared sheet.
 
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
