@@ -396,6 +396,11 @@ class WindowConfig:
     offzone: tuple[int, int]
     default_window: tuple[int, int]
     windows: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: Crunch mode (work/life guardrail escape hatch): while active, the per-key
+    #: domain/category/source *bands* are suspended so anything can surface any
+    #: waking hour — the off-zone and travel-late gate still apply. Set by a
+    #: self-expiring ``crunch_until`` coaching-state timestamp; see window_config_for.
+    crunch: bool = False
 
     @classmethod
     def build(
@@ -406,6 +411,7 @@ class WindowConfig:
         state_offzone: str | None = None,
         state_windows: dict[str, str] | None = None,
         default_window: str | None = None,
+        crunch: bool = False,
     ) -> WindowConfig:
         """Assemble a config, layering **state over env over built-in** per key.
 
@@ -434,7 +440,7 @@ class WindowConfig:
                 if parsed is not None:
                     windows[key.strip().lower()] = parsed
         assert offzone is not None and default is not None  # built-in constants parse
-        return cls(offzone=offzone, default_window=default, windows=windows)
+        return cls(offzone=offzone, default_window=default, windows=windows, crunch=crunch)
 
     def awake_band(self) -> tuple[str, str]:
         """The off-zone's complement as ``("HH:MM", "HH:MM")`` waking-hours band.
@@ -449,6 +455,9 @@ class WindowConfig:
 
 #: Coaching-state key for a per-user off-zone override ("HH:MM-HH:MM").
 STATE_OFFZONE_KEY = "todo_offzone"
+#: Coaching-state key holding a UTC timestamp until which **crunch mode** is on
+#: (work/life bands suspended). Self-expiring — a past/absent value ⇒ off.
+STATE_CRUNCH_UNTIL_KEY = "crunch_until"
 #: Prefix for per-user category/source window overrides in coaching-state, e.g.
 #: ``"todo_window:work" -> "09:00-17:00"``.
 STATE_WINDOW_PREFIX = "todo_window:"
@@ -487,7 +496,23 @@ def window_config_for(settings: Any, store: Any) -> WindowConfig:
         env_windows=dict(getattr(settings, "todo_window_map", {}) or {}),
         state_offzone=sval(STATE_OFFZONE_KEY),
         state_windows=state_windows,
+        crunch=_crunch_active(sval(STATE_CRUNCH_UNTIL_KEY)),
     )
+
+
+def _crunch_active(crunch_until: str | None) -> bool:
+    """Whether crunch mode is currently on, from a stored UTC ``crunch_until``.
+
+    ``True`` only while ``crunch_until`` parses and is still in the future — so it
+    self-expires without a sweep. A blank/unparseable value is simply off.
+    """
+    if not crunch_until:
+        return False
+    try:
+        parsed = _parse(str(crunch_until))
+    except (ValueError, TypeError):
+        return False
+    return parsed > datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def resolve_window(todo: dict[str, Any], config: WindowConfig) -> tuple[int, int]:
@@ -529,7 +554,9 @@ def todo_allowed_at(
     minute = local_dt.hour * 60 + local_dt.minute
     if _in_span(minute, config.offzone):
         return False
-    if not _in_span(minute, resolve_window(todo, config)):
+    # Crunch mode suspends the per-key band (so work can surface any waking hour),
+    # but the off-zone above and the travel-late gate below still apply.
+    if not config.crunch and not _in_span(minute, resolve_window(todo, config)):
         return False
     if minute >= _TRAVEL_LATEST_MINUTE and requires_travel(todo):
         return False
