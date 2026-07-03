@@ -923,12 +923,18 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success, 1 if generation failed with no fallback).
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations import ProviderError, ProviderResolver
+    from prefrontal.integrations.ollama import OllamaClient
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path
-    client = OllamaClient(
+    # Local client (honors --model); the summarizer agent uses Claude instead
+    # when opted into the Anthropic provider, falling back to this one.
+    local = OllamaClient(
         base_url=settings.ollama_url, model=args.model or settings.ollama_model
+    )
+    client = ProviderResolver.from_settings(settings, ollama=local).client(
+        "summarizer", fallback=local
     )
     with MemoryStore.open(db_path) as store:
         if args.all_users:
@@ -944,15 +950,16 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
                 result = summarize_profile(
                     s, client=client, fallback=not args.no_fallback
                 )
-            except OllamaError as exc:
+            except ProviderError as exc:
                 print(f"[{handle}] summarization failed: {exc}", file=sys.stderr)
                 return 1
             if not args.no_cache:
                 cache_summary(s, result)
             if result.source == "heuristic":
                 print(
-                    f"[{handle}] Ollama unavailable ({client.base_url}, model "
-                    f"{client.model}); cached the structured profile instead.",
+                    f"[{handle}] model unavailable (local fallback "
+                    f"{local.base_url}, model {local.model}); cached the "
+                    "structured profile instead.",
                     file=sys.stderr,
                 )
             # Per-user profile artifact: ``profile-<handle>.md`` unless an explicit
@@ -974,12 +981,16 @@ def _cmd_briefing(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
+    from prefrontal.integrations import ProviderResolver
+
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
         if args.llm:
-            result = summarize_briefing(store)
+            # Claude when the ``briefing`` agent is opted into Anthropic, else local.
+            client = ProviderResolver.from_settings(settings).client("briefing")
+            result = summarize_briefing(store, client=client)
             text = result.text
             if result.source == "heuristic":
                 print(
@@ -1205,12 +1216,15 @@ def _cmd_note(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
+    from prefrontal.integrations import ProviderResolver
     from prefrontal.sensor import extract_candidates, record_candidates, summarize_candidate
 
     settings = get_settings()
+    # Claude when the ``sensor`` agent is opted into Anthropic, else local.
+    client = ProviderResolver.from_settings(settings).client("sensor")
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
-        candidates = extract_candidates(args.text)
+        candidates = extract_candidates(args.text, client=client)
         if not candidates:
             print("No candidate updates found (or the model was unreachable).")
             return 0

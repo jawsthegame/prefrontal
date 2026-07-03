@@ -17,9 +17,10 @@ from typing import Any
 import httpx
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.integrations.base import ProviderError
 
 
-class OllamaError(RuntimeError):
+class OllamaError(ProviderError):
     """Raised when an Ollama request fails (transport error or non-2xx)."""
 
 

@@ -39,7 +39,7 @@ from prefrontal.memory.patterns import (
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
     from prefrontal.modules.base import Module
 
 #: System prompt steering the model from structured facts to coaching prose.
@@ -211,7 +211,7 @@ class ProfileSummary:
 def summarize_profile(
     store: MemoryStore,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     modules: list[Module] | None = None,
     fallback: bool = True,
 ) -> ProfileSummary:
@@ -224,7 +224,9 @@ def summarize_profile(
 
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
-        client: An Ollama client. Defaults to one built from settings.
+        client: A model client — the local Ollama client, or Claude when the
+            ``summarizer`` agent is opted into the Anthropic provider. Defaults
+            to a local client built from settings.
         modules: Modules to include in the structured profile (see
             :func:`build_profile`).
         fallback: If ``True`` (default), fall back to the structured profile on
@@ -234,17 +236,18 @@ def summarize_profile(
         A :class:`ProfileSummary`.
 
     Raises:
-        prefrontal.integrations.ollama.OllamaError: If the model fails and
+        prefrontal.integrations.base.ProviderError: If the model fails and
             ``fallback`` is ``False``.
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations.base import ProviderError
+    from prefrontal.integrations.ollama import OllamaClient
 
     structured = build_profile(store, modules=modules)
     client = client or OllamaClient.from_settings()
 
     try:
         prose = client.generate(structured, system=SUMMARIZER_SYSTEM_PROMPT)
-    except OllamaError:
+    except ProviderError:
         if not fallback:
             raise
         return ProfileSummary(
@@ -256,7 +259,7 @@ def summarize_profile(
     prose = prose.strip()
     if not prose:
         if not fallback:
-            raise OllamaError("Ollama returned an empty summary.")
+            raise ProviderError("The model returned an empty summary.")
         return ProfileSummary(
             text=structured, source="heuristic", model=None, structured=structured
         )
@@ -302,7 +305,7 @@ def load_cached_summary(store: MemoryStore) -> ProfileSummary | None:
 def refresh_profile_cache(
     store: MemoryStore,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     modules: list[Module] | None = None,
     fallback: bool = True,
 ) -> ProfileSummary:

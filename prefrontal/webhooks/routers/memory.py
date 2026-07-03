@@ -27,7 +27,12 @@ from prefrontal.webhooks.services import RouterServices
 def build_router(services: RouterServices) -> APIRouter:
     """Build the "memory" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
-    summarizer_client = services.summarizer
+    # The summarizer's local fallback is the longer-timeout Ollama client (the
+    # profile is a heavier generation than the snappy inferences); Claude is used
+    # instead when the ``summarizer`` agent is opted into the Anthropic provider.
+    summarizer_client = services.provider.client(
+        "summarizer", fallback=services.summarizer
+    )
 
     @router.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(

@@ -122,6 +122,14 @@ class Settings:
     # fallback. The key never leaves the host except on outbound Anthropic calls.
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
+    # Which *agents* prefer the Anthropic provider over the local model, when a
+    # key is configured — the per-agent selectability the README describes. An
+    # agent not listed here stays on Ollama regardless of the key. Historical
+    # default: only the dashboard ``assistant`` (its long-standing behavior when
+    # a key is present). The sentinel ``all`` opts every agent in. Selectable
+    # names: assistant, summarizer, briefing, sensor, triage. See
+    # ``prefrontal.integrations.provider``.
+    anthropic_agents: tuple[str, ...] = ("assistant",)
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     # Delivery layer — operator *defaults* for the native publishing client
@@ -337,6 +345,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
+        anthropic_agents=_parse_anthropic_agents(os.environ.get("ANTHROPIC_AGENTS")),
         geocoder_url=os.environ.get(
             "GEOCODER_URL", "https://nominatim.openstreetmap.org/search"
         ),
@@ -493,6 +502,37 @@ def _parse_todo_windows(raw: str) -> tuple[tuple[str, str], ...]:
         if key and spec:
             pairs.append((key, spec))
     return tuple(pairs)
+
+
+def _parse_anthropic_agents(raw: str | None) -> tuple[str, ...]:
+    """Parse ``ANTHROPIC_AGENTS`` into the set of agents that prefer Claude.
+
+    Unset (``None``) keeps the historical default — only the dashboard
+    ``assistant`` uses Claude when a key is configured. An explicit *empty*
+    string opts every agent back to the local model. The sentinel ``all`` (or
+    ``*``) opts them all in. Otherwise it's a comma-separated list of agent
+    names, lowercased and de-duplicated; unknown names are harmless (they simply
+    never match a real agent), so a typo degrades to "stay local".
+
+    Args:
+        raw: The raw environment-variable value, or ``None`` if unset.
+
+    Returns:
+        A tuple of agent names (possibly the ``("all",)`` sentinel), suitable
+        for :attr:`Settings.anthropic_agents`.
+    """
+    if raw is None:
+        return ("assistant",)
+    out: list[str] = []
+    for entry in raw.split(","):
+        token = entry.strip().lower()
+        if not token:
+            continue
+        if token == "*":
+            token = "all"
+        if token not in out:
+            out.append(token)
+    return tuple(out)
 
 
 def _parse_account_domains(raw: str) -> tuple[tuple[str, str], ...]:

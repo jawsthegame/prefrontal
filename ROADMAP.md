@@ -358,8 +358,9 @@ the first test. Code follow-ups below are optional polish.
   narrative in the `profile_cache` table so `GET /profile` serves the prose
   without a per-request model round-trip (`?refresh=1` regenerates it,
   `?format=structured` returns the raw input; `X-Profile-*` headers report
-  source/model/age/staleness). *(Next: optional Anthropic provider for
-  higher-quality summaries.)*
+  source/model/age/staleness). The summarizer is now one of the agents that can
+  opt into the **Anthropic provider** (`ANTHROPIC_AGENTS=summarizer`) for
+  higher-quality prose, with Ollama as the fallback — see below.
 - **Calendar ingestion + double-booking** ✅ — `commitments` table +
   `prefrontal/commitments.py`: feed-aware calendar sync
   (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,
@@ -662,12 +663,17 @@ ordered by leverage; each is independent but builds on denser capture.
   `prefrontal/mail/` with IMAP fetch + n8n/Apps-Script batch sync). Still open:
   the Google Apps Script work-email digest as an alternative source, and folding
   ingestion under the general Triage agent (`docs/triage-agent.md`).
-- **Optional Anthropic provider** — keep inference local by default, but add an
-  opt-in Anthropic API path (e.g. Claude Haiku for cheap, high-quality
-  summaries; a larger model for heavier coaching/triage reasoning), selectable
-  per agent as the README describes. The summarizer already takes an injected
-  client, so this slots in behind the same interface. Local-first stays the
-  default; the cloud path is explicit and configurable.
+- **Optional Anthropic provider** ✅ — inference stays local by default, with an
+  opt-in Anthropic API path selectable **per agent** via `ANTHROPIC_AGENTS`
+  (`prefrontal/integrations/provider.py`: `ProviderResolver`). The reasoning-heavy
+  agents — `assistant`, `summarizer`, `briefing`, `sensor`, `triage` — each
+  resolve to Claude when opted in and a key is configured, otherwise the local
+  Ollama client, all behind the shared `generate(prompt, system=)` interface.
+  Selection is availability-only (no network) and safe: a shared `ProviderError`
+  base means every agent falls back to Ollama when Claude is unavailable *or* a
+  call fails, and keeps its deterministic fallback when both are down. The snappy
+  in-loop inferences (window/title/kind, decomposition) stay local by design for
+  latency. See "Inference providers" in `docs/guide.md`.
 - **Encouragement & recovery layer** ✅ **(shipped — see "Recently shipped")** —
   the deterministic detector + recovery plan + `GET /encouragement` are live
   (`prefrontal/encouragement.py`, spec `docs/encouragement.md`), opt-in and

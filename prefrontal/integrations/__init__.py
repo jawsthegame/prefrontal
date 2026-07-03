@@ -18,8 +18,10 @@ import DeliveryClient``.
 from typing import Protocol
 
 from prefrontal.integrations.anthropic import AnthropicClient, AnthropicError
+from prefrontal.integrations.base import ProviderError
 from prefrontal.integrations.n8n import N8nClient, N8nResult
 from prefrontal.integrations.ollama import OllamaClient, OllamaError
+from prefrontal.integrations.provider import ProviderResolver
 
 
 class Generator(Protocol):
@@ -43,4 +45,6 @@ __all__ = [
     "N8nResult",
     "OllamaClient",
     "OllamaError",
+    "ProviderError",
+    "ProviderResolver",
 ]

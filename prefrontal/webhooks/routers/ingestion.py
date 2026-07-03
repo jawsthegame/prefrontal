@@ -43,6 +43,11 @@ def build_router(services: RouterServices) -> APIRouter:
     resolved_settings = services.settings
     n8n = services.n8n
     ollama_client = services.ollama
+    # Reasoning-heavy paths are per-agent selectable (Claude vs local): mail
+    # triage and the sensor that reads a trip reflection. The snappy outcome
+    # inference on a reflection stays on the local model.
+    triage_client = services.provider.client("triage")
+    sensor_client = services.provider.client("sensor")
 
     @router.post(
         "/webhooks/shortcut",
@@ -253,7 +258,7 @@ def build_router(services: RouterServices) -> APIRouter:
             reflection,
             outcome=payload.outcome,
             client=ollama_client,
-            sensor_client=ollama_client,
+            sensor_client=sensor_client,
         )
         return {
             "trip_id": payload.trip_id,
@@ -292,7 +297,7 @@ def build_router(services: RouterServices) -> APIRouter:
             payload.messages,
             account=payload.account,
             policy=policy,
-            client=ollama_client,
+            client=triage_client,
             corrections=learned_corrections(
                 memory,
                 quick_drop_days=resolved_settings.triage_quick_drop_days,
