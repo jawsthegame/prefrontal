@@ -19,6 +19,7 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.hyperfocus import (
     build_focus_message,
     focus_level,
+    infer_focus_start,
     is_abandoned,
     is_focus_protected,
     level_rank,
@@ -177,11 +178,45 @@ def test_start_creates_session(client):
     assert body["aligned"] is True
 
 
-def test_start_rejects_blank_task(client):
+def test_infer_focus_start_picks_first_titled_todo():
+    """The first candidate with a real title wins, carrying its estimate."""
+    got = infer_focus_start([
+        {"id": 1, "title": "   "},          # blank — skipped
+        {"id": 2, "title": "write the RFC", "estimate_minutes": 60},
+        {"id": 3, "title": "later"},
+    ])
+    assert (got.intended_task, got.planned_minutes, got.source) == ("write the RFC", 60.0, "todo")
+
+
+def test_infer_focus_start_no_estimate_leaves_planned_none():
+    got = infer_focus_start([{"id": 1, "title": "read the spec"}])
+    assert got.planned_minutes is None and got.source == "todo"
+
+
+def test_infer_focus_start_falls_back_to_generic_block():
+    got = infer_focus_start([])
+    assert got.intended_task == "a focus block"
+    assert got.planned_minutes is None and got.source == "default"
+
+
+def test_start_blank_infers_generic_block_when_no_todos(client):
+    """A one-tap start with nothing open still works — a generic block."""
     resp = client.post(
         "/webhooks/focus/start", json={"intended_task": "   "}, headers=_auth()
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    assert resp.json()["intended_task"] == "a focus block"
+
+
+def test_start_blank_infers_top_todo(client, store):
+    """A one-tap start (no fields) picks the top open todo + its estimate."""
+    store.add_todo("the API refactor", estimate_minutes=45, priority=2)
+    resp = client.post("/webhooks/focus/start", json={}, headers=_auth())
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["intended_task"] == "the API refactor"
+    assert body["planned_minutes"] == 45
+    assert "open todos" in body["confirmation"]
 
 
 def test_start_confirmation_notes_protection_and_plan(client):

@@ -114,6 +114,7 @@ from prefrontal.modules.hyperfocus import (
     DEFAULT_SOFT_BLOCK_MINUTES,
     build_focus_message,
     focus_level,
+    infer_focus_start,
     record_focus_abandoned,
     record_focus_end,
     record_focus_switched,
@@ -306,7 +307,13 @@ class OutingReturn(BaseModel):
 class FocusStart(BaseModel):
     """Body of ``POST /webhooks/focus/start`` — declaring a focus session."""
 
-    intended_task: str = Field(description="What you're getting into, e.g. 'the API refactor'.")
+    intended_task: str = Field(
+        default="",
+        description=(
+            "What you're getting into, e.g. 'the API refactor'. Leave blank for a "
+            "one-tap start — the server infers it from your top open todo."
+        ),
+    )
     planned_minutes: float | None = Field(
         default=None,
         description="Optional intended duration; the point past which a gentle check fires.",
@@ -1278,6 +1285,7 @@ __all__ = [
     "classify_departure",
     "record_departure_outcome",
     "build_focus_message",
+    "infer_focus_start",
     "body_double_message",
     "build_message",
     "build_panic",
