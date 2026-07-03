@@ -23,6 +23,7 @@ from datetime import timezone
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any
 
+from prefrontal.clock import TS_FMT
 from prefrontal.commitments import to_utc
 
 #: Valid retention policies (see :class:`prefrontal.config.Settings`).
@@ -106,7 +107,7 @@ def normalize_date(value: Any) -> str | None:
         return None
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return dt.strftime(TS_FMT)
 
 
 def parse_sender(raw: dict[str, Any]) -> tuple[str | None, str | None]:

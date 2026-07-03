@@ -56,6 +56,7 @@ from prefrontal.assistant import (
 )
 from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.classify import classify_kind
+from prefrontal.clock import parse_ts as _parse_dt_or_none
 from prefrontal.coaching import in_quiet_hours, resolve_ack
 from prefrontal.commitments import (
     KINDS,
@@ -948,16 +949,6 @@ class AssistantApply(BaseModel):
     )
 
 
-def _parse_dt_or_none(ts: str | None) -> Any:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
-    if not ts:
-        return None
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
-
-
 def _fmt_minutes(value: float | None) -> str:
     """Render a minutes value without a trailing ``.0`` (30.0 -> "30", 12.5 -> "12.5")."""
     if value is None:
@@ -1224,6 +1215,24 @@ def require_operator(
     return ctx
 
 
+def require_member(
+    ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+) -> ScopedRequest:
+    """Like :func:`resolve_user` but also requires the caller be in a household.
+
+    A caller in no household has nothing shared to touch, so household routes
+    404 rather than surfacing the store's raw scope error. Declared as a
+    dependency (not a per-handler call) so it attaches via ``Depends`` and a new
+    household endpoint can't forget the guard.
+    """
+    if ctx.store.household_id_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You're not set up in a household.",
+        )
+    return ctx
+
+
 #: Per-request timeout (seconds) for the hot-path window inference. Kept short:
 #: ``/outing/start`` is interactive (an iOS Shortcut waits on it), so a slow or
 #: unreachable model must degrade to the heuristic fast rather than hang the tap.
@@ -1466,6 +1475,7 @@ __all__ = [
     "render_sheet",
     "repeat_stalled_tasks",
     "require_operator",
+    "require_member",
     "resolve_ack",
     "resolve_user",
     "session_user",

@@ -30,14 +30,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
+from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+from prefrontal.scheduling import local_datetime
 
 #: Interrupt levels in ascending severity. ``none`` is rank 0; an interrupt fires
 #: only when a *new* (higher-ranked) level is crossed since the last poll.
@@ -359,15 +360,6 @@ def build_focus_recap(name: str = "") -> str:
     )
 
 
-def _local(now: datetime, tz: str) -> datetime:
-    """A naive-UTC instant as tz-aware local (falls back to UTC)."""
-    try:
-        zone = ZoneInfo(tz)
-    except Exception:
-        zone = ZoneInfo("UTC")
-    return now.replace(tzinfo=timezone.utc).astimezone(zone)
-
-
 def record_focus_end(
     store: MemoryStore,
     closed: dict,
@@ -518,7 +510,7 @@ def _minutes_between(start: str | None, end: str | None) -> float:
         return 0.0
     from datetime import datetime
 
-    fmt = "%Y-%m-%d %H:%M:%S"
+    fmt = TS_FMT
     try:
         delta = datetime.strptime(end, fmt) - datetime.strptime(start, fmt)
     except ValueError:
@@ -604,7 +596,7 @@ class HyperfocusModule(Module):
         """
         if store.active_focus_sessions():
             return []
-        local = _local(ctx.now, ctx.timezone)
+        local = local_datetime(ctx.now, ctx.timezone)
         focused_today = self._focused_today(store, local.date(), ctx.timezone)
         day = local.date().isoformat()
 
@@ -658,10 +650,10 @@ class HyperfocusModule(Module):
             if not started:
                 continue
             try:
-                dt = datetime.strptime(str(started)[:19], "%Y-%m-%d %H:%M:%S")
+                dt = datetime.strptime(str(started)[:19], TS_FMT)
             except ValueError:
                 continue
-            if _local(dt, tz).date() == today:
+            if local_datetime(dt, tz).date() == today:
                 return True
         return False
 

@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.webhooks._common import (
     DEFAULT_FOCUS_ABANDON_RATIO,
     DEFAULT_HARD_INTERRUPT_MINUTES,
@@ -40,16 +42,6 @@ from prefrontal.webhooks._common import (
     status,
     utcnow,
 )
-
-_TS = "%Y-%m-%d %H:%M:%S"
-
-
-def _parse_ts(ts: Any) -> datetime | None:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp, or ``None``."""
-    try:
-        return datetime.strptime(str(ts)[:19], _TS)
-    except (ValueError, TypeError):
-        return None
 
 
 def _top_todo_guess(memory: Any, now: datetime):
@@ -149,7 +141,7 @@ def build_router(
         live: dict[str, Any] | None = None
         end_at: datetime | None = None
         for c in memory.commitments_between(
-            day_start.strftime(_TS), day_end.strftime(_TS)
+            day_start.strftime(TS_FMT), day_end.strftime(TS_FMT)
         ):
             if not is_focus_intent_title(c.get("title")):
                 continue
@@ -208,7 +200,7 @@ def build_router(
             if todo_id is None:
                 todo_id = guess.todo_id
 
-        started_at = (now - timedelta(minutes=payload.minutes)).strftime(_TS)
+        started_at = (now - timedelta(minutes=payload.minutes)).strftime(TS_FMT)
         session_id = memory.start_focus_session(
             task,
             planned_minutes=None,  # a forgotten block had no stated plan

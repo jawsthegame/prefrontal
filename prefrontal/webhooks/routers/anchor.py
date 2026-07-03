@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
 from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
@@ -472,7 +473,7 @@ def build_router(
             # these changes — the one-tap equivalent of opening /kids.
             now = utcnow()
             memory.set_state(
-                "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
+                "household_seen_at", now.strftime(TS_FMT), source="inferred"
             )
             return _dismiss_page("All caught up 💛")
 

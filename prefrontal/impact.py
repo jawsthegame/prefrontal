@@ -17,8 +17,11 @@ Pure functions only; the outing check endpoint wires them to live data.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
+
+from prefrontal.clock import TS_FMT, utcnow
+from prefrontal.clock import parse_ts_strict as _parse
 
 
 @dataclass(frozen=True)
@@ -37,16 +40,6 @@ class Impact:
     latest_departure: str
     slack_minutes: float
     at_risk: bool
-
-
-def _parse(ts: str) -> datetime:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp (naive UTC)."""
-    return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
-
-
-def utcnow() -> datetime:
-    """Current time as naive UTC, matching stored timestamps."""
-    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
 def project_free_time(
@@ -98,7 +91,7 @@ def analyze_impact(
         impacts.append(
             Impact(
                 commitment=c,
-                latest_departure=latest.strftime("%Y-%m-%d %H:%M:%S"),
+                latest_departure=latest.strftime(TS_FMT),
                 slack_minutes=round(slack, 1),
                 at_risk=slack < 0,
             )

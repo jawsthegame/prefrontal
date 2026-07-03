@@ -25,6 +25,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dateutil.rrule import rrulestr
 
+from prefrontal.clock import TS_FMT, utcnow
+from prefrontal.clock import parse_ts_strict as _parse_utc
 from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
@@ -37,9 +39,6 @@ RECUR_HORIZON_HOURS = 36.0
 #: Joins a recurring series' id to a generated occurrence's start stamp, forming a
 #: stable per-occurrence ``external_id`` so repeated polls upsert (never duplicate).
 RECUR_OCCURRENCE_SEP = "::"
-
-#: SQLite-comparable UTC timestamp format (matches ``datetime('now')``).
-_TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 #: Windows/Outlook timezone names → IANA zones. Outlook-published ICS feeds label
 #: ``TZID`` with Windows names (``Eastern Standard Time``) that :mod:`zoneinfo`
@@ -262,13 +261,13 @@ def to_utc(value: str, tzid: str | None = None, default_tz: str = "UTC") -> str:
     dt = datetime.fromisoformat(text)
     if dt.tzinfo is not None:
         # An explicit offset wins outright; any tzid is redundant/ignored.
-        return dt.astimezone(timezone.utc).replace(tzinfo=None).strftime(_TS_FMT)
+        return dt.astimezone(timezone.utc).replace(tzinfo=None).strftime(TS_FMT)
     if len(text) <= 10:
         # Date-only (all-day): floating midnight, never shifted across a day.
-        return dt.strftime(_TS_FMT)
+        return dt.strftime(TS_FMT)
     # Naive datetime: attach the source zone and convert to UTC.
     localized = dt.replace(tzinfo=resolve_zone(tzid, default_tz))
-    return localized.astimezone(timezone.utc).replace(tzinfo=None).strftime(_TS_FMT)
+    return localized.astimezone(timezone.utc).replace(tzinfo=None).strftime(TS_FMT)
 
 
 def normalize_event(
@@ -509,7 +508,7 @@ def sync_calendar(
     # else — a weekly event ships as one long-past-dated master, so this is what
     # makes today's instance exist at all.
     events = expand_recurrences(
-        events, now=now or datetime.now(timezone.utc), default_tz=default_tz
+        events, now=now or utcnow(), default_tz=default_tz
     )
     normalized = [  # validate all up front
         normalize_event(e, default_tz=default_tz) for e in events
@@ -583,11 +582,6 @@ def _conflict_signature(conflicts: list[Conflict]) -> str:
         b = c.b.get("external_id") or f"id:{c.b.get('id')}"
         pairs.append("|".join(sorted([str(a), str(b)])))
     return ";".join(sorted(pairs))
-
-
-def _parse_utc(ts: str) -> datetime:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp."""
-    return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
 
 
 def _interval(commitment: dict[str, Any], default_minutes: float) -> tuple[datetime, datetime]:

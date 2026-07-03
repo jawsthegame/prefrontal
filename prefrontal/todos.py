@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.llm_json import extract_json_object
 
@@ -569,14 +570,6 @@ def decompose_task(
 # ("someday") items are exempt so this never nags about genuine maybes.
 
 DEFAULT_AVOIDANCE_MIN_DAYS = 3.0
-
-
-def _parse_ts(ts: Any) -> datetime | None:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp, or ``None``."""
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 def _days_open(todo: dict[str, Any], now: datetime) -> float | None:

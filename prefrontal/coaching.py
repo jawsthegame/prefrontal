@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.scheduling import local_hour_of
 
 # --- Urgency ladder & channel floors -----------------------------------------
@@ -184,13 +186,6 @@ def in_quiet_hours(store: Any, now: datetime, tz: str) -> bool:
     return not _within_hours(local_hour_of(now, tz), start, end)
 
 
-def _parse_ts(ts: Any) -> datetime | None:
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
-
-
 def _fired_key(dedup_key: str) -> str:
     """Coaching-state key holding when a cue last fired (debounce, no schema change)."""
     return f"coach_fired:{dedup_key}"
@@ -275,7 +270,7 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
     never mutates state; the delivering caller invokes this once it commits to
     sending.
     """
-    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    stamp = now.strftime(TS_FMT)
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
 
@@ -333,7 +328,7 @@ def note_delivered(store: Any, decisions: list[Decision], now: datetime) -> None
     cue has no observable ack. Keyed by ``(context, target)``, the coordinates a
     one-tap ack arrives on (see :func:`resolve_ack`).
     """
-    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    stamp = now.strftime(TS_FMT)
     for d in decisions:
         if d.channel == "digest":
             continue

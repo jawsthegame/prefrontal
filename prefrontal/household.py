@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any
 
+from prefrontal.clock import parse_ts as _parse_dt
 from prefrontal.commitments import KIND_CHILD
 from prefrontal.impact import utcnow
 from prefrontal.memory.repos.household import (
@@ -118,14 +119,6 @@ class HouseholdSheet:
 
 
 # --- timestamp helpers (mirrors panic.py) ------------------------------------
-
-
-def _parse_dt(ts: Any) -> datetime | None:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 def _ago_phrase(ts: Any, now: datetime) -> str:

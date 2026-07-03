@@ -25,6 +25,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from prefrontal.clock import TS_FMT, utcnow
+from prefrontal.clock import parse_ts_strict as _parse
 from prefrontal.todos import KNOWN_CATEGORIES, requires_travel
 
 #: Local hour after which a travel-requiring todo (see
@@ -44,11 +46,6 @@ DEFAULT_DAY_START = "08:30"
 DEFAULT_DAY_END = "17:30"
 #: Default cap on "free time right now" so an open evening doesn't offer a 3h task.
 DEFAULT_FIT_CAP_MINUTES = 90.0
-
-
-def _parse(ts: str) -> datetime:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp."""
-    return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
 
 
 @dataclass(frozen=True)
@@ -98,7 +95,7 @@ def free_windows(
 
     windows: list[FreeWindow] = []
     cursor = start
-    fmt = "%Y-%m-%d %H:%M:%S"
+    fmt = TS_FMT
     for s, e in busy:
         if s > cursor:
             gap = (s - cursor).total_seconds() / 60.0
@@ -524,7 +521,7 @@ def _crunch_active(crunch_until: str | None) -> bool:
         parsed = _parse(str(crunch_until))
     except (ValueError, TypeError):
         return False
-    return parsed > datetime.now(timezone.utc).replace(tzinfo=None)
+    return parsed > utcnow()
 
 
 def resolve_window(todo: dict[str, Any], config: WindowConfig) -> tuple[int, int]:

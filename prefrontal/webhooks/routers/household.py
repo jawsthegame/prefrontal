@@ -12,6 +12,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
     BALANCE_WINDOW_DAYS,
@@ -69,6 +70,7 @@ from prefrontal.webhooks._common import (
     build_sheet,
     local_datetime,
     render_sheet,
+    require_member,
     resolve_user,
     status,
     timedelta,
@@ -87,14 +89,6 @@ def build_router(
 ) -> APIRouter:
     """Build the "household" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
-
-    def _require_member(ctx: ScopedRequest) -> None:
-        """404 if the caller isn't in a household (nothing shared to touch)."""
-        if ctx.store.household_id_or_none() is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="You're not set up in a household.",
-            )
 
     def _child_name(ctx: ScopedRequest, child_id: int) -> str | None:
         """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
@@ -117,7 +111,7 @@ def build_router(
 
     @router.get("/household/sheet", tags=["household"])
     def household_sheet(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Return the caller's shared household sheet — structured + rendered Markdown.
 
@@ -125,7 +119,6 @@ def build_router(
         Deterministic assembly, built on request — no cache. ``vocab`` drives the
         ``/kids`` dashboard's category / kind dropdowns off the server.
         """
-        _require_member(ctx)
         now = utcnow()
         sheet = build_sheet(ctx.store, now=now, timezone=resolved_settings.timezone)
         now_local = local_datetime(now, resolved_settings.timezone)
@@ -150,7 +143,7 @@ def build_router(
         unseen = unseen_changes(ctx.store, viewer_id=ctx.user["id"], since=since)
         digest = {"enabled": ctx.store.get_digest_enabled(), "unseen": len(unseen)}
         ctx.store.set_state(
-            "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
+            "household_seen_at", now.strftime(TS_FMT), source="inferred"
         )
         # The load-balance view (opt-in, shared-only). Derived on read from a
         # 30-day provenance window; `view` is null when the toggle is off.
@@ -161,7 +154,7 @@ def build_router(
             view = None
             if bal_enabled:
                 since = (now - timedelta(days=BALANCE_WINDOW_DAYS)).strftime(
-                    "%Y-%m-%d %H:%M:%S"
+                    TS_FMT
                 )
                 view = balance_view(
                     ctx.store.contribution_counts(since),
@@ -206,10 +199,9 @@ def build_router(
 
     @router.post("/household/invites", status_code=status.HTTP_201_CREATED, tags=["household"])
     def create_invite(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Mint a shareable invite code (+ a join link) for the caller's household."""
-        _require_member(ctx)
         invite = ctx.store.create_invite()
         base = resolved_settings.oauth_base_url
         join_url = f"{base}/kids?invite={invite['code']}" if base else ""
@@ -218,10 +210,9 @@ def build_router(
     @router.post("/household/invites/{invite_id}/revoke", tags=["household"])
     def revoke_invite(
         invite_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Revoke an unredeemed invite code."""
-        _require_member(ctx)
         if not ctx.store.revoke_invite(invite_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such invite")
         return {"revoked": True}
@@ -244,10 +235,9 @@ def build_router(
     @router.post("/household/children", status_code=status.HTTP_201_CREATED, tags=["household"])
     def add_child(
         payload: ChildCreate,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Add a kid to the roster (idempotent on name)."""
-        _require_member(ctx)
         cid = ctx.store.add_child(name=payload.name, birthday=payload.birthday)
         return {"id": cid, "name": payload.name}
 
@@ -255,10 +245,9 @@ def build_router(
     def rename_child(
         child_id: int,
         payload: ChildRename,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Rename a kid (and optionally set a birthday)."""
-        _require_member(ctx)
         if not ctx.store.rename_child(child_id, name=payload.name, birthday=payload.birthday):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such child")
         return {"id": child_id, "name": payload.name}
@@ -268,10 +257,9 @@ def build_router(
     @router.post("/household/facts", tags=["household"])
     def set_fact(
         payload: FactSet,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Upsert one fact, stamping the acting user as ``updated_by``."""
-        _require_member(ctx)
         category = _valid_category(payload.category)
         item = normalize_fact_item(payload.item)
         if not item:
@@ -288,10 +276,9 @@ def build_router(
     @router.post("/household/facts/clear", tags=["household"])
     def clear_fact(
         payload: FactClear,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete one fact. ``removed`` is false if it was already gone."""
-        _require_member(ctx)
         removed = ctx.store.clear_fact(
             category=_valid_category(payload.category),
             item=normalize_fact_item(payload.item),
@@ -304,10 +291,9 @@ def build_router(
     @router.post("/household/agreements", tags=["household"])
     def set_agreement(
         payload: AgreementSet,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Upsert a standing behaviour plan (star charts via ``structured``)."""
-        _require_member(ctx)
         if payload.kind not in AGREEMENT_KINDS:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -325,10 +311,9 @@ def build_router(
     @router.post("/household/agreements/{agreement_id}/remove", tags=["household"])
     def remove_agreement(
         agreement_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete an agreement by id (scoped to the household)."""
-        _require_member(ctx)
         if not ctx.store.remove_agreement(agreement_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement")
         return {"removed": True}
@@ -339,7 +324,7 @@ def build_router(
     def award_stars(
         agreement_id: int,
         payload: StarAward,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Record earned stars against a chart; congratulate + notify both parents.
 
@@ -349,7 +334,6 @@ def build_router(
         so a goal hit is never something only the tracking parent knows. Returns
         the new total, the goals reached, the next reward, and who was notified.
         """
-        _require_member(ctx)
         if payload.delta == 0:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -384,7 +368,7 @@ def build_router(
     def set_prompt(
         agreement_id: int,
         payload: PromptConfig,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Set a chart's recurring award-prompt schedule (weekdays + time of day).
 
@@ -392,7 +376,6 @@ def build_router(
         JSON (leaving the thresholds untouched), so the periodic sweep can ask both
         parents "did <kid> earn a star today?" on the chosen days.
         """
-        _require_member(ctx)
         agreement = ctx.store.agreement(agreement_id)
         if agreement is None:
             raise HTTPException(
@@ -422,7 +405,7 @@ def build_router(
     def set_tiers(
         agreement_id: int,
         payload: TierConfig,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Set/replace a chart's reward tiers in place (e.g. '7=small LEGO, 30=large').
 
@@ -431,7 +414,6 @@ def build_router(
         the running star total untouched — so you can add or retune tiers without
         recreating the chart (and a plain agreement becomes a star chart).
         """
-        _require_member(ctx)
         agreement = ctx.store.agreement(agreement_id)
         if agreement is None:
             raise HTTPException(
@@ -462,7 +444,7 @@ def build_router(
 
     @router.post("/webhooks/household/star-prompts/check", tags=["household"])
     def star_prompts_check(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Fire any star-award prompts due now for the caller's household.
 
@@ -471,7 +453,6 @@ def build_router(
         one-tap "did <kid> earn a star?" push, and stamps ``last_prompted_at`` so it
         fires once per local day. Idempotent — a second call the same day is a no-op.
         """
-        _require_member(ctx)
         from prefrontal.integrations.delivery import (
             deliver_to_household,
             household_prompt_notice,
@@ -514,10 +495,9 @@ def build_router(
     @router.post("/household/checkin", tags=["household"])
     def set_checkin(
         payload: CheckinConfig,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Set the opt-in weekly mental-load check-in schedule (both parents share it)."""
-        _require_member(ctx)
         clean, error = normalize_checkin_config(payload.model_dump())
         if error is not None:
             raise HTTPException(
@@ -530,7 +510,7 @@ def build_router(
 
     @router.post("/webhooks/household/checkin/check", tags=["household"])
     def checkin_check(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Send the weekly check-in to both parents if it's due (once per ISO week).
 
@@ -538,7 +518,6 @@ def build_router(
         endpoint pushes both parents the warm one-tap self-report and stamps
         ``checkin_last_sent_at`` so it fires once that week. Idempotent within a week.
         """
-        _require_member(ctx)
         now_local = local_datetime(utcnow(), resolved_settings.timezone)
         # Load-balancing is a two-parent concern — a solo household skips it.
         if not ctx.store.is_shared_household():
@@ -577,26 +556,24 @@ def build_router(
     @router.post("/household/digest", tags=["household"])
     def set_digest(
         payload: DigestConfig,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Turn the opt-in daily delta digest on or off (shared by both parents)."""
-        _require_member(ctx)
         ctx.store.set_digest_enabled(payload.enabled)
         return {"ok": True, "enabled": payload.enabled}
 
     @router.post("/household/balance", tags=["household"])
     def set_balance(
         payload: BalanceConfig,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Turn the opt-in load-balance view on or off (shared by both parents)."""
-        _require_member(ctx)
         ctx.store.set_balance_enabled(payload.enabled)
         return {"ok": True, "enabled": payload.enabled}
 
     @router.post("/webhooks/household/digest/check", tags=["household"])
     def digest_check(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Push each parent the other parent's unseen sheet changes (self-suppressing).
 
@@ -605,9 +582,8 @@ def build_router(
         there's anything new and it's been ~a day since their last digest — send
         just that member a warm catch-up. Silent when nothing's new; opt-in.
         """
-        _require_member(ctx)
         now = utcnow()
-        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now.strftime(TS_FMT)
         # Nothing to balance in a household of one — skip (and it can't have any
         # "other parent" changes anyway).
         if not ctx.store.is_shared_household() or not ctx.store.get_digest_enabled():
@@ -646,7 +622,7 @@ def build_router(
 
     @router.get("/household/shopping", tags=["household"])
     def list_shopping(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """The shared shopping list on its own (still-needed first).
 
@@ -654,16 +630,14 @@ def build_router(
         quick-add card — without pulling the whole household sheet. 404s for a
         user in no household, mirroring the write endpoints.
         """
-        _require_member(ctx)
         return {"items": ctx.store.shopping_items()}
 
     @router.post("/household/shopping", status_code=status.HTTP_201_CREATED, tags=["household"])
     def add_shopping(
         payload: ShoppingAdd,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Add a thing to buy to the shared list (stamps who added it)."""
-        _require_member(ctx)
         item = payload.item.strip()
         if not item:
             raise HTTPException(
@@ -679,10 +653,9 @@ def build_router(
     def shopping_got(
         item_id: int,
         payload: ShoppingGot,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Check a shopping item off (or un-check it), stamping who bought it."""
-        _require_member(ctx)
         if not ctx.store.set_shopping_got(item_id, payload.got, user_id=ctx.user["id"]):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
         return {"ok": True, "got": payload.got}
@@ -690,10 +663,9 @@ def build_router(
     @router.post("/household/shopping/{item_id}/remove", tags=["household"])
     def remove_shopping(
         item_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete a shopping item (scoped to the household)."""
-        _require_member(ctx)
         if not ctx.store.remove_shopping_item(item_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
         return {"removed": True}
@@ -721,7 +693,7 @@ def build_router(
     @router.post("/household/routines", tags=["household"])
     def set_routine(
         payload: RoutineSet,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Upsert a routine (keyed on title within the household).
 
@@ -729,7 +701,6 @@ def build_router(
         holder) and carries the schedule its chores inherit. Editing re-submits the
         same title; the chores linked under it are untouched.
         """
-        _require_member(ctx)
         clean, error = normalize_routine(payload.model_dump())
         if error is not None:
             raise HTTPException(
@@ -745,10 +716,9 @@ def build_router(
     def set_routine_enabled(
         routine_id: int,
         payload: RoutineEnabled,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Pause or resume a routine (and the schedule its chores inherit)."""
-        _require_member(ctx)
         if not ctx.store.set_routine_enabled(routine_id, payload.enabled):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
         return {"ok": True, "enabled": payload.enabled}
@@ -756,10 +726,9 @@ def build_router(
     @router.post("/household/routines/{routine_id}/remove", tags=["household"])
     def remove_routine(
         routine_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete a routine; its chores survive, unlinked (they stand alone)."""
-        _require_member(ctx)
         if not ctx.store.remove_routine(routine_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
         return {"removed": True}
@@ -767,7 +736,7 @@ def build_router(
     @router.post("/household/chores", tags=["household"])
     def set_chore(
         payload: ChoreSet,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Upsert a recurring shared chore (keyed on title within the household).
 
@@ -776,7 +745,6 @@ def build_router(
         parent. A chore may join a ``routine_id`` (inheriting its schedule) and may
         be untimed. Editing re-submits the same title; the completion log is untouched.
         """
-        _require_member(ctx)
         clean, error = normalize_chore(payload.model_dump())
         if error is not None:
             raise HTTPException(
@@ -796,10 +764,9 @@ def build_router(
     def set_chore_enabled(
         chore_id: int,
         payload: ChoreEnabled,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Pause or resume a chore's reminders without deleting it."""
-        _require_member(ctx)
         if not ctx.store.set_chore_enabled(chore_id, payload.enabled):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
         return {"ok": True, "enabled": payload.enabled}
@@ -807,10 +774,9 @@ def build_router(
     @router.post("/household/chores/{chore_id}/done", tags=["household"])
     def mark_chore_done(
         chore_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Mark a chore done for today (idempotent), attributed to the acting parent."""
-        _require_member(ctx)
         today = local_datetime(utcnow(), resolved_settings.timezone).strftime("%Y-%m-%d")
         result = ctx.store.log_chore_done(
             chore_id=chore_id, done_on=today, done_by=ctx.user["id"]
@@ -822,17 +788,16 @@ def build_router(
     @router.post("/household/chores/{chore_id}/remove", tags=["household"])
     def remove_chore(
         chore_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete a chore and its completion log (scoped to the household)."""
-        _require_member(ctx)
         if not ctx.store.remove_chore(chore_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
         return {"removed": True}
 
     @router.post("/webhooks/household/chores/check", tags=["household"])
     def chores_check(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Fire any chore reminders / miss-handoffs due now for the caller's household.
 
@@ -842,7 +807,6 @@ def build_router(
         check running every 15–30 min fires each exactly once. Silent when nothing's
         due.
         """
-        _require_member(ctx)
         now = utcnow()
         sent = run_chores_check(ctx.store, settings=resolved_settings, now=now)
         now_local = local_datetime(now, resolved_settings.timezone)
@@ -855,7 +819,7 @@ def build_router(
     )
     def add_appointment(
         payload: AppointmentCreate,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Add a kid appointment as a ``kind='child'`` commitment on the caller's calendar.
 
@@ -863,7 +827,6 @@ def build_router(
         calendar; other co-parents see them from their own view when they sync the
         same event (v1 keeps commitments per-user).
         """
-        _require_member(ctx)
         try:
             start_at = to_utc(payload.start_at, default_tz=resolved_settings.timezone)
             end_at = (

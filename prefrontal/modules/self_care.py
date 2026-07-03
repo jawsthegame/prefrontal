@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -191,15 +193,8 @@ for _c in CHECKS:
 SELF_CARE_ACTIONS = frozenset(_ACTION_CHECK)
 
 
-def _parse_ts(ts: Any) -> datetime | None:
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
-
-
 def _stamp(now: datetime, minutes: int) -> str:
-    return (now + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    return (now + timedelta(minutes=minutes)).strftime(TS_FMT)
 
 
 def _target(store: MemoryStore, check: BasicCheck) -> int:
@@ -297,7 +292,7 @@ def mark_self_care_prompted(store: MemoryStore, decisions: list[Any], now: datet
     the next Ate/Drank/Snooze tap can be timed against when the nudge actually
     went out. A no-op for non-self-care decisions.
     """
-    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    stamp = now.strftime(TS_FMT)
     for d in decisions:
         cue = getattr(d, "cue", None)
         if cue is not None and cue.module == "self_care":

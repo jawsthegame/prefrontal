@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 from prefrontal.webhooks._common import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
@@ -315,7 +316,7 @@ def build_router(
             hours = float(body.get("hours") or 16.0)
         except (TypeError, ValueError):
             hours = 16.0
-        until = (utcnow() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        until = (utcnow() + timedelta(hours=hours)).strftime(TS_FMT)
         memory.set_state("office_day_until", until, source="user")
         return {"office_day": True, "until": until}
 
@@ -422,7 +423,7 @@ def build_router(
             "confirmation": confirmation,
             "title": title,
             "leave_by": plan.leave_by,
-            "departed_at": departed_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "departed_at": departed_at.strftime(TS_FMT),
             **recorded,
         }
 
@@ -806,7 +807,7 @@ def build_router(
                 )
             memory.set_state(
                 "last_panic_alert_at",
-                utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                utcnow().strftime(TS_FMT),
                 source="inferred",
             )
 

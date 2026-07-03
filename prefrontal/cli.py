@@ -36,6 +36,8 @@ from pathlib import Path
 
 from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_last
 from prefrontal.coaching import (
     DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
@@ -518,7 +520,7 @@ def _balance_cli(store, args, settings) -> int:
     if not scoped.is_shared_household():
         print("Single-parent household — nothing to balance.")
         return 0
-    since = (utcnow() - timedelta(days=BALANCE_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    since = (utcnow() - timedelta(days=BALANCE_WINDOW_DAYS)).strftime(TS_FMT)
     view = balance_view(
         scoped.contribution_counts(since), carrying=scoped.accountability_counts()
     )
@@ -564,7 +566,7 @@ def _digest_cli(store, args, settings) -> int:
         print("The daily digest is off for this household.")
         return 0
     now = utcnow()
-    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now.strftime(TS_FMT)
     sent = 0
     for member in scoped.household_members(hid):
         if member.get("status") not in (None, "active"):
@@ -721,16 +723,6 @@ def _star_prompts_cli(store, args, settings) -> int:
     if not sent:
         print("No prompts due right now.")
     return 0
-
-
-def _parse_last(ts):
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp for prompt dedup, or ``None``."""
-    from datetime import datetime
-
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
@@ -1299,7 +1291,7 @@ def _cmd_crunch(args: argparse.Namespace) -> int:
             else:
                 print("Crunch mode off.")
         else:  # on
-            until = (utcnow() + timedelta(hours=args.hours)).strftime("%Y-%m-%d %H:%M:%S")
+            until = (utcnow() + timedelta(hours=args.hours)).strftime(TS_FMT)
             store.set_state("crunch_until", until, source="explicit")
             print(
                 f"Crunch mode ON for ~{args.hours:g}h (until {until} UTC) — "

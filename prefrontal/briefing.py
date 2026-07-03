@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.clock import TS_FMT
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
@@ -95,7 +96,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     now = now or utcnow()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
-    fmt = "%Y-%m-%d %H:%M:%S"
+    fmt = TS_FMT
 
     today = store.commitments_between(day_start.strftime(fmt), day_end.strftime(fmt))
 

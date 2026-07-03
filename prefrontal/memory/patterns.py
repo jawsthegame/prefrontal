@@ -38,13 +38,13 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from datetime import timezone as _timezone
 from statistics import fmean
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
+from prefrontal.scheduling import local_hour_of
 
 #: Smoothing constant for the confidence estimator ``n / (n + k)``. With k=5,
 #: 5 samples ⇒ 0.5, 15 ⇒ 0.75, 45 ⇒ 0.9 — "low until the sample is meaningful".
@@ -90,14 +90,6 @@ def time_of_day_band(hour: int) -> str:
     return "evening"  # 17:00–05:00 (evenings + the quiet overnight tail)
 
 
-def _parse_ts(ts: Any) -> datetime | None:
-    """Parse a stored episode timestamp (``YYYY-MM-DD HH:MM:SS``), else ``None``."""
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
-
-
 def _local_hour(ts: Any, timezone: str) -> int | None:
     """Local wall-clock hour of a stored (naive-UTC) episode timestamp, or ``None``.
 
@@ -108,11 +100,7 @@ def _local_hour(ts: Any, timezone: str) -> int | None:
     dt = _parse_ts(ts)
     if dt is None:
         return None
-    try:
-        zone = ZoneInfo(timezone or "UTC")
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = _timezone.utc
-    return dt.replace(tzinfo=_timezone.utc).astimezone(zone).hour
+    return local_hour_of(dt, timezone or "UTC")
 
 
 def decay_weight(ts: Any, now: datetime, half_life_days: float | None) -> float:
