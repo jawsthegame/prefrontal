@@ -40,6 +40,21 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Work/life guardrails — per-account domains + time bands** ✅ — a todo now
+  carries a life **domain** (`work`/`home`/…) that resolves to a time band and
+  **outranks its category**, so a work email that triages as "communication" is
+  still held to work hours and never squeezed into a home evening. `resolve_window`
+  precedence is now *per-todo override → domain → category → source → default*
+  (`prefrontal/scheduling.py`); the band is a **hard** gate (`todo_allowed_at`),
+  matching the existing off-zone. Mail ingestion stamps the domain from the
+  account: `PREFRONTAL_ACCOUNT_DOMAINS` (e.g. `work=work,personal=home`) maps each
+  inbox to a domain, threaded through `ingest_messages`. A new nullable
+  `todos.domain` column (created by the idempotent schema + migrate back-fill) with
+  `add_todo(domain=…)` / `set_todo_domain`. Off by default (no accounts mapped ⇒
+  unchanged scheduling). Covered by `tests/test_todos.py` + `tests/test_mail.py`.
+  *(Next: a "crunch mode" override — a `crunch_until` toggle that suspends the
+  bands for a deadline week; and surfacing/editing a todo's domain from the
+  dashboard.)*
 - **Self-care checks — "have you eaten?" + water** ✅ — the cues that deliberately
   pierce flow (a focus state is exactly when you forget to eat or drink), shipped
   as a sixth module, `prefrontal/modules/self_care.py`. A small registry of

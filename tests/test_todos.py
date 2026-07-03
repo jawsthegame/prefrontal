@@ -1058,6 +1058,31 @@ def test_resolve_window_precedence():
     )
 
 
+def test_resolve_window_domain_outranks_category():
+    """Work/life guardrail: domain beats category, but a per-todo override beats domain."""
+    config = WindowConfig.build(env_windows={"work": "09:00-17:00", "home": "06:00-22:00"})
+    # A work-domain todo triaged as "home" is still held to work hours.
+    assert resolve_window({"domain": "work", "category": "home"}, config) == (
+        _mins("09:00"), _mins("17:00"),
+    )
+    # An explicit per-todo window still wins over the domain.
+    assert resolve_window(
+        {"time_window": "05:00-06:00", "domain": "work"}, config
+    ) == (_mins("05:00"), _mins("06:00"))
+    # An unknown domain falls through to category.
+    assert resolve_window({"domain": "mystery", "category": "home"}, config) == (
+        _mins("06:00"), _mins("22:00"),
+    )
+
+
+def test_work_domain_todo_is_gated_out_of_the_evening():
+    """A work-domain todo is suggestible in work hours, blocked after them."""
+    config = WindowConfig.build(env_windows={"work": "09:00-17:00"})
+    work_todo = {"domain": "work", "category": "communication"}
+    assert todo_allowed_at(work_todo, datetime(2026, 6, 15, 10, 0), config) is True
+    assert todo_allowed_at(work_todo, datetime(2026, 6, 15, 20, 0), config) is False
+
+
 def test_todo_allowed_at_offzone_is_a_hard_gate():
     """Off-zone blocks even a todo whose own window would otherwise include the time."""
     config = WindowConfig.build()  # off-zone 22:00-06:00, default 06:00-22:00
