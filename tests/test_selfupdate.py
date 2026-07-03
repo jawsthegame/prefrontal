@@ -147,3 +147,30 @@ def test_restart_endpoint_operator_and_gate(store):
     with _client(store, Settings(self_update_enabled=True, restart_cmd="true")) as c:
         assert c.post("/admin/restart", headers=_h("lee-tok")).status_code == 403
         assert c.post("/admin/restart", headers=_h("op-tok")).status_code == 200
+
+
+def test_whoami_reports_operator_and_self_update_flag(store):
+    with _client(store, Settings(self_update_enabled=True)) as c:
+        op = c.get("/admin/whoami", headers=_h("op-tok")).json()
+        assert op == {"handle": "op", "is_operator": True, "self_update_enabled": True}
+        # A non-operator gets a valid answer (so the UI can hide the controls).
+        lee = c.get("/admin/whoami", headers=_h("lee-tok")).json()
+        assert lee["is_operator"] is False and lee["self_update_enabled"] is True
+    # Reflects the flag being off, too.
+    with _client(store, Settings()) as c:
+        assert c.get("/admin/whoami", headers=_h("op-tok")).json()["self_update_enabled"] is False
+
+
+def test_whoami_requires_auth(store):
+    with _client(store, Settings()) as c:
+        assert c.get("/admin/whoami").status_code == 401
+
+
+def test_dashboard_has_gated_update_controls():
+    """The dashboard ships the (hidden) Update/Restart buttons + the whoami gate."""
+    from prefrontal.webhooks._common import DASHBOARD_HTML
+
+    assert 'id="update-btn"' in DASHBOARD_HTML
+    assert 'id="restart-btn"' in DASHBOARD_HTML
+    assert "/admin/whoami" in DASHBOARD_HTML  # gated on operator + self_update_enabled
+    assert "/admin/update" in DASHBOARD_HTML and "/admin/restart" in DASHBOARD_HTML

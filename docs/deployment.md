@@ -155,6 +155,11 @@ without SSHing in.
   is spawned *detached* so the response returns before the process is bounced. A
   failed update **skips** the restart, so a bad pull never takes down a working
   service.
+- **From the dashboard** (once `PREFRONTAL_SELF_UPDATE=on`): signed in as an
+  operator, the `/dashboard` header shows **Update** and **Restart** buttons
+  (hidden otherwise). Update confirms, then pulls + deploys + restarts and
+  reloads the page when the service is back; a failed pull surfaces its output
+  and leaves the service running.
 
 Non-launchd host (systemd, Docker, a script)? Point `PREFRONTAL_RESTART_CMD` (and
 optionally `PREFRONTAL_UPDATE_CMD`) at your own commands — the defaults just
