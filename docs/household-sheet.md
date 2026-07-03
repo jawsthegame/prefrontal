@@ -347,18 +347,21 @@ household-scoped table.
 - Columns: `item`, `spec` (size/brand), `where_to_buy`, `got` (0/1), plus
   provenance on both **add** (`added_by`/`created_at`) and **buy**
   (`got_by`/`got_at`), and `child_id` (0 = household-wide).
-- Repo: `add_shopping_item`, `set_shopping_got` (check off / un-check), 
-  `remove_shopping_item`, `shopping_items` (still-needed first). It rides the
+- Repo: `add_shopping_item`, `set_shopping_got` (check off / un-check),
+  `remove_shopping_item`, `clear_got_shopping_items` (sweep all checked-off rows
+  at once), `shopping_items` (still-needed first). It rides the
   shared sheet — `build_sheet`/`render_sheet` gain a **Shopping** section
   (unchecked/ticked boxes), and `counts["shopping"]` is the still-needed tally.
 - Surfaces: `GET /household/shopping` (the list alone) + `POST /household/shopping`,
-  `…/{id}/got`, `…/{id}/remove`; the `/kids` dashboard's checklist; the **`/family`**
+  `…/{id}/got`, `…/{id}/remove`, `…/clear-got` (bulk-clear checked-off items); the
+  `/kids` dashboard's checklist (with a **Clear N bought** button once anything is
+  ticked); the **`/family`**
   view's quick-add + tap-to-check-off (the one editable spot on the otherwise
   read-only shared glance); a **Shopping card on `/dashboard`** (direct quick-add +
   check-off for household members, no model needed); the natural-language
   **assistant** (`add_shopping` / `check_shopping` / `remove_shopping`, so "add
   eggs and milk to the list" works from the dashboard or `/kids` box); and
-  `prefrontal household shopping`.
+  `prefrontal household shopping` (`--clear-got` to sweep bought items).
 
 ### 3.6.5 Recurring shared chores — `household_chores` + `household_chore_log`
 
