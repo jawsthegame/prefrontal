@@ -176,6 +176,12 @@ class Settings:
     # more likely avoidance than a triage error, is ignored.
     triage_quick_drop_days: float = 2.0
     triage_repeat_threshold: int = 2
+    # Triage agent (docs/triage-agent.md §8). triage_use_llm=False skips the model
+    # refinement of ambiguous signals (pure heuristic — useful when Ollama is busy
+    # or absent). triage_drop_threshold: below this confidence a "noise" verdict is
+    # surfaced instead of dropped, so uncertain noise is seen rather than discarded.
+    triage_use_llm: bool = True
+    triage_drop_threshold: float = 0.0
     # Google sign-in for the web surfaces (dashboard/family). Machine clients
     # (n8n, iOS Shortcuts, the widget) keep using per-user tokens regardless.
     google_oauth_client_id: str = ""
@@ -376,6 +382,9 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         triage_repeat_threshold=int(
             os.environ.get("PREFRONTAL_TRIAGE_REPEAT_THRESHOLD", "2")
         ),
+        triage_use_llm=os.environ.get("PREFRONTAL_TRIAGE_LLM", "true").strip().lower()
+        not in ("0", "false", "no", "off"),
+        triage_drop_threshold=float(os.environ.get("PREFRONTAL_TRIAGE_DROP", "0") or "0"),
         google_oauth_client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
         google_oauth_client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
         oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),
