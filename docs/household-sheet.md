@@ -244,6 +244,35 @@ attributed to whoever tapped, congratulating both parents if it crosses a reward
 goal. The CLI twin is `prefrontal household prompt-check`; the importable n8n
 workflow is `deploy/n8n/star-prompt-check.workflow.json`.
 
+### 3.6.1 `household_checkins` — the weekly mental-load check-in
+
+The sheet makes *objective* load legible (who set what, via `updated_by`). This is
+the **subjective** companion: an opt-in, once-a-week, deliberately gentle check-in
+that asks each parent how the invisible load has *felt for them* — because the
+felt experience and the tally can diverge, and honesty needs a welcoming frame.
+
+- **Opt-in schedule** on the household row (`checkin_enabled`, `checkin_day`,
+  `checkin_time`, `checkin_last_sent_at`) — one weekday + time both parents share,
+  set on the `/kids` dashboard; off by default.
+- **The ask** — a periodic trigger (`POST /webhooks/household/checkin/check`, and
+  `prefrontal household checkin-check`; n8n workflow
+  `deploy/n8n/checkin-check.workflow.json`) sends **both** parents a warm push
+  once per ISO week (`checkin_due` / `week_key`, pure) with three one-tap
+  self-report buttons — **Felt light 🙂 / Balanced ⚖️ / Carried a lot 🫠** (three,
+  since ntfy renders at most three actions; kind `"load"` in `notify.py`, actions
+  in `oauth.py`, context `"checkin"` in `delivery.py`). Framed as *your* week, no
+  wrong answers, not about keeping score.
+- **The answer** — a tap hits `/nudge/act`, recording that parent's `response` for
+  the week in `household_checkins` (never who-did-what). Once **both** have
+  replied, `checkin_summary` builds a gentle shared note delivered to both:
+  affirming if aligned, a soft "might be worth a chat / trade a task" if one felt
+  heavier (**never naming who**), a be-kind-to-each-other nudge if both felt heavy.
+- **Tone is the feature.** Every string is warm and non-accusatory by design, so
+  people answer honestly; the summary is aggregate, never a callout.
+
+This is the opt-in, tone-calibrated realization of the "balance view" sketched in
+§7 — subjective perception first, before any `updated_by`-count scoreboard.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
@@ -384,17 +413,17 @@ mechanism.
 
 | Area | Change |
 |---|---|
-| `prefrontal/memory/schema.sql` | `households`, `children`, `household_facts`, `household_agreements`, `household_stars`; `users.household_id`. |
-| `prefrontal/memory/migrate.py` | `users.household_id` + `household_agreements.last_prompted_at` in `_ADDED_COLUMNS` (back-fill). |
-| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, the star ledger (`award_stars`/`star_total`/`star_totals`/`star_ledger`/`recent_star_awards`), and `mark_prompted`. |
+| `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`; `users.household_id`. |
+| `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
+| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, the star ledger + `mark_prompted`, and the check-in (`get`/`set_checkin_config`, `record_checkin_response`, `checkin_responses`, `mark_checkin_sent`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
-| `prefrontal/household.py` | Pure render (`build_sheet`/`render_sheet`) + pure goal logic (`newly_reached_goals`/`next_goal`/`star_congrats_text`) + prompt logic (`normalize_prompt`/`prompt_due`/`prompt_question`) + the `award_stars_and_notify` service. |
-| `prefrontal/integrations/delivery.py` | `deliver_to_household()`, `household_notice()`, `household_prompt_notice()` (with one-tap ⭐ buttons) — fan a notice to every co-parent's own route. |
-| `prefrontal/webhooks/{notify,oauth}.py` | `star` nudge kind (⭐ Yes / Not today buttons) + `star_award`/`star_skip` actions; handled in `routers/anchor.py`'s `/nudge/act`. |
+| `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic (`normalize_checkin_config`/`checkin_due`/`week_key`/`checkin_question`/`checkin_summary`, `CHECKIN_CHOICES`). |
+| `prefrontal/integrations/delivery.py` | `deliver_to_household()`, `household_notice()`, `household_prompt_notice()` (⭐ buttons), `household_checkin_notice()` (self-report buttons) — fan a notice to every co-parent's own route. |
+| `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` nudge kinds and their actions (`star_award`/`star_skip`, `load_light`/`load_balanced`/`load_heavy`); handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
-| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet`; `POST /household/agreements/{id}/stars`, `…/prompt`, `POST /webhooks/household/star-prompts/check`; the `/kids` star-chart UI; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check`. |
-| `deploy/n8n/star-prompt-check.workflow.json` | Scheduled trigger that fires due award prompts. |
+| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin`); star endpoints; `POST /household/checkin` + `POST /webhooks/household/checkin/check`; the `/kids` star-chart + check-in UI; operator household endpoints. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check`. |
+| `deploy/n8n/*.workflow.json` | Scheduled triggers for the award prompts and the weekly check-in. |
 | `docs/schema.md` | Document the five new tables + the added column. |
 
 ---

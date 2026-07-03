@@ -18,24 +18,31 @@ from prefrontal.assistant import build_snapshot, execute_actions, validate_actio
 from prefrontal.config import Settings
 from prefrontal.household import (
     build_sheet,
+    checkin_due,
+    checkin_summary,
     newly_reached_goals,
     next_goal,
+    normalize_checkin_config,
     normalize_prompt,
     parse_structured,
     prompt_due,
     prompt_question,
     render_sheet,
     star_congrats_text,
+    week_key,
 )
+from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import (
     DeliveryClient,
     deliver_to_household,
+    household_checkin_notice,
     household_notice,
     household_prompt_notice,
 )
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore, provision_user
+from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action, verify_action
 
@@ -858,6 +865,155 @@ def test_nudge_act_star_award_adds_a_star_and_skip_is_a_noop(signed_client, stor
     assert dana.star_total(aid) == 1
 
 
+# --- weekly mental-load check-in: pure logic ---------------------------------
+
+
+def test_normalize_checkin_config_validates():
+    clean, err = normalize_checkin_config({"enabled": True, "day": 6, "time": "19:00"})
+    assert err is None and clean == {"enabled": True, "day": 6, "time": "19:00"}
+    # enabling without a day/time is rejected (would never fire)
+    assert normalize_checkin_config({"enabled": True, "day": None, "time": None})[1]
+    assert normalize_checkin_config({"enabled": True, "day": 9, "time": "19:00"})[1]
+    # disabled may omit day/time (turning it off)
+    off, e = normalize_checkin_config({"enabled": False})
+    assert e is None and off["enabled"] is False
+
+
+def test_checkin_due_weekday_time_and_weekly_dedup():
+    cfg = {"enabled": True, "day": 6, "time": "19:00"}  # Sundays 7pm
+    sun_8pm = datetime.datetime(2026, 7, 5, 20, 0)  # 2026-07-05 is a Sunday
+    assert checkin_due(cfg, now_local=sun_8pm) is True
+    assert checkin_due(cfg, now_local=datetime.datetime(2026, 7, 5, 18, 0)) is False  # early
+    assert checkin_due(cfg, now_local=datetime.datetime(2026, 7, 6, 20, 0)) is False  # not Sun
+    # already sent this ISO week → held
+    assert checkin_due(
+        cfg, now_local=sun_8pm, last_sent_local=datetime.datetime(2026, 7, 5, 19, 1)
+    ) is False
+    # a send last week does NOT hold this week
+    assert checkin_due(
+        cfg, now_local=sun_8pm, last_sent_local=datetime.datetime(2026, 6, 28, 19, 1)
+    ) is True
+    assert checkin_due({"enabled": False, "day": 6, "time": "19:00"}, now_local=sun_8pm) is False
+
+
+def test_week_key_is_stable_per_iso_week():
+    assert week_key(datetime.datetime(2026, 7, 5, 20, 0)) == week_key(
+        datetime.datetime(2026, 7, 5, 8, 0)
+    )
+    assert week_key(datetime.datetime(2026, 7, 5)) != week_key(datetime.datetime(2026, 7, 13))
+
+
+def test_checkin_summary_is_gentle_and_never_names():
+    balanced = checkin_summary(["light", "balanced"])
+    assert "balanced" in balanced.lower()
+    heavier = checkin_summary(["heavy", "balanced"])
+    assert "heavier for one of you" in heavier and "scorekeeping" in heavier
+    both = checkin_summary(["heavy", "heavy"])
+    assert "both of you" in both
+    # never names a person
+    for text in (balanced, heavier, both):
+        assert "Dana" not in text and "Alex" not in text
+    # a single reply still reads warmly
+    assert checkin_summary(["heavy"]).startswith("Thanks for checking in")
+
+
+# --- weekly mental-load check-in: repo + endpoints ---------------------------
+
+
+def _due_checkin_body():
+    """A config whose day/time is due right now in the server's timezone."""
+    now_local = local_datetime(utcnow(), Settings().timezone)
+    return {"enabled": True, "day": now_local.weekday(), "time": "00:00"}
+
+
+def test_checkin_config_round_trips_and_records_responses(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    dana.set_checkin_config(enabled=True, day=6, time="19:00")
+    cfg = alex.get_checkin_config()  # shared across co-parents
+    assert cfg["enabled"] is True and cfg["day"] == 6 and cfg["time"] == "19:00"
+    dana.record_checkin_response(week="2026-W27", user_id=dana_id, response="heavy")
+    alex.record_checkin_response(week="2026-W27", user_id=alex_id, response="light")
+    got = {r["by_name"]: r["response"] for r in dana.checkin_responses("2026-W27")}
+    assert got == {"Dana": "heavy", "Alex": "light"}
+    # re-tapping overwrites in place (no second row)
+    dana.record_checkin_response(week="2026-W27", user_id=dana_id, response="balanced")
+    assert len(dana.checkin_responses("2026-W27")) == 2
+
+
+def test_set_checkin_endpoint_validates(client):
+    ok = client.post(
+        "/household/checkin",
+        json={"enabled": True, "day": 6, "time": "19:00"},
+        headers=_h("dana-tok"),
+    )
+    assert ok.status_code == 200 and ok.json()["checkin"]["day"] == 6
+    assert client.post(
+        "/household/checkin",
+        json={"enabled": True, "day": None, "time": None},
+        headers=_h("dana-tok"),
+    ).status_code == 422
+    # config is visible on the shared sheet payload
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()
+    assert sheet["checkin"]["enabled"] is True
+
+
+def test_checkin_check_sends_once_per_week_to_both(client):
+    check = "/webhooks/household/checkin/check"
+    client.post("/household/checkin", json=_due_checkin_body(), headers=_h("dana-tok"))
+    first = client.post(check, json={}, headers=_h("alex-tok")).json()
+    assert first["sent"] is True
+    assert {n["handle"] for n in first["notified"]} == {"dana", "alex"}
+    # a second sweep the same week is a no-op
+    second = client.post(check, json={}, headers=_h("dana-tok")).json()
+    assert second["sent"] is False
+
+
+def test_checkin_check_skips_when_off(client):
+    assert client.post(
+        "/webhooks/household/checkin/check", json={}, headers=_h("dana-tok")
+    ).json()["sent"] is False
+
+
+# --- weekly mental-load check-in: one-tap buttons + tap ----------------------
+
+
+def test_checkin_notice_carries_three_signed_self_report_buttons(store):
+    store.scoped(store.get_user("dana")["id"]).set_state("ntfy_topic", "dana-topic")
+    store.scoped(store.get_user("alex")["id"]).set_state("ntfy_topic", "alex-topic")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    hid = store.get_user("dana")["household_id"]
+    deliver_to_household(
+        store, hid, household_checkin_notice("How did it feel?"),
+        settings=Settings(), client=client, base_url=BASE, secret=SIGNING,
+    )
+    actions = {b["topic"]: b["actions"] for b in bodies}["dana-topic"]
+    assert [a["label"] for a in actions] == ["Felt light 🙂", "Balanced ⚖️", "Carried a lot 🫠"]
+    tok = actions[2]["url"].split("t=", 1)[1]
+    assert verify_action(tok, SIGNING) == ("dana", "load_heavy", 0)
+
+
+def test_nudge_act_checkin_records_both_then_notes(signed_client, store):
+    week = week_key(local_datetime(utcnow(), Settings().timezone))
+    dana = store.scoped(store.get_user("dana")["id"])
+    # first parent replies — recorded, no shared note yet
+    r1 = signed_client.get(f"/nudge/act?t={sign_action('dana', 'load_balanced', 0, SIGNING)}")
+    assert "Thanks for checking in" in r1.text
+    assert len(dana.checkin_responses(week)) == 1
+    # second parent replies — both now on record (the gentle note fans out)
+    signed_client.get(f"/nudge/act?t={sign_action('alex', 'load_heavy', 0, SIGNING)}")
+    got = {r["by_name"]: r["response"] for r in dana.checkin_responses(week)}
+    assert got == {"Dana": "balanced", "Alex": "heavy"}
+
+
 # --- migration ---------------------------------------------------------------
 
 
@@ -889,4 +1045,19 @@ def test_last_prompted_at_backfilled_on_old_db(tmp_path):
     backfill_added_columns(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(household_agreements)")}
     assert "last_prompted_at" in cols
+    conn.close()
+
+
+def test_checkin_columns_backfilled_on_old_db(tmp_path):
+    """A households table predating the check-in gains its config columns."""
+    db = str(tmp_path / "old.db")
+    conn = connect(db)
+    conn.execute(
+        "CREATE TABLE households (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, "
+        "created_at DATETIME)"
+    )
+    conn.commit()
+    backfill_added_columns(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(households)")}
+    assert {"checkin_enabled", "checkin_day", "checkin_time", "checkin_last_sent_at"} <= cols
     conn.close()

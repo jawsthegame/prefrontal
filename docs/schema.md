@@ -225,7 +225,10 @@ positive `children.id`.
 
 - **`households`** — the household entity (`id`, `name`, `created_at`). Membership
   is operator-set in v1 (`create_household` / `set_user_household`, surfaced via
-  `prefrontal household add/join` and `POST /admin/households`).
+  `prefrontal household add/join` and `POST /admin/households`). Also holds the
+  opt-in weekly **mental-load check-in** schedule — `checkin_enabled`,
+  `checkin_day` (0=Mon…6=Sun), `checkin_time` (`"HH:MM"`), and `checkin_last_sent_at`
+  (weekly dedup by ISO week).
 - **`children`** — the roster: stable identity only (`household_id`, `name`,
   `birthday`), `UNIQUE (household_id, name)`. Everything else about a child is a
   fact, not a column.
@@ -254,6 +257,15 @@ positive `children.id`.
   `prefrontal/integrations/delivery.py`). Awarded via
   `POST /household/agreements/{id}/stars` or `prefrontal household star`; the
   running total and next reward render on the shared sheet.
+
+- **`household_checkins`** — the weekly mental-load self-reports: one row per
+  parent per ISO `week` with a `response` (`light`/`balanced`/`heavy`) and
+  provenance. `UNIQUE (household_id, week, user_id)` — a re-tap overwrites in
+  place. Deliberately subjective and non-judgmental: it records how each parent
+  *felt*, never who did what, and once both have replied a gentle shared note goes
+  back to both (`checkin_summary` in `prefrontal/household.py`). Opt-in via the
+  `households.checkin_*` schedule; the sweep is
+  `POST /webhooks/household/checkin/check`.
 
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its

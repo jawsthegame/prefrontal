@@ -74,6 +74,7 @@ _CONTEXT_KIND = {
     "meal": "meal",
     "water": "water",
     "star": "star",
+    "checkin": "load",
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -82,6 +83,7 @@ _KIND_TARGET = {
     "meal": "target",
     "water": "target",
     "star": "agreement_id",
+    "load": "target",
 }
 
 
@@ -456,6 +458,29 @@ def household_prompt_notice(
         context_key="star",
         dedup_key=f"star_prompt:{agreement_id}",
         ref={"agreement_id": agreement_id},
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
+def household_checkin_notice(message: str, *, channel: str = "push") -> Decision:
+    """A weekly mental-load check-in push, with one-tap self-report buttons.
+
+    Carries ``context_key="checkin"`` so :meth:`DeliveryClient.deliver` attaches
+    the signed *Felt light / Balanced / Carried a lot* buttons (built per recipient
+    in ``notify.py``). The check-in has no entity id — it acts on "this week" — so
+    it rides a synthetic ``target`` like the self-care checks; the tap resolves the
+    week at ``/nudge/act`` time.
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="load_checkin",
+        urgency="nudge",
+        text=message,
+        context_key="checkin",
+        dedup_key="load_checkin",
+        ref={"target": 0},
     )
     return Decision(cue=cue, channel=channel, text=message)
 

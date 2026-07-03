@@ -151,6 +151,23 @@
     </form>
   </section>
 
+  <section class="card" id="c-checkin">
+    <p class="label">Weekly load check-in</p>
+    <p class="hint" style="margin-top:-2px">
+      A gentle, optional once-a-week nudge to both of you — “how has the invisible load felt
+      for <em>you</em>?” No scorekeeping; once you’ve both answered you get a warm little note.
+    </p>
+    <div id="checkin-status"></div>
+    <form class="inline" id="checkin-form">
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="ci-enabled" /> Send it</label>
+      <div class="days" id="ci-days"></div>
+      <input type="time" id="ci-time" value="19:00" title="Time of day" />
+      <button class="primary" type="submit">Save check-in</button>
+      <span class="hint">Pick a day and time you’ll both have a quiet moment.</span>
+    </form>
+  </section>
+
   <section class="card" id="c-appts">
     <p class="label">Upcoming appointments</p>
     <div id="appts"></div>
@@ -342,6 +359,28 @@ function renderAgreements(list) {
     : `<div class="empty">No standing agreements yet.</div>`;
 }
 
+const LOAD_LABEL = { light: "Felt light 🙂", balanced: "Balanced ⚖️", heavy: "Carried a lot 🫠" };
+
+function renderCheckin(ci) {
+  ci = ci || { enabled: false, day: null, time: null, responses: [] };
+  const on = ci.day == null ? new Set() : new Set([ci.day]);
+  $("#ci-days").innerHTML = DAY_NAMES.map((n, i) =>
+    `<span class="day${on.has(i) ? " on" : ""}" data-day="${i}">${n}</span>`).join("");
+  $("#ci-enabled").checked = !!ci.enabled;
+  if (ci.time) $("#ci-time").value = ci.time;
+  const resp = ci.responses || [];
+  let status;
+  if (!ci.enabled) {
+    status = `<div class="empty">Off — turn it on to get a gentle weekly check-in.</div>`;
+  } else if (!resp.length) {
+    status = `<div class="empty">No replies yet this week — the check-in will go out on schedule.</div>`;
+  } else {
+    status = `<div>This week: ` + resp.map((r) =>
+      `${esc(r.by_name || "someone")} — ${esc(LOAD_LABEL[r.response] || r.response)}`).join(" · ") + `</div>`;
+  }
+  $("#checkin-status").innerHTML = status;
+}
+
 function renderAppts(upcoming) {
   $("#appts").innerHTML = (upcoming || []).length
     ? upcoming.map((ap) => `<div class="appt"><span class="when">${esc(ap.when)}</span>
@@ -385,6 +424,7 @@ async function loadSheet() {
   agreements = sheet.agreements || [];
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
+  renderCheckin(data.checkin);
   refreshDropdowns();
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
@@ -545,6 +585,27 @@ $("#agreements").addEventListener("click", async (e) => {
     await post(`/household/agreements/${saveId}/prompt`, body);
     await loadSheet();
   }
+});
+
+// Check-in day is a single choice — tapping a day selects just that one.
+$("#ci-days").addEventListener("click", (e) => {
+  if (!e.target.classList.contains("day")) return;
+  const wasOn = e.target.classList.contains("on");
+  $("#ci-days").querySelectorAll(".day").forEach((d) => d.classList.remove("on"));
+  if (!wasOn) e.target.classList.add("on");
+});
+
+$("#checkin-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sel = $("#ci-days").querySelector(".day.on");
+  const enabled = $("#ci-enabled").checked;
+  if (enabled && !sel) { alert("Pick a day for the check-in, or turn it off."); return; }
+  await post("/household/checkin", {
+    enabled,
+    day: sel ? Number(sel.getAttribute("data-day")) : null,
+    time: $("#ci-time").value || "19:00",
+  });
+  await loadSheet();
 });
 
 $("#appt-form").addEventListener("submit", async (e) => {

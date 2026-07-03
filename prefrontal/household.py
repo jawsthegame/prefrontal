@@ -585,6 +585,116 @@ def prompt_question(structured: Any, child_name: str | None, title: str) -> str:
     return f"🌟 Did {who} earn a star for {title} today?"
 
 
+# --- weekly mental-load check-in (pure) --------------------------------------
+#
+# Opt-in, household-scoped. Once a week both parents get a warm, non-judgmental
+# "how did the invisible load feel for *you*?" self-report (light / balanced /
+# heavy — three, since ntfy renders at most three action buttons). Once both have
+# replied, a gentle shared note goes back to both — affirming if aligned, a soft
+# "might be worth a chat" if one felt heavier, and it never names who. The
+# schedule + last-sent live on the household row; the answers in household_checkins.
+
+#: The self-report values, warm labels, and the one-tap actions that set them.
+#: Kept in one place so notify.py buttons, the /nudge/act handler, and the store
+#: never disagree on the vocabulary.
+CHECKIN_CHOICES: tuple[tuple[str, str, str], ...] = (
+    ("light", "load_light", "Felt light 🙂"),
+    ("balanced", "load_balanced", "Balanced ⚖️"),
+    ("heavy", "load_heavy", "Carried a lot 🫠"),
+)
+#: One-tap action name → stored response value.
+CHECKIN_ACTION_RESPONSE: dict[str, str] = {a: v for v, a, _ in CHECKIN_CHOICES}
+
+
+def week_key(dt: datetime) -> str:
+    """A stable ISO week key like ``"2026-W27"`` — the dedup unit for the check-in."""
+    iso = dt.isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+
+def normalize_checkin_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate the check-in schedule, returning ``(clean, None)`` or ``(None, error)``.
+
+    ``day`` is a weekday int (0=Mon … 6=Sun) and ``time`` is ``"HH:MM"``. Enabling
+    the check-in without both is rejected (it would never fire); a disabled config
+    may omit them (turning it off).
+    """
+    if not isinstance(raw, dict):
+        return None, "config must be an object"
+    enabled = bool(raw.get("enabled", False))
+    day = raw.get("day")
+    if day is not None:
+        try:
+            day = int(day)
+        except (ValueError, TypeError):
+            return None, "day must be 0 (Mon) … 6 (Sun)"
+        if not 0 <= day <= 6:
+            return None, "day must be 0 (Mon) … 6 (Sun)"
+    parsed_time = _parse_hhmm(raw.get("time"))
+    if enabled and (day is None or parsed_time is None):
+        return None, "pick a day and time, or turn the check-in off"
+    return {
+        "enabled": enabled,
+        "day": day,
+        "time": parsed_time.strftime("%H:%M") if parsed_time else None,
+    }, None
+
+
+def checkin_due(
+    config: Any,
+    *,
+    now_local: datetime,
+    last_sent_local: datetime | None = None,
+) -> bool:
+    """Whether the weekly check-in should fire now (once per ISO week, at/after its time)."""
+    if not isinstance(config, dict) or not config.get("enabled"):
+        return False
+    day = config.get("day")
+    if day is None or now_local.weekday() != day:
+        return False
+    due_t = _parse_hhmm(config.get("time"))
+    if due_t is None or now_local.time() < due_t:
+        return False
+    if last_sent_local is not None and week_key(last_sent_local) == week_key(now_local):
+        return False
+    return True
+
+
+def checkin_question() -> str:
+    """The warm, welcoming ask — framed as *your* week, with no wrong answers."""
+    return (
+        "💛 Weekly check-in — no wrong answers, and it's not about keeping score. "
+        "How has the invisible load felt for *you* this week?"
+    )
+
+
+def checkin_summary(responses: list[str]) -> str:
+    """The gentle shared note once parents have replied — never names who felt what.
+
+    Aligned/light → affirming; someone heavier → a soft invitation to talk (no
+    scorekeeping); both heavy → a be-kind-to-each-other nudge. Kept deliberately
+    non-accusatory so people stay honest.
+    """
+    heavy = sum(1 for r in responses if r == "heavy")
+    both = len(responses) >= 2
+    lead = "You both checked in 💛" if both else "Thanks for checking in 💛"
+    if heavy == 0:
+        return (
+            f"{lead} Sounds like things feel pretty balanced right now — nice. "
+            "Keep looking out for each other."
+        )
+    if heavy == len(responses):
+        tail = " for both of you" if both else ""
+        return (
+            f"{lead} Sounds like a heavy stretch{tail}. Be extra gentle with each "
+            "other this week — what's one thing you could drop or share?"
+        )
+    return (
+        f"{lead} It sounds like it's felt heavier for one of you lately. "
+        "No scorekeeping — maybe a good week to trade a task or two, or just talk it through."
+    )
+
+
 # --- render ------------------------------------------------------------------
 
 

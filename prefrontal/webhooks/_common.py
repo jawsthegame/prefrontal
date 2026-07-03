@@ -629,6 +629,14 @@ class PromptConfig(BaseModel):
     )
 
 
+class CheckinConfig(BaseModel):
+    """Body of ``POST /household/checkin`` — the weekly mental-load check-in schedule."""
+
+    enabled: bool = Field(default=False, description="Opt in to the gentle weekly check-in.")
+    day: int | None = Field(default=None, description="Weekday to ask on: 0=Mon … 6=Sun.")
+    time: str | None = Field(default=None, description="Local time of day, 'HH:MM' 24-hour.")
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1091,6 +1099,7 @@ __all__ = [
     "ScopedRequest",
     "Settings",
     "ShortcutPayload",
+    "CheckinConfig",
     "PromptConfig",
     "StarAward",
     "StepDone",

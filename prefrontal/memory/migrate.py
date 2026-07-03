@@ -85,6 +85,15 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     # A star chart's recurring "should we award a star today?" prompt records its
     # last fire here to dedup to once per local day (added after the sheet shipped).
     "household_agreements": [("last_prompted_at", "DATETIME")],
+    # The opt-in weekly mental-load check-in config lives on the household row
+    # (added after households shipped). household_checkins is a whole new table,
+    # created by schema.sql, so it needs no back-fill here.
+    "households": [
+        ("checkin_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("checkin_day", "INTEGER"),
+        ("checkin_time", "TEXT"),
+        ("checkin_last_sent_at", "DATETIME"),
+    ],
 }
 
 

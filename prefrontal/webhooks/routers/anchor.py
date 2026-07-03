@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from prefrontal.household import award_stars_and_notify
+from prefrontal.household import (
+    CHECKIN_ACTION_RESPONSE,
+    award_stars_and_notify,
+    checkin_summary,
+    week_key,
+)
 from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
 from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks._common import (
@@ -434,6 +439,33 @@ def build_router(
 
         if action == "star_skip":
             return _dismiss_page("No star today — that's okay. 🙂")
+
+        if action in CHECKIN_ACTION_RESPONSE:
+            # Weekly mental-load check-in: record how *this* parent's week felt
+            # (no entity id — resolve the ISO week at tap time). Once everyone has
+            # replied, send both parents the gentle shared note.
+            from prefrontal.integrations.delivery import (
+                deliver_to_household,
+                household_notice,
+            )
+
+            now_local = local_datetime(utcnow(), settings.timezone)
+            week = week_key(now_local)
+            memory.record_checkin_response(
+                week=week, user_id=user["id"], response=CHECKIN_ACTION_RESPONSE[action]
+            )
+            hid = memory.household_id_or_none()
+            members = [
+                m for m in memory.household_members(hid)
+                if m.get("status") in (None, "active")
+            ] if hid is not None else []
+            responses = memory.checkin_responses(week) if hid is not None else []
+            if members and len(responses) >= len(members):
+                note = checkin_summary([r["response"] for r in responses])
+                deliver_to_household(
+                    memory, hid, household_notice(note, channel="push"), settings=settings
+                )
+            return _dismiss_page("Thanks for checking in 💛 That's really helpful.")
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)

@@ -230,6 +230,48 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _award_stars_cli(store, args, settings)
         elif args.household_action == "prompt-check":
             return _star_prompts_cli(store, args, settings)
+        elif args.household_action == "checkin-check":
+            return _checkin_cli(store, args, settings)
+    return 0
+
+
+def _checkin_cli(store, args, settings) -> int:
+    """Send the weekly mental-load check-in to both parents if it's due.
+
+    The CLI twin of ``POST /webhooks/household/checkin/check`` — for a launchd
+    trigger or a manual test. No-op (with a message) when the check-in is off or
+    already sent this week.
+    """
+    from prefrontal.household import checkin_due, checkin_question
+    from prefrontal.integrations.delivery import (
+        deliver_to_household,
+        household_checkin_notice,
+    )
+    from prefrontal.scheduling import local_datetime
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    now_local = local_datetime(utcnow(), settings.timezone)
+    config = scoped.get_checkin_config()
+    last_local = None
+    if config.get("last_sent_at"):
+        last_local = local_datetime(_parse_last(config["last_sent_at"]), settings.timezone)
+    if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
+        print("Weekly check-in not due right now (off, wrong day/time, or already sent).")
+        return 0
+    rows = deliver_to_household(
+        store, scoped.household_id_or_none(),
+        household_checkin_notice(checkin_question(), channel="push"),
+        settings=settings,
+        base_url=settings.oauth_base_url, secret=settings.session_secret,
+    )
+    scoped.mark_checkin_sent()
+    for row in rows:
+        state = "sent" if row["delivered"] else "not sent"
+        print(f"  → {row['handle']}: {state} ({row['detail']})")
+    print("Weekly check-in sent to both parents.")
     return 0
 
 
@@ -1099,7 +1141,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_house = sub.add_parser(
         "household",
-        help="Manage the shared household sheet (add/join/leave/show/star/prompt-check).",
+        help="Manage the shared household sheet (add/join/show/star/prompt-check/checkin-check…).",
     )
     p_house.add_argument("--db-path", default=None, help="Override the database path.")
     house_sub = p_house.add_subparsers(dest="household_action", required=True)
@@ -1129,6 +1171,10 @@ def build_parser() -> argparse.ArgumentParser:
         "prompt-check", help="Fire any star-award prompts due now (both parents)."
     )
     h_check.add_argument("--user", default=None, help="Handle of a household member.")
+    h_ci = house_sub.add_parser(
+        "checkin-check", help="Send the weekly mental-load check-in if it's due."
+    )
+    h_ci.add_argument("--user", default=None, help="Handle of a household member.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

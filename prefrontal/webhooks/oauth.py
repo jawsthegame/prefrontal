@@ -159,6 +159,9 @@ NUDGE_ACTIONS = (
     "water_snooze",    # self-care water check → remind again shortly
     "star_award",      # star-chart prompt → award a star for the child today
     "star_skip",       # star-chart prompt → no star today
+    "load_light",      # weekly load check-in → felt light this week
+    "load_balanced",   # weekly load check-in → felt balanced this week
+    "load_heavy",      # weekly load check-in → carried a lot this week
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a
