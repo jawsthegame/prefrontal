@@ -20,7 +20,10 @@ from prefrontal.household import (
     build_sheet,
     newly_reached_goals,
     next_goal,
+    normalize_prompt,
     parse_structured,
+    prompt_due,
+    prompt_question,
     render_sheet,
     star_congrats_text,
 )
@@ -28,11 +31,16 @@ from prefrontal.integrations.delivery import (
     DeliveryClient,
     deliver_to_household,
     household_notice,
+    household_prompt_notice,
 )
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.webhooks.app import create_app
+from prefrontal.webhooks.oauth import sign_action, verify_action
+
+BASE = "https://agent-1.tail8b0a.ts.net"
+SIGNING = "household-signing-key"
 
 STAR_CHART = {
     "unit": "star",
@@ -689,6 +697,167 @@ def test_award_endpoint_unknown_agreement_and_non_member(client):
     )
 
 
+# --- scheduled award prompts: pure logic -------------------------------------
+
+
+def test_normalize_prompt_validates_and_cleans():
+    clean, err = normalize_prompt(
+        {"enabled": True, "days": [2, 2, 9, 0], "time": "7:5", "question": "  Did   Sam?  "}
+    )
+    assert err is None
+    assert clean["days"] == [0, 2]  # de-duped, out-of-range 9 dropped, sorted
+    assert clean["time"] == "07:05"
+    assert clean["question"] == "Did Sam?"  # whitespace collapsed
+    # an enabled schedule with no days would silently never fire → rejected
+    assert normalize_prompt({"enabled": True, "days": [], "time": "19:30"})[1]
+    assert normalize_prompt({"time": "nope"})[1]
+    # disabled with no days is fine (turning reminders off)
+    c2, e2 = normalize_prompt({"enabled": False, "days": [], "time": "19:30"})
+    assert e2 is None and c2["enabled"] is False
+
+
+def test_prompt_due_weekday_time_and_daily_dedup():
+    struct = {"prompt": {"enabled": True, "days": [0], "time": "19:30"}}  # Mondays 7:30pm
+    mon_8pm = datetime.datetime(2026, 7, 6, 20, 0)  # 2026-07-06 is a Monday
+    assert prompt_due(struct, now_local=mon_8pm) is True
+    too_early = datetime.datetime(2026, 7, 6, 19, 0)
+    assert prompt_due(struct, now_local=too_early) is False  # before the time
+    assert prompt_due(struct, now_local=datetime.datetime(2026, 7, 7, 20, 0)) is False  # not Mon
+    # already asked today → held for the rest of the day
+    already = datetime.datetime(2026, 7, 6, 19, 31)
+    assert prompt_due(struct, now_local=mon_8pm, last_prompted_local=already) is False
+    # disabled never fires
+    off = {"prompt": {"enabled": False, "days": [0], "time": "19:30"}}
+    assert prompt_due(off, now_local=mon_8pm) is False
+
+
+def test_prompt_question_custom_and_default():
+    assert prompt_question({"prompt": {"question": "Bed made?"}}, "Sam", "Chart") == "Bed made?"
+    default = prompt_question({}, "Sam", "Morning routine")
+    assert default == "🌟 Did Sam earn a star for Morning routine today?"
+    assert "the kids" in prompt_question({}, None, "Chores")
+
+
+# --- scheduled award prompts: repo + endpoints -------------------------------
+
+
+def test_mark_prompted_stamps_and_surfaces(store, dana):
+    aid = _star_agreement(dana, store)
+    assert dana.agreement(aid)["last_prompted_at"] is None
+    assert dana.mark_prompted(aid) is True
+    assert dana.agreement(aid)["last_prompted_at"] is not None
+    assert dana.agreements()[0]["last_prompted_at"] is not None
+
+
+def test_set_prompt_endpoint_merges_and_validates(client):
+    aid = client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "structured": STAR_CHART},
+        headers=_h("dana-tok"),
+    ).json()["id"]
+    ok = client.post(
+        f"/household/agreements/{aid}/prompt",
+        json={"enabled": True, "days": [0, 1, 2, 3, 4], "time": "19:30", "question": "Bed?"},
+        headers=_h("dana-tok"),
+    )
+    assert ok.status_code == 200 and ok.json()["prompt"]["days"] == [0, 1, 2, 3, 4]
+    # thresholds are preserved alongside the new prompt, visible to the other parent
+    agr = client.get("/household/sheet", headers=_h("alex-tok")).json()["sheet"]["agreements"][0]
+    assert agr["structured"]["prompt"]["time"] == "19:30"
+    assert len(agr["structured"]["thresholds"]) == 2
+    # bad time → 422; unknown agreement → 404
+    assert client.post(
+        f"/household/agreements/{aid}/prompt",
+        json={"enabled": True, "days": [0], "time": "nope"}, headers=_h("dana-tok"),
+    ).status_code == 422
+    assert client.post(
+        "/household/agreements/999/prompt",
+        json={"enabled": True, "days": [0], "time": "19:30"}, headers=_h("dana-tok"),
+    ).status_code == 404
+
+
+def test_star_prompt_check_sends_once_per_day_to_both_parents(client):
+    aid = client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "structured": STAR_CHART},
+        headers=_h("dana-tok"),
+    ).json()["id"]
+    # daily at 00:00 → due on any check today, regardless of timezone/day
+    client.post(
+        f"/household/agreements/{aid}/prompt",
+        json={"enabled": True, "days": [0, 1, 2, 3, 4, 5, 6], "time": "00:00"},
+        headers=_h("dana-tok"),
+    )
+    check = "/webhooks/household/star-prompts/check"
+    first = client.post(check, json={}, headers=_h("alex-tok")).json()
+    assert len(first["sent"]) == 1
+    assert {n["handle"] for n in first["sent"][0]["notified"]} == {"dana", "alex"}
+    # a second sweep the same day is a no-op (last_prompted_at dedups)
+    second = client.post(check, json={}, headers=_h("dana-tok")).json()
+    assert second["sent"] == []
+
+
+def test_star_prompt_check_skips_charts_without_a_schedule(client):
+    client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "structured": STAR_CHART},
+        headers=_h("dana-tok"),
+    )
+    assert client.post(
+        "/webhooks/household/star-prompts/check", json={}, headers=_h("dana-tok")
+    ).json()["sent"] == []
+    assert client.post(
+        "/webhooks/household/star-prompts/check", json={}, headers=_h("lee-tok")
+    ).status_code == 404  # non-member
+
+
+# --- scheduled award prompts: one-tap buttons + tap --------------------------
+
+
+def test_prompt_notice_carries_signed_star_buttons(store):
+    """Each parent's prompt push gets ⭐ Yes / Not today, signed for that parent."""
+    store.scoped(store.get_user("dana")["id"]).set_state("ntfy_topic", "dana-topic")
+    store.scoped(store.get_user("alex")["id"]).set_state("ntfy_topic", "alex-topic")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    hid = store.get_user("dana")["household_id"]
+    deliver_to_household(
+        store, hid, household_prompt_notice("Did Sam earn a star?", 42),
+        settings=Settings(), client=client, base_url=BASE, secret=SIGNING,
+    )
+    by_topic = {b["topic"]: b for b in bodies}
+    dana_actions = by_topic["dana-topic"]["actions"]
+    assert [a["label"] for a in dana_actions] == ["⭐ Yes", "Not today"]
+    tok = dana_actions[0]["url"].split("t=", 1)[1]
+    assert verify_action(tok, SIGNING) == ("dana", "star_award", 42)  # signed for the recipient
+
+
+@pytest.fixture()
+def signed_client(store):
+    app = create_app(store=store, settings=Settings(session_secret=SIGNING, oauth_base_url=BASE))
+    with TestClient(app) as c:
+        yield c
+
+
+def test_nudge_act_star_award_adds_a_star_and_skip_is_a_noop(signed_client, store):
+    dana = store.scoped(store.get_user("dana")["id"])
+    aid = _star_agreement(dana, store)
+    r = signed_client.get(f"/nudge/act?t={sign_action('dana', 'star_award', aid, SIGNING)}")
+    assert r.status_code == 200 and "Star added" in r.text
+    assert dana.star_total(aid) == 1
+    # "Not today" changes nothing
+    r2 = signed_client.get(f"/nudge/act?t={sign_action('alex', 'star_skip', aid, SIGNING)}")
+    assert "No star today" in r2.text
+    assert dana.star_total(aid) == 1
+
+
 # --- migration ---------------------------------------------------------------
 
 
@@ -704,4 +873,20 @@ def test_household_id_column_backfilled_on_old_db(tmp_path):
     backfill_added_columns(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     assert "household_id" in cols
+    conn.close()
+
+
+def test_last_prompted_at_backfilled_on_old_db(tmp_path):
+    """An agreements table predating the prompt schedule gains last_prompted_at."""
+    db = str(tmp_path / "old.db")
+    conn = connect(db)
+    conn.execute(
+        "CREATE TABLE household_agreements (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "household_id INTEGER, child_id INTEGER, title TEXT, kind TEXT, body TEXT, "
+        "structured TEXT, updated_by INTEGER, updated_at DATETIME)"
+    )
+    conn.commit()
+    backfill_added_columns(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(household_agreements)")}
+    assert "last_prompted_at" in cols
     conn.close()

@@ -51,6 +51,25 @@
   .appt { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
   .appt:last-child { border: none; }
   .appt .when { font-weight: 600; min-width: 130px; }
+  /* star charts */
+  .stars { margin-top: 5px; font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .stars .prog { color: var(--accent); font-weight: 600; }
+  .awardbtn { background: var(--warn); color: #fff; border: none; border-radius: 8px;
+    padding: 4px 11px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .awardbtn:hover { filter: brightness(1.06); }
+  .thresholds { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .prompt-line { font-size: 13px; color: var(--muted); margin-top: 5px; }
+  .prompt-line .edit { color: var(--accent); cursor: pointer; margin-left: 6px; }
+  .prompt-ed { margin-top: 8px; padding: 11px 12px; border: 1px dashed var(--line);
+    border-radius: 10px; background: #faf9f5; display: none; }
+  .prompt-ed.open { display: block; }
+  .prompt-ed .fld { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .prompt-ed .fld label { font-size: 13px; color: var(--muted); min-width: 74px; }
+  .days { display: flex; flex-wrap: wrap; gap: 5px; }
+  .day { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+    cursor: pointer; font-size: 13px; user-select: none; }
+  .day.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .preset { color: var(--accent); cursor: pointer; font-size: 12px; margin-right: 8px; }
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
@@ -165,6 +184,8 @@ const $ = (s) => document.querySelector(s);
 let token = localStorage.getItem(KEY);
 let vocab = { fact_categories: [], agreement_kinds: [] };
 let children = [];
+let agreements = [];
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -241,22 +262,82 @@ function renderFacts(per_child) {
   }).join("");
 }
 
-function renderAgreements(agreements) {
-  $("#agreements").innerHTML = (agreements || []).length
-    ? agreements.map((a) => {
+function timeLabel(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  let h = Number(m[1]); const ap = h < 12 ? "AM" : "PM";
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
+}
+function daysLabel(days) {
+  const d = (days || []).slice().sort((a, b) => a - b);
+  if (d.length === 7) return "Every day";
+  if (d.length === 5 && d.every((x, i) => x === i)) return "Weekdays";
+  if (d.length === 2 && d[0] === 5 && d[1] === 6) return "Weekends";
+  return d.map((x) => DAY_NAMES[x]).join(", ") || "—";
+}
+function promptSummary(p) {
+  if (!p || !p.enabled || !(p.days || []).length) return "🔕 No award reminder set";
+  return `🔔 ${daysLabel(p.days)} at ${timeLabel(p.time)}`;
+}
+
+function isStarChart(a) {
+  return a.structured && Array.isArray(a.structured.thresholds) && a.structured.thresholds.length;
+}
+
+function starBlock(a) {
+  if (!isStarChart(a)) return "";
+  const unit = a.structured.unit || "star";
+  const total = a.star_total || 0;
+  const ng = a.next_goal;
+  const prog = ng
+    ? `<span class="prog">${total} ${esc(unit)}s</span> · ${ng.remaining} to go → ${esc(ng.reward)}`
+    : `<span class="prog">${total} ${esc(unit)}s</span> · all rewards earned 🎉`;
+  const thresholds = a.structured.thresholds.map((t) =>
+    `${esc(t[unit] != null ? t[unit] : (t.stars != null ? t.stars : t.points))}→${esc(t.reward)}`
+  ).join(" · ");
+  return `<div class="stars">${prog}
+      <button class="awardbtn" data-award="${a.id}">⭐ Give a star</button></div>
+    <div class="thresholds">${esc(thresholds)}</div>`;
+}
+
+function promptEditor(a) {
+  const p = (a.structured && a.structured.prompt) || {};
+  const on = new Set(p.days || []);
+  const days = DAY_NAMES.map((n, i) =>
+    `<span class="day${on.has(i) ? " on" : ""}" data-day="${i}">${n}</span>`).join("");
+  return `<div class="prompt-ed" data-ed="${a.id}">
+    <div class="fld"><label>Ask on</label><div class="days">${days}</div></div>
+    <div class="fld"><span class="preset" data-preset="daily">Daily</span>
+      <span class="preset" data-preset="weekdays">Weekdays</span>
+      <span class="preset" data-preset="weekends">Weekends</span>
+      <span class="preset" data-preset="none">Clear</span></div>
+    <div class="fld"><label>At</label><input type="time" class="p-time" value="${esc(p.time || "19:30")}" /></div>
+    <div class="fld"><label>Question</label>
+      <input type="text" class="p-q grow" placeholder="Did they earn a star today? (optional)" value="${esc(p.question || "")}" /></div>
+    <div class="fld"><label><input type="checkbox" class="p-enabled" ${p.enabled ? "checked" : ""} /> Send reminders</label>
+      <span class="spacer" style="flex:1"></span>
+      <button class="iconbtn" data-prompt-cancel="${a.id}">Cancel</button>
+      <button class="primary" data-prompt-save="${a.id}">Save reminder</button></div>
+  </div>`;
+}
+
+function renderAgreements(list) {
+  $("#agreements").innerHTML = (list || []).length
+    ? list.map((a) => {
         const who = a.child_name ? ` — ${esc(a.child_name)}` : "";
-        let stars = "";
-        if (a.structured && Array.isArray(a.structured.thresholds)) {
-          const unit = a.structured.unit || "star";
-          stars = "<div>" + a.structured.thresholds.map((t) =>
-            `${esc(t[unit] != null ? t[unit] : (t.stars != null ? t.stars : t.points))} ${esc(unit)}s → ${esc(t.reward)}`
-          ).join(" · ") + "</div>";
-        }
-        return `<div class="row"><div class="v">
+        const prompt = isStarChart(a)
+          ? `<div class="prompt-line">${esc(promptSummary(a.structured && a.structured.prompt))}
+               <span class="edit" data-prompt-edit="${a.id}">edit reminder</span></div>`
+          : "";
+        return `<div class="agr">
+          <div class="row"><div class="v">
             <strong>${esc(a.title)}</strong>${who} <span class="prov">${esc(a.kind)}</span>
-            ${a.body ? `<div>${esc(a.body)}</div>` : ""}${stars}
+            ${a.body ? `<div>${esc(a.body)}</div>` : ""}${starBlock(a)}${prompt}
           </div>
-          <button class="iconbtn del" data-delagr="${a.id}" title="Remove">🗑</button></div>`;
+          <button class="iconbtn del" data-delagr="${a.id}" title="Remove">🗑</button></div>
+          ${isStarChart(a) ? promptEditor(a) : ""}
+        </div>`;
       }).join("")
     : `<div class="empty">No standing agreements yet.</div>`;
 }
@@ -301,7 +382,8 @@ async function loadSheet() {
   renderRecent(sheet.recently_changed);
   renderRoster();
   renderFacts(sheet.per_child);
-  renderAgreements(sheet.agreements);
+  agreements = sheet.agreements || [];
+  renderAgreements(agreements);
   renderAppts(sheet.upcoming);
   refreshDropdowns();
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -419,8 +501,50 @@ $("#agr-form").addEventListener("submit", async (e) => {
 });
 
 $("#agreements").addEventListener("click", async (e) => {
-  const id = e.target.getAttribute("data-delagr");
-  if (id && confirm("Remove this plan?")) { await post(`/household/agreements/${id}/remove`, {}); await loadSheet(); }
+  const t = e.target;
+  const del = t.getAttribute("data-delagr");
+  if (del) {
+    if (confirm("Remove this plan?")) { await post(`/household/agreements/${del}/remove`, {}); await loadSheet(); }
+    return;
+  }
+  const award = t.getAttribute("data-award");
+  if (award) {
+    t.disabled = true;
+    const r = await post(`/household/agreements/${award}/stars`, { delta: 1 });
+    if (r.goals_reached && r.goals_reached.length) {
+      alert("🎉 Goal reached — reward unlocked: " + r.goals_reached.map((g) => g.reward).join(", ") +
+            "\nBoth parents have been notified.");
+    }
+    await loadSheet();
+    return;
+  }
+  const editId = t.getAttribute("data-prompt-edit");
+  if (editId) { const ed = document.querySelector(`.prompt-ed[data-ed="${editId}"]`); if (ed) ed.classList.toggle("open"); return; }
+  const cancelId = t.getAttribute("data-prompt-cancel");
+  if (cancelId) { const ed = document.querySelector(`.prompt-ed[data-ed="${cancelId}"]`); if (ed) ed.classList.remove("open"); return; }
+  if (t.classList.contains("day")) { t.classList.toggle("on"); return; }
+  const preset = t.getAttribute("data-preset");
+  if (preset) {
+    const ed = t.closest(".prompt-ed");
+    const want = { daily: [0,1,2,3,4,5,6], weekdays: [0,1,2,3,4], weekends: [5,6], none: [] }[preset] || [];
+    ed.querySelectorAll(".day").forEach((d) =>
+      d.classList.toggle("on", want.includes(Number(d.getAttribute("data-day")))));
+    return;
+  }
+  const saveId = t.getAttribute("data-prompt-save");
+  if (saveId) {
+    const ed = document.querySelector(`.prompt-ed[data-ed="${saveId}"]`);
+    const days = [...ed.querySelectorAll(".day.on")].map((d) => Number(d.getAttribute("data-day")));
+    const body = {
+      enabled: ed.querySelector(".p-enabled").checked,
+      days,
+      time: ed.querySelector(".p-time").value || "19:30",
+      question: ed.querySelector(".p-q").value.trim() || null,
+    };
+    if (body.enabled && !days.length) { alert("Pick at least one day, or turn off reminders."); return; }
+    await post(`/household/agreements/${saveId}/prompt`, body);
+    await loadSheet();
+  }
 });
 
 $("#appt-form").addEventListener("submit", async (e) => {

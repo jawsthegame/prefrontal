@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prefrontal.household import award_stars_and_notify
 from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
 from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks._common import (
@@ -415,6 +416,24 @@ def build_router(
             today = local_datetime(now, settings.timezone).strftime("%Y-%m-%d")
             headline = apply_self_care_action(memory, action, now=now, today=today)
             return _dismiss_page(headline or "Done.")
+
+        if action == "star_award":
+            # target_id is the star-chart agreement id. Award one star, attributed
+            # to whoever tapped; a crossed reward goal congratulates both parents.
+            result = award_stars_and_notify(
+                memory, target_id, delta=1, awarded_by=user["id"],
+                note="via prompt", settings=settings,
+            )
+            if result is None:
+                return _dismiss_page("That star chart is no longer available.")
+            who = result["child_name"] or "the kids"
+            line = f"⭐ Star added for {who} — {result['total']} total."
+            if result["goals_reached"]:
+                line += " 🎉 Reward unlocked!"
+            return _dismiss_page(line)
+
+        if action == "star_skip":
+            return _dismiss_page("No star today — that's okay. 🙂")
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)

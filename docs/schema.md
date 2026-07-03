@@ -238,7 +238,11 @@ positive `children.id`.
 - **`household_agreements`** — standing behaviour plans: `title`, `kind`
   (`reward`/`consistency`/`routine`), plain-language `body`, an optional
   `structured` JSON for star/points charts (thresholds → rewards, earn-only), and
-  provenance. `UNIQUE (household_id, child_id, title)`.
+  provenance. `UNIQUE (household_id, child_id, title)`. A star chart's `structured`
+  may also carry a `prompt` block — `{enabled, days:[0=Mon…6=Sun], time:"HH:MM",
+  question}` — a recurring "did they earn a star today?" check-in; `last_prompted_at`
+  dedups that prompt to once per local day (the sweep at
+  `POST /webhooks/household/star-prompts/check`).
 - **`household_stars`** — the star/points **ledger** behind a reward chart: one
   append-only row per grant (`agreement_id`, `child_id` copied from the chart,
   `delta`, optional `note`, `awarded_by`/`created_at`). The agreement's

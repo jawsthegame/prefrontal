@@ -14,10 +14,11 @@ from fastapi import APIRouter
 
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
-    newly_reached_goals,
-    next_goal,
+    award_stars_and_notify,
+    normalize_prompt,
     parse_structured,
-    star_congrats_text,
+    prompt_due,
+    prompt_question,
 )
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
@@ -36,12 +37,16 @@ from prefrontal.webhooks._common import (
     FactClear,
     FactSet,
     HTTPException,
+    PromptConfig,
     ScopedRequest,
     StarAward,
+    _parse_dt_or_none,
     build_sheet,
+    local_datetime,
     render_sheet,
     resolve_user,
     status,
+    utcnow,
 )
 
 
@@ -221,53 +226,117 @@ def build_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="delta must be non-zero",
             )
+        try:
+            result = award_stars_and_notify(
+                ctx.store,
+                agreement_id,
+                delta=payload.delta,
+                awarded_by=ctx.user["id"],
+                note=payload.note,
+                settings=resolved_settings,
+            )
+        except ValueError as exc:  # earn-only chart, negative delta
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from None
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement"
+            )
+        return {
+            "total": result["total"],
+            "delta": result["delta"],
+            "goals_reached": result["goals_reached"],
+            "next_goal": result["next_goal"],
+            "notified": result["notified"],
+        }
+
+    @router.post("/household/agreements/{agreement_id}/prompt", tags=["household"])
+    def set_prompt(
+        agreement_id: int,
+        payload: PromptConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set a chart's recurring award-prompt schedule (weekdays + time of day).
+
+        Merges the validated ``prompt`` block into the agreement's ``structured``
+        JSON (leaving the thresholds untouched), so the periodic sweep can ask both
+        parents "did <kid> earn a star today?" on the chosen days.
+        """
+        _require_member(ctx)
         agreement = ctx.store.agreement(agreement_id)
         if agreement is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement"
             )
-        structured = parse_structured(agreement.get("structured"))
-        earn_only = isinstance(structured, dict) and bool(structured.get("earn_only"))
-        if earn_only and payload.delta < 0:
+        clean, error = normalize_prompt(payload.model_dump())
+        if error is not None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="this chart is earn-only — stars can't be taken away",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
             )
-        result = ctx.store.award_stars(
-            agreement_id=agreement_id,
-            delta=payload.delta,
-            awarded_by=ctx.user["id"],
-            note=payload.note,
-        )
-        # award_stars only returns None for a foreign agreement, already ruled out.
-        assert result is not None
-        goals = newly_reached_goals(structured, result["before"], result["after"])
-        child_name = _child_name(ctx, agreement.get("child_id") or 0)
-        notified: list[dict[str, Any]] = []
-        if goals:
-            # Imported lazily: prefrontal.integrations.delivery pulls in
-            # prefrontal.webhooks.notify, which at module-import time would re-enter
-            # the partially-initialized webhooks package during app construction.
-            from prefrontal.integrations.delivery import (
-                deliver_to_household,
-                household_notice,
-            )
+        structured = parse_structured(agreement.get("structured"))
+        structured = structured if isinstance(structured, dict) else {}
+        structured["prompt"] = clean
+        import json
 
-            hid = ctx.store.household_id_or_none()
-            message = " ".join(star_congrats_text(child_name, g) for g in goals)
+        ctx.store.set_agreement(
+            title=agreement["title"],
+            body=agreement.get("body"),
+            kind=agreement.get("kind") or "consistency",
+            structured=json.dumps(structured),
+            updated_by=ctx.user["id"],
+            child_id=agreement.get("child_id") or 0,
+        )
+        return {"ok": True, "prompt": clean}
+
+    @router.post("/webhooks/household/star-prompts/check", tags=["household"])
+    def star_prompts_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Fire any star-award prompts due now for the caller's household.
+
+        A periodic trigger (n8n / launchd, like the coach/panic checks) POSTs here;
+        the sweep finds every chart whose schedule is due, sends both parents a
+        one-tap "did <kid> earn a star?" push, and stamps ``last_prompted_at`` so it
+        fires once per local day. Idempotent — a second call the same day is a no-op.
+        """
+        _require_member(ctx)
+        from prefrontal.integrations.delivery import (
+            deliver_to_household,
+            household_prompt_notice,
+        )
+
+        now = utcnow()
+        now_local = local_datetime(now, resolved_settings.timezone)
+        hid = ctx.store.household_id_or_none()
+        sent: list[dict[str, Any]] = []
+        for agreement in ctx.store.agreements():
+            structured = parse_structured(agreement.get("structured"))
+            last_local = None
+            if agreement.get("last_prompted_at"):
+                last_dt = _parse_dt_or_none(agreement["last_prompted_at"])
+                last_local = (
+                    local_datetime(last_dt, resolved_settings.timezone)
+                    if last_dt else None
+                )
+            if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
+                continue
+            child_name = _child_name(ctx, agreement.get("child_id") or 0)
+            question = prompt_question(structured, child_name, agreement["title"])
             notified = deliver_to_household(
                 ctx.store,
                 hid,
-                household_notice(message, channel="sound"),
+                household_prompt_notice(question, agreement["id"], channel="push"),
                 settings=resolved_settings,
+                base_url=resolved_settings.oauth_base_url,
+                secret=resolved_settings.session_secret,
             )
-        return {
-            "total": result["after"],
-            "delta": result["delta"],
-            "goals_reached": goals,
-            "next_goal": next_goal(structured, result["after"]),
-            "notified": notified,
-        }
+            ctx.store.mark_prompted(agreement["id"])
+            sent.append(
+                {"agreement_id": agreement["id"], "title": agreement["title"],
+                 "question": question, "notified": notified}
+            )
+        return {"sent": sent, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
 
     # -- appointments ---------------------------------------------------------
 

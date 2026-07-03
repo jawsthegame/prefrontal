@@ -73,6 +73,7 @@ _CONTEXT_KIND = {
     "focus": "focus",
     "meal": "meal",
     "water": "water",
+    "star": "star",
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -80,6 +81,7 @@ _KIND_TARGET = {
     "focus": "session_id",
     "meal": "target",
     "water": "target",
+    "star": "agreement_id",
 }
 
 
@@ -434,6 +436,30 @@ def household_notice(message: str, *, channel: str = "push") -> Decision:
     return Decision(cue=cue, channel=channel, text=message)
 
 
+def household_prompt_notice(
+    message: str, agreement_id: int, *, channel: str = "push"
+) -> Decision:
+    """A household push that asks whether to award a star, with one-tap Yes / Not-today.
+
+    Unlike :func:`household_notice`, this carries ``context_key="star"`` and the
+    chart's ``agreement_id`` in ``ref`` so :meth:`DeliveryClient.deliver` attaches
+    the signed ⭐ Yes / Not today buttons (built per recipient in ``notify.py``) —
+    tapping ⭐ Yes hits ``/nudge/act`` and awards a star with no app switch.
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="star_prompt",
+        urgency="nudge",
+        text=message,
+        context_key="star",
+        dedup_key=f"star_prompt:{agreement_id}",
+        ref={"agreement_id": agreement_id},
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
 def deliver_to_household(
     store: Any,
     household_id: int,
@@ -441,6 +467,8 @@ def deliver_to_household(
     *,
     settings: Settings | None = None,
     client: DeliveryClient | None = None,
+    base_url: str = "",
+    secret: str = "",
 ) -> list[dict[str, Any]]:
     """Deliver one decision to **every** member of a household (both co-parents).
 
@@ -462,6 +490,8 @@ def deliver_to_household(
         decision: The decision to publish (build one with :func:`household_notice`).
         settings: Operator defaults for routing (defaults to :func:`get_settings`).
         client: A :class:`DeliveryClient` (tests inject one with a mock transport).
+        base_url: Public origin for signing one-tap buttons (empty → plain push).
+        secret: Signing key for one-tap buttons (empty → plain push).
 
     Returns:
         One dict per active member: ``handle``, ``display_name``, ``transport``,
@@ -474,7 +504,11 @@ def deliver_to_household(
         if member.get("status") not in (None, "active"):
             continue
         route = resolve_route(store.scoped(member["id"]), resolved)
-        result = client.deliver(decision, route, handle=member["handle"])
+        # Buttons are signed per recipient (each member's own handle), so ⭐ Yes
+        # attributes the award to whoever taps it.
+        result = client.deliver(
+            decision, route, base_url=base_url, secret=secret, handle=member["handle"]
+        )
         out.append(
             {
                 "handle": member["handle"],

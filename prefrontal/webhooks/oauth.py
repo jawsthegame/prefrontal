@@ -157,6 +157,8 @@ NUDGE_ACTIONS = (
     "meal_snooze",     # self-care meal check → ask again in a bit
     "water_drank",     # self-care water check → drank (defer a full interval)
     "water_snooze",    # self-care water check → remind again shortly
+    "star_award",      # star-chart prompt → award a star for the child today
+    "star_skip",       # star-chart prompt → no star today
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

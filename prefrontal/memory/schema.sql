@@ -464,9 +464,10 @@ CREATE TABLE IF NOT EXISTS household_agreements (
     title        TEXT NOT NULL,
     kind         TEXT NOT NULL DEFAULT 'consistency',  -- reward | consistency | routine
     body         TEXT,                             -- the plan in plain language (Markdown)
-    structured   TEXT,                             -- optional JSON, e.g. star thresholds
+    structured   TEXT,                             -- optional JSON: star thresholds + prompt schedule
     updated_by   INTEGER REFERENCES users(id),
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_prompted_at DATETIME,                      -- last time the award prompt fired (dedup, see structured.prompt)
     UNIQUE (household_id, child_id, title)
 );
 

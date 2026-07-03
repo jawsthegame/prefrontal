@@ -289,7 +289,7 @@ class HouseholdRepo:
         rows = self.conn.execute(
             """
             SELECT a.id, a.child_id, a.title, a.kind, a.body, a.structured,
-                   a.updated_by, a.updated_at,
+                   a.updated_by, a.updated_at, a.last_prompted_at,
                    c.name AS child_name,
                    COALESCE(u.display_name, u.handle) AS updated_by_name
             FROM household_agreements a
@@ -318,11 +318,21 @@ class HouseholdRepo:
         another household's agreement (it simply reads back ``None`` → 404).
         """
         row = self.conn.execute(
-            "SELECT id, child_id, title, kind, body, structured "
+            "SELECT id, child_id, title, kind, body, structured, last_prompted_at "
             "FROM household_agreements WHERE id = ? AND household_id = ?",
             (agreement_id, self._household_id()),
         ).fetchone()
         return _row_to_dict(row)
+
+    def mark_prompted(self, agreement_id: int) -> bool:
+        """Stamp a chart's ``last_prompted_at`` = now (dedups the daily award prompt)."""
+        cur = self.conn.execute(
+            "UPDATE household_agreements SET last_prompted_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND household_id = ?",
+            (agreement_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def award_stars(
         self,

@@ -615,6 +615,20 @@ class StarAward(BaseModel):
     )
 
 
+class PromptConfig(BaseModel):
+    """Body of ``POST /household/agreements/{id}/prompt`` — the award-prompt schedule."""
+
+    enabled: bool = Field(default=True, description="Whether the recurring prompt fires.")
+    days: list[int] = Field(
+        default_factory=list,
+        description="Weekdays to ask on: 0=Mon … 6=Sun (all seven = daily).",
+    )
+    time: str = Field(description="Local time of day, 'HH:MM' 24-hour, e.g. '19:30'.")
+    question: str | None = Field(
+        default=None, description="Optional custom question; a default is used if omitted."
+    )
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1077,6 +1091,7 @@ __all__ = [
     "ScopedRequest",
     "Settings",
     "ShortcutPayload",
+    "PromptConfig",
     "StarAward",
     "StepDone",
     "SwitchImpulse",

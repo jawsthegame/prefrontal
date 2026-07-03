@@ -219,7 +219,30 @@ hit is never something only the tracking parent knows.
 Surfaced as `POST /household/agreements/{id}/stars` (and `prefrontal household
 star`); the shared sheet's agreement block shows the running total + how many to
 the next reward, and recent grants join the "recently changed" load surface.
-Earn-only charts reject a negative `delta` at the write layer.
+Earn-only charts reject a negative `delta` at the write layer. All four award
+paths — the endpoint, the CLI, the one-tap button, and the scheduled prompt —
+funnel through one service, `award_stars_and_notify()` in `prefrontal/household.py`,
+so the "crossed a goal → tell both parents" rule lives in exactly one place.
+
+#### Scheduled award prompts
+
+Giving a star only helps if someone remembers to. A chart can carry a **prompt
+schedule** in its `structured` JSON — `{enabled, days:[0=Mon … 6=Sun],
+time:"HH:MM", question}` — a recurring "did &lt;kid&gt; earn a star for
+&lt;chart&gt; today?" check-in on chosen weekdays at a time of day (configured on
+the `/kids` dashboard, weekday picker + time; validated by `normalize_prompt`).
+No new table: the schedule rides the chart, and a `last_prompted_at` column dedups
+it to once per local day.
+
+A periodic trigger (n8n / launchd, like the coach & panic checks) POSTs
+`/webhooks/household/star-prompts/check`; the sweep (`prompt_due` /
+`prompt_question`, pure) finds every due chart and pushes **both** parents a
+notification carrying signed one-tap **⭐ Yes / Not today** buttons (context
+`"star"` in `delivery.py`, kind `"star"` in `notify.py`, actions in `oauth.py`).
+Tapping **⭐ Yes** hits `GET /nudge/act` and awards a star with no app switch —
+attributed to whoever tapped, congratulating both parents if it crosses a reward
+goal. The CLI twin is `prefrontal household prompt-check`; the importable n8n
+workflow is `deploy/n8n/star-prompt-check.workflow.json`.
 
 ### 3.7 What reuses existing tables (no new schema)
 
@@ -362,14 +385,16 @@ mechanism.
 | Area | Change |
 |---|---|
 | `prefrontal/memory/schema.sql` | `households`, `children`, `household_facts`, `household_agreements`, `household_stars`; `users.household_id`. |
-| `prefrontal/memory/migrate.py` | `users.household_id` in `_ADDED_COLUMNS` (back-fill). |
-| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, and the star ledger (`award_stars`/`star_total`/`star_totals`/`star_ledger`/`recent_star_awards`). |
+| `prefrontal/memory/migrate.py` | `users.household_id` + `household_agreements.last_prompted_at` in `_ADDED_COLUMNS` (back-fill). |
+| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, the star ledger (`award_stars`/`star_total`/`star_totals`/`star_ledger`/`recent_star_awards`), and `mark_prompted`. |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
-| `prefrontal/household.py` | Pure render (`build_sheet()` → structured; `render_sheet()` → Markdown) + pure goal logic (`newly_reached_goals`/`next_goal`/`star_congrats_text`), mirroring `briefing.py`/`panic.py`. |
-| `prefrontal/integrations/delivery.py` | `deliver_to_household()` / `household_notice()` — fan a notice to every co-parent's own route. |
+| `prefrontal/household.py` | Pure render (`build_sheet`/`render_sheet`) + pure goal logic (`newly_reached_goals`/`next_goal`/`star_congrats_text`) + prompt logic (`normalize_prompt`/`prompt_due`/`prompt_question`) + the `award_stars_and_notify` service. |
+| `prefrontal/integrations/delivery.py` | `deliver_to_household()`, `household_notice()`, `household_prompt_notice()` (with one-tap ⭐ buttons) — fan a notice to every co-parent's own route. |
+| `prefrontal/webhooks/{notify,oauth}.py` | `star` nudge kind (⭐ Yes / Not today buttons) + `star_award`/`star_skip` actions; handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
-| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet`; `POST /household/agreements/{id}/stars`; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show/star`. |
+| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet`; `POST /household/agreements/{id}/stars`, `…/prompt`, `POST /webhooks/household/star-prompts/check`; the `/kids` star-chart UI; operator household endpoints. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check`. |
+| `deploy/n8n/star-prompt-check.workflow.json` | Scheduled trigger that fires due award prompts. |
 | `docs/schema.md` | Document the five new tables + the added column. |
 
 ---
