@@ -257,6 +257,12 @@ curl -s -XPOST $PF/webhooks/focus/start -H "X-Prefrontal-Token: $TOK" \
 > check-in. Past the hard ceiling: *"time for a break"* — and protection lifts so
 > your departure/outing nudges can fire again.
 
+**Optional time checks (for time blindness):** if losing track of time in a block
+is the problem, set the `elapsed_callout_minutes` coaching-state key (e.g. `30`)
+and the coaching tick sends a gentle *"~N min on this so far"* on each interval —
+separate from the alignment check/break above. Off by default (`0`); it only
+fires while a focus session is active.
+
 **One-tap start (don't make it a chore):** remembering to declare a session is
 itself friction at the worst moment. So `intended_task` is optional — POST an
 empty body and Prefrontal infers the task from your **top open todo**
