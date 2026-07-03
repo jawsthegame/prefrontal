@@ -12,6 +12,7 @@ from prefrontal.webhooks._common import (
     DASHBOARD_HTML,
     FAMILY_HTML,
     KIDS_HTML,
+    REVIEW_HTML,
     STATS_HTML,
     Annotated,
     Any,
@@ -88,6 +89,19 @@ def build_router(
         inline SVG/CSS. Shares the unified theme + nav.
         """
         return STATS_HTML
+
+    @router.get("/review", response_class=HTMLResponse, tags=["system"])
+    def review_page() -> str:
+        """Serve the LLM-sensor review page — jot a note, confirm proposals.
+
+        Self-contained shell (unauthenticated, carries no data); it signs in via
+        Google session or an access code, then drives the sensor over the existing
+        JSON API: ``POST /observe`` to turn a note into pending proposals, and
+        ``GET /proposals`` + ``POST /proposals/{id}/accept|reject`` to review them.
+        The human-in-the-loop path is unchanged — nothing is written until accept.
+        Shares the unified theme + nav.
+        """
+        return REVIEW_HTML
 
     @router.get("/stats/data", tags=["system"])
     def stats_data(

@@ -450,9 +450,12 @@ ordered by leverage; each is independent but builds on denser capture.
    `POST /observe` (note → pending proposals), `GET /proposals?status=` (the
    review queue), and `POST /proposals/{id}/accept|reject` (apply/dismiss). The
    endpoints reuse the exact sensor path — allowlist, `source="llm_inferred"`,
-   pending-only resolve — in a new `routers/sensor.py`. *(Next: a `/proposals`
-   review UI so it's one-tap from the phone; a conversation/transcript source; and
-   letting an accepted state proposal feed the same calibration check as §4.)*
+   pending-only resolve — in a new `routers/sensor.py`. A **`/review` web page**
+   closes the loop for the phone: jot a note (→ `POST /observe`) and accept/reject
+   the pending proposals one-tap (→ the `/proposals` endpoints), on the shared
+   theme/nav shell (`review.html`, served by `system.py`, linked in every
+   surface's nav). *(Next: a conversation/transcript source; and letting an
+   accepted state proposal feed the same calibration check as §4.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
    now weigh each episode by an exponential decay on its age (`decay_weight`,
    `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the

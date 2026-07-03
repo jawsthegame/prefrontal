@@ -228,3 +228,14 @@ def test_proposals_unknown_action_404s():
     with client:
         pid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
         assert client.post(f"/proposals/{pid}/frobnicate", headers=_auth()).status_code == 404
+
+
+def test_review_page_served_without_auth():
+    client, _ = _client_with("[]")
+    with client:
+        resp = client.get("/review")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        # A self-contained shell: carries no data, drives the JSON API client-side.
+        assert "X-Prefrontal-Token" in resp.text
+        assert "/observe" in resp.text and "/proposals" in resp.text

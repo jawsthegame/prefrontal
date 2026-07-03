@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
-<title>Prefrontal — Insights</title>
+<title>Prefrontal — Review</title>
 <script>
 (function () {
   try {
@@ -37,7 +37,7 @@
     background: var(--bg); border-bottom: 1px solid var(--line); }
   .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
     display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .topnav .links { display: flex; gap: 2px; flex: 1; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
   .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
   .topnav .links a:hover { color: var(--fg); background: var(--line); }
   .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
@@ -57,29 +57,29 @@
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .empty { color: var(--muted); font-style: italic; }
 
-  .hero { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 6px; }
-  .hero .n { font-size: 36px; font-weight: 760; letter-spacing: -.5px; }
-  .hero .u { color: var(--muted); font-size: 15px; }
-  .streak { display: inline-block; background: var(--line); border-radius: 999px;
-    padding: 3px 11px; font-size: 13px; font-weight: 600; }
+  /* Note composer */
+  textarea { width: 100%; min-height: 80px; padding: 12px; border-radius: 10px; resize: vertical;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 11px 16px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-weight: 600; font-size: 15px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn.good { background: var(--good); color: var(--accent-fg); border-color: var(--good); }
+  .btn.ghost { background: transparent; color: var(--muted); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .composer-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  .composer-row .note { flex: 1; color: var(--muted); font-size: 13px; min-height: 16px; }
 
-  /* horizontal magnitude bars (thin marks, rounded ends, recessive track) */
-  .barrow { display: flex; align-items: center; gap: 10px; margin: 9px 0; font-size: 14px; }
-  .barrow .bl { min-width: 92px; }
-  .barrow .track { flex: 1; height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; }
-  .barrow .fill { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
-  .barrow .bv { min-width: 88px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-  /* composition bar + legend (status colours, always labelled) */
-  .compbar { display: flex; gap: 2px; height: 18px; border-radius: 6px; overflow: hidden; margin: 6px 0 0; background: var(--line); }
-  .compbar .seg { height: 100%; }
-  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
-  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
-  .legend .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-
-  /* outcome sparkline (recent history, newest right) */
-  .spark { display: flex; gap: 2px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap; }
-  .spark .tick { width: 9px; height: 20px; border-radius: 2px; }
+  /* Proposal rows */
+  .prop { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0 0; }
+  .prop .top { display: flex; align-items: baseline; gap: 8px; }
+  .prop .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700;
+    color: var(--accent-fg); background: var(--accent); border-radius: 999px; padding: 2px 9px; }
+  .prop .summary { font-weight: 600; flex: 1; }
+  .prop .why { color: var(--muted); font-size: 13px; margin: 6px 0 0; font-style: italic; }
+  .prop .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .prop .actions .btn { flex: 1; }
 
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
 
@@ -107,37 +107,37 @@
     <a href="/family">Family</a>
     <a href="/kids">Kids</a>
     <a href="/dashboard">Dashboard</a>
-    <a href="/stats" aria-current="page">Insights</a>
-    <a href="/review">Review</a>
+    <a href="/stats">Insights</a>
+    <a href="/review" aria-current="page">Review</a>
   </div>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
 </nav>
 
 <header>
-  <h1>📈 Insights</h1>
+  <h1>📝 Review</h1>
   <div class="meta" id="status">loading…</div>
 </header>
 
 <div class="wrap" id="wrap" style="display:none">
-  <section class="card" id="c-time">
-    <p class="label">Time-estimation accuracy</p>
-    <p class="sub">How long things actually take vs. what you estimated.</p>
-    <div id="time-body"></div>
+  <section class="card">
+    <p class="label">Jot a note</p>
+    <p class="sub">Anything you notice about how you work. The assistant proposes
+      small updates for you to confirm — it never saves anything on its own.</p>
+    <textarea id="note" placeholder="e.g. I always blow off admin on Mondays"></textarea>
+    <div class="composer-row">
+      <button class="btn primary" id="observe" type="button">Observe</button>
+      <span class="note" id="observe-note"></span>
+    </div>
   </section>
 
-  <section class="card" id="c-follow">
-    <p class="label">Follow-through</p>
-    <p class="sub">How often you complete / make it — over time.</p>
-    <div id="follow-body"></div>
+  <section class="card">
+    <p class="label">Pending proposals</p>
+    <p class="sub">Candidate updates awaiting your review. Accept to apply
+      (recorded as LLM-inferred), or reject to dismiss.</p>
+    <div id="proposals"></div>
   </section>
 
-  <section class="card" id="c-channels">
-    <p class="label">Channel responsiveness</p>
-    <p class="sub">Which nudge channels you actually answer.</p>
-    <div id="channels-body"></div>
-  </section>
-
-  <footer>Learned from your logged outcomes · updates as you go</footer>
+  <footer>Human-in-the-loop · nothing is written until you accept</footer>
 </div>
 
 <div id="gate">
@@ -155,15 +155,10 @@
 
 <script>
 const KEY = "prefrontal_token";
-const REFRESH_MS = 60000;
 let token = localStorage.getItem(KEY);
-let timer = null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const pct = (r) => Math.round((r || 0) * 100);
-const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-const OUT_COLOR = { success: "var(--good)", partial: "var(--warn)", miss: "var(--danger)" };
 
 // ── Theme toggle (shared) ────────────────────────────────────────────────
 (function () {
@@ -180,88 +175,82 @@ const OUT_COLOR = { success: "var(--good)", partial: "var(--warn)", miss: "var(-
 })();
 
 function gate(msg) {
-  token = null; localStorage.removeItem(KEY); clearInterval(timer);
+  token = null; localStorage.removeItem(KEY);
   $("#gate-err").textContent = msg || "";
   $("#gate").style.display = "flex";
 }
-async function api(path) {
-  const r = await fetch(path, { headers: token ? { "X-Prefrontal-Token": token } : {} });
+async function api(path, opts) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { ...(opts || {}), headers });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
 }
 
-// ── Renderers ─────────────────────────────────────────────────────────────
-function renderTime(t) {
-  if (!t || !t.n) {
-    $("#time-body").innerHTML = `<p class="empty">No estimates logged yet — as you record how long things take, this fills in.</p>`;
-    return;
-  }
-  const word = t.direction === "over" ? "over your estimates"
-    : t.direction === "under" ? "under your estimates" : "on target";
-  let html = `<div class="hero"><span class="n">${t.ratio}×</span><span class="u">${esc(word)}</span></div>
-    <p class="sub" style="margin:0 0 12px">from ${t.n} logged estimate${t.n === 1 ? "" : "s"}</p>`;
-  const ctxs = (t.contexts || []).filter((c) => c.ratio != null);
-  if (ctxs.length) {
-    const max = Math.max(1, ...ctxs.map((c) => c.ratio));
-    html += ctxs.map((c) => {
-      const w = Math.max(6, Math.round((c.ratio / max) * 100));
-      const dir = c.direction === "over" ? "over" : c.direction === "under" ? "under" : "on";
-      return `<div class="barrow" title="${esc(cap(c.context))}: ${c.ratio}× (${c.n})">
-        <span class="bl">${esc(cap(c.context))}</span>
-        <span class="track"><span class="fill" style="width:${w}%"></span></span>
-        <span class="bv">${c.ratio}× ${dir} · ${c.n}</span></div>`;
-    }).join("");
-  }
-  $("#time-body").innerHTML = html;
-}
-
-function renderFollow(f) {
-  if (!f || !f.n) {
-    $("#follow-body").innerHTML = `<p class="empty">No outcomes logged yet — “made it / missed it” taps show up here.</p>`;
-    return;
-  }
-  const c = f.counts || {};
-  const streak = f.streak
-    ? `<span class="streak">🔥 ${f.streak} in a row</span>` : "";
-  let html = `<div class="hero"><span class="n">${pct(f.rate)}%</span><span class="u">follow-through</span>
-    <span style="flex:1"></span>${streak}</div>`;
-  // composition bar (status colours), each segment sized by share, all labelled below
-  const segs = ["success", "partial", "miss"].filter((k) => c[k]);
-  html += `<div class="compbar">` + segs.map((k) =>
-    `<span class="seg" title="${esc(cap(k))}: ${c[k]}" style="width:${(c[k] / f.n) * 100}%;background:${OUT_COLOR[k]}"></span>`
-  ).join("") + `</div>`;
-  html += `<div class="legend">` + ["success", "partial", "miss"].map((k) =>
-    `<span class="k"><span class="dot" style="background:${OUT_COLOR[k]}"></span>${cap(k)} · ${c[k] || 0}</span>`
-  ).join("") + `</div>`;
-  // recent series sparkline
-  if ((f.series || []).length) {
-    html += `<div class="spark">` + f.series.map((o) =>
-      `<span class="tick" title="${esc(cap(o))}" style="background:${OUT_COLOR[o] || "var(--line)"}"></span>`
-    ).join("") + `</div>`;
-  }
-  $("#follow-body").innerHTML = html;
-}
-
-function renderChannels(rows) {
-  rows = (rows || []).filter((r) => r.rate != null);
+// ── Render + actions ───────────────────────────────────────────────────────
+function renderProposals(rows) {
   if (!rows.length) {
-    $("#channels-body").innerHTML = `<p class="empty">No channel responses logged yet.</p>`;
+    $("#proposals").innerHTML = `<p class="empty">Nothing to review — jot a note above and I'll suggest updates.</p>`;
     return;
   }
-  $("#channels-body").innerHTML = rows.map((r) =>
-    `<div class="barrow" title="${esc(r.channel)}: ${pct(r.rate)}% of ${r.n}">
-      <span class="bl">${esc(cap(r.channel))}</span>
-      <span class="track"><span class="fill" style="width:${Math.max(4, pct(r.rate))}%"></span></span>
-      <span class="bv">${pct(r.rate)}% · ${r.n}</span></div>`
-  ).join("");
+  $("#proposals").innerHTML = rows.map((p) => `
+    <div class="prop" data-id="${p.id}">
+      <div class="top">
+        <span class="kind">${esc(p.kind)}</span>
+        <span class="summary">${esc(p.summary)}</span>
+      </div>
+      ${p.rationale ? `<p class="why">“${esc(p.rationale)}”</p>` : ""}
+      <div class="actions">
+        <button class="btn good" type="button" data-act="accept" data-id="${p.id}">✓ Accept</button>
+        <button class="btn ghost" type="button" data-act="reject" data-id="${p.id}">Reject</button>
+      </div>
+    </div>`).join("");
+}
+
+async function resolve(id, action, btn) {
+  const buttons = btn.parentElement.querySelectorAll("button");
+  buttons.forEach((b) => (b.disabled = true));
+  try {
+    await api(`/proposals/${id}/${action}`, { method: "POST" });
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    buttons.forEach((b) => (b.disabled = false));
+    $("#status").textContent = "couldn't save — retry";
+    return;
+  }
+  await load();
+}
+
+async function observe() {
+  const el = $("#note");
+  const text = el.value.trim();
+  if (!text) return;
+  const btn = $("#observe");
+  btn.disabled = true;
+  $("#observe-note").textContent = "reading…";
+  let res;
+  try {
+    res = await api("/observe", { method: "POST", body: JSON.stringify({ text }) });
+  } catch (err) {
+    btn.disabled = false;
+    if (err.code === 401) { gate("Session expired."); return; }
+    $("#observe-note").textContent = "couldn't reach the model — try again";
+    return;
+  }
+  btn.disabled = false;
+  el.value = "";
+  $("#observe-note").textContent = res.count
+    ? `Proposed ${res.count} update${res.count === 1 ? "" : "s"} — review below.`
+    : "Nothing worth recording in that note.";
+  await load();
 }
 
 async function load() {
   $("#status").textContent = "updating…";
   let data;
   try {
-    data = await api("/stats/data");
+    data = await api("/proposals?status=pending");
   } catch (err) {
     if (err.code === 401) { gate("That code didn't work."); return; }
     $("#status").textContent = "couldn't load — retry";
@@ -269,27 +258,29 @@ async function load() {
   }
   $("#gate").style.display = "none";
   $("#wrap").style.display = "block";
-  renderTime(data.time_estimation);
-  renderFollow(data.follow_through);
-  renderChannels(data.channels);
-  const n = (data.counts || {}).episodes || 0;
-  $("#status").textContent = `${n} event${n === 1 ? "" : "s"} · updated ` +
-    new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const rows = data.proposals || [];
+  renderProposals(rows);
+  $("#status").textContent = rows.length
+    ? `${rows.length} pending`
+    : "all caught up";
 }
 
-function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
-
+$("#observe").onclick = observe;
+$("#proposals").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (b) resolve(b.dataset.id, b.dataset.act, b);
+});
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
   if (!v) return;
   token = v; localStorage.setItem(KEY, v);
   $("#gate").style.display = "none"; $("#gate-err").textContent = "";
-  start();
+  load();
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
 
-start();  // try the session cookie / saved code; the gate appears only on 401
+load();  // try the session cookie / saved code; the gate appears only on 401
 </script>
 </body>
 </html>
