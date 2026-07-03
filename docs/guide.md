@@ -450,7 +450,7 @@ model earns its cost:
 | `assistant` | Natural-language edits to todos/commitments | `POST /assistant`, dashboard chat |
 | `summarizer` | The prioritized-prose behavioral profile | `prefrontal summarize`, `GET /profile?refresh=1` |
 | `briefing` | The morning briefing rewritten as prose | `prefrontal briefing --llm` |
-| `sensor` | Free-text note → candidate structured updates | `prefrontal note`, `POST /observe` |
+| `sensor` | Free-text note or conversation transcript → candidate structured updates | `prefrontal note`, `POST /observe` |
 | `triage` | Mail triage (urgency/category/needs-action) | `POST /webhooks/mail/sync` |
 
 `ANTHROPIC_AGENTS` is a comma-separated list (`summarizer,triage`), the sentinel
@@ -590,7 +590,7 @@ token client-side).
 | `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
 | `GET /briefing` | Today's digest (structured + rendered text) |
-| `POST /observe` | Feed a free-text note to the LLM sensor → pending candidate updates |
+| `POST /observe` | Feed a free-text note **or** a conversation `transcript` to the LLM sensor → pending candidate updates |
 | `GET /proposals?status=` · `POST /proposals/{id}/accept\|reject` | Review / apply / dismiss sensor proposals |
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
 | `POST /webhooks/coach/check` · `/ack` | Run the coaching tick / acknowledge a nudge |
@@ -632,7 +632,7 @@ token client-side).
 | `encourage` | Rough-day check: today's recovery message if it's gone sideways |
 | `panic` | Overwhelm triage — what's on fire + one first step; `--llm` |
 | `crunch on\|off\|status` | Deadline mode: suspend the work/life time bands; `--hours N` |
-| `note "…"` / `proposals list\|accept\|reject` | LLM-as-sensor: jot a note → review proposed updates |
+| `note "…"` (or `note --transcript turns.json`) / `proposals list\|accept\|reject` | LLM-as-sensor: jot a note or feed a conversation → review proposed updates |
 | `household add\|join\|leave\|show\|invite\|redeem\|star\|balance\|shopping\|chore\|routine\|prompt-check\|checkin-check\|digest-check\|chores-check` | Co-parent household sheet (chores + routines feed the two-facet balance) |
 | `modules [-v]` | List challenge-area modules and status |
 

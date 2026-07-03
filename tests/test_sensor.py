@@ -18,7 +18,9 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.sensor import (
     apply_proposal,
     extract_candidates,
+    extract_candidates_from_transcript,
     record_candidates,
+    render_transcript,
 )
 from tests.conftest import scoped_default
 
@@ -239,3 +241,91 @@ def test_review_page_served_without_auth():
         # A self-contained shell: carries no data, drives the JSON API client-side.
         assert "X-Prefrontal-Token" in resp.text
         assert "/observe" in resp.text and "/proposals" in resp.text
+
+
+# -- conversation / transcript source ----------------------------------------
+
+
+def test_render_transcript_labels_turns_and_skips_blanks():
+    turns = [
+        {"speaker": "me", "text": "I always bail on admin"},
+        {"role": "coach", "content": "when?"},  # role/content fallbacks
+        {"speaker": "me", "text": "   "},  # blank text → dropped
+        {"text": "no speaker"},  # missing speaker → '?'
+    ]
+    assert render_transcript(turns) == "me: I always bail on admin\ncoach: when?\n?: no speaker"
+
+
+def _capturing_client(reply: str):
+    """An OllamaClient that records the last prompt/system it was asked to generate."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        body = _json.loads(request.content)
+        seen["prompt"] = body.get("prompt", "")
+        seen["system"] = body.get("system", "")
+        return httpx.Response(200, json={"response": reply})
+
+    return OllamaClient(transport=httpx.MockTransport(handler)), seen
+
+
+def test_transcript_extraction_reads_whole_conversation_and_enforces_allowlist():
+    reply = """[
+      {"kind": "state", "key": "self_care", "value": "on", "rationale": "asked for meal nudges"},
+      {"kind": "state", "key": "pushover_token", "value": "leaked"},
+      {"kind": "episode", "episode_type": "task", "outcome": "miss", "context": "admin"}
+    ]"""
+    client, seen = _capturing_client(reply)
+    turns = [
+        {"speaker": "me", "text": "remind me to eat; I forget lunch"},
+        {"speaker": "coach", "text": "and admin tasks?"},
+        {"speaker": "me", "text": "I always blow those off"},
+    ]
+    cands = extract_candidates_from_transcript(turns, client=client)
+    # Same safety gate as a note: disallowed pushover_token is dropped.
+    assert {c.payload.get("key") for c in cands if c.kind == "state"} == {"self_care"}
+    assert any(c.kind == "episode" for c in cands)
+    # The model saw the rendered conversation, framed to attribute to the user.
+    assert "I always blow those off" in seen["prompt"]
+    assert "CONVERSATION:" in seen["prompt"] and "ABOUT THE USER" in seen["prompt"]
+
+
+def test_transcript_extraction_empty_when_no_usable_turns():
+    client, _ = _capturing_client("[]")
+    blank = [{"speaker": "me", "text": "  "}]
+    assert extract_candidates_from_transcript(blank, client=client) == []
+
+
+def test_observe_accepts_a_transcript():
+    reply = '[{"kind":"state","key":"encouragement","value":"on","rationale":"wants pep talks"}]'
+    client, store = _client_with(reply)
+    with client:
+        r = client.post(
+            "/observe",
+            json={
+                "transcript": [
+                    {"speaker": "me", "text": "rough week, be gentle with me"},
+                    {"speaker": "coach", "text": "want encouragement on?"},
+                    {"speaker": "me", "text": "yes please"},
+                ]
+            },
+            headers=_auth(),
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["count"] == 1
+        assert body["proposals"][0]["kind"] == "state"
+        # Still pending until accepted.
+        assert store.get_state("encouragement") != "on"
+        assert store.list_proposals("pending")
+
+
+def test_observe_422s_when_neither_text_nor_transcript():
+    client, _ = _client_with("[]")
+    with client:
+        assert client.post("/observe", json={}, headers=_auth()).status_code == 422
+        assert client.post(
+            "/observe", json={"text": "   ", "transcript": []}, headers=_auth()
+        ).status_code == 422

@@ -475,8 +475,16 @@ ordered by leverage; each is independent but builds on denser capture.
    closes the loop for the phone: jot a note (→ `POST /observe`) and accept/reject
    the pending proposals one-tap (→ the `/proposals` endpoints), on the shared
    theme/nav shell (`review.html`, served by `system.py`, linked in every
-   surface's nav). *(Next: a conversation/transcript source; and letting an
-   accepted state proposal feed the same calibration check as §4.)*
+   surface's nav). A **conversation/transcript source** now sits alongside the
+   single note: `extract_candidates_from_transcript` reads multi-turn
+   `{speaker, text}` turns (`render_transcript` flattens them), framing the prompt
+   to attribute signal to *the user* and never to other speakers, through the
+   exact same allowlist/validation/pending gate. Reachable via `POST /observe`
+   (a `transcript` array, which takes precedence over `text`) and
+   `prefrontal note --transcript <turns.json>`. *(Next: letting an accepted state
+   proposal feed the same calibration check as §4 — deferred because none of the
+   sensor's allowlisted keys are the numeric adaptations §4's walk-forward
+   measures, so it needs either a broader allowlist or a generalized check.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
    now weigh each episode by an exponential decay on its age (`decay_weight`,
    `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the

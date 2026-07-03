@@ -21,6 +21,7 @@ from prefrontal.webhooks._common import (
     ScopedRequest,
     apply_proposal,
     extract_candidates,
+    extract_candidates_from_transcript,
     record_candidates,
     resolve_user,
     status,
@@ -51,19 +52,32 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: ObserveRequest,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Read a free-text note and record any candidate updates as *pending*.
+        """Read a note *or* a conversation transcript and record *pending* candidates.
 
-        The HTTP twin of ``prefrontal note``. The local model reads the note and
+        The HTTP twin of ``prefrontal note``. The model reads the source and
         proposes allowlisted `state`/`episode` candidates (:mod:`prefrontal.sensor`);
         each lands as a pending `proposals` row for review at ``GET /proposals``.
         Nothing authoritative is written here — accept a proposal to apply it.
 
+        Provide ``text`` (a single note) or ``transcript`` (conversation turns);
+        a non-empty transcript takes precedence and the sensor attributes signal
+        to the user across the whole conversation. A body with neither is a 422.
+
         Returns the created proposals (compact form) and their count. When the
-        note yields nothing, or the model is unreachable, ``count`` is 0 and
+        source yields nothing, or the model is unreachable, ``count`` is 0 and
         ``proposals`` is empty (an honest no-guess result, not an error).
         """
         memory = ctx.store
-        candidates = extract_candidates(payload.text, client=sensor_client)
+        turns = [t.model_dump() for t in payload.transcript]
+        if any(t["text"].strip() for t in turns):
+            candidates = extract_candidates_from_transcript(turns, client=sensor_client)
+        elif payload.text.strip():
+            candidates = extract_candidates(payload.text, client=sensor_client)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provide a non-empty 'text' or 'transcript'.",
+            )
         ids = record_candidates(memory, candidates)
         # Read back the freshly-stored rows so the response matches GET /proposals.
         created = [p for p in memory.list_proposals("pending") if p["id"] in set(ids)]
