@@ -1285,6 +1285,17 @@ def test_shopping_endpoints_shared_flow_and_validation(client):
     ).status_code == 404
 
 
+def test_shopping_list_endpoint_is_shared_and_member_only(client):
+    """GET /household/shopping returns just the list (dashboard quick-add) and 404s for a loner."""
+    client.post("/household/shopping", json={"item": "milk"}, headers=_h("dana-tok"))
+    # Any member reads the same list, no need to pull the whole sheet.
+    listed = client.get("/household/shopping", headers=_h("alex-tok"))
+    assert listed.status_code == 200
+    assert [s["item"] for s in listed.json()["items"]] == ["milk"]
+    # A user in no household has nothing shared to read.
+    assert client.get("/household/shopping", headers=_h("lee-tok")).status_code == 404
+
+
 def test_shopping_available_to_single_parent(client, store):
     """Shopping is a shared checklist, not load-balancing — solo households get it."""
     solo = store.create_household("Solo")
