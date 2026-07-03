@@ -41,7 +41,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from prefrontal.coaching import CoachContext, Cue
-from prefrontal.modules.base import Intervention, Module, ModuleStore
+from prefrontal.memory.store import MemoryStore
+from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
 from prefrontal.scheduling import local_datetime
 
@@ -201,11 +202,11 @@ def _stamp(now: datetime, minutes: int) -> str:
     return (now + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _target(store: ModuleStore, check: BasicCheck) -> int:
+def _target(store: MemoryStore, check: BasicCheck) -> int:
     return max(1, int(store.get_float(check.target_key, check.target_default)))
 
 
-def day_count(store: ModuleStore, check: BasicCheck, today: str) -> int:
+def day_count(store: MemoryStore, check: BasicCheck, today: str) -> int:
     """How many confirms the user has logged for ``check`` *today* (0 if none).
 
     The cursor is ``"YYYY-MM-DD|n"``; a date mismatch means a new day, so the
@@ -224,7 +225,7 @@ def day_count(store: ModuleStore, check: BasicCheck, today: str) -> int:
 
 
 def apply_self_care_action(
-    store: ModuleStore, action: str, *, now: datetime, today: str
+    store: MemoryStore, action: str, *, now: datetime, today: str
 ) -> str | None:
     """Apply a one-tap self-care action; return the confirmation copy (or ``None``).
 
@@ -273,7 +274,7 @@ def apply_self_care_action(
     return f"Okay — I'll check back in {mins} min."
 
 
-def _latency_note(store: ModuleStore, check: BasicCheck, now: datetime) -> str:
+def _latency_note(store: MemoryStore, check: BasicCheck, now: datetime) -> str:
     """Pop the prompt stamp and render the nudge→tap latency as a note token.
 
     Returns ``"latency=<n>s"`` when we know when the nudge fired, else
@@ -288,7 +289,7 @@ def _latency_note(store: ModuleStore, check: BasicCheck, now: datetime) -> str:
     return f"latency={seconds}s"
 
 
-def mark_self_care_prompted(store: ModuleStore, decisions: list[Any], now: datetime) -> None:
+def mark_self_care_prompted(store: MemoryStore, decisions: list[Any], now: datetime) -> None:
     """Stamp the delivery time for each self-care cue just fired (for latency).
 
     Called by the coaching tick right after it commits to firing (``record_fired``)
@@ -311,7 +312,7 @@ def _latency_seconds(notes: str | None) -> float | None:
     return float(m.group(1)) if m else None
 
 
-def _recent_responses(store: ModuleStore, check: BasicCheck) -> list[dict[str, Any]]:
+def _recent_responses(store: MemoryStore, check: BasicCheck) -> list[dict[str, Any]]:
     """This check's recent self-care responses (newest first), parsed for learning.
 
     Each item is ``{"outcome": "confirmed"|"snoozed", "latency": float|None}``.
@@ -380,7 +381,7 @@ def adapt_self_care_interval(
     return current_interval, "cadence looks about right"
 
 
-def adapt_self_care(store: ModuleStore, now: datetime | None = None) -> list[dict[str, Any]]:
+def adapt_self_care(store: MemoryStore, now: datetime | None = None) -> list[dict[str, Any]]:
     """Learn each enabled check's interval from response history (learning §6).
 
     Runs in the nightly ``learn`` pass. Writes the adapted value to the check's
@@ -466,7 +467,7 @@ class SelfCareModule(Module):
             ),
         ]
 
-    def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Fire whichever basic-needs checks are due right now.
 
         Opt-in (``self_care`` == ``on``); each check inert before its start hour,
@@ -515,7 +516,7 @@ class SelfCareModule(Module):
             )
         return cues
 
-    def profile_section(self, store: ModuleStore) -> str | None:
+    def profile_section(self, store: MemoryStore) -> str | None:
         """Report which basic-needs checks are on."""
         if (store.get_state("self_care", "off") or "off") != "on":
             return None
