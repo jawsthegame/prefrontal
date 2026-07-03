@@ -549,6 +549,28 @@ CREATE TABLE IF NOT EXISTS household_checkins (
 
 CREATE INDEX IF NOT EXISTS idx_household_checkins ON household_checkins (household_id, week);
 
+-- The shared shopping list — the template's "Shopping Lists" sheet. A running
+-- list of things to buy, child-tagged, that either parent can add to and check
+-- off (so nobody buys the same thing twice). Deliberately NOT per-user todos:
+-- those are per-user-scoped and carry scheduling weight a shared checklist
+-- doesn't want. Provenance on both add (added_by) and buy (got_by). See
+-- docs/household-sheet.md.
+CREATE TABLE IF NOT EXISTS household_shopping (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    child_id     INTEGER NOT NULL DEFAULT 0,       -- children.id, or 0 = household-wide
+    item         TEXT NOT NULL,                    -- what to buy
+    spec         TEXT,                             -- size / brand / details
+    where_to_buy TEXT,                             -- where to get it
+    got          INTEGER NOT NULL DEFAULT 0,       -- 0 = still needed, 1 = bought
+    added_by     INTEGER REFERENCES users(id),
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    got_by       INTEGER REFERENCES users(id),     -- who checked it off
+    got_at       DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_shopping ON household_shopping (household_id, got);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"

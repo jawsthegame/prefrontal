@@ -1148,6 +1148,85 @@ def test_nudge_act_digest_seen_marks_the_sheet_seen(signed_client, store):
     assert dana.get_state("household_seen_at")
 
 
+# --- shared shopping list ----------------------------------------------------
+
+
+def test_shopping_repo_add_check_remove_and_ordering(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    sam = dana.add_child(name="Sam")
+    a = dana.add_shopping_item(item="shoes", spec="size 13", where_to_buy="Target",
+                               child_id=sam, added_by=dana_id)
+    b = dana.add_shopping_item(item="glue sticks", added_by=dana_id)
+    # Alex (co-parent) sees the same list, with child + who-added names.
+    items = alex.shopping_items()
+    assert [i["item"] for i in items] == ["shoes", "glue sticks"]  # needed, insertion order
+    assert items[0]["child_name"] == "Sam" and items[0]["added_by_name"] == "Dana"
+    # Check the first off → it drops below still-needed items.
+    assert alex.set_shopping_got(a, True, user_id=store.get_user("alex")["id"]) is True
+    assert [i["item"] for i in dana.shopping_items()] == ["glue sticks", "shoes"]
+    assert next(i for i in dana.shopping_items() if i["id"] == a)["got"] == 1
+    # Un-check it, then remove b.
+    assert dana.set_shopping_got(a, False, user_id=dana_id) is True
+    assert dana.remove_shopping_item(b) is True
+    assert [i["item"] for i in dana.shopping_items()] == ["shoes"]
+
+
+def test_shopping_renders_and_counts(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.add_shopping_item(item="milk", added_by=dana_id)
+    got = dana.add_shopping_item(item="eggs", added_by=dana_id)
+    dana.set_shopping_got(got, True, user_id=dana_id)
+    sheet = build_sheet(dana, now=NOW)
+    assert sheet.counts["shopping"] == 1  # still-needed count only
+    text = render_sheet(sheet)
+    assert "## Shopping" in text
+    assert "- [ ] milk" in text and "- [x] eggs" in text
+
+
+def test_shopping_only_sheet_is_not_empty(dana):
+    dana.add_shopping_item(item="milk", added_by=None)
+    assert "Nothing here yet" not in render_sheet(build_sheet(dana, now=NOW))
+
+
+def test_shopping_endpoints_shared_flow_and_validation(client):
+    r = client.post(
+        "/household/shopping",
+        json={"item": "shoes", "spec": "size 13", "where_to_buy": "Target"},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 201
+    sid = r.json()["id"]
+    # Alex sees it on the shared sheet and checks it off.
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()["sheet"]
+    assert sheet["shopping"][0]["item"] == "shoes"
+    assert client.post(
+        f"/household/shopping/{sid}/got", json={"got": True}, headers=_h("alex-tok")
+    ).json()["got"] is True
+    assert client.post(
+        f"/household/shopping/{sid}/remove", json={}, headers=_h("dana-tok")
+    ).json()["removed"] is True
+    # validation + not-found
+    assert client.post(
+        "/household/shopping", json={"item": "  "}, headers=_h("dana-tok")
+    ).status_code == 422
+    assert client.post(
+        "/household/shopping/999/got", json={"got": True}, headers=_h("dana-tok")
+    ).status_code == 404
+    assert client.post(
+        "/household/shopping/999/remove", json={}, headers=_h("dana-tok")
+    ).status_code == 404
+
+
+def test_shopping_available_to_single_parent(client, store):
+    """Shopping is a shared checklist, not load-balancing — solo households get it."""
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    r = client.post("/household/shopping", json={"item": "diapers"}, headers=_h("lee-tok"))
+    assert r.status_code == 201
+    sheet = client.get("/household/sheet", headers=_h("lee-tok")).json()["sheet"]
+    assert [s["item"] for s in sheet["shopping"]] == ["diapers"]
+
+
 # --- load balance view -------------------------------------------------------
 
 

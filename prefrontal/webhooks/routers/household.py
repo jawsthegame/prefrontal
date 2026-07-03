@@ -51,6 +51,8 @@ from prefrontal.webhooks._common import (
     HTTPException,
     PromptConfig,
     ScopedRequest,
+    ShoppingAdd,
+    ShoppingGot,
     StarAward,
     _parse_dt_or_none,
     build_sheet,
@@ -528,6 +530,49 @@ def build_router(
                 {"handle": member["handle"], "count": len(changes), "delivery": delivery}
             )
         return {"sent": sent, "checked_at": now_str}
+
+    # -- shared shopping list -------------------------------------------------
+
+    @router.post("/household/shopping", status_code=status.HTTP_201_CREATED, tags=["household"])
+    def add_shopping(
+        payload: ShoppingAdd,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Add a thing to buy to the shared list (stamps who added it)."""
+        _require_member(ctx)
+        item = payload.item.strip()
+        if not item:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item must be non-empty"
+            )
+        sid = ctx.store.add_shopping_item(
+            item=item, spec=payload.spec, where_to_buy=payload.where_to_buy,
+            child_id=payload.child_id, added_by=ctx.user["id"],
+        )
+        return {"id": sid, "item": item}
+
+    @router.post("/household/shopping/{item_id}/got", tags=["household"])
+    def shopping_got(
+        item_id: int,
+        payload: ShoppingGot,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Check a shopping item off (or un-check it), stamping who bought it."""
+        _require_member(ctx)
+        if not ctx.store.set_shopping_got(item_id, payload.got, user_id=ctx.user["id"]):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
+        return {"ok": True, "got": payload.got}
+
+    @router.post("/household/shopping/{item_id}/remove", tags=["household"])
+    def remove_shopping(
+        item_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Delete a shopping item (scoped to the household)."""
+        _require_member(ctx)
+        if not ctx.store.remove_shopping_item(item_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
+        return {"removed": True}
 
     # -- appointments ---------------------------------------------------------
 

@@ -236,6 +236,46 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _digest_cli(store, args, settings)
         elif args.household_action == "balance":
             return _balance_cli(store, args, settings)
+        elif args.household_action == "shopping":
+            return _shopping_cli(store, args)
+    return 0
+
+
+def _shopping_cli(store, args) -> int:
+    """List the shared shopping list, or add/check-off/remove an item."""
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    if args.add:
+        sid = scoped.add_shopping_item(
+            item=args.add, spec=args.spec, where_to_buy=args.where,
+            child_id=args.child or 0, added_by=scoped.user_id,
+        )
+        print(f"Added #{sid}: {args.add}")
+        return 0
+    if args.got is not None:
+        if not scoped.set_shopping_got(args.got, True, user_id=scoped.user_id):
+            print(f"No item #{args.got}.", file=sys.stderr)
+            return 1
+        print(f"Checked off #{args.got}.")
+        return 0
+    if args.remove is not None:
+        if not scoped.remove_shopping_item(args.remove):
+            print(f"No item #{args.remove}.", file=sys.stderr)
+            return 1
+        print(f"Removed #{args.remove}.")
+        return 0
+    items = scoped.shopping_items()
+    if not items:
+        print("Shopping list is empty.")
+        return 0
+    for s in items:
+        box = "x" if s["got"] else " "
+        detail = " · ".join(p for p in (s.get("spec"), s.get("where_to_buy")) if p)
+        who = f" — {s['child_name']}" if s.get("child_name") else ""
+        tail = f" ({detail})" if detail else ""
+        print(f"  [{box}] #{s['id']} {s['item']}{tail}{who}")
     return 0
 
 
@@ -1315,6 +1355,16 @@ def build_parser() -> argparse.ArgumentParser:
         "balance", help="Print the gentle 'who's keeping the sheet up' view."
     )
     h_bal.add_argument("--user", default=None, help="Handle of a household member.")
+    h_shop = house_sub.add_parser(
+        "shopping", help="List the shared shopping list (or add/check/remove an item)."
+    )
+    h_shop.add_argument("--user", default=None, help="Handle of a household member.")
+    h_shop.add_argument("--add", default=None, help="Add an item (the thing to buy).")
+    h_shop.add_argument("--spec", default=None, help="Size / brand / details (with --add).")
+    h_shop.add_argument("--where", default=None, help="Where to buy it (with --add).")
+    h_shop.add_argument("--child", type=int, default=None, help="A children.id (with --add).")
+    h_shop.add_argument("--got", type=int, default=None, help="Check off item by id.")
+    h_shop.add_argument("--remove", type=int, default=None, help="Remove item by id.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

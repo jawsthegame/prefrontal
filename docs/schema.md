@@ -274,6 +274,13 @@ positive `children.id`.
   `households.checkin_*` schedule; the sweep is
   `POST /webhooks/household/checkin/check`.
 
+- **`household_shopping`** — the shared shopping list: `item`, `spec`,
+  `where_to_buy`, `got` (0/1), `child_id` (0 = household-wide), with provenance on
+  both add (`added_by`/`created_at`) and buy (`got_by`/`got_at`). Either parent
+  adds and checks off; it rides the shared sheet (`build_sheet` → a **Shopping**
+  section). A shared checklist, deliberately not per-user `todos`. Available to
+  every household (not load-balancing), including a solo one.
+
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
 "upcoming" section.

@@ -614,6 +614,75 @@ class HouseholdRepo:
         out.sort(key=lambda c: (-c["count"], c["name"]))
         return out
 
+    # -- shared shopping list -------------------------------------------------
+    #
+    # A household-scoped checklist both parents share: add, check off (with
+    # provenance on both), remove. Not per-user todos (those are user-scoped and
+    # carry scheduling weight). See docs/household-sheet.md §3.7.
+
+    def add_shopping_item(
+        self,
+        *,
+        item: str,
+        spec: str | None = None,
+        where_to_buy: str | None = None,
+        child_id: int = HOUSEHOLD_WIDE,
+        added_by: int | None,
+    ) -> int:
+        """Add a thing to buy, returning its id (stamps who added it)."""
+        cur = self.conn.execute(
+            "INSERT INTO household_shopping "
+            "(household_id, child_id, item, spec, where_to_buy, added_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (self._household_id(), child_id, item.strip(), spec, where_to_buy, added_by),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def set_shopping_got(self, item_id: int, got: bool, *, user_id: int | None) -> bool:
+        """Check an item off (or un-check it), stamping who bought it. ``True`` if changed."""
+        if got:
+            cur = self.conn.execute(
+                "UPDATE household_shopping SET got = 1, got_by = ?, got_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND household_id = ?",
+                (user_id, item_id, self._household_id()),
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE household_shopping SET got = 0, got_by = NULL, got_at = NULL "
+                "WHERE id = ? AND household_id = ?",
+                (item_id, self._household_id()),
+            )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def remove_shopping_item(self, item_id: int) -> bool:
+        """Delete a shopping item (scoped to the household). ``True`` if removed."""
+        cur = self.conn.execute(
+            "DELETE FROM household_shopping WHERE id = ? AND household_id = ?",
+            (item_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def shopping_items(self) -> list[dict[str, Any]]:
+        """All shopping items — still-needed first, each with child + who-added names."""
+        rows = self.conn.execute(
+            """
+            SELECT s.id, s.child_id, s.item, s.spec, s.where_to_buy, s.got, s.created_at,
+                   c.name AS child_name,
+                   COALESCE(u.display_name, u.handle) AS added_by_name
+            FROM household_shopping s
+            LEFT JOIN children c
+                   ON c.id = s.child_id AND c.household_id = s.household_id
+            LEFT JOIN users u ON u.id = s.added_by
+            WHERE s.household_id = ?
+            ORDER BY s.got ASC, s.created_at ASC, s.id ASC
+            """,
+            (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- operator (unscoped store) --------------------------------------------
     #
     # Membership is operator-set in v1 (docs/household-sheet.md §8): one of the
