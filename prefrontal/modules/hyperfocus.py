@@ -28,6 +28,9 @@ these into real nudges, mirroring the Location-Aware Task Anchor escalation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -184,6 +187,62 @@ def _todo_tags(store: MemoryStore, closed: dict) -> tuple[str | None, str | None
     if not todo:
         return (None, None)
     return (todo.get("energy"), todo.get("category"))
+
+
+# --- Zero-field ("one tap") start --------------------------------------------
+#
+# Declaring a focus session — a task + a duration — is friction at exactly the
+# wrong moment: right when you're trying to drop in. The whole product premise is
+# that you shouldn't have to remember to reach for it. So a start with no fields
+# infers what you'd have typed: the task you *should* be getting into (your
+# most-avoided / highest-priority open todo, carrying its estimate as the planned
+# duration), falling back to a generic block so the one-tap button always works.
+
+#: Task label when there's nothing open to infer a focus session from.
+DEFAULT_FOCUS_TASK = "a focus block"
+
+
+@dataclass(frozen=True)
+class InferredFocus:
+    """A focus start inferred for a zero-field (one-tap) session.
+
+    Attributes:
+        intended_task: The task to protect — an open todo's title, or a generic
+            fallback.
+        planned_minutes: The todo's estimate when it carries one, else ``None``
+            (the module's soft-block default then governs the gentle check).
+        source: ``"todo"`` when taken from an open loop, ``"default"`` otherwise.
+    """
+
+    intended_task: str
+    planned_minutes: float | None
+    source: str
+
+
+def infer_focus_start(candidates: list[dict[str, Any]]) -> InferredFocus:
+    """Infer a focus session's task + duration for a no-field start.
+
+    Args:
+        candidates: Open todo dicts in the order you'd want them picked — ideally
+            most-avoided first, then the rest by priority. The first with a
+            non-blank title wins.
+
+    Returns:
+        An :class:`InferredFocus`. Always returns something (a generic block when
+        ``candidates`` is empty), so the one-tap start never dead-ends.
+    """
+    for todo in candidates:
+        title = (todo.get("title") or "").strip()
+        if not title:
+            continue
+        est = todo.get("estimate_minutes")
+        planned = (
+            float(est)
+            if isinstance(est, (int, float)) and not isinstance(est, bool) and est > 0
+            else None
+        )
+        return InferredFocus(title, planned, "todo")
+    return InferredFocus(DEFAULT_FOCUS_TASK, None, "default")
 
 
 def record_focus_end(

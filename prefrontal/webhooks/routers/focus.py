@@ -21,16 +21,19 @@ from prefrontal.webhooks._common import (
     _focus_end_confirmation,
     _focus_started_confirmation,
     _nudge_actions,
+    avoided_todos,
     build_focus_message,
     focus_is_abandoned,
     focus_level,
     focus_level_rank,
+    infer_focus_start,
     module_enabled,
     record_focus_abandoned,
     record_focus_end,
     resolve_user,
     should_protect,
     status,
+    utcnow,
 )
 
 
@@ -58,31 +61,47 @@ def build_router(
     ) -> FocusStarted:
         """Declare a focus session: a stated task and an optional planned length.
 
+        **One-tap start:** leave ``intended_task`` blank and the server infers it
+        from your top open todo (most-avoided first, carrying its estimate as the
+        planned duration) — so dropping into focus is a single tap, not a form.
+        A blank start with no open todos still works: it opens a generic block.
+
         Unlike an outing, no window is *required* — the soft alignment check
         falls back to the ``hyperfocus_block_minutes`` default when no
         ``planned_minutes`` is given, and the hard biological break is keyed off
-        ``hard_interrupt_minutes`` regardless. Only a blank task is rejected.
+        ``hard_interrupt_minutes`` regardless.
         """
         memory = ctx.store
-        if not payload.intended_task.strip():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Send a non-empty intended_task.",
-            )
+        task = payload.intended_task.strip()
+        planned = payload.planned_minutes
+        inferred_from = None
+        if not task:
+            # Zero-field start: infer what you'd have typed from your open loops.
+            open_todos = memory.open_todos()
+            avoided = [a["todo"] for a in avoided_todos(open_todos, utcnow())]
+            seen = {t["id"] for t in avoided}
+            ordered = avoided + [t for t in open_todos if t["id"] not in seen]
+            guess = infer_focus_start(ordered)
+            task = guess.intended_task
+            if planned is None:
+                planned = guess.planned_minutes
+            inferred_from = guess.source
+
         session_id = memory.start_focus_session(
-            payload.intended_task.strip(),
-            planned_minutes=payload.planned_minutes,
+            task,
+            planned_minutes=planned,
             aligned=payload.aligned,
             todo_id=payload.todo_id,
         )
+        confirmation = _focus_started_confirmation(task, planned, payload.aligned)
+        if inferred_from == "todo":
+            confirmation += " (picked from your open todos — tap Wrap up if that's not it)"
         return FocusStarted(
             session_id=session_id,
-            intended_task=payload.intended_task.strip(),
-            planned_minutes=payload.planned_minutes,
+            intended_task=task,
+            planned_minutes=planned,
             aligned=payload.aligned,
-            confirmation=_focus_started_confirmation(
-                payload.intended_task.strip(), payload.planned_minutes, payload.aligned
-            ),
+            confirmation=confirmation,
         )
 
     @router.post("/webhooks/focus/check", tags=["focus"])

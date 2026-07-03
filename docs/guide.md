@@ -257,6 +257,19 @@ curl -s -XPOST $PF/webhooks/focus/start -H "X-Prefrontal-Token: $TOK" \
 > check-in. Past the hard ceiling: *"time for a break"* — and protection lifts so
 > your departure/outing nudges can fire again.
 
+**One-tap start (don't make it a chore):** remembering to declare a session is
+itself friction at the worst moment. So `intended_task` is optional — POST an
+empty body and Prefrontal infers the task from your **top open todo**
+(most-avoided first, carrying its estimate as the planned length), falling back
+to a generic block when nothing's open. Wire it to a home-screen / lock-screen /
+Apple Watch Shortcut so dropping into focus is a single tap:
+
+```bash
+# one tap → "start focus on whatever I've been avoiding"
+curl -s -XPOST $PF/webhooks/focus/start -H "X-Prefrontal-Token: $TOK" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
 ---
 
 ## Daily rhythm
