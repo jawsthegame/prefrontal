@@ -13,10 +13,13 @@ import pytest
 
 from prefrontal.memory.patterns import (
     compute_bias,
+    compute_bias_by_band,
     compute_confidence,
     compute_patterns,
     decay_weight,
     recompute_patterns,
+    resolve_bias,
+    time_of_day_band,
 )
 from prefrontal.memory.store import MemoryStore
 from tests.conftest import scoped_default
@@ -297,3 +300,52 @@ def test_recompute_persists_calibration_verdict():
         assert summary.calibration.helps is True
         assert store.get_state("bias_calibration_helps") == "true"
         assert store.get_state("bias_calibration_samples") == "3"
+
+
+# -- context-conditioned bias by time of day (learning §5) -------------------
+
+
+def _at_hour(pred, act, hour):
+    return _ep(predicted_value=pred, actual_value=act, timestamp=f"2026-01-05 {hour:02d}:00:00")
+
+
+def test_time_of_day_band_buckets():
+    assert time_of_day_band(6) == "morning"
+    assert time_of_day_band(13) == "afternoon"
+    assert time_of_day_band(20) == "evening"
+    assert time_of_day_band(2) == "evening"  # overnight tail folds into evening
+
+
+def test_compute_bias_by_band_conditions_on_local_hour():
+    episodes = (
+        [_at_hour(10, 20, 9) for _ in range(3)]     # mornings run 2× long
+        + [_at_hour(10, 10, 14) for _ in range(3)]  # afternoons on the nose
+        + [_at_hour(10, 30, 20) for _ in range(2)]  # only 2 evenings — below the floor
+    )
+    banded = compute_bias_by_band(episodes, timezone="UTC")
+    assert banded == {"morning": 2.0, "afternoon": 1.0}  # evening omitted (too few)
+
+
+def test_resolve_bias_prefers_band_then_global():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        # No band learned yet → the (seeded) global multiplier.
+        assert resolve_bias(store, local_hour=9) == 1.4
+        store.set_state("time_estimation_bias", "1.4")
+        store.set_state("time_estimation_bias:morning", "2.0")
+        assert resolve_bias(store, local_hour=9) == 2.0    # band wins
+        assert resolve_bias(store, local_hour=14) == 1.4   # no afternoon band → global
+        assert resolve_bias(store) == 1.4                  # no hour → global
+
+
+def test_recompute_persists_band_bias():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for _ in range(3):
+            store.log_episode(
+                "task", predicted_value=10, actual_value=20,
+                timestamp="2026-01-05 09:00:00",
+            )
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.band_bias.get("morning") == 2.0
+        assert store.get_state("time_estimation_bias:morning") == "2.0"

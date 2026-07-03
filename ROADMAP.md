@@ -435,13 +435,20 @@ ordered by leverage; each is independent but builds on denser capture.
    walk-forward check to the channel-choice and drift adaptations, and act on a
    "not helping" verdict automatically — decay the multiplier toward 1.0 or widen
    the confidence gate — rather than only reporting it.)*
-5. **Generalize beyond the three hardcoded pattern types.**
-   `time_estimation`/`channel_response`/`drift` are fixed in
-   `prefrontal/memory/patterns.py`, and `context_key` is just the episode type.
-   Adapting to a *new* dimension of someone's life is currently a code change,
-   not learning. Add context-conditioned patterns (bias by task type, by time of
-   day, by energy level) — the schema's `context_key` already supports finer
-   bucketing — and derive `context_switch` once switch events are captured.
+5. **Context-conditioned patterns.** ✅ (v1 — time of day) — the learned
+   time-estimation bias is now computed **per time-of-day band** (morning /
+   afternoon / evening) as well as globally, because the same person often
+   mis-estimates very differently across the day. `compute_bias_by_band` buckets
+   episodes by their local hour (recency-weighted, same sample floor) and
+   `recompute_patterns` stores a `time_estimation_bias:<band>` per band with
+   enough signal; `resolve_bias(store, local_hour=…)` prefers the band, falling
+   back to the global multiplier then `1.0`. Wired into the flagship consumer —
+   `/todos/now` calibrates with *this hour's* bias — and surfaced in the profile
+   ("By time of day: morning 1.8x…") and `prefrontal learn`. Covered by
+   `tests/test_patterns.py` + `tests/test_summarizer.py`. *(Next: adopt
+   `resolve_bias` in the other consumers — briefing, fit, encouragement,
+   time_blindness — and add task-type / energy dimensions; derive `context_switch`
+   once switch events are captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in

@@ -457,7 +457,7 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             scoped = _resolve_user_store(store, args.user)
             targets = [(scoped.user_id, scoped)]
         for label, s in targets:
-            summary = recompute_patterns(s)
+            summary = recompute_patterns(s, timezone=settings.timezone)
             by_type = (
                 ", ".join(f"{n} {t}" for t, n in sorted(summary.by_type.items()))
                 or "none"
@@ -466,6 +466,9 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             print(f"[{label}] patterns written: {summary.patterns} ({by_type})")
             if summary.bias is not None:
                 print(f"[{label}] time_estimation_bias -> {summary.bias}")
+            if summary.band_bias:
+                bands = ", ".join(f"{b}={v}" for b, v in sorted(summary.band_bias.items()))
+                print(f"[{label}] time-of-day bias -> {bands}")
             cal = summary.calibration
             if cal is not None and cal.status == "ok":
                 verdict = "helping" if cal.helps else "NOT helping — consider a reset"

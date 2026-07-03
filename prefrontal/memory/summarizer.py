@@ -130,6 +130,15 @@ def build_profile(
                     "> ⚠️ This multiplier is NOT improving recent estimates — treat it "
                     "cautiously; a reset toward 1.0 may be due."
                 )
+            # Context-conditioned by time of day (learning §5), where there's
+            # enough signal — so estimates are calibrated to *when* they run.
+            bands = [
+                (b, state.get(f"time_estimation_bias:{b}", {}).get("value"))
+                for b in ("morning", "afternoon", "evening")
+            ]
+            banded = [f"{b} {v}x" for b, v in bands if v]
+            if banded:
+                lines.append(f"> By time of day: {', '.join(banded)}.")
             lines.append("")
 
     # One section per enabled challenge-area module. Modules that have nothing

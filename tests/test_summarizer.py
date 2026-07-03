@@ -195,3 +195,13 @@ def test_profile_surfaces_bias_calibration_verdict(store):
     store.set_state("bias_calibration_helps", "false", source="inferred")
     hurting = build_profile(store, modules=[])
     assert "NOT improving recent estimates" in hurting
+
+
+def test_profile_surfaces_time_of_day_bias(store):
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_state("time_estimation_bias", "1.4", source="inferred")
+    store.set_state("time_estimation_bias:morning", "1.8", source="inferred")
+    store.set_state("time_estimation_bias:afternoon", "1.1", source="inferred")
+    out = build_profile(store, modules=[])
+    assert "By time of day: morning 1.8x, afternoon 1.1x." in out
