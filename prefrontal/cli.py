@@ -895,6 +895,45 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_crunch(args: argparse.Namespace) -> int:
+    """Toggle crunch mode — suspend the work/life time bands for a deadline stretch.
+
+    While on, a work todo (or any domain/category) can surface any waking hour;
+    the off-zone and travel-late gate still apply. Self-expiring: ``on`` sets a
+    ``crunch_until`` timestamp ``--hours`` out, and it lapses on its own.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``crunch_action``, ``hours``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from datetime import timedelta
+
+    from prefrontal.scheduling import _crunch_active
+
+    settings = get_settings()
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if args.crunch_action == "off":
+            store.set_state("crunch_until", "", source="explicit")
+            print("Crunch mode off — work/life bands are back on.")
+        elif args.crunch_action == "status":
+            until = store.get_state("crunch_until")
+            if _crunch_active(until):
+                print(f"Crunch mode ON until {until} UTC — bands suspended.")
+            else:
+                print("Crunch mode off.")
+        else:  # on
+            until = (utcnow() + timedelta(hours=args.hours)).strftime("%Y-%m-%d %H:%M:%S")
+            store.set_state("crunch_until", until, source="explicit")
+            print(
+                f"Crunch mode ON for ~{args.hours:g}h (until {until} UTC) — "
+                "work/life bands suspended; off-zone still applies."
+            )
+    return 0
+
+
 def _cmd_todo(args: argparse.Namespace) -> int:
     """Add, list, or close open todos.
 
@@ -951,12 +990,17 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
+    from prefrontal.memory.patterns import resolve_bias
+    from prefrontal.scheduling import local_datetime
+
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
 
-        bias = store.get_float("time_estimation_bias", 1.0)
+        # "right now" → calibrate with this hour's band bias (§5), else global.
+        now_hour = local_datetime(utcnow(), settings.timezone).hour
+        bias = resolve_bias(store, local_hour=now_hour)
         fits = fit_todos(args.minutes, store.open_todos(), bias)
     print(f"With {args.minutes:g} minutes free, you could knock out:")
     if not fits:
@@ -1377,6 +1421,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_prop_reject = prop_sub.add_parser("reject", help="Discard a proposal.")
     p_prop_reject.add_argument("id", type=int, help="Proposal id.")
     p_proposals.set_defaults(func=_cmd_proposals)
+
+    p_crunch = sub.add_parser(
+        "crunch", help="Suspend work/life time bands for a deadline stretch (on/off/status)."
+    )
+    p_crunch.add_argument("--db-path", default=None, help="Override the database path.")
+    p_crunch.add_argument("--user", default=None, help="Handle of the user to act on.")
+    crunch_sub = p_crunch.add_subparsers(dest="crunch_action", required=True)
+    c_on = crunch_sub.add_parser("on", help="Turn crunch on for N hours.")
+    c_on.add_argument("--hours", type=float, default=48.0, help="How long to stay in crunch.")
+    crunch_sub.add_parser("off", help="Turn crunch off now.")
+    crunch_sub.add_parser("status", help="Show whether crunch is on.")
+    p_crunch.set_defaults(func=_cmd_crunch)
 
     p_todo = sub.add_parser("todo", help="Add/list/close open todos (open loops).")
     p_todo.add_argument("--db-path", default=None, help="Override the database path.")

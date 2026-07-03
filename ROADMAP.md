@@ -52,9 +52,11 @@ the first test. Code follow-ups below are optional polish.
   `todos.domain` column (created by the idempotent schema + migrate back-fill) with
   `add_todo(domain=…)` / `set_todo_domain`. Off by default (no accounts mapped ⇒
   unchanged scheduling). Covered by `tests/test_todos.py` + `tests/test_mail.py`.
-  *(Next: a "crunch mode" override — a `crunch_until` toggle that suspends the
-  bands for a deadline week; and surfacing/editing a todo's domain from the
-  dashboard.)*
+  **Crunch mode** ✅ ships the escape hatch: a self-expiring `crunch_until`
+  coaching-state timestamp (`prefrontal crunch on --hours N` / `off` / `status`)
+  suspends the per-key bands so anything can surface any waking hour during a
+  deadline stretch — the off-zone and travel-late gate still apply. *(Next:
+  surfacing/editing a todo's domain from the dashboard.)*
 - **Self-care checks — "have you eaten?" + water** ✅ — the cues that deliberately
   pierce flow (a focus state is exactly when you forget to eat or drink), shipped
   as a sixth module, `prefrontal/modules/self_care.py`. A small registry of
@@ -445,10 +447,12 @@ ordered by leverage; each is independent but builds on denser capture.
    back to the global multiplier then `1.0`. Wired into the flagship consumer —
    `/todos/now` calibrates with *this hour's* bias — and surfaced in the profile
    ("By time of day: morning 1.8x…") and `prefrontal learn`. Covered by
-   `tests/test_patterns.py` + `tests/test_summarizer.py`. *(Next: adopt
-   `resolve_bias` in the other consumers — briefing, fit, encouragement,
-   time_blindness — and add task-type / energy dimensions; derive `context_switch`
-   once switch events are captured.)*
+   `tests/test_patterns.py` + `tests/test_summarizer.py`. The point-in-time fit
+   consumers now adopt it too — `/todos/fit` and `prefrontal fit` calibrate with
+   *this hour's* band, like `/todos/now`. *(Next: adopt `resolve_bias` in the
+   whole-day consumers — briefing, encouragement — per free window; add
+   task-type / energy dimensions; derive `context_switch` once switch events are
+   captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in

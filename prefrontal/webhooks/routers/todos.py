@@ -459,11 +459,13 @@ def build_router(
     ) -> dict[str, Any]:
         """Rank the open todos that fit in ``minutes`` of free time, right now.
 
-        Applies the learned time bias, so a "10-minute" todo is judged at its
+        Applies the learned time bias — context-conditioned to *this hour's* band
+        (§5) when one's been learned — so a "10-minute" todo is judged at its
         realistic length. Great for "I have 20 minutes — what can I knock out?"
         """
         memory = ctx.store
-        bias = memory.get_float("time_estimation_bias", 1.0)
+        now_local = local_datetime(utcnow(), resolved_settings.timezone)
+        bias = resolve_bias(memory, local_hour=now_local.hour)
         fits = fit_todos(minutes, memory.open_todos(), bias)
         return {
             "available_minutes": minutes,

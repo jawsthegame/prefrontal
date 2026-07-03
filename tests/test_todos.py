@@ -1083,6 +1083,33 @@ def test_work_domain_todo_is_gated_out_of_the_evening():
     assert todo_allowed_at(work_todo, datetime(2026, 6, 15, 20, 0), config) is False
 
 
+def test_crunch_active_self_expires():
+    from datetime import timedelta, timezone
+
+    from prefrontal.scheduling import _crunch_active
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    future = (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    past = (now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    assert _crunch_active(future) is True
+    assert _crunch_active(past) is False
+    assert _crunch_active("") is False
+    assert _crunch_active(None) is False
+    assert _crunch_active("not a timestamp") is False
+
+
+def test_crunch_mode_suspends_bands_but_keeps_offzone():
+    """Crunch lets a work todo surface after hours, but never in the off-zone."""
+    base = WindowConfig.build(env_windows={"work": "09:00-17:00"})
+    crunch = WindowConfig.build(env_windows={"work": "09:00-17:00"}, crunch=True)
+    work = {"domain": "work"}
+    # 8pm: outside the work band → blocked normally, allowed under crunch.
+    assert todo_allowed_at(work, datetime(2026, 6, 15, 20, 0), base) is False
+    assert todo_allowed_at(work, datetime(2026, 6, 15, 20, 0), crunch) is True
+    # 3am: the off-zone is a hard gate even in crunch.
+    assert todo_allowed_at(work, datetime(2026, 6, 15, 3, 0), crunch) is False
+
+
 def test_todo_allowed_at_offzone_is_a_hard_gate():
     """Off-zone blocks even a todo whose own window would otherwise include the time."""
     config = WindowConfig.build()  # off-zone 22:00-06:00, default 06:00-22:00
@@ -1169,6 +1196,18 @@ def test_window_config_for_reads_settings_and_state(store):
     config = window_config_for(settings, store)
     assert config.offzone == parse_window("20:00-08:00")
     assert config.windows["work"] == parse_window("11:00-15:00")
+    assert config.crunch is False  # no crunch_until set
+
+
+def test_window_config_for_picks_up_active_crunch(store):
+    """A future `crunch_until` in coaching-state flips the config into crunch mode."""
+    from datetime import timedelta, timezone
+
+    future = (
+        datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=6)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    store.set_state("crunch_until", future)
+    assert window_config_for(Settings(), store).crunch is True
 
 
 def test_todo_window_endpoint_set_clear_and_validation(client, store_open):
