@@ -29,8 +29,12 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+from prefrontal.clock import TS_FMT, utcnow
+from prefrontal.commitments import to_utc
 from prefrontal.integrations import Generator, OllamaError
 from prefrontal.llm_json import extract_json_object
+from prefrontal.memory._helpers import EPISODE_TYPES
+from prefrontal.todos import augment_todo
 
 #: What a signal is. Maps onto the memory layer triage routes into (see ROUTE_FOR_KIND).
 KINDS: tuple[str, ...] = ("commitment", "action", "outcome", "preference", "info", "noise")
@@ -317,3 +321,116 @@ def classify(
             confidence=decision.confidence, source=decision.source, fields=decision.fields,
         )
     return decision
+
+
+# --- apply: the only part that touches the store / delivery ------------------
+
+
+def _route_signal(
+    signal: Signal, decision: TriageDecision, store: Any, *, client: Generator | None, today: date
+) -> str | None:
+    """Perform the side effect for ``decision.route``; return a ``routed_ref`` or None.
+
+    Each route is a thin call into the existing store API (triage adds no new
+    storage primitives). ``state`` (a stated preference) and ``surface``/``drop``
+    write nothing to the core tables — the preference is *surfaced* for review
+    rather than auto-applied, mirroring the LLM-as-sensor "propose, don't apply"
+    safety stance; only the ``triage_log`` row records them.
+    """
+    route = decision.route
+    when = decision.fields.get("when")
+    if route == "todo":
+        aug = augment_todo(
+            signal.title, client=client, today=today,
+            existing_categories=store.todo_categories(),
+        )
+        deadline = None
+        raw_deadline = when or aug.deadline
+        if raw_deadline:
+            try:
+                deadline = to_utc(raw_deadline)
+            except ValueError:
+                deadline = None
+        tid = store.add_todo(
+            signal.title, notes=signal.body or None,
+            estimate_minutes=aug.estimate_minutes, priority=aug.priority,
+            deadline=deadline, energy=aug.energy, category=aug.category, source="triage",
+        )
+        return f"todo:{tid}"
+    if route == "commitment" and when:
+        try:
+            start_at = to_utc(when)
+        except ValueError:
+            return None  # unparseable date → nothing dated to create (logged, not routed)
+        cid, _created = store.upsert_commitment(
+            title=signal.title, start_at=start_at,
+            external_id=signal.external_id or None,
+            location=(signal.meta.get("location") or None),
+            source="triage",
+        )
+        return f"commitment:{cid}"
+    if route == "episode":
+        etype = signal.source if signal.source in EPISODE_TYPES else "task"
+        eid = store.log_episode(etype, notes=signal.title, context=f"triage:{signal.source}")
+        return f"episode:{eid}"
+    return None  # commitment-without-date, state, surface, drop → logged only
+
+
+def apply(
+    signal: Signal,
+    decision: TriageDecision,
+    store: Any,
+    *,
+    n8n: Any | None = None,
+    client: Generator | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Route a classified signal: perform its side effect, log it, maybe nudge.
+
+    Idempotent on ``(source, external_id)`` — a re-delivered signal returns the
+    prior decision without routing or logging again (so a flaky poll never
+    double-creates a todo). Fires a ``triage.urgent`` n8n event **only** when
+    urgency is ``now`` (a down/absent n8n is a no-op, never breaking the capture
+    path). Every decision — including drops — is recorded in ``triage_log`` with
+    its reason.
+
+    Args:
+        signal: The normalized inbound signal.
+        decision: Its :class:`TriageDecision` (from :func:`classify`).
+        store: A **scoped** :class:`~prefrontal.memory.store.MemoryStore`.
+        n8n: Optional n8n client for the urgent nudge.
+        client: Optional LLM client, passed to ``augment_todo`` on the todo route.
+        today: Injectable clock for date math.
+
+    Returns:
+        ``{idempotent, triage_id, routed_ref, route, fired}``.
+    """
+    today = today or date.today()
+    prior = store.triage_seen(signal.source, signal.external_id)
+    if prior is not None:
+        return {
+            "idempotent": True, "triage_id": prior["id"],
+            "routed_ref": prior["routed_ref"], "route": prior["route"], "fired": False,
+        }
+    routed_ref = _route_signal(signal, decision, store, client=client, today=today)
+    fired = False
+    if decision.urgency == "now" and n8n is not None:
+        result = n8n.trigger(
+            "triage.urgent",
+            {
+                "source": signal.source, "title": signal.title, "kind": decision.kind,
+                "reason": decision.reason, "routed_ref": routed_ref,
+            },
+        )
+        fired = bool(getattr(result, "delivered", False))
+    triage_id = store.log_triage(
+        source=signal.source, title=signal.title, kind=decision.kind,
+        urgency=decision.urgency, route=decision.route, reason=decision.reason,
+        confidence=decision.confidence, decided_by=decision.source,
+        external_id=signal.external_id, routed_ref=routed_ref,
+        received_at=signal.received_at or utcnow().strftime(TS_FMT),
+    )
+    return {
+        "idempotent": False, "triage_id": triage_id, "routed_ref": routed_ref,
+        "route": decision.route, "fired": fired,
+    }
