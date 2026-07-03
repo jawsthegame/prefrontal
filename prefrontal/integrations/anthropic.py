@@ -7,7 +7,7 @@ Claude for more reliable structured parsing, with Ollama staying as the fallback
 
 It deliberately mirrors :class:`~prefrontal.integrations.ollama.OllamaClient`'s
 tiny surface — ``generate(prompt, *, system=None) -> str`` and ``available()`` —
-so the two are interchangeable behind the ``_Generator`` protocol callers already
+so the two are interchangeable behind the ``Generator`` protocol callers already
 use. Today only the dashboard assistant selects this backend (Claude when
 available, else Ollama); the todo augmenter/decomposer still run on the local
 model. Whichever backend answers, the reply is parsed the same way (see

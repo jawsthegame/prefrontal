@@ -24,11 +24,11 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Protocol
 
 from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.impact import analyze_impact, at_risk, impact_phrase, project_free_time
+from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -225,10 +225,6 @@ INFER_SYSTEM_PROMPT = (
 )
 
 
-class _Generator(Protocol):
-    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 def heuristic_time_window(intention: str) -> float | None:
@@ -261,7 +257,7 @@ def _parse_minutes_reply(reply: str) -> float | None:
 def infer_time_window(
     intention: str,
     *,
-    client: _Generator | None = None,
+    client: Generator | None = None,
     fallback: bool = True,
 ) -> tuple[float, str] | None:
     """Infer a time window (minutes) for an intention with no stated window.

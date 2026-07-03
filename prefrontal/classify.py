@@ -18,9 +18,10 @@ keep it honest:
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
 from prefrontal.commitments import KIND_FYI, KIND_SELF
+from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 
 #: Cap on how many learned examples to fold into the prompt. Most-recent first,
@@ -39,10 +40,6 @@ _BASE_SYSTEM_PROMPT = (
 )
 
 
-class _Generator(Protocol):
-    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 def build_system_prompt(examples: list[dict[str, Any]] | None = None) -> str:
@@ -97,7 +94,7 @@ def parse_kind_reply(reply: str) -> str | None:
 def classify_kind(
     title: str,
     *,
-    client: _Generator | None = None,
+    client: Generator | None = None,
     examples: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Classify a commitment title as ``self`` or ``fyi``.

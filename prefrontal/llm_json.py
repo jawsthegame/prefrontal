@@ -41,6 +41,41 @@ def extract_json_object(text: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def generate_json(
+    prompt: str,
+    *,
+    system: str | None = None,
+    client: Any = None,
+) -> dict[str, Any] | list[Any] | None:
+    """Ask an LLM for JSON and return the parsed object/array, or ``None``.
+
+    Wraps the "call the model, tolerate a provider failure, pull the JSON out of
+    the reply" idiom that otherwise repeats at each call site. Returns ``None`` on
+    a provider transport error *or* an unparseable reply, so a caller falls back
+    the same way for both.
+
+    Args:
+        prompt: The user prompt.
+        system: Optional system prompt.
+        client: An Ollama- or Anthropic-like
+            :class:`~prefrontal.integrations.Generator`. ``None`` (the default)
+            uses the local Ollama client built from settings.
+    """
+    # Imported lazily so this small text utility keeps a light import graph and
+    # cannot cycle with the integrations package.
+    from prefrontal.integrations import AnthropicError, OllamaError
+
+    if client is None:
+        from prefrontal.integrations import OllamaClient
+
+        client = OllamaClient.from_settings()
+    try:
+        reply = client.generate(prompt, system=system)
+    except (OllamaError, AnthropicError):
+        return None
+    return extract_json(reply)
+
+
 def _json_candidates(text: str) -> list[str]:
     """Yield progressively looser JSON substrings to attempt parsing."""
     candidates = [text]
