@@ -382,17 +382,20 @@ ordered by leverage; each is independent but builds on denser capture.
    `POST /webhooks/location` crossing the home radius, so it works without a
    dedicated geofence automation — needs a stored home coordinate + a prior-fix
    edge check; the geofence path above is the reliable default.)*
-2. **LLM-as-sensor, not LLM-as-author.** Add a path that turns *unstructured*
-   signal (a free-text note, a conversation, an observed behavior) into
-   *candidate* episodes or `coaching_state` updates — e.g. "I always blow off
-   admin on Mondays" has nowhere to land today, because the loop only learns from
-   things already shaped as structured episodes. The model should *propose* into
-   the existing deterministic / human-confirmed write path (a new `source` value
-   like `llm_inferred`, distinct from `inferred`/`explicit` in `coaching_state`),
-   never write authoritative facts directly. This preserves the auditable spine
-   while widening what can be observed. The summarizer's grounded-prompt +
-   heuristic-fallback shape (`prefrontal/memory/summarizer.py`) is the pattern to
-   mirror, flipped to emit structured JSON instead of prose.
+2. **LLM-as-sensor, not LLM-as-author.** ✅ (v1) — `prefrontal/sensor.py` turns a
+   free-text note ("I always blow off admin on Mondays") into *candidate*
+   structured updates: a `coaching_state` key/value or an episode. Crucially the
+   model only **proposes** — `extract_candidates` emits JSON validated against a
+   small **allowlist** (`PROPOSABLE_STATE_KEYS` / `PROPOSABLE_EPISODE_TYPES`, and
+   it strips any fabricated predicted/actual numbers), candidates land as
+   **pending** rows in a new `proposals` table, and only a human accept writes
+   them — stamped `source="llm_inferred"` (distinct from `inferred`/`explicit`).
+   No model reachable ⇒ *no* candidates (an honest no-guess fallback), mirroring
+   the summarizer's grounded-prompt shape flipped to JSON. Driven by
+   `prefrontal note "…"` and `prefrontal proposals list|accept|reject`; covered by
+   `tests/test_sensor.py`. *(Next: HTTP surface — `POST /observe` + a `/proposals`
+   review UI so it's one-tap from the phone; a conversation/transcript source; and
+   letting an accepted state proposal feed the same calibration check as §4.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
    now weigh each episode by an exponential decay on its age (`decay_weight`,
    `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the

@@ -674,6 +674,79 @@ def _cmd_panic(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_note(args: argparse.Namespace) -> int:
+    """Feed a free-text note to the LLM sensor; store any candidates as pending.
+
+    Nothing is written to the profile here — the model only *proposes* structured
+    updates, which land as pending proposals for review (``prefrontal proposals``).
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``text``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.sensor import extract_candidates, record_candidates, summarize_candidate
+
+    settings = get_settings()
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        candidates = extract_candidates(args.text)
+        if not candidates:
+            print("No candidate updates found (or the model was unreachable).")
+            return 0
+        ids = record_candidates(store, candidates)
+        print(f"Recorded {len(ids)} pending proposal(s) — review with `prefrontal proposals`:")
+        for pid, c in zip(ids, candidates, strict=True):
+            print(f"  #{pid}  {summarize_candidate(c.kind, c.payload)}")
+            if c.rationale:
+                print(f"        ↳ {c.rationale}")
+    return 0
+
+
+def _cmd_proposals(args: argparse.Namespace) -> int:
+    """List pending sensor proposals, or accept/reject one by id.
+
+    Accepting applies the update with ``source='llm_inferred'``; rejecting just
+    resolves it. Both only move a still-``pending`` proposal.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``proposals_action``, ``id``.
+
+    Returns:
+        Process exit code (0 on success, 1 if the id isn't a pending proposal).
+    """
+    from prefrontal.sensor import apply_proposal, summarize_candidate
+
+    settings = get_settings()
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        action = args.proposals_action
+        if action == "list":
+            pending = store.list_proposals("pending")
+            if not pending:
+                print("No pending proposals.")
+                return 0
+            for p in pending:
+                print(f"#{p['id']}  {summarize_candidate(p['kind'], p['payload'])}")
+                if p.get("rationale"):
+                    print(f"      ↳ {p['rationale']}")
+            return 0
+        # accept / reject
+        proposal = store.get_proposal(args.id)
+        if proposal is None or proposal["status"] != "pending":
+            print(f"No pending proposal #{args.id}.", file=sys.stderr)
+            return 1
+        if action == "accept":
+            applied = apply_proposal(store, proposal)
+            store.set_proposal_status(args.id, "accepted")
+            print(f"Accepted #{args.id}: {applied} (source=llm_inferred)")
+        else:  # reject
+            store.set_proposal_status(args.id, "rejected")
+            print(f"Rejected #{args.id}.")
+    return 0
+
+
 def _cmd_todo(args: argparse.Namespace) -> int:
     """Add, list, or close open todos.
 
@@ -1121,6 +1194,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_panic.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_panic.set_defaults(func=_cmd_panic)
+
+    p_note = sub.add_parser(
+        "note", help="Feed a free-text note to the LLM sensor (proposes, never writes)."
+    )
+    p_note.add_argument("text", help="The observation, e.g. 'I always blow off admin on Mondays'.")
+    p_note.add_argument("--db-path", default=None, help="Override the database path.")
+    p_note.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_note.set_defaults(func=_cmd_note)
+
+    p_proposals = sub.add_parser(
+        "proposals", help="Review LLM-sensor candidates: list / accept / reject."
+    )
+    p_proposals.add_argument("--db-path", default=None, help="Override the database path.")
+    p_proposals.add_argument("--user", default=None, help="Handle of the user to act on.")
+    prop_sub = p_proposals.add_subparsers(dest="proposals_action", required=True)
+    prop_sub.add_parser("list", help="List pending proposals.")
+    p_prop_accept = prop_sub.add_parser("accept", help="Apply a proposal (source=llm_inferred).")
+    p_prop_accept.add_argument("id", type=int, help="Proposal id.")
+    p_prop_reject = prop_sub.add_parser("reject", help="Discard a proposal.")
+    p_prop_reject.add_argument("id", type=int, help="Proposal id.")
+    p_proposals.set_defaults(func=_cmd_proposals)
 
     p_todo = sub.add_parser("todo", help="Add/list/close open todos (open loops).")
     p_todo.add_argument("--db-path", default=None, help="Override the database path.")
