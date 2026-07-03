@@ -233,6 +233,9 @@ positive `children.id`.
   digested" stamps live in each user's `coaching_state`
   (`household_seen_at` / `household_digested_at`), so it surfaces only the *other*
   parent's unseen changes; the sweep is `POST /webhooks/household/digest/check`.
+  Finally, `balance_enabled` opts into the gentle **load-balance view** — a
+  "who's been keeping the sheet up" split derived on read from `updated_by` /
+  `awarded_by` counts over a 30-day window (no push, shown on `/kids`).
 - **`children`** — the roster: stable identity only (`household_id`, `name`,
   `birthday`), `UNIQUE (household_id, name)`. Everything else about a child is a
   fact, not a column.

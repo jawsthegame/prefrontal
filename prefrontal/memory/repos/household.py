@@ -557,6 +557,63 @@ class HouseholdRepo:
         )
         self.conn.commit()
 
+    # -- load balance view ----------------------------------------------------
+    #
+    # A gentle, opt-in "who's been keeping the sheet up" picture from provenance
+    # counts (facts.updated_by, agreements.updated_by, stars.awarded_by). Derived
+    # on read; the framing lives in prefrontal.household (pure).
+
+    def get_balance_enabled(self) -> bool:
+        """Whether the opt-in load-balance view is on for this household."""
+        row = self.conn.execute(
+            "SELECT balance_enabled FROM households WHERE id = ?",
+            (self._household_id(),),
+        ).fetchone()
+        return bool(row["balance_enabled"]) if row is not None else False
+
+    def set_balance_enabled(self, enabled: bool) -> None:
+        """Turn the load-balance view on or off for this household."""
+        self.conn.execute(
+            "UPDATE households SET balance_enabled = ? WHERE id = ?",
+            (1 if enabled else 0, self._household_id()),
+        )
+        self.conn.commit()
+
+    def contribution_counts(self, since: str) -> list[dict[str, Any]]:
+        """Per-member counts of sheet writes since ``since`` (facts + agreements + stars).
+
+        Every active member is included — even one who wrote nothing — so the view
+        shows both parents. Sorted most-active first, then by name. The counts are
+        provenance tallies (who touched the sheet), not a judgment.
+        """
+        hid = self._household_id()
+        counts: dict[int, int] = {}
+        queries = (
+            "SELECT updated_by AS uid, COUNT(*) AS n FROM household_facts "
+            "WHERE household_id = ? AND updated_at >= ? AND updated_by IS NOT NULL "
+            "GROUP BY updated_by",
+            "SELECT updated_by AS uid, COUNT(*) AS n FROM household_agreements "
+            "WHERE household_id = ? AND updated_at >= ? AND updated_by IS NOT NULL "
+            "GROUP BY updated_by",
+            "SELECT awarded_by AS uid, COUNT(*) AS n FROM household_stars "
+            "WHERE household_id = ? AND created_at >= ? AND awarded_by IS NOT NULL "
+            "GROUP BY awarded_by",
+        )
+        for sql in queries:
+            for r in self.conn.execute(sql, (hid, since)).fetchall():
+                counts[r["uid"]] = counts.get(r["uid"], 0) + int(r["n"])
+        members = self.conn.execute(
+            "SELECT id, COALESCE(display_name, handle) AS name FROM users "
+            "WHERE household_id = ? AND status = 'active'",
+            (hid,),
+        ).fetchall()
+        out = [
+            {"user_id": m["id"], "name": m["name"], "count": counts.get(m["id"], 0)}
+            for m in members
+        ]
+        out.sort(key=lambda c: (-c["count"], c["name"]))
+        return out
+
     # -- operator (unscoped store) --------------------------------------------
     #
     # Membership is operator-set in v1 (docs/household-sheet.md §8): one of the

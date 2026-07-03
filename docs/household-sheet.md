@@ -312,6 +312,26 @@ Tone is informational and warm ("here's what your co-parent updated"), never a
 callout. This lands the §7 delta digest; the `updated_by`-count balance view
 remains a possible follow-on.
 
+### 3.6.3 The load-balance view — the objective companion (no new table)
+
+The check-in (§3.6.1) captures how the load *felt*; this shows what the sheet
+*records* — a gentle, opt-in "who's been keeping it up" split from provenance
+counts, so felt and actual can be seen side by side.
+
+- **Opt-in** household toggle `households.balance_enabled` (off by default),
+  **shared-only** (hidden for a solo household, §2). No push — it's a passive
+  panel on `/kids` (and `prefrontal household balance`).
+- **Derived on read** — `contribution_counts(since)` tallies each active member's
+  `household_facts.updated_by` + `household_agreements.updated_by` +
+  `household_stars.awarded_by` over `BALANCE_WINDOW_DAYS` (30); every member is
+  included (even a zero) so both parents always show. `balance_view` (pure) turns
+  that into shares + a caption.
+- **Tone is the whole game** — `balance_caption` affirms when even, and when
+  lopsided names only the *carrier* ("Dana has been carrying most of the sheet
+  lately… no blame, just a gentle heads-up"), never the low contributor, and
+  frames imbalance as a season. A raw "Dana 14, Alex 1" scoreboard is exactly
+  what it avoids.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
@@ -427,9 +447,10 @@ household cue source:
   to the member(s) who **haven't** touched them: *"3 things changed since
   Tuesday: Sam's shoe size, the new sticker plan, dentist Thu 3pm — you're on
   pickup."*
-- A periodic **balance view** built from `updated_by` counts ("this month: Dana
-  updated 14, Alex 1") — gentle, not accusatory; opt-in and tone-calibrated like
-  the encouragement layer ([`encouragement.md`](encouragement.md)).
+- A **balance view** built from `updated_by` counts ("this month: Dana updated 14,
+  Alex 1") — gentle, not accusatory; opt-in and tone-calibrated like the
+  encouragement layer ([`encouragement.md`](encouragement.md)). **Shipped** as an
+  opt-in, shared-only panel — see §3.6.3.
 
 This reuses the existing cue → channel → debounce machinery; no new delivery
 mechanism.
@@ -454,7 +475,7 @@ mechanism.
 |---|---|
 | `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`; `users.household_id`. |
 | `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
-| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, and the digest toggle. |
+| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, the digest toggle, and the balance view (`get`/`set_balance_enabled`, `contribution_counts`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
 | `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic + the digest logic (`unseen_changes`/`digest_message`/`digest_interval_ok`). |
 | `prefrontal/integrations/delivery.py` | `deliver_to_household()` + `deliver_to_member()`; `household_notice()`, `household_prompt_notice()` (⭐), `household_checkin_notice()` (self-report), `household_digest_notice()` (Caught up). |
