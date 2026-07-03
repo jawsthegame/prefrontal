@@ -232,6 +232,60 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _star_prompts_cli(store, args, settings)
         elif args.household_action == "checkin-check":
             return _checkin_cli(store, args, settings)
+        elif args.household_action == "digest-check":
+            return _digest_cli(store, args, settings)
+    return 0
+
+
+def _digest_cli(store, args, settings) -> int:
+    """Push each parent the other parent's unseen sheet changes, if the digest is on.
+
+    The CLI twin of ``POST /webhooks/household/digest/check`` — for a launchd
+    trigger or a manual test. Self-suppressing: silent per parent when there's
+    nothing new or they were digested within the last day.
+    """
+    from prefrontal.household import (
+        digest_interval_ok,
+        digest_message,
+        unseen_changes,
+    )
+    from prefrontal.integrations.delivery import (
+        deliver_to_member,
+        household_digest_notice,
+    )
+
+    scoped = _resolve_user_store(store, args.user)
+    hid = scoped.household_id_or_none()
+    if hid is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    if not scoped.get_digest_enabled():
+        print("The daily digest is off for this household.")
+        return 0
+    now = utcnow()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    sent = 0
+    for member in scoped.household_members(hid):
+        if member.get("status") not in (None, "active"):
+            continue
+        m_store = store.scoped(member["id"])
+        digested = m_store.get_state("household_digested_at")
+        since = max(m_store.get_state("household_seen_at") or "", digested or "")
+        changes = unseen_changes(m_store, viewer_id=member["id"], since=since)
+        if not changes or not digest_interval_ok(digested, now):
+            continue
+        row = deliver_to_member(
+            m_store,
+            household_digest_notice(digest_message(changes), channel="push"),
+            handle=member["handle"], settings=settings,
+            base_url=settings.oauth_base_url, secret=settings.session_secret,
+        )
+        m_store.set_state("household_digested_at", now_str, source="inferred")
+        state = "sent" if row["delivered"] else "not sent"
+        print(f"  → {member['handle']}: {len(changes)} change(s) — {state} ({row['detail']})")
+        sent += 1
+    if not sent:
+        print("No digests to send (everyone's caught up or recently digested).")
     return 0
 
 
@@ -1175,6 +1229,10 @@ def build_parser() -> argparse.ArgumentParser:
         "checkin-check", help="Send the weekly mental-load check-in if it's due."
     )
     h_ci.add_argument("--user", default=None, help="Handle of a household member.")
+    h_dig = house_sub.add_parser(
+        "digest-check", help="Push each parent the other's unseen sheet changes."
+    )
+    h_dig.add_argument("--user", default=None, help="Handle of a household member.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

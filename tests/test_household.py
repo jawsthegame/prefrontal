@@ -20,6 +20,8 @@ from prefrontal.household import (
     build_sheet,
     checkin_due,
     checkin_summary,
+    digest_interval_ok,
+    digest_message,
     newly_reached_goals,
     next_goal,
     normalize_checkin_config,
@@ -29,13 +31,16 @@ from prefrontal.household import (
     prompt_question,
     render_sheet,
     star_congrats_text,
+    unseen_changes,
     week_key,
 )
 from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import (
     DeliveryClient,
     deliver_to_household,
+    deliver_to_member,
     household_checkin_notice,
+    household_digest_notice,
     household_notice,
     household_prompt_notice,
 )
@@ -1014,6 +1019,134 @@ def test_nudge_act_checkin_records_both_then_notes(signed_client, store):
     assert got == {"Dana": "balanced", "Alex": "heavy"}
 
 
+# --- daily delta digest: pure logic ------------------------------------------
+
+
+def test_unseen_changes_excludes_own_and_filters_since(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    dana.set_fact(category="sizes", item="shoe size", value="13", updated_by=dana_id)
+    alex.set_fact(category="food", item="allergy", value="peanuts", updated_by=alex_id)
+    # From Alex's view: only Dana's change counts — never Alex's own edits.
+    whats = [c["what"] for c in unseen_changes(alex, viewer_id=alex_id, since="")]
+    assert any("shoe size" in w for w in whats)
+    assert all("allergy" not in w for w in whats)
+    # a future `since` filters everything out
+    assert unseen_changes(alex, viewer_id=alex_id, since="2999-01-01 00:00:00") == []
+
+
+def test_unseen_changes_spans_facts_agreements_and_stars(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    dana.set_fact(category="sizes", item="shoe size", value="13", updated_by=dana_id)
+    aid = dana.set_agreement(title="Star chart", body="s", kind="reward", updated_by=dana_id)
+    dana.award_stars(agreement_id=aid, delta=2, awarded_by=dana_id)
+    kinds = [c["what"] for c in unseen_changes(alex, viewer_id=alex_id, since="")]
+    assert any("shoe size" in w for w in kinds)
+    assert any("(plan)" in w for w in kinds)
+    assert any("⭐" in w for w in kinds)
+
+
+def test_digest_message_lists_and_truncates():
+    changes = [{"what": f"item {i}", "who": "Dana", "at": f"2026-07-{i:02d}"} for i in range(1, 9)]
+    msg = digest_message(changes, max_items=3)
+    assert "since you last looked" in msg
+    assert msg.count("•") == 3
+    assert "and 5 more" in msg
+
+
+def test_digest_interval_ok_is_the_once_a_day_cap():
+    now = datetime.datetime(2026, 7, 3, 12, 0)
+    assert digest_interval_ok(None, now) is True
+    assert digest_interval_ok("2026-07-03 09:00:00", now) is False  # 3h ago < 20h
+    assert digest_interval_ok("2026-07-01 09:00:00", now) is True  # >20h ago
+
+
+# --- daily delta digest: repo + endpoints ------------------------------------
+
+
+def test_digest_enabled_toggle_and_star_awarded_by(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    assert dana.get_digest_enabled() is False
+    dana.set_digest_enabled(True)
+    assert dana.get_digest_enabled() is True
+    aid = _star_agreement(dana, store)
+    dana.award_stars(agreement_id=aid, delta=1, awarded_by=dana_id)
+    assert dana.recent_star_awards()[0]["awarded_by"] == dana_id  # id exposed for the diff
+
+
+def test_sheet_reports_unseen_then_marks_it_seen(client):
+    client.post(
+        "/household/facts",
+        json={"category": "sizes", "item": "shoe size", "value": "13"},
+        headers=_h("dana-tok"),
+    )
+    # Alex's first look: 1 unseen (Dana's change); the look itself marks it seen.
+    first = client.get("/household/sheet", headers=_h("alex-tok")).json()["digest"]
+    assert first["unseen"] == 1
+    second = client.get("/household/sheet", headers=_h("alex-tok")).json()["digest"]
+    assert second["unseen"] == 0
+
+
+def test_digest_check_sends_others_changes_and_self_suppresses(client):
+    check = "/webhooks/household/digest/check"
+    client.post("/household/digest", json={"enabled": True}, headers=_h("dana-tok"))
+    client.post(
+        "/household/facts",
+        json={"category": "sizes", "item": "shoe size", "value": "13"},
+        headers=_h("dana-tok"),
+    )
+    # Only Alex is nudged — it's Dana's own change, so Dana gets nothing.
+    first = client.post(check, json={}, headers=_h("dana-tok")).json()
+    assert [s["handle"] for s in first["sent"]] == ["alex"]
+    assert first["sent"][0]["count"] == 1
+    # A second sweep the same day is suppressed (once/day + already digested).
+    second = client.post(check, json={}, headers=_h("alex-tok")).json()
+    assert second["sent"] == []
+
+
+def test_digest_check_silent_when_off(client):
+    client.post(
+        "/household/facts",
+        json={"category": "sizes", "item": "shoe size", "value": "13"},
+        headers=_h("dana-tok"),
+    )
+    resp = client.post("/webhooks/household/digest/check", json={}, headers=_h("alex-tok"))
+    assert resp.json()["sent"] == []  # off by default
+
+
+# --- daily delta digest: one-tap button + tap --------------------------------
+
+
+def test_digest_notice_carries_signed_caught_up_button(store):
+    dana = store.scoped(store.get_user("dana")["id"])
+    dana.set_state("ntfy_topic", "dana-topic")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    deliver_to_member(
+        dana, household_digest_notice("here's what changed"),
+        handle="dana", settings=Settings(), client=client, base_url=BASE, secret=SIGNING,
+    )
+    actions = bodies[0]["actions"]
+    assert [a["label"] for a in actions] == ["Caught up 👍"]
+    assert verify_action(actions[0]["url"].split("t=", 1)[1], SIGNING) == ("dana", "digest_seen", 0)
+
+
+def test_nudge_act_digest_seen_marks_the_sheet_seen(signed_client, store):
+    dana = store.scoped(store.get_user("dana")["id"])
+    assert not dana.get_state("household_seen_at")
+    r = signed_client.get(f"/nudge/act?t={sign_action('dana', 'digest_seen', 0, SIGNING)}")
+    assert r.status_code == 200 and "caught up" in r.text.lower()
+    assert dana.get_state("household_seen_at")
+
+
 # --- migration ---------------------------------------------------------------
 
 
@@ -1059,5 +1192,8 @@ def test_checkin_columns_backfilled_on_old_db(tmp_path):
     conn.commit()
     backfill_added_columns(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(households)")}
-    assert {"checkin_enabled", "checkin_day", "checkin_time", "checkin_last_sent_at"} <= cols
+    assert {
+        "checkin_enabled", "checkin_day", "checkin_time", "checkin_last_sent_at",
+        "digest_enabled",
+    } <= cols
     conn.close()

@@ -467,6 +467,15 @@ def build_router(
                 )
             return _dismiss_page("Thanks for checking in 💛 That's really helpful.")
 
+        if action == "digest_seen":
+            # Mark the shared sheet seen "now" so the delta digest won't re-surface
+            # these changes — the one-tap equivalent of opening /kids.
+            now = utcnow()
+            memory.set_state(
+                "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
+            )
+            return _dismiss_page("All caught up 💛")
+
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)
         title = (commitment or {}).get("title") or "your commitment"

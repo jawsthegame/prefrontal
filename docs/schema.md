@@ -228,7 +228,11 @@ positive `children.id`.
   `prefrontal household add/join` and `POST /admin/households`). Also holds the
   opt-in weekly **mental-load check-in** schedule — `checkin_enabled`,
   `checkin_day` (0=Mon…6=Sun), `checkin_time` (`"HH:MM"`), and `checkin_last_sent_at`
-  (weekly dedup by ISO week).
+  (weekly dedup by ISO week) — and the opt-in daily **delta digest** toggle
+  `digest_enabled`. The digest's per-parent "last looked at the sheet" and "last
+  digested" stamps live in each user's `coaching_state`
+  (`household_seen_at` / `household_digested_at`), so it surfaces only the *other*
+  parent's unseen changes; the sweep is `POST /webhooks/household/digest/check`.
 - **`children`** — the roster: stable identity only (`household_id`, `name`,
   `birthday`), `UNIQUE (household_id, name)`. Everything else about a child is a
   fact, not a column.

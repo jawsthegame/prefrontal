@@ -162,6 +162,7 @@ NUDGE_ACTIONS = (
     "load_light",      # weekly load check-in → felt light this week
     "load_balanced",   # weekly load check-in → felt balanced this week
     "load_heavy",      # weekly load check-in → carried a lot this week
+    "digest_seen",     # daily delta digest → mark the sheet seen (all caught up)
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

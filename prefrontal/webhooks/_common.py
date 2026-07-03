@@ -637,6 +637,12 @@ class CheckinConfig(BaseModel):
     time: str | None = Field(default=None, description="Local time of day, 'HH:MM' 24-hour.")
 
 
+class DigestConfig(BaseModel):
+    """Body of ``POST /household/digest`` — toggle the opt-in daily delta digest."""
+
+    enabled: bool = Field(default=False, description="Opt in to the daily 'what changed' digest.")
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1100,6 +1106,7 @@ __all__ = [
     "Settings",
     "ShortcutPayload",
     "CheckinConfig",
+    "DigestConfig",
     "PromptConfig",
     "StarAward",
     "StepDone",

@@ -54,6 +54,8 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
         ("load_balanced", "Balanced ⚖️"),
         ("load_heavy", "Carried a lot 🫠"),
     ),
+    # Daily delta digest — acknowledge you've seen the other parent's changes.
+    "digest": (("digest_seen", "Caught up 👍"),),
 }
 
 

@@ -17,11 +17,14 @@ from prefrontal.household import (
     award_stars_and_notify,
     checkin_due,
     checkin_question,
+    digest_interval_ok,
+    digest_message,
     normalize_checkin_config,
     normalize_prompt,
     parse_structured,
     prompt_due,
     prompt_question,
+    unseen_changes,
     week_key,
 )
 from prefrontal.memory.repos.household import (
@@ -39,6 +42,7 @@ from prefrontal.webhooks._common import (
     ChildCreate,
     ChildRename,
     Depends,
+    DigestConfig,
     FactClear,
     FactSet,
     HTTPException,
@@ -106,7 +110,8 @@ def build_router(
         """
         _require_member(ctx)
         sheet = build_sheet(ctx.store)
-        now_local = local_datetime(utcnow(), resolved_settings.timezone)
+        now = utcnow()
+        now_local = local_datetime(now, resolved_settings.timezone)
         week = week_key(now_local)
         config = ctx.store.get_checkin_config()
         checkin = {
@@ -119,10 +124,22 @@ def build_router(
                 for r in ctx.store.checkin_responses(week)
             ],
         }
+        # The delta digest: count what the other parent changed since this parent
+        # last looked, then stamp "seen now" — opening the sheet *is* catching up.
+        since = max(
+            ctx.store.get_state("household_seen_at") or "",
+            ctx.store.get_state("household_digested_at") or "",
+        )
+        unseen = unseen_changes(ctx.store, viewer_id=ctx.user["id"], since=since)
+        digest = {"enabled": ctx.store.get_digest_enabled(), "unseen": len(unseen)}
+        ctx.store.set_state(
+            "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
+        )
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
             "checkin": checkin,
+            "digest": digest,
             "vocab": {
                 "fact_categories": list(FACT_CATEGORIES),
                 "agreement_kinds": list(AGREEMENT_KINDS),
@@ -416,6 +433,64 @@ def build_router(
             "notified": notified,
             "checked_at": now_local.strftime("%Y-%m-%d %H:%M"),
         }
+
+    # -- daily delta digest ---------------------------------------------------
+
+    @router.post("/household/digest", tags=["household"])
+    def set_digest(
+        payload: DigestConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Turn the opt-in daily delta digest on or off (shared by both parents)."""
+        _require_member(ctx)
+        ctx.store.set_digest_enabled(payload.enabled)
+        return {"ok": True, "enabled": payload.enabled}
+
+    @router.post("/webhooks/household/digest/check", tags=["household"])
+    def digest_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Push each parent the other parent's unseen sheet changes (self-suppressing).
+
+        A periodic trigger POSTs here; per member we diff what the *other* parent
+        changed since that member last looked (or was last digested), and — if
+        there's anything new and it's been ~a day since their last digest — send
+        just that member a warm catch-up. Silent when nothing's new; opt-in.
+        """
+        _require_member(ctx)
+        now = utcnow()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        if not ctx.store.get_digest_enabled():
+            return {"sent": [], "checked_at": now_str}
+        from prefrontal.integrations.delivery import (
+            deliver_to_member,
+            household_digest_notice,
+        )
+
+        hid = ctx.store.household_id_or_none()
+        sent: list[dict[str, Any]] = []
+        for member in ctx.store.household_members(hid):
+            if member.get("status") not in (None, "active"):
+                continue
+            m_store = ctx.store.scoped(member["id"])
+            digested = m_store.get_state("household_digested_at")
+            since = max(m_store.get_state("household_seen_at") or "", digested or "")
+            changes = unseen_changes(m_store, viewer_id=member["id"], since=since)
+            if not changes or not digest_interval_ok(digested, now):
+                continue
+            delivery = deliver_to_member(
+                m_store,
+                household_digest_notice(digest_message(changes), channel="push"),
+                handle=member["handle"],
+                settings=resolved_settings,
+                base_url=resolved_settings.oauth_base_url,
+                secret=resolved_settings.session_secret,
+            )
+            m_store.set_state("household_digested_at", now_str, source="inferred")
+            sent.append(
+                {"handle": member["handle"], "count": len(changes), "delivery": delivery}
+            )
+        return {"sent": sent, "checked_at": now_str}
 
     # -- appointments ---------------------------------------------------------
 

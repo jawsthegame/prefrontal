@@ -422,7 +422,7 @@ class HouseholdRepo:
         """
         rows = self.conn.execute(
             """
-            SELECT s.delta, s.note, s.created_at, s.child_id,
+            SELECT s.delta, s.note, s.created_at, s.child_id, s.awarded_by,
                    a.title AS agreement_title,
                    c.name AS child_name,
                    COALESCE(u.display_name, u.handle) AS awarded_by_name
@@ -512,6 +512,29 @@ class HouseholdRepo:
             (self._household_id(), week),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- daily delta digest ---------------------------------------------------
+    #
+    # Opt-in household toggle; each parent's "last looked at the sheet" and "last
+    # digested" stamps live in their own coaching_state (household_seen_at /
+    # household_digested_at), so the digest only surfaces the *other* parent's
+    # unseen changes. The diff + message are pure (prefrontal.household).
+
+    def get_digest_enabled(self) -> bool:
+        """Whether the opt-in daily delta digest is on for this household."""
+        row = self.conn.execute(
+            "SELECT digest_enabled FROM households WHERE id = ?",
+            (self._household_id(),),
+        ).fetchone()
+        return bool(row["digest_enabled"]) if row is not None else False
+
+    def set_digest_enabled(self, enabled: bool) -> None:
+        """Turn the daily delta digest on or off for this household."""
+        self.conn.execute(
+            "UPDATE households SET digest_enabled = ? WHERE id = ?",
+            (1 if enabled else 0, self._household_id()),
+        )
+        self.conn.commit()
 
     # -- operator (unscoped store) --------------------------------------------
     #

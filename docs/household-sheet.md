@@ -273,6 +273,33 @@ felt experience and the tally can diverge, and honesty needs a welcoming frame.
 This is the opt-in, tone-calibrated realization of the "balance view" sketched in
 §7 — subjective perception first, before any `updated_by`-count scoreboard.
 
+### 3.6.2 The delta digest — the active push (no new table)
+
+The sheet + check-in are still *pull* (someone has to look) or *self-report*. The
+delta digest is the **push** half of §7: a daily, opt-in nudge that tells each
+parent what the *other* parent changed on the sheet since they last looked.
+
+- **Opt-in** household toggle `households.digest_enabled` (off by default), set on
+  the `/kids` dashboard.
+- **"Seen" vs "digested"** — two per-parent `coaching_state` stamps:
+  `household_seen_at` (bumped whenever they open the sheet — `GET /household/sheet`
+  — or tap **Caught up 👍**) and `household_digested_at` (bumped when we last told
+  them). The diff (`unseen_changes`, pure) unions facts, agreements, and star
+  grants **not authored by the viewer** with a timestamp after `max(seen,
+  digested)` — so a parent is never told about their own edits, nor told twice.
+- **Self-suppressing** — the sweep (`POST /webhooks/household/digest/check`,
+  `prefrontal household digest-check`, n8n `deploy/n8n/digest-check.workflow.json`)
+  sends each parent their own catch-up *only* when there's something new and it's
+  been ~a day since their last (`digest_interval_ok`, the once/day cap). Silent
+  otherwise, so a frequent poll is safe. Delivered per parent via
+  `deliver_to_member` (context `"digest"`, kind `"digest"`, action `digest_seen`).
+- The dashboard also shows a passive "✨ N new since you last looked" line, then
+  marks the sheet seen — opening it *is* catching up.
+
+Tone is informational and warm ("here's what your co-parent updated"), never a
+callout. This lands the §7 delta digest; the `updated_by`-count balance view
+remains a possible follow-on.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
@@ -417,13 +444,13 @@ mechanism.
 | `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
 | `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, the star ledger + `mark_prompted`, and the check-in (`get`/`set_checkin_config`, `record_checkin_response`, `checkin_responses`, `mark_checkin_sent`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
-| `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic (`normalize_checkin_config`/`checkin_due`/`week_key`/`checkin_question`/`checkin_summary`, `CHECKIN_CHOICES`). |
-| `prefrontal/integrations/delivery.py` | `deliver_to_household()`, `household_notice()`, `household_prompt_notice()` (⭐ buttons), `household_checkin_notice()` (self-report buttons) — fan a notice to every co-parent's own route. |
-| `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` nudge kinds and their actions (`star_award`/`star_skip`, `load_light`/`load_balanced`/`load_heavy`); handled in `routers/anchor.py`'s `/nudge/act`. |
+| `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic + the digest logic (`unseen_changes`/`digest_message`/`digest_interval_ok`). |
+| `prefrontal/integrations/delivery.py` | `deliver_to_household()` + `deliver_to_member()`; `household_notice()`, `household_prompt_notice()` (⭐), `household_checkin_notice()` (self-report), `household_digest_notice()` (Caught up). |
+| `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` + `digest` nudge kinds and their actions (`star_award`/`star_skip`, `load_*`, `digest_seen`); handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
-| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin`); star endpoints; `POST /household/checkin` + `POST /webhooks/household/checkin/check`; the `/kids` star-chart + check-in UI; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check`. |
-| `deploy/n8n/*.workflow.json` | Scheduled triggers for the award prompts and the weekly check-in. |
+| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin` + `digest`, marks seen); star endpoints; `POST /household/{checkin,digest}` + `POST /webhooks/household/{checkin,digest}/check`; the `/kids` star-chart + check-in + digest UI; operator household endpoints. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check/digest-check`. |
+| `deploy/n8n/*.workflow.json` | Scheduled triggers for the award prompts, the weekly check-in, and the daily digest. |
 | `docs/schema.md` | Document the five new tables + the added column. |
 
 ---
