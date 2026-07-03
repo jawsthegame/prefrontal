@@ -282,6 +282,14 @@ curl -s -XPOST $PF/webhooks/focus/arm -H "X-Prefrontal-Token: $TOK"
 # {"armed": true, "intended_task": "the RFC", "planned_minutes": 55, ...}
 ```
 
+**Want a nudge to start? (opt-in):** if you'd like Prefrontal to *offer* a focus
+block rather than wait for you, set the `suggest_focus_start` coaching-state key
+to `on`. The coaching tick (§ delivered by the coach-check workflow) then emits
+one gentle "want to protect a block today?" nudge — only in the focus-friendly
+hours (`focus_suggest_start_hour`–`focus_suggest_until_hour`, default 8–15), only
+when nothing's running, and only if you haven't focused yet today (once/day).
+Off by default, so it never becomes "go focus" nagging.
+
 ---
 
 ## Daily rhythm

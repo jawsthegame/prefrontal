@@ -13,10 +13,12 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from prefrontal.coaching import CoachContext
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.hyperfocus import (
+    HyperfocusModule,
     build_focus_message,
     focus_level,
     focus_task_from_title,
@@ -26,6 +28,7 @@ from prefrontal.modules.hyperfocus import (
     is_focus_protected,
     level_rank,
     should_protect,
+    should_suggest_focus,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -250,6 +253,51 @@ def test_one_tap_links_inferred_todo_id(client, store):
     tid = store.add_todo("the API refactor", estimate_minutes=45, priority=2)
     body = client.post("/webhooks/focus/start", json={}, headers=_auth()).json()
     assert store.get_focus_session(body["session_id"])["todo_id"] == tid
+
+
+# -- proactive "want to focus?" suggestion -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "hour, active, done_today, expected",
+    [
+        (9, False, False, True),    # ripe: morning, nothing running, none yet today
+        (9, True, False, False),    # a session is already running
+        (9, False, True, False),    # already focused today
+        (20, False, False, False),  # outside the focus-friendly band
+        (7, False, False, False),   # before the band
+    ],
+)
+def test_should_suggest_focus(hour, active, done_today, expected):
+    assert should_suggest_focus(
+        local_hour=hour, start_hour=8, until_hour=15,
+        has_active_session=active, focused_today=done_today,
+    ) is expected
+
+
+def _ctx(hour):
+    return CoachContext(now=datetime(2026, 6, 15, hour, 0, 0), timezone="UTC")
+
+
+def test_evaluate_suggests_when_opted_in(store):
+    """Opted in, a fresh morning tick offers a one-tap start (once/day dedup)."""
+    store.set_state("suggest_focus_start", "on", source="explicit")
+    cues = HyperfocusModule().evaluate(store, _ctx(9))
+    assert len(cues) == 1
+    assert cues[0].intervention == "suggest_start"
+    assert cues[0].dedup_key == "focus_suggest:2026-06-15"
+
+
+def test_evaluate_silent_by_default(store):
+    """Off by default — no unsolicited 'go focus' nudge."""
+    assert HyperfocusModule().evaluate(store, _ctx(9)) == []
+
+
+def test_evaluate_silent_when_session_active(store):
+    """Never suggest starting while a block is already running."""
+    store.set_state("suggest_focus_start", "on", source="explicit")
+    store.start_focus_session("deep in it")
+    assert HyperfocusModule().evaluate(store, _ctx(9)) == []
 
 
 # -- calendar-armed start ----------------------------------------------------
