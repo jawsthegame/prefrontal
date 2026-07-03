@@ -469,6 +469,22 @@ def test_set_category_endpoint(client):
                        headers=_auth()).status_code == 404
 
 
+def test_set_domain_endpoint(client):
+    """POST /todos/{id}/domain sets, normalizes, clears the work/life guardrail; 404s unknown."""
+    tid = client.post("/todos", json={"title": "quarterly report"},
+                      headers=_auth()).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/domain", json={"domain": "  Work  "}, headers=_auth())
+    assert r.status_code == 200 and r.json() == {"todo_id": tid, "domain": "work"}
+    # Clear it (empty string normalizes to null, same as omitting).
+    r = client.post(f"/todos/{tid}/domain", json={"domain": ""}, headers=_auth())
+    assert r.status_code == 200 and r.json()["domain"] is None
+    r = client.post(f"/todos/{tid}/domain", json={"domain": None}, headers=_auth())
+    assert r.status_code == 200 and r.json()["domain"] is None
+    # Unknown todo → 404.
+    assert client.post("/todos/9999/domain", json={"domain": "home"},
+                       headers=_auth()).status_code == 404
+
+
 def test_set_category_rejects_new_at_cap(client, store_open):
     # Fill the vocabulary to the cap with distinct categories.
     for i in range(MAX_CATEGORIES):
