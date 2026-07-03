@@ -9,9 +9,10 @@ from typing import Any
 from prefrontal.memory._helpers import (
     _row_to_dict,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class SessionsRepo:
+class SessionsRepo(Repo):
     """Escalating sessions — outings and focus sessions — over a shared core."""
 
     def _session_start(

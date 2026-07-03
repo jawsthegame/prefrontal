@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from prefrontal.memory.repos._base import Repo
 
-class ProposalsRepo:
+
+class ProposalsRepo(Repo):
     """Pending/accepted/rejected candidate updates from the LLM sensor."""
 
     def add_proposal(

@@ -9,9 +9,10 @@ from typing import Any
 from prefrontal.memory._helpers import (
     _row_to_dict,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class EpisodesRepo:
+class EpisodesRepo(Repo):
     """Episode logging and queries."""
 
     def log_episode(

@@ -22,6 +22,7 @@ import secrets
 from typing import Any
 
 from prefrontal.memory._helpers import _row_to_dict
+from prefrontal.memory.repos._base import Repo
 
 #: Invite-code alphabet — uppercase + digits minus ambiguous glyphs (no O/0/I/1),
 #: so a code read off one phone and typed into another is unambiguous.
@@ -80,7 +81,7 @@ def normalize_fact_item(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())[:60]
 
 
-class HouseholdRepo:
+class HouseholdRepo(Repo):
     """Shared household sheet — facts, agreements, roster (household-scoped)."""
 
     # -- scope resolution -----------------------------------------------------

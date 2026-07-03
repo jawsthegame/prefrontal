@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from prefrontal.memory.repos._base import Repo
+
 # How long a nudge stays "fresh" on a surface when the caller gives no explicit
 # expiry. Outing escalation nudges have no natural end time (unlike a departure,
 # which expires at the meeting's start), so without a default they linger for
@@ -15,7 +17,7 @@ from typing import Any
 DEFAULT_NUDGE_TTL_HOURS = 2
 
 
-class NudgesRepo:
+class NudgesRepo(Repo):
     """The log of what the system last told the user."""
 
     def record_nudge(
@@ -72,13 +74,12 @@ class NudgesRepo:
             A list of nudge dicts (``kind``, ``level``, ``message``,
             ``created_at``, ``expires_at``), newest first.
         """
-        rows = self.conn.execute(
+        return self._query_all(
             "SELECT id, kind, level, message, created_at, expires_at FROM nudges "
             "WHERE user_id = ? AND (expires_at IS NULL OR expires_at > datetime('now')) "
             "ORDER BY created_at DESC, id DESC LIMIT ?",
             (self._uid(), limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
 
     def expire_nudges(self, kind: str) -> int:
         """Immediately expire this user's still-live nudges of a given kind.
