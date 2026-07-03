@@ -138,6 +138,10 @@ def build_router(
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
+            # A household of one is fully supported; the co-parent-only features
+            # (check-in, digest) hide when not shared and return automatically
+            # once a second parent joins.
+            "shared": ctx.store.is_shared_household(),
             "checkin": checkin,
             "digest": digest,
             "vocab": {
@@ -404,12 +408,15 @@ def build_router(
         ``checkin_last_sent_at`` so it fires once that week. Idempotent within a week.
         """
         _require_member(ctx)
+        now_local = local_datetime(utcnow(), resolved_settings.timezone)
+        # Load-balancing is a two-parent concern — a solo household skips it.
+        if not ctx.store.is_shared_household():
+            return {"sent": False, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
         from prefrontal.integrations.delivery import (
             deliver_to_household,
             household_checkin_notice,
         )
 
-        now_local = local_datetime(utcnow(), resolved_settings.timezone)
         config = ctx.store.get_checkin_config()
         last_local = None
         if config.get("last_sent_at"):
@@ -460,7 +467,9 @@ def build_router(
         _require_member(ctx)
         now = utcnow()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        if not ctx.store.get_digest_enabled():
+        # Nothing to balance in a household of one — skip (and it can't have any
+        # "other parent" changes anyway).
+        if not ctx.store.is_shared_household() or not ctx.store.get_digest_enabled():
             return {"sent": [], "checked_at": now_str}
         from prefrontal.integrations.delivery import (
             deliver_to_member,
