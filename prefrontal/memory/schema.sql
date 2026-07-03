@@ -472,6 +472,28 @@ CREATE TABLE IF NOT EXISTS household_agreements (
 
 CREATE INDEX IF NOT EXISTS idx_household_agreements ON household_agreements (household_id, child_id);
 
+-- The star/points ledger behind an agreement's reward chart. An agreement's
+-- `structured` JSON declares the *goals* (thresholds -> rewards); this table is
+-- the running *earnings* against them — one row per grant, so who awarded what
+-- (and when) stays legible, exactly like a fact's provenance. The running total
+-- for a chart is SUM(delta) over its agreement_id; a threshold is "reached" when
+-- a grant carries the total across it, which is when both parents get told.
+-- `delta` is normally positive (earned); a negative delta is a correction and is
+-- rejected by the write layer when the chart is earn_only. child_id mirrors the
+-- owning agreement so the ledger never disagrees with the chart it belongs to.
+CREATE TABLE IF NOT EXISTS household_stars (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    agreement_id INTEGER NOT NULL REFERENCES household_agreements(id),
+    child_id     INTEGER NOT NULL DEFAULT 0,       -- children.id, or 0 = whole household
+    delta        INTEGER NOT NULL,                 -- stars earned (+) or corrected (-)
+    note         TEXT,                             -- optional "what for" note
+    awarded_by   INTEGER REFERENCES users(id),     -- provenance — which parent awarded it
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_stars ON household_stars (household_id, agreement_id);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"

@@ -14,12 +14,14 @@ the thing the oblivious parent sees first. See ``docs/household-sheet.md``.
 
 Sections, in order (§6 of the spec):
 
-1. **Recently changed** — the last few facts/agreements by ``updated_at``, each
-   showing *what · who · when* ("Sam shoe size → 13 · Dana · 2d ago").
+1. **Recently changed** — the last few facts/agreements/star grants by their
+   timestamp, each showing *what · who · when* ("Sam shoe size → 13 · Dana ·
+   2d ago", "Sam · +2⭐ (Star chart) · Alex · 1h ago").
 2. **Per-child facts** — grouped by category, one block per child (plus a
    household-wide block for ``child_id = 0`` facts).
 3. **Standing agreements** — behaviour plans; star charts rendered from the
-   optional ``structured`` JSON (thresholds → rewards).
+   optional ``structured`` JSON (thresholds → rewards) with live progress from
+   the star ledger (total so far · how many to the next reward).
 4. **Upcoming appointments** — the viewer's ``kind='child'`` commitments in the
    near window.
 """
@@ -87,7 +89,9 @@ class HouseholdSheet:
             ``categories`` is ``[{category, label, items}]`` in
             :data:`FACT_CATEGORIES` order; the household-wide block (child_id 0)
             comes first when present.
-        agreements: Standing-plan dicts (title/kind/body/child_name/structured).
+        agreements: Standing-plan dicts (title/kind/body/child_name/structured),
+            each also carrying ``star_total`` (the chart's running ledger total)
+            and ``next_goal`` (the nearest unreached reward, or ``None``).
         upcoming: Upcoming child appointments, soonest first.
         counts: ``{children, facts, agreements, upcoming}`` for a summary line.
     """
@@ -139,6 +143,15 @@ def _fact_what(fact: dict[str, Any]) -> str:
     return f"{who_for} · {fact['item']}{tail}"
 
 
+def _star_grant_what(grant: dict[str, Any]) -> str:
+    """Human label for a star grant: "Sam · +2⭐ (Star chart)"."""
+    who_for = grant.get("child_name") or "Household"
+    delta = int(grant.get("delta") or 0)
+    sign = "+" if delta >= 0 else ""
+    title = grant.get("agreement_title") or "chart"
+    return f"{who_for} · {sign}{delta}⭐ ({title})"
+
+
 def _appt_when(start: datetime | None, now: datetime) -> str:
     """Friendly "when" for an appointment ("today 3:00pm", "Thu 3:00pm", "in 5d")."""
     if start is None:
@@ -173,7 +186,9 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
     facts = store.facts()
     agreements = store.agreements()
 
-    # 1. Recently changed — facts + agreements, newest first.
+    star_totals = store.star_totals()
+
+    # 1. Recently changed — facts + agreements + star grants, newest first.
     changes: list[Change] = []
     for f in facts:
         changes.append(
@@ -193,14 +208,23 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
                 at=str(a.get("updated_at") or ""),
             )
         )
+    for grant in store.recent_star_awards(limit=MAX_RECENTLY_CHANGED):
+        changes.append(
+            Change(
+                what=_star_grant_what(grant),
+                who=grant.get("awarded_by_name"),
+                when=_ago_phrase(grant.get("created_at"), now),
+                at=str(grant.get("created_at") or ""),
+            )
+        )
     changes.sort(key=lambda c: c.at, reverse=True)
     recently_changed = changes[:MAX_RECENTLY_CHANGED]
 
     # 2. Per-child facts, grouped by category. Household-wide (child_id 0) first.
     per_child = _group_facts_by_child(facts, children)
 
-    # 3. Agreements — parse structured JSON once for the render.
-    agreements_out = [_prepare_agreement(a) for a in agreements]
+    # 3. Agreements — parse structured JSON + attach the chart's star progress.
+    agreements_out = [_prepare_agreement(a, star_totals.get(a["id"], 0)) for a in agreements]
 
     # 4. Upcoming child appointments — the viewer's kind='child' commitments.
     upcoming = _upcoming_child_appts(store, now)
@@ -264,15 +288,15 @@ def _group_facts_by_child(
     return blocks
 
 
-def _prepare_agreement(a: dict[str, Any]) -> dict[str, Any]:
-    """Copy an agreement row with its ``structured`` JSON parsed (or ``None``)."""
-    parsed: Any = None
-    raw = a.get("structured")
-    if raw:
-        try:
-            parsed = json.loads(raw)
-        except (ValueError, TypeError):
-            parsed = None
+def _prepare_agreement(a: dict[str, Any], star_total: int = 0) -> dict[str, Any]:
+    """Copy an agreement row with its ``structured`` JSON parsed and star progress.
+
+    ``star_total`` is the chart's running ledger total; from it and the parsed
+    goals we precompute the next unreached reward so the render (and any machine
+    client) shows "7 stars · 3 to go → …" without re-deriving it.
+    """
+    parsed = parse_structured(a.get("structured"))
+    ng = next_goal(parsed, star_total) if isinstance(parsed, dict) else None
     return {
         "id": a.get("id"),
         "title": a.get("title"),
@@ -280,6 +304,8 @@ def _prepare_agreement(a: dict[str, Any]) -> dict[str, Any]:
         "body": a.get("body"),
         "child_name": a.get("child_name"),
         "structured": parsed,
+        "star_total": star_total,
+        "next_goal": ng,
         "updated_by_name": a.get("updated_by_name"),
     }
 
@@ -305,24 +331,122 @@ def _upcoming_child_appts(store: MemoryStore, now: datetime) -> list[Appointment
     return out
 
 
+# --- star chart goals (pure) -------------------------------------------------
+#
+# An agreement's `structured` JSON declares the reward goals; the running total
+# lives in the household_stars ledger. These helpers turn (structured, totals)
+# into the reached/next-goal facts the award endpoint and the render both need —
+# kept pure so the "did this grant cross a reward line?" decision is unit-tested
+# without a store, a transport, or a request.
+
+
+def parse_structured(raw: Any) -> Any:
+    """Parse an agreement's ``structured`` JSON string, or ``None`` if absent/bad."""
+    if isinstance(raw, (dict, list)):
+        return raw
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _star_thresholds(structured: Any) -> list[tuple[int, str]]:
+    """Sorted ``(count, reward)`` goal pairs from a chart's ``structured`` JSON.
+
+    Tolerates the template's shapes: the count lives under the chart's ``unit``
+    key, or ``stars``/``points``. Malformed entries are skipped, not raised on.
+    """
+    if not isinstance(structured, dict):
+        return []
+    raw = structured.get("thresholds")
+    if not isinstance(raw, list):
+        return []
+    unit = structured.get("unit", "star")
+    out: list[tuple[int, str]] = []
+    for t in raw:
+        if not isinstance(t, dict):
+            continue
+        if unit in t:
+            n = t.get(unit)
+        elif "stars" in t:
+            n = t.get("stars")
+        else:
+            n = t.get("points")
+        reward = t.get("reward")
+        if isinstance(n, (int, float)) and reward:
+            out.append((int(n), str(reward)))
+    out.sort(key=lambda pair: pair[0])
+    return out
+
+
+def _unit_of(structured: Any) -> str:
+    """The chart's counting unit (``"star"`` by default)."""
+    return structured.get("unit", "star") if isinstance(structured, dict) else "star"
+
+
+def newly_reached_goals(structured: Any, before: int, after: int) -> list[dict[str, Any]]:
+    """Goals whose threshold the total crossed going ``before`` → ``after``.
+
+    A goal ``n`` is newly reached when ``before < n <= after`` — so re-awarding
+    at or above a threshold never re-fires it, and a single big grant that leaps
+    past several thresholds reports each one (each is its own reward to hand out).
+    """
+    unit = _unit_of(structured)
+    return [
+        {"count": n, "unit": unit, "reward": reward}
+        for n, reward in _star_thresholds(structured)
+        if before < n <= after
+    ]
+
+
+def next_goal(structured: Any, total: int) -> dict[str, Any] | None:
+    """The nearest not-yet-reached goal above ``total`` (with ``remaining``), or ``None``."""
+    for n, reward in _star_thresholds(structured):
+        if n > total:
+            return {
+                "count": n,
+                "unit": _unit_of(structured),
+                "reward": reward,
+                "remaining": n - total,
+            }
+    return None
+
+
+def star_congrats_text(child_name: str | None, goal: dict[str, Any]) -> str:
+    """The celebration line sent to both parents when a reward goal is hit."""
+    count = goal["count"]
+    unit = goal["unit"]
+    label = unit if count == 1 else f"{unit}s"
+    who = child_name or "The kids"
+    return f"🌟 {who} hit {count} {label} — reward unlocked: {goal['reward']}!"
+
+
 # --- render ------------------------------------------------------------------
 
 
-def _render_star_chart(structured: dict[str, Any]) -> list[str]:
-    """Render a star/points chart's thresholds as list lines, if well-formed."""
-    thresholds = structured.get("thresholds")
-    if not isinstance(thresholds, list) or not thresholds:
+def _render_star_chart(
+    structured: dict[str, Any],
+    star_total: int = 0,
+    next_g: dict[str, Any] | None = None,
+) -> list[str]:
+    """Render a star/points chart: a progress line, then thresholds → rewards."""
+    thresholds = _star_thresholds(structured)
+    if not thresholds:
         return []
     unit = structured.get("unit", "star")
     lines = []
-    for t in thresholds:
-        if not isinstance(t, dict):
-            continue
-        n = t.get(unit) if unit in t else t.get("stars") or t.get("points")
-        reward = t.get("reward")
-        if n is not None and reward:
-            lines.append(f"  - {n} {unit}s → {reward}")
-    if lines and structured.get("earn_only"):
+    if star_total or next_g:
+        head = f"  - **{star_total} {unit}s so far**"
+        if next_g:
+            head += f" · {next_g['remaining']} to go → {next_g['reward']}"
+        else:
+            head += " · all rewards earned! 🎉"
+        lines.append(head)
+    for n, reward in thresholds:
+        lines.append(f"  - {n} {unit}s → {reward}")
+    if structured.get("earn_only"):
         lines.append("  - _(earn-only — stars are never taken away)_")
     return lines
 
@@ -381,7 +505,11 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             if a.get("body"):
                 lines.append(a["body"])
             if isinstance(a.get("structured"), dict):
-                lines.extend(_render_star_chart(a["structured"]))
+                lines.extend(
+                    _render_star_chart(
+                        a["structured"], a.get("star_total", 0), a.get("next_goal")
+                    )
+                )
             lines.append("")
 
     # 4. Upcoming appointments.

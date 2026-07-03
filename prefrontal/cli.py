@@ -226,6 +226,67 @@ def _cmd_household(args: argparse.Namespace) -> int:
                 )
                 return 1
             print(render_sheet(build_sheet(scoped)), end="")
+        elif args.household_action == "star":
+            return _award_stars_cli(store, args, settings)
+    return 0
+
+
+def _award_stars_cli(store, args, settings) -> int:
+    """Award stars from the CLI, congratulating both parents when a goal is hit.
+
+    Mirrors ``POST /household/agreements/{id}/stars``: append to the ledger, then
+    fire a celebration to every household member for each reward threshold the
+    grant crossed. The operator picks the acting parent with ``--user`` (that's
+    who the grant is attributed to and who signs the push).
+    """
+    from prefrontal.household import (
+        newly_reached_goals,
+        next_goal,
+        parse_structured,
+        star_congrats_text,
+    )
+    from prefrontal.integrations.delivery import deliver_to_household, household_notice
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    agreement = scoped.agreement(args.agreement)
+    if agreement is None:
+        print(f"No agreement with id {args.agreement} in this household.", file=sys.stderr)
+        return 1
+    structured = parse_structured(agreement.get("structured"))
+    if isinstance(structured, dict) and structured.get("earn_only") and args.count < 0:
+        print("This chart is earn-only — stars can't be taken away.", file=sys.stderr)
+        return 1
+    if args.count == 0:
+        print("Nothing to award (count is 0).", file=sys.stderr)
+        return 1
+    result = scoped.award_stars(
+        agreement_id=args.agreement,
+        delta=args.count,
+        awarded_by=scoped.user_id,
+        note=args.note,
+    )
+    assert result is not None
+    print(f"{agreement['title']}: {result['delta']:+d} → {result['after']} total.")
+    goals = newly_reached_goals(structured, result["before"], result["after"])
+    child_name = None
+    if agreement.get("child_id"):
+        child_name = next(
+            (c["name"] for c in scoped.children() if c["id"] == agreement["child_id"]), None
+        )
+    for goal in goals:
+        print(f"🎉 Goal reached: {star_congrats_text(child_name, goal)}")
+        decision = household_notice(star_congrats_text(child_name, goal), channel="sound")
+        for row in deliver_to_household(
+            store, scoped.household_id_or_none(), decision, settings=settings
+        ):
+            state = "sent" if row["delivered"] else "not sent"
+            print(f"  → {row['handle']}: {state} ({row['detail']})")
+    upcoming = next_goal(structured, result["after"])
+    if upcoming:
+        print(f"Next: {upcoming['remaining']} to go → {upcoming['reward']}.")
     return 0
 
 
@@ -921,7 +982,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_user.set_defaults(func=_cmd_user)
 
     p_house = sub.add_parser(
-        "household", help="Manage the shared household sheet (add/join/leave/show)."
+        "household", help="Manage the shared household sheet (add/join/leave/show/star)."
     )
     p_house.add_argument("--db-path", default=None, help="Override the database path.")
     house_sub = p_house.add_subparsers(dest="household_action", required=True)
@@ -936,6 +997,17 @@ def build_parser() -> argparse.ArgumentParser:
     h_leave.add_argument("handle", help="The user's handle.")
     h_show = house_sub.add_parser("show", help="Print the rendered shared sheet.")
     h_show.add_argument("--user", default=None, help="Handle of a household member.")
+    h_star = house_sub.add_parser(
+        "star", help="Award stars on a chart; congratulate + notify both parents."
+    )
+    h_star.add_argument(
+        "--agreement", type=int, required=True, help="Star-chart agreement id (from `show`)."
+    )
+    h_star.add_argument(
+        "--count", type=int, default=1, help="Stars to award (negative to correct)."
+    )
+    h_star.add_argument("--note", default=None, help="Optional 'what for' note.")
+    h_star.add_argument("--user", default=None, help="Acting parent's handle.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

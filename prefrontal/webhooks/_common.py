@@ -603,6 +603,18 @@ class AgreementSet(BaseModel):
     )
 
 
+class StarAward(BaseModel):
+    """Body of ``POST /household/agreements/{id}/stars`` — record earned stars."""
+
+    delta: int = Field(
+        default=1,
+        description="Stars to add (negative to correct, unless the chart is earn-only).",
+    )
+    note: str | None = Field(
+        default=None, description="Optional 'what for' note, e.g. 'tidied room unprompted'."
+    )
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1065,6 +1077,7 @@ __all__ = [
     "ScopedRequest",
     "Settings",
     "ShortcutPayload",
+    "StarAward",
     "StepDone",
     "SwitchImpulse",
     "SwitchPause",

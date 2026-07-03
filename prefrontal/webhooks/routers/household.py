@@ -13,6 +13,12 @@ from dataclasses import asdict
 from fastapi import APIRouter
 
 from prefrontal.commitments import KIND_CHILD, to_utc
+from prefrontal.household import (
+    newly_reached_goals,
+    next_goal,
+    parse_structured,
+    star_congrats_text,
+)
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
     FACT_CATEGORIES,
@@ -31,6 +37,7 @@ from prefrontal.webhooks._common import (
     FactSet,
     HTTPException,
     ScopedRequest,
+    StarAward,
     build_sheet,
     render_sheet,
     resolve_user,
@@ -57,6 +64,14 @@ def build_router(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="You're not set up in a household.",
             )
+
+    def _child_name(ctx: ScopedRequest, child_id: int) -> str | None:
+        """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
+        if not child_id:
+            return None
+        return next(
+            (c["name"] for c in ctx.store.children() if c["id"] == child_id), None
+        )
 
     def _valid_category(value: str) -> str:
         cat = normalize_fact_category(value)
@@ -183,6 +198,76 @@ def build_router(
         if not ctx.store.remove_agreement(agreement_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement")
         return {"removed": True}
+
+    # -- star chart ------------------------------------------------------------
+
+    @router.post("/household/agreements/{agreement_id}/stars", tags=["household"])
+    def award_stars(
+        agreement_id: int,
+        payload: StarAward,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Record earned stars against a chart; congratulate + notify both parents.
+
+        Appends to the star ledger, then compares the running total before and
+        after: any reward threshold the grant *crossed* is "reached", and for each
+        one a celebration is pushed to **every** household member (both parents),
+        so a goal hit is never something only the tracking parent knows. Returns
+        the new total, the goals reached, the next reward, and who was notified.
+        """
+        _require_member(ctx)
+        if payload.delta == 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="delta must be non-zero",
+            )
+        agreement = ctx.store.agreement(agreement_id)
+        if agreement is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement"
+            )
+        structured = parse_structured(agreement.get("structured"))
+        earn_only = isinstance(structured, dict) and bool(structured.get("earn_only"))
+        if earn_only and payload.delta < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="this chart is earn-only — stars can't be taken away",
+            )
+        result = ctx.store.award_stars(
+            agreement_id=agreement_id,
+            delta=payload.delta,
+            awarded_by=ctx.user["id"],
+            note=payload.note,
+        )
+        # award_stars only returns None for a foreign agreement, already ruled out.
+        assert result is not None
+        goals = newly_reached_goals(structured, result["before"], result["after"])
+        child_name = _child_name(ctx, agreement.get("child_id") or 0)
+        notified: list[dict[str, Any]] = []
+        if goals:
+            # Imported lazily: prefrontal.integrations.delivery pulls in
+            # prefrontal.webhooks.notify, which at module-import time would re-enter
+            # the partially-initialized webhooks package during app construction.
+            from prefrontal.integrations.delivery import (
+                deliver_to_household,
+                household_notice,
+            )
+
+            hid = ctx.store.household_id_or_none()
+            message = " ".join(star_congrats_text(child_name, g) for g in goals)
+            notified = deliver_to_household(
+                ctx.store,
+                hid,
+                household_notice(message, channel="sound"),
+                settings=resolved_settings,
+            )
+        return {
+            "total": result["after"],
+            "delta": result["delta"],
+            "goals_reached": goals,
+            "next_goal": next_goal(structured, result["after"]),
+            "notified": notified,
+        }
 
     # -- appointments ---------------------------------------------------------
 

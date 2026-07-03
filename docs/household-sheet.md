@@ -184,7 +184,44 @@ Example `structured` for a star chart (from the template):
                 {"stars": 30, "reward": "big Lego set"}]}
 ```
 
-### 3.6 What reuses existing tables (no new schema)
+### 3.6 `household_stars` — the reward-chart ledger
+
+A star chart's `structured` (§3.5) declares the **goals** (thresholds → rewards);
+`household_stars` is the running **earnings** against them. Each grant is one
+append-only row, so who awarded what — and when — stays as legible as a fact's
+provenance (the same load-balancing point).
+
+```sql
+CREATE TABLE IF NOT EXISTS household_stars (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    agreement_id INTEGER NOT NULL REFERENCES household_agreements(id),
+    child_id     INTEGER NOT NULL DEFAULT 0,       -- copied from the agreement
+    delta        INTEGER NOT NULL,                 -- earned (+) or corrected (-)
+    note         TEXT,
+    awarded_by   INTEGER REFERENCES users(id),
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+A chart's total is `SUM(delta)` over its `agreement_id` (derived, never stored),
+so awarding is a plain insert. The **goal-crossing** logic is pure and lives in
+`prefrontal/household.py` (`newly_reached_goals(structured, before, after)`,
+`next_goal`, `star_congrats_text`), fed by the `before`/`after` totals
+`award_stars()` returns — a goal `n` fires exactly once, when a grant carries the
+total from `before < n` to `>= n`. When one or more goals are reached, the write
+layer congratulates and pushes to **both** co-parents at once via
+`deliver_to_household()` (`prefrontal/integrations/delivery.py`), which resolves
+each member's own `Route` (their ntfy topic / Pushover key). This is the first
+concrete slice of the "push the delta to the *other* parent" idea in §7 — a goal
+hit is never something only the tracking parent knows.
+
+Surfaced as `POST /household/agreements/{id}/stars` (and `prefrontal household
+star`); the shared sheet's agreement block shows the running total + how many to
+the next reward, and recent grants join the "recently changed" load surface.
+Earn-only charts reject a negative `delta` at the write layer.
+
+### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
   `kind` and a `health` category. The sheet just *surfaces* the upcoming ones;
@@ -276,7 +313,10 @@ Sections, in order:
 2. **Per-child facts** — grouped by category (sizes, routine, food, health,
    school), one block per child.
 3. **Standing agreements** — behavior plans, star charts rendered from
-   `structured` (progress + next reward) with the plan `body`.
+   `structured` (progress + next reward) with the plan `body`. The chart's
+   running total (from the `household_stars` ledger, §3.6) and how many stars to
+   the next reward render inline; recent grants join the "recently changed"
+   surface.
 4. **Upcoming appointments** — child commitments in the near window, with who (if
    known) is on pickup.
 
@@ -321,15 +361,16 @@ mechanism.
 
 | Area | Change |
 |---|---|
-| `prefrontal/memory/schema.sql` | `households`, `children`, `household_facts`, `household_agreements`; `users.household_id`. |
+| `prefrontal/memory/schema.sql` | `households`, `children`, `household_facts`, `household_agreements`, `household_stars`; `users.household_id`. |
 | `prefrontal/memory/migrate.py` | `users.household_id` in `_ADDED_COLUMNS` (back-fill). |
-| `prefrontal/memory/repos/household.py` | New repo mixin: `_household_id()`, facts/agreements/children methods. |
+| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, and the star ledger (`award_stars`/`star_total`/`star_totals`/`star_ledger`/`recent_star_awards`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
-| `prefrontal/household.py` | Pure render (`build_sheet()` → structured; `render_sheet()` → Markdown), mirroring `briefing.py`/`panic.py`. |
+| `prefrontal/household.py` | Pure render (`build_sheet()` → structured; `render_sheet()` → Markdown) + pure goal logic (`newly_reached_goals`/`next_goal`/`star_congrats_text`), mirroring `briefing.py`/`panic.py`. |
+| `prefrontal/integrations/delivery.py` | `deliver_to_household()` / `household_notice()` — fan a notice to every co-parent's own route. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
-| `prefrontal/webhooks/…` | `/family` render section; optional `GET /household/sheet`; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show`. |
-| `docs/schema.md` | Document the four new tables + the added column. |
+| `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet`; `POST /household/agreements/{id}/stars`; operator household endpoints. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star`. |
+| `docs/schema.md` | Document the five new tables + the added column. |
 
 ---
 
