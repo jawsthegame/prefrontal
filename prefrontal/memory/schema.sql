@@ -495,6 +495,28 @@ CREATE TABLE IF NOT EXISTS household_stars (
 
 CREATE INDEX IF NOT EXISTS idx_household_stars ON household_stars (household_id, agreement_id);
 
+-- LLM-as-sensor candidates (learning §2). The learning loop only learns from
+-- signal already shaped as episodes / coaching_state; this widens what can be
+-- observed by letting the model turn *free text* ("I always blow off admin on
+-- Mondays") into a *candidate* structured update — a coaching_state key/value or
+-- an episode. Crucially these never land authoritatively: a candidate sits
+-- `pending` until a human accepts it (then applied with source 'llm_inferred',
+-- distinct from 'inferred'/'explicit') or rejects it. The model proposes; the
+-- deterministic/human-confirmed write path still decides. See prefrontal/sensor.py.
+CREATE TABLE IF NOT EXISTS proposals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    kind        TEXT    NOT NULL,                       -- 'state' | 'episode'
+    payload     TEXT    NOT NULL,                       -- JSON: the proposed update
+    rationale   TEXT,                                   -- why (a quote/paraphrase of the text)
+    source      TEXT    NOT NULL DEFAULT 'llm_inferred',
+    status      TEXT    NOT NULL DEFAULT 'pending',     -- pending | accepted | rejected
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_proposals_user ON proposals (user_id, status);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"
