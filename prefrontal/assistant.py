@@ -76,6 +76,9 @@ ALLOWED_OPS = frozenset(
         "clear_fact",
         "set_agreement",
         "remove_agreement",
+        "add_shopping",
+        "check_shopping",
+        "remove_shopping",
     }
 )
 
@@ -161,7 +164,14 @@ ASSISTANT_SYSTEM = (
     '- {"op":"clear_fact","category":str,"item":str,"child":int?}\n'
     '- {"op":"set_agreement","title":str,"body":str,'
     '"kind":"reward"|"consistency"|"routine"?,"child":int?,"structured":object?}\n'
-    '- {"op":"remove_agreement","agreement_id":int}\n\n'
+    '- {"op":"remove_agreement","agreement_id":int}\n'
+    "Shared shopping list — add things to buy, check them off, or remove them. "
+    "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
+    "resolve the item to an id from \"household.shopping\"; \"got\" defaults to "
+    "true (a false un-checks it). Emit ONE add_shopping per distinct item:\n"
+    '- {"op":"add_shopping","item":str,"spec":str?,"where_to_buy":str?,"child":int?}\n'
+    '- {"op":"check_shopping","shopping_id":int,"got":bool?}\n'
+    '- {"op":"remove_shopping","shopping_id":int}\n\n'
     "If the user asks for something "
     "you cannot express with these ops, leave actions empty and say so in reply. "
     "If nothing needs doing, return an empty actions list."
@@ -215,10 +225,11 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
     """Household context for the shared sheet, or ``None`` if the user is in none.
 
     Gives the model the roster (so "Sam" resolves to a real ``child`` id), the
-    controlled fact-category vocabulary, and open agreements (so "remove the
-    sticker plan" resolves to a real ``agreement_id``) — the same id-discipline
-    as the todo/commitment snapshot. Omitted entirely for a user with no
-    household, which is the signal the household-op validators key on.
+    controlled fact-category vocabulary, open agreements (so "remove the sticker
+    plan" resolves to a real ``agreement_id``), and the shopping list (so "check
+    off the milk" resolves to a real shopping id) — the same id-discipline as the
+    todo/commitment snapshot. Omitted entirely for a user with no household, which
+    is the signal the household-op validators key on.
     """
     if memory.household_id_or_none() is None:
         return None
@@ -230,6 +241,10 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
         "agreements": [
             {"id": a["id"], "title": a.get("title"), "child_id": a.get("child_id")}
             for a in memory.agreements()
+        ],
+        "shopping": [
+            {"id": s["id"], "item": s.get("item"), "got": bool(s.get("got"))}
+            for s in memory.shopping_items()
         ],
     }
 
@@ -424,6 +439,19 @@ def _require_agreement(
     raise _ActionError(f"no agreement with id {aid}")
 
 
+def _require_shopping(
+    action: dict[str, Any], household: dict[str, Any]
+) -> tuple[int, str]:
+    """Resolve ``shopping_id`` against the snapshot, returning ``(id, item)``."""
+    sid = _as_int(action.get("shopping_id"))
+    if sid is None:
+        raise _ActionError("shopping_id must be an integer")
+    for s in household.get("shopping", []):
+        if s.get("id") == sid:
+            return sid, (s.get("item") or f"item #{sid}")
+    raise _ActionError(f"no shopping item with id {sid}")
+
+
 def _as_fact_category(value: Any) -> str:
     """Validate a fact category against the controlled vocab."""
     cat = normalize_fact_category(value if isinstance(value, str) else None)
@@ -582,6 +610,34 @@ def _validate_one(action: dict[str, Any], snapshot: dict[str, Any]) -> Validated
         aid, title = _require_agreement(action, household)
         return ValidatedAction(op, {"agreement_id": aid}, f"Remove plan: “{title}”")
 
+    if op == "add_shopping":
+        household = _require_household(snapshot)
+        child_id, _who = _resolve_child(action, household)
+        item = _as_title(action.get("item"))
+        params = {"item": item, "child_id": child_id}
+        extras = []
+        if action.get("spec") is not None and str(action.get("spec")).strip():
+            params["spec"] = str(action["spec"]).strip()
+            extras.append(params["spec"])
+        if action.get("where_to_buy") is not None and str(action.get("where_to_buy")).strip():
+            params["where_to_buy"] = str(action["where_to_buy"]).strip()
+            extras.append(f"@ {params['where_to_buy']}")
+        detail = f" ({', '.join(extras)})" if extras else ""
+        return ValidatedAction(op, params, f"Add to shopping: “{item}”{detail}")
+
+    if op == "check_shopping":
+        household = _require_household(snapshot)
+        sid, item = _require_shopping(action, household)
+        got = action.get("got")
+        got = True if got is None else bool(got)
+        verb = "Check off" if got else "Un-check"
+        return ValidatedAction(op, {"shopping_id": sid, "got": got}, f"{verb}: “{item}”")
+
+    if op == "remove_shopping":
+        household = _require_household(snapshot)
+        sid, item = _require_shopping(action, household)
+        return ValidatedAction(op, {"shopping_id": sid}, f"Remove from shopping: “{item}”")
+
     raise _ActionError(f"unsupported action '{op}'")  # pragma: no cover
 
 
@@ -739,6 +795,21 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             result.update(ok=True, detail=f"agreement #{aid}")
         elif op == "remove_agreement":
             result["ok"] = memory.remove_agreement(p["agreement_id"])
+        elif op == "add_shopping":
+            sid = memory.add_shopping_item(
+                item=p["item"],
+                spec=p.get("spec"),
+                where_to_buy=p.get("where_to_buy"),
+                child_id=p["child_id"],
+                added_by=memory.user_id,
+            )
+            result.update(ok=True, detail=f"item #{sid}")
+        elif op == "check_shopping":
+            result["ok"] = memory.set_shopping_got(
+                p["shopping_id"], p["got"], user_id=memory.user_id
+            )
+        elif op == "remove_shopping":
+            result["ok"] = memory.remove_shopping_item(p["shopping_id"])
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except ValueError as exc:  # e.g. to_utc on an unparseable date

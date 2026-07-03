@@ -363,10 +363,13 @@ lower the taxes todo to normal" and it resolves each reference to a real item an
 proposes the matching actions. Two steps, on purpose:
 
 - **`POST /assistant`** interprets the message against a snapshot of your open
-  todos, upcoming commitments, and dismissable conflicts, and returns a
-  *proposed* action list — **nothing is written**. Supported ops cover todos
-  (add / complete / drop / set priority / set estimate / rename / set deadline),
-  commitments (add / cancel), and dismissing a possible conflict.
+  todos, upcoming commitments, dismissable conflicts, and — when you're in a
+  household — the shared sheet, and returns a *proposed* action list — **nothing
+  is written**. Supported ops cover todos (add / complete / drop / set priority /
+  set estimate / rename / set deadline), commitments (add / cancel), dismissing a
+  possible conflict, and the shared household sheet: facts, agreements, and the
+  shopping list (add an item / check it off / remove it). So "add eggs, milk, and
+  coffee to the shopping list" becomes three add actions you review and apply.
 - **`POST /assistant/apply`** executes actions you confirm. They're re-validated
   against your current data first, so an item that moved since it was proposed is
   skipped rather than mis-edited.
@@ -387,10 +390,12 @@ default); the response says which `provider` answered.
   a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
   todo") and it proposes the concrete edits, which you review and one-tap Apply.
   Open it over Tailscale; it asks for your token once and remembers it.
-- **`GET /family`** — a calm, read-only *shared household* glance for everyone
-  in the household: kids & facts, standing plans + star progress, the shopping
-  list, upcoming appointments, recent changes, and (if enabled) the load-balance
-  view. No edit forms — those live on `/kids`.
+- **`GET /family`** — a calm, mostly read-only *shared household* glance for
+  everyone in the household: kids & facts, standing plans + star progress, the
+  shopping list, upcoming appointments, recent changes, and (if enabled) the
+  load-balance view. The one editable spot is the **shopping list** — a quick-add
+  box and tap-to-check-off, since that's the inherently collaborative list; all
+  other editing lives on `/kids`.
 - **`GET /kids`** — the editable face of the same shared household sheet: add
   facts, agreements, children and appointments, award stars, and drive it all
   from a plain-English assistant box.
