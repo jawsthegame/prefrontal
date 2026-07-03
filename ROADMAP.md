@@ -387,10 +387,10 @@ the first test. Code follow-ups below are optional polish.
 
 ## Known stubs in the current code
 
-- **n8n inbound handlers** — `POST /webhooks/n8n` classifies events via
-  `parse_inbound_event()` but routes none of them to real handlers yet. The
-  Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
-  *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/routers/ingestion.py`.)*
+- ~~**n8n inbound handlers**~~ ✅ **discharged** — `POST /webhooks/n8n` now
+  normalizes the body into a `Signal` and runs the Triage agent (classify →
+  route → maybe nudge), joined by `POST /triage` and `GET /triage/recent`. See
+  "Recently shipped" below and `docs/triage-agent.md`.
 - **Module interventions** — all six modules have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
@@ -573,13 +573,17 @@ ordered by leverage; each is independent but builds on denser capture.
 
 ## Beyond v1 (from the README architecture)
 
-- **Triage agent** — a source-agnostic classify/prioritize/route step for any
-  inbound signal (mail, calendar change, n8n event, manual capture), discharging
-  the `parse_inbound_event` stub. Specced in
-  [`docs/triage-agent.md`](docs/triage-agent.md). The shipped **mail ingestion**
-  (above) is the first concrete slice — it triages email and routes actionable
-  items to `todos`; the spec generalizes that single path into a reusable
-  `Signal → TriageDecision → apply` core with a `triage_log`.
+- **Triage agent** ✅ **shipped** — the source-agnostic classify/prioritize/route
+  step for any inbound signal (mail, calendar change, n8n event, manual capture)
+  is built: `prefrontal/triage.py`'s `classify` (heuristic-first, LLM-assisted
+  for ambiguous cases) + `apply` route into the existing tables (commitment /
+  todo / episode / state), fire `triage.urgent` on urgent items, and log every
+  decision to `triage_log` (idempotent on `(source, external_id)`). Wired at
+  `POST /webhooks/n8n`, `POST /triage`, and `GET /triage/recent`; surfaced in the
+  briefing ("worth a look") and a dashboard panel; n8n templates in
+  `deploy/n8n/triage-{ingest,urgent}.workflow.json`. Design of record:
+  [`docs/triage-agent.md`](docs/triage-agent.md). *(Next: absorb the standalone
+  mail path into a `Signal` adapter so there's one triage, not two.)*
 - **Coaching agent** — **the engine, tick endpoint, and both v1 evaluators have
   shipped** (see "Recently shipped": `prefrontal/coaching.py` + `Module.evaluate`
   + Task Paralysis & Location Anchor evaluators + `prefrontal coach` +

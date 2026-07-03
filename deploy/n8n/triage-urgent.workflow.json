@@ -1,0 +1,59 @@
+{
+  "name": "Prefrontal — Triage Urgent (push urgent triage to ntfy)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prefrontal-events",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Prefrontal event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Prefrontal POSTs outbound events here (N8N_WEBHOOK_URL). This workflow only\n// acts on triage.urgent — the nudge triage.apply() fires when a signal is\n// urgent (overdue/imminent). Emit one ntfy-ready item, or nothing for other\n// events (episode.logged, reminder.sent, …), which your other flows handle.\nconst b = $input.first().json.body || $input.first().json;\nif (!b || b.event !== 'triage.urgent') return [];\nconst where = b.routed_ref ? ` → ${b.routed_ref}` : '';\nreturn [{ json: {\n  title: 'Prefrontal — urgent',\n  message: `${b.title || 'Something needs attention'} (${b.kind || 'action'})${where}`,\n} }];"
+      },
+      "id": "urgent-only",
+      "name": "Urgent Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NTFY_SERVER }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer NTFY_TOKEN_OPTIONAL" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4\n}",
+        "options": {}
+      },
+      "id": "publish-ntfy",
+      "name": "Publish to ntfy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    }
+  ],
+  "connections": {
+    "Prefrontal event": { "main": [[{ "node": "Urgent Only", "type": "main", "index": 0 }]] },
+    "Urgent Only": { "main": [[{ "node": "Publish to ntfy", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "TEMPLATE — the consumer for Prefrontal's outbound events. Set N8N_WEBHOOK_URL (in Prefrontal's .env) to this webhook's production URL; Prefrontal POSTs {event, …} here, and triage.apply() sends event=triage.urgent for urgent signals. This flow filters for that event and pushes to ntfy; add branches for other events (episode.logged, reminder.sent) as needed. If you already run one inbound-webhook workflow, just add the 'Urgent Only' + ntfy branch to it instead of importing this separately (Prefrontal has a single N8N_WEBHOOK_URL)."
+  }
+}
