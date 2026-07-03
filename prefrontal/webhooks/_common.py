@@ -231,6 +231,9 @@ FAMILY_HTML = (Path(__file__).with_name("family.html")).read_text(encoding="utf-
 KIDS_HTML = (Path(__file__).with_name("kids.html")).read_text(encoding="utf-8")
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
 STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8")
+#: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
+#: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
+REVIEW_HTML = (Path(__file__).with_name("review.html")).read_text(encoding="utf-8")
 
 
 class ShortcutPayload(BaseModel):
@@ -1226,6 +1229,7 @@ __all__ = [
     "InviteRedeem",
     "KIDS_HTML",
     "STATS_HTML",
+    "REVIEW_HTML",
     "INFER_TIMEOUT_SECONDS",
     "ImpulseCaptured",
     "KINDS",

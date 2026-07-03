@@ -536,7 +536,7 @@ token client-side).
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
 | `GET /household/sheet` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping, load-balance, check-in, digest, invites |
 | `POST /webhooks/household/{star-prompts,checkin,digest}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest) |
-| `GET /dashboard` · `/family` · `/kids` · `/stats` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights (no auth on the shell) |
+| `GET /dashboard` · `/family` · `/kids` · `/stats` · `/review` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights, LLM-sensor review (no auth on the shell) |
 | `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |
