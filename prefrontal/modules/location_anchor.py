@@ -25,7 +25,6 @@ from __future__ import annotations
 import math
 import re
 
-from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.impact import analyze_impact, at_risk, impact_phrase, project_free_time
 from prefrontal.integrations import Generator
@@ -33,6 +32,7 @@ from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+from prefrontal.scheduling import minutes_between
 
 #: Escalation thresholds as fractions of the stated time window.
 SOFT_THRESHOLD = 0.5
@@ -541,7 +541,7 @@ class LocationAnchorModule(Module):
             over = 0
             for o in outings:
                 # Recompute actual minutes from the stored timestamps.
-                actual = _minutes_between(o.get("departure_at"), o.get("returned_at"))
+                actual = minutes_between(o.get("departure_at"), o.get("returned_at"))
                 if actual is not None and actual > (o.get("time_window_minutes") or 0):
                     over += 1
             rate = over / len(outings)
@@ -609,21 +609,6 @@ def record_outing_abandoned(store: MemoryStore, closed: dict) -> dict:
         outcome="miss",
     )
     return {"episode_id": episode_id, "outcome": "miss"}
-
-
-def _minutes_between(start: str | None, end: str | None) -> float | None:
-    """Best-effort minutes between two ``YYYY-MM-DD HH:MM:SS`` UTC timestamps."""
-    if not start or not end:
-        return None
-    from datetime import datetime
-
-    fmt = TS_FMT
-    try:
-        # Trim fractional seconds if SQLite included them.
-        delta = datetime.strptime(end[:19], fmt) - datetime.strptime(start[:19], fmt)
-    except ValueError:
-        return None
-    return delta.total_seconds() / 60.0
 
 
 register(LocationAnchorModule())

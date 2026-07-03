@@ -19,8 +19,8 @@ from __future__ import annotations
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
-from prefrontal.modules.location_anchor import _minutes_between
 from prefrontal.modules.registry import register
+from prefrontal.scheduling import minutes_between
 
 #: Cap how many unlabeled trips we ask about per tick, so a stretch of untracked
 #: days can't turn into a wall of asks. Newest first — the freshest trip is the
@@ -78,7 +78,7 @@ class ClosedLoopTripModule(Module):
             enriched = dict(trip)
             enriched.setdefault(
                 "actual_minutes",
-                _minutes_between(trip.get("departed_at"), trip.get("returned_at")),
+                minutes_between(trip.get("departed_at"), trip.get("returned_at")),
             )
             cues.append(
                 Cue(
@@ -102,7 +102,7 @@ class ClosedLoopTripModule(Module):
         durations = [
             m
             for t in trips
-            if (m := _minutes_between(t.get("departed_at"), t.get("returned_at"))) is not None
+            if (m := minutes_between(t.get("departed_at"), t.get("returned_at"))) is not None
         ]
         lines = [f"Closed-loop trips tracked recently: {len(trips)}."]
         if durations:

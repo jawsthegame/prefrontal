@@ -38,7 +38,7 @@ from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
-from prefrontal.scheduling import local_datetime
+from prefrontal.scheduling import local_datetime, minutes_between
 
 #: Interrupt levels in ascending severity. ``none`` is rank 0; an interrupt fires
 #: only when a *new* (higher-ranked) level is crossed since the last poll.
@@ -504,20 +504,6 @@ def is_focus_protected(store: MemoryStore) -> bool:
     return False
 
 
-def _minutes_between(start: str | None, end: str | None) -> float:
-    """Minutes between two ``YYYY-MM-DD HH:MM:SS`` UTC timestamps (0 if unknown)."""
-    if not start or not end:
-        return 0.0
-    from datetime import datetime
-
-    fmt = TS_FMT
-    try:
-        delta = datetime.strptime(end, fmt) - datetime.strptime(start, fmt)
-    except ValueError:
-        return 0.0
-    return delta.total_seconds() / 60.0
-
-
 class HyperfocusModule(Module):
     """Protects productive hyperfocus and interrupts misdirected hyperfocus."""
 
@@ -682,7 +668,7 @@ class HyperfocusModule(Module):
                 1
                 for s in ended
                 if (s.get("planned_minutes") or 0)
-                and _minutes_between(s.get("started_at"), s.get("ended_at"))
+                and minutes_between(s.get("started_at"), s.get("ended_at"), default=0.0)
                 > s["planned_minutes"]
             )
             lines.append(

@@ -1,14 +1,13 @@
 """High-level read/write API over the behavioral memory database.
 
 :class:`MemoryStore` is the single object the rest of Prefrontal uses to touch
-the memory layer. It wraps a :class:`sqlite3.Connection` and exposes intention-
-revealing methods for the three tables:
-
-- ``episodes`` — :meth:`MemoryStore.log_episode`, :meth:`MemoryStore.recent_episodes`,
-  :meth:`MemoryStore.episodes_by_type`.
-- ``patterns`` — :meth:`MemoryStore.upsert_pattern`, :meth:`MemoryStore.get_patterns`.
-- ``coaching_state`` — :meth:`MemoryStore.get_state`, :meth:`MemoryStore.set_state`,
-  :meth:`MemoryStore.all_state`.
+the memory layer. It wraps a :class:`sqlite3.Connection` and composes, by mixing
+in the per-domain repositories under :mod:`prefrontal.memory.repos`, one
+intention-revealing surface over every table — episodes and patterns, coaching
+state, sessions (outings/focus), trips, schedule/commitments, todos, mail,
+nudges, proposals, users, and the shared household sheet. Each repo owns the SQL
+for its own domain; ``MemoryStore`` supplies the connection and the ``user_id``
+scoping the repos rely on.
 
 Rows are returned as plain ``dict``\\ s so callers never have to think about
 :class:`sqlite3.Row`. Writes commit immediately — the access patterns here are

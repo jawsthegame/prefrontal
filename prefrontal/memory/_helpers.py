@@ -66,6 +66,11 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def sql_placeholders(count: int) -> str:
+    """A comma-joined run of ``count`` SQL ``?`` placeholders, for an ``IN (…)`` clause."""
+    return ",".join("?" * count)
+
+
 def _safe_close(conn: sqlite3.Connection) -> None:
     """Close a connection, swallowing errors (it may already be closed/broken)."""
     try:
