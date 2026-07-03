@@ -319,6 +319,13 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             print(f"[{label}] patterns written: {summary.patterns} ({by_type})")
             if summary.bias is not None:
                 print(f"[{label}] time_estimation_bias -> {summary.bias}")
+            cal = summary.calibration
+            if cal is not None and cal.status == "ok":
+                verdict = "helping" if cal.helps else "NOT helping — consider a reset"
+                print(
+                    f"[{label}] bias check: error {cal.raw_error} -> {cal.adjusted_error} "
+                    f"on {cal.samples} recent ({verdict})"
+                )
     return 0
 
 

@@ -38,6 +38,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from statistics import fmean
 from typing import Any
 
 from prefrontal.impact import utcnow
@@ -49,6 +50,14 @@ DEFAULT_CONFIDENCE_K = 5.0
 
 #: Minimum predicted/actual pairs before we trust a recomputed bias multiplier.
 MIN_BIAS_SAMPLES = 3
+
+#: Minimum pairs before we attempt a walk-forward calibration check (needs enough
+#: to split into a train slice that meets ``MIN_BIAS_SAMPLES`` and a test slice).
+MIN_CALIBRATION_SAMPLES = 6
+
+#: Fraction of (time-ordered) pairs held out as the "recent" test slice when
+#: checking whether the learned bias actually improved subsequent estimates.
+DEFAULT_CALIBRATION_TEST_FRACTION = 0.34
 
 #: How much each outcome contributes to a drift score (higher = more off-track).
 DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
@@ -103,6 +112,28 @@ class PatternResult:
 
 
 @dataclass(frozen=True)
+class BiasCalibration:
+    """Does the learned time-estimation bias actually improve estimates? (§4)
+
+    A walk-forward check: learn a bias from the *older* pairs, then measure the
+    mean absolute error of raw vs bias-adjusted predictions on the *newer* pairs
+    it never saw. ``improvement`` (raw − adjusted, in the estimate's units, e.g.
+    minutes) is positive when applying the bias got predictions closer to reality;
+    ``helps`` is the verdict. This makes a bad adaptation *visible and
+    self-correcting* rather than asserted, and hints when a pattern is worth
+    trusting more assertively.
+    """
+
+    status: str  # "ok" | "insufficient"
+    samples: int  # test-slice pairs the error was measured on
+    train_bias: float | None = None
+    raw_error: float | None = None
+    adjusted_error: float | None = None
+    improvement: float | None = None
+    helps: bool = False
+
+
+@dataclass(frozen=True)
 class PatternRunSummary:
     """Summary of a single :func:`recompute_patterns` run."""
 
@@ -110,6 +141,7 @@ class PatternRunSummary:
     patterns: int
     by_type: dict[str, int] = field(default_factory=dict)
     bias: float | None = None
+    calibration: BiasCalibration | None = None
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -207,6 +239,64 @@ def compute_bias(
     return round(total_act / total_pred, 2)
 
 
+def bias_calibration(
+    episodes: list[dict[str, Any]],
+    *,
+    min_samples: int = MIN_CALIBRATION_SAMPLES,
+    test_fraction: float = DEFAULT_CALIBRATION_TEST_FRACTION,
+) -> BiasCalibration:
+    """Measure whether the learned bias improves *subsequent* estimates (§4).
+
+    Walk-forward, so it's honest rather than circular: sort the predicted/actual
+    pairs by time, learn a bias (Σactual / Σpredicted) from the older *train*
+    slice, then compare mean absolute error of raw vs bias-adjusted predictions on
+    the newer *test* slice the bias never saw. ``improvement`` = raw − adjusted MAE
+    (positive ⇒ the bias helped); ``helps`` is that verdict.
+
+    Returns a ``status="insufficient"`` result (rather than raising) when there
+    aren't enough pairs to split, so callers can surface "not enough data yet".
+
+    Args:
+        episodes: Episode dicts (only those with both predicted and actual count).
+        min_samples: Minimum usable pairs before attempting the split.
+        test_fraction: Fraction held out as the recent test slice.
+
+    Returns:
+        A :class:`BiasCalibration`.
+    """
+    pairs = [
+        (_parse_ts(e.get("timestamp")) or datetime.min, e["predicted_value"], e["actual_value"])
+        for e in episodes
+        if e.get("predicted_value") and e.get("actual_value") is not None
+    ]
+    n = len(pairs)
+    if n < min_samples:
+        return BiasCalibration(status="insufficient", samples=n)
+    pairs.sort(key=lambda t: t[0])
+    test_size = max(2, round(n * test_fraction))
+    train, test = pairs[: n - test_size], pairs[n - test_size :]
+    if len(train) < MIN_BIAS_SAMPLES:
+        return BiasCalibration(status="insufficient", samples=n)
+
+    total_pred = sum(p for _, p, _ in train)
+    if total_pred <= 0:
+        return BiasCalibration(status="insufficient", samples=n)
+    bias = sum(a for _, _, a in train) / total_pred
+
+    raw_error = fmean(abs(p - a) for _, p, a in test)
+    adjusted_error = fmean(abs(p * bias - a) for _, p, a in test)
+    improvement = raw_error - adjusted_error
+    return BiasCalibration(
+        status="ok",
+        samples=len(test),
+        train_bias=round(bias, 2),
+        raw_error=round(raw_error, 2),
+        adjusted_error=round(adjusted_error, 2),
+        improvement=round(improvement, 2),
+        helps=improvement > 0,
+    )
+
+
 def recompute_patterns(
     store: MemoryStore,
     *,
@@ -245,16 +335,28 @@ def recompute_patterns(
         )
 
     bias: float | None = None
+    calibration: BiasCalibration | None = None
     if update_bias:
         bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
             store.set_state("time_estimation_bias", str(bias), source="inferred")
+        # Close the loop: does that bias actually improve subsequent estimates?
+        # Persist the verdict so the profile and CLI can surface a bad adaptation.
+        calibration = bias_calibration(episodes)
+        if calibration.status == "ok":
+            helps_str = "true" if calibration.helps else "false"
+            store.set_state("bias_calibration_helps", helps_str, source="inferred")
+            store.set_state(
+                "bias_calibration_improvement", str(calibration.improvement), source="inferred"
+            )
+            store.set_state("bias_calibration_samples", str(calibration.samples), source="inferred")
 
     return PatternRunSummary(
         episodes=len(episodes),
         patterns=len(results),
         by_type=dict(Counter(r.pattern_type for r in results)),
         bias=bias,
+        calibration=calibration,
     )
 
 

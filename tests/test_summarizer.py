@@ -177,3 +177,21 @@ def test_cache_is_stale_detects_changes(store):
 def test_cache_is_stale_when_empty(store):
     """A missing cache counts as stale (nothing to trust)."""
     assert cache_is_stale(store) is True
+
+
+# -- bias calibration surfacing in the profile (learning §4) -----------------
+
+
+def test_profile_surfaces_bias_calibration_verdict(store):
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_state("time_estimation_bias", "1.4", source="inferred")
+
+    store.set_state("bias_calibration_helps", "true", source="inferred")
+    store.set_state("bias_calibration_improvement", "3.0", source="inferred")
+    helping = build_profile(store, modules=[])
+    assert "improving recent estimates" in helping and "3.0 closer" in helping
+
+    store.set_state("bias_calibration_helps", "false", source="inferred")
+    hurting = build_profile(store, modules=[])
+    assert "NOT improving recent estimates" in hurting

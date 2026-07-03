@@ -241,3 +241,59 @@ def test_recompute_half_life_key_controls_decay():
         recompute_patterns(store)
         decayed = store.get_patterns("drift")[0]["observed_value"]
         assert decayed < flat  # the ancient miss is now nearly weightless
+
+
+# -- bias calibration (does the adaptation help? §4) -------------------------
+
+
+def _dated(pred, act, day):
+    return _ep(predicted_value=pred, actual_value=act, timestamp=f"2026-01-{day:02d} 09:00:00")
+
+
+def test_bias_calibration_insufficient_data():
+    from prefrontal.memory.patterns import bias_calibration
+
+    cal = bias_calibration([_dated(10, 15, d) for d in range(1, 5)])  # 4 < min 6
+    assert cal.status == "insufficient" and cal.samples == 4 and not cal.helps
+
+
+def test_bias_calibration_helps_when_bias_reduces_error():
+    from prefrontal.memory.patterns import bias_calibration
+
+    # A steady 1.5× underestimate throughout: the bias learned from the older
+    # slice zeroes the error on the newer slice.
+    cal = bias_calibration([_dated(10, 15, d) for d in range(1, 10)])  # 9 pairs
+    assert cal.status == "ok"
+    assert cal.train_bias == pytest.approx(1.5)
+    assert cal.raw_error == pytest.approx(5.0)
+    assert cal.adjusted_error == pytest.approx(0.0)
+    assert cal.improvement == pytest.approx(5.0) and cal.helps is True
+
+
+def test_bias_calibration_flags_a_stale_bias_that_hurts():
+    from prefrontal.memory.patterns import bias_calibration
+
+    # You *used* to run over (older pairs underestimate → bias > 1), but lately
+    # you're on time. Applying the old bias now overshoots — it should NOT help.
+    older = [_dated(10, 15, d) for d in range(1, 7)]      # train: 1.5× underestimate
+    recent = [_dated(10, 10, d) for d in range(7, 10)]    # test: on time
+    cal = bias_calibration(older + recent)
+    assert cal.status == "ok"
+    assert cal.raw_error == pytest.approx(0.0)      # raw predictions were already spot on
+    assert cal.adjusted_error == pytest.approx(5.0)  # the 1.5× bias overshoots
+    assert cal.improvement == pytest.approx(-5.0) and cal.helps is False
+
+
+def test_recompute_persists_calibration_verdict():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for d in range(1, 10):
+            store.log_episode(
+                "task", predicted_value=10, actual_value=15,
+                timestamp=f"2026-01-{d:02d} 09:00:00",
+            )
+        summary = recompute_patterns(store)
+        assert summary.calibration is not None and summary.calibration.status == "ok"
+        assert summary.calibration.helps is True
+        assert store.get_state("bias_calibration_helps") == "true"
+        assert store.get_state("bias_calibration_samples") == "3"
