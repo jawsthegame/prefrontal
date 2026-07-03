@@ -23,14 +23,17 @@ from prefrontal.household import (
     chore_missed_partner_message,
     chore_reminder_message,
     describe_chore_days,
+    effective_chore_schedule,
     fmt_time_12h,
     format_chore_days,
     miss_due,
     normalize_chore,
+    normalize_routine,
     parse_chore_days,
     reminder_due,
     render_sheet,
     run_chores_check,
+    with_effective_schedule,
 )
 from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import DeliveryClient
@@ -384,3 +387,124 @@ def test_chores_check_endpoint(client, store, dana):
     # due_time is 00:01 local, so by any wall-clock "now" it's already past due → miss fires.
     out = client.post("/webhooks/household/chores/check", headers=_h("dana-tok")).json()
     assert isinstance(out["sent"], list)
+
+
+# --- routines: grouping + accountability + schedule inheritance --------------
+
+
+def test_normalize_routine_clean_and_optional_time():
+    clean, err = normalize_routine(
+        {"title": " Monday pickup ", "accountable_id": "3", "days": [0], "due_time": "7:30"}
+    )
+    assert err is None
+    assert clean == {"title": "Monday pickup", "accountable_id": 3, "days": "0",
+                     "due_time": "07:30", "impact": None, "enabled": True}
+    # Blank time is allowed — a routine that just groups chores, no clock.
+    untimed, err2 = normalize_routine({"title": "Tidy up", "due_time": ""})
+    assert err2 is None and untimed["due_time"] == ""
+    # A non-blank but malformed time is rejected.
+    bad, err3 = normalize_routine({"title": "x", "due_time": "nope"})
+    assert bad is None and "HH:MM" in err3
+
+
+def test_effective_schedule_inherit_override_untimed():
+    routine = {"days": "0,1", "due_time": "08:00"}
+    # No own time → inherit the routine's schedule.
+    assert effective_chore_schedule({"due_time": "", "days": ""}, routine) == ("0,1", "08:00")
+    # Own time → full override (own days + time win).
+    assert effective_chore_schedule({"due_time": "09:15", "days": "2"}, routine) == ("2", "09:15")
+    # Standalone with no time → untimed.
+    assert effective_chore_schedule({"due_time": "", "days": "3"}, None) == ("3", "")
+    # with_effective_schedule copies the row with the resolved fields.
+    merged = with_effective_schedule({"id": 1, "title": "t", "due_time": "", "days": ""}, routine)
+    assert merged["due_time"] == "08:00" and merged["title"] == "t"
+
+
+def test_set_routine_upsert_and_accountability_counts(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    rid = dana.set_routine(title="Bedtime", accountable_id=dana_id, due_time="19:30",
+                           updated_by=dana_id)
+    dana.set_routine(title="Mornings", accountable_id=dana_id, updated_by=dana_id)
+    dana.set_routine(title="Pickup", accountable_id=alex_id, updated_by=dana_id)
+    routines = {r["title"]: r for r in dana.routines()}
+    assert routines["Bedtime"]["accountable_name"] == "Dana"
+    assert routines["Bedtime"]["due_time"] == "19:30"
+    # Upsert on title (re-assign accountability), not a duplicate.
+    dana.set_routine(title="Bedtime", accountable_id=alex_id, updated_by=dana_id)
+    assert dana.routine(rid)["accountable_id"] == alex_id
+    # Carrying facet: Dana holds Mornings; Alex holds Bedtime + Pickup.
+    counts = {c["name"]: c["count"] for c in dana.accountability_counts()}
+    assert counts == {"Dana": 1, "Alex": 2}
+
+
+def test_remove_routine_unlinks_its_chores(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    rid = dana.set_routine(title="Evening", due_time="20:00", updated_by=dana_id)
+    cid = dana.set_chore(title="dishes", due_time="", routine_id=rid, updated_by=dana_id)
+    assert dana.routines()[0]["chore_count"] == 1
+    assert dana.remove_routine(rid) is True
+    # The chore survives, now standing alone (routine_id cleared).
+    survivor = next(c for c in dana.chores() if c["id"] == cid)
+    assert survivor["routine_id"] is None and survivor["routine_title"] is None
+
+
+def test_sweep_uses_routine_inherited_schedule(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    # Routine on Wednesday 22:00; the chore sets no time of its own → inherits it.
+    rid = dana.set_routine(title="Evening", days="2", due_time="22:00", updated_by=dana_id)
+    dana.set_chore(title="dishes", due_time="", routine_id=rid, owner_id=alex_id,
+                   updated_by=dana_id)
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    # Inherited 22:00 due + default 30m lead → the 21:40 sweep reminds the owner.
+    assert [s["topic"] for s in sent] == ["alex-topic"]
+    assert result and result[0]["stage"] == "reminder"
+
+
+def test_sweep_never_fires_an_untimed_chore(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    # No routine, no own time → untimed checklist chore: it has no clock to fire on.
+    dana.set_chore(title="tidy entryway", due_time="", owner_id=dana_id, updated_by=dana_id)
+    client, sent = _capture_client()
+    assert run_chores_check(dana, settings=UTC, now=MISS_NOW, client=client) == []
+    assert sent == []
+
+
+def test_routine_endpoints_crud_and_chore_linkage(client, store):
+    dana_id = store.get_user("dana")["id"]
+    # Create a routine with Dana accountable.
+    r = client.post(
+        "/household/routines",
+        json={"title": "Monday pickup prep", "accountable_id": dana_id, "due_time": "07:30",
+              "days": [0]},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    rid = r.json()["id"]
+    # A non-member can't be accountable.
+    assert client.post(
+        "/household/routines", json={"title": "x", "accountable_id": 9999},
+        headers=_h("dana-tok"),
+    ).status_code == 422
+    # A chore can join the routine; an unknown routine_id is refused.
+    ok = client.post(
+        "/household/chores",
+        json={"title": "pack laundry", "routine_id": rid},  # untimed, inherits routine
+        headers=_h("dana-tok"),
+    )
+    assert ok.status_code == 200
+    assert client.post(
+        "/household/chores", json={"title": "y", "routine_id": 9999}, headers=_h("dana-tok"),
+    ).status_code == 422
+    # Pause + remove.
+    assert client.post(f"/household/routines/{rid}/enabled", json={"enabled": False},
+                       headers=_h("dana-tok")).json()["enabled"] is False
+    assert client.post(f"/household/routines/{rid}/remove",
+                       headers=_h("dana-tok")).json()["removed"]
+    assert client.post(f"/household/routines/{rid}/enabled", json={"enabled": True},
+                       headers=_h("dana-tok")).status_code == 404

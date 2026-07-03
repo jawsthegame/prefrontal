@@ -564,8 +564,8 @@ token client-side).
 | `POST /places` · `GET /places` | Curated location aliases |
 | `POST /webhooks/mail/sync` · `GET /mail` | Ingest mail / recent + action items |
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
-| `GET /household/sheet` · `GET /household/shopping` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping (list/add/check/remove), load-balance, check-in, digest, invites |
-| `POST /webhooks/household/{star-prompts,checkin,digest}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest) |
+| `GET /household/sheet` · `GET /household/shopping` · `POST /household/{create,facts,agreements,shopping,chores,routines,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping (list/add/check/remove), chores, routines (grouping + accountability), load-balance (doing + carrying), check-in, digest, invites |
+| `POST /webhooks/household/{star-prompts,checkin,digest,chores}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest, chore reminders/miss-handoffs) |
 | `GET /dashboard` · `/family` · `/kids` · `/stats` · `/review` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights, LLM-sensor review (no auth on the shell) |
 | `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
@@ -596,7 +596,7 @@ token client-side).
 | `panic` | Overwhelm triage — what's on fire + one first step; `--llm` |
 | `crunch on\|off\|status` | Deadline mode: suspend the work/life time bands; `--hours N` |
 | `note "…"` / `proposals list\|accept\|reject` | LLM-as-sensor: jot a note → review proposed updates |
-| `household add\|join\|leave\|show\|invite\|redeem\|star\|balance\|shopping\|prompt-check\|checkin-check\|digest-check` | Co-parent household sheet |
+| `household add\|join\|leave\|show\|invite\|redeem\|star\|balance\|shopping\|chore\|routine\|prompt-check\|checkin-check\|digest-check\|chores-check` | Co-parent household sheet (chores + routines feed the two-facet balance) |
 | `modules [-v]` | List challenge-area modules and status |
 
 Data commands (`learn`, `summarize`, `profile`, `briefing`, `todo`, `fit`,

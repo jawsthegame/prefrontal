@@ -585,11 +585,15 @@ class HouseholdRepo:
         self.conn.commit()
 
     def contribution_counts(self, since: str) -> list[dict[str, Any]]:
-        """Per-member counts of sheet writes since ``since`` (facts + agreements + stars).
+        """Per-member "doing" counts since ``since`` (facts + agreements + stars + chores done).
 
-        Every active member is included — even one who wrote nothing — so the view
-        shows both parents. Sorted most-active first, then by name. The counts are
-        provenance tallies (who touched the sheet), not a judgment.
+        The activity facet of shared load: who actually did things — sheet edits,
+        star awards, and *completed chores* (``household_chore_log.done_by``), so
+        doing the dishes every night finally counts, not just editing the sheet.
+        Every active member is included — even one who did nothing — so the view
+        shows both parents. Sorted most-active first, then by name; a provenance
+        tally, not a judgment. (The "carrying" facet is
+        :meth:`accountability_counts`.)
         """
         hid = self._household_id()
         counts: dict[int, int] = {}
@@ -603,6 +607,9 @@ class HouseholdRepo:
             "SELECT awarded_by AS uid, COUNT(*) AS n FROM household_stars "
             "WHERE household_id = ? AND created_at >= ? AND awarded_by IS NOT NULL "
             "GROUP BY awarded_by",
+            "SELECT done_by AS uid, COUNT(*) AS n FROM household_chore_log "
+            "WHERE household_id = ? AND done_at >= ? AND done_by IS NOT NULL "
+            "GROUP BY done_by",
         )
         for sql in queries:
             for r in self.conn.execute(sql, (hid, since)).fetchall():
@@ -688,6 +695,137 @@ class HouseholdRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- routines (grouping + accountability) ---------------------------------
+    #
+    # A routine groups chores under ONE accountable owner (RACI "A" — the parent
+    # who holds the mental load) and carries the schedule its chores inherit.
+    # Upsert on title like agreements/chores; removing one unlinks (never deletes)
+    # its chores. `accountability_counts` powers the "carrying" facet of the
+    # balance view — how many active routines each parent is answerable for.
+
+    def set_routine(
+        self,
+        *,
+        title: str,
+        days: str = "",
+        due_time: str = "",
+        accountable_id: int | None = None,
+        impact: str | None = None,
+        enabled: bool = True,
+        updated_by: int | None,
+    ) -> int:
+        """Upsert a routine (keyed on title within the household), returning its id.
+
+        ``accountable_id`` is the mental-load holder (``None`` = unassigned).
+        ``due_time`` may be blank (a routine that just groups chores, no clock).
+        Editing never touches the chores linked under it — only the definition.
+        """
+        hid = self._household_id()
+        self.conn.execute(
+            """
+            INSERT INTO household_routines
+                (household_id, title, accountable_id, days, due_time, impact,
+                 enabled, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (household_id, title) DO UPDATE SET
+                accountable_id = excluded.accountable_id,
+                days           = excluded.days,
+                due_time       = excluded.due_time,
+                impact         = excluded.impact,
+                enabled        = excluded.enabled,
+                updated_by     = excluded.updated_by,
+                updated_at     = CURRENT_TIMESTAMP
+            """,
+            (hid, title.strip(), accountable_id, days, due_time, impact,
+             1 if enabled else 0, updated_by),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM household_routines WHERE household_id = ? AND title = ?",
+            (hid, title.strip()),
+        ).fetchone()
+        return int(row["id"])
+
+    def set_routine_enabled(self, routine_id: int, enabled: bool) -> bool:
+        """Pause or resume a routine without deleting it. ``True`` if a row changed."""
+        cur = self.conn.execute(
+            "UPDATE household_routines SET enabled = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND household_id = ?",
+            (1 if enabled else 0, routine_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def remove_routine(self, routine_id: int) -> bool:
+        """Delete a routine; its chores survive, unlinked (``routine_id`` → NULL)."""
+        hid = self._household_id()
+        self.conn.execute(
+            "UPDATE household_chores SET routine_id = NULL "
+            "WHERE routine_id = ? AND household_id = ?",
+            (routine_id, hid),
+        )
+        cur = self.conn.execute(
+            "DELETE FROM household_routines WHERE id = ? AND household_id = ?",
+            (routine_id, hid),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def routines(self) -> list[dict[str, Any]]:
+        """All the household's routines, each with the accountable member's name and chore count."""
+        rows = self.conn.execute(
+            """
+            SELECT r.id, r.title, r.accountable_id, r.days, r.due_time, r.impact,
+                   r.enabled,
+                   COALESCE(u.display_name, u.handle) AS accountable_name,
+                   (SELECT COUNT(*) FROM household_chores c WHERE c.routine_id = r.id)
+                       AS chore_count
+            FROM household_routines r
+            LEFT JOIN users u ON u.id = r.accountable_id
+            WHERE r.household_id = ?
+            ORDER BY r.due_time ASC, r.title ASC
+            """,
+            (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def routine(self, routine_id: int) -> dict[str, Any] | None:
+        """One routine row (scoped to the household), or ``None`` if not found."""
+        row = self.conn.execute(
+            "SELECT id, title, accountable_id, days, due_time, impact, enabled "
+            "FROM household_routines WHERE id = ? AND household_id = ?",
+            (routine_id, self._household_id()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def accountability_counts(self) -> list[dict[str, Any]]:
+        """Per-member count of *enabled* routines they're accountable for (the "carrying" facet).
+
+        Standing state, not windowed — accountability is who currently holds the
+        mental load, not an activity tally. Every active member is included (even
+        one holding nothing), so the balance view shows both parents.
+        """
+        hid = self._household_id()
+        counts: dict[int, int] = {}
+        for r in self.conn.execute(
+            "SELECT accountable_id AS uid, COUNT(*) AS n FROM household_routines "
+            "WHERE household_id = ? AND enabled = 1 AND accountable_id IS NOT NULL "
+            "GROUP BY accountable_id",
+            (hid,),
+        ).fetchall():
+            counts[r["uid"]] = int(r["n"])
+        members = self.conn.execute(
+            "SELECT id, COALESCE(display_name, handle) AS name FROM users "
+            "WHERE household_id = ? AND status = 'active'",
+            (hid,),
+        ).fetchall()
+        out = [
+            {"user_id": m["id"], "name": m["name"], "count": counts.get(m["id"], 0)}
+            for m in members
+        ]
+        out.sort(key=lambda c: (-c["count"], c["name"]))
+        return out
+
     # -- recurring shared chores ----------------------------------------------
     #
     # Household-scoped, owner-assigned recurring tasks whose whole reason to exist
@@ -704,6 +842,7 @@ class HouseholdRepo:
         due_time: str,
         days: str = "",
         owner_id: int | None = None,
+        routine_id: int | None = None,
         remind_before: int = 30,
         impact: str | None = None,
         enabled: bool = True,
@@ -712,18 +851,20 @@ class HouseholdRepo:
         """Upsert a recurring chore (keyed on title within the household), returning its id.
 
         Same last-write-wins upsert shape as :meth:`set_agreement`. ``owner_id`` is
-        the member whose job it is (``None`` = either parent). Editing a chore never
-        clears its completion log or dedup cursors — only its definition changes.
+        the member whose job it is (RACI "R"; ``None`` = either parent);
+        ``routine_id`` links it under a routine (``None`` = stands alone). Editing a
+        chore never clears its completion log or dedup cursors — only its definition.
         """
         hid = self._household_id()
         self.conn.execute(
             """
             INSERT INTO household_chores
-                (household_id, title, owner_id, days, due_time, remind_before,
-                 impact, enabled, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                (household_id, title, owner_id, routine_id, days, due_time,
+                 remind_before, impact, enabled, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 owner_id      = excluded.owner_id,
+                routine_id    = excluded.routine_id,
                 days          = excluded.days,
                 due_time      = excluded.due_time,
                 remind_before = excluded.remind_before,
@@ -732,8 +873,8 @@ class HouseholdRepo:
                 updated_by    = excluded.updated_by,
                 updated_at    = CURRENT_TIMESTAMP
             """,
-            (hid, title.strip(), owner_id, days, due_time, int(remind_before),
-             impact, 1 if enabled else 0, updated_by),
+            (hid, title.strip(), owner_id, routine_id, days, due_time,
+             int(remind_before), impact, 1 if enabled else 0, updated_by),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -774,11 +915,14 @@ class HouseholdRepo:
         """
         rows = self.conn.execute(
             """
-            SELECT c.id, c.title, c.owner_id, c.days, c.due_time, c.remind_before,
-                   c.impact, c.enabled, c.last_reminded_on, c.last_missed_on,
-                   COALESCE(u.display_name, u.handle) AS owner_name
+            SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.due_time,
+                   c.remind_before, c.impact, c.enabled, c.last_reminded_on,
+                   c.last_missed_on,
+                   COALESCE(u.display_name, u.handle) AS owner_name,
+                   r.title AS routine_title
             FROM household_chores c
             LEFT JOIN users u ON u.id = c.owner_id
+            LEFT JOIN household_routines r ON r.id = c.routine_id
             WHERE c.household_id = ?
             ORDER BY c.due_time ASC, c.title ASC
             """,

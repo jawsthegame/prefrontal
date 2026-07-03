@@ -107,6 +107,10 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("digest_enabled", "INTEGER NOT NULL DEFAULT 0"),
         ("balance_enabled", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    # A chore can belong to a routine (added after chores shipped). No FK in the
+    # ALTER (SQLite limitation); schema.sql declares REFERENCES on fresh installs.
+    # household_routines itself is a whole new table, created by schema.sql.
+    "household_chores": [("routine_id", "INTEGER")],
 }
 
 

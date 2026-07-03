@@ -240,6 +240,8 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _shopping_cli(store, args)
         elif args.household_action == "chore":
             return _chores_cli(store, args, settings)
+        elif args.household_action == "routine":
+            return _routines_cli(store, args, settings)
         elif args.household_action == "chores-check":
             return _chores_check_cli(store, args, settings)
         elif args.household_action == "invite":
@@ -309,6 +311,7 @@ def _chores_cli(store, args, settings) -> int:
         describe_chore_days,
         fmt_time_12h,
         normalize_chore,
+        with_effective_schedule,
     )
     from prefrontal.scheduling import local_datetime
 
@@ -325,6 +328,17 @@ def _chores_cli(store, args, settings) -> int:
                 print(f"'{args.owner}' isn't a member of this household.", file=sys.stderr)
                 return 1
             owner_id = owner["id"]
+        routine_id = None
+        if args.routine:
+            match = next(
+                (r for r in scoped.routines()
+                 if r["title"].lower() == args.routine.strip().lower()),
+                None,
+            )
+            if match is None:
+                print(f"No routine titled '{args.routine}'.", file=sys.stderr)
+                return 1
+            routine_id = match["id"]
         clean, error = normalize_chore(
             {
                 "title": args.add,
@@ -338,8 +352,10 @@ def _chores_cli(store, args, settings) -> int:
         if error is not None:
             print(error, file=sys.stderr)
             return 1
-        cid = scoped.set_chore(updated_by=scoped.user_id, **clean)
-        print(f"Added chore #{cid}: {clean['title']} (by {fmt_time_12h(clean['due_time'])}).")
+        cid = scoped.set_chore(updated_by=scoped.user_id, routine_id=routine_id, **clean)
+        when = f"by {fmt_time_12h(clean['due_time'])}" if clean["due_time"] else "untimed"
+        into = f" in '{args.routine}'" if routine_id else ""
+        print(f"Added chore #{cid}: {clean['title']} ({when}){into}.")
         return 0
     if args.done is not None:
         today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
@@ -374,15 +390,95 @@ def _chores_cli(store, args, settings) -> int:
         return 0
     today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
     done_ids = scoped.chore_ids_done_on(today)
+    routines_by_id = {r["id"]: r for r in scoped.routines()}
     for c in chores:
+        # Show the schedule the chore actually runs on (inherited from its routine
+        # unless it sets its own), matching what the reminder sweep uses.
+        eff = with_effective_schedule(c, routines_by_id.get(c.get("routine_id")))
         box = "x" if c["id"] in done_ids else " "
         owner = c.get("owner_name") or "either"
         paused = "" if c["enabled"] else " [paused]"
         impact = f" — {c['impact']}" if c.get("impact") else ""
+        when = f"by {fmt_time_12h(eff['due_time'])}" if eff.get("due_time") else "untimed"
+        routine = f" · {c['routine_title']}" if c.get("routine_title") else ""
         print(
             f"  [{box}] #{c['id']} {c['title']} "
-            f"({owner} · {describe_chore_days(c['days'])} · by {fmt_time_12h(c['due_time'])})"
+            f"({owner} · {describe_chore_days(eff['days'])} · {when}{routine})"
             f"{paused}{impact}"
+        )
+    return 0
+
+
+def _routines_cli(store, args, settings) -> int:
+    """List the household's routines, or add/assign-accountable/pause/remove one.
+
+    A routine groups chores under one **accountable** owner (the mental-load
+    holder) and carries the schedule its chores inherit. ``--add`` defines one,
+    ``--accountable`` sets who holds it, ``--remove`` deletes it (its chores
+    survive, unlinked), and ``--enable``/``--disable`` pause or resume it.
+    """
+    from prefrontal.household import describe_chore_days, fmt_time_12h, normalize_routine
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+
+    if args.add:
+        accountable_id = None
+        if args.accountable:
+            who = store.get_user(args.accountable)
+            if who is None or who.get("household_id") != scoped.household_id_or_none():
+                print(f"'{args.accountable}' isn't a member of this household.", file=sys.stderr)
+                return 1
+            accountable_id = who["id"]
+        clean, error = normalize_routine(
+            {
+                "title": args.add,
+                "due_time": args.due,
+                "days": args.days.split(",") if args.days else [],
+                "accountable_id": accountable_id,
+                "impact": args.impact,
+            }
+        )
+        if error is not None:
+            print(error, file=sys.stderr)
+            return 1
+        rid = scoped.set_routine(updated_by=scoped.user_id, **clean)
+        holder = args.accountable if accountable_id else "unassigned"
+        print(f"Added routine #{rid}: {clean['title']} (accountable: {holder}).")
+        return 0
+    if args.remove is not None:
+        if not scoped.remove_routine(args.remove):
+            print(f"No routine #{args.remove}.", file=sys.stderr)
+            return 1
+        print(f"Removed routine #{args.remove} (its chores now stand alone).")
+        return 0
+    for rid, want in ((args.enable, True), (args.disable, False)):
+        if rid is not None:
+            if not scoped.set_routine_enabled(rid, want):
+                print(f"No routine #{rid}.", file=sys.stderr)
+                return 1
+            print(f"{'Resumed' if want else 'Paused'} routine #{rid}.")
+            return 0
+
+    routines = scoped.routines()
+    if not routines:
+        print(
+            'No routines yet. Add one: household routine --add "Monday pickup prep" '
+            '--accountable dana --due 07:30'
+        )
+        return 0
+    for r in routines:
+        holder = r.get("accountable_name") or "unassigned"
+        paused = "" if r["enabled"] else " [paused]"
+        when = f"by {fmt_time_12h(r['due_time'])}" if r.get("due_time") else "no set time"
+        impact = f" — {r['impact']}" if r.get("impact") else ""
+        n = r.get("chore_count") or 0
+        print(
+            f"  #{r['id']} {r['title']} "
+            f"(accountable: {holder} · {describe_chore_days(r['days'])} · {when} · "
+            f"{n} chore{'' if n == 1 else 's'}){paused}{impact}"
         )
     return 0
 
@@ -423,11 +519,19 @@ def _balance_cli(store, args, settings) -> int:
         print("Single-parent household — nothing to balance.")
         return 0
     since = (utcnow() - timedelta(days=BALANCE_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    view = balance_view(scoped.contribution_counts(since))
-    print(f"Sheet updates in the last {BALANCE_WINDOW_DAYS} days:")
+    view = balance_view(
+        scoped.contribution_counts(since), carrying=scoped.accountability_counts()
+    )
+    print(f"Doing — shared work in the last {BALANCE_WINDOW_DAYS} days:")
     for m in view["members"]:
         print(f"  {m['name']}: {m['count']} ({m['share']}%)")
-    print(view["caption"])
+    print(f"  {view['caption']}")
+    carrying = view.get("carrying")
+    if carrying:
+        print("Carrying — routines each parent is accountable for:")
+        for m in carrying["members"]:
+            print(f"  {m['name']}: {m['count']} ({m['share']}%)")
+        print(f"  {carrying['caption']}")
     return 0
 
 
@@ -1586,11 +1690,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     h_chore.add_argument("--user", default=None, help="Handle of a household member.")
     h_chore.add_argument("--add", default=None, help="Add a chore (what to do).")
-    h_chore.add_argument("--due", default=None, help="Due time 'HH:MM' local (with --add).")
+    h_chore.add_argument(
+        "--due", default=None, help="Due time 'HH:MM' local (omit = inherit routine / untimed)."
+    )
     h_chore.add_argument(
         "--days", default=None, help="Weekday CSV '0,1,2' (0=Mon; omit = every day)."
     )
     h_chore.add_argument("--owner", default=None, help="Owner's handle (with --add).")
+    h_chore.add_argument(
+        "--routine", default=None, help="Routine title to file this chore under (with --add)."
+    )
     h_chore.add_argument(
         "--remind", type=int, default=30, help="Minutes before due to nudge (with --add)."
     )
@@ -1599,6 +1708,24 @@ def build_parser() -> argparse.ArgumentParser:
     h_chore.add_argument("--remove", type=int, default=None, help="Remove chore by id.")
     h_chore.add_argument("--enable", type=int, default=None, help="Resume chore by id.")
     h_chore.add_argument("--disable", type=int, default=None, help="Pause chore by id.")
+    h_routine = house_sub.add_parser(
+        "routine", help="List routines (or add/assign-accountable/pause/remove one)."
+    )
+    h_routine.add_argument("--user", default=None, help="Handle of a household member.")
+    h_routine.add_argument("--add", default=None, help="Add a routine (its title).")
+    h_routine.add_argument(
+        "--accountable", default=None, help="Handle of the member who holds the mental load."
+    )
+    h_routine.add_argument(
+        "--due", default=None, help="Time 'HH:MM' its chores inherit (omit = not time-tied)."
+    )
+    h_routine.add_argument(
+        "--days", default=None, help="Weekday CSV '0,1,2' (0=Mon; omit = every day)."
+    )
+    h_routine.add_argument("--impact", default=None, help="Why the routine matters if it slips.")
+    h_routine.add_argument("--remove", type=int, default=None, help="Remove routine by id.")
+    h_routine.add_argument("--enable", type=int, default=None, help="Resume routine by id.")
+    h_routine.add_argument("--disable", type=int, default=None, help="Pause routine by id.")
     h_chk = house_sub.add_parser(
         "chores-check", help="Fire any chore reminders / miss-handoffs due now."
     )

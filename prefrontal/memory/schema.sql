@@ -619,6 +619,31 @@ CREATE TABLE IF NOT EXISTS household_invites (
 
 CREATE INDEX IF NOT EXISTS idx_household_invites_code ON household_invites (code);
 
+-- Routines — a named grouping of chores with ONE accountable owner (RACI "A":
+-- the parent who holds the mental load and is answerable for the whole thing,
+-- distinct from whoever is "responsible" for doing each chore). A routine
+-- carries the schedule its chores inherit (days + optional due time), so
+-- "Monday pickup prep" is defined once and every chore under it runs on that
+-- cadence unless the chore overrides. Accountability itself is load — the
+-- balance view counts it as a second facet ("carrying") alongside doing. See
+-- docs/household-sheet.md.
+CREATE TABLE IF NOT EXISTS household_routines (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id   INTEGER NOT NULL REFERENCES households(id),
+    title          TEXT NOT NULL,                    -- "Monday pickup prep"
+    accountable_id INTEGER REFERENCES users(id),     -- RACI "A" — mental-load holder (NULL = unassigned)
+    days           TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = every day
+    due_time       TEXT NOT NULL DEFAULT '',         -- "HH:MM" local, or '' = not time-tied
+    impact         TEXT,                             -- why it matters ("mornings run late without it")
+    enabled        INTEGER NOT NULL DEFAULT 1,       -- 0/1
+    updated_by     INTEGER REFERENCES users(id),
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, title)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_routines ON household_routines (household_id, enabled);
+
 -- Recurring shared chores — the "someone has to do this every day, and if it
 -- slips it lands on the other parent" load. Unlike a star chart (about the
 -- kids), a chore is about the *co-parents'* shared load: it's owned by one
@@ -634,9 +659,10 @@ CREATE TABLE IF NOT EXISTS household_chores (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     household_id  INTEGER NOT NULL REFERENCES households(id),
     title         TEXT NOT NULL,                    -- "run the dishwasher"
-    owner_id      INTEGER REFERENCES users(id),     -- whose job it is (NULL = either parent)
-    days          TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = every day
-    due_time      TEXT NOT NULL,                    -- "HH:MM" local — by when it should be done
+    owner_id      INTEGER REFERENCES users(id),     -- RACI "R" — whose job it is to do it (NULL = either parent)
+    routine_id    INTEGER REFERENCES household_routines(id),  -- part of a routine (NULL = stands alone)
+    days          TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = inherit routine / every day
+    due_time      TEXT NOT NULL DEFAULT '',         -- "HH:MM" local; '' = inherit routine, or not time-tied
     remind_before INTEGER NOT NULL DEFAULT 30,      -- minutes before due to nudge the owner
     impact        TEXT,                             -- why it matters ("makes the morning harder")
     enabled       INTEGER NOT NULL DEFAULT 1,       -- 0/1
