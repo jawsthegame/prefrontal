@@ -7,7 +7,7 @@ GET /encouragement + POST /encouragement/sent surface.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,11 +24,43 @@ from prefrontal.encouragement import (
 from prefrontal.impact import utcnow
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.db import init_db
+from prefrontal.memory.repos.episodes import EpisodesRepo
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
 SECRET = "enc-secret"
+
+#: A fixed reference instant for the whole suite — a midday, mid-month time far
+#: from any date boundary. The assessment scopes signals to "today"
+#: (``day_start = midnight``), so these tests were flaky whenever their separate
+#: clock reads — ``utcnow()`` here, SQLite ``CURRENT_TIMESTAMP`` inside
+#: ``log_episode``, and a second ``utcnow()`` *inside* the HTTP handler — straddled
+#: a UTC midnight: the miss episode then fell outside "today" and the day read
+#: not-rough. Freezing every one of those reads to :data:`_NOW` removes the race.
+_NOW = datetime(2026, 6, 15, 12, 0, 0)
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock(monkeypatch):
+    """Freeze every clock these tests depend on to :data:`_NOW` (deterministic).
+
+    Pins the three ``utcnow()`` read sites (this module, the encouragement core,
+    and the coaching router used by the endpoint) *and* the episode timestamp,
+    which is otherwise ``CURRENT_TIMESTAMP`` (the real clock). With all four on the
+    same instant, "today"-scoped assessment is stable regardless of wall time.
+    """
+    ts = _NOW.strftime("%Y-%m-%d %H:%M:%S")
+    monkeypatch.setattr("tests.test_encouragement.utcnow", lambda: _NOW)
+    monkeypatch.setattr("prefrontal.encouragement.utcnow", lambda: _NOW)
+    monkeypatch.setattr("prefrontal.webhooks.routers.coaching.utcnow", lambda: _NOW)
+    _orig_log = EpisodesRepo.log_episode
+
+    def _log_pinned(self, *args, **kwargs):
+        kwargs.setdefault("timestamp", ts)  # default to the frozen clock, not CURRENT_TIMESTAMP
+        return _orig_log(self, *args, **kwargs)
+
+    monkeypatch.setattr(EpisodesRepo, "log_episode", _log_pinned)
 
 
 @pytest.fixture()
