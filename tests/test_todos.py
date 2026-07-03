@@ -19,6 +19,7 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.patterns import recompute_patterns
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import (
+    TRAVEL_LATEST_HOUR,
     FreeWindow,
     WindowConfig,
     available_now,
@@ -50,6 +51,7 @@ from prefrontal.todos import (
     heuristic_priority,
     normalize_category,
     normalize_energy,
+    requires_travel,
     resolve_category,
     todo_episode_fields,
 )
@@ -1066,6 +1068,48 @@ def test_todo_allowed_at_offzone_is_a_hard_gate():
     work = {"category": "work"}  # 09:00-17:00
     assert todo_allowed_at(work, datetime(2026, 6, 15, 20, 0), config) is False
     assert todo_allowed_at(work, datetime(2026, 6, 15, 10, 0), config) is True
+
+
+@pytest.mark.parametrize(
+    "title, travel",
+    [
+        ("Pick up dry cleaning", True),
+        ("Drive to the DMV", True),
+        ("Grab groceries", True),
+        ("Run errands", True),
+        ("Drop off the package", True),
+        ("Call the dentist", False),        # a phone call, not travel
+        ("Order printer ink online", False),  # online, no physical-presence cue
+        ("Draft the report", False),
+    ],
+)
+def test_requires_travel_is_title_based(title, travel):
+    assert requires_travel({"title": title}) is travel
+
+
+def test_todo_allowed_at_travel_capped_at_6pm():
+    """A travel-requiring todo is gated at 18:00 even though its window runs later."""
+    config = WindowConfig.build()  # errands window 09:00-20:00
+    errand = {"category": "errands", "title": "Pick up prescription"}
+    # Fine in the afternoon…
+    assert todo_allowed_at(errand, datetime(2026, 6, 15, 16, 0), config) is True
+    # …but not at 6pm+ (before the errands window's own 20:00 close).
+    assert todo_allowed_at(errand, datetime(2026, 6, 15, 18, 0), config) is False
+    assert todo_allowed_at(errand, datetime(2026, 6, 15, 19, 0), config) is False
+    # A non-travel todo in the same category/window is still fine at 7pm.
+    deskbound = {"category": "errands", "title": "Compare insurance quotes online"}
+    assert todo_allowed_at(deskbound, datetime(2026, 6, 15, 19, 0), config) is True
+    assert TRAVEL_LATEST_HOUR == 18
+
+
+def test_suggest_for_windows_skips_travel_in_evening():
+    """A travel errand isn't proposed for a 7pm gap, but a desk task is."""
+    config = WindowConfig.build()
+    windows = [FreeWindow("2026-06-15 19:00:00", "2026-06-15 20:00:00", 60.0)]
+    travel = [{"id": 1, "estimate_minutes": 30, "title": "Drive to the store"}]
+    assert suggest_for_windows(windows, travel, config=config, tz="UTC")[0]["suggestion"] is None
+    desk = [{"id": 2, "estimate_minutes": 30, "title": "Reply to Sam"}]
+    assert suggest_for_windows(windows, desk, config=config, tz="UTC")[0]["suggestion"] is not None
 
 
 def test_filter_suggestible_drops_out_of_window():

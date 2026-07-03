@@ -24,7 +24,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from prefrontal.todos import KNOWN_CATEGORIES
+from prefrontal.todos import KNOWN_CATEGORIES, requires_travel
+
+#: Local hour after which a travel-requiring todo (see
+#: :func:`prefrontal.todos.requires_travel`) is no longer suggested into a free
+#: window — you shouldn't be sent out on an errand late in the evening. This is a
+#: cap on top of the todo's normal suggestion window, not a replacement for it.
+TRAVEL_LATEST_HOUR = 18
+_TRAVEL_LATEST_MINUTE = TRAVEL_LATEST_HOUR * 60
 
 #: Assumed duration for a commitment with no ``end_at`` when carving windows.
 DEFAULT_EVENT_MINUTES = 30.0
@@ -507,14 +514,21 @@ def todo_allowed_at(
 ) -> bool:
     """Whether ``todo`` is suggestible at local wall-clock time ``local_dt``.
 
-    ``True`` only when ``local_dt`` is **outside** the off-zone **and inside** the
-    todo's resolved window (see :func:`resolve_window`). ``local_dt`` is read for
-    its hour/minute only, so a naive-local or tz-aware datetime both work.
+    ``True`` only when ``local_dt`` is **outside** the off-zone, **inside** the
+    todo's resolved window (see :func:`resolve_window`), and — for a todo that
+    means leaving home (:func:`prefrontal.todos.requires_travel`) — no later than
+    :data:`TRAVEL_LATEST_HOUR`, so an errand isn't squeezed into the evening.
+    ``local_dt`` is read for its hour/minute only, so a naive-local or tz-aware
+    datetime both work.
     """
     minute = local_dt.hour * 60 + local_dt.minute
     if _in_span(minute, config.offzone):
         return False
-    return _in_span(minute, resolve_window(todo, config))
+    if not _in_span(minute, resolve_window(todo, config)):
+        return False
+    if minute >= _TRAVEL_LATEST_MINUTE and requires_travel(todo):
+        return False
+    return True
 
 
 def filter_suggestible(
