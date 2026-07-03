@@ -147,6 +147,11 @@ class Settings:
     gmail_accounts: frozenset[str] = frozenset()
     account_labels: tuple[tuple[str, str, str], ...] = ()
     calendar_labels: tuple[tuple[str, str, str], ...] = ()
+    # Work/life guardrail: map a mail account to a life *domain* (work / home / …)
+    # so a todo created from that inbox inherits the domain's time band and never
+    # squeezes into the wrong part of the day. Empty (default) → no domain is
+    # stamped and scheduling behaves exactly as before. See `account_domain_map`.
+    account_domains: tuple[tuple[str, str], ...] = ()
     timezone: str = "UTC"
     # Suggestion time windows: when a todo may be proposed into free time. The
     # off-zone is a hard local band nothing is ever suggested inside (default
@@ -245,6 +250,17 @@ class Settings:
         }
 
     @property
+    def account_domain_map(self) -> dict[str, str]:
+        """Mail account name → life domain (``work``/``home``/…), lowercased.
+
+        Built from :attr:`account_domains` (``PREFRONTAL_ACCOUNT_DOMAINS``). Empty
+        (the default) means no todo gets a domain from its mailbox, so scheduling
+        is unchanged until an operator opts in. The domain resolves to a time band
+        via ``PREFRONTAL_TODO_WINDOWS`` / the built-in category windows.
+        """
+        return {account: domain for account, domain in self.account_domains}
+
+    @property
     def calendar_label_map(self) -> dict[str, dict[str, str]]:
         """Calendar feed slug → ``{"label", "color"}`` for dashboard pills.
 
@@ -288,6 +304,9 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     calendar_labels = _parse_calendar_labels(
         os.environ.get("PREFRONTAL_CALENDAR_LABELS", "")
     )
+    account_domains = _parse_account_domains(
+        os.environ.get("PREFRONTAL_ACCOUNT_DOMAINS", "")
+    )
     default_policy = os.environ.get("PREFRONTAL_MAIL_DEFAULT_POLICY", "signals").strip()
     if default_policy not in ("full", "signals"):
         default_policy = "signals"
@@ -330,6 +349,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         gmail_accounts=gmail_accounts,
         account_labels=account_labels,
         calendar_labels=calendar_labels,
+        account_domains=account_domains,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
         todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),
@@ -459,6 +479,27 @@ def _parse_todo_windows(raw: str) -> tuple[tuple[str, str], ...]:
         key, spec = key.strip().lower(), spec.strip()
         if key and spec:
             pairs.append((key, spec))
+    return tuple(pairs)
+
+
+def _parse_account_domains(raw: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``PREFRONTAL_ACCOUNT_DOMAINS`` into ``(account, domain)`` pairs.
+
+    Format: comma-separated ``account=domain`` entries, e.g.
+    ``work@co=work,me@gmail=home``. The key is the logical mail account name
+    (from ``PREFRONTAL_MAIL_ACCOUNTS``); the domain is a life sphere that resolves
+    to a time band. Entries without ``=`` or an empty side are skipped; the domain
+    is lowercased so it matches the (lowercased) window keys.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        account, _, domain = entry.partition("=")
+        account, domain = account.strip(), domain.strip().lower()
+        if account and domain:
+            pairs.append((account, domain))
     return tuple(pairs)
 
 

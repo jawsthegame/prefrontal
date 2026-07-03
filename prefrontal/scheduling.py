@@ -491,15 +491,20 @@ def window_config_for(settings: Any, store: Any) -> WindowConfig:
 
 
 def resolve_window(todo: dict[str, Any], config: WindowConfig) -> tuple[int, int]:
-    """The window governing ``todo``: per-todo override → category → source → default.
+    """The window governing ``todo``: override → domain → category → source → default.
 
     The per-todo override is the todo's ``time_window`` field (a ``"HH:MM-HH:MM"``
-    string); an unparseable one is ignored. Category is tried before source, and
-    both look up the same :attr:`WindowConfig.windows` map.
+    string); an unparseable one is ignored. **Domain** (the work/life guardrail —
+    ``work``/``home``/…) is tried next and outranks category on purpose: a work
+    email that triages as "communication" is still held to work hours. Category
+    then source both look up the same :attr:`WindowConfig.windows` map.
     """
     override = parse_window(todo.get("time_window"))
     if override is not None:
         return override
+    domain = (todo.get("domain") or "").strip().lower()
+    if domain in config.windows:
+        return config.windows[domain]
     category = (todo.get("category") or "").strip().lower()
     if category in config.windows:
         return config.windows[category]

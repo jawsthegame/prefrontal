@@ -205,7 +205,8 @@ CREATE TABLE IF NOT EXISTS todos (
     deadline         DATETIME,                       -- optional, UTC
     energy           TEXT,                           -- low | medium | high (optional)
     category         TEXT,                           -- inferred, editable; canonical set derived (capped at 20)
-    time_window      TEXT,                           -- optional per-todo override "HH:MM-HH:MM" local; else category/source/default window
+    time_window      TEXT,                           -- optional per-todo override "HH:MM-HH:MM" local; else domain/category/source/default window
+    domain           TEXT,                           -- work | home | ... — the life sphere; outranks category for the window (work/life guardrails)
     source           TEXT    NOT NULL DEFAULT 'manual', -- manual | impulse (captured-and-deferred)
     status           TEXT    NOT NULL DEFAULT 'open', -- open | done | dropped
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

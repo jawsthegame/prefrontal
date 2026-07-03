@@ -26,6 +26,7 @@ class TodosRepo:
         energy: str | None = None,
         category: str | None = None,
         time_window: str | None = None,
+        domain: str | None = None,
         source: str = "manual",
     ) -> int:
         """Insert an open todo and return its id.
@@ -40,9 +41,13 @@ class TodosRepo:
             category: Optional topic (inferred upstream by ``augment_todo``);
                 editable later via :meth:`set_todo_category`.
             time_window: Optional per-todo suggestion window ``"HH:MM-HH:MM"``
-                (local), overriding the category/source/default window used by
-                :func:`prefrontal.scheduling.todo_allowed_at`. Editable later via
-                :meth:`set_todo_window`.
+                (local), overriding the domain/category/source/default window used
+                by :func:`prefrontal.scheduling.todo_allowed_at`. Editable later
+                via :meth:`set_todo_window`.
+            domain: Optional life sphere (``work``/``home``/…) — the work/life
+                guardrail. Outranks ``category`` when resolving the time band, so
+                a work-mailbox todo is held to work hours whatever its category.
+                Mail ingestion stamps it from the account's configured domain.
             source: Where the todo came from — ``manual`` or ``impulse`` (a
                 captured-and-deferred impulse). Lets surfaces distinguish the
                 impulse inbox from deliberately-added loops.
@@ -52,10 +57,10 @@ class TodosRepo:
         """
         cur = self.conn.execute(
             "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
-            "deadline, energy, category, time_window, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "deadline, energy, category, time_window, domain, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._uid(), title, notes, estimate_minutes, priority, deadline, energy,
-             category, time_window, source),
+             category, time_window, domain, source),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -191,6 +196,16 @@ class TodosRepo:
         responsible for validating the format; this just writes the value.
         """
         return self._update_todo_field(todo_id, "time_window", time_window)
+
+    def set_todo_domain(self, todo_id: int, domain: str | None) -> bool:
+        """Set (or clear) a todo's life-sphere domain. Returns ``True`` if changed.
+
+        The domain (``work``/``home``/…) is the work/life guardrail: it outranks
+        the category when the scheduler resolves the todo's time band, so a
+        work-mailbox todo stays inside work hours whatever its category. Editable
+        at any status so a misfiled item can be corrected.
+        """
+        return self._update_todo_field(todo_id, "domain", domain, open_only=False)
 
     def todo_categories(self) -> list[str]:
         """Distinct categories in use, most-common first (drives cap + hints).

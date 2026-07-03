@@ -1032,6 +1032,7 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             denylisted_senders=learned_denylist(
                 store, repeat_threshold=settings.triage_repeat_threshold
             ),
+            domain=settings.account_domain_map.get(account),
         )
     print(
         f"[{summary.account}/{summary.policy}] received {summary.received}, "

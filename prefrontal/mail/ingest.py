@@ -75,6 +75,7 @@ def ingest_messages(
     create_todos: bool = True,
     corrections: str = "",
     denylisted_senders: frozenset[str] = frozenset(),
+    domain: str | None = None,
 ) -> IngestSummary:
     """Normalize, dedup, triage, and persist a batch of raw messages.
 
@@ -134,6 +135,7 @@ def ingest_messages(
                     _todo_title(item, verdict),
                     notes=_todo_notes(item, verdict),
                     priority=verdict.priority,
+                    domain=domain,
                 )
                 summary.todos_created += 1
             else:
@@ -243,6 +245,7 @@ def retriage_messages(
     create_todos: bool = True,
     corrections: str = "",
     denylisted_senders: frozenset[str] = frozenset(),
+    domain: str | None = None,
     dry_run: bool = False,
 ) -> RetriageSummary:
     """Re-run triage over already-ingested mail with the current prompt.
@@ -318,6 +321,7 @@ def retriage_messages(
                     _todo_title(item, verdict),
                     notes=_todo_notes(item, verdict),
                     priority=verdict.priority,
+                    domain=domain,
                 )
                 summary.todos_created += 1
 

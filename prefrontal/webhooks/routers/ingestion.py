@@ -176,6 +176,7 @@ def build_router(
                 memory,
                 repeat_threshold=resolved_settings.triage_repeat_threshold,
             ),
+            domain=resolved_settings.account_domain_map.get(payload.account),
         )
         return {
             "account": summary.account,

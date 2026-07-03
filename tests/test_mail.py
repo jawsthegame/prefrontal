@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import (
     Settings,
+    _parse_account_domains,
     _parse_account_labels,
     _parse_calendar_labels,
     _parse_mail_accounts,
@@ -334,6 +335,14 @@ def test_settings_account_label_map():
     assert Settings().account_label_map == {}
 
 
+def test_parse_account_domains_and_map():
+    parsed = _parse_account_domains("work@co=Work, me@gmail=home, junk, =x, a=")
+    assert parsed == (("work@co", "work"), ("me@gmail", "home"))  # domain lowercased; junk skipped
+    s = Settings(account_domains=parsed)
+    assert s.account_domain_map == {"work@co": "work", "me@gmail": "home"}
+    assert Settings().account_domain_map == {}
+
+
 def test_parse_calendar_labels():
     parsed = _parse_calendar_labels(
         "personal=Personal:blue, work=Vistar:orange, outlook=T-Mobile:magenta"
@@ -378,6 +387,24 @@ def test_ingest_creates_todo_and_episode_for_action(store):
     action_items = store.mail_needing_action()
     assert len(action_items) == 1
     assert action_items[0]["todo_id"] == todos[0]["id"]
+
+
+def test_ingest_stamps_domain_on_mail_todo(store):
+    """A work-mailbox todo inherits the account's domain (work/life guardrail)."""
+    ingest_messages(
+        store, [_msg()], account="work", policy="full", client=_ollama_down(), domain="work"
+    )
+    (todo,) = store.open_todos()
+    assert todo["domain"] == "work"
+    # No domain configured for the account → nothing stamped (unchanged behavior).
+    ingest_messages(
+        store,
+        [_msg(message_id="<m2@example.com>")],
+        account="personal",
+        client=_ollama_down(),
+    )
+    other = next(t for t in store.open_todos() if t["id"] != todo["id"])
+    assert other["domain"] is None
 
 
 def test_ingest_is_idempotent_on_message_id(store):
