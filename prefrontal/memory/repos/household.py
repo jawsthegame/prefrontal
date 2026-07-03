@@ -440,6 +440,79 @@ class HouseholdRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- weekly mental-load check-in ------------------------------------------
+    #
+    # Opt-in, household-scoped. The schedule (enabled/day/time) lives on the
+    # household row; each parent's weekly self-report is a row in
+    # household_checkins. The "is it due?" and "what's the gentle note?" logic is
+    # pure (prefrontal.household); this layer just stores and reads.
+
+    def get_checkin_config(self) -> dict[str, Any]:
+        """The household's check-in schedule + last-sent stamp (all fields nullable)."""
+        row = self.conn.execute(
+            "SELECT checkin_enabled, checkin_day, checkin_time, checkin_last_sent_at "
+            "FROM households WHERE id = ?",
+            (self._household_id(),),
+        ).fetchone()
+        if row is None:
+            return {"enabled": False, "day": None, "time": None, "last_sent_at": None}
+        return {
+            "enabled": bool(row["checkin_enabled"]),
+            "day": row["checkin_day"],
+            "time": row["checkin_time"],
+            "last_sent_at": row["checkin_last_sent_at"],
+        }
+
+    def set_checkin_config(
+        self, *, enabled: bool, day: int | None, time: str | None
+    ) -> None:
+        """Set the weekly check-in schedule (opt-in). Leaves responses untouched."""
+        self.conn.execute(
+            "UPDATE households SET checkin_enabled = ?, checkin_day = ?, checkin_time = ? "
+            "WHERE id = ?",
+            (1 if enabled else 0, day, time, self._household_id()),
+        )
+        self.conn.commit()
+
+    def mark_checkin_sent(self) -> None:
+        """Stamp the household's ``checkin_last_sent_at`` = now (weekly dedup)."""
+        self.conn.execute(
+            "UPDATE households SET checkin_last_sent_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (self._household_id(),),
+        )
+        self.conn.commit()
+
+    def record_checkin_response(
+        self, *, week: str, user_id: int | None, response: str
+    ) -> None:
+        """Upsert one parent's self-report for a week (re-tapping overwrites in place)."""
+        self.conn.execute(
+            """
+            INSERT INTO household_checkins (household_id, week, user_id, response, created_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (household_id, week, user_id) DO UPDATE SET
+                response   = excluded.response,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (self._household_id(), week, user_id, response),
+        )
+        self.conn.commit()
+
+    def checkin_responses(self, week: str) -> list[dict[str, Any]]:
+        """This week's self-reports, each with the responder's display name."""
+        rows = self.conn.execute(
+            """
+            SELECT c.user_id, c.response, c.created_at,
+                   COALESCE(u.display_name, u.handle) AS by_name
+            FROM household_checkins c
+            LEFT JOIN users u ON u.id = c.user_id
+            WHERE c.household_id = ? AND c.week = ?
+            ORDER BY c.created_at ASC
+            """,
+            (self._household_id(), week),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- operator (unscoped store) --------------------------------------------
     #
     # Membership is operator-set in v1 (docs/household-sheet.md §8): one of the

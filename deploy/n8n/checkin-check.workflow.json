@@ -1,0 +1,42 @@
+{
+  "name": "Prefrontal — Mental-Load Check-in (weekly, opt-in)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 30 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 30 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/household/checkin/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_A_HOUSEHOLD_MEMBERS_TOKEN" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "checkin-check",
+      "name": "Check-in Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    }
+  ],
+  "connections": {
+    "Every 30 min": { "main": [[{ "node": "Check-in Check", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "Opt-in weekly 'how did the invisible load feel for you?' check-in for the token owner's household. The endpoint pushes the warm one-tap self-report (Felt light / Balanced / Carried a lot) to BOTH parents itself, once per ISO week on the day/time set on the /kids dashboard; it no-ops otherwise, so a frequent poll is fine. Once both reply, a gentle shared note goes back to both. Use a household member's per-user token so delivery resolves that household."
+  }
+}

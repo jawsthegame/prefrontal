@@ -15,10 +15,14 @@ from fastapi import APIRouter
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
     award_stars_and_notify,
+    checkin_due,
+    checkin_question,
+    normalize_checkin_config,
     normalize_prompt,
     parse_structured,
     prompt_due,
     prompt_question,
+    week_key,
 )
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
@@ -31,6 +35,7 @@ from prefrontal.webhooks._common import (
     Annotated,
     Any,
     AppointmentCreate,
+    CheckinConfig,
     ChildCreate,
     ChildRename,
     Depends,
@@ -101,9 +106,23 @@ def build_router(
         """
         _require_member(ctx)
         sheet = build_sheet(ctx.store)
+        now_local = local_datetime(utcnow(), resolved_settings.timezone)
+        week = week_key(now_local)
+        config = ctx.store.get_checkin_config()
+        checkin = {
+            "enabled": config["enabled"],
+            "day": config["day"],
+            "time": config["time"],
+            "week": week,
+            "responses": [
+                {"by_name": r["by_name"], "response": r["response"]}
+                for r in ctx.store.checkin_responses(week)
+            ],
+        }
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
+            "checkin": checkin,
             "vocab": {
                 "fact_categories": list(FACT_CATEGORIES),
                 "agreement_kinds": list(AGREEMENT_KINDS),
@@ -337,6 +356,66 @@ def build_router(
                  "question": question, "notified": notified}
             )
         return {"sent": sent, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
+
+    # -- weekly mental-load check-in ------------------------------------------
+
+    @router.post("/household/checkin", tags=["household"])
+    def set_checkin(
+        payload: CheckinConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the opt-in weekly mental-load check-in schedule (both parents share it)."""
+        _require_member(ctx)
+        clean, error = normalize_checkin_config(payload.model_dump())
+        if error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
+            )
+        ctx.store.set_checkin_config(
+            enabled=clean["enabled"], day=clean["day"], time=clean["time"]
+        )
+        return {"ok": True, "checkin": clean}
+
+    @router.post("/webhooks/household/checkin/check", tags=["household"])
+    def checkin_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Send the weekly check-in to both parents if it's due (once per ISO week).
+
+        A periodic trigger (n8n / launchd) POSTs here; when the schedule is due the
+        endpoint pushes both parents the warm one-tap self-report and stamps
+        ``checkin_last_sent_at`` so it fires once that week. Idempotent within a week.
+        """
+        _require_member(ctx)
+        from prefrontal.integrations.delivery import (
+            deliver_to_household,
+            household_checkin_notice,
+        )
+
+        now_local = local_datetime(utcnow(), resolved_settings.timezone)
+        config = ctx.store.get_checkin_config()
+        last_local = None
+        if config.get("last_sent_at"):
+            last_dt = _parse_dt_or_none(config["last_sent_at"])
+            last_local = (
+                local_datetime(last_dt, resolved_settings.timezone) if last_dt else None
+            )
+        if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
+            return {"sent": False, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
+        notified = deliver_to_household(
+            ctx.store,
+            ctx.store.household_id_or_none(),
+            household_checkin_notice(checkin_question(), channel="push"),
+            settings=resolved_settings,
+            base_url=resolved_settings.oauth_base_url,
+            secret=resolved_settings.session_secret,
+        )
+        ctx.store.mark_checkin_sent()
+        return {
+            "sent": True,
+            "notified": notified,
+            "checked_at": now_local.strftime("%Y-%m-%d %H:%M"),
+        }
 
     # -- appointments ---------------------------------------------------------
 

@@ -46,7 +46,14 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS households (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Opt-in weekly "mental load" check-in: a gentle, non-judgmental self-report
+    -- both parents get on the chosen weekday/time. Off by default. See
+    -- household_checkins + docs/household-sheet.md.
+    checkin_enabled      INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
+    checkin_day          INTEGER,                     -- 0=Mon … 6=Sun
+    checkin_time         TEXT,                        -- "HH:MM" local
+    checkin_last_sent_at DATETIME                     -- weekly dedup (see week_key)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -516,6 +523,22 @@ CREATE TABLE IF NOT EXISTS proposals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_proposals_user ON proposals (user_id, status);
+
+-- Weekly "how did the invisible load feel for you?" self-reports — one row per
+-- parent per ISO week. Deliberately subjective and non-judgmental: we store how
+-- each parent *felt* (light / balanced / heavy), never who did what, and surface
+-- a gentle shared note once both have replied. Opt-in (households.checkin_*).
+CREATE TABLE IF NOT EXISTS household_checkins (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    week         TEXT NOT NULL,                    -- ISO week key, e.g. "2026-W27"
+    user_id      INTEGER REFERENCES users(id),     -- which parent replied
+    response     TEXT NOT NULL,                    -- 'light' | 'balanced' | 'heavy'
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, week, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_checkins ON household_checkins (household_id, week);
 
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
