@@ -79,6 +79,21 @@ class TriageRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def surfaced_triage(self, since: str) -> list[dict[str, Any]]:
+        """Return ``route='surface'`` decisions at/after ``since`` (newest first).
+
+        The briefing pulls these — signals worth seeing once but with no core-table
+        write — into its "worth a look" section. ``since`` bounds it to a recent
+        window (the briefing uses the last day) so old surfaced items age out of
+        view without being deleted.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM triage_log WHERE user_id = ? AND route = 'surface' "
+            "AND received_at >= ? ORDER BY received_at DESC, id DESC",
+            (self._uid(), since),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def triage_seen(self, source: str, external_id: str) -> dict[str, Any] | None:
         """Return the prior decision for ``(source, external_id)``, or ``None``.
 

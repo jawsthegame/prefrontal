@@ -75,6 +75,14 @@ def test_recent_lists_decisions_newest_first(client):
     assert recent[0]["reason"]  # explainable
 
 
+def test_dashboard_has_a_triage_panel():
+    """The dashboard ships a recent-triage card that reads /triage/recent."""
+    from prefrontal.webhooks._common import DASHBOARD_HTML
+
+    assert 'id="c-triagelog"' in DASHBOARD_HTML
+    assert "/triage/recent" in DASHBOARD_HTML
+
+
 def test_post_triage_is_idempotent_on_external_id(client):
     payload = {"source": "mail", "title": "pay invoice today", "external_id": "gmail-42"}
     first = client.post("/triage", json=payload, headers=_h()).json()

@@ -103,6 +103,35 @@ def test_render_includes_bias_reminder(store):
     assert "underestimate time by ~40%" in text
 
 
+def test_briefing_surfaces_recent_triage_items(store):
+    """Triage 'surface' items from the last day appear; drops and stale ones don't."""
+    now = utcnow()
+
+    def _at_ts(hours_ago):
+        return (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+    store.log_triage(
+        source="mail", title="Package delivered", kind="info", urgency="none",
+        route="surface", reason="worth seeing once", confidence=0.4,
+        decided_by="heuristic", received_at=_at_ts(2),
+    )
+    store.log_triage(  # > 24h → ages out
+        source="mail", title="Old notice", kind="info", urgency="none",
+        route="surface", reason="stale", confidence=0.4,
+        decided_by="heuristic", received_at=_at_ts(30),
+    )
+    store.log_triage(  # dropped → never surfaced
+        source="mail", title="Spammy promo", kind="noise", urgency="none",
+        route="drop", reason="junk", confidence=0.9,
+        decided_by="heuristic", received_at=_at_ts(1),
+    )
+    b = build_briefing(store, now=now)
+    assert [s["title"] for s in b.surfaced] == ["Package delivered"]
+    text = render_briefing(b)
+    assert "Worth a look" in text and "Package delivered" in text
+    assert "Old notice" not in text and "Spammy promo" not in text
+
+
 class _FakeClient:
     def __init__(self, reply="", error=False, model="fake"):
         self.reply, self.error, self.model = reply, error, model

@@ -377,6 +377,7 @@
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
   <section class="card" id="c-profile"><details class="collapse"><summary><h2>Behavioral profile</h2><span class="updated" id="profile-updated"></span></summary><div class="body"></div></details></section>
   <section class="card" id="c-triage"><details class="collapse"><summary><h2>Mail triage — learned from drops</h2></summary><div class="body"></div></details></section>
+  <section class="card" id="c-triagelog"><details class="collapse"><summary><h2>Triage — recent decisions</h2></summary><div class="body"></div></details></section>
 </main>
 
 <div id="gate">
@@ -923,6 +924,21 @@ function renderShopping(items) {
   return rows + footer + clear;
 }
 
+// Recent triage decisions — what the classify+route step did with inbound signals
+// (mail/calendar/n8n), each with its reason so a drop is explainable.
+function renderTriageLog(data) {
+  const rows = (data && data.decisions) || [];
+  if (!rows.length) return `<div class="empty">No triaged signals yet.</div>`;
+  return rows.map((d) => {
+    const ref = d.routed_ref ? ` <span class="pill">${esc(d.routed_ref)}</span>` : "";
+    const urg = d.urgency && d.urgency !== "none" ? ` · ${esc(d.urgency)}` : "";
+    return `<div class="row"><div class="main">`
+      + `<div><span class="title">${esc(d.title)}</span> <span class="pill">${esc(d.kind)}</span>${ref}</div>`
+      + `<div class="sub">${esc(d.route)}${urg} — ${esc(d.reason)}</div>`
+      + `</div></div>`;
+  }).join("");
+}
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -931,11 +947,12 @@ async function load() {
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
+    api("/triage/recent"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog] = results;
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
     $("#c-shopping").style.display = "";
@@ -950,6 +967,7 @@ async function load() {
   paintTodos();
   put("#c-categories", categories, renderCategories);
   put("#c-triage", triage, renderTriage);
+  put("#c-triagelog", triagelog, renderTriageLog);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
     ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
     : `<div class="err">unavailable</div>`;

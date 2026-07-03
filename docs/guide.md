@@ -469,7 +469,9 @@ and every path keeps its deterministic fallback when both are down.
   a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
   todo") and it proposes the concrete edits, which you review and one-tap Apply.
   When you're in a household it also shows a **Shopping** card — a direct quick-add
-  box and tap-to-check-off (no model needed), alongside the assistant path.
+  box and tap-to-check-off (no model needed), alongside the assistant path. A
+  **Triage — recent decisions** card shows what the triage agent did with recent
+  inbound signals (kind, where it routed, and *why* — so a drop is explainable).
   Each card carries small controls to **reorder** it (▲▼, move earlier/later) and,
   for the list cards, **cap how many items it shows** ("max N", with a "+ N more"
   toggle) — so you arrange the dashboard around what you look at; the layout is
