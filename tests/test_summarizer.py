@@ -205,3 +205,14 @@ def test_profile_surfaces_time_of_day_bias(store):
     store.set_state("time_estimation_bias:afternoon", "1.1", source="inferred")
     out = build_profile(store, modules=[])
     assert "By time of day: morning 1.8x, afternoon 1.1x." in out
+
+
+def test_profile_surfaces_task_type_bias(store):
+    from prefrontal.memory.patterns import TYPE_BIAS_PREFIX
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_state("time_estimation_bias", "1.4", source="inferred")
+    store.set_state(f"{TYPE_BIAS_PREFIX}task", "1.9", source="inferred")
+    store.set_state(f"{TYPE_BIAS_PREFIX}departure", "1.2", source="inferred")
+    out = build_profile(store, modules=[])
+    assert "By task type: departure 1.2x, task 1.9x." in out

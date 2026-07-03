@@ -490,7 +490,7 @@ def build_router(
         """
         memory = ctx.store
         now_local = local_datetime(utcnow(), resolved_settings.timezone)
-        bias = resolve_bias(memory, local_hour=now_local.hour)
+        bias = resolve_bias(memory, local_hour=now_local.hour, episode_type="task")
         fits = fit_todos(minutes, memory.open_todos(), bias)
         return {
             "available_minutes": minutes,
@@ -563,7 +563,7 @@ def build_router(
         open_todos = filter_suggestible(memory.open_todos(), now_local, window_config)
         # Context-conditioned (§5): calibrate with *this hour's* learned bias, so a
         # morning gap is sized by morning history — falls back to the global bias.
-        bias = resolve_bias(memory, local_hour=now_local.hour)
+        bias = resolve_bias(memory, local_hour=now_local.hour, episode_type="task")
         fits = fit_todos(free, open_todos, bias)
         if not fits:
             result["reason"] = "nothing fits this window"

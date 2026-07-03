@@ -179,6 +179,7 @@ class PatternRunSummary:
     bias: float | None = None
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = field(default_factory=dict)
+    type_bias: dict[str, float] = field(default_factory=dict)
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -310,20 +311,75 @@ def compute_bias_by_band(
     return out
 
 
-def resolve_bias(store: MemoryStore, *, local_hour: int | None = None) -> float:
-    """The time-estimation multiplier to apply, preferring the time-of-day band.
+#: State-key prefix for the per-episode-type bias (learning §5, task-type
+#: dimension). Namespaced with ``:type:`` so it never collides with the
+#: time-of-day band keys (``time_estimation_bias:morning`` etc.).
+TYPE_BIAS_PREFIX = "time_estimation_bias:type:"
 
-    When ``local_hour`` is given and a band-specific bias has been learned for it,
-    that wins; otherwise this falls back to the global ``time_estimation_bias``,
-    then to ``1.0``. Consumers that know *when* a prediction applies (e.g. the
-    "what fits right now" picker) pass the local hour to get context-conditioned
-    calibration; those that don't keep the global behavior unchanged.
+
+def compute_bias_by_type(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> dict[str, float]:
+    """Recompute the time-estimation bias **per episode type** (learning §5).
+
+    The global multiplier pools every kind of prediction together, but a person
+    mis-estimates a focus block differently from a departure buffer or an outing.
+    This buckets the predicted/actual episodes by ``episode_type`` and runs the
+    same recency-weighted :func:`compute_bias` within each. A type with too few
+    pairs (``< MIN_BIAS_SAMPLES``) is omitted, so we only condition where there's
+    enough signal — everything else falls back to the global multiplier.
+
+    (Todo closes log a ``task`` episode with ``actual_value=None`` on purpose —
+    created→closed is wall-clock, not time on task — so they don't feed this; the
+    ``task`` bias is learned from focus sessions, the real task-duration signal.)
+
+    Returns:
+        ``{episode_type: multiplier}`` for the types that cleared the floor.
+    """
+    now = now or utcnow()
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+            continue
+        etype = e.get("episode_type")
+        if etype:
+            groups[etype].append(e)
+    out: dict[str, float] = {}
+    for etype, eps in groups.items():
+        type_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
+        if type_bias is not None:
+            out[etype] = type_bias
+    return out
+
+
+def resolve_bias(
+    store: MemoryStore, *, local_hour: int | None = None, episode_type: str | None = None
+) -> float:
+    """The time-estimation multiplier to apply, preferring the most specific signal.
+
+    Precedence: a learned **time-of-day band** for ``local_hour`` wins first (it's
+    the finer, calibration-validated signal for the "what fits" path); failing
+    that, a learned **per-episode-type** bias for ``episode_type``; then the global
+    ``time_estimation_bias``; then ``1.0``. Each layer is only consulted when the
+    caller supplies its context *and* enough signal was learned there, so a
+    consumer that knows neither keeps the global behavior unchanged, and one that
+    knows both gets the type bias as a fallback when its band has no data yet.
     """
     if local_hour is not None:
         banded = store.get_state(f"time_estimation_bias:{time_of_day_band(local_hour)}")
         if banded:
             try:
                 return float(banded)
+            except ValueError:
+                pass
+    if episode_type is not None:
+        typed = store.get_state(f"{TYPE_BIAS_PREFIX}{episode_type}")
+        if typed:
+            try:
+                return float(typed)
             except ValueError:
                 pass
     return store.get_float("time_estimation_bias", 1.0)
@@ -428,6 +484,7 @@ def recompute_patterns(
     bias: float | None = None
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = {}
+    type_bias: dict[str, float] = {}
     if update_bias:
         bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
@@ -439,6 +496,11 @@ def recompute_patterns(
         )
         for band, value in band_bias.items():
             store.set_state(f"time_estimation_bias:{band}", str(value), source="inferred")
+        # ...and per episode type (§5, task-type dimension): a focus block is
+        # mis-estimated differently from a departure buffer, so calibrate by kind.
+        type_bias = compute_bias_by_type(episodes, now=now, half_life_days=half_life_days)
+        for etype, value in type_bias.items():
+            store.set_state(f"{TYPE_BIAS_PREFIX}{etype}", str(value), source="inferred")
         # Close the loop: does that bias actually improve subsequent estimates?
         # Persist the verdict so the profile and CLI can surface a bad adaptation.
         calibration = bias_calibration(episodes)
@@ -457,6 +519,7 @@ def recompute_patterns(
         bias=bias,
         calibration=calibration,
         band_bias=band_bias,
+        type_bias=type_bias,
     )
 
 

@@ -149,7 +149,9 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
                 bias,
                 config=window_config,
                 tz=settings.timezone,
-                bias_fn=lambda hour: resolve_bias(store, local_hour=hour),
+                bias_fn=lambda hour: resolve_bias(
+                    store, local_hour=hour, episode_type="task"
+                ),
             ):
                 pick = s["suggestion"]
                 spare.append(

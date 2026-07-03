@@ -608,6 +608,9 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             if summary.band_bias:
                 bands = ", ".join(f"{b}={v}" for b, v in sorted(summary.band_bias.items()))
                 print(f"[{label}] time-of-day bias -> {bands}")
+            if summary.type_bias:
+                types = ", ".join(f"{t}={v}" for t, v in sorted(summary.type_bias.items()))
+                print(f"[{label}] task-type bias -> {types}")
             cal = summary.calibration
             if cal is not None and cal.status == "ok":
                 verdict = "helping" if cal.helps else "NOT helping — consider a reset"
@@ -1085,9 +1088,10 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
 
-        # "right now" → calibrate with this hour's band bias (§5), else global.
+        # "right now" → calibrate with this hour's band bias (§5), then the
+        # task-type bias, else global.
         now_hour = local_datetime(utcnow(), settings.timezone).hour
-        bias = resolve_bias(store, local_hour=now_hour)
+        bias = resolve_bias(store, local_hour=now_hour, episode_type="task")
         fits = fit_todos(args.minutes, store.open_todos(), bias)
     print(f"With {args.minutes:g} minutes free, you could knock out:")
     if not fits:
