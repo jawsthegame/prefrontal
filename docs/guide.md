@@ -13,7 +13,7 @@ for the deeper design of individual agents see the specs linked from
 ## How it fits together (30 seconds)
 
 ```
-iOS Shortcuts ─┐                         ┌─ Pushover / Twilio / Ntfy
+iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
    Scriptable  ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
      widget   ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
                      ▼
@@ -23,7 +23,8 @@ iOS Shortcuts ─┐                         ┌─ Pushover / Twilio / Ntfy
 - **Prefrontal** is the brain: a FastAPI app over a SQLite database. Nothing
   leaves the machine unless you wire an outbound step.
 - **n8n** is the muscle: it polls Prefrontal on a schedule and delivers nudges
-  (Pushover pushes, Twilio calls). Workflows live in [`../deploy/n8n/`](../deploy/n8n).
+  (ntfy pushes by default, Pushover optional, Twilio calls for the top of the
+  ladder). Workflows live in [`../deploy/n8n/`](../deploy/n8n).
 - **Ollama** is optional local inference for nicer phrasing and triage; every
   feature has a deterministic fallback when it's down.
 - You interact via **iOS Shortcuts**, the **dashboard**, a **home-screen
@@ -275,7 +276,7 @@ curl -s "$PF/briefing" -H "X-Prefrontal-Token: $TOK" | python3 -c 'import sys,js
 ```
 
 Delivered each morning by the [`morning-briefing`](../deploy/n8n/morning-briefing.workflow.json)
-workflow via Pushover.
+workflow via ntfy.
 
 ---
 
@@ -482,10 +483,16 @@ token client-side).
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
 | `GET /briefing` | Today's digest (structured + rendered text) |
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
+| `POST /webhooks/coach/check` · `/ack` | Run the coaching tick / acknowledge a nudge |
+| `GET /encouragement` · `POST /encouragement/sent` | Rough-day recovery message / stamp it delivered (once-a-day cursor) |
+| `POST /webhooks/impulse/capture` · `/webhooks/focus/switch` · `/resolve` | Capture a deferred impulse / log & resolve a context switch |
+| `GET /nudge/act` · `/nudge/dismiss` · `GET /nudges` | One-tap action buttons / dismiss / recent-nudge log |
 | `POST /places` · `GET /places` | Curated location aliases |
 | `POST /webhooks/mail/sync` · `GET /mail` | Ingest mail / recent + action items |
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
-| `GET /dashboard` · `GET /family` | Web surfaces (no auth on the shell) |
+| `GET /household/sheet` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping, load-balance, check-in, digest, invites |
+| `POST /webhooks/household/{star-prompts,checkin,digest}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest) |
+| `GET /dashboard` · `GET /family` · `GET /kids` | Web surfaces — dashboard, partner glance, editable household sheet (no auth on the shell) |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |
 | `POST /admin/users` · `GET /admin/users` | Provision / list users (operator only) |
@@ -495,7 +502,7 @@ token client-side).
 
 | Command | Purpose |
 |---|---|
-| `init-db` | Create & seed the SQLite database |
+| `init-db` | Create the SQLite database (structure only; users seed on `user add`) |
 | `serve` | Run the API (uvicorn); `--host`, `--port` |
 | `user add\|list\|rotate\|disable` | Manage users & tokens |
 | `migrate-multi-tenant` | Upgrade a single-user DB in place |
@@ -506,10 +513,17 @@ token client-side).
 | `todo add\|list\|done\|drop` | Manage todos (add auto-augments) |
 | `fit <minutes>` | Todos that fit a free block now |
 | `mail list\|sync\|fetch` | View / ingest / IMAP-pull mail; `--account`, `--heuristic` |
+| `coach [--dry-run] [--deliver]` | Run the coaching tick — what's due, on which channel |
+| `encourage` | Rough-day check: today's recovery message if it's gone sideways |
+| `panic` | Overwhelm triage — what's on fire + one first step; `--llm` |
+| `crunch on\|off\|status` | Deadline mode: suspend the work/life time bands; `--hours N` |
+| `note "…"` / `proposals list\|accept\|reject` | LLM-as-sensor: jot a note → review proposed updates |
+| `household add\|join\|leave\|show\|invite\|redeem\|star\|balance\|shopping\|prompt-check\|checkin-check\|digest-check` | Co-parent household sheet |
 | `modules [-v]` | List challenge-area modules and status |
 
 Data commands (`learn`, `summarize`, `profile`, `briefing`, `todo`, `fit`,
-`mail`) take `--user HANDLE` (or `--all-users`); with a single user they resolve
+`mail`, `coach`, `encourage`, `panic`, `crunch`, `note`/`proposals`, `household`)
+take `--user HANDLE` (or `--all-users`); with a single user they resolve
 automatically.
 
 ### Key configuration
@@ -522,7 +536,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_PORT` | `8000` | API port |
 | `PREFRONTAL_DEFAULT_USER` | _(empty)_ | Tokenless requests resolve to this user (single-user mode) |
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `llama3.1:8b` | Local inference (use `127.0.0.1`, not `localhost`) |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
 | `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Vistar:orange`) |
 | `PREFRONTAL_CALENDAR_LABELS` | _(empty)_ | `feed=label:color` calendar pills (e.g. `personal=Personal:blue`) |

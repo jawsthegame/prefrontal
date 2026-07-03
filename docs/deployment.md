@@ -223,7 +223,7 @@ To run it always-on, add a launchd agent like the one in step 3 whose
 
 1. Open the editor, **Import from File**, and choose
    [`../deploy/n8n/departure-reminder.workflow.json`](../deploy/n8n/departure-reminder.workflow.json).
-2. The workflow has four nodes: a schedule trigger (every 5 min) →
+2. The workflow has five nodes: a schedule trigger (every 5 min) →
    `POST /webhooks/departure/check` → a Code node that continues only when a
    reminder is due (`fire === true`) → **Publish to ntfy** → `POST /webhooks/n8n`
    (log that a reminder fired). Prefrontal does the "when to leave" reasoning and
@@ -362,25 +362,29 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
 Feeds your schedule into Prefrontal's `commitments` table so it can (next)
 do impact analysis and (now) flag double-bookings across calendars.
 
-Flow: every 15 min, n8n pulls **personal events from Google Calendar** (direct
-OAuth) and **work events from a shared ICS feed**, merges them, and POSTs the
-combined batch to `/webhooks/calendar/sync`. If the resulting schedule has any
-overlaps, it sends an ntfy **double-booking alert**.
+Flow: every 15 min, n8n fetches **four read-only ICS feeds** — personal, work,
+Outlook, and family — parses each, merges them, and POSTs the combined batch to
+`/webhooks/calendar/sync`. It then sends an ntfy **double-booking alert** for hard
+overlaps and a separate **possible-conflict alert** for soft ones. (No Google
+OAuth node — every calendar is pulled via its secret iCal URL, so there are no
+credentials to manage.)
 
 ```
-n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
-                    └─ GET work ICS feed ──────────┴─► merge ─► POST /webhooks/calendar/sync
-                                                                   └─ conflicts > 0 ─► ntfy alert
+n8n (every 15 min) ─┬─ GET personal ICS ─┐
+                    ├─ GET work ICS      ├─► merge ─► POST /webhooks/calendar/sync
+                    ├─ GET Outlook ICS   │             ├─ double-booked ─► ntfy alert
+                    └─ GET family ICS  ──┘             └─ possible conflict ─► ntfy alert
 ```
 
 1. Import [`../deploy/n8n/calendar-sync.workflow.json`](../deploy/n8n/calendar-sync.workflow.json).
-2. **Google Calendar node** → attach a Google OAuth2 credential (personal account);
-   `primary` is your personal calendar.
-3. **Get Work ICS node** → paste your work calendar's shared/secret **iCal feed
-   URL** (read-only). Google/Outlook/most providers expose one per calendar.
-4. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
-5. **Double-booking alert** → set your ntfy topic (defaults to `prefrontal-me`).
-6. **Execute Workflow** once, then toggle **Active**.
+2. **Get {Personal,Work,Outlook,Family} ICS nodes** → paste each calendar's
+   shared/secret **iCal feed URL** (read-only). Google/Outlook/most providers
+   expose one per calendar (in Google: *Settings → Secret address in iCal format*).
+   Leave a node's URL blank to skip that feed.
+3. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
+4. **Double-booking / possible-conflict alert** nodes → set your ntfy topic
+   (defaults to `prefrontal-me`).
+5. **Execute Workflow** once, then toggle **Active**.
 
 Notes:
 - Events are namespaced per feed (`personal:…` / `work:…` / `outlook:…` /
@@ -583,6 +587,47 @@ with a get-back-on-track plan instead of another reminder (`docs/encouragement.m
 
 ---
 
+## 17. Hyperfocus + interactive nudges
+
+Two more delivery workflows round out the module coverage:
+
+- **Hyperfocus interrupts** — import
+  [`../deploy/n8n/hyperfocus-check.workflow.json`](../deploy/n8n/hyperfocus-check.workflow.json).
+  It polls `POST /webhooks/focus/check` and pushes the gentle alignment check /
+  biological-break nudge when an aligned block overruns.
+- **Interactive one-tap actions over ntfy** — import
+  [`../deploy/n8n/interactive-nudge-ntfy.workflow.json`](../deploy/n8n/interactive-nudge-ntfy.workflow.json),
+  the reference for wiring ntfy's action buttons back to the signed `/nudge/act`
+  links so a tap (Made it, ⭐ Yes, Ate, …) records straight into Prefrontal.
+
+---
+
+## 18. Parent pack — the shared household sheet (optional)
+
+For co-parents. One shared, always-current sheet both parents read and edit —
+kids' facts, agreements/star charts, a shopping list — with load-balancing pushes.
+
+1. **Set up the household.** Either operator-wire it (`prefrontal household add
+   "<name>"` then `prefrontal household join <handle> --household <id>`), or let a
+   parent self-serve: `POST /household/create`, then `POST /household/invites` →
+   share the code/link → the co-parent `POST /household/invites/redeem` (CLI:
+   `prefrontal household invite` / `redeem`). A single parent can run solo; the
+   load-balancing lights up once a second member joins.
+2. **Use it.** The editable sheet is the **`/kids`** dashboard (partner glance at
+   `/family`); edit in plain English via `POST /assistant`. CLI:
+   `prefrontal household show|star|balance|shopping`.
+3. **Schedule the sweeps** (import each, set the ntfy topic + token):
+   - [`star-prompt-check.workflow.json`](../deploy/n8n/star-prompt-check.workflow.json)
+     — asks both parents "did <kid> earn a star today?" on the chart's schedule.
+   - [`checkin-check.workflow.json`](../deploy/n8n/checkin-check.workflow.json)
+     — the optional weekly mental-load check-in.
+   - [`digest-check.workflow.json`](../deploy/n8n/digest-check.workflow.json)
+     — the daily delta digest: pushes each parent what the *other* changed.
+
+Full design and data model: [`household-sheet.md`](household-sheet.md).
+
+---
+
 ## What's not automated yet
 
 All six modules are wired end-to-end today — **Location-Aware Task Anchor** (the
@@ -590,9 +635,9 @@ coffee-shop nudge above), **Hyperfocus** (focus sessions, `/webhooks/focus/*`),
 **Time Blindness** (departure timing + outcome capture), **Task Paralysis**
 (auto-decompose, tiny first step, body-double), **Impulsivity**
 (`reflective_pause` + `capture_and_defer`; only `switch_rate_feedback` is still
-planned), and **Self-Care** (the opt-in "have you eaten?" meal check — set the
-`self_care` coaching key to `on`, delivered through the coaching tick §15 with
-one-tap Ate/Snooze). The coaching agent (§15) now fans over all of them, and the
+planned), and **Self-Care** (the opt-in "have you eaten? / had water?" meal &
+water checks — set the `self_care` coaching key to `on`, delivered through the
+coaching tick §15 with one-tap Ate/Drank/Snooze). The coaching agent (§15) now fans over all of them, and the
 encouragement layer (§16) handles rough days. Run `prefrontal modules -v` for the
 live status, and see `ROADMAP.md` for what's next. (Mail ingestion is also live —
 `prefrontal mail fetch`/`sync` and `POST /webhooks/mail/sync`; see §13.)

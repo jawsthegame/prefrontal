@@ -40,8 +40,9 @@ multi-tenancy ([`multi-tenant.md`](multi-tenant.md)), the NL assistant
 - **Plain-English editing** through the existing assistant ("Sam's shoe size is
   13 now", "add a dentist appt for Sam next Tuesday 3pm") with the same
   validate → preview → confirm safety as todo/commitment edits.
-- A single **visible sheet** rendered into the existing `/family` view — reusing
-  the profile-render pattern, *not* a new bespoke UI.
+- A single **visible sheet** rendered at the **`/kids` dashboard** (with a calm
+  read-only partner glance at `/family`), backed by `GET /household/sheet` —
+  reusing the profile-render pattern, *not* a new bespoke UI.
 
 **Non-goals (for v1)**
 
@@ -53,8 +54,9 @@ multi-tenancy ([`multi-tenant.md`](multi-tenant.md)), the NL assistant
   shareable code/link; the operator path also remains (§8).
 - No per-parent-private fields. Everything in a household is visible to both
   members (that's the point).
-- The proactive **delta digest** to the other parent is **v2** (§7); v1 ships the
-  visible sheet.
+- ~~The proactive **delta digest** to the other parent is **v2**.~~ **Shipped** —
+  the daily delta digest (§3.6.2) and the load-balance view (§3.6.3) both push/
+  surface what the other parent changed.
 
 ---
 
@@ -426,12 +428,12 @@ confirm) is unchanged.
 
 ---
 
-## 6. The visible sheet (`/family` render)
+## 6. The visible sheet (`/kids` render)
 
-Assemble the household's data into a single rendered section in the existing
-`/family` view (server-rendered; no new UI framework). Deterministic — built on
-request from `facts()` / `agreements()` / `children()` / upcoming child
-`commitments`.
+Assemble the household's data into a single rendered view — the editable **`/kids`**
+dashboard, with a read-only partner glance at **`/family`** (server-rendered; no
+new UI framework). Deterministic — built on request from `facts()` /
+`agreements()` / `children()` / upcoming child `commitments`.
 
 Sections, in order:
 
@@ -448,16 +450,16 @@ Sections, in order:
 4. **Upcoming appointments** — child commitments in the near window, with who (if
    known) is on pickup.
 
-Reachable at `GET /family` (already exists) for both parents; optionally a
-`GET /household/sheet` JSON for machine clients / the widget.
+Reachable at `GET /kids` (editable) and `GET /family` (glance) for both parents;
+`GET /household/sheet` returns the same assembly as JSON for machine clients / the
+widget.
 
 ---
 
-## 7. Balancing the load (v2 — the delta digest)
+## 7. Balancing the load (the delta digest) — **shipped**
 
-The visible sheet is passive; the differentiator is **push**. Once the coaching
-agent ([`coaching-agent.md`](coaching-agent.md)) is the delivery path, add a
-household cue source:
+The visible sheet is passive; the differentiator is **push**, and it shipped as a
+household cue source over the existing delivery path (§3.6.2/§3.6.3):
 
 - On a tick, compare each member's "last seen" stamp against recent
   `household_facts`/appointment changes and near-term child appts, and emit a cue
@@ -532,8 +534,9 @@ load-balancing features light up on their own.
 - **Conflict handling.** Last-write-wins + provenance is the v1 call; is a visible
   "Dana changed this 5 min ago" ever needed, or is that overkill at co-parent
   scale?
-- **Contacts & shopping (v1.1).** Contacts-as-facts vs. a `household_contacts`
-  table; a dedicated `household_shopping` list vs. reusing todos.
+- **Contacts.** Contacts-as-facts vs. a dedicated `household_contacts` table —
+  still open. *(Shopping is resolved: it shipped as a dedicated `household_shopping`
+  table, §3.6.4, rather than reusing todos.)*
 - **Privacy.** v1 makes everything household-visible. Is there ever a need for a
   per-parent-private annotation, or does that undermine the shared-sheet premise?
 
@@ -546,9 +549,9 @@ load-balancing features light up on their own.
    tests: two users in one household see the same rows; a user with no household
    raises; two households don't leak.
 2. Operator wiring (`create_household`, `set_user_household`, CLI/endpoint).
-3. Pure render (`prefrontal/household.py`) + the `/family` sheet section.
+3. Pure render (`prefrontal/household.py`) + the `/kids` sheet + `/family` glance.
 4. Assistant ops (`set_fact`/`set_agreement`/…) with validation + snapshot.
-5. *(v2)* the coaching-agent delta digest + balance view.
+5. The delta digest + balance view + weekly check-in.
 
-Ship 1–4 as the visible, plain-English-editable shared sheet; 5 turns it into the
-active load-balancer.
+All five shipped: 1–4 are the visible, plain-English-editable shared sheet; 5 turns
+it into the active load-balancer.

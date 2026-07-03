@@ -21,12 +21,16 @@ auth credential, and notification target, with no data crossing between them.
 
 **Non-goals (v1).**
 
-- No web signup / self-service onboarding. Users are provisioned by an operator
-  (a CLI command). This is a self-hosted system for a handful of trusted people,
-  not a SaaS.
-- No roles/permissions beyond "owns their own data" + one operator. No sharing,
-  no household-level aggregate views (the existing `/family` view stays a
-  read-only window onto **one** user; see §9).
+- No public/anonymous SaaS signup. This is a self-hosted system for a handful of
+  trusted people. *(An operator still provisions the first user; but self-serve
+  **household invites** — create/redeem/revoke — later shipped so a co-parent can
+  join without operator action. See the household scope below and
+  [`household-sheet.md`](household-sheet.md).)*
+- No roles/permissions beyond "owns their own data" + one operator, **plus** an
+  opt-in **household scope** where co-parents deliberately share a set of rows
+  (facts, agreements, shopping, star charts) — a second scope alongside per-user,
+  not a weakening of it (see §2 and the household section below). The `/family`
+  and `/kids` views render that shared household sheet (see §9).
 - No per-user module *code* — modules stay global; only their *state* becomes
   per-user (§5).
 - No move off SQLite. The "local first, few moving parts" promise holds.
@@ -75,6 +79,7 @@ CREATE TABLE IF NOT EXISTS users (
     token_hash   TEXT    NOT NULL UNIQUE,         -- sha256(token); raw token never stored
     status       TEXT    NOT NULL DEFAULT 'active', -- active | disabled
     is_operator  BOOLEAN NOT NULL DEFAULT 0,      -- may call admin endpoints
+    household_id INTEGER REFERENCES households(id), -- 0/1 household (the shared scope)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -91,8 +96,13 @@ CREATE INDEX IF NOT EXISTS idx_users_token ON users (token_hash);
 
 ### 3.2 `user_id` on every per-user table
 
-Add `user_id INTEGER NOT NULL REFERENCES users(id)` to: `episodes`, `patterns`,
-`coaching_state`, `outings`, `commitments`, `todos`, `dismissed_conflicts`.
+Add `user_id INTEGER NOT NULL REFERENCES users(id)` to every per-user table. This
+was the original set — `episodes`, `patterns`, `coaching_state`, `outings`,
+`commitments`, `todos`, `dismissed_conflicts` — and it has since grown to also
+include `focus_sessions`, `dismissed_departures`, `kind_feedback`, `mail_messages`,
+`triage_feedback`, `nudges`, `profile_cache`, `todo_decompositions`, `places`, and
+`proposals`. `prefrontal/memory/schema.sql` is the source of truth; the
+household-scoped tables (below) carry `household_id` instead.
 
 Index it everywhere, and **fold it into the existing uniqueness constraints** —
 this is the subtle part:
@@ -321,11 +331,19 @@ A new `prefrontal migrate-multi-tenant` command (and a versioned SQL step):
 5. Stamp a `schema_version` so the migration won't re-run.
 
 Because SQLite's `ALTER` is limited (no drop-constraint), tables whose
-*uniqueness* changes (`coaching_state`, `patterns`, `dismissed_conflicts`) use
-the standard SQLite **rebuild dance**: `CREATE … _new` with the new schema,
-`INSERT INTO _new SELECT …, <legacy_id>`, `DROP`, `ALTER … RENAME`. This runs
-inside one transaction with `foreign_keys=OFF` for the duration, per SQLite's
-documented procedure. The migration is covered by a dedicated test that loads a
+*uniqueness* changes use the standard SQLite **rebuild dance**: `CREATE … _new`
+with the new schema, `INSERT INTO _new SELECT …, <legacy_id>`, `DROP`, `ALTER …
+RENAME`. As shipped, `_rebuild_constraints` in `prefrontal/memory/migrate.py`
+rebuilds **seven** tables — `coaching_state`, `patterns`, `dismissed_conflicts`,
+`kind_feedback`, `mail_messages`, `places`, and `profile_cache`. This runs inside
+one transaction with `foreign_keys=OFF` for the duration, per SQLite's documented
+procedure.
+
+Later-added columns ride a separate step: `backfill_added_columns` /
+`_ADDED_COLUMNS` (e.g. `users.household_id`, `todos.domain`, `commitments.source_url`,
+`nudges.expires_at`, `focus_sessions.switch_impulses`) adds any missing nullable
+columns on open. Both steps run under the single `run_migrations` ladder before
+`schema.sql` is applied. The migration is covered by a dedicated test that loads a
 fixture single-tenant DB and asserts the row counts and scoping survive.
 
 Fresh installs skip all this — `schema.sql` already has the final shape and
@@ -333,17 +351,29 @@ Fresh installs skip all this — `schema.sql` already has the final shape and
 
 ---
 
-## 9. The `/family` view
+## 9. The `/family` and `/kids` views (household scope)
 
-Today `/family` is a calm read-only window onto the single user. Multi-tenant
-options:
+This is where the **second scope** shipped. Beyond per-user scoping, a `households`
+table plus a nullable `users.household_id` lets two co-parents share one set of
+rows. The household-scoped tables (`children`, `household_facts`,
+`household_agreements`, `household_stars`, `household_shopping`, `household_checkins`,
+`household_invites`) carry `household_id NOT NULL` instead of `user_id`, reached
+through household-scoped store methods that resolve the caller's `household_id` and
+inject `WHERE household_id = ?` — the exact mirror of `_uid()`/`.scoped()`, on the
+household column. A user with no household calling a household method gets a loud
+`RuntimeError`, never a silent empty read.
 
-- **v1 (chosen):** `/family` resolves a user like every other endpoint (its HTML
-  shell already prompts for a token). A partner is given **the user's family-
-  scoped token** — same data, now explicitly scoped. Simplest, no new concepts.
-- **v2 (noted, out of scope):** a read-only *viewer* credential type that can see
-  one named user's family view but drive nothing. Needs a `scope` column on
-  `users` or a separate `view_grants` table. Deferred.
+The shared sheet renders at:
+
+- **`/kids`** — the editable household dashboard (facts, agreements/star charts,
+  shopping, the load-balance view), backed by `GET /household/sheet` (JSON).
+- **`/family`** — the calm partner glance (kids' facts · agreements · upcoming
+  appts · recently changed).
+
+Membership: an operator can wire users in (`POST /admin/households/...`), or a
+co-parent can self-serve via **invites** (`POST /household/invites` →
+`/household/invites/redeem`). Full design + schema:
+[`household-sheet.md`](household-sheet.md) and [`schema.md`](schema.md).
 
 ---
 

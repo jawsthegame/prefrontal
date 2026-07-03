@@ -27,7 +27,7 @@ this file wins.
         ↓
   Coaching Agent        ← THIS SPEC: decides what to say, when, on which channel
         ↓
-  Delivery Layer        ← Pushover / Ntfy / TTS / Twilio (n8n today)
+  Delivery Layer        ← ntfy (default) / Pushover / TTS / Twilio
 ```
 
 ---
@@ -113,7 +113,7 @@ notion of "level":
 | urgency | meaning | default channel floor |
 |---|---|---|
 | `ambient` | nice to know, never interrupts | digest only (folded into briefing) |
-| `nudge` | a normal reminder | push (Pushover/Ntfy) |
+| `nudge` | a normal reminder | push (ntfy/Pushover) |
 | `urgent` | time-critical, must be seen | push, escalates to sound |
 | `critical` | will be missed otherwise | voice (Twilio), bypasses quiet hours |
 

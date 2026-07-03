@@ -82,7 +82,7 @@ iOS Shortcuts / Webhooks
         ↓
   Coaching Agent        ← generates briefings, reminders, check-ins
         ↓
-  Delivery Layer        ← Pushover / Ntfy / TTS / notification
+  Delivery Layer        ← ntfy (default) / Pushover / TTS, one-tap action buttons
 ```
 
 The memory layer is the core. Everything the system learns about your behavior lives in a local SQLite database. A summarizer agent periodically compresses patterns into a profile document that gets injected into every agent's system prompt — so behavioral context travels with every interaction.
@@ -93,7 +93,8 @@ See [`docs/schema.md`](docs/schema.md) for the full database schema.
 
 ## What's in this repo today
 
-Prefrontal is in early development. This repository currently implements the **foundation**:
+Prefrontal is in active development — multi-tenant (every row scoped per user; see
+[`docs/multi-tenant.md`](docs/multi-tenant.md)) and running in daily use. What's implemented:
 
 | Layer | Module | Status |
 |---|---|---|
@@ -114,11 +115,13 @@ Prefrontal is in early development. This repository currently implements the **f
 | LLM-as-sensor | `prefrontal/sensor.py` | ✅ Free text → *candidate* structured updates (allowlisted, `source=llm_inferred`), held pending until you accept; `prefrontal note` / `proposals` |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
-| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 6 modules, all wired end-to-end (5 EF challenges + an opt-in Self-Care meal check) |
+| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 6 modules, all wired end-to-end (5 EF challenges + an opt-in Self-Care meal/water check) |
+| Shared household sheet / Parent pack | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Co-parent facts, agreements & star charts, shared shopping list, load-balance view, daily delta digest, weekly mental-load check-in, self-serve invites; `/kids` + `/family` views, `prefrontal household …` |
+| Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes to ntfy / Pushover / TTS with one-tap action buttons; `prefrontal coach --deliver` |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |
-| Triage / coaching / delivery agents | — | 🔜 Not yet built as general agents — see `docs/triage-agent.md`, `docs/coaching-agent.md` (mail triage above is the first concrete slice) |
+| Source-agnostic triage agent | — | 🔜 The coaching tick engine and native delivery have shipped (rows above); a general, source-agnostic **triage agent** is the remaining unbuilt piece — mail triage is its first concrete slice. See `docs/triage-agent.md`, `docs/coaching-agent.md`. |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,
 then `prefrontal/webhooks/app.py`.
@@ -136,11 +139,18 @@ pip install -e ".[dev]"
 # Configure — copy the example and edit
 cp .env.example .env
 
-# Create and seed the SQLite memory database
+# Create the SQLite memory database (structure only — no global seed)
 prefrontal init-db
+
+# Provision yourself (multi-tenant: every data command is scoped to a user).
+# Prints a one-time token; seeds this user's coaching-state + module defaults.
+prefrontal user add me --operator
 
 # Run the webhook listener (defaults to http://0.0.0.0:8000)
 prefrontal serve
+
+# CLI data commands are per-user — pass --user <handle> (defaults to the sole
+# user when there's only one).
 
 # Learn: recompute derived patterns + the time-estimation bias from episodes
 prefrontal learn
