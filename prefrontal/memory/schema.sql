@@ -692,6 +692,32 @@ CREATE TABLE IF NOT EXISTS household_chore_log (
 
 CREATE INDEX IF NOT EXISTS idx_household_chore_log ON household_chore_log (household_id, chore_id, done_on);
 
+-- Triage audit/idempotency log (docs/triage-agent.md §7.3). One row per triaged
+-- inbound signal: what it was classified as, why, and the row it routed into.
+-- Triage routes into the existing core tables (todos/commitments/episodes/state)
+-- and needs only this ledger of its own. Per-user scoped like every other table;
+-- the partial unique index makes re-delivery of the same signal (matched by
+-- source + external_id) a no-op, so a flaky poll never double-creates a todo.
+CREATE TABLE IF NOT EXISTS triage_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(id),
+    received_at  DATETIME NOT NULL,
+    source       TEXT NOT NULL,                     -- Signal.source
+    external_id  TEXT NOT NULL DEFAULT '',          -- provider id, for idempotent re-delivery
+    title        TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    urgency      TEXT NOT NULL,
+    route        TEXT NOT NULL,
+    reason       TEXT NOT NULL,                      -- always populated — never a silent drop
+    confidence   REAL NOT NULL,
+    decided_by   TEXT NOT NULL,                     -- "heuristic" | "llm"
+    routed_ref   TEXT                               -- "todo:42" / "commitment:7" / NULL on drop
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_external
+    ON triage_log (user_id, source, external_id) WHERE external_id <> '';
+CREATE INDEX IF NOT EXISTS idx_triage_user ON triage_log (user_id, received_at);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"
