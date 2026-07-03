@@ -403,6 +403,38 @@ Details:
   taps), a **Shared chores** section on the sheet (today's done/pending status),
   and `prefrontal household chore` / `chores-check`.
 
+### 3.6.6 Routines (RACI) + accountability in the balance view — `household_routines`
+
+Chores answer *who does what*; routines answer *who's on the hook for the whole
+thing*. A **routine** groups chores under exactly one **accountable** owner (RACI
+"A" — the parent holding the mental load), distinct from each chore's `owner_id`
+("R", the doer). "Monday pickup prep" is defined once with Dana accountable, and
+its chores (pack laundry, prep bags) live under it.
+
+- **Schedule inheritance**: a routine carries `days` + `due_time`; its chores
+  inherit that schedule unless a chore sets its **own** `due_time` (a full
+  override). A chore with no time and no routine is **untimed** — a checklist item
+  with no reminder (`due_time=''`). Resolution is pure
+  (`effective_chore_schedule` / `with_effective_schedule`); the sweep and every
+  surface render the *effective* schedule.
+- **Two-facet load balance**: accountability is itself load, so the balance view
+  now reports two things, side by side:
+  - **Doing** — `contribution_counts`, now including chores actually **completed**
+    (`household_chore_log.done_by`), not just sheet edits. Doing the dishes every
+    night finally counts.
+  - **Carrying** — `accountability_counts`: how many active routines each parent
+    holds. `balance_view(counts, carrying=…)` returns both, each with its own
+    gentle caption (`balance_caption` / `carrying_caption`) — naming the carrier,
+    never the low contributor.
+- **`household_routines`**: `title` (unique per household), `accountable_id` (NULL
+  = unassigned), `days`, `due_time` (`''` = not time-tied), `impact`, `enabled`,
+  provenance. Removing a routine **unlinks** its chores (they survive, standing
+  alone) rather than deleting them.
+- **Surfaces**: `POST /household/routines` (+`/{id}/enabled`, `/{id}/remove`),
+  `chore.routine_id` on `POST /household/chores`, a **Routines** section on the
+  sheet, the carrying facet in the balance panel, and `prefrontal household
+  routine`.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`

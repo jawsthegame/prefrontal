@@ -113,6 +113,7 @@ class HouseholdSheet:
     upcoming: list[Appointment] = field(default_factory=list)
     shopping: list[dict[str, Any]] = field(default_factory=list)
     chores: list[dict[str, Any]] = field(default_factory=list)
+    routines: list[dict[str, Any]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -248,7 +249,8 @@ def build_sheet(
     shopping = store.shopping_items()
 
     # 6. Recurring shared chores — with today's local done/pending status.
-    chores = _chores_with_status(store, now, timezone)
+    routines = store.routines()
+    chores = _chores_with_status(store, now, timezone, routines)
 
     counts = {
         "children": len(children),
@@ -257,6 +259,7 @@ def build_sheet(
         "upcoming": len(upcoming),
         "shopping": sum(1 for s in shopping if not s.get("got")),
         "chores": sum(1 for c in chores if c.get("enabled")),
+        "routines": sum(1 for r in routines if r.get("enabled")),
     }
     return HouseholdSheet(
         household_name=(household or {}).get("name"),
@@ -267,21 +270,41 @@ def build_sheet(
         upcoming=upcoming,
         shopping=shopping,
         chores=chores,
+        routines=routines,
         counts=counts,
     )
 
 
 def _chores_with_status(
-    store: MemoryStore, now: datetime, timezone: str
+    store: MemoryStore,
+    now: datetime,
+    timezone: str,
+    routines: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Chore rows with a ``done_today`` flag for today's local date (enabled first)."""
+    """Chore rows with ``done_today`` + the *effective* schedule (routine-inherited).
+
+    ``effective_days``/``effective_due_time`` resolve a chore's routine-inherited
+    schedule (see :func:`with_effective_schedule`), so a surface renders when a
+    chore actually runs without re-deriving it. Enabled first, then by due time.
+    """
     chores = store.chores()
     if not chores:
         return []
     today = local_datetime(now, timezone).strftime("%Y-%m-%d")
     done_ids = store.chore_ids_done_on(today)
-    out = [{**c, "done_today": c["id"] in done_ids} for c in chores]
-    out.sort(key=lambda c: (0 if c.get("enabled") else 1, c.get("due_time") or "", c["title"]))
+    routines_by_id = {r["id"]: r for r in (routines or [])}
+    out = []
+    for c in chores:
+        eff = with_effective_schedule(c, routines_by_id.get(c.get("routine_id")))
+        out.append({
+            **c,
+            "done_today": c["id"] in done_ids,
+            "effective_days": eff["days"],
+            "effective_due_time": eff["due_time"],
+        })
+    out.sort(
+        key=lambda c: (0 if c.get("enabled") else 1, c.get("effective_due_time") or "", c["title"])
+    )
     return out
 
 
@@ -833,8 +856,8 @@ BALANCE_WINDOW_DAYS = 30
 _LOPSIDED_SHARE = 75
 
 
-def balance_view(counts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Shape per-member counts into shares + a gentle caption (no judgment)."""
+def _share_members(counts: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Attach a percentage share to each member's count; return ``(members, total)``."""
     total = sum(c["count"] for c in counts)
     members = [
         {
@@ -844,20 +867,66 @@ def balance_view(counts: list[dict[str, Any]]) -> dict[str, Any]:
         }
         for c in counts
     ]
-    return {"total": total, "members": members, "caption": balance_caption(members, total)}
+    return members, total
+
+
+def balance_view(
+    counts: list[dict[str, Any]], *, carrying: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Shape per-member counts into shares + a gentle caption (no judgment).
+
+    Two facets of shared load (learning/parent-pack): ``counts`` is the **doing**
+    tally — sheet edits, star awards, and chores actually completed in the window.
+    ``carrying`` (optional) is the **accountability** tally — how many active
+    routines each parent holds the mental load for (RACI "A"), a standing count
+    rather than a windowed one. Doing and carrying are reported separately because
+    they're different kinds of load: knocking out ten chores isn't the same as
+    being the one answerable for the whole bedtime routine.
+
+    Returns the doing facet at the top level (``total``/``members``/``caption``,
+    unchanged) plus, when ``carrying`` is given, a ``carrying`` block with its own
+    members/shares and caption.
+    """
+    members, total = _share_members(counts)
+    view: dict[str, Any] = {
+        "total": total,
+        "members": members,
+        "caption": balance_caption(members, total),
+    }
+    if carrying is not None:
+        c_members, c_total = _share_members(carrying)
+        view["carrying"] = {
+            "total": c_total,
+            "members": c_members,
+            "caption": carrying_caption(c_members, c_total),
+        }
+    return view
 
 
 def balance_caption(members: list[dict[str, Any]], total: int) -> str:
-    """A warm one-liner for the split — affirming when even, gentle when not."""
+    """A warm one-liner for the doing split — affirming when even, gentle when not."""
     if total == 0 or not members:
-        return "No sheet updates yet — nothing to compare. 💛"
+        return "No shared work logged yet — nothing to compare. 💛"
     top = max(members, key=lambda m: m["share"])
     if top["share"] < _LOPSIDED_SHARE:
-        return "You've been sharing the sheet pretty evenly lately — nice teamwork. 💛"
+        return "You've been sharing the load pretty evenly lately — nice teamwork. 💛"
     return (
-        f"{top['name']} has been carrying most of the sheet lately. "
+        f"{top['name']} has been carrying most of the doing lately. "
         "Some seasons just go that way — might be a nice week to trade a few things. "
         "No blame, just a gentle heads-up."
+    )
+
+
+def carrying_caption(members: list[dict[str, Any]], total: int) -> str:
+    """A warm one-liner for the accountability split (who holds the mental load)."""
+    if total == 0 or not members:
+        return "No routines have an owner yet — assigning one gives it a home. 💛"
+    top = max(members, key=lambda m: m["share"])
+    if top["share"] < _LOPSIDED_SHARE:
+        return "The mental load of your routines is split pretty evenly — that's the goal. 💛"
+    return (
+        f"{top['name']} is holding the mental load for most of your routines. "
+        "That invisible work adds up — worth seeing if one could change hands."
     )
 
 
@@ -944,9 +1013,16 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     title = re.sub(r"\s+", " ", str(raw.get("title") or "").strip())
     if not title:
         return None, "title must be non-empty"
-    due = _parse_hhmm(raw.get("due_time"))
-    if due is None:
-        return None, "due_time must be 'HH:MM' (24-hour), e.g. '22:00'"
+    # due_time is optional: blank means "inherit the routine's schedule, or run
+    # untimed" (a checklist chore with no reminder). A non-blank value must parse.
+    due_raw = raw.get("due_time")
+    if due_raw in (None, ""):
+        due_time = ""
+    else:
+        due = _parse_hhmm(due_raw)
+        if due is None:
+            return None, "due_time must be 'HH:MM' (24-hour), e.g. '22:00', or blank"
+        due_time = due.strftime("%H:%M")
     days = format_chore_days(raw.get("days", []))
     remind_before = raw.get("remind_before", DEFAULT_CHORE_REMIND_BEFORE_MINUTES)
     try:
@@ -968,11 +1044,81 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "title": title,
         "owner_id": owner_id,
         "days": days,
-        "due_time": due.strftime("%H:%M"),
+        "due_time": due_time,
         "remind_before": remind_before,
         "impact": impact,
         "enabled": bool(raw.get("enabled", True)),
     }, None
+
+
+def normalize_routine(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate a routine definition, returning ``(clean, None)`` or ``(None, error)``.
+
+    A routine groups chores and names one **accountable** owner (RACI "A" — the
+    mental-load holder, distinct from the "responsible" doer of each chore). It
+    carries the schedule its chores inherit: ``days`` (weekday CSV, empty = every
+    day) and ``due_time`` (``"HH:MM"``, or empty = *not* time-tied — a plain
+    grouping with no clock). ``accountable_id`` is an int member id or ``None``
+    (unassigned); membership is the caller's to check (needs the store).
+    """
+    if not isinstance(raw, dict):
+        return None, "routine must be an object"
+    title = re.sub(r"\s+", " ", str(raw.get("title") or "").strip())
+    if not title:
+        return None, "title must be non-empty"
+    # due_time is optional for a routine: blank means "not time-tied".
+    due_raw = raw.get("due_time")
+    if due_raw in (None, ""):
+        due_time = ""
+    else:
+        due = _parse_hhmm(due_raw)
+        if due is None:
+            return None, "due_time must be 'HH:MM' (24-hour), e.g. '07:30', or blank"
+        due_time = due.strftime("%H:%M")
+    accountable_id = raw.get("accountable_id")
+    if accountable_id is not None:
+        try:
+            accountable_id = int(accountable_id)
+        except (ValueError, TypeError):
+            return None, "accountable_id must be a member's user id, or null"
+    impact = raw.get("impact")
+    if impact is not None:
+        impact = re.sub(r"\s+", " ", str(impact).strip())[:160] or None
+    return {
+        "title": title,
+        "accountable_id": accountable_id,
+        "days": format_chore_days(raw.get("days", [])),
+        "due_time": due_time,
+        "impact": impact,
+        "enabled": bool(raw.get("enabled", True)),
+    }, None
+
+
+def effective_chore_schedule(
+    chore: dict[str, Any], routine: dict[str, Any] | None = None
+) -> tuple[str, str]:
+    """The ``(days, due_time)`` a chore actually runs on (schedule inheritance).
+
+    A chore that sets its **own** ``due_time`` overrides fully (its own days +
+    time win). Otherwise it **inherits** its routine's schedule. A standalone
+    chore with no time of its own is *untimed* — it never fires a reminder or
+    miss-handoff; it's a checklist item you mark done (which still counts toward
+    the "doing" balance).
+    """
+    own_due = _parse_hhmm(chore.get("due_time"))
+    if own_due is not None:
+        return format_chore_days(chore.get("days")), own_due.strftime("%H:%M")
+    if routine is not None:
+        return format_chore_days(routine.get("days")), str(routine.get("due_time") or "")
+    return format_chore_days(chore.get("days")), ""
+
+
+def with_effective_schedule(
+    chore: dict[str, Any], routine: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A copy of ``chore`` with ``days``/``due_time`` resolved via its routine."""
+    days, due_time = effective_chore_schedule(chore, routine)
+    return {**chore, "days": days, "due_time": due_time}
 
 
 def chore_scheduled_on(days: Any, now_local: datetime) -> bool:
@@ -1112,6 +1258,10 @@ def run_chores_check(
         m for m in store.household_members(hid) if m.get("status") in (None, "active")
     ]
     done_ids = store.chore_ids_done_on(today)
+    # A chore inherits its routine's schedule unless it sets its own (see
+    # with_effective_schedule); resolve once so the pure timing predicates below
+    # see the effective days/due_time. An untimed chore never fires.
+    routines_by_id = {r["id"]: r for r in store.routines()}
     deliver_kw = {
         "settings": settings,
         "client": client,
@@ -1127,7 +1277,10 @@ def run_chores_check(
         return {"handle": member["handle"], "delivery": row}
 
     sent: list[dict[str, Any]] = []
-    for chore in store.chores():
+    for raw_chore in store.chores():
+        chore = with_effective_schedule(
+            raw_chore, routines_by_id.get(raw_chore.get("routine_id"))
+        )
         done = chore["id"] in done_ids
         if reminder_due(
             chore, now_local=now_local, done_today=done,
@@ -1217,6 +1370,7 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             sheet.upcoming,
             sheet.shopping,
             sheet.chores,
+            sheet.routines,
         )
     ):
         lines.append(
@@ -1282,14 +1436,33 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             lines.append(f"- [{box}] {s['item']}{tail}{who}")
         lines.append("")
 
-    # 6. Shared chores — today's status, whose job, when it's due, and why.
+    # 6. Routines — a grouping + its accountable owner (the mental-load holder).
+    if sheet.routines:
+        lines.append("## Routines")
+        for r in sheet.routines:
+            holder = r.get("accountable_name") or "unassigned"
+            bits = [f"accountable: {holder}", describe_chore_days(r.get("days"))]
+            bits.append(f"by {fmt_time_12h(r['due_time'])}" if r.get("due_time") else "no set time")
+            if not r.get("enabled"):
+                bits.append("paused")
+            impact = f" — {r['impact']}" if r.get("impact") else ""
+            lines.append(f"- **{r['title']}** ({' · '.join(bits)}){impact}")
+        lines.append("")
+
+    # 7. Shared chores — today's status, whose job, when it's due (effective), why.
     if sheet.chores:
         lines.append("## Shared chores")
         for c in sheet.chores:
             box = "x" if c.get("done_today") else " "
             owner = c.get("owner_name") or "either"
-            bits = [f"{owner}", describe_chore_days(c.get("days")),
-                    f"by {fmt_time_12h(c.get('due_time'))}"]
+            due = c.get("effective_due_time", c.get("due_time"))
+            bits = [
+                f"{owner}",
+                describe_chore_days(c.get("effective_days", c.get("days"))),
+                f"by {fmt_time_12h(due)}" if due else "untimed",
+            ]
+            if c.get("routine_title"):
+                bits.append(c["routine_title"])
             if not c.get("enabled"):
                 bits.append("paused")
             meta = " · ".join(bits)

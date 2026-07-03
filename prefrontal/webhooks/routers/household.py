@@ -24,6 +24,7 @@ from prefrontal.household import (
     normalize_checkin_config,
     normalize_chore,
     normalize_prompt,
+    normalize_routine,
     parse_star_tiers,
     parse_structured,
     prompt_due,
@@ -57,6 +58,8 @@ from prefrontal.webhooks._common import (
     HTTPException,
     InviteRedeem,
     PromptConfig,
+    RoutineEnabled,
+    RoutineSet,
     ScopedRequest,
     ShoppingAdd,
     ShoppingGot,
@@ -160,7 +163,10 @@ def build_router(
                 since = (now - timedelta(days=BALANCE_WINDOW_DAYS)).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-                view = balance_view(ctx.store.contribution_counts(since))
+                view = balance_view(
+                    ctx.store.contribution_counts(since),
+                    carrying=ctx.store.accountability_counts(),
+                )
             balance = {"enabled": bal_enabled, "window_days": BALANCE_WINDOW_DAYS, "view": view}
         return {
             "sheet": asdict(sheet),
@@ -694,17 +700,69 @@ def build_router(
 
     # -- recurring shared chores ----------------------------------------------
 
-    def _resolve_owner_id(ctx: ScopedRequest, owner_id: int | None) -> int | None:
-        """Validate ``owner_id`` is an active member (or None), else 422."""
-        if owner_id is None:
+    def _resolve_member_id(
+        ctx: ScopedRequest, uid: int | None, field: str
+    ) -> int | None:
+        """Validate ``uid`` is an active member (or None), else 422."""
+        if uid is None:
             return None
         members = {m["id"] for m in ctx.store.household_members(ctx.store.household_id_or_none())}
-        if owner_id not in members:
+        if uid not in members:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="owner_id must be a member of this household (or null).",
+                detail=f"{field} must be a member of this household (or null).",
             )
-        return owner_id
+        return uid
+
+    def _resolve_owner_id(ctx: ScopedRequest, owner_id: int | None) -> int | None:
+        """Validate ``owner_id`` is an active member (or None), else 422."""
+        return _resolve_member_id(ctx, owner_id, "owner_id")
+
+    @router.post("/household/routines", tags=["household"])
+    def set_routine(
+        payload: RoutineSet,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Upsert a routine (keyed on title within the household).
+
+        A routine groups chores under one **accountable** owner (the mental-load
+        holder) and carries the schedule its chores inherit. Editing re-submits the
+        same title; the chores linked under it are untouched.
+        """
+        _require_member(ctx)
+        clean, error = normalize_routine(payload.model_dump())
+        if error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
+            )
+        clean["accountable_id"] = _resolve_member_id(
+            ctx, clean["accountable_id"], "accountable_id"
+        )
+        rid = ctx.store.set_routine(updated_by=ctx.user["id"], **clean)
+        return {"id": rid, "title": clean["title"]}
+
+    @router.post("/household/routines/{routine_id}/enabled", tags=["household"])
+    def set_routine_enabled(
+        routine_id: int,
+        payload: RoutineEnabled,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Pause or resume a routine (and the schedule its chores inherit)."""
+        _require_member(ctx)
+        if not ctx.store.set_routine_enabled(routine_id, payload.enabled):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
+        return {"ok": True, "enabled": payload.enabled}
+
+    @router.post("/household/routines/{routine_id}/remove", tags=["household"])
+    def remove_routine(
+        routine_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Delete a routine; its chores survive, unlinked (they stand alone)."""
+        _require_member(ctx)
+        if not ctx.store.remove_routine(routine_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
+        return {"removed": True}
 
     @router.post("/household/chores", tags=["household"])
     def set_chore(
@@ -715,7 +773,8 @@ def build_router(
 
         The chore's schedule drives the notification flow: a lead-time reminder to
         the owner, and — if it slips past due — a gentle heads-up to the other
-        parent. Editing re-submits the same title; the completion log is untouched.
+        parent. A chore may join a ``routine_id`` (inheriting its schedule) and may
+        be untimed. Editing re-submits the same title; the completion log is untouched.
         """
         _require_member(ctx)
         clean, error = normalize_chore(payload.model_dump())
@@ -724,7 +783,13 @@ def build_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
             )
         clean["owner_id"] = _resolve_owner_id(ctx, clean["owner_id"])
-        cid = ctx.store.set_chore(updated_by=ctx.user["id"], **clean)
+        routine_id = payload.routine_id
+        if routine_id is not None and ctx.store.routine(routine_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="routine_id must be a routine in this household (or null).",
+            )
+        cid = ctx.store.set_chore(updated_by=ctx.user["id"], routine_id=routine_id, **clean)
         return {"id": cid, "title": clean["title"]}
 
     @router.post("/household/chores/{chore_id}/enabled", tags=["household"])

@@ -1390,17 +1390,47 @@ def test_balance_view_shares_and_gentle_captions():
     assert empty["total"] == 0 and "nothing to compare" in empty["caption"].lower()
 
 
-def test_contribution_counts_tallies_all_sources_and_keeps_zeros(store, dana):
+def test_contribution_counts_tallies_all_sources_and_keeps_zeros(store, dana, alex):
     dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
     dana.set_fact(category="sizes", item="shoe size", value="13", updated_by=dana_id)
     aid = dana.set_agreement(title="Star chart", body="s", kind="reward", updated_by=dana_id)
     dana.award_stars(agreement_id=aid, delta=1, awarded_by=dana_id)
-    # Alex did nothing, but still appears with a zero so the split shows both.
+    # Doing a chore counts too — the whole point: real work, not just sheet edits.
+    cid = dana.set_chore(title="dishes", due_time="20:00", updated_by=dana_id)
+    dana.log_chore_done(chore_id=cid, done_on="2026-07-01", done_by=alex_id)
     counts = {c["name"]: c["count"] for c in dana.contribution_counts("")}
-    assert counts == {"Dana": 3, "Alex": 0}
+    assert counts == {"Dana": 3, "Alex": 1}  # Alex's contribution is the completed chore
     # a future window excludes everything
     future = {c["name"]: c["count"] for c in dana.contribution_counts("2999-01-01 00:00:00")}
     assert future == {"Dana": 0, "Alex": 0}
+
+
+def test_balance_view_carrying_facet():
+    doing = [{"user_id": 1, "name": "Dana", "count": 2}, {"user_id": 2, "name": "Alex", "count": 8}]
+    carrying = [{"user_id": 1, "name": "Dana", "count": 3},
+                {"user_id": 2, "name": "Alex", "count": 0}]
+    v = balance_view(doing, carrying=carrying)
+    # doing facet unchanged at the top level
+    assert {m["name"]: m["share"] for m in v["members"]} == {"Alex": 80, "Dana": 20}
+    # carrying facet is its own block, named on the mental-load holder
+    assert {m["name"]: m["share"] for m in v["carrying"]["members"]} == {"Dana": 100, "Alex": 0}
+    assert "Dana" in v["carrying"]["caption"] and "mental load" in v["carrying"]["caption"]
+    # omitting carrying keeps the old single-facet shape (back-compatible)
+    assert "carrying" not in balance_view(doing)
+
+
+def test_balance_endpoint_includes_carrying(client, store):
+    dana_id = store.get_user("dana")["id"]
+    client.post("/household/balance", json={"enabled": True}, headers=_h("dana-tok"))
+    client.post(
+        "/household/routines",
+        json={"title": "Bedtime", "accountable_id": dana_id},
+        headers=_h("dana-tok"),
+    )
+    view = client.get("/household/sheet", headers=_h("dana-tok")).json()["balance"]["view"]
+    carrying = {m["name"]: m["count"] for m in view["carrying"]["members"]}
+    assert carrying == {"Dana": 1, "Alex": 0}
 
 
 def test_balance_enabled_toggle(dana):

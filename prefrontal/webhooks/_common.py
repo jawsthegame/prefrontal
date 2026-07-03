@@ -764,13 +764,24 @@ class ChoreSet(BaseModel):
     """Body of ``POST /household/chores`` — upsert a recurring shared chore."""
 
     title: str = Field(description="What has to happen, e.g. 'run the dishwasher'.")
-    due_time: str = Field(description="Local time it should be done by, 'HH:MM' 24-hour.")
+    due_time: str = Field(
+        default="",
+        description=(
+            "Local time it should be done by, 'HH:MM' 24-hour. Blank = inherit the "
+            "routine's time, or run untimed (a checklist chore, no reminder)."
+        ),
+    )
     days: list[int] = Field(
         default_factory=list,
-        description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = every day.",
+        description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = inherit routine / every day.",
     )
     owner_id: int | None = Field(
-        default=None, description="A member's user id whose job it is; null = either parent."
+        default=None,
+        description="RACI 'R' — a member's user id whose job it is; null = either parent.",
+    )
+    routine_id: int | None = Field(
+        default=None,
+        description="Routine this chore belongs to (inherits its schedule); null = stands alone.",
     )
     remind_before: int = Field(
         default=30, description="Minutes before the due time to nudge the owner."
@@ -784,6 +795,36 @@ class ChoreSet(BaseModel):
 
 class ChoreEnabled(BaseModel):
     """Body of ``POST /household/chores/{id}/enabled`` — pause or resume a chore."""
+
+    enabled: bool = Field(default=True, description="True = active, false = paused.")
+
+
+class RoutineSet(BaseModel):
+    """Body of ``POST /household/routines`` — upsert a routine (grouping + accountability)."""
+
+    title: str = Field(description="What the routine is, e.g. 'Monday pickup prep'.")
+    accountable_id: int | None = Field(
+        default=None,
+        description="RACI 'A' — the member who holds the mental load; null = unassigned.",
+    )
+    due_time: str = Field(
+        default="",
+        description="Local 'HH:MM' its chores inherit; blank = not time-tied (just a grouping).",
+    )
+    days: list[int] = Field(
+        default_factory=list,
+        description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = every day.",
+    )
+    impact: str | None = Field(
+        default=None, description="Why the routine matters if it slips."
+    )
+    enabled: bool = Field(
+        default=True, description="Whether the routine (and its inherited schedule) is active."
+    )
+
+
+class RoutineEnabled(BaseModel):
+    """Body of ``POST /household/routines/{id}/enabled`` — pause or resume a routine."""
 
     enabled: bool = Field(default=True, description="True = active, false = paused.")
 
@@ -1245,6 +1286,8 @@ __all__ = [
     "AgreementSet",
     "AppointmentCreate",
     "ChildCreate",
+    "RoutineSet",
+    "RoutineEnabled",
     "ChildRename",
     "FactClear",
     "FactSet",

@@ -44,7 +44,8 @@ the first test. Code follow-ups below are optional polish.
   to end (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; the `/kids` dashboard + `/family` glance;
   `prefrontal household add|join|leave|show|invite|redeem|star|prompt-check|
-  checkin-check|digest-check|balance|shopping|chore|chores-check`). It carries: a
+  checkin-check|digest-check|balance|shopping|chore|routine|chores-check`). It
+  carries: a
   real **household scope** (`households` + `users.household_id`), **facts** &
   **agreements**, **star charts** with goals + dual-parent congratulation and
   scheduled award prompts, a shared **shopping list**, **recurring shared chores**
@@ -55,6 +56,20 @@ the first test. Code follow-ups below are optional polish.
   workflows drive the sweeps (`star-prompt-check`, `checkin-check`, `digest-check`,
   `chores-check`). Full design:
   [`docs/household-sheet.md`](docs/household-sheet.md).
+- **Household routines (RACI) + accountability in the balance view** ✅ — chores
+  now group under a **routine** (`household_routines`) with exactly one
+  **accountable** owner (RACI "A" — the mental-load holder, distinct from the
+  chore's "responsible" doer). A routine carries the schedule its chores
+  **inherit** (a chore overrides only if it sets its own time; a chore can be
+  *untimed* — a checklist item with no clock, `due_time=''`). Crucially, load
+  balancing gained a **second facet**: `contribution_counts` now counts chores
+  actually **done** (`household_chore_log.done_by`) — not just sheet edits — as the
+  *doing* tally, and `accountability_counts` reports the *carrying* tally (enabled
+  routines each parent holds). `balance_view(counts, carrying=…)` surfaces both,
+  each with its own gentle caption. Endpoints `POST /household/routines`
+  (+`/enabled`, `/remove`), `chore.routine_id`, and `prefrontal household routine`.
+  Covered by `tests/test_chores.py` + `tests/test_household.py`. *(Next: surface
+  routines + the carrying facet on the `/kids` web dashboard.)*
 - **LLM-as-sensor — free text → candidate updates** ✅ — `prefrontal/sensor.py`
   reads a plain note ("I always blow off admin on Mondays") and *proposes*
   allowlisted `coaching_state`/episode candidates that land as **pending**

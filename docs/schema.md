@@ -316,20 +316,35 @@ positive `children.id`.
   (`redeemed_by`/`redeemed_at`, one-time) to join with no operator step. Endpoints
   `POST /household/invites{,/redeem,/{id}/revoke}`; CLI `household invite`/`redeem`.
 
+- **`household_routines`** — a named grouping of chores with ONE **accountable**
+  owner (`accountable_id`, RACI "A" — the mental-load holder, distinct from a
+  chore's `owner_id` "responsible" doer). Carries the schedule its chores inherit:
+  `days` (weekday-int CSV; empty = every day) and `due_time` (`HH:MM` local, or
+  `''` = not time-tied — a pure grouping). Plus `impact`, `enabled`, provenance.
+  `UNIQUE (household_id, title)`. Accountability is load: it's the "carrying" facet
+  of the balance view (`accountability_counts`). Endpoints `POST /household/routines`
+  (+`/enabled`, `/remove`); CLI `household routine`.
+
 - **`household_chores`** — recurring shared chores (the active load-balancer):
-  `title`, `owner_id` (NULL = either parent), `days` (weekday-int CSV; empty =
-  every day), `due_time` (`HH:MM` local), `remind_before` (minutes), `impact` (the
-  "why"), `enabled`, and two local-date dedup cursors `last_reminded_on` /
-  `last_missed_on`. The sweep (`POST /webhooks/household/chores/check`) sends the
-  owner a lead-time reminder and — if it slips past due — the *other* parent a
-  gentle heads-up. Pure logic + the shared `run_chores_check` live in
-  `prefrontal/household.py`; CLI `household chore`/`chores-check`.
+  `title`, `owner_id` (RACI "R" — whose job to do it; NULL = either parent),
+  `routine_id` (NULL = stands alone), `days` (weekday-int CSV; empty = inherit
+  routine / every day), `due_time` (`HH:MM` local; `''` = inherit the routine's
+  time, or run *untimed* — a checklist chore with no reminder), `remind_before`
+  (minutes), `impact` (the "why"), `enabled`, and two local-date dedup cursors
+  `last_reminded_on` / `last_missed_on`. A chore in a routine inherits its schedule
+  unless it sets its own time (`effective_chore_schedule`). The sweep
+  (`POST /webhooks/household/chores/check`) sends the owner a lead-time reminder
+  and — if it slips past due — the *other* parent a gentle heads-up. Pure logic +
+  the shared `run_chores_check` live in `prefrontal/household.py`; CLI
+  `household chore`/`chores-check`.
 
 - **`household_chore_log`** — one row per chore per local day it was completed
   (`done_on`, `done_by`), `UNIQUE (household_id, chore_id, done_on)`. Answers "done
   today?" for the sweep and the sheet, and keeps *who did it* legible so the loop
-  closes even when the other parent picks up a slipped chore. A one-tap **Done**
-  button (`chore_done`) or `POST /household/chores/{id}/done` writes it.
+  closes even when the other parent picks up a slipped chore — and feeds the
+  "doing" facet of the balance view (`contribution_counts` counts completions). A
+  one-tap **Done** button (`chore_done`) or `POST /household/chores/{id}/done`
+  writes it.
 
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
