@@ -100,6 +100,11 @@
   .prompt-ed.open { display: block; }
   .prompt-ed .fld { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
   .prompt-ed .fld label { font-size: 13px; color: var(--muted); min-width: 74px; }
+  .tier-ed { margin-top: 8px; padding: 11px 12px; border: 1px dashed var(--line);
+    border-radius: 10px; background: var(--bg); display: none; }
+  .tier-ed.open { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tier-ed input { flex: 1 1 240px; }
+  .tier-ed .hint { flex-basis: 100%; font-size: 12px; color: var(--muted); }
   .days { display: flex; flex-wrap: wrap; gap: 5px; }
   .day { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
     cursor: pointer; font-size: 13px; user-select: none; }
@@ -229,7 +234,8 @@
       <select id="agr-kind" title="Kind"></select>
       <textarea id="agr-body" placeholder="The plan in plain language both parents follow…"></textarea>
       <input class="grow" id="agr-stars" type="text"
-        placeholder="star thresholds (optional), e.g. 10=small Lego, 30=big Lego" />
+        title="Comma-separate as many reward tiers as you like: count=reward"
+        placeholder="reward tiers (optional) — e.g. 7=small LEGO, 30=large" />
       <button class="primary" type="submit">Save plan</button>
     </form>
   </section>
@@ -505,6 +511,26 @@ function promptEditor(a) {
   </div>`;
 }
 
+function tiersString(a) {
+  // Rebuild the "7=small LEGO, 30=large" spec from a chart's thresholds.
+  if (!isStarChart(a)) return "";
+  const unit = a.structured.unit || "star";
+  return a.structured.thresholds.map((t) => {
+    const n = t[unit] != null ? t[unit] : (t.stars != null ? t.stars : t.points);
+    return `${n}=${t.reward}`;
+  }).join(", ");
+}
+
+function tierEditor(a) {
+  return `<div class="tier-ed" data-ted="${a.id}">
+    <input type="text" class="t-spec" value="${esc(tiersString(a))}"
+      placeholder="7=small LEGO, 30=large" />
+    <button class="iconbtn" data-tiers-cancel="${a.id}">Cancel</button>
+    <button class="primary" data-tiers-save="${a.id}">Save tiers</button>
+    <div class="hint">Comma-separate as many tiers as you like — each is a total star count and its reward.</div>
+  </div>`;
+}
+
 function renderAgreements(list) {
   $("#agreements").innerHTML = (list || []).length
     ? list.map((a) => {
@@ -513,13 +539,16 @@ function renderAgreements(list) {
           ? `<div class="prompt-line">${esc(promptSummary(a.structured && a.structured.prompt))}
                <span class="edit" data-prompt-edit="${a.id}">edit reminder</span></div>`
           : "";
+        const tiers = `<div class="prompt-line">
+            <span class="edit" data-tiers-edit="${a.id}">${isStarChart(a) ? "edit reward tiers" : "add reward tiers"}</span></div>`;
         return `<div class="agr">
           <div class="row"><div class="v">
             <strong>${esc(a.title)}</strong>${who} <span class="prov">${esc(a.kind)}</span>
-            ${a.body ? `<div>${esc(a.body)}</div>` : ""}${starBlock(a)}${prompt}
+            ${a.body ? `<div>${esc(a.body)}</div>` : ""}${starBlock(a)}${prompt}${tiers}
           </div>
           <button class="iconbtn del" data-delagr="${a.id}" title="Remove">🗑</button></div>
           ${isStarChart(a) ? promptEditor(a) : ""}
+          ${tierEditor(a)}
         </div>`;
       }).join("")
     : `<div class="empty">No standing agreements yet.</div>`;
@@ -751,6 +780,19 @@ $("#agreements").addEventListener("click", async (e) => {
       alert("🎉 Goal reached — reward unlocked: " + r.goals_reached.map((g) => g.reward).join(", ") +
             "\nBoth parents have been notified.");
     }
+    await loadSheet();
+    return;
+  }
+  const tiersEdit = t.getAttribute("data-tiers-edit");
+  if (tiersEdit) { const ed = document.querySelector(`.tier-ed[data-ted="${tiersEdit}"]`); if (ed) ed.classList.toggle("open"); return; }
+  const tiersCancel = t.getAttribute("data-tiers-cancel");
+  if (tiersCancel) { const ed = document.querySelector(`.tier-ed[data-ted="${tiersCancel}"]`); if (ed) ed.classList.remove("open"); return; }
+  const tiersSave = t.getAttribute("data-tiers-save");
+  if (tiersSave) {
+    const ed = document.querySelector(`.tier-ed[data-ted="${tiersSave}"]`);
+    const spec = ed.querySelector(".t-spec").value.trim();
+    if (!spec) { alert("Add at least one tier, e.g. 7=small LEGO, 30=large."); return; }
+    await post(`/household/agreements/${tiersSave}/tiers`, { tiers: spec });
     await loadSheet();
     return;
   }

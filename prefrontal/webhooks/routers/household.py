@@ -24,6 +24,7 @@ from prefrontal.household import (
     normalize_checkin_config,
     normalize_chore,
     normalize_prompt,
+    parse_star_tiers,
     parse_structured,
     prompt_due,
     prompt_question,
@@ -60,6 +61,7 @@ from prefrontal.webhooks._common import (
     ShoppingAdd,
     ShoppingGot,
     StarAward,
+    TierConfig,
     _parse_dt_or_none,
     build_sheet,
     local_datetime,
@@ -409,6 +411,48 @@ def build_router(
             child_id=agreement.get("child_id") or 0,
         )
         return {"ok": True, "prompt": clean}
+
+    @router.post("/household/agreements/{agreement_id}/tiers", tags=["household"])
+    def set_tiers(
+        agreement_id: int,
+        payload: TierConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set/replace a chart's reward tiers in place (e.g. '7=small LEGO, 30=large').
+
+        Parses the comma-separated ``count=reward`` spec and merges the thresholds
+        into the agreement's ``structured`` JSON, leaving any prompt schedule and
+        the running star total untouched — so you can add or retune tiers without
+        recreating the chart (and a plain agreement becomes a star chart).
+        """
+        _require_member(ctx)
+        agreement = ctx.store.agreement(agreement_id)
+        if agreement is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="no such agreement"
+            )
+        tiers = parse_star_tiers(payload.tiers)
+        if tiers is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Give at least one tier as 'count=reward', e.g. '7=small LEGO, 30=large'.",
+            )
+        structured = parse_structured(agreement.get("structured"))
+        structured = structured if isinstance(structured, dict) else {}
+        structured["thresholds"] = tiers
+        structured.setdefault("unit", "star")
+        structured.setdefault("earn_only", True)
+        import json
+
+        ctx.store.set_agreement(
+            title=agreement["title"],
+            body=agreement.get("body"),
+            kind=agreement.get("kind") or "consistency",
+            structured=json.dumps(structured),
+            updated_by=ctx.user["id"],
+            child_id=agreement.get("child_id") or 0,
+        )
+        return {"ok": True, "thresholds": tiers}
 
     @router.post("/webhooks/household/star-prompts/check", tags=["household"])
     def star_prompts_check(
