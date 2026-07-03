@@ -476,6 +476,18 @@ def build_router(
             )
             return _dismiss_page("All caught up 💛")
 
+        if action == "chore_done":
+            # target_id is the chore id. Log it done for today (local date),
+            # attributed to whoever tapped — so a partner picking up a slipped
+            # chore closes the loop and stops the miss-handoff re-firing.
+            today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
+            result = memory.log_chore_done(
+                chore_id=target_id, done_on=today, done_by=user["id"]
+            )
+            if result is None:
+                return _dismiss_page("That chore is no longer on the list.")
+            return _dismiss_page(f"Done — “{result['title']}” is sorted for today. 🙌")
+
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)
         title = (commitment or {}).get("title") or "your commitment"

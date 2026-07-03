@@ -688,6 +688,179 @@ class HouseholdRepo:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- recurring shared chores ----------------------------------------------
+    #
+    # Household-scoped, owner-assigned recurring tasks whose whole reason to exist
+    # is shared load: forgetting one lands on the other parent. Storage is plain
+    # (upsert on title, a per-day completion log, two date cursors that dedup the
+    # reminder and the miss-handoff); the "is it due?" timing and the message copy
+    # are pure and live in prefrontal.household. `days` is stored as a weekday-int
+    # CSV ("0,1,2"; empty = every day) — the pure layer parses/formats it.
+
+    def set_chore(
+        self,
+        *,
+        title: str,
+        due_time: str,
+        days: str = "",
+        owner_id: int | None = None,
+        remind_before: int = 30,
+        impact: str | None = None,
+        enabled: bool = True,
+        updated_by: int | None,
+    ) -> int:
+        """Upsert a recurring chore (keyed on title within the household), returning its id.
+
+        Same last-write-wins upsert shape as :meth:`set_agreement`. ``owner_id`` is
+        the member whose job it is (``None`` = either parent). Editing a chore never
+        clears its completion log or dedup cursors — only its definition changes.
+        """
+        hid = self._household_id()
+        self.conn.execute(
+            """
+            INSERT INTO household_chores
+                (household_id, title, owner_id, days, due_time, remind_before,
+                 impact, enabled, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (household_id, title) DO UPDATE SET
+                owner_id      = excluded.owner_id,
+                days          = excluded.days,
+                due_time      = excluded.due_time,
+                remind_before = excluded.remind_before,
+                impact        = excluded.impact,
+                enabled       = excluded.enabled,
+                updated_by    = excluded.updated_by,
+                updated_at    = CURRENT_TIMESTAMP
+            """,
+            (hid, title.strip(), owner_id, days, due_time, int(remind_before),
+             impact, 1 if enabled else 0, updated_by),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM household_chores WHERE household_id = ? AND title = ?",
+            (hid, title.strip()),
+        ).fetchone()
+        return int(row["id"])
+
+    def set_chore_enabled(self, chore_id: int, enabled: bool) -> bool:
+        """Pause or resume a chore without deleting it. ``True`` if a row changed."""
+        cur = self.conn.execute(
+            "UPDATE household_chores SET enabled = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND household_id = ?",
+            (1 if enabled else 0, chore_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def remove_chore(self, chore_id: int) -> bool:
+        """Delete a chore and its completion log (scoped to the household)."""
+        hid = self._household_id()
+        self.conn.execute(
+            "DELETE FROM household_chore_log WHERE chore_id = ? AND household_id = ?",
+            (chore_id, hid),
+        )
+        cur = self.conn.execute(
+            "DELETE FROM household_chores WHERE id = ? AND household_id = ?",
+            (chore_id, hid),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def chores(self) -> list[dict[str, Any]]:
+        """All the household's chores, each with the owner's display name.
+
+        Ordered by due time then title for a stable list. ``owner_name`` is
+        ``None`` for an unassigned ("either parent") chore.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT c.id, c.title, c.owner_id, c.days, c.due_time, c.remind_before,
+                   c.impact, c.enabled, c.last_reminded_on, c.last_missed_on,
+                   COALESCE(u.display_name, u.handle) AS owner_name
+            FROM household_chores c
+            LEFT JOIN users u ON u.id = c.owner_id
+            WHERE c.household_id = ?
+            ORDER BY c.due_time ASC, c.title ASC
+            """,
+            (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def chore(self, chore_id: int) -> dict[str, Any] | None:
+        """One chore row (scoped to the household), or ``None`` if not found.
+
+        Used by the one-tap "Done" path before logging a completion, so a tap
+        can't touch another household's chore (reads back ``None`` → 404).
+        """
+        row = self.conn.execute(
+            "SELECT id, title, owner_id, days, due_time, remind_before, impact, "
+            "enabled, last_reminded_on, last_missed_on "
+            "FROM household_chores WHERE id = ? AND household_id = ?",
+            (chore_id, self._household_id()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def chore_ids_done_on(self, done_on: str) -> set[int]:
+        """The ids of chores already completed on local date ``done_on`` (a "YYYY-MM-DD")."""
+        rows = self.conn.execute(
+            "SELECT chore_id FROM household_chore_log "
+            "WHERE household_id = ? AND done_on = ?",
+            (self._household_id(), done_on),
+        ).fetchall()
+        return {int(r["chore_id"]) for r in rows}
+
+    def log_chore_done(
+        self, *, chore_id: int, done_on: str, done_by: int | None
+    ) -> dict[str, Any] | None:
+        """Mark a chore done for local date ``done_on`` (idempotent). Returns a result dict.
+
+        Returns ``None`` if the chore isn't in this household (so a tap can 404).
+        ``created`` is ``False`` when it was already logged done for that day — a
+        second tap re-stamps who/when in place rather than erroring or double-logging.
+        """
+        hid = self._household_id()
+        chore = self.conn.execute(
+            "SELECT title FROM household_chores WHERE id = ? AND household_id = ?",
+            (chore_id, hid),
+        ).fetchone()
+        if chore is None:
+            return None
+        already = self.conn.execute(
+            "SELECT 1 FROM household_chore_log "
+            "WHERE household_id = ? AND chore_id = ? AND done_on = ?",
+            (hid, chore_id, done_on),
+        ).fetchone() is not None
+        self.conn.execute(
+            """
+            INSERT INTO household_chore_log (household_id, chore_id, done_on, done_by, done_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (household_id, chore_id, done_on) DO UPDATE SET
+                done_by = excluded.done_by,
+                done_at = CURRENT_TIMESTAMP
+            """,
+            (hid, chore_id, done_on, done_by),
+        )
+        self.conn.commit()
+        return {"title": chore["title"], "created": not already, "done_on": done_on}
+
+    def mark_chore_reminded(self, chore_id: int, on: str) -> None:
+        """Stamp ``last_reminded_on`` = local date ``on`` (dedups the reminder to once/day)."""
+        self.conn.execute(
+            "UPDATE household_chores SET last_reminded_on = ? "
+            "WHERE id = ? AND household_id = ?",
+            (on, chore_id, self._household_id()),
+        )
+        self.conn.commit()
+
+    def mark_chore_missed(self, chore_id: int, on: str) -> None:
+        """Stamp ``last_missed_on`` = local date ``on`` (dedups the miss-handoff to once/day)."""
+        self.conn.execute(
+            "UPDATE household_chores SET last_missed_on = ? "
+            "WHERE id = ? AND household_id = ?",
+            (on, chore_id, self._household_id()),
+        )
+        self.conn.commit()
+
     # -- self-serve household setup + invites ---------------------------------
     #
     # Membership without an operator: a user with no household can create one

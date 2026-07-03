@@ -354,6 +354,49 @@ household-scoped table.
 - Surfaces: `POST /household/shopping`, `…/{id}/got`, `…/{id}/remove`; the `/kids`
   dashboard's checklist; and `prefrontal household shopping`.
 
+### 3.6.5 Recurring shared chores — `household_chores` + `household_chore_log`
+
+The **active heart of shared load**: a chore is one parent's recurring job (run
+the dishwasher, pack lunches) whose whole point is that forgetting it lands on
+the *other* parent. Unlike a star chart (about the kids), a chore is about the
+co-parents' own load, so it carries no `child_id` — just an `owner_id`, a
+schedule, and the plain reason it matters.
+
+The notification flow reads the schedule twice a day (via a periodic sweep, like
+the star-award prompt and check-in):
+
+- A **lead-time reminder** to the *owner* `remind_before` minutes before `due_time`
+  on a scheduled, still-undone day — "Time to run the dishwasher — ideally by
+  10:00pm. If it slips, it makes the morning harder. Tap Done once it's sorted."
+- If the due time passes with the chore still undone, a **miss-handoff**: the
+  owner gets a no-blame "still isn't done" nudge, and the *other* parent gets a
+  gentle heads-up — "Heads up — 'run the dishwasher' didn't get done today …
+  flagging it so it's not a morning surprise" — so the slip isn't discovered cold
+  the next morning. An unassigned chore (`owner_id` NULL) reminds/nudges everyone.
+
+Details:
+
+- **`household_chores`**: `title` (unique per household), `owner_id` (NULL =
+  either parent), `days` (weekday-int CSV; empty = every day), `due_time`
+  (`HH:MM` local), `remind_before` (minutes), `impact` (the "why"), `enabled`,
+  provenance, and two local-date cursors — `last_reminded_on` / `last_missed_on` —
+  that dedup each stage to once per local day (mirrors
+  `household_agreements.last_prompted_at`).
+- **`household_chore_log`**: one row per chore per local day it was completed
+  (`done_on`, `done_by`), so "done today?" is a lookup and *who actually did it*
+  stays legible — the loop closes even when the **other** parent picks up a
+  slipped chore. The `UNIQUE (household_id, chore_id, done_on)` key makes "mark
+  done" idempotent.
+- **Pure logic** (`prefrontal.household`): `normalize_chore`, `reminder_due` /
+  `miss_due` (fed now / done-today / last-fired, so timing is unit-tested with no
+  store or clock), the message builders, and `run_chores_check` — the one
+  orchestration path (like `award_stars_and_notify`) the endpoint and CLI share.
+- **Surfaces**: `POST /household/chores`, `…/{id}/done`, `…/{id}/enabled`,
+  `…/{id}/remove`, the `POST /webhooks/household/chores/check` sweep, a one-tap
+  **✓ Done** ntfy button (`chore_done` → `/nudge/act`, attributed to whoever
+  taps), a **Shared chores** section on the sheet (today's done/pending status),
+  and `prefrontal household chore` / `chores-check`.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`

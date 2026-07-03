@@ -615,7 +615,7 @@ kids' facts, agreements/star charts, a shopping list — with load-balancing pus
    load-balancing lights up once a second member joins.
 2. **Use it.** The editable sheet is the **`/kids`** dashboard (partner glance at
    `/family`); edit in plain English via `POST /assistant`. CLI:
-   `prefrontal household show|star|balance|shopping`.
+   `prefrontal household show|star|balance|shopping|chore`.
 3. **Schedule the sweeps** (import each, set the ntfy topic + token):
    - [`star-prompt-check.workflow.json`](../deploy/n8n/star-prompt-check.workflow.json)
      — asks both parents "did <kid> earn a star today?" on the chart's schedule.
@@ -623,6 +623,9 @@ kids' facts, agreements/star charts, a shopping list — with load-balancing pus
      — the optional weekly mental-load check-in.
    - [`digest-check.workflow.json`](../deploy/n8n/digest-check.workflow.json)
      — the daily delta digest: pushes each parent what the *other* changed.
+   - [`chores-check.workflow.json`](../deploy/n8n/chores-check.workflow.json)
+     — recurring shared chores: a lead-time reminder to the owner, and a
+     miss-handoff to the *other* parent if a chore slips past due (every 15 min).
 
 Full design and data model: [`household-sheet.md`](household-sheet.md).
 

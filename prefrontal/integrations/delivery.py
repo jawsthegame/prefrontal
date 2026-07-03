@@ -76,6 +76,7 @@ _CONTEXT_KIND = {
     "star": "star",
     "checkin": "load",
     "digest": "digest",
+    "chore": "chore",
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -86,6 +87,7 @@ _KIND_TARGET = {
     "star": "agreement_id",
     "load": "target",
     "digest": "target",
+    "chore": "chore_id",
 }
 
 
@@ -504,6 +506,32 @@ def household_digest_notice(message: str, *, channel: str = "push") -> Decision:
         context_key="digest",
         dedup_key="household_digest",
         ref={"target": 0},
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
+def household_chore_notice(
+    message: str, chore_id: int, *, channel: str = "push"
+) -> Decision:
+    """A shared-chore push (reminder or miss-handoff) with a one-tap "Done" button.
+
+    Carries ``context_key="chore"`` and the chore's id in ``ref`` so
+    :meth:`DeliveryClient.deliver` attaches the signed ✓ Done button (built per
+    recipient in ``notify.py``) — tapping it marks the chore done for today with no
+    app switch, attributed to whoever tapped. The same builder serves the owner's
+    reminder, the owner's still-not-done nudge, and the other parent's heads-up;
+    only the ``message`` differs (see :mod:`prefrontal.household`).
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="chore_reminder",
+        urgency="nudge",
+        text=message,
+        context_key="chore",
+        dedup_key=f"chore:{chore_id}",
+        ref={"chore_id": chore_id},
     )
     return Decision(cue=cue, channel=channel, text=message)
 

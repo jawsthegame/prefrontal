@@ -308,6 +308,21 @@ positive `children.id`.
   (`redeemed_by`/`redeemed_at`, one-time) to join with no operator step. Endpoints
   `POST /household/invites{,/redeem,/{id}/revoke}`; CLI `household invite`/`redeem`.
 
+- **`household_chores`** — recurring shared chores (the active load-balancer):
+  `title`, `owner_id` (NULL = either parent), `days` (weekday-int CSV; empty =
+  every day), `due_time` (`HH:MM` local), `remind_before` (minutes), `impact` (the
+  "why"), `enabled`, and two local-date dedup cursors `last_reminded_on` /
+  `last_missed_on`. The sweep (`POST /webhooks/household/chores/check`) sends the
+  owner a lead-time reminder and — if it slips past due — the *other* parent a
+  gentle heads-up. Pure logic + the shared `run_chores_check` live in
+  `prefrontal/household.py`; CLI `household chore`/`chores-check`.
+
+- **`household_chore_log`** — one row per chore per local day it was completed
+  (`done_on`, `done_by`), `UNIQUE (household_id, chore_id, done_on)`. Answers "done
+  today?" for the sweep and the sheet, and keeps *who did it* legible so the loop
+  closes even when the other parent picks up a slipped chore. A one-tap **Done**
+  button (`chore_done`) or `POST /household/chores/{id}/done` writes it.
+
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its
 "upcoming" section.

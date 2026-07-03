@@ -238,6 +238,10 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _balance_cli(store, args, settings)
         elif args.household_action == "shopping":
             return _shopping_cli(store, args)
+        elif args.household_action == "chore":
+            return _chores_cli(store, args, settings)
+        elif args.household_action == "chores-check":
+            return _chores_check_cli(store, args, settings)
         elif args.household_action == "invite":
             scoped = _resolve_user_store(store, args.user)
             if scoped.household_id_or_none() is None:
@@ -291,6 +295,117 @@ def _shopping_cli(store, args) -> int:
         who = f" — {s['child_name']}" if s.get("child_name") else ""
         tail = f" ({detail})" if detail else ""
         print(f"  [{box}] #{s['id']} {s['item']}{tail}{who}")
+    return 0
+
+
+def _chores_cli(store, args, settings) -> int:
+    """List the shared chores, or add/mark-done/pause/remove one.
+
+    The CLI face of the recurring-chore feature: ``--add`` defines a chore (with
+    ``--due`` required), ``--done`` marks it complete for today, ``--remove``
+    deletes it, and ``--enable``/``--disable`` pause or resume its reminders.
+    """
+    from prefrontal.household import (
+        describe_chore_days,
+        fmt_time_12h,
+        normalize_chore,
+    )
+    from prefrontal.scheduling import local_datetime
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+
+    if args.add:
+        owner_id = None
+        if args.owner:
+            owner = store.get_user(args.owner)
+            if owner is None or owner.get("household_id") != scoped.household_id_or_none():
+                print(f"'{args.owner}' isn't a member of this household.", file=sys.stderr)
+                return 1
+            owner_id = owner["id"]
+        clean, error = normalize_chore(
+            {
+                "title": args.add,
+                "due_time": args.due,
+                "days": args.days.split(",") if args.days else [],
+                "owner_id": owner_id,
+                "remind_before": args.remind,
+                "impact": args.impact,
+            }
+        )
+        if error is not None:
+            print(error, file=sys.stderr)
+            return 1
+        cid = scoped.set_chore(updated_by=scoped.user_id, **clean)
+        print(f"Added chore #{cid}: {clean['title']} (by {fmt_time_12h(clean['due_time'])}).")
+        return 0
+    if args.done is not None:
+        today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
+        result = scoped.log_chore_done(
+            chore_id=args.done, done_on=today, done_by=scoped.user_id
+        )
+        if result is None:
+            print(f"No chore #{args.done}.", file=sys.stderr)
+            return 1
+        print(f"Marked #{args.done} done for today.")
+        return 0
+    if args.remove is not None:
+        if not scoped.remove_chore(args.remove):
+            print(f"No chore #{args.remove}.", file=sys.stderr)
+            return 1
+        print(f"Removed chore #{args.remove}.")
+        return 0
+    for cid, want in ((args.enable, True), (args.disable, False)):
+        if cid is not None:
+            if not scoped.set_chore_enabled(cid, want):
+                print(f"No chore #{cid}.", file=sys.stderr)
+                return 1
+            print(f"{'Resumed' if want else 'Paused'} chore #{cid}.")
+            return 0
+
+    chores = scoped.chores()
+    if not chores:
+        print(
+            'No shared chores yet. Add one: '
+            'household chore --add "run the dishwasher" --due 22:00'
+        )
+        return 0
+    today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
+    done_ids = scoped.chore_ids_done_on(today)
+    for c in chores:
+        box = "x" if c["id"] in done_ids else " "
+        owner = c.get("owner_name") or "either"
+        paused = "" if c["enabled"] else " [paused]"
+        impact = f" — {c['impact']}" if c.get("impact") else ""
+        print(
+            f"  [{box}] #{c['id']} {c['title']} "
+            f"({owner} · {describe_chore_days(c['days'])} · by {fmt_time_12h(c['due_time'])})"
+            f"{paused}{impact}"
+        )
+    return 0
+
+
+def _chores_check_cli(store, args, settings) -> int:
+    """Fire any due chore reminders / miss-handoffs for a household (the sweep, run locally).
+
+    The CLI twin of ``POST /webhooks/household/chores/check`` — for a launchd
+    trigger or a manual test. Shares :func:`run_chores_check`, so the notification
+    logic lives in one place.
+    """
+    from prefrontal.household import run_chores_check
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    sent = run_chores_check(scoped, settings=settings)
+    if not sent:
+        print("No chore reminders due right now.")
+        return 0
+    for s in sent:
+        print(f"  → {s['stage']}: {s['title']} ({len(s['notified'])} notified)")
     return 0
 
 
@@ -1432,6 +1547,28 @@ def build_parser() -> argparse.ArgumentParser:
     h_shop.add_argument("--child", type=int, default=None, help="A children.id (with --add).")
     h_shop.add_argument("--got", type=int, default=None, help="Check off item by id.")
     h_shop.add_argument("--remove", type=int, default=None, help="Remove item by id.")
+    h_chore = house_sub.add_parser(
+        "chore", help="List shared chores (or add/mark-done/pause/remove one)."
+    )
+    h_chore.add_argument("--user", default=None, help="Handle of a household member.")
+    h_chore.add_argument("--add", default=None, help="Add a chore (what to do).")
+    h_chore.add_argument("--due", default=None, help="Due time 'HH:MM' local (with --add).")
+    h_chore.add_argument(
+        "--days", default=None, help="Weekday CSV '0,1,2' (0=Mon; omit = every day)."
+    )
+    h_chore.add_argument("--owner", default=None, help="Owner's handle (with --add).")
+    h_chore.add_argument(
+        "--remind", type=int, default=30, help="Minutes before due to nudge (with --add)."
+    )
+    h_chore.add_argument("--impact", default=None, help="Why it matters if it slips.")
+    h_chore.add_argument("--done", type=int, default=None, help="Mark chore done today, by id.")
+    h_chore.add_argument("--remove", type=int, default=None, help="Remove chore by id.")
+    h_chore.add_argument("--enable", type=int, default=None, help="Resume chore by id.")
+    h_chore.add_argument("--disable", type=int, default=None, help="Pause chore by id.")
+    h_chk = house_sub.add_parser(
+        "chores-check", help="Fire any chore reminders / miss-handoffs due now."
+    )
+    h_chk.add_argument("--user", default=None, help="Handle of a household member.")
     h_inv = house_sub.add_parser(
         "invite", help="Generate a shareable invite code for your household."
     )

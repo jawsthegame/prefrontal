@@ -591,6 +591,53 @@ CREATE TABLE IF NOT EXISTS household_invites (
 
 CREATE INDEX IF NOT EXISTS idx_household_invites_code ON household_invites (code);
 
+-- Recurring shared chores — the "someone has to do this every day, and if it
+-- slips it lands on the other parent" load. Unlike a star chart (about the
+-- kids), a chore is about the *co-parents'* shared load: it's owned by one
+-- member, recurs on chosen weekdays at a due time, and carries the plain reason
+-- it matters ("makes the morning harder"). The notification flow reads it: a
+-- lead-time reminder to the owner, and — if the due time passes undone — a gentle
+-- heads-up to the *other* parent so the slip isn't a morning surprise. Completion
+-- is logged per local day (household_chore_log) both for provenance ("who did
+-- it") and to answer "done today?"; two date cursors on the row dedup the
+-- reminder and the miss-handoff to once per local day, mirroring
+-- household_agreements.last_prompted_at. See docs/household-sheet.md.
+CREATE TABLE IF NOT EXISTS household_chores (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id  INTEGER NOT NULL REFERENCES households(id),
+    title         TEXT NOT NULL,                    -- "run the dishwasher"
+    owner_id      INTEGER REFERENCES users(id),     -- whose job it is (NULL = either parent)
+    days          TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = every day
+    due_time      TEXT NOT NULL,                    -- "HH:MM" local — by when it should be done
+    remind_before INTEGER NOT NULL DEFAULT 30,      -- minutes before due to nudge the owner
+    impact        TEXT,                             -- why it matters ("makes the morning harder")
+    enabled       INTEGER NOT NULL DEFAULT 1,       -- 0/1
+    updated_by    INTEGER REFERENCES users(id),
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_reminded_on TEXT,                           -- local "YYYY-MM-DD" the reminder last fired (dedup)
+    last_missed_on   TEXT,                           -- local "YYYY-MM-DD" the miss-handoff last fired (dedup)
+    UNIQUE (household_id, title)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_chores ON household_chores (household_id, enabled);
+
+-- One row per chore per local day it was completed — the provenance ledger
+-- behind "done today?" (like household_stars is behind a chart's total). done_by
+-- records which parent actually did it, so the loop closes even when the *other*
+-- parent picks up a slipped chore. The UNIQUE key makes "mark done" idempotent.
+CREATE TABLE IF NOT EXISTS household_chore_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    chore_id     INTEGER NOT NULL REFERENCES household_chores(id),
+    done_on      TEXT NOT NULL,                     -- local "YYYY-MM-DD" it was completed
+    done_by      INTEGER REFERENCES users(id),      -- provenance — who actually did it
+    done_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, chore_id, done_on)
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_chore_log ON household_chore_log (household_id, chore_id, done_on);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"
