@@ -161,6 +161,13 @@ def build_router(
                     carrying=ctx.store.accountability_counts(),
                 )
             balance = {"enabled": bal_enabled, "window_days": BALANCE_WINDOW_DAYS, "view": view}
+        # The parents themselves (id + display name), so the /kids UI can offer
+        # them in the chore-owner / routine-accountable pickers.
+        members = [
+            {"id": m["id"], "name": m.get("display_name") or m["handle"]}
+            for m in ctx.store.household_members(ctx.store.household_id_or_none())
+            if m.get("status") in (None, "active")
+        ]
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
@@ -169,6 +176,7 @@ def build_router(
             # (check-in, digest, balance) hide when not shared and return
             # automatically once a second parent joins.
             "shared": shared,
+            "members": members,
             "checkin": checkin,
             "digest": digest,
             "balance": balance,
