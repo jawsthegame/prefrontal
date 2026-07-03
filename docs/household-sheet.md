@@ -351,9 +351,11 @@ household-scoped table.
   `remove_shopping_item`, `shopping_items` (still-needed first). It rides the
   shared sheet — `build_sheet`/`render_sheet` gain a **Shopping** section
   (unchecked/ticked boxes), and `counts["shopping"]` is the still-needed tally.
-- Surfaces: `POST /household/shopping`, `…/{id}/got`, `…/{id}/remove`; the `/kids`
-  dashboard's checklist; the **`/family`** view's quick-add + tap-to-check-off (the
-  one editable spot on the otherwise read-only shared glance); the natural-language
+- Surfaces: `GET /household/shopping` (the list alone) + `POST /household/shopping`,
+  `…/{id}/got`, `…/{id}/remove`; the `/kids` dashboard's checklist; the **`/family`**
+  view's quick-add + tap-to-check-off (the one editable spot on the otherwise
+  read-only shared glance); a **Shopping card on `/dashboard`** (direct quick-add +
+  check-off for household members, no model needed); the natural-language
   **assistant** (`add_shopping` / `check_shopping` / `remove_shopping`, so "add
   eggs and milk to the list" works from the dashboard or `/kids` box); and
   `prefrontal household shopping`.

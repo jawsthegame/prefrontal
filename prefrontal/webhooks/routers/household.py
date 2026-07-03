@@ -594,6 +594,19 @@ def build_router(
 
     # -- shared shopping list -------------------------------------------------
 
+    @router.get("/household/shopping", tags=["household"])
+    def list_shopping(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The shared shopping list on its own (still-needed first).
+
+        A light read for surfaces that only want the list — the dashboard's
+        quick-add card — without pulling the whole household sheet. 404s for a
+        user in no household, mirroring the write endpoints.
+        """
+        _require_member(ctx)
+        return {"items": ctx.store.shopping_items()}
+
     @router.post("/household/shopping", status_code=status.HTTP_201_CREATED, tags=["household"])
     def add_shopping(
         payload: ShoppingAdd,

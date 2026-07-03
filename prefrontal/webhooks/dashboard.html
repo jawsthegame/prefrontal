@@ -188,6 +188,13 @@
     width: 100%; padding: 9px 11px; border-radius: 8px; min-height: 38px;
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
   }
+  /* shopping list rows */
+  .shop-line { display: flex; gap: 9px; padding: 5px 0; align-items: baseline; }
+  .shop-line .box { color: var(--muted); cursor: pointer; background: none; border: none;
+    font: inherit; padding: 0; line-height: 1; }
+  .shop-line .box:hover { color: var(--accent); }
+  .shop-line.done .txt { text-decoration: line-through; color: var(--muted); }
+  .shop-sub { color: var(--muted); font-size: 12px; }
 
   /* lightweight markdown */
   .md h3 { font-size: 14px; margin: 14px 0 6px; }
@@ -331,6 +338,14 @@
     </div>
     <div class="searchrow">
       <input id="todo-search" type="search" placeholder="Search todos…" autocomplete="off" aria-label="Search todos" />
+    </div>
+    <div class="body"></div>
+  </section>
+  <section class="card" id="c-shopping" style="display:none">
+    <h2>Shopping</h2>
+    <div class="addrow">
+      <input id="shop-item" placeholder="Add an item…" autocomplete="off" />
+      <button class="add" data-action="shop-add">Add</button>
     </div>
     <div class="body"></div>
   </section>
@@ -861,6 +876,20 @@ function renderApplied(d) {
   $("#asst-log").innerHTML = html;
 }
 
+// The shared shopping list — a household member's quick-add card (hidden for a
+// solo user, whose /household/shopping 404s). Tap a box to check off / un-check.
+function renderShopping(items) {
+  items = items || [];
+  if (!items.length) return `<div class="empty">Nothing on the list.</div>`;
+  const needed = items.filter((s) => !s.got);
+  return items.map((s) => {
+    const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
+    const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
+    return `<div class="shop-line${s.got ? " done" : ""}"><button type="button" class="box" data-action="shop-check" data-id="${s.id}" data-got="${s.got ? 1 : 0}" aria-label="${s.got ? "Un-check" : "Check off"} ${esc(s.item)}">${s.got ? "☑" : "☐"}</button>`
+      + `<span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span></div>`;
+  }).join("") + (needed.length ? "" : `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`);
+}
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -868,12 +897,19 @@ async function load() {
   const results = await Promise.allSettled([
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
-    api("/mail/triage/learned"), api("/todos/categories"),
+    api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping] = results;
+  // Shopping card appears only for a household member (solo users 404 → stays hidden).
+  if (shopping.status === "fulfilled") {
+    $("#c-shopping").style.display = "";
+    $("#c-shopping .body").innerHTML = renderShopping(shopping.value.items);
+  } else {
+    $("#c-shopping").style.display = "none";
+  }
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
   put("#c-recent", outings, renderRecent);
@@ -921,7 +957,14 @@ document.addEventListener("click", async (e) => {
       const body = pri === "auto" ? { title } : { title, priority: Number(pri) };
       await post("/todos", body);
       $("#todo-title").value = "";
-    } else if (act === "todo-done") { await post(`/todos/${id}/done`); }
+    } else if (act === "shop-add") {
+      const item = $("#shop-item").value.trim();
+      if (!item) return;
+      await post("/household/shopping", { item });
+      $("#shop-item").value = "";
+    }
+    else if (act === "shop-check") { await post(`/household/shopping/${id}/got`, { got: el.dataset.got !== "1" }); }
+    else if (act === "todo-done") { await post(`/todos/${id}/done`); }
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
@@ -957,6 +1000,7 @@ document.addEventListener("click", async (e) => {
   finally { el.disabled = false; }
 });
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
+$("#shop-item").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="shop-add"]').click(); });
 $("#todo-search").addEventListener("input", paintTodos);
 $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
 

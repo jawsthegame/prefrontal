@@ -402,6 +402,8 @@ default); the response says which `provider` answered.
   close outings, dismiss conflicts. It also has an **assistant chat box**: type
   a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
   todo") and it proposes the concrete edits, which you review and one-tap Apply.
+  When you're in a household it also shows a **Shopping** card — a direct quick-add
+  box and tap-to-check-off (no model needed), alongside the assistant path.
   Open it over Tailscale; it asks for your token once and remembers it.
 - **`GET /family`** — a calm, mostly read-only *shared household* glance for
   everyone in the household: kids & facts, standing plans + star progress, the
@@ -521,7 +523,7 @@ token client-side).
 | `POST /places` · `GET /places` | Curated location aliases |
 | `POST /webhooks/mail/sync` · `GET /mail` | Ingest mail / recent + action items |
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
-| `GET /household/sheet` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping, load-balance, check-in, digest, invites |
+| `GET /household/sheet` · `GET /household/shopping` · `POST /household/{create,facts,agreements,shopping,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping (list/add/check/remove), load-balance, check-in, digest, invites |
 | `POST /webhooks/household/{star-prompts,checkin,digest}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest) |
 | `GET /dashboard` · `/family` · `/kids` · `/stats` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights (no auth on the shell) |
 | `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
