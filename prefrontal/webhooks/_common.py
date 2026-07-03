@@ -201,6 +201,15 @@ from prefrontal.todos import (
     normalize_category,
     record_todo_closed,
 )
+from prefrontal.triage import (
+    apply as triage_apply,
+)
+from prefrontal.triage import (
+    classify as triage_classify,
+)
+from prefrontal.triage import (
+    signal_from_payload,
+)
 from prefrontal.trips import (
     TRIP_CATEGORIES,
     apply_reflection,
@@ -615,6 +624,18 @@ class TriageForget(BaseModel):
     """Body of ``POST /mail/triage/learned/forget`` — drop one learned correction."""
 
     id: int = Field(description="The `triage_feedback` row id to forget (from the learned list).")
+
+
+class TriageIn(BaseModel):
+    """Body of ``POST /triage`` — one normalized inbound signal to classify + route."""
+
+    title: str = Field(description="Subject line / event title / short capture.")
+    body: str = Field(default="", description="Email body, event notes, etc.")
+    source: str = Field(default="manual", description="mail | calendar | shortcut | n8n | manual.")
+    sender: str = Field(default="", description="From-address / origin (sender-trust heuristics).")
+    external_id: str = Field(default="", description="Provider id, for idempotent re-delivery.")
+    received_at: str = Field(default="", description="ISO8601 receipt time; defaults to now.")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Raw provider extras.")
 
 
 class UserCreate(BaseModel):
@@ -1361,6 +1382,7 @@ __all__ = [
     "TodoDeadlineUpdate",
     "TodoWindowUpdate",
     "TriageForget",
+    "TriageIn",
     "UserCreate",
     "_DELIVERY_KEYS",
     "_EXACT_WINDOW_SOURCES",
@@ -1453,6 +1475,9 @@ __all__ = [
     "resolve_panic_step",
     "sweep_pending_panic_steps",
     "parse_inbound_event",
+    "signal_from_payload",
+    "triage_apply",
+    "triage_classify",
     "parse_time_window",
     "parse_window",
     "partition_conflicts",

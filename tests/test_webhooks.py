@@ -304,17 +304,18 @@ def test_invalid_episode_type_is_rejected(client):
     assert resp.status_code == 422
 
 
-def test_n8n_inbound_classifies_event(client):
-    """The inbound n8n route echoes a routing decision (handled=False for now)."""
+def test_n8n_inbound_triages_and_routes(client):
+    """The inbound n8n route now classifies + routes the signal (handled=True)."""
     resp = client.post(
         "/webhooks/n8n",
-        json={"event": "mail.received", "id": 7},
+        json={"subject": "Please pay the overdue invoice today", "id": "evt-7"},
         headers={"X-Prefrontal-Token": SECRET},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["event"] == "mail.received"
-    assert body["handled"] is False
+    assert body["handled"] is True
+    assert body["decision"]["kind"] == "action"
+    assert body["routed_ref"].startswith("todo:")  # actionable → an augmented todo
 
 
 def test_default_user_allows_no_token(store):

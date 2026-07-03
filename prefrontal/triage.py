@@ -122,6 +122,42 @@ class Signal:
     meta: dict[str, Any] = field(default_factory=dict)  # raw extras, untyped
 
 
+#: Body keys an adapter may use for each Signal field (first present wins).
+_TITLE_KEYS = ("title", "subject", "summary", "text")
+_BODY_KEYS = ("body", "notes", "content", "snippet")
+_SENDER_KEYS = ("sender", "from", "from_address", "origin")
+_ID_KEYS = ("external_id", "id", "message_id", "uid")
+
+
+def signal_from_payload(body: dict[str, Any], *, source: str = "n8n") -> Signal:
+    """Normalize a loosely-shaped inbound body into a :class:`Signal`.
+
+    The single body→Signal adapter behind ``POST /webhooks/n8n`` and ``POST
+    /triage`` — it maps the common aliases (``subject``→title, ``from``→sender,
+    ``id``→external_id, …) so the classifier never sees provider-specific shapes.
+    Unmapped keys are preserved in ``meta``. ``body["source"]`` overrides the
+    default source.
+    """
+    def first(keys: tuple[str, ...]) -> str:
+        for k in keys:
+            v = body.get(k)
+            if isinstance(v, (str, int, float)) and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    known = set(_TITLE_KEYS + _BODY_KEYS + _SENDER_KEYS + _ID_KEYS) | {"source", "received_at"}
+    meta = {k: v for k, v in body.items() if k not in known}
+    return Signal(
+        source=str(body.get("source") or source),
+        title=first(_TITLE_KEYS),
+        body=first(_BODY_KEYS),
+        sender=first(_SENDER_KEYS),
+        received_at=str(body.get("received_at") or ""),
+        external_id=first(_ID_KEYS),
+        meta=meta,
+    )
+
+
 @dataclass(frozen=True)
 class TriageDecision:
     """The classifier's verdict. ``reason`` is always populated — triage never

@@ -21,6 +21,7 @@ from prefrontal.webhooks._common import (
     ScopedRequest,
     ShortcutPayload,
     TriageForget,
+    TriageIn,
     TripLabel,
     TripReflect,
     apply_reflection,
@@ -29,10 +30,12 @@ from prefrontal.webhooks._common import (
     learned_denylist,
     module_enabled,
     normalize_trip_category,
-    parse_inbound_event,
     process_location,
     resolve_user,
+    signal_from_payload,
     status,
+    triage_apply,
+    triage_classify,
 )
 from prefrontal.webhooks.services import RouterServices
 
@@ -48,6 +51,23 @@ def build_router(services: RouterServices) -> APIRouter:
     # inference on a reflection stays on the local model.
     triage_client = services.provider.client("triage")
     sensor_client = services.provider.client("sensor")
+
+    def _run_triage(signal, store) -> dict[str, Any]:
+        """Classify + apply a signal, honoring the triage settings; return a report."""
+        client = triage_client if resolved_settings.triage_use_llm else None
+        decision = triage_classify(
+            signal, client=client, drop_threshold=resolved_settings.triage_drop_threshold
+        )
+        report = triage_apply(signal, decision, store, n8n=n8n, client=client)
+        return {
+            "handled": True,
+            "decision": {
+                "kind": decision.kind, "urgency": decision.urgency, "route": decision.route,
+                "reason": decision.reason, "confidence": decision.confidence,
+                "decided_by": decision.source, "fields": decision.fields,
+            },
+            **report,
+        }
 
     @router.post(
         "/webhooks/shortcut",
@@ -107,12 +127,14 @@ def build_router(services: RouterServices) -> APIRouter:
         request: Request,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Receive an event pushed by an n8n workflow.
+        """Receive an event pushed by an n8n workflow and triage it.
 
-        Currently classifies the payload via
-        :func:`prefrontal.integrations.n8n.parse_inbound_event` and echoes the
-        routing decision. Concrete per-event handlers are a documented TODO.
-        Authenticated like the other webhooks (no per-user data is touched yet).
+        The body is normalized into a :class:`~prefrontal.triage.Signal`, then
+        **classified and routed** (:func:`prefrontal.triage.classify` /
+        ``apply``): a dated event becomes a commitment, an actionable one an
+        augmented todo, an outcome an episode, noise a logged drop — and an
+        ``urgency == "now"`` signal also fires a ``triage.urgent`` n8n event.
+        Idempotent on ``(source, external_id)``. Returns the decision + routing.
         """
         try:
             body = await request.json()
@@ -120,7 +142,32 @@ def build_router(services: RouterServices) -> APIRouter:
             body = {}
         if not isinstance(body, dict):
             body = {"value": body}
-        return parse_inbound_event(body)
+        signal = signal_from_payload(body, source=str(body.get("source") or "n8n"))
+        return _run_triage(signal, ctx.store)
+
+    @router.post("/triage", tags=["ingestion"])
+    def triage_signal(
+        payload: TriageIn,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Classify + route a single normalized signal posted directly.
+
+        The source-agnostic entry point (an iOS Shortcut or an Apps Script mail
+        digest can post a :class:`TriageIn` without going through n8n). Same
+        classify+apply as ``/webhooks/n8n``; returns the decision and what it
+        routed to.
+        """
+        signal = signal_from_payload(payload.model_dump(), source=payload.source)
+        return _run_triage(signal, ctx.store)
+
+    @router.get("/triage/recent", tags=["ingestion"])
+    def triage_recent(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Recent triage decisions (newest first) with their reasons — for the
+        dashboard and for explainability ("why was this dropped?"). Read-only."""
+        return {"decisions": ctx.store.recent_triage(max(1, min(limit, 200)))}
 
     @router.post("/webhooks/location", tags=["ingestion"])
     def location_ping(

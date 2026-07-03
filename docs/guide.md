@@ -559,7 +559,8 @@ token client-side).
 | `GET /health` | Liveness probe (no auth) |
 | `GET /profile` | Behavioral profile; `?format=structured`, `?refresh=1` |
 | `POST /webhooks/shortcut` | Log a one-tap outcome (made_it / missed_it / partial / log) |
-| `POST /webhooks/n8n` | Receive an inbound event from n8n |
+| `POST /webhooks/n8n` | Triage an inbound n8n event (classify → route → maybe nudge) |
+| `POST /triage` · `GET /triage/recent` | Triage one normalized signal / recent decisions + reasons |
 | `POST /webhooks/location` · `GET /location` | Record / read last-known position |
 | `POST /webhooks/outing/start` | Declare an outing (intention + window) |
 | `POST /webhooks/outing/check` | Poll for due nudges (fires escalation) |
@@ -648,6 +649,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_PORT` | `8000` | API port |
 | `PREFRONTAL_DEFAULT_USER` | _(empty)_ | Tokenless requests resolve to this user (single-user mode) |
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
+| `PREFRONTAL_TRIAGE_LLM` / `_DROP` | `true` / `0` | Triage: use the model for ambiguous signals / confidence below which "noise" is surfaced not dropped |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
 | `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage`, `all`, or empty for all-local |
