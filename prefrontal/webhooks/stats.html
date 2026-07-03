@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Insights</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /family, /kids, /dashboard, /stats) ─── */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  header { max-width: 720px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); margin: 0 0 4px; font-weight: 700; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .empty { color: var(--muted); font-style: italic; }
+
+  .hero { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 6px; }
+  .hero .n { font-size: 36px; font-weight: 760; letter-spacing: -.5px; }
+  .hero .u { color: var(--muted); font-size: 15px; }
+  .streak { display: inline-block; background: var(--line); border-radius: 999px;
+    padding: 3px 11px; font-size: 13px; font-weight: 600; }
+
+  /* horizontal magnitude bars (thin marks, rounded ends, recessive track) */
+  .barrow { display: flex; align-items: center; gap: 10px; margin: 9px 0; font-size: 14px; }
+  .barrow .bl { min-width: 92px; }
+  .barrow .track { flex: 1; height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; }
+  .barrow .fill { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+  .barrow .bv { min-width: 88px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* composition bar + legend (status colours, always labelled) */
+  .compbar { display: flex; gap: 2px; height: 18px; border-radius: 6px; overflow: hidden; margin: 6px 0 0; background: var(--line); }
+  .compbar .seg { height: 100%; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  /* outcome sparkline (recent history, newest right) */
+  .spark { display: flex; gap: 2px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap; }
+  .spark .tick { width: 9px; height: 20px; border-radius: 2px; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/family">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/family">Family</a>
+    <a href="/kids">Kids</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/stats" aria-current="page">Insights</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>📈 Insights</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card" id="c-time">
+    <p class="label">Time-estimation accuracy</p>
+    <p class="sub">How long things actually take vs. what you estimated.</p>
+    <div id="time-body"></div>
+  </section>
+
+  <section class="card" id="c-follow">
+    <p class="label">Follow-through</p>
+    <p class="sub">How often you complete / make it — over time.</p>
+    <div id="follow-body"></div>
+  </section>
+
+  <section class="card" id="c-channels">
+    <p class="label">Channel responsiveness</p>
+    <p class="sub">Which nudge channels you actually answer.</p>
+    <div id="channels-body"></div>
+  </section>
+
+  <footer>Learned from your logged outcomes · updates as you go</footer>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+const REFRESH_MS = 60000;
+let token = localStorage.getItem(KEY);
+let timer = null;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (r) => Math.round((r || 0) * 100);
+const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+const OUT_COLOR = { success: "var(--good)", partial: "var(--warn)", miss: "var(--danger)" };
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY); clearInterval(timer);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path) {
+  const r = await fetch(path, { headers: token ? { "X-Prefrontal-Token": token } : {} });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// ── Renderers ─────────────────────────────────────────────────────────────
+function renderTime(t) {
+  if (!t || !t.n) {
+    $("#time-body").innerHTML = `<p class="empty">No estimates logged yet — as you record how long things take, this fills in.</p>`;
+    return;
+  }
+  const word = t.direction === "over" ? "over your estimates"
+    : t.direction === "under" ? "under your estimates" : "on target";
+  let html = `<div class="hero"><span class="n">${t.ratio}×</span><span class="u">${esc(word)}</span></div>
+    <p class="sub" style="margin:0 0 12px">from ${t.n} logged estimate${t.n === 1 ? "" : "s"}</p>`;
+  const ctxs = (t.contexts || []).filter((c) => c.ratio != null);
+  if (ctxs.length) {
+    const max = Math.max(1, ...ctxs.map((c) => c.ratio));
+    html += ctxs.map((c) => {
+      const w = Math.max(6, Math.round((c.ratio / max) * 100));
+      const dir = c.direction === "over" ? "over" : c.direction === "under" ? "under" : "on";
+      return `<div class="barrow" title="${esc(cap(c.context))}: ${c.ratio}× (${c.n})">
+        <span class="bl">${esc(cap(c.context))}</span>
+        <span class="track"><span class="fill" style="width:${w}%"></span></span>
+        <span class="bv">${c.ratio}× ${dir} · ${c.n}</span></div>`;
+    }).join("");
+  }
+  $("#time-body").innerHTML = html;
+}
+
+function renderFollow(f) {
+  if (!f || !f.n) {
+    $("#follow-body").innerHTML = `<p class="empty">No outcomes logged yet — “made it / missed it” taps show up here.</p>`;
+    return;
+  }
+  const c = f.counts || {};
+  const streak = f.streak
+    ? `<span class="streak">🔥 ${f.streak} in a row</span>` : "";
+  let html = `<div class="hero"><span class="n">${pct(f.rate)}%</span><span class="u">follow-through</span>
+    <span style="flex:1"></span>${streak}</div>`;
+  // composition bar (status colours), each segment sized by share, all labelled below
+  const segs = ["success", "partial", "miss"].filter((k) => c[k]);
+  html += `<div class="compbar">` + segs.map((k) =>
+    `<span class="seg" title="${esc(cap(k))}: ${c[k]}" style="width:${(c[k] / f.n) * 100}%;background:${OUT_COLOR[k]}"></span>`
+  ).join("") + `</div>`;
+  html += `<div class="legend">` + ["success", "partial", "miss"].map((k) =>
+    `<span class="k"><span class="dot" style="background:${OUT_COLOR[k]}"></span>${cap(k)} · ${c[k] || 0}</span>`
+  ).join("") + `</div>`;
+  // recent series sparkline
+  if ((f.series || []).length) {
+    html += `<div class="spark">` + f.series.map((o) =>
+      `<span class="tick" title="${esc(cap(o))}" style="background:${OUT_COLOR[o] || "var(--line)"}"></span>`
+    ).join("") + `</div>`;
+  }
+  $("#follow-body").innerHTML = html;
+}
+
+function renderChannels(rows) {
+  rows = (rows || []).filter((r) => r.rate != null);
+  if (!rows.length) {
+    $("#channels-body").innerHTML = `<p class="empty">No channel responses logged yet.</p>`;
+    return;
+  }
+  $("#channels-body").innerHTML = rows.map((r) =>
+    `<div class="barrow" title="${esc(r.channel)}: ${pct(r.rate)}% of ${r.n}">
+      <span class="bl">${esc(cap(r.channel))}</span>
+      <span class="track"><span class="fill" style="width:${Math.max(4, pct(r.rate))}%"></span></span>
+      <span class="bv">${pct(r.rate)}% · ${r.n}</span></div>`
+  ).join("");
+}
+
+async function load() {
+  $("#status").textContent = "updating…";
+  let data;
+  try {
+    data = await api("/stats/data");
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  $("#gate").style.display = "none";
+  $("#wrap").style.display = "block";
+  renderTime(data.time_estimation);
+  renderFollow(data.follow_through);
+  renderChannels(data.channels);
+  const n = (data.counts || {}).episodes || 0;
+  $("#status").textContent = `${n} event${n === 1 ? "" : "s"} · updated ` +
+    new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  $("#gate").style.display = "none"; $("#gate-err").textContent = "";
+  start();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
+
+start();  // try the session cookie / saved code; the gate appears only on 401
+</script>
+</body>
+</html>

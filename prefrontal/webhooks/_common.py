@@ -214,6 +214,8 @@ DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding
 FAMILY_HTML = (Path(__file__).with_name("family.html")).read_text(encoding="utf-8")
 #: The editable kids dashboard for the shared household sheet.
 KIDS_HTML = (Path(__file__).with_name("kids.html")).read_text(encoding="utf-8")
+#: The behavioral Insights page (charts over episodes; reads GET /stats/data).
+STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8")
 
 
 class ShortcutPayload(BaseModel):
@@ -1121,6 +1123,7 @@ __all__ = [
     "HouseholdMember",
     "InviteRedeem",
     "KIDS_HTML",
+    "STATS_HTML",
     "INFER_TIMEOUT_SECONDS",
     "ImpulseCaptured",
     "KINDS",
