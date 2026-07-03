@@ -37,6 +37,7 @@ from prefrontal.scheduling import free_windows, suggest_for_windows, window_conf
 from prefrontal.todos import avoided_todos, decompose_task
 
 if TYPE_CHECKING:
+    from prefrontal.briefing import Briefing
     from prefrontal.integrations.ollama import OllamaClient
 
 #: ``rough_score`` at/above which a day is flagged (the ``encouragement_threshold``
@@ -56,6 +57,23 @@ DRIFT_MODIFIER = 0.5
 
 #: Ceiling for the recovery plan's "one small step" (minutes).
 FIRST_STEP_MAX_MINUTES = 5.0
+
+#: Morning-briefing note thresholds (spec §6.2). Deliberately simple and tunable.
+#: A day reads as *packed* at this many commitments, or this many *hard* ones.
+PACKED_COMMITMENTS = 6
+PACKED_HARD = 3
+#: A *recent* rough stretch: this many ``miss`` episodes over the briefing's 7-day
+#: window, or this many todos being actively avoided.
+RECENT_MISS_THRESHOLD = 3
+RECENT_AVOIDED_THRESHOLD = 3
+#: A *wide-open* day: at most this many commitments, none of them hard.
+OPEN_MAX_COMMITMENTS = 1
+
+#: Coaching-state key holding the user's standing answer to the open-day choice
+#: (§6.2): ``relax`` (open days are rest days) or ``accomplish`` (shape a light
+#: plan). Absent/other ⇒ the briefing presents the choice instead of acting on it.
+OPEN_DAY_KEY = "open_day_choice"
+OPEN_DAY_CHOICES = ("relax", "accomplish")
 
 ENCOURAGEMENT_SYSTEM_PROMPTS = {
     "warm": (
@@ -399,6 +417,183 @@ def summarize_encouragement(
             raise OllamaError("Ollama returned an empty encouragement message.")
         return EncouragementResult(text=rendered, source="heuristic", rough=True)
     return EncouragementResult(text=prose, source="llm", rough=True, model=client.model)
+
+
+# --- Morning-briefing note (spec §6.2) ---------------------------------------
+#
+# The briefing's closing line, tone-shifted by how the day (and the recent
+# stretch) is shaping up. This is the "briefing variant" of the layer: instead of
+# a separate recovery message, the *morning* brief itself gets a sentence or two —
+# encouragement on a packed/rough day, and a relax-vs-accomplish choice on a
+# wide-open one. Deterministic and gated on the same ``encouragement`` opt-in as
+# the rest of the layer, so it stays inert (and the brief keeps its usual time-bias
+# reminder) unless the user turns it on.
+
+
+def _n_things(n: int, noun: str) -> str:
+    """Pluralize a small count: ``_n_things(1, "task") == "1 task"``."""
+    return f"{n} {noun}" + ("" if n == 1 else "s")
+
+
+def _open_optional_item(briefing: Briefing) -> str | None:
+    """The single lowest-stakes thing to offer on a rest day (or ``None``)."""
+    if briefing.avoided:
+        return briefing.avoided[0]["title"]
+    for s in briefing.spare:
+        if s.get("suggestion"):
+            return s["suggestion"]
+    return None
+
+
+def _open_relax_note(briefing: Briefing, warm: bool) -> str:
+    item = _open_optional_item(briefing)
+    if warm:
+        base = (
+            "Today's wide open, and you've set open days as rest days — so no agenda "
+            "from me."
+        )
+        if item:
+            return (
+                base + f" If you want one tiny, optional win, “{item}” would fit "
+                "without turning today into work."
+            )
+        return base + " Genuinely nothing pressing — take the day."
+    base = "Open day; set to rest. No agenda."
+    return base + (f" Optional single item: “{item}”." if item else "")
+
+
+def _open_accomplish_note(briefing: Briefing, warm: bool) -> str:
+    picks = [s for s in briefing.spare if s.get("suggestion")][:2]
+    if picks:
+        shape = ", ".join(f"{_hhmm(s['start'])} {s['suggestion']}" for s in picks)
+        if warm:
+            return (
+                "Today's wide open and you're in make-it-count mode — here's a light "
+                f"shape: {shape}. Start with the smallest and let it build."
+            )
+        return f"Open day, make-it-count mode. Shape: {shape}. Start with the smallest."
+    if briefing.avoided:
+        item = briefing.avoided[0]["title"]
+        if warm:
+            return (
+                "Today's wide open and you're in make-it-count mode. Nothing auto-fit "
+                f"a window, but “{item}” is the one worth a first swing."
+            )
+        return f"Open day, make-it-count mode. Best target: “{item}”."
+    if warm:
+        return (
+            "Today's wide open and you're in make-it-count mode — and your list is "
+            "clear too. Nothing pressing, so make it count however you like."
+        )
+    return "Open day, make-it-count mode. List is clear — nothing pressing to assign."
+
+
+def _open_note(store: MemoryStore, briefing: Briefing, warm: bool) -> str:
+    """Present the relax-vs-accomplish choice, or act on the standing answer."""
+    choice = (store.get_state(OPEN_DAY_KEY, "") or "").strip().lower()
+    if choice not in OPEN_DAY_CHOICES:
+        if warm:
+            return (
+                "Today's wide open — nothing hard on the calendar. Do you want to take "
+                "it easy or make it count? Tell me relax or accomplish and I'll shape "
+                "the day to match."
+            )
+        return (
+            "Open day, nothing hard scheduled. Rest, or make it count? Set relax or "
+            "accomplish and the brief will match."
+        )
+    if choice == "relax":
+        return _open_relax_note(briefing, warm)
+    return _open_accomplish_note(briefing, warm)
+
+
+def briefing_note(
+    store: MemoryStore, briefing: Briefing, now: Any | None = None
+) -> str | None:
+    """The morning brief's closing encouragement line, or ``None`` (spec §6.2).
+
+    Reads the shape of the day off an already-built :class:`~prefrontal.briefing.Briefing`
+    (plus today's acute :func:`assess_day` and the recent 7-day slips it already
+    carries) and returns at most a sentence or two:
+
+    - **today already rough** (e.g. an overnight missed hard commitment) — a
+      no-judgment "one thing at a time, you've got this";
+    - **a rough recent stretch** (misses piling up / things being avoided) —
+      encouragement to go gentle and space things out rather than catch up at once;
+    - **a packed day** (many commitments, or several hard) — "you've got this;
+      leave breathing room";
+    - **a wide-open day** — presents the relax-vs-accomplish choice, or, once the
+      user has answered (:data:`OPEN_DAY_KEY`), a rest note or a light plan.
+
+    Returns ``None`` on an ordinary day, or whenever the ``encouragement`` layer is
+    off — so the briefing falls back to its usual time-bias reminder. Never invents
+    events: every branch is driven by counts already in ``briefing``.
+    """
+    now = now or utcnow()
+    assessment = assess_day(store, now=now)
+    if not assessment.enabled:
+        return None
+    warm = assessment.tone != "plain"
+
+    today = briefing.today
+    n = len(today)
+    hard = sum(1 for c in today if c.get("hardness") == "hard")
+    recent_misses = sum(briefing.slips.values())
+    avoided_n = len(briefing.avoided)
+
+    # 1. Today already went sideways (acute, today-scoped).
+    if assessment.rough:
+        if warm:
+            return (
+                "Rough start already — that's not a verdict on you. Take today one "
+                "thing at a time and let the rest wait; you've got this."
+            )
+        return "Rough start. One thing at a time; let non-essentials wait."
+
+    # 2. A rough recent stretch — the 7-day misses / avoidance the brief carries.
+    if recent_misses >= RECENT_MISS_THRESHOLD or avoided_n >= RECENT_AVOIDED_THRESHOLD:
+        bits: list[str] = []
+        if recent_misses:
+            bits.append(_n_things(recent_misses, "thing") + " slipped")
+        if avoided_n:
+            bits.append(_n_things(avoided_n, "task") + " you keep putting off")
+        detail = " and ".join(bits)
+        if warm:
+            return (
+                f"The last stretch has been heavy — {detail}. You've got this: go "
+                "gentle today and space things out rather than trying to catch up all "
+                "at once."
+            )
+        return (
+            f"Heavy stretch recently ({detail}). Keep today light and spaced; don't "
+            "try to catch up all at once."
+        )
+
+    # 3. A packed day.
+    if n >= PACKED_COMMITMENTS or hard >= PACKED_HARD:
+        if hard == 0:
+            hard_bit = ""
+        elif hard == n:
+            hard_bit = ", all hard"
+        else:
+            hard_bit = f", {hard} hard"
+        if warm:
+            return (
+                f"Packed day — {_n_things(n, 'commitment')}{hard_bit}. You've got "
+                "this: leave a little breathing room between things and try not to "
+                "pack the gaps too tight."
+            )
+        return (
+            f"Full day: {_n_things(n, 'commitment')}{hard_bit}. Leave buffers between "
+            "them and keep the gaps loose."
+        )
+
+    # 4. A wide-open day — offer the choice, or act on the standing answer.
+    if n <= OPEN_MAX_COMMITMENTS and hard == 0:
+        return _open_note(store, briefing, warm)
+
+    # Otherwise: an ordinary day — let the briefing keep its time-bias reminder.
+    return None
 
 
 # --- Debounce cursor ---------------------------------------------------------

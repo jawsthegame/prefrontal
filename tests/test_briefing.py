@@ -134,3 +134,86 @@ def test_briefing_endpoint(store):
         body = c.get("/briefing", headers={"X-Prefrontal-Token": SECRET}).json()
     assert body["today"][0]["title"] == "Standup"
     assert "Morning briefing" in body["text"]
+
+
+# --- Encouragement in the briefing (spec §6.2) -------------------------------
+
+
+def _morning(store):
+    """Enable the encouragement layer and return a fixed 9am 'now'."""
+    store.set_state("encouragement", "on", source="explicit")
+    return utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+
+
+def test_encouragement_off_keeps_bias_reminder(store):
+    """Layer off (default): no note, the briefing keeps its time-bias reminder."""
+    now = _morning(store)
+    store.set_state("encouragement", "off", source="explicit")
+    for i in range(3):
+        store.upsert_commitment(
+            title=f"Mtg {i}", start_at=_at(now + timedelta(hours=i + 1)),
+            external_id=f"work:{i}", hardness="hard",
+        )
+    b = build_briefing(store, now=now)
+    assert b.encouragement is None
+    assert "underestimate time" in render_briefing(b)
+
+
+def test_packed_day_encourages(store):
+    """A packed day (≥3 hard) gets a 'you've got this' + space-it-out note."""
+    now = _morning(store)
+    for i in range(3):
+        store.upsert_commitment(
+            title=f"Mtg {i}", start_at=_at(now + timedelta(hours=i + 1)),
+            external_id=f"work:{i}", hardness="hard",
+        )
+    b = build_briefing(store, now=now)
+    assert b.encouragement and "you've got this" in b.encouragement.lower()
+    text = render_briefing(b)
+    assert b.encouragement in text
+    assert "underestimate time" not in text  # note replaces the bias reminder
+
+
+def test_recent_rough_stretch_encourages(store):
+    """Misses across the week (not today) trip the recently-rough note."""
+    now = _morning(store)
+    # Three misses two days ago — inside the 7-day slip window but not "today",
+    # so this is the *recent stretch* branch, not today's acute assessment.
+    earlier = _at(now - timedelta(days=2))
+    for _ in range(3):
+        store.log_episode("reminder", outcome="miss", timestamp=earlier)
+    b = build_briefing(store, now=now)
+    assert b.encouragement and "space things out" in b.encouragement.lower()
+
+
+def test_open_day_presents_choice_then_acts(store):
+    """A wide-open day asks the relax/accomplish question, then honors the answer."""
+    now = _morning(store)
+    store.add_todo("Draft the report", priority=2, estimate_minutes=30)
+
+    ask = build_briefing(store, now=now).encouragement
+    assert ask and "relax or accomplish" in ask.lower()
+
+    store.set_state("open_day_choice", "relax", source="user")
+    relax = build_briefing(store, now=now).encouragement
+    assert relax and "rest days" in relax.lower()
+    assert "Draft the report" in relax  # one optional low-stakes item
+
+    store.set_state("open_day_choice", "accomplish", source="user")
+    plan = build_briefing(store, now=now).encouragement
+    assert plan and "make-it-count" in plan.lower()
+    assert "Draft the report" in plan  # a concrete light plan
+
+
+def test_open_day_endpoint_choice_roundtrip(store):
+    """GET exposes the choice; POST /briefing/open-day sets and clears it."""
+    store.set_state("encouragement", "on", source="explicit")
+    app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
+    hdr = {"X-Prefrontal-Token": SECRET}
+    with TestClient(app) as c:
+        assert c.get("/briefing", headers=hdr).json()["open_day_choice"] is None
+        set_resp = c.post("/briefing/open-day", headers=hdr, json={"choice": "accomplish"})
+        assert set_resp.json()["open_day_choice"] == "accomplish"
+        assert c.get("/briefing", headers=hdr).json()["open_day_choice"] == "accomplish"
+        clear = c.post("/briefing/open-day", headers=hdr, json={"choice": "ask"})
+        assert clear.json()["open_day_choice"] is None

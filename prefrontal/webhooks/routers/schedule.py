@@ -62,6 +62,7 @@ from prefrontal.webhooks._common import (
     timedelta,
     utcnow,
 )
+from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 
 
 def _attend_slugs(memory) -> tuple[str, ...]:
@@ -622,8 +623,37 @@ def build_router(
             "slips": b.slips,
             "coaching": b.coaching,
             "spare": b.spare,
+            "encouragement": b.encouragement,
+            "open_day_choice": memory.get_state(OPEN_DAY_KEY) or None,
             "text": render_briefing(b),
         }
+
+    @router.post("/briefing/open-day", tags=["schedule"])
+    async def briefing_open_day(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Answer the morning brief's open-day choice (spec §6.2).
+
+        On a wide-open day the briefing asks whether you want to take it easy or
+        make it count; this records that standing answer so future open days act on
+        it instead of re-asking. Body: ``{"choice": "relax" | "accomplish"}`` to
+        set it, or ``{"choice": "ask"}`` (or anything else) to clear it and be asked
+        again. Only meaningful when the ``encouragement`` layer is on.
+        """
+        memory = ctx.store
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        choice = str(body.get("choice") or "").strip().lower()
+        if choice in OPEN_DAY_CHOICES:
+            memory.set_state(OPEN_DAY_KEY, choice, source="user")
+            return {"open_day_choice": choice}
+        memory.set_state(OPEN_DAY_KEY, "", source="user")
+        return {"open_day_choice": None}
 
     @router.get("/panic", tags=["schedule"])
     def panic(
