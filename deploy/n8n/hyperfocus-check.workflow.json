@@ -18,16 +18,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/focus/check",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/focus/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": false,
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "check-focus",
       "name": "Check Focus",
       "type": "n8n-nodes-base.httpRequest",
@@ -48,10 +45,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",

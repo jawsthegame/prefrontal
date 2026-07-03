@@ -221,6 +221,43 @@ To run it always-on, add a launchd agent like the one in step 3 whose
 > `127.0.0.1`. Also: stop n8n before editing its SQLite DB directly — it holds
 > the DB open (WAL) and caches active workflows in memory.
 
+### Configure once: env vars + the token credential
+
+The bundled workflows **don't hardcode** your token, base URL, or ntfy topic —
+they read them from **n8n's environment** plus one shared **credential**, so an
+imported workflow needs no per-file editing. Set these up once and every import
+after is just *Import from File → Active*:
+
+1. **Environment variables** — set these in n8n's *own* process (docker-compose
+   `environment:` / `env_file:`, the launchd plist's `EnvironmentVariables`, or
+   the shell that launches `n8n`), then restart n8n:
+
+   | Variable | Example | Used for |
+   |---|---|---|
+   | `PREFRONTAL_BASE_URL` | `http://127.0.0.1:8000` | the Prefrontal API origin (use `127.0.0.1`, **not** `localhost` — see the gotcha above) |
+   | `NTFY_SERVER` | `https://ntfy.sh` | the ntfy server (point at a self-hosted one to stay local) |
+   | `NTFY_TOPIC` | `prefrontal-me` | your ntfy topic (subscribe your phone to it) |
+
+   Nodes reference them as expressions, e.g. `={{ $env.PREFRONTAL_BASE_URL }}`.
+   (Self-host note: leave `N8N_BLOCK_ENV_ACCESS_IN_NODE` unset/`false` — the
+   default — so expressions can read `$env`.)
+
+2. **The token credential** — create **one** *Header Auth* credential named
+   exactly **`Prefrontal Token`** (Credentials → New → *Header Auth*; header
+   **Name** `X-Prefrontal-Token`, **Value** your `PREFRONTAL_WEBHOOK_SECRET` or a
+   per-user token). Every Prefrontal HTTP node references it *by name*, so n8n
+   links it on import — if a node ever shows it unset, pick `Prefrontal Token`
+   from the dropdown once. The secret then never lives in an exported workflow
+   file, and rotating it in this one credential updates every workflow at once.
+   *(Using the household sweeps too? Put a **household member's** per-user token in
+   this credential so those endpoints resolve the shared household — that one
+   token also serves the personal workflows. Two co-parents who each want their
+   own personal nudges can make a second Header Auth credential and point their
+   personal workflows at it.)*
+
+Only genuinely per-integration values remain in a few workflows — Google/ICS
+calendar feed URLs, Twilio SID/number/phone — since those aren't Prefrontal's.
+
 1. Open the editor, **Import from File**, and choose
    [`../deploy/n8n/departure-reminder.workflow.json`](../deploy/n8n/departure-reminder.workflow.json).
 2. The workflow has five nodes: a schedule trigger (every 5 min) →
@@ -228,16 +265,13 @@ To run it always-on, add a launchd agent like the one in step 3 whose
    reminder is due (`fire === true`) → **Publish to ntfy** → `POST /webhooks/n8n`
    (log that a reminder fired). Prefrontal does the "when to leave" reasoning and
    returns a ready `message`, so there's no Ollama compose step on this path.
-3. Set credentials/values it can't ship with:
-   - **Prefrontal token** — in the two Prefrontal HTTP nodes' `X-Prefrontal-Token`
-     header, paste your `PREFRONTAL_WEBHOOK_SECRET`.
-   - **ntfy** — the Publish node posts to `https://ntfy.sh` on the `prefrontal-me`
-     topic; change the topic to your own (and the URL to a self-hosted ntfy if you
-     run one). Subscribe your phone to that topic in the ntfy app. The push
-     carries the endpoint's signed **Made it / Missed it** buttons (see the
-     one-tap note below). *(Prefer Pushover? The native Python delivery client
-     (`prefrontal coach --deliver`) still supports it; or swap this node for a
-     Pushover HTTP node.)*
+3. Nothing to paste — the two Prefrontal nodes use the **`Prefrontal Token`**
+   credential and `={{ $env.PREFRONTAL_BASE_URL }}`, and the Publish node posts to
+   `={{ $env.NTFY_SERVER }}` on `={{ $env.NTFY_TOPIC }}` (all from *Configure once*
+   above). Subscribe your phone to that ntfy topic. The push carries the
+   endpoint's signed **Made it / Missed it** buttons (see the one-tap note below).
+   *(Prefer Pushover? The native Python delivery client (`prefrontal coach
+   --deliver`) still supports it; or swap this node for a Pushover HTTP node.)*
 4. **Execute Workflow** once to test, then toggle it **Active**.
 
 > **For a *travel-time* estimate** (rather than the static `lead_minutes`
@@ -292,13 +326,14 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 **b. Import and configure the workflow**
 
 1. Import [`../deploy/n8n/coffee-shop-nudge.workflow.json`](../deploy/n8n/coffee-shop-nudge.workflow.json).
-2. **Check Outings** node → set the `X-Prefrontal-Token` header to your secret.
+2. **Check Outings** node → already wired to the `Prefrontal Token` credential +
+   `$env` (see *Configure once*); nothing to set.
 3. **Twilio Voice Call** node → attach the Basic Auth credential; replace
    `REPLACE_WITH_TWILIO_ACCOUNT_SID` in the URL, and set `To` (your phone) and
    `From` (your Twilio number). The spoken text comes from `{{ $json.message }}`.
-4. **ntfy Push (50% / 100%)** node → set your ntfy topic (defaults to
-   `prefrontal-me` on `https://ntfy.sh`); it carries the **I'm back / Abandon**
-   buttons. (Prefer Pushover? Swap this for a Pushover HTTP node.)
+4. **ntfy Push (50% / 100%)** node → posts to `={{ $env.NTFY_SERVER }}` on
+   `={{ $env.NTFY_TOPIC }}`; it carries the **I'm back / Abandon** buttons.
+   (Prefer Pushover? Swap this for a Pushover HTTP node.)
 5. (Optional) Set your name for the voice message:
    `prefrontal` has a `user_name` coaching key —
    `sqlite3 prefrontal.db "UPDATE coaching_state SET value='Tom' WHERE key='user_name';"`
@@ -381,10 +416,10 @@ n8n (every 15 min) ─┬─ GET personal ICS ─┐
    shared/secret **iCal feed URL** (read-only). Google/Outlook/most providers
    expose one per calendar (in Google: *Settings → Secret address in iCal format*).
    Leave a node's URL blank to skip that feed.
-3. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
-4. **Double-booking / possible-conflict alert** nodes → set your ntfy topic
-   (defaults to `prefrontal-me`).
-5. **Execute Workflow** once, then toggle **Active**.
+3. **POST sync node** and the **Double-booking / possible-conflict alert** nodes
+   are already wired to the `Prefrontal Token` credential + `$env.NTFY_*` (see
+   *Configure once*); only the ICS feed URLs above are yours to fill in.
+4. **Execute Workflow** once, then toggle **Active**.
 
 Notes:
 - Events are namespaced per feed (`personal:…` / `work:…` / `outlook:…` /
@@ -409,8 +444,8 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 (`short`/`long`).
 
 - Preview it now: `prefrontal briefing` (add `--llm` for Ollama prose).
-- Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json),
-  set the `X-Prefrontal-Token` header and your ntfy topic. It fires at 7am,
+- Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json)
+  (token credential + `$env` from *Configure once* — nothing to edit). It fires at 7am,
   `GET /briefing`, and pushes the digest text. (Insert an Ollama node between the
   two for prose, or point it at `prefrontal summarize`-style output.)
 - The briefing is best once calendars are syncing (§10) and a few days of
@@ -432,8 +467,8 @@ and mail — into already-behind / bearing-down-soon / piling-up, and hands back
   [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md)) — it `GET /panic`s and
   reads back the `headline` (grounding + first step) in one tap.
 - **Proactive nudge:** import
-  [`../deploy/n8n/panic-check.workflow.json`](../deploy/n8n/panic-check.workflow.json),
-  set the token + your ntfy topic. It polls `POST /webhooks/panic/check`
+  [`../deploy/n8n/panic-check.workflow.json`](../deploy/n8n/panic-check.workflow.json)
+  (token credential + `$env` from *Configure once*). It polls `POST /webhooks/panic/check`
   every 20 min and pushes **only when the plate tips into overwhelm**. The server
   edge-triggers on the level (like the departure signature) and honors a
   cooldown, so a sustained pile-up nudges once, not every poll.
@@ -541,8 +576,8 @@ enabled module — it asks each "anything due?", picks a channel (urgency floor 
 learned `channel_response` bump), and suppresses on quiet hours + debounce.
 
 - Preview: `prefrontal coach` (add `--dry-run` to see cues before suppression).
-- Deliver: import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json),
-  set the token + ntfy topic. It polls `POST /webhooks/coach/check` and publishes
+- Deliver: import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json)
+  (token credential + `$env` from *Configure once*). It polls `POST /webhooks/coach/check` and publishes
   each returned cue to ntfy at a priority matching the agent's chosen channel,
   passing through any signed one-tap `actions` a cue carries (so ntfy renders the
   background buttons). Today it surfaces the Task Paralysis "tiny first step"
@@ -623,7 +658,8 @@ kids' facts, agreements/star charts, a shopping list — with load-balancing pus
 2. **Use it.** The editable sheet is the **`/kids`** dashboard (partner glance at
    `/family`); edit in plain English via `POST /assistant`. CLI:
    `prefrontal household show|star|balance|shopping|chore`.
-3. **Schedule the sweeps** (import each, set the ntfy topic + token):
+3. **Schedule the sweeps** (import each — the `Prefrontal Token` credential + the
+   env vars from *Configure once* cover the rest; no per-file editing):
    - [`star-prompt-check.workflow.json`](../deploy/n8n/star-prompt-check.workflow.json)
      — asks both parents "did <kid> earn a star today?" on the chart's schedule.
    - [`checkin-check.workflow.json`](../deploy/n8n/checkin-check.workflow.json)

@@ -120,18 +120,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/calendar/sync",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/calendar/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ events: $json.events }) }}",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "post-sync",
       "name": "POST /webhooks/calendar/sync",
       "type": "n8n-nodes-base.httpRequest",
@@ -164,10 +161,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — double-booking\",\n  \"message\": \"⚠️ {{ $json.conflicts }} overlapping commitment(s) on your calendar. Check /commitments/conflicts.\",\n  \"priority\": 4\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — double-booking\",\n  \"message\": \"⚠️ {{ $json.conflicts }} overlapping commitment(s) on your calendar. Check /commitments/conflicts.\",\n  \"priority\": 4\n}",
         "options": {}
       },
       "id": "ntfy-conflict",
@@ -201,10 +198,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — possible conflict\",\n  \"message\": \"🟡 {{ $json.possible_conflicts }} possible conflict(s): a hold (Busy/Block) overlaps a real event. Review or dismiss at /dashboard.\",\n  \"priority\": 3\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — possible conflict\",\n  \"message\": \"🟡 {{ $json.possible_conflicts }} possible conflict(s): a hold (Busy/Block) overlaps a real event. Review or dismiss at /dashboard.\",\n  \"priority\": 3\n}",
         "options": {}
       },
       "id": "ntfy-possible",

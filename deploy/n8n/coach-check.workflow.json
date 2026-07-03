@@ -14,18 +14,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/coach/check",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/coach/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"current_lat\": null,\n  \"current_lon\": null\n}",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "coach-check",
       "name": "Coach Check",
       "type": "n8n-nodes-base.httpRequest",
@@ -46,10 +43,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }},\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }},\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",

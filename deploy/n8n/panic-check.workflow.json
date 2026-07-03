@@ -18,15 +18,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/panic/check",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/panic/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "check-panic",
       "name": "Check Overwhelm",
       "type": "n8n-nodes-base.httpRequest",
@@ -47,7 +44,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -56,7 +53,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4,\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4,\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",
@@ -68,18 +65,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/n8n",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/n8n",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"event\": \"reminder.sent\",\n  \"episode_type\": \"panic\",\n  \"channel\": \"notification\",\n  \"context\": \"proactive overwhelm nudge ({{ $json.late }} late, {{ $json.pressing }} pressing)\"\n}",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "log-back",
       "name": "Log to Prefrontal",
       "type": "n8n-nodes-base.httpRequest",

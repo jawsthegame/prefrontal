@@ -14,15 +14,12 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://127.0.0.1:8000/encouragement",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/encouragement",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "check-encouragement",
       "name": "Check Encouragement",
       "type": "n8n-nodes-base.httpRequest",
@@ -43,10 +40,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — rough day\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 2\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — rough day\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 2\n}",
         "options": {}
       },
       "id": "publish-ntfy",
@@ -58,15 +55,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/encouragement/sent",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/encouragement/sent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "stamp-sent",
       "name": "Stamp Sent (once/day)",
       "type": "n8n-nodes-base.httpRequest",

@@ -18,18 +18,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/departure/check",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/departure/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"current_lat\": null,\n  \"current_lon\": null\n}",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "check-departures",
       "name": "Check Departures",
       "type": "n8n-nodes-base.httpRequest",
@@ -50,10 +47,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh",
+        "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — time to leave\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'go' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — time to leave\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'go' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",
@@ -65,18 +62,15 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/webhooks/n8n",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET" }
-          ]
-        },
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/n8n",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"event\": \"reminder.sent\",\n  \"episode_type\": \"departure\",\n  \"channel\": \"notification\",\n  \"context\": \"{{ $json.title }} ({{ $json.level }})\"\n}",
         "options": {}
       },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
       "id": "log-back",
       "name": "Log to Prefrontal",
       "type": "n8n-nodes-base.httpRequest",
