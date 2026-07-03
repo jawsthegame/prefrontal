@@ -270,6 +270,18 @@ curl -s -XPOST $PF/webhooks/focus/start -H "X-Prefrontal-Token: $TOK" \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
+**Zero taps — calendar-armed:** the most frictionless start is none. Put a
+**"Deep work: the RFC"** (or bare **"Focus time"**) block on your calendar, and
+`POST /webhooks/focus/arm` — polled by n8n every few minutes — auto-starts a
+protected session while that block is live (the event's end is the planned
+duration; a bare "Focus time" protects your top todo). It won't stack on a
+session you're already in. You scheduled the intention once; it arms itself.
+
+```bash
+curl -s -XPOST $PF/webhooks/focus/arm -H "X-Prefrontal-Token: $TOK"
+# {"armed": true, "intended_task": "the RFC", "planned_minutes": 55, ...}
+```
+
 ---
 
 ## Daily rhythm
@@ -486,7 +498,8 @@ token client-side).
 | `POST /webhooks/outing/check` | Poll for due nudges (fires escalation) |
 | `POST /webhooks/outing/return` | Close an outing; logs stated-vs-actual |
 | `GET /outings` | Read-only outings snapshot (no side effects) |
-| `POST /webhooks/focus/start` · `/check` · `/end` | Focus session lifecycle |
+| `POST /webhooks/focus/start` · `/check` · `/end` | Focus session lifecycle (`start` with an empty body = one-tap inferred start) |
+| `POST /webhooks/focus/arm` | Auto-start a session from a live "focus"/"deep work" calendar block (n8n polls) |
 | `GET /focus` | Read-only focus snapshot |
 | `POST /webhooks/calendar/sync` | Sync a batch of calendar events |
 | `POST /webhooks/departure/check` | Poll for a due departure nudge |

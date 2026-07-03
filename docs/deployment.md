@@ -595,6 +595,13 @@ Two more delivery workflows round out the module coverage:
   [`../deploy/n8n/hyperfocus-check.workflow.json`](../deploy/n8n/hyperfocus-check.workflow.json).
   It polls `POST /webhooks/focus/check` and pushes the gentle alignment check /
   biological-break nudge when an aligned block overruns.
+- **Calendar-armed focus** — import
+  [`../deploy/n8n/focus-arm-check.workflow.json`](../deploy/n8n/focus-arm-check.workflow.json).
+  Every 5 min it POSTs `/webhooks/focus/arm`, which auto-starts a protected
+  session whenever a "focus"/"deep work" calendar block is live and none is
+  running — so a session you scheduled needs zero taps to begin. (Pairs with the
+  one-tap `focus/start` — leave its body empty and it infers the task from your
+  top open todo.)
 - **Interactive one-tap actions over ntfy** — import
   [`../deploy/n8n/interactive-nudge-ntfy.workflow.json`](../deploy/n8n/interactive-nudge-ntfy.workflow.json),
   the reference for wiring ntfy's action buttons back to the signed `/nudge/act`

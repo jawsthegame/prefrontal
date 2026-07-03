@@ -28,6 +28,7 @@ these into real nudges, mirroring the Location-Aware Task Anchor escalation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -217,6 +218,7 @@ class InferredFocus:
     intended_task: str
     planned_minutes: float | None
     source: str
+    todo_id: int | None = None
 
 
 def infer_focus_start(candidates: list[dict[str, Any]]) -> InferredFocus:
@@ -228,8 +230,11 @@ def infer_focus_start(candidates: list[dict[str, Any]]) -> InferredFocus:
             non-blank title wins.
 
     Returns:
-        An :class:`InferredFocus`. Always returns something (a generic block when
-        ``candidates`` is empty), so the one-tap start never dead-ends.
+        An :class:`InferredFocus`. When a todo is chosen its ``id`` rides along as
+        ``todo_id`` so the session links back to it (the close episode then
+        inherits the todo's energy/category for learning). Always returns
+        something (a generic block when ``candidates`` is empty), so the one-tap
+        start never dead-ends.
     """
     for todo in candidates:
         title = (todo.get("title") or "").strip()
@@ -241,8 +246,39 @@ def infer_focus_start(candidates: list[dict[str, Any]]) -> InferredFocus:
             if isinstance(est, (int, float)) and not isinstance(est, bool) and est > 0
             else None
         )
-        return InferredFocus(title, planned, "todo")
-    return InferredFocus(DEFAULT_FOCUS_TASK, None, "default")
+        tid = todo.get("id")
+        return InferredFocus(title, planned, "todo", tid if isinstance(tid, int) else None)
+    return InferredFocus(DEFAULT_FOCUS_TASK, None, "default", None)
+
+
+# --- Calendar-armed start (zero taps) ----------------------------------------
+#
+# The most frictionless start is none at all: a "focus" / "deep work" block on
+# your calendar *is* the intention — you scheduled it once. So when such an event
+# is live and no session is running, arm one for its window automatically, with
+# the event's own remaining time as the planned duration.
+
+#: Whole-word cues in a calendar title that mark a self-scheduled focus block.
+_FOCUS_INTENT_RE = re.compile(r"\b(?:deep[\s-]*work|focus(?:\s*time)?|heads?[\s-]*down)\b", re.I)
+#: The label to strip so "Deep work: the RFC" yields the real task "the RFC".
+_FOCUS_LABEL_RE = re.compile(
+    r"^\s*(?:deep[\s-]*work|focus(?:\s*time)?|heads?[\s-]*down)\s*[:\-–—]*\s*", re.I
+)
+
+
+def is_focus_intent_title(title: str | None) -> bool:
+    """Whether a calendar title reads as a self-scheduled focus/deep-work block."""
+    return bool(_FOCUS_INTENT_RE.search(title or ""))
+
+
+def focus_task_from_title(title: str | None) -> str | None:
+    """The task inside a focus event title, or ``None`` when it's just a label.
+
+    "Deep work: the API refactor" → "the API refactor"; a bare "Focus time" →
+    ``None`` (so the caller can fall back to your top todo).
+    """
+    remainder = _FOCUS_LABEL_RE.sub("", (title or "").strip()).strip(" :–—-")
+    return remainder or None
 
 
 def record_focus_end(

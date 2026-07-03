@@ -4,6 +4,8 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter
 
 from prefrontal.webhooks._common import (
@@ -26,7 +28,9 @@ from prefrontal.webhooks._common import (
     focus_is_abandoned,
     focus_level,
     focus_level_rank,
+    focus_task_from_title,
     infer_focus_start,
+    is_focus_intent_title,
     module_enabled,
     record_focus_abandoned,
     record_focus_end,
@@ -35,6 +39,24 @@ from prefrontal.webhooks._common import (
     status,
     utcnow,
 )
+
+_TS = "%Y-%m-%d %H:%M:%S"
+
+
+def _parse_ts(ts: Any) -> datetime | None:
+    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp, or ``None``."""
+    try:
+        return datetime.strptime(str(ts)[:19], _TS)
+    except (ValueError, TypeError):
+        return None
+
+
+def _top_todo_guess(memory: Any, now: datetime):
+    """Infer a focus task from open todos (most-avoided first). See infer_focus_start."""
+    open_todos = memory.open_todos()
+    avoided = [a["todo"] for a in avoided_todos(open_todos, now)]
+    seen = {t["id"] for t in avoided}
+    return infer_focus_start(avoided + [t for t in open_todos if t["id"] not in seen])
 
 
 def build_router(
@@ -74,24 +96,23 @@ def build_router(
         memory = ctx.store
         task = payload.intended_task.strip()
         planned = payload.planned_minutes
+        todo_id = payload.todo_id
         inferred_from = None
         if not task:
             # Zero-field start: infer what you'd have typed from your open loops.
-            open_todos = memory.open_todos()
-            avoided = [a["todo"] for a in avoided_todos(open_todos, utcnow())]
-            seen = {t["id"] for t in avoided}
-            ordered = avoided + [t for t in open_todos if t["id"] not in seen]
-            guess = infer_focus_start(ordered)
+            guess = _top_todo_guess(memory, utcnow())
             task = guess.intended_task
             if planned is None:
                 planned = guess.planned_minutes
+            if todo_id is None:
+                todo_id = guess.todo_id  # link the todo we picked, for learning
             inferred_from = guess.source
 
         session_id = memory.start_focus_session(
             task,
             planned_minutes=planned,
             aligned=payload.aligned,
-            todo_id=payload.todo_id,
+            todo_id=todo_id,
         )
         confirmation = _focus_started_confirmation(task, planned, payload.aligned)
         if inferred_from == "todo":
@@ -103,6 +124,63 @@ def build_router(
             aligned=payload.aligned,
             confirmation=confirmation,
         )
+
+    @router.post("/webhooks/focus/arm", tags=["focus"])
+    def focus_arm(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Auto-start a focus session from a *live* calendar focus block (zero taps).
+
+        The most frictionless start is none at all: a "focus" / "deep work" event
+        you scheduled once *is* the intention. When such a block is happening now
+        and no session is already running, arm one for the rest of its window —
+        the event's own end is the planned duration. A bare "Focus time" (no task
+        in the title) protects your top open todo instead. Idempotent: n8n can
+        poll this every few minutes without stacking sessions.
+        """
+        memory = ctx.store
+        if memory.active_focus_sessions():
+            return {"armed": False, "reason": "a focus session is already active"}
+
+        now = utcnow()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        live: dict[str, Any] | None = None
+        end_at: datetime | None = None
+        for c in memory.commitments_between(
+            day_start.strftime(_TS), day_end.strftime(_TS)
+        ):
+            if not is_focus_intent_title(c.get("title")):
+                continue
+            start = _parse_ts(c.get("start_at"))
+            end = _parse_ts(c.get("end_at"))
+            if start is None or start > now or end is None or end <= now:
+                continue  # not happening right now
+            live, end_at = c, end
+            break
+
+        if live is None:
+            return {"armed": False, "reason": "no live focus block on the calendar"}
+
+        remaining = round((end_at - now).total_seconds() / 60.0, 1)
+        task = focus_task_from_title(live.get("title"))
+        todo_id = None
+        if task is None:  # a bare "Focus time" — protect the top todo instead
+            guess = _top_todo_guess(memory, now)
+            task, todo_id = guess.intended_task, guess.todo_id
+        session_id = memory.start_focus_session(
+            task,
+            planned_minutes=remaining if remaining > 0 else None,
+            aligned=True,
+            todo_id=todo_id,
+        )
+        return {
+            "armed": True,
+            "session_id": session_id,
+            "intended_task": task,
+            "planned_minutes": remaining,
+            "from_commitment": live.get("id"),
+        }
 
     @router.post("/webhooks/focus/check", tags=["focus"])
     def focus_check(

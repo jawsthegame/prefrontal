@@ -1,0 +1,69 @@
+{
+ "name": "Prefrontal — Focus Arm (calendar-armed sessions)",
+ "nodes": [
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 5
+      }
+     ]
+    }
+   },
+   "id": "schedule-trigger",
+   "name": "Every 5 min",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    300
+   ]
+  },
+  {
+   "parameters": {
+    "method": "POST",
+    "url": "http://127.0.0.1:8000/webhooks/focus/arm",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-Prefrontal-Token",
+       "value": "REPLACE_WITH_PREFRONTAL_WEBHOOK_SECRET"
+      }
+     ]
+    },
+    "sendBody": false,
+    "options": {}
+   },
+   "id": "arm-focus",
+   "name": "Arm Focus",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    220,
+    300
+   ]
+  }
+ ],
+ "connections": {
+  "Every 5 min": {
+   "main": [
+    [
+     {
+      "node": "Arm Focus",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "pinData": {},
+ "meta": {}
+}
