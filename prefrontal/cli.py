@@ -234,6 +234,30 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _checkin_cli(store, args, settings)
         elif args.household_action == "digest-check":
             return _digest_cli(store, args, settings)
+        elif args.household_action == "balance":
+            return _balance_cli(store, args, settings)
+    return 0
+
+
+def _balance_cli(store, args, settings) -> int:
+    """Print the gentle 'who's keeping the sheet up' balance view for a household."""
+    from datetime import timedelta
+
+    from prefrontal.household import BALANCE_WINDOW_DAYS, balance_view
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    if not scoped.is_shared_household():
+        print("Single-parent household — nothing to balance.")
+        return 0
+    since = (utcnow() - timedelta(days=BALANCE_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    view = balance_view(scoped.contribution_counts(since))
+    print(f"Sheet updates in the last {BALANCE_WINDOW_DAYS} days:")
+    for m in view["members"]:
+        print(f"  {m['name']}: {m['count']} ({m['share']}%)")
+    print(view["caption"])
     return 0
 
 
@@ -1287,6 +1311,10 @@ def build_parser() -> argparse.ArgumentParser:
         "digest-check", help="Push each parent the other's unseen sheet changes."
     )
     h_dig.add_argument("--user", default=None, help="Handle of a household member.")
+    h_bal = house_sub.add_parser(
+        "balance", help="Print the gentle 'who's keeping the sheet up' view."
+    )
+    h_bal.add_argument("--user", default=None, help="Handle of a household member.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(

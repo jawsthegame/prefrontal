@@ -73,6 +73,14 @@
   #digest-toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px;
     font-size: 13px; color: var(--muted); cursor: pointer; }
   #recent-new { color: var(--accent); font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+  #balance-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px;
+    color: var(--muted); cursor: pointer; }
+  .bal-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
+  .bal-row .bal-name { min-width: 76px; font-weight: 500; }
+  .bal-bar { flex: 1; height: 10px; background: #eceae2; border-radius: 6px; overflow: hidden; }
+  .bal-fill { height: 100%; background: var(--accent); }
+  .bal-row .bal-n { color: var(--muted); min-width: 62px; text-align: right; }
+  .bal-cap { color: var(--muted); font-size: 13px; margin-top: 12px; }
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
@@ -176,6 +184,15 @@
     </form>
   </section>
 
+  <section class="card" id="c-balance">
+    <p class="label">Sharing the load</p>
+    <label id="balance-toggle">
+      <input type="checkbox" id="balance-enabled" />
+      Show who's been keeping the sheet up (last 30 days)
+    </label>
+    <div id="balance-body"></div>
+  </section>
+
   <section class="card" id="c-appts">
     <p class="label">Upcoming appointments</p>
     <div id="appts"></div>
@@ -264,6 +281,23 @@ function renderDigest(d) {
   $("#digest-enabled").checked = !!d.enabled;
   $("#recent-new").textContent = d.unseen > 0
     ? `✨ ${d.unseen} new since you last looked` : "";
+}
+
+function renderBalance(bal) {
+  bal = bal || { enabled: false, view: null };
+  $("#balance-enabled").checked = !!bal.enabled;
+  if (!bal.enabled || !bal.view) {
+    $("#balance-body").innerHTML = bal.enabled
+      ? `<div class="empty">No sheet updates yet to compare.</div>`
+      : `<div class="empty" style="margin-top:8px">A gentle monthly picture of who's been keeping the sheet up — no scorekeeping.</div>`;
+    return;
+  }
+  const v = bal.view;
+  const rows = v.members.map((m) =>
+    `<div class="bal-row"><span class="bal-name">${esc(m.name)}</span>
+      <span class="bal-bar"><span class="bal-fill" style="width:${m.share}%"></span></span>
+      <span class="bal-n">${m.count} · ${m.share}%</span></div>`).join("");
+  $("#balance-body").innerHTML = rows + `<div class="bal-cap">${esc(v.caption)}</div>`;
 }
 
 function renderRoster() {
@@ -441,10 +475,12 @@ async function loadSheet() {
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
   renderCheckin(data.checkin);
+  renderBalance(data.balance);
   // Single-parent households: the co-parent-only features simply aren't shown.
   // They reappear on their own once a second parent joins the household.
   const shared = data.shared !== false;
   $("#c-checkin").style.display = shared ? "" : "none";
+  $("#c-balance").style.display = shared ? "" : "none";
   $("#digest-toggle").style.display = shared ? "" : "none";
   refreshDropdowns();
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -610,6 +646,11 @@ $("#agreements").addEventListener("click", async (e) => {
 
 $("#digest-enabled").addEventListener("change", async (e) => {
   await post("/household/digest", { enabled: e.target.checked });
+});
+
+$("#balance-enabled").addEventListener("change", async (e) => {
+  await post("/household/balance", { enabled: e.target.checked });
+  await loadSheet();  // reveal / hide the split
 });
 
 // Check-in day is a single choice — tapping a day selects just that one.

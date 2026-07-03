@@ -643,6 +643,14 @@ class DigestConfig(BaseModel):
     enabled: bool = Field(default=False, description="Opt in to the daily 'what changed' digest.")
 
 
+class BalanceConfig(BaseModel):
+    """Body of ``POST /household/balance`` — toggle the opt-in load-balance view."""
+
+    enabled: bool = Field(
+        default=False, description="Opt in to the gentle 'who's keeping the sheet up' view."
+    )
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1105,6 +1113,7 @@ __all__ = [
     "ScopedRequest",
     "Settings",
     "ShortcutPayload",
+    "BalanceConfig",
     "CheckinConfig",
     "DigestConfig",
     "PromptConfig",

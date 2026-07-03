@@ -57,7 +57,11 @@ CREATE TABLE IF NOT EXISTS households (
     -- Opt-in daily "delta digest": push each parent the OTHER parent's changes
     -- they haven't seen yet. Off by default. Per-parent "seen"/"digested" stamps
     -- live in coaching_state (household_seen_at / household_digested_at).
-    digest_enabled       INTEGER NOT NULL DEFAULT 0   -- 0/1, opt-in
+    digest_enabled       INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
+    -- Opt-in "who's keeping the sheet up" balance view — a gentle, non-accusatory
+    -- picture from updated_by/awarded_by counts. Off by default; shown on /kids
+    -- (no push). Derived on read, so there's nothing else to store.
+    balance_enabled      INTEGER NOT NULL DEFAULT 0   -- 0/1, opt-in
 );
 
 CREATE TABLE IF NOT EXISTS users (

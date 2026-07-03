@@ -14,7 +14,9 @@ from fastapi import APIRouter
 
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
+    BALANCE_WINDOW_DAYS,
     award_stars_and_notify,
+    balance_view,
     checkin_due,
     checkin_question,
     digest_interval_ok,
@@ -38,6 +40,7 @@ from prefrontal.webhooks._common import (
     Annotated,
     Any,
     AppointmentCreate,
+    BalanceConfig,
     CheckinConfig,
     ChildCreate,
     ChildRename,
@@ -55,6 +58,7 @@ from prefrontal.webhooks._common import (
     render_sheet,
     resolve_user,
     status,
+    timedelta,
     utcnow,
 )
 
@@ -135,15 +139,29 @@ def build_router(
         ctx.store.set_state(
             "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
         )
+        # The load-balance view (opt-in, shared-only). Derived on read from a
+        # 30-day provenance window; `view` is null when the toggle is off.
+        shared = ctx.store.is_shared_household()
+        balance = None
+        if shared:
+            bal_enabled = ctx.store.get_balance_enabled()
+            view = None
+            if bal_enabled:
+                since = (now - timedelta(days=BALANCE_WINDOW_DAYS)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                view = balance_view(ctx.store.contribution_counts(since))
+            balance = {"enabled": bal_enabled, "window_days": BALANCE_WINDOW_DAYS, "view": view}
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
             # A household of one is fully supported; the co-parent-only features
-            # (check-in, digest) hide when not shared and return automatically
-            # once a second parent joins.
-            "shared": ctx.store.is_shared_household(),
+            # (check-in, digest, balance) hide when not shared and return
+            # automatically once a second parent joins.
+            "shared": shared,
             "checkin": checkin,
             "digest": digest,
+            "balance": balance,
             "vocab": {
                 "fact_categories": list(FACT_CATEGORIES),
                 "agreement_kinds": list(AGREEMENT_KINDS),
@@ -451,6 +469,16 @@ def build_router(
         """Turn the opt-in daily delta digest on or off (shared by both parents)."""
         _require_member(ctx)
         ctx.store.set_digest_enabled(payload.enabled)
+        return {"ok": True, "enabled": payload.enabled}
+
+    @router.post("/household/balance", tags=["household"])
+    def set_balance(
+        payload: BalanceConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Turn the opt-in load-balance view on or off (shared by both parents)."""
+        _require_member(ctx)
+        ctx.store.set_balance_enabled(payload.enabled)
         return {"ok": True, "enabled": payload.enabled}
 
     @router.post("/webhooks/household/digest/check", tags=["household"])

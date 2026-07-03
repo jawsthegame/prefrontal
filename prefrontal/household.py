@@ -760,6 +760,48 @@ def digest_interval_ok(
     return (now - last).total_seconds() >= min_hours * 3600
 
 
+# --- load balance view (pure) ------------------------------------------------
+#
+# The *objective* companion to the subjective check-in: who's actually been
+# keeping the sheet up, from provenance counts. Tone is the whole game — a raw
+# "Dana 14, Alex 1" reads as a scoreboard, so the caption is gentle, names the
+# carrier (not the slacker), and treats imbalance as a season, never a verdict.
+
+#: How far back the balance view looks by default.
+BALANCE_WINDOW_DAYS = 30
+
+#: A split at/above this top share reads as lopsided enough to gently name.
+_LOPSIDED_SHARE = 75
+
+
+def balance_view(counts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Shape per-member counts into shares + a gentle caption (no judgment)."""
+    total = sum(c["count"] for c in counts)
+    members = [
+        {
+            "name": c["name"],
+            "count": c["count"],
+            "share": round(100 * c["count"] / total) if total else 0,
+        }
+        for c in counts
+    ]
+    return {"total": total, "members": members, "caption": balance_caption(members, total)}
+
+
+def balance_caption(members: list[dict[str, Any]], total: int) -> str:
+    """A warm one-liner for the split — affirming when even, gentle when not."""
+    if total == 0 or not members:
+        return "No sheet updates yet — nothing to compare. 💛"
+    top = max(members, key=lambda m: m["share"])
+    if top["share"] < _LOPSIDED_SHARE:
+        return "You've been sharing the sheet pretty evenly lately — nice teamwork. 💛"
+    return (
+        f"{top['name']} has been carrying most of the sheet lately. "
+        "Some seasons just go that way — might be a nice week to trade a few things. "
+        "No blame, just a gentle heads-up."
+    )
+
+
 # --- render ------------------------------------------------------------------
 
 

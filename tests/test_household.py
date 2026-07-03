@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from prefrontal.assistant import build_snapshot, execute_actions, validate_actions
 from prefrontal.config import Settings
 from prefrontal.household import (
+    balance_view,
     build_sheet,
     checkin_due,
     checkin_summary,
@@ -1147,6 +1148,71 @@ def test_nudge_act_digest_seen_marks_the_sheet_seen(signed_client, store):
     assert dana.get_state("household_seen_at")
 
 
+# --- load balance view -------------------------------------------------------
+
+
+def test_balance_view_shares_and_gentle_captions():
+    counts = [
+        {"user_id": 1, "name": "Dana", "count": 9},
+        {"user_id": 2, "name": "Alex", "count": 1},
+    ]
+    v = balance_view(counts)
+    assert v["total"] == 10
+    assert {m["name"]: m["share"] for m in v["members"]} == {"Dana": 90, "Alex": 10}
+    # lopsided names only the *carrier*, never the low contributor
+    assert "Dana" in v["caption"] and "carrying" in v["caption"]
+    assert "Alex" not in v["caption"]
+    even = balance_view(
+        [{"user_id": 1, "name": "Dana", "count": 5}, {"user_id": 2, "name": "Alex", "count": 5}]
+    )
+    assert "evenly" in even["caption"].lower()
+    empty = balance_view(
+        [{"user_id": 1, "name": "Dana", "count": 0}, {"user_id": 2, "name": "Alex", "count": 0}]
+    )
+    assert empty["total"] == 0 and "nothing to compare" in empty["caption"].lower()
+
+
+def test_contribution_counts_tallies_all_sources_and_keeps_zeros(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_fact(category="sizes", item="shoe size", value="13", updated_by=dana_id)
+    aid = dana.set_agreement(title="Star chart", body="s", kind="reward", updated_by=dana_id)
+    dana.award_stars(agreement_id=aid, delta=1, awarded_by=dana_id)
+    # Alex did nothing, but still appears with a zero so the split shows both.
+    counts = {c["name"]: c["count"] for c in dana.contribution_counts("")}
+    assert counts == {"Dana": 3, "Alex": 0}
+    # a future window excludes everything
+    future = {c["name"]: c["count"] for c in dana.contribution_counts("2999-01-01 00:00:00")}
+    assert future == {"Dana": 0, "Alex": 0}
+
+
+def test_balance_enabled_toggle(dana):
+    assert dana.get_balance_enabled() is False
+    dana.set_balance_enabled(True)
+    assert dana.get_balance_enabled() is True
+
+
+def test_balance_endpoint_shared_only_with_toggle(client, store):
+    body = client.get("/household/sheet", headers=_h("dana-tok")).json()["balance"]
+    assert body["enabled"] is False and body["view"] is None  # off by default
+    client.post(
+        "/household/facts",
+        json={"category": "sizes", "item": "shoe size", "value": "13"},
+        headers=_h("dana-tok"),
+    )
+    assert client.post(
+        "/household/balance", json={"enabled": True}, headers=_h("alex-tok")
+    ).json()["enabled"] is True
+    view = client.get("/household/sheet", headers=_h("alex-tok")).json()["balance"]["view"]
+    assert view["total"] == 1
+    assert {m["name"] for m in view["members"]} == {"Dana", "Alex"}
+
+
+def test_balance_absent_for_single_parent(client, store):
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    assert client.get("/household/sheet", headers=_h("lee-tok")).json()["balance"] is None
+
+
 # --- single-parent households ------------------------------------------------
 
 
@@ -1253,6 +1319,6 @@ def test_checkin_columns_backfilled_on_old_db(tmp_path):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(households)")}
     assert {
         "checkin_enabled", "checkin_day", "checkin_time", "checkin_last_sent_at",
-        "digest_enabled",
+        "digest_enabled", "balance_enabled",
     } <= cols
     conn.close()
