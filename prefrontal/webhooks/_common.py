@@ -191,6 +191,12 @@ from prefrontal.todos import (
     normalize_category,
     record_todo_closed,
 )
+from prefrontal.trips import (
+    TRIP_CATEGORIES,
+    apply_reflection,
+    normalize_trip_category,
+    process_location,
+)
 from prefrontal.webhooks.notify import nudge_actions, panic_actions
 from prefrontal.webhooks.oauth import (
     NUDGE_ACTIONS,
@@ -490,6 +496,35 @@ class LocationPing(BaseModel):
     lon: float = Field(description="Current longitude in degrees.")
     accuracy_m: float | None = Field(
         default=None, description="Optional reported accuracy radius in metres."
+    )
+
+
+class HomeSet(BaseModel):
+    """Body of ``POST /webhooks/home`` — the home coordinate for trip detection."""
+
+    lat: float = Field(description="Home latitude in degrees.")
+    lon: float = Field(description="Home longitude in degrees.")
+
+
+class TripLabel(BaseModel):
+    """Body of ``POST /webhooks/trip/label`` — name and categorize a closed trip."""
+
+    trip_id: int = Field(description="The completed trip to label.")
+    label: str = Field(description="What the trip was, e.g. 'Target run'.")
+    category: str | None = Field(
+        default=None,
+        description="Optional category (errand/social/work/health/family/leisure/other).",
+    )
+
+
+class TripReflect(BaseModel):
+    """Body of ``POST /webhooks/trip/reflect`` — an honest 'how it went' note."""
+
+    trip_id: int = Field(description="The completed trip to reflect on.")
+    reflection: str = Field(description="Plain-English note on how the trip went.")
+    outcome: Literal["success", "partial", "miss"] | None = Field(
+        default=None,
+        description="Optional explicit outcome; omit to let it be classified from the note.",
     )
 
 
@@ -1127,6 +1162,13 @@ __all__ = [
     "LEVELS",
     "Literal",
     "LocationPing",
+    "HomeSet",
+    "TripLabel",
+    "TripReflect",
+    "TRIP_CATEGORIES",
+    "normalize_trip_category",
+    "process_location",
+    "apply_reflection",
     "MAX_CATEGORIES",
     "MailSync",
     "MemoryStore",

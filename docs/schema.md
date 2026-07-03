@@ -4,7 +4,7 @@
 
 Three **core** tables cover episodic memory, behavioral patterns, and coaching
 state — the heart of the learning loop. A growing set of **feature** tables
-(outings, focus sessions, commitments, todos, mail, and supporting caches) back
+(outings, trips, focus sessions, commitments, todos, mail, and supporting caches) back
 the individual modules and ingestion paths; they are documented under
 [Additional tables](#additional-tables). A summarizer agent compresses memory
 into a profile document injected into every agent's system prompt.
@@ -140,6 +140,14 @@ also defines:
 
 - **`outings`** — active/historical "task anchors" (a stated intention + time
   window) for the Location-Aware Task Anchor module.
+- **`trips`** — closed-loop round trips detected *passively* from location pings
+  crossing the home radius (`prefrontal/trips.py`, the Closed-Loop Trip Tracking
+  module). Unlike an outing, nothing is declared up front: `departed_at` is when
+  the phone left the home radius, `returned_at` when it came back (closing the
+  loop), `max_distance_m` the farthest it reached. After the fact the user adds a
+  `label` and `category` and an honest plain-English `reflection`, classified into
+  a `reflection_outcome` (success/partial/miss) that resolves the `task` episode
+  (`episode_id`) the return logged — feeding the learning loop.
 - **`focus_sessions`** — active/historical deep-work blocks (a stated task, an
   optional planned duration, and an `aligned` "is this what I meant to do?" bit)
   for the Hyperfocus module. Drives the asymmetric protect-vs-interrupt logic: an

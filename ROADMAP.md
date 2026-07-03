@@ -416,11 +416,21 @@ ordered by leverage; each is independent but builds on denser capture.
    commitment it was for (`attribute_departure`), scores it on-time vs late
    against the computed leave-by (`classify_departure`), and logs a `departure`
    episode (`record_departure_outcome`) — `actual_value` left `None` so it feeds
-   `drift` without polluting the shared `time_estimation_bias`. *(Next: derive
-   the same signal passively from the stored location fix in
-   `POST /webhooks/location` crossing the home radius, so it works without a
-   dedicated geofence automation — needs a stored home coordinate + a prior-fix
-   edge check; the geofence path above is the reliable default.)*
+   `drift` without polluting the shared `time_estimation_bias`. **Passive
+   location capture has now shipped too** (`prefrontal/trips.py`,
+   `prefrontal/modules/trip_tracking.py`): once a home coordinate is set
+   (`POST /webhooks/home`), each `POST /webhooks/location` ping is folded into a
+   closed-loop **trip** state machine — leaving the home radius opens a trip,
+   returning closes it — logging a `task` episode with the real duration but no
+   prediction (so it never touches the shared bias). Unlike the coffee-shop
+   *outing*, a trip is undeclared, so it's reviewed after the fact: the
+   `trip_tracking` module asks (ambiently) for a **label** and **category**, and
+   an honest plain-English **"how it went"** note (`POST /webhooks/trip/reflect`)
+   is classified into an outcome that *resolves* that pending episode — so
+   self-report becomes drift signal — while the raw note is also handed to the
+   LLM-as-sensor (§2) to propose deeper structured updates. *(Next: a per-trip
+   `context_key` bucket so trips calibrate separately from other tasks, and a
+   one-tap label/reflect Shortcut off the ambient ask.)*
 2. **LLM-as-sensor, not LLM-as-author.** ✅ (v1) — `prefrontal/sensor.py` turns a
    free-text note ("I always blow off admin on Mondays") into *candidate*
    structured updates: a `coaching_state` key/value or an episode. Crucially the

@@ -8,10 +8,12 @@ from fastapi import APIRouter
 
 from prefrontal.webhooks._common import (
     ACTION_OUTCOME,
+    TRIP_CATEGORIES,
     Annotated,
     Any,
     Depends,
     EpisodeCreated,
+    HomeSet,
     HTTPException,
     LocationPing,
     MailSync,
@@ -19,10 +21,16 @@ from prefrontal.webhooks._common import (
     ScopedRequest,
     ShortcutPayload,
     TriageForget,
+    TripLabel,
+    TripReflect,
+    apply_reflection,
     ingest_messages,
     learned_corrections,
     learned_denylist,
+    module_enabled,
+    normalize_trip_category,
     parse_inbound_event,
+    process_location,
     resolve_user,
     status,
 )
@@ -125,10 +133,25 @@ def build_router(
         nudge without a Home Assistant feed, and ``/webhooks/departure/check``
         reads it to estimate travel time to upcoming commitments. A location
         automation ("when I leave Home", on a schedule, or one-tap) can POST it.
+
+        When the ``trip_tracking`` module is enabled and a home coordinate is set
+        (``POST /webhooks/home``), each ping is also folded into the closed-loop
+        **trip** state machine (:func:`prefrontal.trips.process_location`): leaving
+        the home radius opens a trip, returning closes it as a completed loop. The
+        response echoes any ``trip`` edge crossed so a client can react.
         """
         memory = ctx.store
         memory.set_location(payload.lat, payload.lon, payload.accuracy_m)
-        return {"stored": True, "lat": payload.lat, "lon": payload.lon}
+        response: dict[str, Any] = {"stored": True, "lat": payload.lat, "lon": payload.lon}
+        if module_enabled("trip_tracking", resolved_settings):
+            trip = process_location(memory, payload.lat, payload.lon)
+            if trip["event"] is not None:
+                response["trip"] = {
+                    "event": trip["event"],
+                    "trip_id": trip["trip_id"],
+                    "distance_m": trip["distance_m"],
+                }
+        return response
 
     @router.get("/location", tags=["ingestion"])
     def location_get(
@@ -137,6 +160,113 @@ def build_router(
         """Return the last-known position (or ``{"location": null}`` if unset)."""
         memory = ctx.store
         return {"location": memory.get_location()}
+
+    # -- Closed-loop trip tracking -------------------------------------------
+
+    @router.post(
+        "/webhooks/home", status_code=status.HTTP_201_CREATED, tags=["ingestion"]
+    )
+    def home_set(
+        payload: HomeSet,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the home coordinate — the anchor closed-loop trip detection needs.
+
+        Trip tracking is dormant until this is set: without a home fix there's no
+        radius to cross, so nothing is auto-detected.
+        """
+        ctx.store.set_home(payload.lat, payload.lon)
+        return {"stored": True, "lat": payload.lat, "lon": payload.lon}
+
+    @router.get("/trips", tags=["ingestion"])
+    def trips_list(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Read-only snapshot of trips — **no side effects**, safe to poll.
+
+        ``active`` is the open trip (if you're out right now); ``recent`` is the
+        history newest-first; ``unlabeled`` are the completed trips still awaiting
+        a label, i.e. the ones the system is asking you to name. ``categories`` is
+        the suggested vocabulary for the label form.
+        """
+        memory = ctx.store
+        return {
+            "active": memory.active_trip(),
+            "recent": memory.recent_trips(limit=20),
+            "unlabeled": memory.unlabeled_trips(limit=20),
+            "categories": list(TRIP_CATEGORIES),
+        }
+
+    @router.post("/webhooks/trip/label", tags=["ingestion"])
+    def trip_label(
+        payload: TripLabel,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Label and categorize a completed trip (the retrospective ask)."""
+        label = payload.label.strip()
+        if not label:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A trip label cannot be empty.",
+            )
+        updated = ctx.store.label_trip(
+            payload.trip_id,
+            label=label,
+            category=normalize_trip_category(payload.category),
+        )
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No trip with id {payload.trip_id}.",
+            )
+        return {
+            "trip_id": updated["id"],
+            "label": updated["label"],
+            "category": updated["category"],
+        }
+
+    @router.post("/webhooks/trip/reflect", tags=["ingestion"])
+    def trip_reflect(
+        payload: TripReflect,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Submit a plain-English 'how it went' note and feed it into learning.
+
+        The note is classified into an outcome (unless one is stated explicitly),
+        which resolves the ``task`` episode the trip's return logged — so honest
+        self-report becomes drift signal the learn pass reads. The raw note is
+        also handed to the LLM-as-sensor, which may *propose* deeper structured
+        updates (held pending for review; none if the model is offline).
+        """
+        memory = ctx.store
+        reflection = payload.reflection.strip()
+        if not reflection:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A reflection cannot be empty.",
+            )
+        trip = memory.get_trip(payload.trip_id)
+        if trip is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No trip with id {payload.trip_id}.",
+            )
+        result = apply_reflection(
+            memory,
+            trip,
+            reflection,
+            outcome=payload.outcome,
+            client=ollama_client,
+            sensor_client=ollama_client,
+        )
+        return {
+            "trip_id": payload.trip_id,
+            "outcome": result["outcome"],
+            "outcome_source": result["outcome_source"],
+            "episode_resolved": result["episode_resolved"],
+            "proposals": result["proposals"],
+        }
+
     # -- Mail ingestion ------------------------------------------------------
 
     @router.post(

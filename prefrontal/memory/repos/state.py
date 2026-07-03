@@ -174,6 +174,37 @@ class StateRepo:
             "at": row["last_updated"],
         }
 
+    def set_home(self, lat: float, lon: float) -> None:
+        """Record the user's home coordinate — the anchor for trip detection.
+
+        Stored in ``coaching_state`` (like :meth:`set_location`) as two keys so it
+        rides the same machinery as every other preference. Trip detection reads it
+        to decide whether a location ping is inside or outside the home radius; with
+        no home set, closed-loop tracking stays dormant.
+
+        Args:
+            lat: Home latitude in degrees.
+            lon: Home longitude in degrees.
+        """
+        self.set_state("home_lat", repr(float(lat)), source="explicit")
+        self.set_state("home_lon", repr(float(lon)), source="explicit")
+
+    def get_home(self) -> dict[str, float] | None:
+        """Return the stored home coordinate, or ``None`` if none has been set.
+
+        Returns:
+            ``{"lat": float, "lon": float}`` when both coordinates are stored,
+            else ``None``.
+        """
+        lat = self.get_state("home_lat")
+        lon = self.get_state("home_lon")
+        if lat is None or lon is None:
+            return None
+        try:
+            return {"lat": float(lat), "lon": float(lon)}
+        except (TypeError, ValueError):
+            return None
+
     def get_profile_cache(self) -> dict[str, Any] | None:
         """Return the cached profile narrative row, or ``None`` if unset.
 

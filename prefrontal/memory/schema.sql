@@ -13,6 +13,7 @@
 --
 -- Plus feature tables backing the modules and ingestion paths:
 --   outings              Location-Aware Task Anchor blocks (intention + window)
+--   trips                closed-loop trips auto-detected from location crossings
 --   focus_sessions       Hyperfocus deep-work blocks (protect / interrupt)
 --   commitments          synced/manual schedule items (impact + double-booking)
 --   todos                open loops fitted into free windows
@@ -146,6 +147,33 @@ CREATE TABLE IF NOT EXISTS outings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outings_user_status ON outings (user_id, status);
+
+-- Closed-loop "trips": a leave-home → return-home round trip detected *passively*
+-- from location pings crossing the home radius (no declared intention or window,
+-- unlike an outing). One row per loop: `departed_at` when the phone first left
+-- the home radius, `returned_at` when it came back (which closes the loop). After
+-- the fact the user is asked to `label` and `category`-ize the trip, and can
+-- submit a plain-English `reflection` on how it went — classified into an
+-- `reflection_outcome` (success/partial/miss) that resolves the `task` episode
+-- (`episode_id`) the return logged, so honest self-report feeds the learning loop.
+CREATE TABLE IF NOT EXISTS trips (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER NOT NULL REFERENCES users(id),
+    departed_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- left the home radius
+    returned_at        DATETIME,                       -- back within it (closes the loop)
+    status             TEXT    NOT NULL DEFAULT 'active',  -- active | completed
+    depart_lat         REAL,                           -- home fix the loop opened from
+    depart_lon         REAL,
+    max_distance_m     REAL    NOT NULL DEFAULT 0,      -- farthest from home seen while out
+    label              TEXT,                           -- user "what was this" (NULL until labeled)
+    category           TEXT,                           -- user categorization (errand/social/…)
+    reflection         TEXT,                           -- plain-English "how it went", set on reflect
+    reflection_outcome TEXT,                           -- classified success | partial | miss
+    episode_id         INTEGER,                        -- the task episode the return logged
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trips_user_status ON trips (user_id, status);
 
 -- Active and historical "focus sessions": a declared block of deep work on a
 -- stated task, used by the Hyperfocus module. Unlike an outing (which escalates
