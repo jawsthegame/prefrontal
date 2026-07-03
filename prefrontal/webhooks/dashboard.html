@@ -3,13 +3,39 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<!-- Set the theme before first paint so there's no flash. -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
 <title>Prefrontal — Monitor</title>
 <style>
+  /* ── Shared theme (identical across /family, /kids, /dashboard) ─────────── */
   :root {
-    --bg: #0f1115; --card: #181b22; --line: #262b36; --fg: #e6e9ef;
-    --muted: #8b93a7; --accent: #6ea8fe; --good: #5bc97a;
-    --none: #6b7280; --soft: #d9a93b; --firm: #e07b39; --call: #e0556b;
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+    /* dashboard status foregrounds + surface/tint fills */
+    --none: #6b7280; --soft: #b9762f; --firm: #c2571f; --call: #c0344b; --fyi: #3f6f9c;
+    --raise: #f2f0ea; --chip: #ece9e2;
+    --none-bg: #eceae4; --soft-bg: #f6ecd9; --firm-bg: #f7e4d6; --call-bg: #f7dbe0;
+    --good-bg: #e2efe4; --fyi-bg: #e2ecf5;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+    --none: #8b93a7; --soft: #d9a93b; --firm: #e07b39; --call: #e0556b; --fyi: #8ab4d8;
+    --raise: #1d212b; --chip: #2a2f3a;
+    --none-bg: #2a2f3a; --soft-bg: #3a2f12; --firm-bg: #3a2412; --call-bg: #3a1620;
+    --good-bg: #16341f; --fyi-bg: #1e2a3a;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -20,8 +46,7 @@
   header {
     display: flex; align-items: baseline; gap: 10px 12px; flex-wrap: wrap;
     padding: 14px 20px; padding-top: max(14px, env(safe-area-inset-top));
-    border-bottom: 1px solid var(--line); position: sticky; top: 0;
-    background: rgba(15,17,21,.92); backdrop-filter: blur(8px); z-index: 5;
+    border-bottom: 1px solid var(--line); background: var(--bg);
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   header .meta { color: var(--muted); font-size: 13px; }
@@ -33,6 +58,19 @@
     border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; min-height: 36px;
   }
   .ghost:hover { border-color: var(--accent); }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
 
   .banner { padding: 16px 20px 0; max-width: 1400px; margin: 0 auto; }
   .masonry {
@@ -59,20 +97,20 @@
 
   .badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase;
            padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; vertical-align: middle; }
-  .lvl-none { background: #2a2f3a; color: var(--none); }
-  .lvl-soft { background: #3a2f12; color: var(--soft); }
-  .lvl-firm { background: #3a2412; color: var(--firm); }
-  .lvl-call { background: #3a1620; color: var(--call); }
-  .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #2a2f3a; color: var(--muted); }
-  .pill.fyi { background: #1e2a3a; color: #8ab4d8; }
+  .lvl-none { background: var(--none-bg); color: var(--none); }
+  .lvl-soft { background: var(--soft-bg); color: var(--soft); }
+  .lvl-firm { background: var(--firm-bg); color: var(--firm); }
+  .lvl-call { background: var(--call-bg); color: var(--call); }
+  .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--chip); color: var(--muted); }
+  .pill.fyi { background: var(--fyi-bg); color: var(--fyi); }
   /* Account/calendar pill: names the mail inbox a todo came from, or the
      calendar a commitment belongs to. Solid color + dark text so a bright
      configured color (orange, magenta, blue) reads clearly. */
-  .pill.acct, .pill.cal { font-weight: 700; color: #0b0d12; }
+  .pill.acct, .pill.cal { font-weight: 700; color: var(--accent-fg); }
   /* Category chip: clickable (a button), colored by a hash of its label. The
      "none" variant is the muted "+ category" affordance on an uncategorized todo. */
-  .pill.cat { font-weight: 700; color: #fff; border: none; cursor: pointer; }
-  .pill.cat.none { background: transparent; color: var(--muted); border: 1px dashed #3a4150; font-weight: 400; }
+  .pill.cat { font-weight: 700; color: var(--accent-fg); border: none; cursor: pointer; }
+  .pill.cat.none { background: transparent; color: var(--muted); border: 1px dashed var(--line); font-weight: 400; }
   .pill.cat:hover { filter: brightness(1.15); }
   .pill.cat .caret { opacity: .65; font-size: 9px; margin-left: 2px; }
   /* Category picker: a floating popover of the existing category pills, opened
@@ -82,27 +120,27 @@
     display: flex; flex-wrap: wrap; gap: 6px; max-width: 280px; }
   .cat-menu .cat-opt { position: relative; }
   .cat-menu .cat-opt.sel { outline: 2px solid var(--fg); outline-offset: 1px; }
-  .cat-menu .cat-act { font-size: 11px; padding: 2px 9px; border-radius: 6px; background: #2a2f3a;
-    color: var(--muted); border: 1px dashed #3a4150; cursor: pointer; font-weight: 400; }
-  .cat-menu .cat-act:hover { color: var(--fg); border-color: #4a5160; }
+  .cat-menu .cat-act { font-size: 11px; padding: 2px 9px; border-radius: 6px; background: var(--chip);
+    color: var(--muted); border: 1px dashed var(--line); cursor: pointer; font-weight: 400; }
+  .cat-menu .cat-act:hover { color: var(--fg); border-color: var(--muted); }
   .cat-menu .cat-sep { flex-basis: 100%; height: 0; border-top: 1px solid var(--line); margin: 1px 0; }
   .catlead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   /* The exact text appended to the triage prompt on the next sync — the concrete
      impact your drops have on what mail gets flagged. */
   .addendum { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
-    padding: 8px 10px; background: #1d212b; border-left: 3px solid var(--accent);
+    padding: 8px 10px; background: var(--raise); border-left: 3px solid var(--accent);
     border-radius: 0 6px 6px 0; font: 12px/1.5 inherit; color: var(--fg); }
   .subhead { color: var(--muted); font-size: 12px; text-transform: uppercase;
     letter-spacing: .4px; margin: 2px 0 4px; }
   .src { font-size: 12px; text-decoration: none; color: var(--muted); padding: 0 3px; }
   .src:hover { color: var(--accent); }
-  .pri-3 { background: #3a1620; color: var(--call); }
-  .pri-2 { background: #3a2412; color: var(--firm); }
-  .conflict { background: #3a1620; color: var(--call); }
-  .possible { background: #3a2f12; color: var(--soft); }
-  .avoiding { background: #3a1620; color: var(--call); }
-  .badge.first { background: #16341f; color: var(--good); }
-  .firststep { margin-top: 8px; padding: 8px 10px; background: #15231a;
+  .pri-3 { background: var(--call-bg); color: var(--call); }
+  .pri-2 { background: var(--firm-bg); color: var(--firm); }
+  .conflict { background: var(--call-bg); color: var(--call); }
+  .possible { background: var(--soft-bg); color: var(--soft); }
+  .avoiding { background: var(--call-bg); color: var(--call); }
+  .badge.first { background: var(--good-bg); color: var(--good); }
+  .firststep { margin-top: 8px; padding: 8px 10px; background: var(--good-bg);
                border-left: 3px solid var(--good); border-radius: 0 6px 6px 0; font-size: 14px; }
   .steps { margin-top: 6px; }
   .steps summary { color: var(--muted); font-size: 13px; cursor: pointer; }
@@ -113,7 +151,7 @@
     border: 1.5px solid var(--line); border-radius: 50%; background: transparent;
     color: var(--good); font-size: 11px; line-height: 1; cursor: pointer; }
   .step-check:hover { border-color: var(--good); }
-  .step-check.on { background: var(--good); border-color: var(--good); color: #0b0d12; }
+  .step-check.on { background: var(--good); border-color: var(--good); color: var(--accent-fg); }
   .firststep.step { display: flex; align-items: flex-start; gap: 7px; }
   .firststep .step-check { margin-top: 2px; }
   .step-done { opacity: .55; }
@@ -122,12 +160,12 @@
     font-size: 12px; padding: 0; text-decoration: underline; opacity: .75; }
   .lnk:hover { color: var(--accent); opacity: 1; }
 
-  .bar { height: 6px; border-radius: 4px; background: #2a2f3a; margin-top: 8px; overflow: hidden; }
+  .bar { height: 6px; border-radius: 4px; background: var(--chip); margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
 
   .btn-sm {
     font-size: 12px; padding: 0 11px; min-height: 34px; border-radius: 8px;
-    background: #222734; border: 1px solid var(--line); color: var(--muted); cursor: pointer;
+    background: var(--raise); border: 1px solid var(--line); color: var(--muted); cursor: pointer;
   }
   .btn-go:hover { border-color: var(--good); color: var(--good); }
   .btn-x:hover { border-color: var(--call); color: var(--call); }
@@ -143,7 +181,7 @@
   }
   .addrow .add {
     padding: 0 16px; min-height: 38px; border-radius: 8px; background: var(--accent);
-    color: #0b0d12; border: none; font-weight: 700; cursor: pointer;
+    color: var(--accent-fg); border: none; font-weight: 700; cursor: pointer;
   }
   .searchrow { margin-bottom: 12px; }
   .searchrow input {
@@ -158,9 +196,9 @@
   .md ul { margin: 6px 0; padding-left: 20px; }
   .md li { margin: 2px 0; }
   .md em { color: var(--muted); font-style: normal; opacity: .8; }
-  .md code { background: #2a2f3a; padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+  .md code { background: var(--chip); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
   .md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent);
-                   background: #1d212b; color: var(--muted); border-radius: 0 6px 6px 0; }
+                   background: var(--raise); color: var(--muted); border-radius: 0 6px 6px 0; }
   details summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
   .card > details.collapse > summary { margin-bottom: 0; list-style-position: inside; }
   .card > details.collapse[open] > summary { margin-bottom: 12px; }
@@ -174,16 +212,16 @@
   #c-assistant .addrow { margin-bottom: 0; }
   .asst-log { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
   .asst-log:empty { display: none; }
-  .asst-reply { background: #1d212b; border-left: 3px solid var(--accent);
+  .asst-reply { background: var(--raise); border-left: 3px solid var(--accent);
     border-radius: 0 8px 8px 0; padding: 9px 12px; font-size: 14px; }
   .asst-actions { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   .act-item { padding: 9px 12px; border-top: 1px solid var(--line); font-size: 14px; }
   .act-item:first-child { border-top: none; }
   .asst-bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px;
-    background: #12151c; border-top: 1px solid var(--line); }
+    background: var(--bg); border-top: 1px solid var(--line); }
   .asst-bar .spacer { flex: 1; }
   .asst-apply { padding: 0 16px; min-height: 34px; border-radius: 8px; background: var(--good);
-    color: #0b0d12; border: none; font-weight: 700; cursor: pointer; }
+    color: var(--accent-fg); border: none; font-weight: 700; cursor: pointer; }
   .asst-note { color: var(--muted); font-size: 13px; }
   .asst-err { color: var(--soft); font-size: 13px; }
   .asst-ok { color: var(--good); font-weight: 700; }
@@ -195,10 +233,10 @@
   #gate p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
   #gate input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--line);
                 background: var(--bg); color: var(--fg); font-size: 16px; margin-bottom: 12px; }
-  #gate button { width: 100%; padding: 12px; min-height: 44px; background: var(--accent); color: #0b0d12; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  #gate button { width: 100%; padding: 12px; min-height: 44px; background: var(--accent); color: var(--accent-fg); border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
   #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 12px; min-height: 44px;
     line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
-    color: #0b0d12; border-radius: 8px; font-weight: 700; }
+    color: var(--accent-fg); border-radius: 8px; font-weight: 700; }
   #gate .gsi:hover { filter: brightness(1.06); }
   #gate .tokenfallback { margin-top: 16px; }
   #gate .tokenfallback summary { color: var(--muted); font-size: 13px; cursor: pointer; }
@@ -207,10 +245,10 @@
   /* Panic mode — a prominent alarm button and a focused, dim-everything overlay
      so an overwhelmed user sees one screen: the single first step, then the
      short list of what's actually on fire. */
-  .alarm { background: #2c1620; color: #ffb3c0; border-color: #5a2130; }
-  .alarm:hover { border-color: var(--call); color: #fff; }
+  .alarm { background: var(--call-bg); color: var(--call); border-color: var(--call-bg); }
+  .alarm:hover { border-color: var(--call); color: var(--fg); }
   #panic { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
-    background: rgba(8,9,12,.86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     align-items: flex-start; justify-content: center;
     padding: max(24px, env(safe-area-inset-top)) 16px 32px; }
   #panic .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
@@ -219,7 +257,7 @@
   .panic-head h2 { margin: 0; font-size: 18px; }
   .panic-head .spacer { flex: 1; }
   .panic-ground { font-size: 16px; line-height: 1.45; margin: 4px 0 14px; }
-  .panic-first { background: #15231a; border: 1px solid #245232; border-radius: 12px;
+  .panic-first { background: var(--good-bg); border: 1px solid var(--line); border-radius: 12px;
     padding: 14px 16px; margin: 0 0 16px; }
   .panic-first-label { font-size: 12px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .5px; color: var(--good); margin-bottom: 6px; }
@@ -242,13 +280,21 @@
 </style>
 </head>
 <body>
+<nav class="topnav">
+  <a class="brand" href="/family">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/family">Family</a>
+    <a href="/kids">Kids</a>
+    <a href="/dashboard" aria-current="page">Dashboard</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
 <header>
-  <h1>🧠 Prefrontal</h1>
+  <h1>Monitor</h1>
   <span class="meta" id="status">loading…</span>
   <span class="spacer"></span>
   <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <button class="ghost" id="refresh">Refresh</button>
-  <a class="ghost" href="/family" title="Calm, non-technical family view" style="text-decoration:none">Family view</a>
   <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
 </header>
 
@@ -335,6 +381,20 @@ let lastTodos = null;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+
+// Theme toggle (shared across pages).
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
 
 function fmt(ts) {
   if (!ts) return "—";

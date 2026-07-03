@@ -120,6 +120,8 @@ Persistent preferences and working memory for the coaching layer.
 > The outing check and departure check read these when a poll body omits explicit
 > coordinates. `last_departure_signature` records the last fired
 > `(commitment, level)` so a standing departure reminder doesn't re-alert.
+> `crunch_until` is a self-expiring timestamp (set by `prefrontal crunch on`) that
+> suspends the per-key work/life time bands during a deadline stretch.
 
 > **Module-contributed keys.** Each enabled challenge-area module
 > (`prefrontal/modules/`) seeds its own additional `coaching_state` rows when the
@@ -142,12 +144,15 @@ also defines:
   optional planned duration, and an `aligned` "is this what I meant to do?" bit)
   for the Hyperfocus module. Drives the asymmetric protect-vs-interrupt logic: an
   aligned block is shielded from other modules' nudges until it overruns its plan
-  (a gentle check) or passes the hard ceiling (a biological break).
+  (a gentle check) or passes the hard ceiling (a biological break). Also carries
+  `switch_impulses`/`switches_deferred` counters — the Impulsivity module's
+  capture-and-defer tally over the session.
 - **`commitments`** — upcoming schedule items synced from calendars (or added
   manually), used for double-booking detection and impact analysis. Optional
   `dest_lat`/`dest_lon` enable a local travel-time estimate for departure
   reminders (`prefrontal/departure.py`); without them the static `lead_minutes`
-  buffer is used.
+  buffer is used. `source_url` keeps the verbatim deeplink back to the source
+  event/email.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
   Each carries an inferred, editable `category` (a short topic label). The
@@ -156,11 +161,15 @@ also defines:
   existing category unless genuinely novel and under the cap, and the dashboard
   can override it (`POST /todos/{id}/category`). The rollup that drives the
   dashboard's Categories panel (counts, typical estimate, completion rate,
-  avoidance) is `category_stats` in `prefrontal/todos.py`. A todo may only be
-  *suggested* at appropriate times: an optional `time_window` (`"HH:MM-HH:MM"`
-  local) overrides the window otherwise chosen by its category/source, and a hard
-  global off-zone (default 22:00–06:00) applies to everything — see `WindowConfig`
-  in `prefrontal/scheduling.py` and `POST /todos/{id}/window`.
+  avoidance) is `category_stats` in `prefrontal/todos.py`. Each also carries a
+  nullable `domain` (`work`/`home`/… the life sphere, stamped from the mail
+  account or set explicitly) that **outranks category** for scheduling — the
+  work/life guardrail. A todo may only be *suggested* at appropriate times: the
+  window is resolved by precedence **per-todo `time_window` override → `domain` →
+  `category` → `source` → default**, and a hard global off-zone (default
+  22:00–06:00) applies to everything — see `WindowConfig` in
+  `prefrontal/scheduling.py` and `POST /todos/{id}/window`. A travel-requiring
+  todo is additionally never suggested after `TRAVEL_LATEST_HOUR` (18:00).
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).
@@ -185,7 +194,7 @@ also defines:
 - **`geocode_cache`** — normalized free-text location → coordinates (or a
   recorded miss, `lat`/`lon` NULL), so the same address resolves once instead of
   re-calling the geocoder each sync. Populated only when `geocoding_enabled` is on.
-- **`profile_cache`** — the single cached LLM profile narrative (the coaching
+- **`profile_cache`** — one cached LLM profile narrative **per user** (the coaching
   prose from `summarize_profile`), with its `source` (`llm`/`heuristic`),
   `model`, the `structured` input it was derived from, a `structured_hash`, and
   `generated_at`. Written by `prefrontal summarize` (or `GET /profile?refresh=1`)
@@ -200,9 +209,16 @@ also defines:
   `days_open` at drop time are recorded, so a repeat or quick-drop sender is
   down-weighted next time (`prefrontal/mail/`).
 - **`nudges`** — a log of nudges the system decided to send (`kind`
-  `outing`/`departure`, escalation `level`, the delivered `message`), so the
-  widget/dashboard can surface "the last thing Prefrontal told you" and a missed
-  push stays visible.
+  `outing`/`departure`/`star`/…, escalation `level`, the delivered `message`), so
+  the widget/dashboard can surface "the last thing Prefrontal told you" and a
+  missed push stays visible. An optional `expires_at` gives a nudge a TTL, so a
+  stale "leave now" stops showing once its moment has passed.
+- **`proposals`** — LLM-as-sensor candidates (`prefrontal/sensor.py`): per-user
+  rows with a `kind` (`state`/`episode`), a JSON `payload`, a `rationale`, a
+  `source` (`llm_inferred`), and a `status` (`pending`/`accepted`/`rejected`).
+  A free-text note is turned into *allowlisted* candidates that stay **pending**
+  until a human accepts — nothing authoritative is written by the model.
+  `prefrontal note` / `prefrontal proposals list|accept|reject`.
 
 ---
 

@@ -12,8 +12,10 @@ from datetime import datetime
 import pytest
 
 from prefrontal.memory.patterns import (
+    TYPE_BIAS_PREFIX,
     compute_bias,
     compute_bias_by_band,
+    compute_bias_by_type,
     compute_confidence,
     compute_patterns,
     decay_weight,
@@ -349,3 +351,52 @@ def test_recompute_persists_band_bias():
         summary = recompute_patterns(store, timezone="UTC")
         assert summary.band_bias.get("morning") == 2.0
         assert store.get_state("time_estimation_bias:morning") == "2.0"
+
+
+# -- context-conditioned bias by task type (learning §5) ---------------------
+
+
+def test_compute_bias_by_type_conditions_on_episode_type():
+    episodes = (
+        [_ep(episode_type="task", predicted_value=10, actual_value=20) for _ in range(3)]
+        + [_ep(episode_type="departure", predicted_value=10, actual_value=10) for _ in range(3)]
+        + [_ep(episode_type="mail", predicted_value=10, actual_value=30) for _ in range(2)]
+    )
+    typed = compute_bias_by_type(episodes)
+    # task runs 2× long, departures on the nose; mail has only 2 pairs → omitted.
+    assert typed == {"task": 2.0, "departure": 1.0}
+
+
+def test_compute_bias_by_type_ignores_pairs_without_actuals():
+    # Todo closes log a "task" episode with actual_value=None — they must not
+    # feed the type bias (created→closed is wall-clock, not time on task).
+    episodes = [_ep(episode_type="task", predicted_value=10, actual_value=None) for _ in range(5)]
+    assert compute_bias_by_type(episodes) == {}
+
+
+def test_resolve_bias_prefers_band_then_type_then_global():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("time_estimation_bias", "1.4")
+        store.set_state(f"{TYPE_BIAS_PREFIX}task", "1.7")
+        # No hour, no type → global.
+        assert resolve_bias(store) == 1.4
+        # Type only → the type multiplier.
+        assert resolve_bias(store, episode_type="task") == 1.7
+        # Unknown type → global.
+        assert resolve_bias(store, episode_type="mail") == 1.4
+        # Band beats type when both are learned and the hour has a band.
+        store.set_state("time_estimation_bias:morning", "2.0")
+        assert resolve_bias(store, local_hour=9, episode_type="task") == 2.0
+        # No band for the hour → falls through to the type bias, not straight to global.
+        assert resolve_bias(store, local_hour=14, episode_type="task") == 1.7
+
+
+def test_recompute_persists_type_bias():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for _ in range(3):
+            store.log_episode("task", predicted_value=10, actual_value=20)
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.type_bias.get("task") == 2.0
+        assert store.get_state(f"{TYPE_BIAS_PREFIX}task") == "2.0"

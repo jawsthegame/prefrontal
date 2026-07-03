@@ -171,6 +171,7 @@ declares the interventions it provides.
 | Focus regulation | **Hyperfocus** | Protects focus when it's aimed right; checks alignment and enforces breaks when it isn't. |
 | Response inhibition | **Impulsivity** | A reflective pause before a snap switch; capture-and-defer the distraction. |
 | Prospective memory, in the field | **Location-Aware Task Anchor** | Escalating nudges (soft → firm → voice call) back to a stated intention as its window elapses, gated by actually being on-site. |
+| Basic needs, dropped in flow | **Self-Care** | Opt-in "have you eaten? / had water?" checks that pierce a focus block — not an EF dysfunction itself but a downstream casualty of one; adaptive cadence to a daily target. |
 
 *(See [`docs/one-sheet.pdf`](one-sheet.pdf) for the reader-facing version of
 this breakdown. Build status per module is tracked in `README.md`.)*
@@ -194,17 +195,20 @@ challenge modules, (2) seeds domain vocabulary — commitment kinds, todo
 categories, default windows, (3) registers **situation tools** that are thin
 compositions of existing primitives (todos, commitments, departure, panic,
 decomposition, the NL-assistant whitelist), and (4) tailors surfaces like the
-family view. Because it's declarative and composed from shipped primitives, a
-Pack is cheap to add and shareable — "install the Parent pack."
+`/kids` household dashboard. Because it's declarative and composed from shipped
+primitives, a Pack is cheap to add and shareable — "install the Parent pack."
 
-The **Parent Pack** is the first, and its backbone is a **shared household
-sheet**: one always-current place two co-parents both read and write in plain
-English — sizes, routines, allergies, providers, standing behavior plans,
-appointments. Every entry is stamped with who set it and when, which makes the
-invisible load *legible*, and the coaching layer pushes the deltas that matter
-to the parent who didn't make them. This is the first concrete driver for a
-**household scope** alongside the per-user scope — two people, one set of rows,
-every write attributed. (Full design: [`docs/household-sheet.md`](household-sheet.md);
+The **Parent Pack** is the first, and much of it has **shipped**. Its backbone is
+a **shared household sheet**: one always-current place two co-parents both read
+and write in plain English — sizes, routines, allergies, providers, standing
+behavior plans (star charts), a shopping list, appointments. Every entry is
+stamped with who set it and when, which makes the invisible load *legible*; a
+daily **delta digest** pushes the changes that matter to the parent who didn't
+make them, a **load-balance view** shows who's keeping it up, and an optional
+weekly **mental-load check-in** asks. This drove a **household scope** alongside
+the per-user scope — two people, one set of rows, every write attributed —
+reached at `/kids` (and a `/family` glance), with self-serve **invites** so a
+co-parent can join. (Full design: [`docs/household-sheet.md`](household-sheet.md);
 reader-facing overview: [`docs/parent-pack.pdf`](parent-pack.pdf).)
 
 ---
@@ -266,17 +270,19 @@ data stays yours.
 
 ## 9. Where it's going
 
-Prefrontal is early. The foundation — memory, the learning pass, calendar/todo
-handling, briefing, panic mode, encouragement, mail triage, the coaching tick
-engine, several challenge modules — is in place; other pieces are stubs or
-in-progress. The near-term direction:
+Prefrontal is in active, daily use. A lot is in place — multi-tenant memory and
+the learning pass, calendar/todo handling, briefing, panic mode, encouragement,
+mail triage, the coaching tick engine, all six challenge modules, native ntfy
+delivery, the LLM-as-sensor capture path, and the Parent Pack backbone (shared
+household sheet, star charts, shopping, delta digest, load-balance view, weekly
+check-in, self-serve invites). What's still ahead:
 
-- **Context Packs** as a first-class composition layer, starting with **Parent**.
-- The **shared household sheet** and household scope (v1: the visible shared
-  sheet; v2: the proactive delta-digest that balances load).
-- **Sharper learning** — context-conditioned patterns and learned channel
-  response.
-- **First-class delivery** — native Pushover/ntfy/TTS publishing.
+- **Context Packs as a first-class abstraction** — a formal Pack registry and
+  merge rules when two Packs overlap (the Parent backbone already ships).
+- **Sharper learning** — deeper context-conditioned patterns and learned channel
+  response, building on today's time-of-day bias and recency-weighted pass.
+- **A source-agnostic triage agent** — routing arbitrary inbound events (mail
+  triage is the first slice); native Pushover/TTS beyond today's ntfy default.
 
 See [`ROADMAP.md`](../ROADMAP.md) for the detailed, honestly-scoped list.
 

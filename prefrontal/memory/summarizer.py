@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from prefrontal.memory.patterns import TYPE_BIAS_PREFIX
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
@@ -139,6 +140,16 @@ def build_profile(
             banded = [f"{b} {v}x" for b, v in bands if v]
             if banded:
                 lines.append(f"> By time of day: {', '.join(banded)}.")
+            # ...and by kind of task (learning §5, task-type dimension): a focus
+            # block is mis-estimated differently from a departure buffer.
+            typed = [
+                (k[len(TYPE_BIAS_PREFIX):], v.get("value"))
+                for k, v in sorted(state.items())
+                if k.startswith(TYPE_BIAS_PREFIX)
+            ]
+            typed_str = [f"{t} {v}x" for t, v in typed if v]
+            if typed_str:
+                lines.append(f"> By task type: {', '.join(typed_str)}.")
             lines.append("")
 
     # One section per enabled challenge-area module. Modules that have nothing

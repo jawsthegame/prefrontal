@@ -47,14 +47,15 @@ def build_router(
 
     @router.get("/family", response_class=HTMLResponse, tags=["system"])
     def family() -> str:
-        """Serve the family view — a calm, non-technical, read-only page.
+        """Serve the family view — a calm, read-only *shared household* glance.
 
-        Like ``/dashboard`` the shell is unauthenticated and carries no data; it
-        prompts once for the access code (the ``X-Prefrontal-Token``) and polls
-        only the gentle, read-only endpoints (``/outings`` for "right now" and
-        ``/briefing`` for today's plan), plus a soft "Feeling overwhelmed?" button
-        that opens a focused ``/panic`` overlay. No levels, profile, or action
-        buttons — meant for a partner to glance at over Tailscale.
+        With households, the shared thing everyone can look at is the household
+        sheet, so this is its read-only face: kids & facts, standing plans + star
+        progress, the shopping list, upcoming appointments, recent changes, and
+        (if enabled) the load-balance view — no edit forms (those live on
+        ``/kids``). Like the other web surfaces the shell is unauthenticated and
+        carries no data; it signs in via Google session or a one-time access code,
+        then reads ``GET /household/sheet``. Shares the unified theme + nav.
         """
         return FAMILY_HTML
 

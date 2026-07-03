@@ -44,10 +44,12 @@ be normalized into a `Signal` flows through the same path.
   function plus a thin store/delivery shim, invoked per inbound request — same
   shape as [`augment_todo`](../prefrontal/todos.py) and
   [`build_briefing`](../prefrontal/briefing.py), not a background loop.
-- **No** mail *fetching* in Python. Polling IMAP/Gmail stays in n8n (or a Google
-  Apps Script digest, per the roadmap); Prefrontal receives already-fetched,
-  normalized signals over the webhook. Local-first: nothing reaches out to a
-  mail provider from the host.
+- Mail *fetching* is optional either way. An in-Python IMAP fetcher has since
+  shipped (`prefrontal mail fetch --account …`, `prefrontal/mail/imap.py`, with
+  `MAIL_IMAP_*_<ACCOUNT>` env vars) for hosts that prefer it; n8n polling (or a
+  Google Apps Script digest) remains an equally-supported path. Either way triage
+  itself consumes already-normalized signals. Local-first still holds: an IMAP
+  fetch reaches only *your* mail server, and nothing is written back.
 - **No** auto-reply, auto-archive, or any write back to the user's inbox. Triage
   reads signals and writes to *Prefrontal's* memory/delivery only.
 - **No** new model dependency. Triage classifies heuristically by default and
