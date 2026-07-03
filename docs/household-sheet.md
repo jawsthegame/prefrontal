@@ -66,6 +66,14 @@ scoping, we add a **second, parallel scope**.
 
 - A new `households` table; `users` gains a nullable `household_id`. A user
   belongs to **0 or 1** household (v1).
+- A household of **one is fully supported** — a single parent is a first-class
+  case, not a degenerate two-parent one. Kid-facing features (facts, agreements,
+  star charts + their prompts and congratulations) work unchanged with one member;
+  only the *load-balancing* features — which are inherently *between* two
+  co-parents (the mental-load check-in §3.6.1, the delta digest §3.6.2) — gate on
+  `household_member_count() >= 2` (`is_shared_household()`), so they hide in the UI
+  and their sweeps no-op for a solo household, then light up on their own when a
+  second parent joins.
 - The new tables (`children`, `household_facts`, `household_agreements`) carry
   **`household_id NOT NULL`** instead of `user_id`. They are reached through
   household-scoped store methods that resolve the caller's `household_id` from
@@ -251,6 +259,8 @@ the **subjective** companion: an opt-in, once-a-week, deliberately gentle check-
 that asks each parent how the invisible load has *felt for them* — because the
 felt experience and the tally can diverge, and honesty needs a welcoming frame.
 
+- **Requires a shared household** (≥2 members) — it's a two-parent concern, so a
+  solo household hides the card and the sweep no-ops (see §2).
 - **Opt-in schedule** on the household row (`checkin_enabled`, `checkin_day`,
   `checkin_time`, `checkin_last_sent_at`) — one weekday + time both parents share,
   set on the `/kids` dashboard; off by default.
@@ -279,6 +289,8 @@ The sheet + check-in are still *pull* (someone has to look) or *self-report*. Th
 delta digest is the **push** half of §7: a daily, opt-in nudge that tells each
 parent what the *other* parent changed on the sheet since they last looked.
 
+- **Requires a shared household** (≥2 members) — with one parent there's no "other
+  parent" to catch up on, so the toggle hides and the sweep no-ops (see §2).
 - **Opt-in** household toggle `households.digest_enabled` (off by default), set on
   the `/kids` dashboard.
 - **"Seen" vs "digested"** — two per-parent `coaching_state` stamps:
@@ -442,7 +454,7 @@ mechanism.
 |---|---|
 | `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`; `users.household_id`. |
 | `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
-| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, facts/agreements/children methods, the star ledger + `mark_prompted`, and the check-in (`get`/`set_checkin_config`, `record_checkin_response`, `checkin_responses`, `mark_checkin_sent`). |
+| `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, and the digest toggle. |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
 | `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic + the digest logic (`unseen_changes`/`digest_message`/`digest_interval_ok`). |
 | `prefrontal/integrations/delivery.py` | `deliver_to_household()` + `deliver_to_member()`; `household_notice()`, `household_prompt_notice()` (⭐), `household_checkin_notice()` (self-report), `household_digest_notice()` (Caught up). |

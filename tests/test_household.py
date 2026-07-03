@@ -1147,6 +1147,65 @@ def test_nudge_act_digest_seen_marks_the_sheet_seen(signed_client, store):
     assert dana.get_state("household_seen_at")
 
 
+# --- single-parent households ------------------------------------------------
+
+
+def test_member_count_and_is_shared(store, dana):
+    assert dana.household_member_count() == 2  # dana + alex
+    assert dana.is_shared_household() is True
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    lee = store.scoped(store.get_user("lee")["id"])
+    assert lee.household_member_count() == 1
+    assert lee.is_shared_household() is False
+
+
+def test_single_parent_disables_load_balancing(client, store):
+    """A household of one skips the co-parent-only features, even if toggled on."""
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    assert client.get("/household/sheet", headers=_h("lee-tok")).json()["shared"] is False
+    # Turn both on and make them "due" — the sweeps must still stay silent.
+    client.post("/household/checkin", json=_due_checkin_body(), headers=_h("lee-tok"))
+    client.post("/household/digest", json={"enabled": True}, headers=_h("lee-tok"))
+    client.post(
+        "/household/facts",
+        json={"category": "sizes", "item": "shoe size", "value": "9"},
+        headers=_h("lee-tok"),
+    )
+    assert client.post(
+        "/webhooks/household/checkin/check", json={}, headers=_h("lee-tok")
+    ).json()["sent"] is False
+    assert client.post(
+        "/webhooks/household/digest/check", json={}, headers=_h("lee-tok")
+    ).json()["sent"] == []
+
+
+def test_single_parent_still_gets_star_features(client, store):
+    """Star tracking + congratulation aren't load-balancing — they stay on solo."""
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    aid = client.post(
+        "/household/agreements",
+        json={"title": "Star chart", "kind": "reward", "structured": STAR_CHART},
+        headers=_h("lee-tok"),
+    ).json()["id"]
+    hit = client.post(
+        f"/household/agreements/{aid}/stars", json={"delta": 5}, headers=_h("lee-tok")
+    ).json()
+    assert hit["total"] == 5
+    assert [g["reward"] for g in hit["goals_reached"]] == ["movie night"]
+    assert {n["handle"] for n in hit["notified"]} == {"lee"}  # the one parent is still told
+
+
+def test_load_balancing_activates_when_a_second_parent_joins(client, store):
+    solo = store.create_household("Solo")
+    store.set_user_household("lee", solo)
+    assert client.get("/household/sheet", headers=_h("lee-tok")).json()["shared"] is False
+    store.set_user_household("op", solo)  # a co-parent joins
+    assert client.get("/household/sheet", headers=_h("lee-tok")).json()["shared"] is True
+
+
 # --- migration ---------------------------------------------------------------
 
 

@@ -441,6 +441,11 @@ async function loadSheet() {
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
   renderCheckin(data.checkin);
+  // Single-parent households: the co-parent-only features simply aren't shown.
+  // They reappear on their own once a second parent joins the household.
+  const shared = data.shared !== false;
+  $("#c-checkin").style.display = shared ? "" : "none";
+  $("#digest-toggle").style.display = shared ? "" : "none";
   refreshDropdowns();
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

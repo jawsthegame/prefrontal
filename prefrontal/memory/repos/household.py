@@ -116,6 +116,27 @@ class HouseholdRepo:
         ).fetchone()
         return _row_to_dict(row)
 
+    def household_member_count(self) -> int:
+        """How many active members the caller's household has (0 if in none).
+
+        The single-parent switch: features that only make sense *between* two
+        co-parents (the mental-load check-in, the delta digest) gate on this being
+        >= 2, so a household of one silently skips them — and they light up on
+        their own the moment a second parent joins.
+        """
+        hid = self.household_id_or_none()
+        if hid is None:
+            return 0
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE household_id = ? AND status = 'active'",
+            (hid,),
+        ).fetchone()
+        return int(row["n"])
+
+    def is_shared_household(self) -> bool:
+        """Whether the caller co-parents with someone (>= 2 active members)."""
+        return self.household_member_count() >= 2
+
     # -- roster ---------------------------------------------------------------
 
     def add_child(self, *, name: str, birthday: str | None = None) -> int:

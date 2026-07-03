@@ -259,6 +259,9 @@ def _digest_cli(store, args, settings) -> int:
     if hid is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
+    if not scoped.is_shared_household():
+        print("Single-parent household — the delta digest is off.")
+        return 0
     if not scoped.get_digest_enabled():
         print("The daily digest is off for this household.")
         return 0
@@ -307,6 +310,9 @@ def _checkin_cli(store, args, settings) -> int:
     if scoped.household_id_or_none() is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
+    if not scoped.is_shared_household():
+        print("Single-parent household — the load check-in is off.")
+        return 0
     now_local = local_datetime(utcnow(), settings.timezone)
     config = scoped.get_checkin_config()
     last_local = None
