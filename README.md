@@ -213,7 +213,7 @@ Interactive API docs are available at `http://localhost:8000/docs` while the ser
 | ntfy (Pushover optional) | Notification delivery — one-tap action buttons |
 | Tailscale | Remote access |
 
-LLM inference uses a local model via Ollama for routing and triage. Heavier reasoning tasks can optionally use the Anthropic API — configurable per agent.
+LLM inference uses a local model via Ollama for routing and triage. Heavier reasoning tasks can optionally use the Anthropic API — configurable per agent via `ANTHROPIC_AGENTS` (assistant / summarizer / briefing / sensor / triage), with Ollama as the fallback. See "Inference providers" in [`docs/guide.md`](docs/guide.md).
 
 ---
 

@@ -32,7 +32,8 @@ from prefrontal.webhooks.services import RouterServices
 def build_router(services: RouterServices) -> APIRouter:
     """Build the "sensor" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
-    ollama_client = services.ollama
+    # Claude when the ``sensor`` agent is opted into Anthropic, else local Ollama.
+    sensor_client = services.provider.client("sensor")
 
     def _describe(proposal: dict[str, Any]) -> dict[str, Any]:
         """A compact, review-ready view of a proposal row (no raw payload noise)."""
@@ -62,7 +63,7 @@ def build_router(services: RouterServices) -> APIRouter:
         ``proposals`` is empty (an honest no-guess result, not an error).
         """
         memory = ctx.store
-        candidates = extract_candidates(payload.text, client=ollama_client)
+        candidates = extract_candidates(payload.text, client=sensor_client)
         ids = record_candidates(memory, candidates)
         # Read back the freshly-stored rows so the response matches GET /proposals.
         created = [p for p in memory.list_proposals("pending") if p["id"] in set(ids)]

@@ -7,6 +7,7 @@ dependencies live in :mod:`prefrontal.webhooks._common`.
 """
 from __future__ import annotations
 
+from prefrontal.integrations import ProviderResolver
 from prefrontal.log import configure_logging
 from prefrontal.webhooks._common import (
     APP_VERSION,
@@ -62,10 +63,18 @@ def create_app(
     # heavier call than the snappy window inference above. Reuses an injected
     # client in tests so the refresh path stays offline.
     summarizer_client = ollama or OllamaClient.from_settings(resolved_settings)
-    # Optional Claude client for the dashboard assistant. Local-first: only used
-    # when an API key is configured (``available()``), otherwise the assistant
-    # falls back to the local Ollama client.
+    # Optional Claude client. Local-first: only used when an API key is
+    # configured (``available()``), otherwise agents fall back to Ollama.
     anthropic_client = anthropic or AnthropicClient.from_settings(resolved_settings)
+    # Per-agent backend selector: which agents prefer Claude (``ANTHROPIC_AGENTS``)
+    # vs the local model. Built once here; each router asks it for its agent's
+    # client. Defaults to the snappy inference client as the local fallback —
+    # the summarizer path passes its longer-timeout client explicitly.
+    provider = ProviderResolver(
+        ollama=ollama_client,
+        anthropic=anthropic_client,
+        anthropic_agents=frozenset(resolved_settings.anthropic_agents),
+    )
     # Forward-geocoder for commitment destinations. Built from settings unless
     # injected (tests pass a stub). Only consulted when the runtime
     # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.
@@ -132,6 +141,7 @@ def create_app(
         ollama=ollama_client,
         summarizer=summarizer_client,
         anthropic=anthropic_client,
+        provider=provider,
         geocoder=geocoder_client,
         run_geocode=_run_geocode,
     )

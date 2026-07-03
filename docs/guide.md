@@ -26,7 +26,8 @@ iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
   (ntfy pushes by default, Pushover optional, Twilio calls for the top of the
   ladder). Workflows live in [`../deploy/n8n/`](../deploy/n8n).
 - **Ollama** is optional local inference for nicer phrasing and triage; every
-  feature has a deterministic fallback when it's down.
+  feature has a deterministic fallback when it's down. Heavier-reasoning agents
+  can optionally use **Claude** instead — see "Inference providers" below.
 - You interact via **iOS Shortcuts**, the **dashboard**, a **home-screen
   widget**, or the **CLI**.
 
@@ -431,9 +432,33 @@ proposes the matching actions. Two steps, on purpose:
 Two guardrails make this safe: a **strict op whitelist** (the assistant can't run
 anything outside the list above) and **id resolution from your own snapshot** (it
 can only touch items that actually exist in your scoped data — never a
-hallucinated or someone else's row). Parsing uses **Claude** when an
-`ANTHROPIC_API_KEY` is set, otherwise the local Ollama model (local-first by
-default); the response says which `provider` answered.
+hallucinated or someone else's row). Parsing uses **Claude** when the
+`assistant` agent is opted into the Anthropic provider (see below), otherwise the
+local Ollama model (local-first by default); the response says which `provider`
+answered.
+
+## Inference providers (local-first, opt-in Claude per agent)
+
+Reasoning runs on the local Ollama model by default — nothing leaves the host.
+When you set `ANTHROPIC_API_KEY` (and `pip install -e '.[anthropic]'`), you can
+opt **individual agents** into Claude with `ANTHROPIC_AGENTS`, leaving everything
+else local. The selectable agents are the reasoning-heavy ones, where a stronger
+model earns its cost:
+
+| Agent | What it does | Where |
+|---|---|---|
+| `assistant` | Natural-language edits to todos/commitments | `POST /assistant`, dashboard chat |
+| `summarizer` | The prioritized-prose behavioral profile | `prefrontal summarize`, `GET /profile?refresh=1` |
+| `briefing` | The morning briefing rewritten as prose | `prefrontal briefing --llm` |
+| `sensor` | Free-text note → candidate structured updates | `prefrontal note`, `POST /observe` |
+| `triage` | Mail triage (urgency/category/needs-action) | `POST /webhooks/mail/sync` |
+
+`ANTHROPIC_AGENTS` is a comma-separated list (`summarizer,triage`), the sentinel
+`all`, or an empty value for all-local. Unset keeps the historical default —
+only the `assistant`. The snappy in-loop inferences (window/title/kind guessing,
+todo decomposition) always stay local for latency. Selection is local-first and
+safe: an agent falls back to Ollama when Claude is unavailable *or* a call fails,
+and every path keeps its deterministic fallback when both are down.
 
 ## Surfaces: dashboard, family, kids, insights, and widget
 
@@ -624,6 +649,8 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_DEFAULT_USER` | _(empty)_ | Tokenless requests resolve to this user (single-user mode) |
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
+| `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage`, `all`, or empty for all-local |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
 | `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Vistar:orange`) |
 | `PREFRONTAL_CALENDAR_LABELS` | _(empty)_ | `feed=label:color` calendar pills (e.g. `personal=Personal:blue`) |

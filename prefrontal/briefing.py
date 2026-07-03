@@ -40,7 +40,7 @@ DEFAULT_DAY_START_HOUR = 8
 DEFAULT_DAY_END_HOUR = 20
 
 if TYPE_CHECKING:
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
 
 #: System prompt for the LLM briefing pass.
 BRIEFING_SYSTEM_PROMPT = (
@@ -295,15 +295,17 @@ class BriefingResult:
 def summarize_briefing(
     store: MemoryStore,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     now: Any | None = None,
     fallback: bool = True,
 ) -> BriefingResult:
-    """Render the briefing and optionally rewrite it as prose via Ollama.
+    """Render the briefing and optionally rewrite it as prose via the model.
 
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
-        client: An Ollama client (defaults to one built from settings).
+        client: A model client — the local Ollama client, or Claude when the
+            ``briefing`` agent is opted into the Anthropic provider (defaults to
+            a local client built from settings).
         now: Optional naive-UTC "now".
         fallback: Fall back to the deterministic digest on model failure.
 
@@ -311,21 +313,22 @@ def summarize_briefing(
         A :class:`BriefingResult`.
 
     Raises:
-        prefrontal.integrations.ollama.OllamaError: If the model fails and
+        prefrontal.integrations.base.ProviderError: If the model fails and
             ``fallback`` is ``False``.
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations.base import ProviderError
+    from prefrontal.integrations.ollama import OllamaClient
 
     rendered = render_briefing(build_briefing(store, now=now))
     client = client or OllamaClient.from_settings()
     try:
         prose = client.generate(rendered, system=BRIEFING_SYSTEM_PROMPT).strip()
-    except OllamaError:
+    except ProviderError:
         if not fallback:
             raise
         return BriefingResult(text=rendered, source="heuristic")
     if not prose:
         if not fallback:
-            raise OllamaError("Ollama returned an empty briefing.")
+            raise ProviderError("The model returned an empty briefing.")
         return BriefingResult(text=rendered, source="heuristic")
     return BriefingResult(text=prose, source="llm", model=client.model)

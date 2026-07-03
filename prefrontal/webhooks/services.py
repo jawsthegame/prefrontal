@@ -13,7 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from prefrontal.config import Settings
-from prefrontal.integrations import AnthropicClient, N8nClient, OllamaClient
+from prefrontal.integrations import (
+    AnthropicClient,
+    N8nClient,
+    OllamaClient,
+    ProviderResolver,
+)
 from prefrontal.integrations.nominatim import NominatimGeocoder
 
 
@@ -27,6 +32,9 @@ class RouterServices:
         ollama: Ollama client for the snappy window/title inference calls.
         summarizer: Ollama client with the longer generation timeout (profile).
         anthropic: Optional Claude client for the dashboard assistant.
+        provider: Per-agent backend selector (Claude vs local). Routers resolve
+            the client for their agent via ``provider.client("<agent>")`` so the
+            Anthropic path is selectable per agent, not hard-wired.
         geocoder: Forward geocoder (usually reached only via ``run_geocode``).
         run_geocode: Best-effort commitment-destination enrichment closure.
     """
@@ -36,5 +44,6 @@ class RouterServices:
     ollama: OllamaClient
     summarizer: OllamaClient
     anthropic: AnthropicClient
+    provider: ProviderResolver
     geocoder: NominatimGeocoder
     run_geocode: Callable[..., dict[str, int]]

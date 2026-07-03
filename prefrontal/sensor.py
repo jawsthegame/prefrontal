@@ -31,9 +31,11 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.integrations.ollama import OllamaClient, OllamaError
+from prefrontal.integrations.base import ProviderError
+from prefrontal.integrations.ollama import OllamaClient
 
 if TYPE_CHECKING:
+    from prefrontal.integrations import Generator
     from prefrontal.memory.store import MemoryStore
 
 #: coaching_state keys the sensor may propose (explicit-preference statements).
@@ -150,14 +152,15 @@ def _validate(raw: dict[str, Any]) -> Candidate | None:
 
 
 def extract_candidates(
-    text: str, *, client: OllamaClient | None = None
+    text: str, *, client: Generator | None = None
 ) -> list[Candidate]:
     """Read free text and return validated candidate updates (never writes).
 
     Args:
         text: The free-text note / observation.
-        client: An :class:`OllamaClient` (tests inject one); defaults to the
-            configured local server.
+        client: A :class:`~prefrontal.integrations.Generator` — the local Ollama
+            client, or Claude when the ``sensor`` agent is opted into the
+            Anthropic provider (tests inject one). Defaults to the local server.
 
     Returns:
         Validated :class:`Candidate` objects. Empty when the note yields nothing,
@@ -168,7 +171,7 @@ def extract_candidates(
     client = client or OllamaClient.from_settings()
     try:
         reply = client.generate(_build_prompt(text), system=SENSOR_SYSTEM_PROMPT)
-    except OllamaError:
+    except ProviderError:
         return []  # no model → observe nothing rather than invent
     candidates = [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
     return candidates

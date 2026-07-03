@@ -24,13 +24,14 @@ from __future__ import annotations
 from typing import Any
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.integrations.base import ProviderError
 
 #: Default Claude model — the most capable Opus-tier model. Overridable via
 #: ``ANTHROPIC_MODEL`` for cost/latency tuning.
 DEFAULT_MODEL = "claude-opus-4-8"
 
 
-class AnthropicError(RuntimeError):
+class AnthropicError(ProviderError):
     """Raised when an Anthropic request fails (missing SDK, auth, or transport)."""
 
 

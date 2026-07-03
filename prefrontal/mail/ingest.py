@@ -26,7 +26,7 @@ from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_mess
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
 
 
 @dataclass
@@ -69,7 +69,7 @@ def ingest_messages(
     *,
     account: str,
     policy: str = "full",
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     fallback: bool = True,
     use_model: bool = True,
     create_todos: bool = True,
@@ -85,8 +85,10 @@ def ingest_messages(
             :func:`prefrontal.mail.models.normalize_message`).
         account: The logical account these belong to.
         policy: Retention policy (``full`` or ``signals``).
-        client: Ollama client for triage. Defaults to one from settings; if the
-            model is down, triage falls back to the heuristic (when ``fallback``).
+        client: Model client for triage (local Ollama, or Claude when the
+            ``triage`` agent is opted into the Anthropic provider). Defaults to
+            one from settings; if the model is down, triage falls back to the
+            heuristic (when ``fallback``).
         fallback: Passed through to :func:`triage_message`.
         use_model: When ``False``, triage every message with the keyword
             heuristic instead of the model (fast backlog clear).
@@ -239,7 +241,7 @@ def retriage_messages(
     *,
     account: str | None = None,
     only_needs_action: bool = True,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     fallback: bool = True,
     use_model: bool = True,
     create_todos: bool = True,
@@ -266,7 +268,7 @@ def retriage_messages(
         only_needs_action: When ``True`` (default), only re-triage mail currently
             flagged ``needs_action`` (can only clear junk). When ``False``,
             re-triage everything (can also newly flag previously-cleared mail).
-        client: Ollama client for triage (see :func:`ingest_messages`).
+        client: Model client for triage (see :func:`ingest_messages`).
         fallback: Passed through to :func:`triage_message`.
         use_model: When ``False``, re-triage with the keyword heuristic only.
         create_todos: When ``True``, create a todo for newly-flagged mail.

@@ -26,14 +26,7 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "assistant" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-    ollama_client = services.ollama
-    anthropic_client = services.anthropic
-
-    def _assistant_client() -> tuple[Any, str]:
-        """Pick the assistant's model backend: Claude if configured, else Ollama."""
-        if anthropic_client.available():
-            return anthropic_client, "anthropic"
-        return ollama_client, "ollama"
+    provider = services.provider
 
     @router.post("/assistant", tags=["assistant"])
     def assistant_interpret(
@@ -48,16 +41,17 @@ def build_router(services: RouterServices) -> APIRouter:
         ``POST /assistant/apply``. ``errors`` explains anything that couldn't be
         turned into a supported edit.
 
-        Uses Claude when an Anthropic key is configured, otherwise the local
-        Ollama model. A message that can't be provided at all yields 503.
+        Uses Claude when the ``assistant`` agent is configured for the Anthropic
+        provider and a key is available, otherwise the local Ollama model. A
+        message that can't be provided at all yields 503.
         """
-        client, provider = _assistant_client()
+        client, provider_name = provider.select("assistant")
         result = assistant_plan_message(payload.message, ctx.store, client=client)
         return {
             "reply": result.reply,
             "actions": [a.to_wire() for a in result.actions],
             "errors": result.errors,
-            "provider": provider,
+            "provider": provider_name,
         }
 
     @router.post("/assistant/apply", tags=["assistant"])

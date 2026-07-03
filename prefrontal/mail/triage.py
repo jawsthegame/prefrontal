@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.mail.models import MailItem
 
 if TYPE_CHECKING:
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
 
 #: Valid urgency levels, lowest to highest.
 URGENCY_LEVELS = ("low", "normal", "high", "urgent")
@@ -197,7 +197,7 @@ def suppress_todo_reason(
 def triage_message(
     item: MailItem,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     fallback: bool = True,
     use_model: bool = True,
     corrections: str = "",
@@ -207,10 +207,12 @@ def triage_message(
     Args:
         item: The normalized message. For a ``signals``-policy account its body
             is already ``None``, so triage runs on subject + sender only.
-        client: An Ollama client. Defaults to one built from settings.
+        client: A model client — the local Ollama client, or Claude when the
+            ``triage`` agent is opted into the Anthropic provider. Defaults to a
+            local client built from settings.
         fallback: If ``True`` (default), fall back to :func:`_heuristic_triage`
             on any model failure or unparseable output; if ``False``, re-raise
-            the underlying :class:`~prefrontal.integrations.ollama.OllamaError`.
+            the underlying :class:`~prefrontal.integrations.base.ProviderError`.
         use_model: If ``False``, skip the model entirely and triage with the
             keyword heuristic. Useful for clearing a large backlog of existing
             unread fast, without spinning the model up per message.
@@ -223,10 +225,11 @@ def triage_message(
         A :class:`MailTriage`.
 
     Raises:
-        prefrontal.integrations.ollama.OllamaError: If the model fails and
+        prefrontal.integrations.base.ProviderError: If the model fails and
             ``fallback`` is ``False``.
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations.base import ProviderError
+    from prefrontal.integrations.ollama import OllamaClient
 
     if not use_model:
         return _heuristic_triage(item)
@@ -235,7 +238,7 @@ def triage_message(
     prompt = _build_prompt(item)
     try:
         raw = client.generate(prompt, system=TRIAGE_SYSTEM_PROMPT + corrections)
-    except OllamaError:
+    except ProviderError:
         if not fallback:
             raise
         return _heuristic_triage(item)
@@ -243,7 +246,7 @@ def triage_message(
     parsed = _parse_verdict(raw)
     if parsed is None:
         if not fallback:
-            raise OllamaError("Mail triage model returned unparseable output.")
+            raise ProviderError("Mail triage model returned unparseable output.")
         return _heuristic_triage(item)
     return parsed
 
