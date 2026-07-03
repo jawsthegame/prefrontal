@@ -439,7 +439,11 @@ default); the response says which `provider` answered.
   todo") and it proposes the concrete edits, which you review and one-tap Apply.
   When you're in a household it also shows a **Shopping** card — a direct quick-add
   box and tap-to-check-off (no model needed), alongside the assistant path.
-  Open it over Tailscale; it asks for your token once and remembers it.
+  Each card carries small controls to **reorder** it (▲▼, move earlier/later) and,
+  for the list cards, **cap how many items it shows** ("max N", with a "+ N more"
+  toggle) — so you arrange the dashboard around what you look at; the layout is
+  remembered per device. Open it over Tailscale; it asks for your token once and
+  remembers it.
 - **`GET /family`** — a calm, mostly read-only *shared household* glance for
   everyone in the household: kids & facts, standing plans + star progress, the
   shopping list, upcoming appointments, recent changes, and (if enabled) the

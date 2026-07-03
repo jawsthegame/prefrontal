@@ -79,7 +79,7 @@
   }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px 18px; margin: 0 0 16px; break-inside: avoid;
+    padding: 16px 18px; margin: 0 0 16px; break-inside: avoid; position: relative;
   }
   .banner .card { margin-bottom: 0; }
   .card h2 {
@@ -87,6 +87,21 @@
     color: var(--muted); margin: 0 0 12px;
   }
   .empty { color: var(--muted); font-style: italic; }
+
+  /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
+  .masonry .card > h2, .masonry .card > details > summary { padding-right: 96px; }
+  .card-ctl { position: absolute; top: 12px; right: 12px; z-index: 2;
+    display: flex; gap: 4px; align-items: center; }
+  .card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 6px; width: 24px; height: 24px; cursor: pointer; font-size: 10px; line-height: 1; padding: 0; }
+  .card-ctl .cardbtn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+  .card-ctl .cardbtn:disabled { opacity: .3; cursor: default; }
+  .card-ctl .capsel { background: var(--card); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 6px; height: 24px; font-size: 11px; padding: 0 2px; cursor: pointer; }
+  .card-ctl .capsel:hover { border-color: var(--accent); }
+  .cap-more { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
+  .cap-more button { background: none; border: none; color: var(--accent); cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 600; padding: 2px 0; }
 
   .row { display: flex; align-items: flex-start; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
   .row:first-of-type { border-top: none; }
@@ -589,12 +604,15 @@ function paintTodos() {
   const body = $("#c-todos .body");
   if (!lastTodos) { body.innerHTML = `<div class="err">unavailable</div>`; return; }
   const q = ($("#todo-search").value || "").trim().toLowerCase();
-  if (!q) { body.innerHTML = renderTodos(lastTodos); return; }
-  const hit = (x) => [x.title, x.category, x.account].some((v) => String(v || "").toLowerCase().includes(q));
-  const matched = (lastTodos.todos || []).filter(hit);
-  body.innerHTML = matched.length
-    ? renderTodos({ ...lastTodos, todos: matched })
-    : `<div class="empty">No todos match “${esc(q)}”.</div>`;
+  if (!q) { body.innerHTML = renderTodos(lastTodos); }
+  else {
+    const hit = (x) => [x.title, x.category, x.account].some((v) => String(v || "").toLowerCase().includes(q));
+    const matched = (lastTodos.todos || []).filter(hit);
+    body.innerHTML = matched.length
+      ? renderTodos({ ...lastTodos, todos: matched })
+      : `<div class="empty">No todos match “${esc(q)}”.</div>`;
+  }
+  if (typeof applyCap === "function") applyCap("c-todos");
 }
 function renderTodos(d) {
   const t = (d.todos || []);
@@ -931,6 +949,7 @@ async function load() {
     $("#profile-updated").textContent = "";
   }
   $("#status").textContent = "updated " + new Date().toLocaleTimeString();
+  applyCaps();  // re-apply per-card item caps after the bodies re-rendered
   // Auth succeeded (no gate). If a panic nudge sent us here, open the triage now.
   if (panicRequested) {
     panicRequested = false;
@@ -939,7 +958,122 @@ async function load() {
   }
 }
 
-function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
+// ── Card layout: reorder cards + per-card item cap (persisted per device) ─────
+const LAYOUT_KEY = "prefrontal_dash_layout";
+// List cards whose flat rows can be capped (prose/pill cards are left alone).
+const CAPPABLE = new Set(["c-shopping", "c-todos", "c-commitments", "c-recent"]);
+const CAP_OPTIONS = [5, 10, 25, 0];  // 0 = All (no cap)
+const expanded = new Set();  // transient "show all" per card (not persisted)
+
+let layout = (() => {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (_) { return {}; }
+})();
+layout.order = layout.order || [];
+layout.caps = layout.caps || {};
+function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
+
+const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
+
+function applyOrder() {
+  const main = document.querySelector(".masonry");
+  if (!main) return;
+  const byId = {}; masonryCards().forEach((c) => { byId[c.id] = c; });
+  const seen = new Set(), ordered = [];
+  (layout.order || []).forEach((id) => { if (byId[id] && !seen.has(id)) { ordered.push(byId[id]); seen.add(id); } });
+  masonryCards().forEach((c) => { if (!seen.has(c.id)) ordered.push(c); });  // new cards keep their place, at the end
+  ordered.forEach((c) => main.appendChild(c));  // re-append existing nodes in order
+  refreshMoveButtons();
+}
+
+function moveCard(id, dir) {
+  const ids = masonryCards().map((c) => c.id);
+  const i = ids.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  layout.order = ids; saveLayout(); applyOrder();
+}
+
+function refreshMoveButtons() {
+  const cards = masonryCards();
+  cards.forEach((card, i) => {
+    const up = card.querySelector(":scope > .card-ctl [data-arr='up']");
+    const down = card.querySelector(":scope > .card-ctl [data-arr='down']");
+    if (up) up.disabled = i === 0;
+    if (down) down.disabled = i === cards.length - 1;
+  });
+}
+
+function injectControls() {
+  masonryCards().forEach((card) => {
+    if (card.querySelector(":scope > .card-ctl")) return;  // inject once
+    const ctl = document.createElement("div");
+    ctl.className = "card-ctl";
+    let html = `<button class="cardbtn" data-arr="up" title="Move earlier" aria-label="Move card earlier">▲</button>`
+      + `<button class="cardbtn" data-arr="down" title="Move later" aria-label="Move card later">▼</button>`;
+    if (CAPPABLE.has(card.id)) {
+      const cap = layout.caps[card.id] ?? 0;
+      html += `<select class="capsel" title="Max items shown" aria-label="Max items shown">`
+        + CAP_OPTIONS.map((n) => `<option value="${n}"${n === cap ? " selected" : ""}>${n === 0 ? "All" : n}</option>`).join("")
+        + `</select>`;
+    }
+    ctl.innerHTML = html;
+    card.insertBefore(ctl, card.firstChild);
+  });
+  refreshMoveButtons();
+}
+
+// Hide a capped card's item rows beyond N, with a "+ K more" / "Show fewer" toggle.
+function applyCap(cardId) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const body = card.querySelector(".body");
+  if (!body) return;
+  const old = card.querySelector(":scope > .cap-more");
+  if (old) old.remove();
+  const cap = layout.caps[cardId] ?? 0;
+  const items = [...body.children].filter((el) => !el.classList.contains("empty") && !el.classList.contains("err"));
+  items.forEach((el) => { el.style.display = ""; });  // reset before re-applying
+  if (!cap || items.length <= cap) return;  // "All", or nothing to hide
+  const more = document.createElement("div");
+  more.className = "cap-more";
+  if (expanded.has(cardId)) {
+    more.innerHTML = `<button data-cap="less" data-id="${cardId}">Show fewer</button>`;
+  } else {
+    items.slice(cap).forEach((el) => { el.style.display = "none"; });
+    more.innerHTML = `<button data-cap="more" data-id="${cardId}">+ ${items.length - cap} more</button>`;
+  }
+  card.appendChild(more);
+}
+function applyCaps() { CAPPABLE.forEach(applyCap); }
+
+// Layout controls live outside the [data-action] flow (no server call, no reload).
+document.addEventListener("click", (e) => {
+  const arr = e.target.closest("[data-arr]");
+  if (arr) { const c = arr.closest(".card"); if (c) moveCard(c.id, arr.dataset.arr === "up" ? -1 : 1); return; }
+  const capb = e.target.closest("[data-cap]");
+  if (capb) {
+    const id = capb.dataset.id;
+    if (capb.dataset.cap === "more") expanded.add(id); else expanded.delete(id);
+    applyCap(id);
+  }
+});
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest(".capsel");
+  if (!sel) return;
+  const card = sel.closest(".card");
+  if (!card) return;
+  layout.caps[card.id] = Number(sel.value);
+  saveLayout();
+  expanded.delete(card.id);
+  applyCap(card.id);
+});
+
+function start() {
+  injectControls();
+  applyOrder();
+  load();
+  clearInterval(timer); timer = setInterval(load, REFRESH_MS);
+}
 
 // Action delegation (rows are re-rendered, so listen on the document).
 document.addEventListener("click", async (e) => {
