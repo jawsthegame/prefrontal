@@ -446,7 +446,11 @@ ordered by leverage; each is independent but builds on denser capture.
    No model reachable ⇒ *no* candidates (an honest no-guess fallback), mirroring
    the summarizer's grounded-prompt shape flipped to JSON. Driven by
    `prefrontal note "…"` and `prefrontal proposals list|accept|reject`; covered by
-   `tests/test_sensor.py`. *(Next: HTTP surface — `POST /observe` + a `/proposals`
+   `tests/test_sensor.py`, and now over **HTTP** for the phone/n8n/dashboard:
+   `POST /observe` (note → pending proposals), `GET /proposals?status=` (the
+   review queue), and `POST /proposals/{id}/accept|reject` (apply/dismiss). The
+   endpoints reuse the exact sensor path — allowlist, `source="llm_inferred"`,
+   pending-only resolve — in a new `routers/sensor.py`. *(Next: a `/proposals`
    review UI so it's one-tap from the phone; a conversation/transcript source; and
    letting an accepted state proposal feed the same calibration check as §4.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`

@@ -181,6 +181,12 @@ from prefrontal.scheduling import (
     window_config_for,
     work_window_now,
 )
+from prefrontal.sensor import (
+    apply_proposal,
+    extract_candidates,
+    record_candidates,
+    summarize_candidate,
+)
 from prefrontal.todos import (
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     MAX_CATEGORIES,
@@ -831,6 +837,18 @@ class TodoDomainUpdate(BaseModel):
     )
 
 
+class ObserveRequest(BaseModel):
+    """Body of ``POST /observe`` — a free-text note for the LLM sensor to read."""
+
+    text: str = Field(
+        description=(
+            "A short free-text note / observation. The sensor proposes allowlisted "
+            "candidate updates that land as pending proposals for human review — it "
+            "never writes authoritative facts."
+        ),
+    )
+
+
 class StepDone(BaseModel):
     """Body of ``POST /todos/{id}/steps/{i}/done`` — tick a decomposed step."""
 
@@ -1181,6 +1199,11 @@ __all__ = [
     "DEFAULT_WORK_LEAD_MINUTES",
     "Depends",
     "EpisodeCreated",
+    "ObserveRequest",
+    "apply_proposal",
+    "extract_candidates",
+    "record_candidates",
+    "summarize_candidate",
     "FAMILY_HTML",
     "FastAPI",
     "Field",

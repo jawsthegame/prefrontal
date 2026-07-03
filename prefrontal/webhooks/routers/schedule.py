@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 from prefrontal.webhooks._common import (
     DEFAULT_ALERT_COOLDOWN_MINUTES,
     DEFAULT_ALERT_MIN_PRESSING,
@@ -62,7 +63,6 @@ from prefrontal.webhooks._common import (
     timedelta,
     utcnow,
 )
-from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 
 
 def _attend_slugs(memory) -> tuple[str, ...]:

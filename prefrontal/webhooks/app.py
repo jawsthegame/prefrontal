@@ -119,6 +119,7 @@ def create_app(
         ingestion,
         memory,
         schedule,
+        sensor,
         system,
         todos,
     )
@@ -141,6 +142,7 @@ def create_app(
         todos,
         coaching,
         household,
+        sensor,
         admin,
     ):
         app.include_router(_module.build_router(**_router_deps))
