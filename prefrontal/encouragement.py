@@ -123,9 +123,10 @@ def _drift_above_baseline(store: MemoryStore) -> bool:
 def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
     """Score today's signals and decide whether it's a rough day (spec §3).
 
-    Reads only today-scoped signals (``[midnight, now]``): a missed *hard*
-    commitment (heaviest), each ``miss`` episode, unresolved double-bookings, plus
-    a small rising-drift modifier. Inert (``rough=False``) unless the
+    Reads today-scoped signals: ``miss`` episodes over ``[midnight, now]``, and
+    today's commitments over the full day (for hard-miss classification and
+    unresolved double-bookings), plus a small rising-drift modifier. A missed
+    *hard* commitment is heaviest. Inert (``rough=False``) unless the
     ``encouragement`` coaching key is ``on``.
     """
     now = now or utcnow()
@@ -138,7 +139,13 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
         return DayAssessment(date, False, 0.0, [], enabled=False, tone=tone)
 
     threshold = store.get_float("encouragement_threshold", DEFAULT_ROUGH_THRESHOLD)
-    today = store.commitments_between(_fmt(day_start), _fmt(now))
+    # Scan the *whole* day for commitments (not just up to `now`): a hard
+    # commitment you already logged a miss for should score as missed_hard
+    # regardless of whether its clock time is earlier or later than the moment
+    # this assessment runs — otherwise a morning check misclassifies an all-day
+    # hard miss as a generic miss. Miss *episodes* below stay [midnight, now].
+    day_end = day_start + timedelta(days=1)
+    today = store.commitments_between(_fmt(day_start), _fmt(day_end))
     hard_titles = {
         (c.get("title") or "").lower()
         for c in today

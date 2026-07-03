@@ -95,14 +95,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.pushover.net/1/messages.json",
+        "url": "https://ntfy.sh",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'firm' ? 1 : 0 }},\n  \"url\": \"{{ $json.dismiss_url }}\",\n  \"url_title\": \"Silence nudges\"\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'firm' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
         "options": {}
       },
-      "id": "pushover-push",
-      "name": "Pushover Push (50% / 100%)",
+      "id": "publish-ntfy",
+      "name": "ntfy Push (50% / 100%)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [900, 400]
@@ -121,7 +121,7 @@
     "Voice call?": {
       "main": [
         [{ "node": "Twilio Voice Call (150%)", "type": "main", "index": 0 }],
-        [{ "node": "Pushover Push (50% / 100%)", "type": "main", "index": 0 }]
+        [{ "node": "ntfy Push (50% / 100%)", "type": "main", "index": 0 }]
       ]
     }
   },

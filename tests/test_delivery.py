@@ -231,6 +231,26 @@ def test_outing_cue_attaches_signed_action_buttons():
     assert verify_action(token, SIGNING) == ("tom", "outing_return", 7)
 
 
+def test_self_care_cue_attaches_meal_buttons():
+    """A meal cue's synthetic date target drives signed Ate / Snooze buttons."""
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    decision = _decision("push", context_key="meal", ref={"target": 20260703})
+    client.deliver(decision, Route(ntfy_topic="me"), base_url=BASE, secret=SIGNING, handle="tom")
+
+    actions = captured["body"]["actions"]
+    assert [a["label"] for a in actions] == ["✓ Ate", "Snooze"]
+    token = actions[0]["url"].split("t=", 1)[1]
+    assert verify_action(token, SIGNING) == ("tom", "meal_ate", 20260703)
+
+
 def test_falls_back_to_pushover_when_no_ntfy_topic():
     captured: dict = {}
 

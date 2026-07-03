@@ -50,14 +50,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.pushover.net/1/messages.json",
+        "url": "https://ntfy.sh",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — time to leave\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'go' ? 1 : 0 }},\n  \"url\": \"{{ $json.dismiss_url }}\",\n  \"url_title\": \"Dismiss reminder\"\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — time to leave\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'go' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
         "options": {}
       },
-      "id": "pushover",
-      "name": "Send Pushover",
+      "id": "publish-ntfy",
+      "name": "Publish to ntfy",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [660, 300]
@@ -92,9 +92,9 @@
       "main": [[{ "node": "Due Reminder Only", "type": "main", "index": 0 }]]
     },
     "Due Reminder Only": {
-      "main": [[{ "node": "Send Pushover", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Publish to ntfy", "type": "main", "index": 0 }]]
     },
-    "Send Pushover": {
+    "Publish to ntfy": {
       "main": [[{ "node": "Log to Prefrontal", "type": "main", "index": 0 }]]
     }
   },

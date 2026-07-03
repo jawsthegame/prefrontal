@@ -6,20 +6,20 @@ wires up the integrations from the README stack:
 - **Ollama** — local model inference (orchestrated by n8n)
 - **n8n** — workflow orchestration and notification delivery
 - **iOS Shortcuts** — one-tap outcome logging and location triggers
-- **Pushover / Ntfy** — notification delivery
+- **ntfy** (Pushover optional) — notification delivery, with one-tap action buttons
 - **Tailscale** — secure remote access from your phone
 
 **Architecture for this setup:** Prefrontal runs as-is — it is the *memory +
 webhook* core. It stores episodes, derives the behavioral profile, and serves it
 over HTTP. **n8n does the orchestration**: it fetches the profile, calls Ollama
-to compose a reminder, delivers it via Pushover/Ntfy, and logs the result back
+to compose a reminder, delivers it via ntfy (Pushover optional), and logs the result back
 into Prefrontal. Outcome capture ("Made it" / "Missed it") goes straight from an
 iOS Shortcut to Prefrontal.
 
 ```
 iOS Shortcut (one-tap) ─────────────► POST /webhooks/shortcut ─► episodes
                                                                      │
-n8n schedule ─► GET /profile ─► Ollama ─► Pushover/Ntfy ─► POST /webhooks/n8n
+n8n schedule ─► GET /profile ─► Ollama ─► ntfy ─► POST /webhooks/n8n
 ```
 
 The glue files referenced below live in [`../deploy/`](../deploy/).
@@ -225,18 +225,19 @@ To run it always-on, add a launchd agent like the one in step 3 whose
    [`../deploy/n8n/departure-reminder.workflow.json`](../deploy/n8n/departure-reminder.workflow.json).
 2. The workflow has four nodes: a schedule trigger (every 5 min) →
    `POST /webhooks/departure/check` → a Code node that continues only when a
-   reminder is due (`fire === true`) → Pushover/Ntfy send → `POST /webhooks/n8n`
+   reminder is due (`fire === true`) → **Publish to ntfy** → `POST /webhooks/n8n`
    (log that a reminder fired). Prefrontal does the "when to leave" reasoning and
    returns a ready `message`, so there's no Ollama compose step on this path.
 3. Set credentials/values it can't ship with:
    - **Prefrontal token** — in the two Prefrontal HTTP nodes' `X-Prefrontal-Token`
      header, paste your `PREFRONTAL_WEBHOOK_SECRET`.
-   - **Pushover** — in the send node's JSON body, set `PUSHOVER_TOKEN` to an
-     **Application API token** (`a…`, create one at pushover.net/apps/build) and
-     `PUSHOVER_USER` to your **User key** (`u…`). Both go in the body and set the
-     node's Authentication to *None* — a `pushoverApi` credential alone does not
-     supply `user`. (Or swap it for an Ntfy HTTP node hitting
-     `https://ntfy.sh/<your-topic>`.)
+   - **ntfy** — the Publish node posts to `https://ntfy.sh` on the `prefrontal-me`
+     topic; change the topic to your own (and the URL to a self-hosted ntfy if you
+     run one). Subscribe your phone to that topic in the ntfy app. The push
+     carries the endpoint's signed **Made it / Missed it** buttons (see the
+     one-tap note below). *(Prefer Pushover? The native Python delivery client
+     (`prefrontal coach --deliver`) still supports it; or swap this node for a
+     Pushover HTTP node.)*
 4. **Execute Workflow** once to test, then toggle it **Active**.
 
 > **For a *travel-time* estimate** (rather than the static `lead_minutes`
@@ -246,15 +247,16 @@ To run it always-on, add a launchd agent like the one in step 3 whose
 > sync or a manual `POST /commitments`). Without them the reminder still fires —
 > it just leans on each commitment's `lead_minutes`.
 
-> **One-tap "dismiss" link.** The departure and coffee-nudge workflows put a
-> signed dismiss URL in the Pushover `url` field (`url_title` = "Dismiss
-> reminder" / "Silence nudges"). Tapping it hits `GET /nudge/dismiss` and
-> silences that reminder — a departure commitment stops nudging (a future
-> occurrence re-arms on its own); a coffee outing's escalation is pinned so no
-> further push or 150% call fires, without closing the outing. The link is only
-> minted when both `OAUTH_BASE_URL` (your Tailscale HTTPS origin — the link opens
-> off-box) and `SESSION_SECRET` (signs the link) are set; otherwise the field is
-> blank and Pushover simply shows no button.
+> **One-tap action buttons.** The departure and coffee-nudge workflows attach the
+> signed **action buttons** the endpoint returns — **Made it / Missed it** on a
+> departure, **I'm back / Abandon** on an outing. ntfy renders them as inline
+> `http` buttons, so a tap fires `GET /nudge/act` in the **background** (no app
+> switch): it logs the outcome and, for an outing, pins the escalation so no
+> further push or 150% call fires. The buttons are only minted when both
+> `OAUTH_BASE_URL` (your Tailscale HTTPS origin — the tap fires off-box) and
+> `SESSION_SECRET` (signs the link) are set; otherwise `actions` is empty and you
+> get a plain notification. *(A signed `GET /nudge/dismiss` link still exists for
+> a Pushover-style single "silence" URL if you build a Pushover node instead.)*
 
 This is a starting template — node `typeVersion`s can differ across n8n
 releases, so adjust any node n8n flags on import.
@@ -268,8 +270,8 @@ The escalation logic lives in Prefrontal; n8n polls and delivers. Flow:
 ```
 "Going out" Shortcut ─► POST /webhooks/outing/start   (logs intention + window)
 n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
-                          ├─ level soft (50%)  ─► Pushover
-                          ├─ level firm (100%) ─► Pushover (high priority)
+                          ├─ level soft (50%)  ─► ntfy
+                          ├─ level firm (100%) ─► ntfy (high priority)
                           └─ level call (150%) ─► Twilio voice call
 "I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
 ```
@@ -294,8 +296,9 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 3. **Twilio Voice Call** node → attach the Basic Auth credential; replace
    `REPLACE_WITH_TWILIO_ACCOUNT_SID` in the URL, and set `To` (your phone) and
    `From` (your Twilio number). The spoken text comes from `{{ $json.message }}`.
-4. **Pushover Push** node → set `PUSHOVER_TOKEN` / `PUSHOVER_USER` (or swap for
-   an Ntfy HTTP node).
+4. **ntfy Push (50% / 100%)** node → set your ntfy topic (defaults to
+   `prefrontal-me` on `https://ntfy.sh`); it carries the **I'm back / Abandon**
+   buttons. (Prefer Pushover? Swap this for a Pushover HTTP node.)
 5. (Optional) Set your name for the voice message:
    `prefrontal` has a `user_name` coaching key —
    `sqlite3 prefrontal.db "UPDATE coaching_state SET value='Tom' WHERE key='user_name';"`
@@ -347,7 +350,7 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
 1. `curl http://localhost:8000/health` → ok.
 2. `curl -H "X-Prefrontal-Token: $PREFRONTAL_WEBHOOK_SECRET" http://localhost:8000/profile`
    → your behavioral profile in Markdown.
-3. Run the n8n workflow manually → a Pushover/Ntfy notification arrives on your
+3. Run the n8n workflow manually → an ntfy notification arrives on your
    phone, and a new row appears: `sqlite3 prefrontal.db 'SELECT * FROM episodes ORDER BY id DESC LIMIT 3;'`
 4. Tap "Made it" in the iOS Shortcut → another episode row lands.
 5. `prefrontal profile` → confirm preferences/patterns read as expected.
@@ -362,12 +365,12 @@ do impact analysis and (now) flag double-bookings across calendars.
 Flow: every 15 min, n8n pulls **personal events from Google Calendar** (direct
 OAuth) and **work events from a shared ICS feed**, merges them, and POSTs the
 combined batch to `/webhooks/calendar/sync`. If the resulting schedule has any
-overlaps, it sends a Pushover **double-booking alert**.
+overlaps, it sends an ntfy **double-booking alert**.
 
 ```
 n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
                     └─ GET work ICS feed ──────────┴─► merge ─► POST /webhooks/calendar/sync
-                                                                   └─ conflicts > 0 ─► Pushover alert
+                                                                   └─ conflicts > 0 ─► ntfy alert
 ```
 
 1. Import [`../deploy/n8n/calendar-sync.workflow.json`](../deploy/n8n/calendar-sync.workflow.json).
@@ -376,7 +379,7 @@ n8n (every 15 min) ─┬─ Google Calendar (personal) ─┐
 3. **Get Work ICS node** → paste your work calendar's shared/secret **iCal feed
    URL** (read-only). Google/Outlook/most providers expose one per calendar.
 4. **POST sync node** → set the `X-Prefrontal-Token` header to your secret.
-5. **Double-booking alert** → set Pushover token/user (or swap for Ntfy).
+5. **Double-booking alert** → set your ntfy topic (defaults to `prefrontal-me`).
 6. **Execute Workflow** once, then toggle **Active**.
 
 Notes:
@@ -403,7 +406,7 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 
 - Preview it now: `prefrontal briefing` (add `--llm` for Ollama prose).
 - Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json),
-  set the `X-Prefrontal-Token` header and Pushover token/user. It fires at 7am,
+  set the `X-Prefrontal-Token` header and your ntfy topic. It fires at 7am,
   `GET /briefing`, and pushes the digest text. (Insert an Ollama node between the
   two for prose, or point it at `prefrontal summarize`-style output.)
 - The briefing is best once calendars are syncing (§10) and a few days of
@@ -426,7 +429,7 @@ and mail — into already-behind / bearing-down-soon / piling-up, and hands back
   reads back the `headline` (grounding + first step) in one tap.
 - **Proactive nudge:** import
   [`../deploy/n8n/panic-check.workflow.json`](../deploy/n8n/panic-check.workflow.json),
-  set the token + Pushover token/user. It polls `POST /webhooks/panic/check`
+  set the token + your ntfy topic. It polls `POST /webhooks/panic/check`
   every 20 min and pushes **only when the plate tips into overwhelm**. The server
   edge-triggers on the level (like the departure signature) and honors a
   cooldown, so a sustained pile-up nudges once, not every poll.

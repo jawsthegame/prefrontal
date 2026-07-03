@@ -65,8 +65,22 @@ PUSHOVER_PRIORITY = {"digest": -1, "push": 0, "sound": 1, "voice": 1}
 #: A cue's ``context_key`` → the :mod:`~prefrontal.webhooks.notify` nudge *kind*
 #: whose action buttons apply, and the ``ref`` key holding the button's target
 #: id. A cue whose context isn't here simply gets no buttons (a plain push).
-_CONTEXT_KIND = {"outing": "outing", "departure": "departure", "focus": "focus"}
-_KIND_TARGET = {"outing": "outing_id", "departure": "commitment_id", "focus": "session_id"}
+#: (Self-care meal/water carry a synthetic date ``target``; the tap acts on
+#: "now" — see :mod:`prefrontal.modules.self_care`.)
+_CONTEXT_KIND = {
+    "outing": "outing",
+    "departure": "departure",
+    "focus": "focus",
+    "meal": "meal",
+    "water": "water",
+}
+_KIND_TARGET = {
+    "outing": "outing_id",
+    "departure": "commitment_id",
+    "focus": "session_id",
+    "meal": "target",
+    "water": "target",
+}
 
 
 @dataclass(frozen=True)
