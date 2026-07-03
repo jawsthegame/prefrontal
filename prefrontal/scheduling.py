@@ -594,7 +594,7 @@ def suggest_for_windows(
     *,
     config: WindowConfig | None = None,
     tz: str | None = None,
-    bias_fn: Callable[[int], float] | None = None,
+    resolver_for_hour: Callable[[int], Callable[[dict[str, Any]], float]] | None = None,
 ) -> list[dict[str, Any]]:
     """Propose one todo per free window (no todo suggested twice).
 
@@ -604,11 +604,12 @@ def suggest_for_windows(
     — so a focus-hours task isn't proposed for an 8pm gap, and nothing is proposed
     inside the off-zone. Omit them to rank purely by fit (legacy behavior).
 
-    When ``bias_fn`` and ``tz`` are both given, each window's fit uses the bias
-    for *its own* local hour (context-conditioned calibration, §5) instead of the
-    single flat ``bias`` — so a morning gap is sized with the morning bias and an
-    evening gap with the evening one. Falls back to the flat ``bias`` per window
-    when ``bias_fn`` isn't supplied or ``tz`` is unknown.
+    When ``resolver_for_hour`` and ``tz`` are both given, each window builds a
+    *per-todo* bias resolver for its own local hour (context-conditioned
+    calibration, §5) — so a morning gap is sized with the morning bias, an evening
+    gap with the evening one, and within each window a heavy or particular-category
+    todo is padded by its own learned multiplier. Falls back to the flat ``bias``
+    when the resolver isn't supplied or ``tz`` is unknown.
 
     Args:
         windows: Free windows (chronological).
@@ -616,9 +617,10 @@ def suggest_for_windows(
         bias: The flat time-estimation multiplier (fallback).
         config: Optional suggestion-window policy.
         tz: IANA timezone for interpreting each window's local time (required for
-            ``config`` and ``bias_fn`` to take effect).
-        bias_fn: Optional ``local_hour -> multiplier`` resolver for per-window,
-            time-of-day-conditioned bias.
+            ``config`` and ``resolver_for_hour`` to take effect).
+        resolver_for_hour: Optional ``local_hour -> (todo -> multiplier)`` factory
+            (e.g. :func:`prefrontal.memory.patterns.task_bias_resolver`) giving a
+            per-todo, context-conditioned bias for each window's time of day.
 
     Returns:
         A list of ``{window, suggestion}`` dicts (``suggestion`` may be ``None``).
@@ -627,14 +629,14 @@ def suggest_for_windows(
     out: list[dict[str, Any]] = []
     for window in windows:
         remaining = [t for t in todos if t["id"] not in used]
-        window_bias = bias
+        window_resolver: Callable[[dict[str, Any]], float] | None = None
         if tz is not None:
             local_dt = _window_local_dt(window.start, tz)
             if config is not None:
                 remaining = filter_suggestible(remaining, local_dt, config)
-            if bias_fn is not None:
-                window_bias = bias_fn(local_dt.hour)
-        fits = fit_todos(window.minutes, remaining, window_bias)
+            if resolver_for_hour is not None:
+                window_resolver = resolver_for_hour(local_dt.hour)
+        fits = fit_todos(window.minutes, remaining, bias, bias_fn=window_resolver)
         pick = fits[0]["todo"] if fits else None
         if pick is not None:
             used.add(pick["id"])

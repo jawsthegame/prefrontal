@@ -501,9 +501,13 @@ ordered by leverage; each is independent but builds on denser capture.
    `task_bias_resolver(store, local_hour=…)` so each candidate is padded by *its
    own* energy/category. Surfaced in the profile ("By energy: …", "By category:
    …") and `prefrontal learn`. Untagged history (free-text focus, legacy
-   episodes) simply falls through to the coarser dimensions. *(Next: whole-day
-   consumers — briefing/encouragement — could adopt per-todo energy/category too;
-   and derive `context_switch` once switch events are captured.)*
+   episodes) simply falls through to the coarser dimensions. The whole-day
+   consumers adopt it too: `suggest_for_windows` takes a `resolver_for_hour`
+   factory (`local_hour -> (todo -> multiplier)`), so the morning **briefing** and
+   the **encouragement** re-fit size each free window by its time of day *and*
+   each candidate by its own energy/category — the same `task_bias_resolver` the
+   point-in-time pickers use. *(Next: derive `context_switch` once switch events
+   are captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in

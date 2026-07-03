@@ -309,19 +309,23 @@ def test_fit_todos_bias_fn_is_per_todo():
     assert titles == ["light"]  # heavy: 20*2=40 > 30; light: 20*1=20 ≤ 30
 
 
-def test_suggest_for_windows_bias_fn_is_per_window():
-    """bias_fn resolves the multiplier from *each* window's local hour (§5)."""
+def test_suggest_for_windows_resolver_is_per_window_and_per_todo():
+    """resolver_for_hour builds a per-todo bias keyed on each window's local hour (§5)."""
     # UTC == local (tz set, no config) so the local hour is the UTC hour.
     windows = [FreeWindow("2026-06-29 09:00:00", "2026-06-29 09:30:00", 30),
                FreeWindow("2026-06-29 18:00:00", "2026-06-29 18:30:00", 30)]
-    todos = [{"id": 1, "title": "T", "estimate_minutes": 20, "priority": 1, "deadline": None}]
-    # Morning bias 1.0 → 20*1.0=20 ≤ 30 fits; evening bias 2.0 → 20*2.0=40 > 30 doesn't.
-    bias_by_hour = {9: 1.0, 18: 2.0}
+    todos = [{"id": 1, "title": "T", "estimate_minutes": 20, "energy": "high",
+              "priority": 1, "deadline": None}]
+    # Bias depends on BOTH the window hour and the todo's energy: morning 1.0×,
+    # evening 2.0× — so the same todo fits the morning gap but overflows the evening.
+    def resolver_for_hour(hour):
+        mult = {9: 1.0, 18: 2.0}[hour]
+        return lambda todo: mult if todo["energy"] == "high" else 1.0
     out = suggest_for_windows(
-        windows, todos, bias=1.0, tz="UTC", bias_fn=lambda hour: bias_by_hour[hour]
+        windows, todos, bias=1.0, tz="UTC", resolver_for_hour=resolver_for_hour
     )
-    assert out[0]["suggestion"]["title"] == "T"   # morning: padded estimate still fits
-    assert out[1]["suggestion"] is None           # evening: padded estimate overflows
+    assert out[0]["suggestion"]["title"] == "T"   # morning: 20*1.0=20 ≤ 30 fits
+    assert out[1]["suggestion"] is None           # evening: 20*2.0=40 > 30 overflows
 
 
 # -- "free time right now" bounds --------------------------------------------
