@@ -68,8 +68,12 @@ the first test. Code follow-ups below are optional polish.
   routines each parent holds). `balance_view(counts, carrying=…)` surfaces both,
   each with its own gentle caption. Endpoints `POST /household/routines`
   (+`/enabled`, `/remove`), `chore.routine_id`, and `prefrontal household routine`.
-  Covered by `tests/test_chores.py` + `tests/test_household.py`. *(Next: surface
-  routines + the carrying facet on the `/kids` web dashboard.)*
+  Covered by `tests/test_chores.py` + `tests/test_household.py`. The **`/kids`
+  dashboard** now surfaces it: a **Shared chores** card (one-tap "done today" that
+  logs who did it, add form with owner/routine/time, routine badge + inherited
+  schedule), a **Routines** card (accountable owner + add form), and the
+  **carrying** facet in the "Sharing the load" panel alongside doing. The sheet
+  payload gained a `members` list to populate the owner/accountable pickers.
 - **LLM-as-sensor — free text → candidate updates** ✅ — `prefrontal/sensor.py`
   reads a plain note ("I always blow off admin on Mondays") and *proposes*
   allowlisted `coaching_state`/episode candidates that land as **pending**

@@ -121,6 +121,16 @@
   .bal-fill { height: 100%; background: var(--accent); }
   .bal-row .bal-n { color: var(--muted); min-width: 62px; text-align: right; }
   .bal-cap { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .bal-facet { margin-top: 16px; }
+  .bal-facet-h { font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+  .task-row { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+    border-bottom: 1px dashed var(--line); }
+  .task-row.done .task-txt { text-decoration: line-through; color: var(--muted); }
+  .task-txt { flex: 1; }
+  .task-sub { color: var(--muted); font-size: 12px; }
+  .task-badge { font-size: 11px; font-weight: 600; color: var(--accent);
+    background: var(--line); border-radius: 999px; padding: 1px 8px; }
   .shop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
     border-bottom: 1px dashed var(--line); }
   .shop-row:last-child { border-bottom: none; }
@@ -266,6 +276,33 @@
     <div id="balance-body"></div>
   </section>
 
+  <section class="card" id="c-chores">
+    <p class="label">Shared chores</p>
+    <div id="chores"></div>
+    <form class="inline" id="chore-form">
+      <input id="chore-title" type="text" placeholder="e.g. run the dishwasher" required />
+      <select id="chore-owner" title="Whose job"></select>
+      <select id="chore-routine" title="Part of a routine"></select>
+      <input id="chore-due" type="time" title="Due by (optional)" />
+      <button class="primary" type="submit">Add chore</button>
+      <span class="hint">Tick one off to log who did it — completing chores counts toward
+        the balance below. Leave the time blank for an untimed to-do.</span>
+    </form>
+  </section>
+
+  <section class="card" id="c-routines">
+    <p class="label">Routines</p>
+    <div id="routines"></div>
+    <form class="inline" id="routine-form">
+      <input id="routine-title" type="text" placeholder="e.g. Monday pickup prep" required />
+      <select id="routine-accountable" title="Who holds the mental load"></select>
+      <input id="routine-due" type="time" title="Time its chores inherit (optional)" />
+      <button class="primary" type="submit">Add routine</button>
+      <span class="hint">A routine groups chores and names one person <em>accountable</em>
+        for it — the mental load, tracked separately from who does each chore.</span>
+    </form>
+  </section>
+
   <section class="card" id="c-shopping">
     <p class="label">Shopping list</p>
     <div id="shopping"></div>
@@ -323,6 +360,8 @@ let token = localStorage.getItem(KEY);
 let vocab = { fact_categories: [], agreement_kinds: [] };
 let children = [];
 let agreements = [];
+let members = [];
+let routines = [];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
@@ -406,11 +445,19 @@ function renderBalance(bal) {
     return;
   }
   const v = bal.view;
-  const rows = v.members.map((m) =>
+  const facet = (f) => f.members.map((m) =>
     `<div class="bal-row"><span class="bal-name">${esc(m.name)}</span>
       <span class="bal-bar"><span class="bal-fill" style="width:${m.share}%"></span></span>
-      <span class="bal-n">${m.count} · ${m.share}%</span></div>`).join("");
-  $("#balance-body").innerHTML = rows + `<div class="bal-cap">${esc(v.caption)}</div>`;
+      <span class="bal-n">${m.count} · ${m.share}%</span></div>`).join("")
+    + `<div class="bal-cap">${esc(f.caption)}</div>`;
+  // Doing — who's actually done the shared work (edits, stars, chores completed).
+  let html = `<div class="bal-facet-h">Doing (last 30 days)</div>` + facet(v);
+  // Carrying — who holds the mental load (routines they're accountable for).
+  if (v.carrying) {
+    html += `<div class="bal-facet"><div class="bal-facet-h">Carrying — mental load</div>`
+      + facet(v.carrying) + `</div>`;
+  }
+  $("#balance-body").innerHTML = html;
 }
 
 function renderInvites(invites) {
@@ -589,6 +636,53 @@ function renderShopping(items) {
   }).join("");
 }
 
+function _choreWhen(c) {
+  // Show the *effective* schedule (a chore inherits its routine's unless it
+  // sets its own); the server resolves this into effective_days/due_time.
+  const due = c.effective_due_time || c.due_time;
+  return due ? "by " + fmtTime(due) : "untimed";
+}
+
+function renderChores(chores) {
+  chores = chores || [];
+  if (!chores.length) { $("#chores").innerHTML = `<div class="empty">No chores yet.</div>`; return; }
+  $("#chores").innerHTML = chores.map((c) => {
+    const owner = c.owner_name || "either";
+    const badge = c.routine_title ? `<span class="task-badge">${esc(c.routine_title)}</span>` : "";
+    const paused = c.enabled ? "" : " · paused";
+    const sub = `<span class="task-sub">${esc(owner)} · ${_choreWhen(c)}${paused}</span>`;
+    return `<div class="task-row${c.done_today ? " done" : ""}">
+      <input type="checkbox" data-chdone="${c.id}" ${c.done_today ? "checked" : ""} title="Done today" />
+      <span class="task-txt">${esc(c.title)} ${sub} ${badge}</span>
+      <button class="iconbtn del" data-delchore="${c.id}" title="Remove">🗑</button></div>`;
+  }).join("");
+}
+
+function renderRoutines(routines) {
+  routines = routines || [];
+  if (!routines.length) {
+    $("#routines").innerHTML = `<div class="empty">No routines yet — group related chores under one accountable owner.</div>`;
+    return;
+  }
+  $("#routines").innerHTML = routines.map((r) => {
+    const holder = r.accountable_name || "unassigned";
+    const when = r.due_time ? " · by " + fmtTime(r.due_time) : "";
+    const n = r.chore_count || 0;
+    const paused = r.enabled ? "" : " · paused";
+    return `<div class="task-row${r.enabled ? "" : " done"}">
+      <span class="task-txt">${esc(r.title)}
+        <span class="task-sub">accountable: ${esc(holder)}${when} · ${n} chore${n === 1 ? "" : "s"}${paused}</span></span>
+      <button class="iconbtn del" data-delroutine="${r.id}" title="Remove (its chores stay)">🗑</button></div>`;
+  }).join("");
+}
+
+function fmtTime(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  let h = +m[1]; const ap = h < 12 ? "am" : "pm"; h = h % 12 || 12;
+  return `${h}:${m[2]}${ap}`;
+}
+
 function renderAppts(upcoming) {
   $("#appts").innerHTML = (upcoming || []).length
     ? upcoming.map((ap) => `<div class="appt"><span class="when">${esc(ap.when)}</span>
@@ -603,6 +697,13 @@ function refreshDropdowns() {
   fillSelect($("#shop-child"), kidOpts, { zero: "Household-wide" });
   fillSelect($("#fact-cat"), vocab.fact_categories.map((c) => ({ value: c, label: c })));
   fillSelect($("#agr-kind"), vocab.agreement_kinds.map((k) => ({ value: k, label: k })));
+  // Parents for the chore-owner / routine-accountable pickers, and routines for
+  // filing a chore under one.
+  const memberOpts = members.map((m) => ({ value: m.id, label: m.name }));
+  fillSelect($("#chore-owner"), memberOpts, { zero: "Either parent" });
+  fillSelect($("#routine-accountable"), memberOpts, { zero: "Unassigned" });
+  fillSelect($("#chore-routine"), routines.map((r) => ({ value: r.id, label: r.title })),
+    { zero: "No routine" });
 }
 
 async function loadSheet() {
@@ -642,6 +743,10 @@ async function loadSheet() {
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
   renderShopping(sheet.shopping);
+  members = data.members || [];
+  routines = sheet.routines || [];
+  renderChores(sheet.chores);
+  renderRoutines(routines);
   renderCheckin(data.checkin);
   renderBalance(data.balance);
   // Single-parent households: the co-parent-only features simply aren't shown.
@@ -915,6 +1020,54 @@ $("#shopping").addEventListener("click", async (e) => {
 $("#shopping").addEventListener("change", async (e) => {
   const id = e.target.getAttribute("data-got");
   if (id) { await post(`/household/shopping/${id}/got`, { got: e.target.checked }); await loadSheet(); }
+});
+
+// -- chores + routines --------------------------------------------------------
+
+const _sel = (v) => (Number(v) || null);  // "0" (either/unassigned/none) → null
+
+$("#chore-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/chores", {
+    title: $("#chore-title").value.trim(),
+    owner_id: _sel($("#chore-owner").value),
+    routine_id: _sel($("#chore-routine").value),
+    due_time: $("#chore-due").value || "",
+  });
+  $("#chore-title").value = ""; $("#chore-due").value = "";
+  await loadSheet();
+});
+$("#chores").addEventListener("click", async (e) => {
+  const del = e.target.getAttribute("data-delchore");
+  if (del && confirm("Remove this chore?")) {
+    await post(`/household/chores/${del}/remove`, {}); await loadSheet();
+  }
+});
+$("#chores").addEventListener("change", async (e) => {
+  const id = e.target.getAttribute("data-chdone");
+  // "Done today" is one-way (like the ntfy Done button). Ticking logs it; an
+  // untick just re-renders (loadSheet snaps the box back to its logged state).
+  if (id) {
+    if (e.target.checked) await post(`/household/chores/${id}/done`, {});
+    await loadSheet();
+  }
+});
+
+$("#routine-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/routines", {
+    title: $("#routine-title").value.trim(),
+    accountable_id: _sel($("#routine-accountable").value),
+    due_time: $("#routine-due").value || "",
+  });
+  $("#routine-title").value = ""; $("#routine-due").value = "";
+  await loadSheet();
+});
+$("#routines").addEventListener("click", async (e) => {
+  const del = e.target.getAttribute("data-delroutine");
+  if (del && confirm("Remove this routine? Its chores stay (unlinked).")) {
+    await post(`/household/routines/${del}/remove`, {}); await loadSheet();
+  }
 });
 
 $("#appt-form").addEventListener("submit", async (e) => {

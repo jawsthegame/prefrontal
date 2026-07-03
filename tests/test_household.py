@@ -647,6 +647,21 @@ def test_kids_page_and_family_link_serve(client):
     assert "/kids" in client.get("/family").text
 
 
+def test_kids_shell_has_chores_routines_and_carrying(client):
+    """The /kids shell renders the chores + routines cards and the carrying facet."""
+    html = client.get("/kids").text
+    assert 'id="c-chores"' in html and 'id="c-routines"' in html
+    assert "Carrying" in html and "/household/routines" in html
+
+
+def test_sheet_payload_includes_members_for_pickers(client, store):
+    """The sheet carries the parents (id + name) so the UI can offer owner/accountable."""
+    body = client.get("/household/sheet", headers=_h("dana-tok")).json()
+    members = {m["name"] for m in body["members"]}
+    assert members == {"Dana", "Alex"}
+    assert all("id" in m for m in body["members"])
+
+
 # --- star tracking: pure goal logic ------------------------------------------
 
 
