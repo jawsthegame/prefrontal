@@ -42,6 +42,7 @@ from prefrontal.webhooks._common import (
     status,
     utcnow,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
 def _top_todo_guess(memory: Any, now: datetime):
@@ -52,17 +53,10 @@ def _top_todo_guess(memory: Any, now: datetime):
     return infer_focus_start(avoided + [t for t in open_todos if t["id"] not in seen])
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "focus" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
 
     @router.post(
         "/webhooks/focus/start",

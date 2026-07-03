@@ -21,19 +21,13 @@ from prefrontal.webhooks._common import (
     resolve_user,
     status,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "admin" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
 
     @router.post("/admin/users", status_code=status.HTTP_201_CREATED, tags=["admin"])
     def admin_create_user(

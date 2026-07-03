@@ -34,19 +34,15 @@ from prefrontal.webhooks._common import (
     resolve_user,
     status,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "ingestion" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    n8n = services.n8n
+    ollama_client = services.ollama
 
     @router.post(
         "/webhooks/shortcut",

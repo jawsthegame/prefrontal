@@ -55,6 +55,7 @@ from prefrontal.webhooks._common import (
     window_config_for,
     work_window_now,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
 def _validated_window(spec: str | None) -> str | None:
@@ -74,17 +75,11 @@ def _validated_window(spec: str | None) -> str | None:
     return format_window(*parsed)
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "todos" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    ollama_client = services.ollama
 
     @router.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
     def todo_create(
