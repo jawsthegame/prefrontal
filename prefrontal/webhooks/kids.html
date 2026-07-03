@@ -3,15 +3,50 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
 <title>Kids · Prefrontal</title>
+<!-- Set the theme before first paint so there's no flash. -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
 <style>
+  /* ── Shared theme (identical across /family, /kids, /dashboard) ─────────── */
   :root {
-    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26;
-    --muted: #8a8578; --accent: #4a7c59; --good: #4a7c59; --warn: #c98a3a;
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
     font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; line-height: 1.45; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px;
+    padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
   header { padding: 20px 18px 8px; }
   header h1 { margin: 0; font-size: 26px; font-weight: 680; }
   .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
@@ -28,11 +63,11 @@
   .row .k { color: var(--muted); min-width: 120px; }
   .row .v { flex: 1; font-weight: 500; }
   .row .prov { color: var(--muted); font-size: 12px; }
-  .iconbtn { border: 1px solid var(--line); background: #fff; border-radius: 8px;
+  .iconbtn { border: 1px solid var(--line); background: var(--card); border-radius: 8px;
     padding: 3px 8px; cursor: pointer; font-size: 13px; }
   .iconbtn:hover { border-color: var(--accent); }
-  .iconbtn.del:hover { border-color: #c05353; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; background: #f1efe8;
+  .iconbtn.del:hover { border-color: var(--danger); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--line);
     border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; margin: 3px 4px 3px 0; font-size: 14px; }
   .empty { color: var(--muted); font-style: italic; }
   .changed { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
@@ -40,11 +75,11 @@
   .changed .who { color: var(--muted); font-size: 12px; }
   form.inline { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
   input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line);
-    border-radius: 9px; background: #fff; color: var(--fg); }
+    border-radius: 9px; background: var(--card); color: var(--fg); }
   textarea { width: 100%; min-height: 52px; resize: vertical; }
   input[type=text], input[type=date], input[type=datetime-local] { min-width: 120px; }
   .grow { flex: 1; min-width: 140px; }
-  button.primary { background: var(--accent); color: #fff; border: none; border-radius: 9px;
+  button.primary { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 9px;
     padding: 9px 16px; font-weight: 600; cursor: pointer; }
   button.primary:hover { filter: brightness(1.06); }
   .hint { color: var(--muted); font-size: 12px; width: 100%; margin-top: -2px; }
@@ -54,21 +89,21 @@
   /* star charts */
   .stars { margin-top: 5px; font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .stars .prog { color: var(--accent); font-weight: 600; }
-  .awardbtn { background: var(--warn); color: #fff; border: none; border-radius: 8px;
+  .awardbtn { background: var(--warn); color: var(--accent-fg); border: none; border-radius: 8px;
     padding: 4px 11px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .awardbtn:hover { filter: brightness(1.06); }
   .thresholds { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .prompt-line { font-size: 13px; color: var(--muted); margin-top: 5px; }
   .prompt-line .edit { color: var(--accent); cursor: pointer; margin-left: 6px; }
   .prompt-ed { margin-top: 8px; padding: 11px 12px; border: 1px dashed var(--line);
-    border-radius: 10px; background: #faf9f5; display: none; }
+    border-radius: 10px; background: var(--bg); display: none; }
   .prompt-ed.open { display: block; }
   .prompt-ed .fld { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
   .prompt-ed .fld label { font-size: 13px; color: var(--muted); min-width: 74px; }
   .days { display: flex; flex-wrap: wrap; gap: 5px; }
   .day { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
     cursor: pointer; font-size: 13px; user-select: none; }
-  .day.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .day.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
   .preset { color: var(--accent); cursor: pointer; font-size: 12px; margin-right: 8px; }
   #digest-toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px;
     font-size: 13px; color: var(--muted); cursor: pointer; }
@@ -77,7 +112,7 @@
     color: var(--muted); cursor: pointer; }
   .bal-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
   .bal-row .bal-name { min-width: 76px; font-weight: 500; }
-  .bal-bar { flex: 1; height: 10px; background: #eceae2; border-radius: 6px; overflow: hidden; }
+  .bal-bar { flex: 1; height: 10px; background: var(--line); border-radius: 6px; overflow: hidden; }
   .bal-fill { height: 100%; background: var(--accent); }
   .bal-row .bal-n { color: var(--muted); min-width: 62px; text-align: right; }
   .bal-cap { color: var(--muted); font-size: 13px; margin-top: 12px; }
@@ -99,12 +134,12 @@
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
-  .act-item { background: #f4f6f4; border: 1px solid #dbe6db; border-radius: 8px; padding: 7px 10px; margin: 4px 0; font-size: 14px; }
+  .act-item { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin: 4px 0; font-size: 14px; }
   .asst-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .asst-bar .spacer { flex: 1; }
   .asst-note, .asst-err { color: var(--muted); font-size: 13px; }
-  .asst-err { color: #b0563a; }
-  .asst-ok { color: var(--good); } .asst-fail { color: #b0563a; }
+  .asst-err { color: var(--danger); }
+  .asst-ok { color: var(--good); } .asst-fail { color: var(--danger); }
   /* gate */
   #gate { position: fixed; inset: 0; background: var(--bg); display: none; z-index: 40;
     align-items: center; justify-content: center; padding: 20px; }
@@ -114,14 +149,22 @@
   #gate p { color: var(--muted); margin: 0 0 14px; }
   #gate input { width: 100%; }
   #gate button { margin-top: 12px; }
-  #gate .err { color: #b0563a; font-size: 14px; min-height: 18px; margin-top: 8px; }
+  #gate .err { color: var(--danger); font-size: 14px; min-height: 18px; margin-top: 8px; }
 </style>
 </head>
 <body>
+<nav class="topnav">
+  <a class="brand" href="/family">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/family">Family</a>
+    <a href="/kids" aria-current="page">Kids</a>
+    <a href="/dashboard">Dashboard</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
 <header>
   <h1>👧 Kids</h1>
-  <div class="meta"><span id="status">loading…</span> ·
-    <a href="/family">family view</a> · <a href="/dashboard">dashboard</a></div>
+  <div class="meta"><span id="status">loading…</span></div>
 </header>
 
 <div class="wrap" id="wrap" style="display:none">
@@ -276,6 +319,23 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ── Theme toggle (shared across pages) ────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    if (btn) btn.textContent = dark ? "☀" : "☾";
+  };
+  sync();
+  if (btn) btn.onclick = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
 
 function authHeaders(extra) {
   return token ? { "X-Prefrontal-Token": token, ...(extra || {}) } : { ...(extra || {}) };
