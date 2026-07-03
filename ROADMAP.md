@@ -369,16 +369,18 @@ the first test. Code follow-ups below are optional polish.
   `parse_inbound_event()` but routes none of them to real handlers yet. The
   Triage agent spec (`docs/triage-agent.md`) is the plan to discharge this.
   *(`prefrontal/integrations/n8n.py`, `prefrontal/webhooks/routers/ingestion.py`.)*
-- **Module interventions** — all six modules now have `status="active"`
+- **Module interventions** — all six modules have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
-  Blindness** (departure timing + outcome capture), **Task Paralysis**
-  (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below),
-  **Impulsivity** (`reflective_pause` + `capture_and_defer` active), and
-  **Self-Care** (`meal_check` + `water_check` basic-needs nudges, opt-in). The
-  only intervention still `planned` is Impulsivity's `switch_rate_feedback`
-  (needs captured switch events — see `docs/impulsivity.md`). Run `prefrontal
-  modules -v` for the live per-intervention status.
+  Blindness** (`estimate_correction` + `departure_buffer` — departure timing +
+  outcome capture), **Task Paralysis** (`tiny_first_step` / `auto_decompose` /
+  `body_double_nudge` — see below), **Impulsivity** (`reflective_pause` +
+  `capture_and_defer` active), and **Self-Care** (`meal_check` + `water_check`
+  basic-needs nudges, opt-in). Two interventions are still `planned`:
+  Impulsivity's `switch_rate_feedback` (needs captured switch events — see
+  `docs/impulsivity.md`) and Time Blindness's `elapsed_time_callouts`
+  ("you've been on this N min" during a focus block — not yet wired). Run
+  `prefrontal modules -v` for the live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 

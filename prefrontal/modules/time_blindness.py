@@ -43,11 +43,13 @@ class TimeBlindnessModule(Module):
                 name="departure_buffer",
                 description="Add a learned buffer and nudge earlier than the naive leave time.",
                 trigger="an upcoming calendar event with a location",
+                status="active",
             ),
             Intervention(
                 name="elapsed_time_callouts",
                 description="Periodic 'you've been on this N minutes' callouts during a block.",
                 trigger="an active focus/work block",
+                status="planned",
             ),
         ]
 
