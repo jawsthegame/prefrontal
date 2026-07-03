@@ -493,6 +493,8 @@ token client-side).
 | `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
 | `GET /briefing` | Today's digest (structured + rendered text) |
+| `POST /observe` | Feed a free-text note to the LLM sensor → pending candidate updates |
+| `GET /proposals?status=` · `POST /proposals/{id}/accept\|reject` | Review / apply / dismiss sensor proposals |
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
 | `POST /webhooks/coach/check` · `/ack` | Run the coaching tick / acknowledge a nudge |
 | `GET /encouragement` · `POST /encouragement/sent` | Rough-day recovery message / stamp it delivered (once-a-day cursor) |

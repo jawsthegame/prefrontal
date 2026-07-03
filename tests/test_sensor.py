@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaClient
+from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.sensor import (
     apply_proposal,
@@ -140,3 +143,88 @@ def test_reject_leaves_state_untouched(store):
     store.set_proposal_status(pid, "rejected")
     assert store.get_state("self_care") != "on"
     assert store.list_proposals("pending") == []
+
+
+# -- HTTP surface: POST /observe + GET/POST /proposals -----------------------
+
+_HTTP_SECRET = "sensor-http-secret"
+
+
+def _auth() -> dict[str, str]:
+    return {"X-Prefrontal-Token": _HTTP_SECRET}
+
+
+def _client_with(reply: str):
+    """A TestClient over an in-memory store, with an Ollama that returns `reply`."""
+    conn = init_db(":memory:")
+    store = scoped_default(MemoryStore(conn))
+    from prefrontal.webhooks.app import create_app
+
+    app = create_app(
+        store=store,
+        settings=Settings(webhook_secret=_HTTP_SECRET),
+        ollama=_client(reply),
+    )
+    return TestClient(app), store
+
+
+def test_observe_records_pending_proposals():
+    reply = """[
+      {"kind": "state", "key": "self_care", "value": "on", "rationale": "wants reminders"},
+      {"kind": "episode", "episode_type": "task", "outcome": "miss", "context": "admin"}
+    ]"""
+    client, store = _client_with(reply)
+    with client:
+        r = client.post("/observe", json={"text": "turn on self care; I blow off admin"},
+                        headers=_auth())
+        assert r.status_code == 201
+        body = r.json()
+        assert body["count"] == 2
+        assert {p["kind"] for p in body["proposals"]} == {"state", "episode"}
+        # Nothing applied yet — they're pending until accepted.
+        assert store.get_state("self_care") != "on"
+        assert store.list_proposals("pending")
+
+
+def test_observe_requires_auth():
+    client, _ = _client_with("[]")
+    with client:
+        assert client.post("/observe", json={"text": "x"}).status_code == 401
+
+
+def test_observe_empty_when_model_yields_nothing():
+    client, store = _client_with("[]")
+    with client:
+        r = client.post("/observe", json={"text": "nothing here"}, headers=_auth())
+        assert r.status_code == 201 and r.json() == {"count": 0, "proposals": []}
+
+
+def test_proposals_list_accept_applies_and_reject_does_not():
+    client, store = _client_with("[]")
+    with client:
+        sid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
+        eid = store.add_proposal(kind="episode",
+                                 payload={"episode_type": "task", "outcome": "miss"})
+        listed = client.get("/proposals", headers=_auth()).json()["proposals"]
+        assert {p["id"] for p in listed} == {sid, eid}
+
+        # Accept the state proposal → applied with source=llm_inferred.
+        acc = client.post(f"/proposals/{sid}/accept", headers=_auth())
+        assert acc.status_code == 200 and acc.json()["status"] == "accepted"
+        assert store.get_state("self_care") == "on"
+
+        # Reject the episode proposal → resolved, nothing logged.
+        rej = client.post(f"/proposals/{eid}/reject", headers=_auth())
+        assert rej.status_code == 200 and rej.json()["status"] == "rejected"
+        assert store.episodes_by_type("task") == []
+
+        # Both resolved → the pending queue is empty; a re-accept 404s.
+        assert client.get("/proposals", headers=_auth()).json()["proposals"] == []
+        assert client.post(f"/proposals/{sid}/accept", headers=_auth()).status_code == 404
+
+
+def test_proposals_unknown_action_404s():
+    client, store = _client_with("[]")
+    with client:
+        pid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
+        assert client.post(f"/proposals/{pid}/frobnicate", headers=_auth()).status_code == 404
