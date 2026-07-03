@@ -27,6 +27,7 @@ from prefrontal.household import (
     next_goal,
     normalize_checkin_config,
     normalize_prompt,
+    parse_star_tiers,
     parse_structured,
     prompt_due,
     prompt_question,
@@ -581,6 +582,54 @@ def test_write_endpoints_validate(client):
     )
 
 
+def test_set_tiers_makes_a_chart_and_edits_in_place(client, dana):
+    """The tiers endpoint turns a plain plan into a multi-tier chart, then re-tunes it."""
+    aid = client.post(
+        "/household/agreements", json={"title": "Chores", "kind": "reward"}, headers=_h("dana-tok")
+    ).json()["id"]
+    # Add two tiers -> it becomes a star chart with the nearest goal at 7.
+    r = client.post(
+        f"/household/agreements/{aid}/tiers",
+        json={"tiers": "7=small LEGO, 30=large"}, headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    assert r.json()["thresholds"] == [
+        {"stars": 7, "reward": "small LEGO"}, {"stars": 30, "reward": "large"}
+    ]
+    assert next_goal(parse_structured(dana.agreement(aid)["structured"]), 0)["count"] == 7
+    # Editing in place replaces the tiers.
+    client.post(
+        f"/household/agreements/{aid}/tiers",
+        json={"tiers": "5=sticker, 20=book"}, headers=_h("dana-tok"),
+    )
+    thresholds = parse_structured(dana.agreement(aid)["structured"])["thresholds"]
+    assert [t["stars"] for t in thresholds] == [5, 20]
+
+
+def test_set_tiers_preserves_prompt_and_rejects_garbage(client, dana):
+    aid = client.post(
+        "/household/agreements",
+        json={"title": "Reading", "kind": "reward",
+              "structured": {"unit": "star", "thresholds": [{"stars": 3, "reward": "x"}]}},
+        headers=_h("dana-tok"),
+    ).json()["id"]
+    client.post(
+        f"/household/agreements/{aid}/prompt",
+        json={"enabled": True, "days": [0], "time": "19:00"}, headers=_h("dana-tok"),
+    )
+    # Re-tuning tiers must not wipe the prompt schedule.
+    client.post(
+        f"/household/agreements/{aid}/tiers", json={"tiers": "9=medal"}, headers=_h("dana-tok")
+    )
+    structured = parse_structured(dana.agreement(aid)["structured"])
+    assert structured["thresholds"] == [{"stars": 9, "reward": "medal"}]
+    assert structured["prompt"]["days"] == [0]
+    # A spec with nothing parseable is a 422, not an empty chart.
+    assert client.post(
+        f"/household/agreements/{aid}/tiers", json={"tiers": "just words"}, headers=_h("dana-tok")
+    ).status_code == 422
+
+
 def test_write_endpoints_are_member_guarded(client):
     """A user in no household gets 404 from every write route, not a 500."""
     for path, body in [
@@ -620,6 +669,17 @@ def test_next_goal_and_congrats_text():
     assert next_goal(STAR_CHART, 10) is None  # all rewards earned
     goal = newly_reached_goals(STAR_CHART, 4, 5)[0]
     assert star_congrats_text("Sam", goal) == "🌟 Sam hit 5 stars — reward unlocked: movie night!"
+
+
+def test_parse_star_tiers():
+    """Multi-tier specs parse to sorted thresholds; blanks/garbage -> None."""
+    assert parse_star_tiers("7=small LEGO, 30=large") == [
+        {"stars": 7, "reward": "small LEGO"},
+        {"stars": 30, "reward": "large"},
+    ]
+    assert parse_star_tiers("30=big, 7=small")[0]["stars"] == 7  # sorted by count
+    assert parse_star_tiers("   ") is None
+    assert parse_star_tiers("no numbers here") is None
 
 
 def test_goal_logic_tolerates_no_or_bad_structure():

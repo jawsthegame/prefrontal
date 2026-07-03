@@ -420,6 +420,27 @@ def _star_thresholds(structured: Any) -> list[tuple[int, str]]:
     return out
 
 
+_TIER_RE = re.compile(r"^\s*(\d+)\s*=\s*(.+?)\s*$")
+
+
+def parse_star_tiers(raw: str) -> list[dict[str, Any]] | None:
+    """Parse a ``"7=small LEGO, 30=large"`` reward-tier spec into thresholds.
+
+    The server-side twin of the ``/kids`` field's parser: each comma-separated
+    ``count=reward`` becomes ``{"stars": count, "reward": reward}``, sorted by
+    count. Blanks/garbage are skipped; ``None`` when nothing valid parses (so the
+    caller can reject rather than store an empty chart). Multiple tiers are the
+    point — e.g. a small reward at 7 and a bigger one at 30.
+    """
+    tiers: list[dict[str, Any]] = []
+    for part in (raw or "").split(","):
+        m = _TIER_RE.match(part)
+        if m:
+            tiers.append({"stars": int(m.group(1)), "reward": m.group(2).strip()})
+    tiers.sort(key=lambda t: t["stars"])
+    return tiers or None
+
+
 def _unit_of(structured: Any) -> str:
     """The chart's counting unit (``"star"`` by default)."""
     return structured.get("unit", "star") if isinstance(structured, dict) else "star"

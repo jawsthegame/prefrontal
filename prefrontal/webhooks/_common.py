@@ -709,6 +709,14 @@ class PromptConfig(BaseModel):
     )
 
 
+class TierConfig(BaseModel):
+    """Body of ``POST /household/agreements/{id}/tiers`` — the reward-tier spec."""
+
+    tiers: str = Field(
+        description="Comma-separated 'count=reward' tiers, e.g. '7=small LEGO, 30=large'.",
+    )
+
+
 class CheckinConfig(BaseModel):
     """Body of ``POST /household/checkin`` — the weekly mental-load check-in schedule."""
 
@@ -1288,6 +1296,7 @@ __all__ = [
     "CheckinConfig",
     "DigestConfig",
     "PromptConfig",
+    "TierConfig",
     "StarAward",
     "StepDone",
     "SwitchImpulse",
