@@ -26,6 +26,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from prefrontal.memory.db import SCHEMA_PATH
 from prefrontal.memory.store import MemoryStore, generate_token, seed_user_state
 
 #: Schema version stamped once this migration has run. Bumping the on-disk
@@ -51,86 +52,69 @@ _USER_TABLES = (
 )
 
 
-#: Columns added to a table *after* its original definition. ``CREATE TABLE IF
-#: NOT EXISTS`` (in ``schema.sql``) never alters an existing table, so a column
-#: introduced later must be back-filled with ``ALTER TABLE`` on databases created
-#: before it existed. Maps table name -> list of ``(column, type)`` to ensure.
-#: Append here when you add a column to an existing table's ``CREATE TABLE``.
-_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "commitments": [
-        ("dest_lat", "REAL"),
-        ("dest_lon", "REAL"),
-        ("kind", "TEXT NOT NULL DEFAULT 'self'"),
-        ("kind_source", "TEXT"),
-        ("source_url", "TEXT"),
-    ],
-    "todo_decompositions": [("done_steps", "TEXT")],
-    "todos": [
-        ("source", "TEXT NOT NULL DEFAULT 'manual'"),
-        ("category", "TEXT"),
-        ("time_window", "TEXT"),
-        ("domain", "TEXT"),
-    ],
-    "focus_sessions": [
-        ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
-        ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
-        # Optional link to the todo the block is working — its energy/category
-        # tag the close episode, so the bias can condition on them (learning §5).
-        ("todo_id", "INTEGER"),
-    ],
-    # Context tags on the learning record, so the time-estimation bias can
-    # condition on the task's energy load and category (learning §5), not just
-    # the global multiplier. Stamped at focus-close from the linked todo.
-    "episodes": [
-        ("energy", "TEXT"),
-        ("category", "TEXT"),
-    ],
-    # Departure nudges expire at their commitment's start_at so a stale "leave
-    # now" doesn't linger on the widget for hours (added after nudges shipped).
-    "nudges": [("expires_at", "DATETIME")],
-    # The shared household sheet's second scope: a nullable pointer from a user to
-    # the household they co-parent in (added after the users table shipped). No FK
-    # in the ALTER (SQLite can't add a column-level REFERENCES via ALTER), which is
-    # fine — schema.sql declares it on fresh installs.
-    "users": [("household_id", "INTEGER")],
-    # A star chart's recurring "should we award a star today?" prompt records its
-    # last fire here to dedup to once per local day (added after the sheet shipped).
-    "household_agreements": [("last_prompted_at", "DATETIME")],
-    # The opt-in weekly mental-load check-in config lives on the household row
-    # (added after households shipped). household_checkins is a whole new table,
-    # created by schema.sql, so it needs no back-fill here.
-    "households": [
-        ("checkin_enabled", "INTEGER NOT NULL DEFAULT 0"),
-        ("checkin_day", "INTEGER"),
-        ("checkin_time", "TEXT"),
-        ("checkin_last_sent_at", "DATETIME"),
-        ("digest_enabled", "INTEGER NOT NULL DEFAULT 0"),
-        ("balance_enabled", "INTEGER NOT NULL DEFAULT 0"),
-    ],
-    # A chore can belong to a routine (added after chores shipped). No FK in the
-    # ALTER (SQLite limitation); schema.sql declares REFERENCES on fresh installs.
-    # household_routines itself is a whole new table, created by schema.sql.
-    "household_chores": [("routine_id", "INTEGER")],
-}
+def _reference_columns() -> dict[str, list[tuple[str, str]]]:
+    """The authoritative per-table column list, derived from ``schema.sql`` itself.
+
+    Applies ``schema.sql`` to a throwaway in-memory database and reads each
+    table's columns via ``PRAGMA table_info``, reconstructing each column's DDL
+    (``TYPE [NOT NULL] [DEFAULT x]``). ``schema.sql`` is therefore the **single
+    source of truth** for the shape of a table — there is no hand-maintained
+    ledger of "columns added later" to drift out of sync with it. Callers diff
+    this against a live database and add whatever it is missing (see
+    :func:`backfill_added_columns`).
+    """
+    ref = sqlite3.connect(":memory:")
+    try:
+        ref.executescript(SCHEMA_PATH.read_text())
+        tables = [
+            row[0]
+            for row in ref.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        columns: dict[str, list[tuple[str, str]]] = {}
+        for table in tables:
+            defs: list[tuple[str, str]] = []
+            for _cid, name, col_type, notnull, dflt, _pk in ref.execute(
+                f"PRAGMA table_info({table})"
+            ):
+                decl = col_type or ""
+                if notnull:
+                    decl += " NOT NULL"
+                if dflt is not None:
+                    decl += f" DEFAULT {dflt}"
+                defs.append((name, decl.strip()))
+            columns[table] = defs
+        return columns
+    finally:
+        ref.close()
 
 
 def backfill_added_columns(conn: sqlite3.Connection) -> None:
-    """Back-fill columns added to a table after its original schema (idempotent).
+    """Back-fill columns a live table is missing versus ``schema.sql`` (idempotent).
 
-    New seed rows and whole new tables are handled by ``schema.sql`` itself (it
-    is idempotent), but ``CREATE TABLE IF NOT EXISTS`` leaves an existing table's
-    columns untouched. This adds any missing later columns (see
-    :data:`_ADDED_COLUMNS`) so an always-on database upgrades in place. A table
-    that does not exist yet is skipped — ``schema.sql`` will create it at its
-    final shape.
+    ``CREATE TABLE IF NOT EXISTS`` (in ``schema.sql``) never alters an existing
+    table, so a column introduced *after* a database was created must be added
+    with ``ALTER TABLE``. Rather than track those columns by hand, this diffs
+    every existing table against the shape ``schema.sql`` declares
+    (:func:`_reference_columns`) and adds any it lacks — so adding a column to a
+    ``CREATE TABLE`` is the *only* edit needed for both fresh and existing
+    databases. A table that does not exist yet is skipped: ``schema.sql`` creates
+    it at its final shape.
+
+    (SQLite's ``ADD COLUMN`` forbids a ``NOT NULL`` column without a constant
+    default and non-constant defaults like ``CURRENT_TIMESTAMP`` — the same
+    constraint the old hand-maintained ledger lived under, so any newly-added
+    column must still be one ``ADD COLUMN`` can express.)
     """
-    for table, columns in _ADDED_COLUMNS.items():
+    for table, columns in _reference_columns().items():
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if not existing:
-            continue  # table absent (PRAGMA returns no rows) — nothing to alter
-        for name, col_type in columns:
+            continue  # table absent (PRAGMA returns no rows) — schema.sql creates it
+        for name, decl in columns:
             if name not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 @dataclass(frozen=True)
