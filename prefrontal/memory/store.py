@@ -54,6 +54,7 @@ from prefrontal.memory.repos.schedule import ScheduleRepo
 from prefrontal.memory.repos.sessions import SessionsRepo
 from prefrontal.memory.repos.state import StateRepo
 from prefrontal.memory.repos.todos import TodosRepo
+from prefrontal.memory.repos.trips import TripsRepo
 from prefrontal.memory.repos.users import UsersRepo
 
 __all__ = [
@@ -76,6 +77,7 @@ class MemoryStore(
     PatternsRepo,
     StateRepo,
     SessionsRepo,
+    TripsRepo,
     ScheduleRepo,
     TodosRepo,
     MailRepo,

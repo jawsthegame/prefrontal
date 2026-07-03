@@ -58,6 +58,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
+| Closed-Loop Trip Tracking | `trip_tracking` | Passively logs undeclared round trips (leave home → return), then asks for a label, category, and an honest plain-English "how it went" that feeds the learning engine |
 | Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day) and "drink some water" (to a daily target), re-asked until met (opt-in via the `self_care` key) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
@@ -116,11 +117,12 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | LLM-as-sensor | `prefrontal/sensor.py` | ✅ Free text → *candidate* structured updates (allowlisted, `source=llm_inferred`), held pending until you accept; `prefrontal note` / `proposals` |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
-| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 6 modules, all wired end-to-end (5 EF challenges + an opt-in Self-Care meal/water check) |
+| Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 7 modules, all wired end-to-end (5 EF challenges + closed-loop trip tracking + an opt-in Self-Care meal/water check) |
 | Shared household sheet / Parent pack | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Co-parent facts, agreements & star charts, shared shopping list, load-balance view, daily delta digest, weekly mental-load check-in, self-serve invites; `/kids` + `/family` views, `prefrontal household …` |
 | Recurring shared chores | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Owner-assigned daily jobs (run the dishwasher, pack lunches) with a lead-time reminder to the owner and — if it slips past due — a gentle heads-up to the *other* parent so the morning isn't a surprise; one-tap **Done**, `POST /webhooks/household/chores/check`, `prefrontal household chore` |
 | Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes to ntfy / Pushover / TTS with one-tap action buttons; `prefrontal coach --deliver` |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
+| Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |
 | Source-agnostic triage agent | — | 🔜 The coaching tick engine and native delivery have shipped (rows above); a general, source-agnostic **triage agent** is the remaining unbuilt piece — mail triage is its first concrete slice. See `docs/triage-agent.md`, `docs/coaching-agent.md`. |
