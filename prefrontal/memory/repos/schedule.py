@@ -9,6 +9,7 @@ from typing import Any
 from prefrontal.memory._helpers import (
     _row_to_dict,
     _with_calendar,
+    sql_placeholders,
 )
 
 
@@ -154,7 +155,7 @@ class ScheduleRepo:
         if not external_ids:
             return {}
         ids = list(external_ids)
-        placeholders = ",".join("?" * len(ids))
+        placeholders = sql_placeholders(len(ids))
         rows = self.conn.execute(
             f"SELECT external_id, kind, kind_source FROM commitments "
             f"WHERE user_id = ? AND external_id IN ({placeholders})",

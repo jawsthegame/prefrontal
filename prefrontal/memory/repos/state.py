@@ -4,11 +4,11 @@ Mixin for :class:`prefrontal.memory.store.MemoryStore`; not used standalone.
 """
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from prefrontal.memory._helpers import (
     _row_to_dict,
+    sha256_hex,
 )
 
 
@@ -238,7 +238,7 @@ class StateRepo:
             model: The model name when ``source == "llm"``, else ``None``.
             structured: The structured profile the narrative was derived from.
         """
-        digest = hashlib.sha256(structured.encode("utf-8")).hexdigest()
+        digest = sha256_hex(structured)
         self.conn.execute(
             """
             INSERT INTO profile_cache (
@@ -255,14 +255,3 @@ class StateRepo:
             (self._uid(), text, source, model, structured, digest),
         )
         self.conn.commit()
-
-    # -- escalating sessions (shared by outings & focus sessions) ------------
-    #
-    # An "escalating session" is a time-boxed row that escalates through severity
-    # levels and eventually closes: outings (Location-Aware Task Anchor) and focus
-    # sessions (Hyperfocus) are two instances of it. Their lifecycles were
-    # duplicated method-for-method; these generic helpers hold the shared CRUD +
-    # elapsed/actual-minutes SQL once, parameterized by table and the timestamp
-    # columns. Table/column names are internal constants, never user input, so the
-    # f-string interpolation is injection-safe. The public per-kind methods below
-    # are thin delegations.

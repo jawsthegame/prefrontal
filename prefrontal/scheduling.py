@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from prefrontal.clock import TS_FMT, utcnow
+from prefrontal.clock import TS_FMT, parse_ts, utcnow
 from prefrontal.clock import parse_ts_strict as _parse
 from prefrontal.todos import KNOWN_CATEGORIES, requires_travel
 
@@ -186,6 +186,22 @@ def local_datetime(now: datetime, tz: str) -> datetime:
 def local_hour_of(now: datetime, tz: str) -> int:
     """The local hour (0–23) for a naive-UTC instant, in timezone ``tz``."""
     return local_datetime(now, tz).hour
+
+
+def minutes_between(
+    start: str | None, end: str | None, *, default: float | None = None
+) -> float | None:
+    """Minutes between two stored UTC timestamps, or ``default`` if unusable.
+
+    Tolerant of a missing or unparseable endpoint (returns ``default``) — callers
+    that want a hard zero pass ``default=0.0``; those that want to distinguish
+    "unknown" leave it ``None``. The single home for the duration math the
+    location-anchor, trip, and hyperfocus modules each used to re-implement.
+    """
+    s, e = parse_ts(start), parse_ts(end)
+    if s is None or e is None:
+        return default
+    return (e - s).total_seconds() / 60.0
 
 
 def energy_time_rank(

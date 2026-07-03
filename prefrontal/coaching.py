@@ -12,11 +12,12 @@ background threads, no transport. It generalizes the two loops that already
 exist: the morning briefing's ``build → render`` phrasing shape and the outing
 escalation's poll → decide-``fire`` → return-``message`` loop.
 
-Scope of this first slice (see the spec's rollout §12): the engine, the
-:class:`Cue`/:class:`CoachContext`/:class:`Decision` types, channel selection,
-and suppression (quiet hours + debounce). The optional LLM phrasing pass, the
-``POST /webhooks/coach/check`` endpoint, and the ``outing/check`` parity refactor
-land in follow-ups; :func:`phrase` is the deterministic core those will build on.
+The engine, the :class:`Cue`/:class:`CoachContext`/:class:`Decision` types,
+channel selection, and suppression (quiet hours + debounce) are implemented here;
+the ``POST /webhooks/coach/check`` tick endpoint (and its CLI twin ``prefrontal
+coach``) fan every enabled module through this core. The one piece still
+deterministic-only is :func:`phrase`: the optional profile-grounded LLM rewrite
+(spec §5) has not landed, so it returns the module's own ``cue.text`` verbatim.
 """
 
 from __future__ import annotations

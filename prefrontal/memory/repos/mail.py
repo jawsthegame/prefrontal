@@ -8,6 +8,7 @@ from typing import Any
 
 from prefrontal.memory._helpers import (
     _row_to_dict,
+    sql_placeholders,
 )
 
 
@@ -219,7 +220,7 @@ class MailRepo:
         """
         if not todo_ids:
             return {}
-        placeholders = ",".join("?" * len(todo_ids))
+        placeholders = sql_placeholders(len(todo_ids))
         rows = self.conn.execute(
             f"SELECT todo_id, account FROM mail_messages "
             f"WHERE user_id = ? AND todo_id IN ({placeholders})",
@@ -245,7 +246,7 @@ class MailRepo:
         """
         if not todo_ids:
             return {}
-        placeholders = ",".join("?" * len(todo_ids))
+        placeholders = sql_placeholders(len(todo_ids))
         rows = self.conn.execute(
             f"SELECT todo_id, account, message_id, thread_id FROM mail_messages "
             f"WHERE user_id = ? AND todo_id IN ({placeholders})",
