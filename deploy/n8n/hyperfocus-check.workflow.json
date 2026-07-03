@@ -48,14 +48,14 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.pushover.net/1/messages.json",
+        "url": "https://ntfy.sh",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 1 : 0 }},\n  \"url\": \"shortcuts://run-shortcut?name=End%20focus\",\n  \"url_title\": \"Wrap up (End focus)\"\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — Focus\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.level === 'break' ? 4 : 3 }},\n  \"actions\": {{ JSON.stringify($json.actions || []) }}\n}",
         "options": {}
       },
-      "id": "pushover-push",
-      "name": "Pushover Push (check / break)",
+      "id": "publish-ntfy",
+      "name": "ntfy Push (check / break)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [660, 300]
@@ -69,7 +69,7 @@
       "main": [[{ "node": "Due Interrupts Only", "type": "main", "index": 0 }]]
     },
     "Due Interrupts Only": {
-      "main": [[{ "node": "Pushover Push (check / break)", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "ntfy Push (check / break)", "type": "main", "index": 0 }]]
     }
   },
   "active": false,

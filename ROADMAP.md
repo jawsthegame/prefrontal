@@ -494,17 +494,29 @@ ordered by leverage; each is independent but builds on denser capture.
     publishes to ntfy with them (retiring its Pushover-only publish). Covered by
     `tests/test_panic.py` + `tests/test_notify.py`.
 
-  Doing this should also **clean up the Pushover-era workarounds** adopted while
-  Pushover was the only channel:
-  - the `shortcuts://run-shortcut?name=End%20focus` deep link in
-    `deploy/n8n/hyperfocus-check.workflow.json` — it works but foregrounds the
-    Shortcuts app and strands the user, and it's brittle (hardcodes the exact
-    shortcut name);
-  - nudge copy that tiptoes around Pushover's lack of inline actions (e.g.
-    "…open End focus to wrap up" instead of a real **Wrap up** button);
-  - the two-call `switch` → `resolve` flow and the multi-tap menu shortcuts —
-    **done for ntfy**: the pause's Stay / Park it / Switch anyway are now single
-    inline buttons (the Shortcuts menu path remains for the Pushover fallback).
+  - **ntfy is now the default delivery across the board** ✅ — every remaining
+    Pushover-based n8n workflow was converted to publish to ntfy (the
+    `prefrontal-me` topic): departure-reminder, coffee-shop-nudge (the 50%/100%
+    pushes; the 150% **Twilio call stays**), hyperfocus-check, calendar-sync
+    (double-booking + possible-conflict alerts), and morning-briefing — joining
+    panic-check, coach-check, interactive-nudge, and encouragement which already
+    did. Each nudge workflow passes the endpoint's signed `actions` through so the
+    one-tap buttons render. This also **cleaned up the Pushover-era workarounds**:
+    - the `shortcuts://run-shortcut?name=End%20focus` deep link in
+      hyperfocus-check is gone — the workflow now publishes the endpoint's real
+      signed **Wrap up** button (background `GET /nudge/act`, no app-switch, no
+      brittle name-match);
+    - nudge copy that tiptoed around Pushover's lack of buttons is fixed (the
+      hyperfocus check now says "tap Wrap up", not "open End focus");
+    - the native delivery client (`delivery.py`) attaches buttons for the
+      self-care **meal/water** cues too, not just outing/departure/focus;
+    - the two-call `switch` → `resolve` flow / multi-tap menu was already single
+      inline buttons for ntfy (the Shortcuts menu path remains for Pushover).
+
+    Pushover isn't removed — the native `DeliveryClient` still supports it as a
+    fallback (no inline buttons; the first action rides as a tap URL), and the
+    `.env.example` documents both. Local-first stays the default (ntfy is
+    self-hostable). Covered by `tests/test_delivery.py` + `tests/test_notify.py`.
 
   Local-first stays the default (ntfy is self-hostable). Pairs with the
   coaching-agent delivery routing and per-user delivery (multi-tenant) below.

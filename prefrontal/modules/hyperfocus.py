@@ -155,7 +155,7 @@ def build_focus_message(
         if aligned:
             return (
                 f"{greeting}, {elapsed} min on '{task}'. Still what you meant to "
-                "be doing? Keep going, or open End focus to wrap up."
+                "be doing? Keep going, or tap Wrap up to end the session."
             )
         return (
             f"{greeting}, you've spent {elapsed} min and you meant to be on "

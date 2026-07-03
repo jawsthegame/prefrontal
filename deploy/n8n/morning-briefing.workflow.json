@@ -31,13 +31,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.pushover.net/1/messages.json",
+        "url": "https://ntfy.sh",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"token\": \"PUSHOVER_TOKEN\",\n  \"user\": \"PUSHOVER_USER\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"prefrontal-me\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }},\n  \"priority\": 3\n}",
         "options": {}
       },
-      "id": "pushover",
+      "id": "publish-ntfy",
       "name": "Deliver briefing",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,

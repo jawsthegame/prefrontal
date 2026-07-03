@@ -195,7 +195,7 @@ Interactive API docs are available at `http://localhost:8000/docs` while the ser
 | SQLite | Behavioral memory |
 | Google Apps Script | Work email digest (stays within Google) |
 | iOS Shortcuts | Location triggers, one-tap logging |
-| Pushover / Ntfy | Notification delivery |
+| ntfy (Pushover optional) | Notification delivery — one-tap action buttons |
 | Tailscale | Remote access |
 
 LLM inference uses a local model via Ollama for routing and triage. Heavier reasoning tasks can optionally use the Anthropic API — configurable per agent.
