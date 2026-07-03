@@ -22,7 +22,7 @@ much detail the rendering includes.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -65,6 +65,9 @@ class Briefing:
         slips: Count of recent ``miss`` episodes by ``episode_type``.
         coaching: Selected coaching values surfaced in the briefing.
         spare: Free windows in the rest of the day, each with a suggested todo.
+        encouragement: Optional closing encouragement line (spec §6.2) — set when
+            the ``encouragement`` layer is on and the day warrants a note; ``None``
+            leaves the briefing's usual time-bias reminder in place.
     """
 
     date: str
@@ -75,6 +78,7 @@ class Briefing:
     coaching: dict[str, str] = field(default_factory=dict)
     spare: list[dict[str, Any]] = field(default_factory=list)
     avoided: list[dict[str, Any]] = field(default_factory=list)
+    encouragement: str | None = None
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -159,7 +163,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         for a in avoided_todos(todos, now)[:3]
     ]
 
-    return Briefing(
+    briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
         today=today,
@@ -169,6 +173,13 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         spare=spare,
         avoided=avoided,
     )
+
+    # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
+    # this module's day-band constants, so importing it at top level would cycle.
+    # Inert unless the `encouragement` layer is on — returns None on an ordinary day.
+    from prefrontal.encouragement import briefing_note
+
+    return replace(briefing, encouragement=briefing_note(store, briefing, now=now))
 
 
 def _time_of(commitment: dict[str, Any]) -> str:
@@ -242,17 +253,22 @@ def render_briefing(briefing: Briefing) -> str:
             )
         lines.append("")
 
-    # Coaching note.
-    bias = briefing.coaching.get("time_estimation_bias")
-    if bias:
-        try:
-            pct = round((float(bias) - 1.0) * 100)
-            lines.append(
-                f"_Reminder: you tend to underestimate time by ~{pct}% — "
-                f"pad today's estimates ({bias}x)._"
-            )
-        except ValueError:
-            pass
+    # Closing note. When the encouragement layer flagged the day (spec §6.2), its
+    # line takes the place of the usual time-bias reminder — a rough/packed day
+    # doesn't need a nag, and a wide-open one gets the relax-vs-accomplish choice.
+    if briefing.encouragement:
+        lines.append(f"_{briefing.encouragement}_")
+    else:
+        bias = briefing.coaching.get("time_estimation_bias")
+        if bias:
+            try:
+                pct = round((float(bias) - 1.0) * 100)
+                lines.append(
+                    f"_Reminder: you tend to underestimate time by ~{pct}% — "
+                    f"pad today's estimates ({bias}x)._"
+                )
+            except ValueError:
+                pass
 
     return "\n".join(lines).rstrip() + "\n"
 

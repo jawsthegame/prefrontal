@@ -783,6 +783,39 @@ def _cmd_encourage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_open_day(args: argparse.Namespace) -> int:
+    """Set the standing answer to the morning brief's open-day choice (§6.2).
+
+    On a wide-open day the briefing asks whether you'd rather rest or make it
+    count; this records that answer so future open days act on it. ``relax`` →
+    permission to rest (plus one optional low-stakes item); ``accomplish`` → a
+    light plan built from the day's free windows; ``ask`` clears it so the brief
+    asks again. ``status`` prints the current setting.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``open_day_choice``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
+
+    settings = get_settings()
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        choice = args.open_day_choice
+        if choice == "status":
+            current = store.get_state(OPEN_DAY_KEY) or "(unset — the brief will ask)"
+            print(f"Open-day choice: {current}")
+        elif choice in OPEN_DAY_CHOICES:
+            store.set_state(OPEN_DAY_KEY, choice, source="explicit")
+            print(f"Open days set to '{choice}'.")
+        else:  # "ask"
+            store.set_state(OPEN_DAY_KEY, "", source="explicit")
+            print("Open-day choice cleared — the brief will ask next open day.")
+    return 0
+
+
 def _cmd_coach(args: argparse.Namespace) -> int:
     """Run one coaching tick and print the decisions (or cues with --dry-run).
 
@@ -1480,6 +1513,19 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="Write to a file instead of stdout."
     )
     p_encourage.set_defaults(func=_cmd_encourage)
+
+    p_open_day = sub.add_parser(
+        "open-day",
+        help="Answer the brief's open-day choice (relax/accomplish/ask/status).",
+    )
+    p_open_day.add_argument("--db-path", default=None, help="Override the database path.")
+    p_open_day.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_open_day.add_argument(
+        "open_day_choice",
+        choices=["relax", "accomplish", "ask", "status"],
+        help="relax = rest days · accomplish = light plan · ask = clear · status.",
+    )
+    p_open_day.set_defaults(func=_cmd_open_day)
 
     p_coach = sub.add_parser(
         "coach", help="Run one coaching tick: what's due, on which channel."

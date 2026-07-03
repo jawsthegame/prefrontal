@@ -7,9 +7,11 @@ Status: **built** (steps 1–4 of §11). Shipped: the standalone core
 encourage` CLI, and `deploy/n8n/encouragement.workflow.json`; covered by
 `tests/test_encouragement.py`, off by default (the `encouragement` key). The
 acute-overwhelm case ships separately as **panic mode** (`GET /panic`,
-`POST /webhooks/panic/check`). **Not yet built:** the morning-briefing tone
-variant (§6.2, step 5) and wrapping `assess_day` as a coaching-agent cue producer
-(coaching-agent §9). This is the implementation spec for the layer; it supersedes
+`POST /webhooks/panic/check`). The **morning-briefing tone variant** (§6.2) is now
+built (`encouragement.briefing_note`, woven into `briefing.py`; covered by
+`tests/test_briefing.py`). **Not yet built:** wrapping `assess_day` as a
+coaching-agent cue producer (coaching-agent §9). This is the implementation spec
+for the layer; it supersedes
 the short "Encouragement & recovery layer" sketch in
 [`ROADMAP.md`](../ROADMAP.md). If this and the roadmap disagree, this file wins.
 
@@ -220,14 +222,34 @@ one scoped state key.)
 
 ### 6.2 Morning-briefing tone variant
 
-When the **morning** already looks rough (rare but real — e.g. you wake to a
-missed hard commitment from overnight, or a heavily double-booked day), the
-briefing swaps its closing coaching note for a short encouraging variant instead
-of the usual time-bias reminder (`briefing.py:236-246`). Implementation: the
-briefing calls `assess_day`; if `rough`, `render_briefing` appends the
-encouragement's acknowledgement + first-step line rather than the bias nag. This
-is the "briefing variant" the roadmap mentions and is purely additive to the
-existing renderer.
+The briefing swaps its closing time-bias reminder for a short encouragement line
+(a sentence or two) whenever the day warrants one. `build_briefing` calls
+`encouragement.briefing_note(store, briefing, now)` and stashes the result on
+`Briefing.encouragement`; `render_briefing` emits that line in place of the bias
+nag when it's set (else the reminder stands, unchanged). The note is deterministic,
+gated on the same `encouragement` opt-in, tone-calibrated (`warm`/`plain`), and
+never invents events — every branch is driven by counts already in the briefing.
+The branches, in priority order:
+
+1. **Today already rough** — `assess_day` (today-scoped) trips: a no-judgment
+   "one thing at a time, you've got this."
+2. **A rough recent stretch** — the briefing's own 7-day `slips` or the `avoided`
+   pile-up cross a threshold: encouragement to go gentle and *space things out*
+   rather than catch up all at once. (This is the multi-day view `assess_day`
+   deliberately doesn't take — the brief reads its own weekly signals.)
+3. **A packed day** — many commitments today, or several hard: "you've got this;
+   leave breathing room between things."
+4. **A wide-open day** — at most one commitment, none hard: the briefing presents
+   a **relax-vs-accomplish choice**. Once the user answers (the `open_day_choice`
+   key, §7), an open day instead gets either a permission-to-rest note (plus one
+   optional low-stakes item) or a light plan built from the day's free windows
+   (reusing `Briefing.spare`).
+
+Otherwise the note is `None` and the ordinary time-bias reminder stands. The
+answer to the open-day choice is set via `POST /briefing/open-day`
+(`{"choice": "relax" | "accomplish" | "ask"}`) or `prefrontal open-day <choice>`,
+and the current value plus the rendered line are surfaced in the `GET /briefing`
+response (`open_day_choice`, `encouragement`).
 
 ### 6.3 CLI
 
@@ -246,6 +268,7 @@ New coaching-state keys (opt-in; the layer is **inert** unless enabled):
 | `encouragement` | `"off"` | `on`/`off` master switch. Off ⇒ endpoint returns `rough:false`, briefing variant never fires. |
 | `encouragement_threshold` | `"3.0"` | `rough_score` cutoff (§3.1). |
 | `encouragement_tone` | `"warm"` | `warm` (reassuring, second-person) / `plain` (matter-of-fact, fewer affect words) — for users who want recovery *content* without the softness. |
+| `open_day_choice` | *(unset)* | The user's standing answer to the briefing's open-day choice (§6.2): `relax` (open days are rest days) or `accomplish` (shape a light plan). Unset ⇒ the brief presents the choice. Set via `POST /briefing/open-day` or `prefrontal open-day`. |
 
 These are read via `store.all_state()` like every other coaching key; no new
 storage shape. The optional `summarize_encouragement` system prompt is selected by
