@@ -18,6 +18,7 @@ from prefrontal.webhooks._common import (
     UserCreate,
     provision_user,
     require_operator,
+    resolve_user,
     status,
 )
 
@@ -136,6 +137,22 @@ def build_router(
         return {
             "household_id": household_id,
             "members": store.household_members(household_id),
+        }
+
+    @router.get("/admin/whoami", tags=["admin"])
+    def admin_whoami(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's admin-relevant capabilities, for the UI to gate on.
+
+        Any authenticated user may call it (a non-operator just sees
+        ``is_operator: false``). The dashboard uses it to decide whether to show
+        the operator-only Update / Restart controls.
+        """
+        return {
+            "handle": ctx.user["handle"],
+            "is_operator": bool(ctx.user.get("is_operator")),
+            "self_update_enabled": resolved_settings.self_update_enabled,
         }
 
     # -- remote update / restart (operator-only, opt-in) -----------------------

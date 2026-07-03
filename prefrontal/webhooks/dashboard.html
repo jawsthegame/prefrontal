@@ -319,6 +319,8 @@
   <span class="spacer"></span>
   <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <button class="ghost" id="refresh">Refresh</button>
+  <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
+  <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
   <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
 </header>
 
@@ -1068,10 +1070,51 @@ document.addEventListener("change", (e) => {
   applyCap(card.id);
 });
 
+// Show the operator-only Update / Restart controls only when the signed-in user
+// is an operator AND remote self-update is enabled (else they stay hidden).
+async function checkAdmin() {
+  try {
+    const who = await api("/admin/whoami");
+    const show = who.is_operator && who.self_update_enabled ? "" : "none";
+    $("#update-btn").style.display = show;
+    $("#restart-btn").style.display = show;
+  } catch (_) { /* not signed in / no access — leave the controls hidden */ }
+}
+
+async function doUpdate() {
+  if (!confirm("Pull the latest code, migrate, and restart?\nThe dashboard will briefly go offline.")) return;
+  const btn = $("#update-btn");
+  btn.disabled = true;
+  $("#status").textContent = "updating…";
+  try {
+    const r = await post("/admin/update", {});
+    if (!r.update || !r.update.ok) {
+      alert("Update failed — restart skipped:\n\n" + ((r.update && r.update.output) || "unknown error"));
+      $("#status").textContent = "update failed";
+      btn.disabled = false;
+      return;
+    }
+    $("#status").textContent = "updated · restarting…";
+    setTimeout(() => location.reload(), 6000);  // give the service time to come back
+  } catch (_) { btn.disabled = false; }  // post() already surfaced the error
+}
+
+async function doRestart() {
+  if (!confirm("Restart the service now?\nThe dashboard will briefly go offline.")) return;
+  const btn = $("#restart-btn");
+  btn.disabled = true;
+  $("#status").textContent = "restarting…";
+  try {
+    await post("/admin/restart", {});
+    setTimeout(() => location.reload(), 6000);
+  } catch (_) { btn.disabled = false; }
+}
+
 function start() {
   injectControls();
   applyOrder();
   load();
+  checkAdmin();
   clearInterval(timer); timer = setInterval(load, REFRESH_MS);
 }
 
@@ -1140,6 +1183,8 @@ $("#todo-search").addEventListener("input", paintTodos);
 $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
 
 $("#refresh").onclick = load;
+$("#update-btn").onclick = doUpdate;
+$("#restart-btn").onclick = doRestart;
 $("#panic-btn").onclick = openPanic;
 $("#panic-close").onclick = closePanic;
 $("#panic-refresh").onclick = loadPanic;

@@ -442,8 +442,10 @@ default); the response says which `provider` answered.
   Each card carries small controls to **reorder** it (▲▼, move earlier/later) and,
   for the list cards, **cap how many items it shows** ("max N", with a "+ N more"
   toggle) — so you arrange the dashboard around what you look at; the layout is
-  remembered per device. Open it over Tailscale; it asks for your token once and
-  remembers it.
+  remembered per device. Operators also get **Update** / **Restart** buttons in
+  the header (shown only when `PREFRONTAL_SELF_UPDATE` is on) — one tap to pull +
+  deploy + restart, or just restart. Open it over Tailscale; it asks for your
+  token once and remembers it.
 - **`GET /family`** — a calm, mostly read-only *shared household* glance for
   everyone in the household: kids & facts, standing plans + star progress, the
   shopping list, upcoming appointments, recent changes, and (if enabled) the
@@ -573,6 +575,7 @@ token client-side).
 | `POST /admin/users` · `GET /admin/users` | Provision / list users (operator only) |
 | `POST /admin/users/{handle}/rotate` · `/disable` | Rotate token / disable user |
 | `POST /admin/update` · `/admin/restart` | Pull + reinstall + migrate + restart / restart only (operator; off until `PREFRONTAL_SELF_UPDATE=on`) |
+| `GET /admin/whoami` | The signed-in user's `is_operator` + `self_update_enabled` (lets the UI gate operator controls) |
 
 ### CLI (`prefrontal <command>`)
 
