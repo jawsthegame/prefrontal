@@ -424,26 +424,26 @@ ordered by leverage; each is independent but builds on denser capture.
    not learning. Add context-conditioned patterns (bias by task type, by time of
    day, by energy level) — the schema's `context_key` already supports finer
    bucketing — and derive `context_switch` once switch events are captured.
-6. **Adaptive self-care cadence (with an honesty check).** The self-care checks
-   (meal/water) fire on a fixed interval and already log a `self_care` episode on
-   every confirm/snooze. The follow-up is to *learn* the cadence: widen the
-   interval for someone who's genuinely on top of it, keep or tighten it for
-   someone who isn't. The signal is ambiguous, so this needs care rather than a
-   naive "they say yes a lot → back off":
-   - **Honesty check (the key guard).** A reflexive *instant* "yes" right after
-     the reminder is more likely a dismissal than a real confirmation — so a
-     near-zero response latency should be treated skeptically (discounted, or a
-     reason to *keep* presence), not as evidence the person doesn't need the
-     nudge. This means capturing **response latency** (delivery → tap), which in
-     turn means recording when each self-care nudge was *delivered* (extend the
-     coach engine's ack-tracking, today scoped to outing/departure/focus, to the
-     self-care kinds) — the confirm episode already lands; it just needs the
-     paired send-time.
-   - Only trust confirms with a plausible gap; weight snoozes as "too frequent /
-     wrong time" and swept-unanswered as "wrong channel or time" (reuse the
-     `channel_response` sweep). Then adjust the per-check interval within bounds,
-     and — per step 4 — measure whether the adaptation actually reduced misses
-     before trusting it further.
+6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
+   checks now *learn* their interval from how you actually respond
+   (`adapt_self_care` / `adapt_self_care_interval` in
+   `prefrontal/modules/self_care.py`, run in the nightly `learn`):
+   - **Response latency is captured.** `mark_self_care_prompted` stamps the
+     delivery time when a meal/water cue fires (from both `/webhooks/coach/check`
+     and `prefrontal coach --deliver`); the Ate/Drank/Snooze tap records the
+     nudge→tap latency in its `self_care` episode.
+   - **Honesty check (the key guard).** When the *timed* confirms are mostly
+     **instant** (within `INSTANT_CONFIRM_SECONDS`, ~reflexive dismissals), the
+     learner *holds* the cadence rather than reading them as "needs it less" —
+     so a scaffold that's just being swatted away is never quietly removed.
+   - Otherwise: a high **snooze** rate (explicit "too often") *widens* the
+     interval; genuine engagement (few snoozes + enough plausibly-timed confirms)
+     *eases off* a little. v1 only ever widens, bounded to `MAX_INTERVAL_FACTOR`×
+     the default, and never overrides an interval the user set explicitly. The
+     verdict prints in `prefrontal learn`. Covered by `tests/test_self_care.py`.
+   *(Next: fold in swept-unanswered as a "wrong channel/time" signal, and — per
+   step 4 — verify the adapted cadence actually reduced misses before trusting it
+   further.)*
 
 ## Beyond v1 (from the README architecture)
 

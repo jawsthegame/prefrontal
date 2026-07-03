@@ -65,6 +65,7 @@ from prefrontal.memory.summarizer import (
     summarize_profile,
 )
 from prefrontal.modules import available, enabled_modules
+from prefrontal.modules.self_care import adapt_self_care, mark_self_care_prompted
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
@@ -326,6 +327,12 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"[{label}] bias check: error {cal.raw_error} -> {cal.adjusted_error} "
                     f"on {cal.samples} recent ({verdict})"
                 )
+            for c in adapt_self_care(s):
+                arrow = "->" if c["changed"] else "="
+                print(
+                    f"[{label}] self-care {c['check']} interval {arrow} "
+                    f"{c['interval']}m ({c['reason']})"
+                )
     return 0
 
 
@@ -540,6 +547,8 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         record_fired(store, decisions, now)
         # Track interactive nudges so a tap (or the next sweep) records the channel.
         note_delivered(store, decisions, now)
+        # Stamp self-care delivery time for the adaptive-cadence latency signal.
+        mark_self_care_prompted(store, decisions, now)
     return 0
 
 
