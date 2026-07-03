@@ -23,6 +23,7 @@ from prefrontal.webhooks._common import (
     get_settings,
     register_oauth_routes,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
 def create_app(
@@ -125,14 +126,18 @@ def create_app(
         system,
         todos,
     )
-    _router_deps = dict(
-        resolved_settings=resolved_settings,
+    services = RouterServices(
+        settings=resolved_settings,
         n8n=n8n,
-        ollama_client=ollama_client,
-        summarizer_client=summarizer_client,
-        geocoder_client=geocoder_client,
-        _run_geocode=_run_geocode,
+        ollama=ollama_client,
+        summarizer=summarizer_client,
+        anthropic=anthropic_client,
+        geocoder=geocoder_client,
+        run_geocode=_run_geocode,
     )
+    # Every router takes the same bundle and binds only what it uses — including
+    # the assistant, whose Claude client is just another field now, so there is
+    # no longer a special case here.
     for _module in (
         system,
         memory,
@@ -146,13 +151,9 @@ def create_app(
         household,
         sensor,
         admin,
+        assistant,
     ):
-        app.include_router(_module.build_router(**_router_deps))
-    # The assistant router needs one extra service (the Claude client), so it's
-    # included separately rather than through the shared-deps loop above.
-    app.include_router(
-        assistant.build_router(**_router_deps, anthropic_client=anthropic_client)
-    )
+        app.include_router(_module.build_router(services))
     return app
 
 

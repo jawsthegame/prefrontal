@@ -56,6 +56,7 @@ from prefrontal.webhooks._common import (
     verify_action,
     verify_dismiss,
 )
+from prefrontal.webhooks.services import RouterServices
 
 #: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
 #: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).
@@ -70,17 +71,11 @@ _ACT_CONTEXT = {
 }
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "anchor" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    ollama_client = services.ollama
 
     @router.post(
         "/webhooks/outing/start",

@@ -6,6 +6,8 @@ coaching agent's tick endpoint (``docs/coaching-agent.md`` §7) — the sibling 
 """
 from __future__ import annotations
 
+from fastapi import APIRouter
+
 from prefrontal.coaching import (
     DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
@@ -36,6 +38,7 @@ from prefrontal.webhooks._common import (
     utcnow,
 )
 from prefrontal.webhooks.notify import nudge_actions
+from prefrontal.webhooks.services import RouterServices
 
 #: Coaching ``context_key`` → (ntfy button ``kind``, ``cue.ref`` key holding the
 #: target id), for cues whose tick delivery should carry one-tap action buttons.
@@ -44,19 +47,10 @@ from prefrontal.webhooks.notify import nudge_actions
 _CUE_ACTION_KIND = {"meal": ("meal", "target"), "water": ("water", "target")}
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-):
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "coaching" APIRouter (shared services injected by create_app)."""
-    from fastapi import APIRouter
-
     router = APIRouter()
+    resolved_settings = services.settings
 
     @router.post("/webhooks/coach/check", tags=["coaching"])
     async def coach_check(

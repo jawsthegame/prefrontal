@@ -64,6 +64,7 @@ from prefrontal.webhooks._common import (
     timedelta,
     utcnow,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
 def _attend_slugs(memory) -> tuple[str, ...]:
@@ -115,17 +116,12 @@ def _departure_kwargs(memory) -> dict[str, Any]:
     }
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "schedule" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    ollama_client = services.ollama
+    _run_geocode = services.run_geocode
 
     @router.post("/webhooks/calendar/sync", tags=["schedule"])
     def calendar_sync(

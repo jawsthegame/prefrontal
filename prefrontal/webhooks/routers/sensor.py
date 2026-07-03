@@ -26,19 +26,13 @@ from prefrontal.webhooks._common import (
     status,
     summarize_candidate,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "sensor" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    ollama_client = services.ollama
 
     def _describe(proposal: dict[str, Any]) -> dict[str, Any]:
         """A compact, review-ready view of a proposal row (no raw payload noise)."""

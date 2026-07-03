@@ -19,20 +19,15 @@ from prefrontal.webhooks._common import (
     resolve_user,
     validate_actions,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-    anthropic_client,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "assistant" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    ollama_client = services.ollama
+    anthropic_client = services.anthropic
 
     def _assistant_client() -> tuple[Any, str]:
         """Pick the assistant's model backend: Claude if configured, else Ollama."""

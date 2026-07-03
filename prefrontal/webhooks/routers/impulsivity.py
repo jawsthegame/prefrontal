@@ -30,19 +30,14 @@ from prefrontal.webhooks._common import (
     status,
     switch_response,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "impulsivity" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
+    ollama_client = services.ollama
 
     @router.post(
         "/webhooks/impulse/capture",

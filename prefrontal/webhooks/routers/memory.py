@@ -21,19 +21,13 @@ from prefrontal.webhooks._common import (
     refresh_profile_cache,
     resolve_user,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "memory" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    summarizer_client = services.summarizer
 
     @router.get("/profile", response_class=PlainTextResponse, tags=["memory"])
     def profile(

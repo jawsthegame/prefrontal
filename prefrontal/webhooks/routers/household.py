@@ -76,19 +76,13 @@ from prefrontal.webhooks._common import (
     timedelta,
     utcnow,
 )
+from prefrontal.webhooks.services import RouterServices
 
 
-def build_router(
-    *,
-    resolved_settings,
-    n8n,
-    ollama_client,
-    summarizer_client,
-    geocoder_client,
-    _run_geocode,
-) -> APIRouter:
+def build_router(services: RouterServices) -> APIRouter:
     """Build the "household" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
+    resolved_settings = services.settings
 
     def _child_name(ctx: ScopedRequest, child_id: int) -> str | None:
         """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
