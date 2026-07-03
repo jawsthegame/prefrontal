@@ -389,6 +389,45 @@ def test_ingest_creates_todo_and_episode_for_action(store):
     assert action_items[0]["todo_id"] == todos[0]["id"]
 
 
+def test_ingest_mirrors_actionable_mail_into_triage_log(store):
+    """A needs-action message is mirrored into the unified triage feed (→ its todo)."""
+    ingest_messages(
+        store, [_msg()], account="personal", policy="full", client=_ollama_down()
+    )
+    (todo,) = store.open_todos()
+    (row,) = store.recent_triage()
+    assert row["source"] == "mail"
+    assert (row["kind"], row["route"]) == ("action", "todo")
+    assert row["routed_ref"] == f"todo:{todo['id']}"
+    assert row["decided_by"] == "heuristic" and row["reason"].startswith("mail:")
+
+
+def test_triage_log_count_matches_needs_action(store):
+    """Only needs-action mail is mirrored — informational mail stays out of the feed."""
+    msgs = [
+        _msg(),  # a question → needs action
+        _msg(**{
+            "message_id": "<n-2@example.com>",
+            "from": "News <noreply@list.example.com>",
+            "subject": "Our weekly newsletter",
+            "body": "This week in tech. Unsubscribe anytime.",
+        }),
+    ]
+    summary = ingest_messages(
+        store, msgs, account="personal", policy="full", client=_ollama_down()
+    )
+    assert len(store.recent_triage()) == summary.needs_action
+
+
+def test_reingest_does_not_duplicate_the_triage_log_row(store):
+    """Re-posting the same message is skipped (dedup) — no duplicate feed row / error."""
+    for _ in range(2):
+        ingest_messages(
+            store, [_msg()], account="personal", policy="full", client=_ollama_down()
+        )
+    assert len(store.recent_triage()) == 1
+
+
 def test_ingest_stamps_domain_on_mail_todo(store):
     """A work-mailbox todo inherits the account's domain (work/life guardrail)."""
     ingest_messages(

@@ -163,6 +163,32 @@ def ingest_messages(
             triage_source=verdict.source,
             todo_id=todo_id,
         )
+
+        # Bridge into the unified triage feed: mirror an *actionable* mail verdict
+        # into triage_log so it shows in GET /triage/recent, the dashboard Triage
+        # panel, and alongside other sources. Mail keeps its own specialized triage
+        # (corrections, denylist, retention, needs_action) — this is an audit
+        # mirror, not a second classifier. Only needs-action mail is mirrored (a
+        # todo, or a suppressed "drop"); ordinary informational mail stays in /mail
+        # so the feed and the briefing's "worth a look" aren't flooded. Runs once
+        # per message (dedup above), so the triage_log unique index is never hit.
+        if verdict.needs_action:
+            store.log_triage(
+                source="mail",
+                title=item.subject or verdict.summary or "(no subject)",
+                kind="action",
+                urgency="now" if verdict.priority >= 3 else "today",
+                route="todo" if todo_id is not None else "drop",
+                reason=(
+                    f"mail: {verdict.category}"
+                    + (f" · waiting on {verdict.waiting_on}" if verdict.waiting_on else "")
+                    + ("" if todo_id is not None else " · todo suppressed")
+                ),
+                confidence=0.9 if verdict.source == "llm" else 0.6,
+                decided_by=verdict.source,
+                external_id=f"{account}:{item.message_id}",
+                routed_ref=f"todo:{todo_id}" if todo_id is not None else None,
+            )
         # An inert record of the message for history; no outcome/ack, so it
         # never pollutes the time-estimation or drift pattern passes.
         store.log_episode(
