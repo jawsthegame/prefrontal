@@ -495,7 +495,8 @@ def test_family_page_served_without_auth(client):
     resp = client.get("/family")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "Right now" in resp.text  # the calm family copy, not the monitor
+    assert "Recently changed" in resp.text  # the shared household view, not the monitor
+    assert "/household/sheet" in resp.text  # it reads the shared sheet client-side
     assert "X-Prefrontal-Token" in resp.text  # asks for the access code client-side
 
 
