@@ -125,7 +125,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |
-| Source-agnostic triage agent | — | 🔜 The coaching tick engine and native delivery have shipped (rows above); a general, source-agnostic **triage agent** is the remaining unbuilt piece — mail triage is its first concrete slice. See `docs/triage-agent.md`, `docs/coaching-agent.md`. |
+| Source-agnostic triage agent | `prefrontal/triage.py` | ✅ Classify → route → nudge for any inbound signal (mail/calendar/n8n/manual): `POST /webhooks/n8n` · `/triage` · `GET /triage/recent`, routing into commitments/todos/episodes + a `triage_log`, surfaced in the briefing + a dashboard panel. See `docs/triage-agent.md`. |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,
 then `prefrontal/webhooks/app.py`.

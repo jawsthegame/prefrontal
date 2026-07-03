@@ -1,11 +1,14 @@
 # Triage agent — design spec
 
-Status: **proposed**. This is the implementation spec for the **Triage Agent**
-that sits in the [README architecture](../README.md#architecture) between the
-ingestion layer and the memory layer ("classifies, prioritizes, routes"). It
-supersedes the one-line "Triage agent" entry in [`ROADMAP.md`](../ROADMAP.md)
-with a concrete data model, routing table, classifier design, API surface, and
-rollout plan. If this and the roadmap disagree, this file wins.
+Status: **shipped** (was: proposed). This is the implementation spec for the
+**Triage Agent** that sits in the [README architecture](../README.md#architecture)
+between the ingestion layer and the memory layer ("classifies, prioritizes,
+routes"). It shipped in six slices — classifier core → `triage_log` schema +
+store → `apply` → wiring (`/webhooks/n8n`, `POST /triage`, `GET /triage/recent`)
+→ briefing surface + dashboard panel → n8n templates — landing in
+`prefrontal/triage.py`, `memory/repos/triage.py`, and the ingestion router. It
+superseded the one-line "Triage agent" entry in [`ROADMAP.md`](../ROADMAP.md);
+this file is the design of record.
 
 ---
 
@@ -28,15 +31,16 @@ personal email accounts into a normalized stream, triages by urgency, and
 surfaces what needs action"), but triage is source-agnostic: anything that can
 be normalized into a `Signal` flows through the same path.
 
-> **Reality note (2026-06).** Mail ingestion has since **shipped** as a
-> standalone slice (`prefrontal/mail/`: `normalize_message` → an Ollama+heuristic
-> triage → an actionable item routed to `todos`, stored in `mail_messages`). It
-> is, in effect, this spec's `route=todo` path hard-wired to one source. The
-> general `Signal` / `TriageDecision` / `triage_log` core described here is **not
-> built** — `parse_inbound_event` is still a classify-only stub. When this lands,
-> it should **absorb** the mail path (mail becomes a `Signal` adapter feeding the
-> shared `classify`/`apply`) rather than running a second, parallel triage; the
-> `mail_messages.todo_id` link already mirrors the spec's `routed_ref`.
+> **Reality note.** The general `Signal` / `TriageDecision` / `triage_log` core
+> described here is now **built** (`prefrontal/triage.py`): `/webhooks/n8n`
+> classifies + routes, `POST /triage` takes a normalized signal directly, and
+> `GET /triage/recent` explains what it did. The older **mail** path
+> (`prefrontal/mail/`: `normalize_message` → Ollama+heuristic triage → a `todos`
+> row in `mail_messages`) still runs as its own slice — in effect this spec's
+> `route=todo` hard-wired to one source. The two now coexist; a remaining
+> follow-up is to **absorb** the mail path into a `Signal` adapter feeding the
+> shared `classify`/`apply` (its `mail_messages.todo_id` already mirrors
+> `routed_ref`), rather than running two parallel triages.
 
 **Non-goals (v1).**
 

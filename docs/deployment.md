@@ -678,6 +678,41 @@ Two more delivery workflows round out the module coverage:
 
 ---
 
+## 17a. Triage agent — classify + route inbound signals (optional)
+
+The triage agent turns any inbound *signal* — an email, a calendar change, an
+n8n event, a manual capture — into the right thing: a dated event becomes a
+commitment, a task an (augmented) todo, an outcome an episode, noise a logged
+drop, and anything urgent also fires a push. Every decision lands in `triage_log`
+with a reason (see it on the dashboard's **Triage — recent decisions** card and
+in the briefing's "worth a look"). It's local-first (heuristic classifier, model
+only for the ambiguous cases) and idempotent on `(source, external_id)`.
+
+- **Feed it signals.** Anything that can POST JSON can drive it — no code:
+
+  ```bash
+  curl -s -XPOST $PF/triage -H "X-Prefrontal-Token: $TOK" \
+    -H 'Content-Type: application/json' \
+    -d '{"source":"mail","title":"Dentist confirmed Tue 3pm","external_id":"gmail-123"}'
+  ```
+
+  To poll a source on a schedule, import
+  [`../deploy/n8n/triage-ingest.workflow.json`](../deploy/n8n/triage-ingest.workflow.json)
+  and point `TRIAGE_SOURCE_URL` at your mail digest / Gmail node / feed (edit the
+  "Map to Signal" node to match its shape). An n8n Gmail node or a Google Apps
+  Script digest both work.
+- **Deliver the urgent ones.** `triage.apply` fires a `triage.urgent` event to
+  `N8N_WEBHOOK_URL` for imminent/overdue signals; import
+  [`../deploy/n8n/triage-urgent.workflow.json`](../deploy/n8n/triage-urgent.workflow.json)
+  (or add its branch to your existing inbound-event workflow) to push those to
+  ntfy.
+- **Tune it.** `PREFRONTAL_TRIAGE_LLM=false` runs pure-heuristic (no model);
+  `PREFRONTAL_TRIAGE_DROP` surfaces low-confidence "noise" instead of dropping it.
+
+Nothing here is required — with no signals posted, triage is dormant.
+
+---
+
 ## 18. Parent pack — the shared household sheet (optional)
 
 For co-parents. One shared, always-current sheet both parents read and edit —

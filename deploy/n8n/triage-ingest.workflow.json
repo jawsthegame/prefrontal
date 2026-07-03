@@ -1,0 +1,67 @@
+{
+  "name": "Prefrontal — Triage Ingest (poll a source → POST /triage)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 15 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TRIAGE_SOURCE_URL }}",
+        "options": {}
+      },
+      "id": "fetch-source",
+      "name": "Fetch signals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Map each raw item from YOUR source (a Gmail node, an Apps Script mail digest,\n// a calendar feed, …) onto the Signal shape POST /triage expects. Edit the field\n// mapping to match your source's payload. `external_id` is what makes re-delivery\n// idempotent, so map a stable provider id (e.g. the Gmail message id).\nreturn $input.all().map(({ json }) => ({ json: {\n  source: 'mail',\n  title: json.subject || json.title || '',\n  body: json.snippet || json.body || '',\n  sender: json.from || json.sender || '',\n  external_id: String(json.id || json.message_id || ''),\n} })).filter(i => i.json.title);"
+      },
+      "id": "to-signal",
+      "name": "Map to Signal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/triage",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"source\": \"{{ $json.source }}\",\n  \"title\": \"{{ $json.title }}\",\n  \"body\": \"{{ $json.body }}\",\n  \"sender\": \"{{ $json.sender }}\",\n  \"external_id\": \"{{ $json.external_id }}\"\n}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
+      "id": "post-triage",
+      "name": "POST /triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 min": { "main": [[{ "node": "Fetch signals", "type": "main", "index": 0 }]] },
+    "Fetch signals": { "main": [[{ "node": "Map to Signal", "type": "main", "index": 0 }]] },
+    "Map to Signal": { "main": [[{ "node": "POST /triage", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "TEMPLATE — configure before enabling. Polls a source of inbound signals and POSTs each to /triage, which classifies + routes it (dated event → commitment, task → augmented todo, outcome → episode, noise → logged drop) and fires triage.urgent on urgent items. Set TRIAGE_SOURCE_URL to your feed (a Gmail node's output, a Google Apps Script mail digest, an ICS/JSON endpoint), or replace the 'Fetch signals' node with your provider's node, and edit 'Map to Signal' to match its payload. Idempotent on (source, external_id), so a duplicate poll never double-creates a todo — map a stable provider id. Use a per-user token so routing lands in that user's data."
+  }
+}
