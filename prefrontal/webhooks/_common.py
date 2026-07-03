@@ -651,6 +651,21 @@ class BalanceConfig(BaseModel):
     )
 
 
+class ShoppingAdd(BaseModel):
+    """Body of ``POST /household/shopping`` — add a thing to buy."""
+
+    item: str = Field(description="What to buy, e.g. 'shoes'.")
+    spec: str | None = Field(default=None, description="Size / brand / details.")
+    where_to_buy: str | None = Field(default=None, description="Where to get it.")
+    child_id: int = Field(default=0, description="A children.id, or 0 for household-wide.")
+
+
+class ShoppingGot(BaseModel):
+    """Body of ``POST /household/shopping/{id}/got`` — check an item off (or un-check)."""
+
+    got: bool = Field(default=True, description="True = bought, false = still needed.")
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 
@@ -1113,6 +1128,8 @@ __all__ = [
     "ScopedRequest",
     "Settings",
     "ShortcutPayload",
+    "ShoppingAdd",
+    "ShoppingGot",
     "BalanceConfig",
     "CheckinConfig",
     "DigestConfig",

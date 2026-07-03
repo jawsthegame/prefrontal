@@ -81,6 +81,12 @@
   .bal-fill { height: 100%; background: var(--accent); }
   .bal-row .bal-n { color: var(--muted); min-width: 62px; text-align: right; }
   .bal-cap { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .shop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+    border-bottom: 1px dashed var(--line); }
+  .shop-row:last-child { border-bottom: none; }
+  .shop-row .shop-txt { flex: 1; }
+  .shop-row.done .shop-txt { text-decoration: line-through; color: var(--muted); }
+  .shop-row .shop-sub { color: var(--muted); font-size: 12px; }
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
@@ -191,6 +197,19 @@
       Show who's been keeping the sheet up (last 30 days)
     </label>
     <div id="balance-body"></div>
+  </section>
+
+  <section class="card" id="c-shopping">
+    <p class="label">Shopping list</p>
+    <div id="shopping"></div>
+    <form class="inline" id="shop-form">
+      <select id="shop-child" title="Which kid"></select>
+      <input id="shop-item" type="text" placeholder="item, e.g. shoes" required />
+      <input id="shop-spec" type="text" placeholder="size / brand (optional)" />
+      <input class="grow" id="shop-where" type="text" placeholder="where (optional)" />
+      <button class="primary" type="submit">Add</button>
+      <span class="hint">Either parent can add or check things off — no double-buying.</span>
+    </form>
   </section>
 
   <section class="card" id="c-appts">
@@ -430,6 +449,19 @@ function renderCheckin(ci) {
   $("#checkin-status").innerHTML = status;
 }
 
+function renderShopping(items) {
+  items = items || [];
+  if (!items.length) { $("#shopping").innerHTML = `<div class="empty">Nothing on the list.</div>`; return; }
+  $("#shopping").innerHTML = items.map((s) => {
+    const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
+    const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
+    return `<div class="shop-row${s.got ? " done" : ""}">
+      <input type="checkbox" data-got="${s.id}" ${s.got ? "checked" : ""} title="Bought" />
+      <span class="shop-txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span>
+      <button class="iconbtn del" data-delshop="${s.id}" title="Remove">🗑</button></div>`;
+  }).join("");
+}
+
 function renderAppts(upcoming) {
   $("#appts").innerHTML = (upcoming || []).length
     ? upcoming.map((ap) => `<div class="appt"><span class="when">${esc(ap.when)}</span>
@@ -441,6 +473,7 @@ function refreshDropdowns() {
   const kidOpts = children.map((c) => ({ value: c.id, label: c.name }));
   fillSelect($("#fact-child"), kidOpts, { zero: "Household-wide" });
   fillSelect($("#agr-child"), kidOpts, { zero: "Whole household" });
+  fillSelect($("#shop-child"), kidOpts, { zero: "Household-wide" });
   fillSelect($("#fact-cat"), vocab.fact_categories.map((c) => ({ value: c, label: c })));
   fillSelect($("#agr-kind"), vocab.agreement_kinds.map((k) => ({ value: k, label: k })));
 }
@@ -474,6 +507,7 @@ async function loadSheet() {
   agreements = sheet.agreements || [];
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
+  renderShopping(sheet.shopping);
   renderCheckin(data.checkin);
   renderBalance(data.balance);
   // Single-parent households: the co-parent-only features simply aren't shown.
@@ -672,6 +706,27 @@ $("#checkin-form").addEventListener("submit", async (e) => {
     time: $("#ci-time").value || "19:00",
   });
   await loadSheet();
+});
+
+$("#shop-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/shopping", {
+    child_id: Number($("#shop-child").value),
+    item: $("#shop-item").value.trim(),
+    spec: $("#shop-spec").value.trim() || null,
+    where_to_buy: $("#shop-where").value.trim() || null,
+  });
+  $("#shop-item").value = ""; $("#shop-spec").value = ""; $("#shop-where").value = "";
+  await loadSheet();
+});
+
+$("#shopping").addEventListener("click", async (e) => {
+  const del = e.target.getAttribute("data-delshop");
+  if (del && confirm("Remove this item?")) { await post(`/household/shopping/${del}/remove`, {}); await loadSheet(); }
+});
+$("#shopping").addEventListener("change", async (e) => {
+  const id = e.target.getAttribute("data-got");
+  if (id) { await post(`/household/shopping/${id}/got`, { got: e.target.checked }); await loadSheet(); }
 });
 
 $("#appt-form").addEventListener("submit", async (e) => {

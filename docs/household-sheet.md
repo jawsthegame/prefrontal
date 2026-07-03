@@ -18,7 +18,7 @@ tagline states the goal: *"everything you need to step in and help — any time,
 asking required."* Its nine sheets map directly onto the model below: Overview /
 Clothing & Shoes / Schedules / Food & Meals / Health / School → **facts**;
 Behaviour Plans → **agreements**; Key Contacts → a facts facet; Shopping Lists →
-child-tagged todos (v1.1).
+the shared **`household_shopping`** checklist (§3.6.4).
 
 This is the concrete driver for **household scope** and the backbone of the
 **Parent** Context Pack (see [`../ROADMAP.md`](../ROADMAP.md)). It builds on
@@ -332,6 +332,25 @@ counts, so felt and actual can be seen side by side.
   frames imbalance as a season. A raw "Dana 14, Alex 1" scoreboard is exactly
   what it avoids.
 
+### 3.6.4 The shared shopping list — `household_shopping`
+
+The template's *Shopping Lists* sheet: a running, child-tagged list of things to
+buy that either parent can add to and check off, so nobody buys the same thing
+twice. **Not** load-balancing — it's available to every household including a
+solo one — and **not** per-user `todos` (those are user-scoped and carry
+scheduling weight a shared checklist doesn't want), so it's its own
+household-scoped table.
+
+- Columns: `item`, `spec` (size/brand), `where_to_buy`, `got` (0/1), plus
+  provenance on both **add** (`added_by`/`created_at`) and **buy**
+  (`got_by`/`got_at`), and `child_id` (0 = household-wide).
+- Repo: `add_shopping_item`, `set_shopping_got` (check off / un-check), 
+  `remove_shopping_item`, `shopping_items` (still-needed first). It rides the
+  shared sheet — `build_sheet`/`render_sheet` gain a **Shopping** section
+  (unchecked/ticked boxes), and `counts["shopping"]` is the still-needed tally.
+- Surfaces: `POST /household/shopping`, `…/{id}/got`, `…/{id}/remove`; the `/kids`
+  dashboard's checklist; and `prefrontal household shopping`.
+
 ### 3.7 What reuses existing tables (no new schema)
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
@@ -340,12 +359,9 @@ counts, so felt and actual can be seen side by side.
 - **Rendering** is deterministic assembly (cheap), so — unlike `profile_cache` —
   there is **no cache table**; the sheet is built on request.
 
-> **Deferred to v1.1 (noted, not built here):** *Key Contacts* and *Shopping
-> Lists* from the template. Contacts fit `household_facts` (`category='contact'`,
-> `item=role`) for v1; a dedicated `household_shopping` list (item · child · spec
-> · where-to-buy · got-it, household-scoped) is the natural follow-on. Shopping
-> is intentionally **not** shoehorned into per-user `todos` — those are
-> per-user-scoped and carry scheduling weight a shared checklist doesn't want.
+> **Deferred to v1.1 (noted, not built here):** *Key Contacts* from the template
+> fit `household_facts` (`category='contact'`, `item=role`) for v1; a dedicated
+> `household_contacts` table is the natural follow-on if they outgrow that.
 
 ---
 
@@ -473,7 +489,7 @@ mechanism.
 
 | Area | Change |
 |---|---|
-| `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`; `users.household_id`. |
+| `prefrontal/memory/schema.sql` | `households` (+ `checkin_*`/`digest_enabled`/`balance_enabled`), `children`, `household_facts`, `household_agreements`, `household_stars`, `household_checkins`, `household_shopping`; `users.household_id`. |
 | `prefrontal/memory/migrate.py` | `users.household_id`, `household_agreements.last_prompted_at`, `households.checkin_*` in `_ADDED_COLUMNS` (back-fill). |
 | `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, the digest toggle, and the balance view (`get`/`set_balance_enabled`, `contribution_counts`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
@@ -482,7 +498,7 @@ mechanism.
 | `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` + `digest` nudge kinds and their actions (`star_award`/`star_skip`, `load_*`, `digest_seen`); handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
 | `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin` + `digest`, marks seen); star endpoints; `POST /household/{checkin,digest}` + `POST /webhooks/household/{checkin,digest}/check`; the `/kids` star-chart + check-in + digest UI; operator household endpoints. |
-| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check/digest-check`. |
+| `prefrontal/cli.py` | `prefrontal household add/join/show/star/prompt-check/checkin-check/digest-check/balance/shopping`. |
 | `deploy/n8n/*.workflow.json` | Scheduled triggers for the award prompts, the weekly check-in, and the daily digest. |
 | `docs/schema.md` | Document the five new tables + the added column. |
 

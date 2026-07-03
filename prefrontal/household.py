@@ -94,7 +94,10 @@ class HouseholdSheet:
             each also carrying ``star_total`` (the chart's running ledger total)
             and ``next_goal`` (the nearest unreached reward, or ``None``).
         upcoming: Upcoming child appointments, soonest first.
-        counts: ``{children, facts, agreements, upcoming}`` for a summary line.
+        shopping: Shopping-list dicts (id/item/spec/where_to_buy/got/child_name/
+            added_by_name), still-needed first.
+        counts: ``{children, facts, agreements, upcoming, shopping}`` for a summary
+            line (``shopping`` is the still-needed count).
     """
 
     household_name: str | None
@@ -103,6 +106,7 @@ class HouseholdSheet:
     per_child: list[dict[str, Any]] = field(default_factory=list)
     agreements: list[dict[str, Any]] = field(default_factory=list)
     upcoming: list[Appointment] = field(default_factory=list)
+    shopping: list[dict[str, Any]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -230,11 +234,15 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
     # 4. Upcoming child appointments — the viewer's kind='child' commitments.
     upcoming = _upcoming_child_appts(store, now)
 
+    # 5. Shared shopping list — still-needed first.
+    shopping = store.shopping_items()
+
     counts = {
         "children": len(children),
         "facts": len(facts),
         "agreements": len(agreements),
         "upcoming": len(upcoming),
+        "shopping": sum(1 for s in shopping if not s.get("got")),
     }
     return HouseholdSheet(
         household_name=(household or {}).get("name"),
@@ -243,6 +251,7 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
         per_child=per_child,
         agreements=agreements_out,
         upcoming=upcoming,
+        shopping=shopping,
         counts=counts,
     )
 
@@ -847,7 +856,13 @@ def render_sheet(sheet: HouseholdSheet) -> str:
     lines = [f"# {title} — shared sheet", ""]
 
     if not any(
-        (sheet.recently_changed, sheet.per_child, sheet.agreements, sheet.upcoming)
+        (
+            sheet.recently_changed,
+            sheet.per_child,
+            sheet.agreements,
+            sheet.upcoming,
+            sheet.shopping,
+        )
     ):
         lines.append(
             "_Nothing here yet. Add the kids' sizes, routines, allergies, and "
@@ -897,6 +912,19 @@ def render_sheet(sheet: HouseholdSheet) -> str:
         for appt in sheet.upcoming:
             where = f" · {appt.location}" if appt.location else ""
             lines.append(f"- **{appt.when}** — {appt.title}{where}")
+        lines.append("")
+
+    # 5. Shopping — still-needed as unchecked boxes, bought ones ticked.
+    if sheet.shopping:
+        lines.append("## Shopping")
+        for s in sheet.shopping:
+            box = "x" if s.get("got") else " "
+            detail = " · ".join(
+                p for p in (s.get("spec"), s.get("where_to_buy")) if p
+            )
+            who = f" — {s['child_name']}" if s.get("child_name") else ""
+            tail = f" ({detail})" if detail else ""
+            lines.append(f"- [{box}] {s['item']}{tail}{who}")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
