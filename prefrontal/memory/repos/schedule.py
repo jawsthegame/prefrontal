@@ -11,9 +11,10 @@ from prefrontal.memory._helpers import (
     _with_calendar,
     sql_placeholders,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class ScheduleRepo:
+class ScheduleRepo(Repo):
     """Commitments, curated places, the geocode cache, and dismissals."""
 
     def upsert_commitment(
@@ -269,18 +270,14 @@ class ScheduleRepo:
         Returns:
             The place's ``id``.
         """
-        self.conn.execute(
+        return self._upsert_returning_id(
             "INSERT INTO places (user_id, name, label, lat, lon) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT (user_id, name) DO UPDATE SET label = excluded.label, "
             "lat = excluded.lat, lon = excluded.lon",
             (self._uid(), name, label, lat, lon),
+            select_sql="SELECT id FROM places WHERE user_id = ? AND name = ?",
+            select_params=(self._uid(), name),
         )
-        self.conn.commit()
-        row = self.conn.execute(
-            "SELECT id FROM places WHERE user_id = ? AND name = ?",
-            (self._uid(), name),
-        ).fetchone()
-        return int(row["id"])
 
     def places(self) -> list[dict[str, Any]]:
         """Return all curated places, longest name first.
@@ -302,10 +299,7 @@ class ScheduleRepo:
         (the geocoder was asked and found nothing), distinct from "never asked"
         (``None`` return).
         """
-        row = self.conn.execute(
-            "SELECT * FROM geocode_cache WHERE query = ?", (query,)
-        ).fetchone()
-        return _row_to_dict(row)
+        return self._query_one("SELECT * FROM geocode_cache WHERE query = ?", (query,))
 
     def set_geocode_cache(
         self, query: str, lat: float | None, lon: float | None

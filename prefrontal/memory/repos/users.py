@@ -12,9 +12,10 @@ from prefrontal.memory._helpers import (
     generate_token,
     sha256_hex,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class UsersRepo:
+class UsersRepo(Repo):
     """User provisioning & lookup (operator-only; unscoped store)."""
 
     def create_user(

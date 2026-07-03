@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from prefrontal.memory.repos._base import Repo
 
-class PatternsRepo:
+
+class PatternsRepo(Repo):
     """Derived behavioral patterns (upsert + read)."""
 
     def upsert_pattern(
@@ -41,7 +43,7 @@ class PatternsRepo:
         Returns:
             The ``id`` of the inserted or updated pattern row.
         """
-        self.conn.execute(
+        return self._upsert_returning_id(
             """
             INSERT INTO patterns (
                 user_id, pattern_type, context_key, observed_value, predicted_value,
@@ -65,14 +67,12 @@ class PatternsRepo:
                 sample_size,
                 confidence,
             ),
+            select_sql=(
+                "SELECT id FROM patterns "
+                "WHERE user_id = ? AND pattern_type = ? AND context_key = ?"
+            ),
+            select_params=(self._uid(), pattern_type, context_key),
         )
-        self.conn.commit()
-        row = self.conn.execute(
-            "SELECT id FROM patterns "
-            "WHERE user_id = ? AND pattern_type = ? AND context_key = ?",
-            (self._uid(), pattern_type, context_key),
-        ).fetchone()
-        return int(row["id"])
 
     def get_patterns(
         self, pattern_type: str | None = None

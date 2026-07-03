@@ -10,9 +10,10 @@ from typing import Any
 from prefrontal.memory._helpers import (
     _row_to_dict,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class TodosRepo:
+class TodosRepo(Repo):
     """Open-loop todos and their tiny-first-step decompositions."""
 
     def add_todo(

@@ -10,9 +10,10 @@ from prefrontal.memory._helpers import (
     _row_to_dict,
     sql_placeholders,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class MailRepo:
+class MailRepo(Repo):
     """Ingested/triaged mail and the triage-feedback learning signal."""
 
     def seen_mail_ids(self, account: str | None = None) -> set[str]:

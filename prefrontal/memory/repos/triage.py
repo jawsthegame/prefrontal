@@ -11,9 +11,10 @@ from typing import Any
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.memory._helpers import _row_to_dict
+from prefrontal.memory.repos._base import Repo
 
 
-class TriageRepo:
+class TriageRepo(Repo):
     """Triage decision logging + queries."""
 
     def log_triage(

@@ -10,9 +10,10 @@ from prefrontal.memory._helpers import (
     _row_to_dict,
     sha256_hex,
 )
+from prefrontal.memory.repos._base import Repo
 
 
-class StateRepo:
+class StateRepo(Repo):
     """Coaching state, last-known location, and the profile-narrative cache."""
 
     def get_state(self, key: str, default: str | None = None) -> str | None:

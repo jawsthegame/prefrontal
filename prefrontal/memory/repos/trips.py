@@ -16,8 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from prefrontal.memory.repos._base import Repo
 
-class TripsRepo:
+
+class TripsRepo(Repo):
     """Closed-loop trips auto-detected from location crossings."""
 
     def open_trip(
