@@ -196,6 +196,34 @@ def heuristic_category(title: str) -> str:
     return DEFAULT_CATEGORY
 
 
+#: Title cues that imply physically *leaving home* — matched whole-word like the
+#: other heuristics. Deliberately high-precision (going somewhere), so an online
+#: "order printer ink" isn't travel while "pick up printer ink" is. Consumed by
+#: :func:`requires_travel` / :mod:`prefrontal.scheduling` to keep travel errands
+#: out of late-evening suggestions.
+_TRAVEL_KEYWORDS: tuple[str, ...] = (
+    "drive", "commute",
+    "go to", "get to", "head to", "drop by", "stop by",
+    "pick up", "pickup", "drop off", "dropoff", "drop-off",
+    "in person", "in-person", "onsite", "on-site",
+    "errand", "errands", "store", "mall", "groceries", "grocery", "dmv",
+    "post office",
+)
+
+
+def requires_travel(todo: dict[str, Any]) -> bool:
+    """Whether a todo likely means leaving home (so it shouldn't be slotted late).
+
+    A title-based heuristic over :data:`_TRAVEL_KEYWORDS` ("drive", "pick up",
+    "go to", "groceries", …). Title-only on purpose: an online "order groceries"
+    reads the same as a shop run at this altitude, so we err toward the physical-
+    presence verbs and let a bare "buy milk" through. Used by
+    :func:`prefrontal.scheduling.todo_allowed_at` to stop suggesting travel
+    errands into the evening.
+    """
+    return _matches(_norm(todo.get("title")), _TRAVEL_KEYWORDS)
+
+
 def at_category_cap(
     candidate: str, existing: list[str], cap: int = MAX_CATEGORIES
 ) -> bool:
