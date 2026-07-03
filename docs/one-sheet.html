@@ -201,6 +201,8 @@
 
   <div class="alsolive">
     <b>Also live&nbsp;→</b>
+    <span class="pill">Co-parent star charts — one-tap ⭐, both parents</span>
+    <span class="pill">Jot a note → it proposes updates you approve</span>
     <span class="pill">Mail triaged to a short action list</span>
     <span class="pill">Morning briefing</span>
     <span class="pill">Bad-day recovery mode</span>
@@ -211,16 +213,17 @@
   <div class="banner">
     <div class="k">It quietly learns →</div>
     <div class="v">your <b>real</b> departure lag, <b>which reminders you ignore after 3pm</b>, when you tend to go quiet,
-    how much you underestimate time — and tunes its timing, wording, and channel to <b>you</b>. Miss a reminder? That's data too.</div>
+    how much you underestimate time — <b>weighting recent days heavier</b> — and tunes its timing, wording, and channel
+    to <b>you</b>. Miss a reminder? That's data too.</div>
   </div>
 
   <h3 class="sec next">→ Where it's going next</h3>
   <div class="next-grid">
     <div class="ni"><b>Context Packs.</b> Role-based bundles — <i>Parent</i>, <i>Caregiver</i>, <i>New job</i> — that pre-wire the primitives for a whole life situation.</div>
-    <div class="ni"><b>Shared co-parent sheet.</b> One household sheet both parents edit in plain English — sizes, appts, behavior plans — to balance the invisible load.</div>
-    <div class="ni"><b>One intake for everything.</b> Mail, a calendar change, a quick thought — captured, sorted, and routed the same way.</div>
-    <div class="ni"><b>Sharper learning.</b> Per-situation time drift, learned channel response, tuned quiet hours.</div>
-    <div class="ni"><b>First-class delivery.</b> Native Pushover / ntfy / TTS publishing (today it routes through n8n).</div>
+    <div class="ni"><b>The full household sheet.</b> One plain-English sheet both parents edit — sizes, appointments, providers — to balance the invisible load.</div>
+    <div class="ni"><b>One intake for everything.</b> Mail, a calendar change, a quick thought — all routed the same way (jotted notes already propose updates).</div>
+    <div class="ni"><b>Sharper learning.</b> Per-situation time drift and learned channel response on top of today's recency-weighted patterns.</div>
+    <div class="ni"><b>Native Pushover &amp; TTS.</b> ntfy delivers natively today; Pushover and voice are next off n8n.</div>
     <div class="ni"><b>Live lock-screen timer.</b> A real countdown for an active outing, in the Dynamic Island.</div>
   </div>
 
@@ -252,12 +255,12 @@
   <header>
     <div>
       <div class="brand brand-lk"><svg class="mk"><use href="#pf-mark"/></svg><span>The modules</span></div>
-      <div class="tag">One executive-function challenge each — a primitive aimed at a specific dysfunction.</div>
+      <div class="tag">One challenge each — a focused primitive aimed at a specific dysfunction.</div>
     </div>
     <div class="meta">
       <b>Switch on only what fits you</b><br>
       Each module is opt-in, per user<br>
-      All five are live today
+      All six ship today
     </div>
   </header>
 
@@ -353,10 +356,25 @@
       </div>
     </div>
 
+    <div class="mod" style="--accent:#0d9488">
+      <div class="dys">
+        <div class="ef">Basic needs — a hyperfocus casualty</div>
+        <div class="name"><span class="ico">🍽️</span>Self-Care</div>
+        <code>self_care</code>
+      </div>
+      <div class="body">
+        <div class="chl">Not a dysfunction itself but a <b>downstream casualty</b> of one: eating and hydrating get <b>dropped mid-flow</b> — the deeper the hyperfocus, the easier they are to skip.</div>
+        <div class="rows">
+          <div class="r shows"><div class="lbl">How it shows up</div><p>You surface at 3pm having had nothing to eat or drink since morning — flow ate the day.</p></div>
+          <div class="r"><div class="lbl">What Prefrontal does</div><p>Gentle <b>meal &amp; water checks</b> from a start hour, re-asking until you confirm — one-tap <b>Ate / Drank / Snooze</b>. <b>Off by default</b>, opt-in.</p></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <footer>
-    <div>Same primitive, five aims — <b>each module names the dysfunction it treats.</b></div>
+    <div>Same primitive, six aims — <b>each module names the dysfunction it treats.</b></div>
     <div>Opt-in per user <span class="dot">•</span> shared memory <span class="dot">•</span> learns which nudge works for <i>you</i></div>
   </footer>
 
