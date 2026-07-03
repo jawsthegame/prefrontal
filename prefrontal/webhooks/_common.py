@@ -189,6 +189,7 @@ from prefrontal.scheduling import (
 from prefrontal.sensor import (
     apply_proposal,
     extract_candidates,
+    extract_candidates_from_transcript,
     record_candidates,
     summarize_candidate,
 )
@@ -244,6 +245,7 @@ from prefrontal.webhooks.schemas import (  # noqa: F401 (re-exported for routers
     CommitmentCreate,
     CommitmentKind,
     ConflictDismiss,
+    ConversationTurn,
     DigestConfig,
     EpisodeCreated,
     FactClear,
@@ -641,9 +643,11 @@ __all__ = [
     "DEFAULT_WORK_LEAD_MINUTES",
     "Depends",
     "EpisodeCreated",
+    "ConversationTurn",
     "ObserveRequest",
     "apply_proposal",
     "extract_candidates",
+    "extract_candidates_from_transcript",
     "record_candidates",
     "summarize_candidate",
     "FAMILY_HTML",

@@ -1216,15 +1216,41 @@ def _cmd_note(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
+    import json
+
     from prefrontal.integrations import ProviderResolver
-    from prefrontal.sensor import extract_candidates, record_candidates, summarize_candidate
+    from prefrontal.sensor import (
+        extract_candidates,
+        extract_candidates_from_transcript,
+        record_candidates,
+        summarize_candidate,
+    )
 
     settings = get_settings()
     # Claude when the ``sensor`` agent is opted into Anthropic, else local.
     client = ProviderResolver.from_settings(settings).client("sensor")
+    # A --transcript file (JSON array of {"speaker","text"} turns) reads a whole
+    # conversation; otherwise the positional text is a single note.
+    turns: list[dict[str, str]] | None = None
+    if getattr(args, "transcript", None):
+        try:
+            loaded = json.loads(Path(args.transcript).read_text())
+        except (OSError, ValueError) as exc:
+            print(f"Could not read transcript {args.transcript!r}: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(loaded, list):
+            print("Transcript file must be a JSON array of turns.", file=sys.stderr)
+            return 1
+        turns = [t for t in loaded if isinstance(t, dict)]
+    elif not (args.text or "").strip():
+        print("Provide a note, or --transcript PATH.", file=sys.stderr)
+        return 1
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
-        candidates = extract_candidates(args.text, client=client)
+        if turns is not None:
+            candidates = extract_candidates_from_transcript(turns, client=client)
+        else:
+            candidates = extract_candidates(args.text, client=client)
         if not candidates:
             print("No candidate updates found (or the model was unreachable).")
             return 0
@@ -1892,7 +1918,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_note = sub.add_parser(
         "note", help="Feed a free-text note to the LLM sensor (proposes, never writes)."
     )
-    p_note.add_argument("text", help="The observation, e.g. 'I always blow off admin on Mondays'.")
+    p_note.add_argument(
+        "text",
+        nargs="?",
+        default="",
+        help="The observation, e.g. 'I always blow off admin on Mondays'.",
+    )
+    p_note.add_argument(
+        "--transcript",
+        default=None,
+        metavar="PATH",
+        help="Read a conversation instead: a JSON array of {\"speaker\",\"text\"} turns.",
+    )
     p_note.add_argument("--db-path", default=None, help="Override the database path.")
     p_note.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_note.set_defaults(func=_cmd_note)

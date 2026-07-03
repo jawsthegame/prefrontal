@@ -58,11 +58,11 @@ PROPOSABLE_EPISODE_TYPES = frozenset({"task", "checkin", "reminder", "departure"
 PROPOSABLE_OUTCOMES = frozenset({"success", "partial", "miss"})
 
 SENSOR_SYSTEM_PROMPT = (
-    "You are a careful note-reader for an ADHD assistant. You turn a short "
-    "free-text note into STRUCTURED CANDIDATE updates that a human will review "
-    "before anything is saved. You never invent numbers or facts the note "
-    "doesn't state. If the note contains nothing worth recording, return an "
-    "empty JSON array. Output ONLY a JSON array, no prose."
+    "You are a careful note-reader for an ADHD assistant. You turn a free-text "
+    "note or a conversation transcript into STRUCTURED CANDIDATE updates that a "
+    "human will review before anything is saved. You never invent numbers or "
+    "facts the source doesn't state. If it contains nothing worth recording, "
+    "return an empty JSON array. Output ONLY a JSON array, no prose."
 )
 
 
@@ -81,11 +81,15 @@ class Candidate:
     rationale: str = ""
 
 
-def _build_prompt(text: str) -> str:
-    """The grounded extraction prompt: the note plus the exact allowlists."""
+def _allowlist_instructions(*, quote_hint: str) -> str:
+    """The shared "here's the JSON shape + the exact allowlists" body.
+
+    Identical for a note and a transcript — the safety model (allowlist,
+    no-fabricated-numbers) doesn't change with the input shape; only the framing
+    of the source and the ``quote_hint`` (what a good rationale quotes) differ.
+    """
     return (
-        "From the NOTE below, extract candidate updates. Each item is a JSON "
-        "object with:\n"
+        "Each item is a JSON object with:\n"
         '  - "kind": "state" or "episode"\n'
         '  - for "state": "key" (one of: '
         f"{', '.join(sorted(PROPOSABLE_STATE_KEYS))}) and "
@@ -94,11 +98,55 @@ def _build_prompt(text: str) -> str:
         f"{', '.join(sorted(PROPOSABLE_EPISODE_TYPES))}), optional "
         '"outcome" (one of: success, partial, miss), optional "context" '
         '(a short label, e.g. the task or place), optional "notes"\n'
-        '  - "rationale": a short reason, ideally quoting the note\n'
+        f'  - "rationale": a short reason, ideally quoting {quote_hint}\n'
         "Only propose a state key from that exact list. Do NOT include any "
         "numeric predicted/actual/duration fields on episodes. Return [] if "
-        "nothing fits.\n\n"
-        f"NOTE:\n{text.strip()}"
+        "nothing fits."
+    )
+
+
+def _build_prompt(text: str) -> str:
+    """The grounded extraction prompt: the note plus the exact allowlists."""
+    return (
+        "From the NOTE below, extract candidate updates. "
+        + _allowlist_instructions(quote_hint="the note")
+        + f"\n\nNOTE:\n{text.strip()}"
+    )
+
+
+def render_transcript(turns: list[dict[str, Any]]) -> str:
+    """Flatten conversation ``turns`` into a ``Speaker: line`` transcript string.
+
+    Each turn is a dict with a ``speaker`` (or ``role``) label and ``text`` (or
+    ``content``). Blank-text turns are skipped; a missing speaker renders as
+    ``?``. This is the exact text the model reads, so it's a pure, testable
+    rendering with no model call.
+    """
+    lines: list[str] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        speaker = str(turn.get("speaker") or turn.get("role") or "?").strip() or "?"
+        text = str(turn.get("text") or turn.get("content") or "").strip()
+        if text:
+            lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
+def _build_transcript_prompt(transcript: str) -> str:
+    """The grounded extraction prompt for a multi-speaker conversation.
+
+    Same allowlist body as :func:`_build_prompt`, but framed to attribute signal
+    to *the user* the assistant supports — a transcript may quote other people,
+    and their facts must not be recorded as the user's.
+    """
+    return (
+        "From the CONVERSATION below, extract candidate updates ABOUT THE USER "
+        "(the person this assistant supports). The transcript may include other "
+        "speakers; only record things that reflect the USER's own preferences, "
+        "behavior, or state — never facts about other participants. "
+        + _allowlist_instructions(quote_hint="the line you drew it from")
+        + f"\n\nCONVERSATION:\n{transcript}"
     )
 
 
@@ -175,6 +223,45 @@ def extract_candidates(
         return []  # no model → observe nothing rather than invent
     candidates = [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
     return candidates
+
+
+def extract_candidates_from_transcript(
+    turns: list[dict[str, Any]], *, client: Generator | None = None
+) -> list[Candidate]:
+    """Read a conversation transcript and return validated candidate updates.
+
+    The transcript counterpart of :func:`extract_candidates`: it reads a
+    multi-turn conversation (``{"speaker", "text"}`` turns) instead of a single
+    note, so behavioral signal spread across a back-and-forth — a journaling
+    dialogue, a captured chat, a coaching conversation — can be observed. The
+    prompt attributes signal to the *user* the assistant supports, not to other
+    speakers in the transcript.
+
+    The safety model is identical to :func:`extract_candidates`: the same
+    allowlist and validation gate every candidate, everything lands **pending**,
+    and an unreachable model yields no candidates rather than a guess.
+
+    Args:
+        turns: Conversation turns, each a dict with a ``speaker`` (or ``role``)
+            label and ``text`` (or ``content``). Rendered via
+            :func:`render_transcript`.
+        client: A :class:`~prefrontal.integrations.Generator` (Ollama, or Claude
+            when the ``sensor`` agent is opted into Anthropic). Defaults to local.
+
+    Returns:
+        Validated :class:`Candidate` objects (possibly empty).
+    """
+    transcript = render_transcript(turns)
+    if not transcript.strip():
+        return []
+    client = client or OllamaClient.from_settings()
+    try:
+        reply = client.generate(
+            _build_transcript_prompt(transcript), system=SENSOR_SYSTEM_PROMPT
+        )
+    except ProviderError:
+        return []  # no model → observe nothing rather than invent
+    return [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
 
 
 def record_candidates(store: MemoryStore, candidates: list[Candidate]) -> list[int]:
