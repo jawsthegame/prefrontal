@@ -411,3 +411,20 @@ def test_assistant_falls_back_to_ollama_when_anthropic_absent(store):
     body = resp.json()
     assert body["provider"] == "ollama"
     assert body["actions"] == []
+
+
+def test_allowed_ops_is_derived_from_the_validator_registry():
+    """The whitelist and the dispatch table are one source of truth (§11)."""
+    from prefrontal.assistant import _VALIDATORS, ALLOWED_OPS
+
+    assert set(_VALIDATORS) == ALLOWED_OPS
+    # Every op resolves to a callable validator.
+    assert all(callable(v) for v in _VALIDATORS.values())
+
+
+def test_validate_one_rejects_an_unregistered_op():
+    """An op with no validator is refused before execution (the boundary holds)."""
+    from prefrontal.assistant import _ActionError, _validate_one
+
+    with pytest.raises(_ActionError):
+        _validate_one({"op": "rm_rf_everything"}, {})

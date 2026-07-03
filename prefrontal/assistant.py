@@ -30,6 +30,7 @@ falls back to Ollama.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -52,31 +53,6 @@ from prefrontal.todos import (
 
 #: Ops the assistant is allowed to emit. The whitelist *is* the security boundary
 #: (with per-user store scoping): anything not here is refused before execution.
-ALLOWED_OPS = frozenset(
-    {
-        "add_todo",
-        "complete_todo",
-        "drop_todo",
-        "set_priority",
-        "set_estimate",
-        "rename_todo",
-        "set_deadline",
-        "add_commitment",
-        "cancel_commitment",
-        "dismiss_conflict",
-        # Shared household sheet (docs/household-sheet.md §5). Only usable when the
-        # caller is in a household — the snapshot omits the household context
-        # otherwise, and these validators drop with a reason.
-        "set_fact",
-        "clear_fact",
-        "set_agreement",
-        "remove_agreement",
-        "add_shopping",
-        "check_shopping",
-        "remove_shopping",
-    }
-)
-
 _PRIORITY_NAMES = {0: "low", 1: "normal", 2: "high", 3: "urgent"}
 
 
@@ -468,163 +444,227 @@ def _as_structured(value: Any) -> str | None:
     raise _ActionError("structured must be a JSON object")
 
 
+# --- per-op validators ------------------------------------------------------
+#
+# Each validator takes (op, action, snapshot) and returns a ValidatedAction or
+# raises _ActionError. They're registered in _VALIDATORS below; _validate_one is
+# just a lookup + dispatch, and ALLOWED_OPS is derived from the registry keys so
+# the whitelist (the security boundary) can never drift from what's implemented.
+# A validator handling more than one op branches on the passed-in ``op``.
+
+
+def _v_add_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    title = _as_title(action.get("title"))
+    params: dict[str, Any] = {"title": title}
+    extras = []
+    if action.get("estimate_minutes") is not None:
+        params["estimate_minutes"] = _as_estimate(action["estimate_minutes"])
+        extras.append(f"{params['estimate_minutes']:g}m")
+    if action.get("priority") is not None:
+        params["priority"] = _as_priority(action["priority"])
+        extras.append(_PRIORITY_NAMES[params["priority"]])
+    if action.get("energy") is not None:
+        energy = str(action["energy"]).lower()
+        if energy not in ENERGY_LEVELS:
+            raise _ActionError("energy must be low|medium|high")
+        params["energy"] = energy
+    if action.get("deadline") is not None:
+        params["deadline"] = _nonblank(action.get("deadline"), "deadline")
+        extras.append(f"by {params['deadline']}")
+    detail = f" ({', '.join(extras)})" if extras else ""
+    return ValidatedAction(op, params, f"Add todo: “{title}”{detail}")
+
+
+def _v_todo_status(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    verb = "Complete" if op == "complete_todo" else "Drop"
+    return ValidatedAction(op, {"todo_id": tid}, f"{verb} todo: “{title}”")
+
+
+def _v_set_priority(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    pri = _as_priority(action.get("priority"))
+    return ValidatedAction(
+        op, {"todo_id": tid, "priority": pri},
+        f"Set “{title}” priority to {_PRIORITY_NAMES[pri]}",
+    )
+
+
+def _v_set_estimate(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    est = _as_estimate(action.get("estimate_minutes"))
+    return ValidatedAction(
+        op, {"todo_id": tid, "estimate_minutes": est},
+        f"Set “{title}” estimate to {est:g}m",
+    )
+
+
+def _v_rename_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    new_title = _as_title(action.get("title"))
+    return ValidatedAction(
+        op, {"todo_id": tid, "title": new_title},
+        f"Rename “{title}” → “{new_title}”",
+    )
+
+
+def _v_set_deadline(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    raw_deadline = action.get("deadline")
+    if raw_deadline is None:
+        return ValidatedAction(
+            op, {"todo_id": tid, "deadline": None}, f"Clear deadline on “{title}”"
+        )
+    deadline = _nonblank(raw_deadline, "deadline")
+    return ValidatedAction(
+        op, {"todo_id": tid, "deadline": deadline},
+        f"Set “{title}” deadline to {deadline}",
+    )
+
+
+def _v_add_commitment(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    title = _as_title(action.get("title"))
+    start_at = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
+    params: dict[str, Any] = {"title": title, "start_at": start_at}
+    if action.get("end_at") is not None:
+        params["end_at"] = _nonblank(action.get("end_at"), "end_at")
+    if action.get("location") is not None and str(action.get("location")).strip():
+        params["location"] = str(action["location"]).strip()
+    return ValidatedAction(op, params, f"Add commitment: “{title}” at {start_at}")
+
+
+def _v_cancel_commitment(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    cid, title = _require_commitment(action, snapshot)
+    return ValidatedAction(op, {"commitment_id": cid}, f"Cancel commitment: “{title}”")
+
+
+def _v_dismiss_conflict(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    key = action.get("key")
+    keys = {c.get("key"): c.get("label") for c in snapshot.get("conflicts", [])}
+    if not isinstance(key, str) or key not in keys:
+        raise _ActionError("no dismissable conflict with that key")
+    label = keys[key] or key
+    return ValidatedAction(op, {"key": key}, f"Dismiss conflict: {label}")
+
+
+def _v_fact(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    child_id, who = _resolve_child(action, household)
+    category = _as_fact_category(action.get("category"))
+    item = normalize_fact_item(action.get("item"))
+    if not item:
+        raise _ActionError("item must be a non-empty string")
+    params: dict[str, Any] = {"child_id": child_id, "category": category, "item": item}
+    if op == "clear_fact":
+        return ValidatedAction(op, params, f"Clear {who}'s {item}")
+    value = action.get("value")
+    if value is not None and not isinstance(value, (str, int, float)):
+        raise _ActionError("value must be text")
+    params["value"] = str(value).strip() if value is not None else None
+    shown = params["value"] or "—"
+    return ValidatedAction(op, params, f"Set {who}'s {item} → {shown}")
+
+
+def _v_set_agreement(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    child_id, who = _resolve_child(action, household)
+    title = _as_title(action.get("title"))
+    params: dict[str, Any] = {"child_id": child_id, "title": title}
+    kind = action.get("kind")
+    if kind is not None:
+        if str(kind).lower() not in AGREEMENT_KINDS:
+            raise _ActionError("kind must be reward|consistency|routine")
+        params["kind"] = str(kind).lower()
+    if action.get("body") is not None:
+        params["body"] = _nonblank(action.get("body"), "body")
+    params["structured"] = _as_structured(action.get("structured"))
+    return ValidatedAction(op, params, f"Set plan “{title}” for {who}")
+
+
+def _v_remove_agreement(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    household = _require_household(snapshot)
+    aid, title = _require_agreement(action, household)
+    return ValidatedAction(op, {"agreement_id": aid}, f"Remove plan: “{title}”")
+
+
+def _v_add_shopping(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    child_id, _who = _resolve_child(action, household)
+    item = _as_title(action.get("item"))
+    params: dict[str, Any] = {"item": item, "child_id": child_id}
+    extras = []
+    if action.get("spec") is not None and str(action.get("spec")).strip():
+        params["spec"] = str(action["spec"]).strip()
+        extras.append(params["spec"])
+    if action.get("where_to_buy") is not None and str(action.get("where_to_buy")).strip():
+        params["where_to_buy"] = str(action["where_to_buy"]).strip()
+        extras.append(f"@ {params['where_to_buy']}")
+    detail = f" ({', '.join(extras)})" if extras else ""
+    return ValidatedAction(op, params, f"Add to shopping: “{item}”{detail}")
+
+
+def _v_check_shopping(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    sid, item = _require_shopping(action, household)
+    got = action.get("got")
+    got = True if got is None else bool(got)
+    verb = "Check off" if got else "Un-check"
+    return ValidatedAction(op, {"shopping_id": sid, "got": got}, f"{verb}: “{item}”")
+
+
+def _v_remove_shopping(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    household = _require_household(snapshot)
+    sid, item = _require_shopping(action, household)
+    return ValidatedAction(op, {"shopping_id": sid}, f"Remove from shopping: “{item}”")
+
+
+#: op → validator. This registry *is* the whitelist: :data:`ALLOWED_OPS` is
+#: derived from its keys, so adding a capability is one entry here and cannot
+#: drift from the security boundary. The household ops (set_fact … remove_shopping)
+#: are only usable when the caller is in a household — the snapshot omits the
+#: household context otherwise, and those validators drop with a reason.
+_VALIDATORS: dict[
+    str, Callable[[str, dict[str, Any], dict[str, Any]], ValidatedAction]
+] = {
+    "add_todo": _v_add_todo,
+    "complete_todo": _v_todo_status,
+    "drop_todo": _v_todo_status,
+    "set_priority": _v_set_priority,
+    "set_estimate": _v_set_estimate,
+    "rename_todo": _v_rename_todo,
+    "set_deadline": _v_set_deadline,
+    "add_commitment": _v_add_commitment,
+    "cancel_commitment": _v_cancel_commitment,
+    "dismiss_conflict": _v_dismiss_conflict,
+    "set_fact": _v_fact,
+    "clear_fact": _v_fact,
+    "set_agreement": _v_set_agreement,
+    "remove_agreement": _v_remove_agreement,
+    "add_shopping": _v_add_shopping,
+    "check_shopping": _v_check_shopping,
+    "remove_shopping": _v_remove_shopping,
+}
+
+#: The ops the assistant may emit — the security boundary, derived from the
+#: registry so the two can never disagree.
+ALLOWED_OPS = frozenset(_VALIDATORS)
+
+
 def _validate_one(action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     """Validate a single raw action, raising :class:`_ActionError` on any problem."""
     op = action.get("op")
-    if op not in ALLOWED_OPS:
+    validator = _VALIDATORS.get(op) if isinstance(op, str) else None
+    if validator is None:
         raise _ActionError(f"unsupported action '{op}'")
-
-    if op == "add_todo":
-        title = _as_title(action.get("title"))
-        params: dict[str, Any] = {"title": title}
-        extras = []
-        if action.get("estimate_minutes") is not None:
-            params["estimate_minutes"] = _as_estimate(action["estimate_minutes"])
-            extras.append(f"{params['estimate_minutes']:g}m")
-        if action.get("priority") is not None:
-            params["priority"] = _as_priority(action["priority"])
-            extras.append(_PRIORITY_NAMES[params["priority"]])
-        if action.get("energy") is not None:
-            energy = str(action["energy"]).lower()
-            if energy not in ENERGY_LEVELS:
-                raise _ActionError("energy must be low|medium|high")
-            params["energy"] = energy
-        if action.get("deadline") is not None:
-            params["deadline"] = _nonblank(action.get("deadline"), "deadline")
-            extras.append(f"by {params['deadline']}")
-        detail = f" ({', '.join(extras)})" if extras else ""
-        return ValidatedAction(op, params, f"Add todo: “{title}”{detail}")
-
-    if op in ("complete_todo", "drop_todo"):
-        tid, title = _require_todo(action, snapshot)
-        verb = "Complete" if op == "complete_todo" else "Drop"
-        return ValidatedAction(op, {"todo_id": tid}, f"{verb} todo: “{title}”")
-
-    if op == "set_priority":
-        tid, title = _require_todo(action, snapshot)
-        pri = _as_priority(action.get("priority"))
-        return ValidatedAction(
-            op, {"todo_id": tid, "priority": pri},
-            f"Set “{title}” priority to {_PRIORITY_NAMES[pri]}",
-        )
-
-    if op == "set_estimate":
-        tid, title = _require_todo(action, snapshot)
-        est = _as_estimate(action.get("estimate_minutes"))
-        return ValidatedAction(
-            op, {"todo_id": tid, "estimate_minutes": est},
-            f"Set “{title}” estimate to {est:g}m",
-        )
-
-    if op == "rename_todo":
-        tid, title = _require_todo(action, snapshot)
-        new_title = _as_title(action.get("title"))
-        return ValidatedAction(
-            op, {"todo_id": tid, "title": new_title},
-            f"Rename “{title}” → “{new_title}”",
-        )
-
-    if op == "set_deadline":
-        tid, title = _require_todo(action, snapshot)
-        raw_deadline = action.get("deadline")
-        if raw_deadline is None:
-            return ValidatedAction(
-                op, {"todo_id": tid, "deadline": None}, f"Clear deadline on “{title}”"
-            )
-        deadline = _nonblank(raw_deadline, "deadline")
-        return ValidatedAction(
-            op, {"todo_id": tid, "deadline": deadline},
-            f"Set “{title}” deadline to {deadline}",
-        )
-
-    if op == "add_commitment":
-        title = _as_title(action.get("title"))
-        start_at = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
-        params = {"title": title, "start_at": start_at}
-        if action.get("end_at") is not None:
-            params["end_at"] = _nonblank(action.get("end_at"), "end_at")
-        if action.get("location") is not None and str(action.get("location")).strip():
-            params["location"] = str(action["location"]).strip()
-        return ValidatedAction(op, params, f"Add commitment: “{title}” at {start_at}")
-
-    if op == "cancel_commitment":
-        cid, title = _require_commitment(action, snapshot)
-        return ValidatedAction(op, {"commitment_id": cid}, f"Cancel commitment: “{title}”")
-
-    if op == "dismiss_conflict":
-        key = action.get("key")
-        keys = {c.get("key"): c.get("label") for c in snapshot.get("conflicts", [])}
-        if not isinstance(key, str) or key not in keys:
-            raise _ActionError("no dismissable conflict with that key")
-        label = keys[key] or key
-        return ValidatedAction(op, {"key": key}, f"Dismiss conflict: {label}")
-
-    if op in ("set_fact", "clear_fact"):
-        household = _require_household(snapshot)
-        child_id, who = _resolve_child(action, household)
-        category = _as_fact_category(action.get("category"))
-        item = normalize_fact_item(action.get("item"))
-        if not item:
-            raise _ActionError("item must be a non-empty string")
-        params = {"child_id": child_id, "category": category, "item": item}
-        if op == "clear_fact":
-            return ValidatedAction(op, params, f"Clear {who}'s {item}")
-        value = action.get("value")
-        if value is not None and not isinstance(value, (str, int, float)):
-            raise _ActionError("value must be text")
-        params["value"] = str(value).strip() if value is not None else None
-        shown = params["value"] or "—"
-        return ValidatedAction(op, params, f"Set {who}'s {item} → {shown}")
-
-    if op == "set_agreement":
-        household = _require_household(snapshot)
-        child_id, who = _resolve_child(action, household)
-        title = _as_title(action.get("title"))
-        params = {"child_id": child_id, "title": title}
-        kind = action.get("kind")
-        if kind is not None:
-            if str(kind).lower() not in AGREEMENT_KINDS:
-                raise _ActionError("kind must be reward|consistency|routine")
-            params["kind"] = str(kind).lower()
-        if action.get("body") is not None:
-            params["body"] = _nonblank(action.get("body"), "body")
-        params["structured"] = _as_structured(action.get("structured"))
-        return ValidatedAction(op, params, f"Set plan “{title}” for {who}")
-
-    if op == "remove_agreement":
-        household = _require_household(snapshot)
-        aid, title = _require_agreement(action, household)
-        return ValidatedAction(op, {"agreement_id": aid}, f"Remove plan: “{title}”")
-
-    if op == "add_shopping":
-        household = _require_household(snapshot)
-        child_id, _who = _resolve_child(action, household)
-        item = _as_title(action.get("item"))
-        params = {"item": item, "child_id": child_id}
-        extras = []
-        if action.get("spec") is not None and str(action.get("spec")).strip():
-            params["spec"] = str(action["spec"]).strip()
-            extras.append(params["spec"])
-        if action.get("where_to_buy") is not None and str(action.get("where_to_buy")).strip():
-            params["where_to_buy"] = str(action["where_to_buy"]).strip()
-            extras.append(f"@ {params['where_to_buy']}")
-        detail = f" ({', '.join(extras)})" if extras else ""
-        return ValidatedAction(op, params, f"Add to shopping: “{item}”{detail}")
-
-    if op == "check_shopping":
-        household = _require_household(snapshot)
-        sid, item = _require_shopping(action, household)
-        got = action.get("got")
-        got = True if got is None else bool(got)
-        verb = "Check off" if got else "Un-check"
-        return ValidatedAction(op, {"shopping_id": sid, "got": got}, f"{verb}: “{item}”")
-
-    if op == "remove_shopping":
-        household = _require_household(snapshot)
-        sid, item = _require_shopping(action, household)
-        return ValidatedAction(op, {"shopping_id": sid}, f"Remove from shopping: “{item}”")
-
-    raise _ActionError(f"unsupported action '{op}'")  # pragma: no cover
+    return validator(op, action, snapshot)
 
 
 def validate_actions(
