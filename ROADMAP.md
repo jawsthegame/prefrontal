@@ -476,8 +476,20 @@ ordered by leverage; each is independent but builds on denser capture.
    morning **briefing** and the **encouragement** re-fit size *each* free window
    with the bias for its own time of day — the 9am gap with the morning bias, the
    4pm gap with the afternoon one — instead of one flat multiplier for the day.
-   *(Next: add task-type / energy dimensions; derive `context_switch` once switch
-   events are captured.)*
+   A second **task-type dimension** now conditions the same way: `compute_bias_by_type`
+   buckets the predicted/actual episodes by `episode_type` and
+   `recompute_patterns` stores a `time_estimation_bias:type:<type>` per kind with
+   enough signal, so a focus block is calibrated separately from a departure
+   buffer. `resolve_bias(store, local_hour=…, episode_type=…)` prefers the
+   time-of-day band, then the type bias, then the global multiplier — so the
+   todo-fit path (`/todos/now`, `/todos/fit`, `prefrontal fit`, briefing,
+   encouragement) passes `episode_type="task"` and gets the focus-session-learned
+   `task` bias as a fallback whenever its band has no data yet. Surfaced in the
+   profile ("By task type: …") and `prefrontal learn`. *(An **energy** dimension
+   is deferred for lack of signal: task actuals come from focus sessions, which
+   aren't todo-linked, and todo closes log `actual_value=None` on purpose — so no
+   per-energy predicted/actual pairs exist to learn from yet. Also still pending:
+   derive `context_switch` once switch events are captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in
