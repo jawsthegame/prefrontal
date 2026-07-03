@@ -16,6 +16,14 @@ A module is deliberately small. It:
 
 Concrete modules live alongside this file (``time_blindness.py`` etc.) and
 register themselves with :mod:`prefrontal.modules.registry` on import.
+
+Modules take the concrete :class:`~prefrontal.memory.store.MemoryStore` directly.
+An earlier ``ModuleStore`` Protocol tried to fence a module to a narrow read/seed
+slice of the store, but Prefrontal is single-tenant, self-hosted, and every
+module is first-party code — there is no untrusted plugin to contain — so the
+fence bought nothing and, as modules grew to touch outings, todos, trips, and
+commitments, it drifted into a contract that no longer described the real
+surface. Depending on ``MemoryStore`` outright is the honest shape.
 """
 
 from __future__ import annotations
@@ -24,50 +32,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from prefrontal.coaching import CoachContext, Cue
-
-
-class ModuleStore(Protocol):
-    """The narrow slice of the memory layer a :class:`Module` may touch.
-
-    Modules depend on this Protocol rather than the concrete
-    :class:`~prefrontal.memory.store.MemoryStore`, so the *abstraction* does not
-    import its *implementation* (dependency inversion). ``MemoryStore`` satisfies
-    it structurally — no explicit subclassing needed.
-
-    It deliberately lists only the methods modules use — coaching-state seeding
-    and profile assembly — not the full store surface, so it doubles as the
-    documented contract for what a module is allowed to read and write.
-    """
-
-    def all_state(self) -> dict[str, dict[str, Any]]: ...
-    def get_state(self, key: str, default: str | None = None) -> str | None: ...
-    def set_state(self, key: str, value: str, source: str = "inferred") -> None: ...
-    def get_float(self, key: str, default: float) -> float: ...
-    def get_bool(self, key: str, default: bool) -> bool: ...
-    def get_patterns(self, pattern_type: str | None = None) -> list[dict[str, Any]]: ...
-    def episodes_by_type(
-        self, episode_type: str, limit: int = 100
-    ) -> list[dict[str, Any]]: ...
-    def active_focus_sessions(self) -> list[dict[str, Any]]: ...
-    def recent_focus_sessions(self, limit: int = 50) -> list[dict[str, Any]]: ...
-    def recent_outings(self, limit: int = 50) -> list[dict[str, Any]]: ...
-    def log_episode(
-        self,
-        episode_type: str,
-        *,
-        predicted_value: float | None = None,
-        actual_value: float | None = None,
-        acknowledged: bool | None = None,
-        channel: str | None = None,
-        context: str | None = None,
-        outcome: str | None = None,
-        notes: str | None = None,
-        timestamp: str | None = None,
-    ) -> int: ...
+    from prefrontal.memory.store import MemoryStore
 
 
 @dataclass(frozen=True)
@@ -126,7 +95,7 @@ class Module(ABC):
         """
         return []
 
-    def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Return the coaching cues due right now, given memory + context.
 
         The coaching agent (:mod:`prefrontal.coaching`) calls this on each tick to
@@ -138,7 +107,7 @@ class Module(ABC):
         """
         return []
 
-    def seed(self, store: ModuleStore) -> None:
+    def seed(self, store: MemoryStore) -> None:
         """Seed this module's ``default_state`` into coaching state.
 
         Existing values are preserved (``set_state`` upserts, and we only write
@@ -146,8 +115,8 @@ class Module(ABC):
         preferences the user or another module has already set.
 
         Args:
-            store: Any :class:`ModuleStore` (the concrete
-                :class:`~prefrontal.memory.store.MemoryStore` satisfies it).
+            store: The :class:`~prefrontal.memory.store.MemoryStore`, scoped to
+                the user being seeded.
         """
         existing = store.all_state()
         for key, value in self.default_state.items():
@@ -155,7 +124,7 @@ class Module(ABC):
                 store.set_state(key, value, source="inferred")
 
     @abstractmethod
-    def profile_section(self, store: ModuleStore) -> str | None:
+    def profile_section(self, store: MemoryStore) -> str | None:
         """Return this module's contribution to the behavioral profile.
 
         The summarizer concatenates each enabled module's section into
@@ -163,8 +132,8 @@ class Module(ABC):
         nothing — e.g. when there is not yet enough data.
 
         Args:
-            store: Any :class:`ModuleStore` (the concrete
-                :class:`~prefrontal.memory.store.MemoryStore` satisfies it).
+            store: The :class:`~prefrontal.memory.store.MemoryStore`, scoped to
+                the user whose profile is being assembled.
 
         Returns:
             A Markdown fragment (without a top-level heading; the summarizer adds

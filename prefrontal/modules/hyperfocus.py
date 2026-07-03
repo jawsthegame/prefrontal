@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
-from prefrontal.modules.base import Intervention, Module, ModuleStore
+from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
 
 #: Interrupt levels in ascending severity. ``none`` is rank 0; an interrupt fires
@@ -594,7 +594,7 @@ class HyperfocusModule(Module):
             ),
         ]
 
-    def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Offer a focus start (morning) or a forgot-to-log recap (evening) — both opt-in.
 
         Interrupts stay on ``/webhooks/focus/check``; this emits only the gentle
@@ -651,7 +651,7 @@ class HyperfocusModule(Module):
         return []
 
     @staticmethod
-    def _focused_today(store: ModuleStore, today, tz: str) -> bool:
+    def _focused_today(store: MemoryStore, today, tz: str) -> bool:
         """Whether any focus session already started on ``today`` (local date)."""
         for session in store.recent_focus_sessions(limit=20):
             started = session.get("started_at")
