@@ -82,6 +82,9 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     # in the ALTER (SQLite can't add a column-level REFERENCES via ALTER), which is
     # fine — schema.sql declares it on fresh installs.
     "users": [("household_id", "INTEGER")],
+    # A star chart's recurring "should we award a star today?" prompt records its
+    # last fire here to dedup to once per local day (added after the sheet shipped).
+    "household_agreements": [("last_prompted_at", "DATETIME")],
 }
 
 

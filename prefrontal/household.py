@@ -29,8 +29,9 @@ Sections, in order (§6 of the spec):
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from prefrontal.commitments import KIND_CHILD
@@ -421,6 +422,167 @@ def star_congrats_text(child_name: str | None, goal: dict[str, Any]) -> str:
     label = unit if count == 1 else f"{unit}s"
     who = child_name or "The kids"
     return f"🌟 {who} hit {count} {label} — reward unlocked: {goal['reward']}!"
+
+
+def _resolve_child_name(store: MemoryStore, child_id: int) -> str | None:
+    """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
+    if not child_id:
+        return None
+    return next((c["name"] for c in store.children() if c["id"] == child_id), None)
+
+
+def award_stars_and_notify(
+    store: MemoryStore,
+    agreement_id: int,
+    *,
+    delta: int,
+    awarded_by: int | None,
+    note: str | None = None,
+    settings: Any = None,
+    client: Any = None,
+) -> dict[str, Any] | None:
+    """Award stars, detect crossed reward goals, and congratulate + notify both parents.
+
+    The single code path behind every way a star can be given — the HTTP endpoint,
+    the CLI, the one-tap notification button, and (via the caller) a scheduled
+    prompt — so the "did this cross a goal? then tell both parents" rule lives in
+    exactly one place.
+
+    Returns ``None`` if the agreement isn't in the store's household (so a caller
+    can 404). Raises :class:`ValueError` when a negative ``delta`` is applied to an
+    earn-only chart. On success returns the new ``total``, the ``goals_reached``,
+    the ``next_goal``, the resolved ``child_name``, and the per-parent ``notified``
+    records (empty unless a goal was crossed).
+    """
+    agreement = store.agreement(agreement_id)
+    if agreement is None:
+        return None
+    structured = parse_structured(agreement.get("structured"))
+    if isinstance(structured, dict) and structured.get("earn_only") and delta < 0:
+        raise ValueError("this chart is earn-only — stars can't be taken away")
+    result = store.award_stars(
+        agreement_id=agreement_id, delta=delta, awarded_by=awarded_by, note=note
+    )
+    assert result is not None  # agreement existence already confirmed above
+    goals = newly_reached_goals(structured, result["before"], result["after"])
+    child_name = _resolve_child_name(store, agreement.get("child_id") or 0)
+    notified: list[dict[str, Any]] = []
+    if goals:
+        # Lazy import: delivery pulls in webhooks.notify, which would re-enter the
+        # partially-initialized webhooks package if imported at module load.
+        from prefrontal.integrations.delivery import (
+            deliver_to_household,
+            household_notice,
+        )
+
+        message = " ".join(star_congrats_text(child_name, g) for g in goals)
+        notified = deliver_to_household(
+            store,
+            store.household_id_or_none(),
+            household_notice(message, channel="sound"),
+            settings=settings,
+            client=client,
+        )
+    return {
+        "agreement": agreement,
+        "child_name": child_name,
+        "total": result["after"],
+        "delta": result["delta"],
+        "goals_reached": goals,
+        "next_goal": next_goal(structured, result["after"]),
+        "notified": notified,
+    }
+
+
+# --- scheduled award prompts (pure) ------------------------------------------
+#
+# A chart can carry a `prompt` block in its `structured` JSON — a recurring
+# "should <kid> get a star for <chart> today?" check-in on chosen weekdays at a
+# time of day. The schedule lives on the chart (no new table); the sweep that
+# fires it (a periodic check endpoint / CLI) uses `prompt_due`, and the chart's
+# `last_prompted_at` column dedups to once per day. Weekdays are Python's
+# `date.weekday()` ints: Mon=0 … Sun=6.
+
+
+def _parse_hhmm(value: Any) -> time | None:
+    """Parse a ``"HH:MM"`` 24-hour string into a :class:`datetime.time`, or ``None``."""
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        return time(int(parts[0]), int(parts[1]))
+    except (ValueError, TypeError):
+        return None
+
+
+def normalize_prompt(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate a prompt-schedule config, returning ``(clean, None)`` or ``(None, error)``.
+
+    ``days`` are weekday ints (0=Mon … 6=Sun; de-duped and sorted), ``time`` is
+    ``"HH:MM"`` 24-hour, ``enabled`` a bool, and ``question`` an optional custom
+    line (whitespace-collapsed, length-capped). An enabled schedule with no days
+    is rejected — that would silently never fire.
+    """
+    if not isinstance(raw, dict):
+        return None, "prompt must be an object"
+    days_raw = raw.get("days", [])
+    if not isinstance(days_raw, list):
+        return None, "days must be a list of weekday numbers (0=Mon … 6=Sun)"
+    days = sorted(
+        {int(d) for d in days_raw if isinstance(d, (int, float)) and 0 <= int(d) <= 6}
+    )
+    parsed_time = _parse_hhmm(raw.get("time"))
+    if parsed_time is None:
+        return None, "time must be 'HH:MM' (24-hour), e.g. '19:30'"
+    enabled = bool(raw.get("enabled", True))
+    if enabled and not days:
+        return None, "pick at least one day, or disable the reminder"
+    question = raw.get("question")
+    if question is not None:
+        question = re.sub(r"\s+", " ", str(question).strip())[:140] or None
+    return {
+        "enabled": enabled,
+        "days": days,
+        "time": parsed_time.strftime("%H:%M"),
+        "question": question,
+    }, None
+
+
+def prompt_due(
+    structured: Any,
+    *,
+    now_local: datetime,
+    last_prompted_local: datetime | None = None,
+) -> bool:
+    """Whether a chart's award prompt should fire at ``now_local``.
+
+    Fires on the first sweep at or after the configured time on a chosen weekday,
+    then holds for the rest of that local day (``last_prompted_local`` on the same
+    date suppresses it) — so a check that runs every 15–30 min sends exactly once.
+    """
+    p = structured.get("prompt") if isinstance(structured, dict) else None
+    if not isinstance(p, dict) or not p.get("enabled"):
+        return False
+    if now_local.weekday() not in (p.get("days") or []):
+        return False
+    due_t = _parse_hhmm(p.get("time"))
+    if due_t is None or now_local.time() < due_t:
+        return False
+    if last_prompted_local is not None and last_prompted_local.date() == now_local.date():
+        return False
+    return True
+
+
+def prompt_question(structured: Any, child_name: str | None, title: str) -> str:
+    """The prompt's question line — the chart's custom text, or a sensible default."""
+    p = structured.get("prompt") if isinstance(structured, dict) else None
+    custom = p.get("question") if isinstance(p, dict) else None
+    if custom:
+        return custom
+    who = child_name or "the kids"
+    return f"🌟 Did {who} earn a star for {title} today?"
 
 
 # --- render ------------------------------------------------------------------

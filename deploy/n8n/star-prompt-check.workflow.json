@@ -1,0 +1,42 @@
+{
+  "name": "Prefrontal — Star Prompt Check (award check-ins)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 15 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/household/star-prompts/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_A_HOUSEHOLD_MEMBERS_TOKEN" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "star-prompt-check",
+      "name": "Star Prompt Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 min": { "main": [[{ "node": "Star Prompt Check", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "Fires any star-chart award prompts due now for the token owner's household. The endpoint publishes the one-tap 'did they earn a star?' push to BOTH parents itself (native ntfy/Pushover delivery), so no publish node is needed. Runs every 15 min; each chart's schedule (weekdays + time, set on the /kids dashboard) decides when it actually asks, and last_prompted_at dedups to once per local day. Use a household member's per-user token so delivery resolves that household. Point the URL at your Prefrontal host (Tailscale addr if n8n runs elsewhere)."
+  }
+}

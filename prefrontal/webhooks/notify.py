@@ -46,6 +46,8 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     "meal": (("meal_ate", "✓ Ate"), ("meal_snooze", "Snooze")),
     # Self-care water check — confirm a drink (defers a full interval) or snooze.
     "water": (("water_drank", "✓ Drank"), ("water_snooze", "Snooze")),
+    # Star-chart award prompt — award a star in one tap, or skip for today.
+    "star": (("star_award", "⭐ Yes"), ("star_skip", "Not today")),
 }
 
 

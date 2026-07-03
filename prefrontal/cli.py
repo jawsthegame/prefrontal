@@ -228,66 +228,109 @@ def _cmd_household(args: argparse.Namespace) -> int:
             print(render_sheet(build_sheet(scoped)), end="")
         elif args.household_action == "star":
             return _award_stars_cli(store, args, settings)
+        elif args.household_action == "prompt-check":
+            return _star_prompts_cli(store, args, settings)
     return 0
 
 
 def _award_stars_cli(store, args, settings) -> int:
     """Award stars from the CLI, congratulating both parents when a goal is hit.
 
-    Mirrors ``POST /household/agreements/{id}/stars``: append to the ledger, then
-    fire a celebration to every household member for each reward threshold the
-    grant crossed. The operator picks the acting parent with ``--user`` (that's
-    who the grant is attributed to and who signs the push).
+    Mirrors ``POST /household/agreements/{id}/stars`` — same shared service, so the
+    "crossed a reward line → tell both parents" rule stays in one place. The
+    operator picks the acting parent with ``--user`` (attributed the grant, signs
+    the push).
     """
-    from prefrontal.household import (
-        newly_reached_goals,
-        next_goal,
-        parse_structured,
-        star_congrats_text,
-    )
-    from prefrontal.integrations.delivery import deliver_to_household, household_notice
+    from prefrontal.household import award_stars_and_notify
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
-    agreement = scoped.agreement(args.agreement)
-    if agreement is None:
-        print(f"No agreement with id {args.agreement} in this household.", file=sys.stderr)
-        return 1
-    structured = parse_structured(agreement.get("structured"))
-    if isinstance(structured, dict) and structured.get("earn_only") and args.count < 0:
-        print("This chart is earn-only — stars can't be taken away.", file=sys.stderr)
-        return 1
     if args.count == 0:
         print("Nothing to award (count is 0).", file=sys.stderr)
         return 1
-    result = scoped.award_stars(
-        agreement_id=args.agreement,
-        delta=args.count,
-        awarded_by=scoped.user_id,
-        note=args.note,
-    )
-    assert result is not None
-    print(f"{agreement['title']}: {result['delta']:+d} → {result['after']} total.")
-    goals = newly_reached_goals(structured, result["before"], result["after"])
-    child_name = None
-    if agreement.get("child_id"):
-        child_name = next(
-            (c["name"] for c in scoped.children() if c["id"] == agreement["child_id"]), None
+    try:
+        result = award_stars_and_notify(
+            scoped, args.agreement, delta=args.count,
+            awarded_by=scoped.user_id, note=args.note, settings=settings,
         )
-    for goal in goals:
-        print(f"🎉 Goal reached: {star_congrats_text(child_name, goal)}")
-        decision = household_notice(star_congrats_text(child_name, goal), channel="sound")
-        for row in deliver_to_household(
-            store, scoped.household_id_or_none(), decision, settings=settings
-        ):
-            state = "sent" if row["delivered"] else "not sent"
-            print(f"  → {row['handle']}: {state} ({row['detail']})")
-    upcoming = next_goal(structured, result["after"])
-    if upcoming:
-        print(f"Next: {upcoming['remaining']} to go → {upcoming['reward']}.")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if result is None:
+        print(f"No agreement with id {args.agreement} in this household.", file=sys.stderr)
+        return 1
+    print(f"{result['agreement']['title']}: {result['delta']:+d} → {result['total']} total.")
+    for goal in result["goals_reached"]:
+        print(f"🎉 Goal reached: reward unlocked — {goal['reward']}!")
+    for row in result["notified"]:
+        state = "sent" if row["delivered"] else "not sent"
+        print(f"  → {row['handle']}: {state} ({row['detail']})")
+    if result["next_goal"]:
+        print(f"Next: {result['next_goal']['remaining']} to go → {result['next_goal']['reward']}.")
     return 0
+
+
+def _star_prompts_cli(store, args, settings) -> int:
+    """Fire any due star-award prompts for a household (the sweep, run locally).
+
+    The CLI twin of ``POST /webhooks/household/star-prompts/check`` — for a launchd
+    ``StartCalendarInterval`` trigger or a manual test. Sends both parents a
+    one-tap "did <kid> earn a star?" push for each chart whose schedule is due now,
+    and marks it so it fires once per local day.
+    """
+    from prefrontal.household import (
+        parse_structured,
+        prompt_due,
+        prompt_question,
+    )
+    from prefrontal.integrations.delivery import (
+        deliver_to_household,
+        household_prompt_notice,
+    )
+    from prefrontal.scheduling import local_datetime
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    now_local = local_datetime(utcnow(), settings.timezone)
+    hid = scoped.household_id_or_none()
+    sent = 0
+    for agreement in scoped.agreements():
+        structured = parse_structured(agreement.get("structured"))
+        last = agreement.get("last_prompted_at")
+        last_local = local_datetime(_parse_last(last), settings.timezone) if last else None
+        if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
+            continue
+        child_name = next(
+            (c["name"] for c in scoped.children() if c["id"] == (agreement.get("child_id") or 0)),
+            None,
+        )
+        question = prompt_question(structured, child_name, agreement["title"])
+        deliver_to_household(
+            store, hid,
+            household_prompt_notice(question, agreement["id"], channel="push"),
+            settings=settings,
+            base_url=settings.oauth_base_url, secret=settings.session_secret,
+        )
+        scoped.mark_prompted(agreement["id"])
+        print(f"Prompted: {agreement['title']} — “{question}”")
+        sent += 1
+    if not sent:
+        print("No prompts due right now.")
+    return 0
+
+
+def _parse_last(ts):
+    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp for prompt dedup, or ``None``."""
+    from datetime import datetime
+
+    try:
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
@@ -982,7 +1025,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_user.set_defaults(func=_cmd_user)
 
     p_house = sub.add_parser(
-        "household", help="Manage the shared household sheet (add/join/leave/show/star)."
+        "household",
+        help="Manage the shared household sheet (add/join/leave/show/star/prompt-check).",
     )
     p_house.add_argument("--db-path", default=None, help="Override the database path.")
     house_sub = p_house.add_subparsers(dest="household_action", required=True)
@@ -1008,6 +1052,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     h_star.add_argument("--note", default=None, help="Optional 'what for' note.")
     h_star.add_argument("--user", default=None, help="Acting parent's handle.")
+    h_check = house_sub.add_parser(
+        "prompt-check", help="Fire any star-award prompts due now (both parents)."
+    )
+    h_check.add_argument("--user", default=None, help="Handle of a household member.")
     p_house.set_defaults(func=_cmd_household)
 
     p_migrate = sub.add_parser(
