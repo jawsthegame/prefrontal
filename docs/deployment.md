@@ -131,6 +131,35 @@ launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
 
 Logs: `tail -f ~/Library/Logs/prefrontal.err.log`.
 
+### Remote update / restart (optional)
+
+Once the launchd job is running you can pull the latest code and restart it
+without SSHing in.
+
+- **On-host CLI** (always available): `prefrontal update` runs the full deploy —
+  `git pull --ff-only`, `pip install -e .`, apply the idempotent schema (`init-db`)
+  — then restarts the service via `launchctl kickstart -k`. `prefrontal restart`
+  bounces it without pulling; `prefrontal update --no-restart` updates only. The
+  deploy steps live in [`deploy/update.sh`](../deploy/update.sh) — **edit
+  `PREFRONTAL_HOME`/paths there** to match your install.
+- **Over HTTP** (operator + opt-in): set `PREFRONTAL_SELF_UPDATE=on` in `.env`,
+  then `POST /admin/update` (or `/admin/restart`) with an operator token:
+
+  ```bash
+  curl -s -XPOST "$PF/admin/update" -H "X-Prefrontal-Token: $OPERATOR_TOKEN"
+  ```
+
+  This is powerful — it runs whatever is on the deployed branch — so it stays
+  **off until you enable it** and requires an operator token. The update runs
+  synchronously (its output comes back in the response); on success the restart
+  is spawned *detached* so the response returns before the process is bounced. A
+  failed update **skips** the restart, so a bad pull never takes down a working
+  service.
+
+Non-launchd host (systemd, Docker, a script)? Point `PREFRONTAL_RESTART_CMD` (and
+optionally `PREFRONTAL_UPDATE_CMD`) at your own commands — the defaults just
+assume the launchd job above.
+
 ---
 
 ## 4. Ollama (local model)
