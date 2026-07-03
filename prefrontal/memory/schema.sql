@@ -571,6 +571,23 @@ CREATE TABLE IF NOT EXISTS household_shopping (
 
 CREATE INDEX IF NOT EXISTS idx_household_shopping ON household_shopping (household_id, got);
 
+-- Self-serve household invites. A member generates a short shareable code (also
+-- rendered as a /kids?invite=CODE link); the other parent redeems it to join,
+-- with no operator step. One-time (redeemed_by stamps who used it), expiring, and
+-- revocable (delete an unredeemed row). See docs/household-sheet.md §8.
+CREATE TABLE IF NOT EXISTS household_invites (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    code         TEXT NOT NULL UNIQUE,             -- short human-typeable code
+    created_by   INTEGER REFERENCES users(id),
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at   DATETIME NOT NULL,                -- redeemable until this (UTC)
+    redeemed_by  INTEGER REFERENCES users(id),     -- who joined with it (NULL = unused)
+    redeemed_at  DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_household_invites_code ON household_invites (code);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"

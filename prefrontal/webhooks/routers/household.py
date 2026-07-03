@@ -48,7 +48,9 @@ from prefrontal.webhooks._common import (
     DigestConfig,
     FactClear,
     FactSet,
+    HouseholdCreate,
     HTTPException,
+    InviteRedeem,
     PromptConfig,
     ScopedRequest,
     ShoppingAdd,
@@ -157,6 +159,7 @@ def build_router(
         return {
             "sheet": asdict(sheet),
             "markdown": render_sheet(sheet),
+            "invites": ctx.store.pending_invites(),
             # A household of one is fully supported; the co-parent-only features
             # (check-in, digest, balance) hide when not shared and return
             # automatically once a second parent joins.
@@ -169,6 +172,60 @@ def build_router(
                 "agreement_kinds": list(AGREEMENT_KINDS),
             },
         }
+
+    # -- self-serve membership (no operator needed) ---------------------------
+
+    @router.post("/household/create", status_code=status.HTTP_201_CREATED, tags=["household"])
+    def create_own_household(
+        payload: HouseholdCreate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Create a household and join it — the self-serve alternative to the operator flow."""
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name must be non-empty"
+            )
+        try:
+            hid = ctx.store.create_own_household(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
+        return {"id": hid, "name": name}
+
+    @router.post("/household/invites", status_code=status.HTTP_201_CREATED, tags=["household"])
+    def create_invite(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mint a shareable invite code (+ a join link) for the caller's household."""
+        _require_member(ctx)
+        invite = ctx.store.create_invite()
+        base = resolved_settings.oauth_base_url
+        join_url = f"{base}/kids?invite={invite['code']}" if base else ""
+        return {**invite, "join_url": join_url}
+
+    @router.post("/household/invites/{invite_id}/revoke", tags=["household"])
+    def revoke_invite(
+        invite_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Revoke an unredeemed invite code."""
+        _require_member(ctx)
+        if not ctx.store.revoke_invite(invite_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such invite")
+        return {"revoked": True}
+
+    @router.post("/household/invites/redeem", tags=["household"])
+    def redeem_invite(
+        payload: InviteRedeem,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Join a household by redeeming an invite code (no operator step)."""
+        result = ctx.store.redeem_invite(payload.code)
+        if not result["ok"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=result["error"]
+            )
+        return {"ok": True, "household_name": result.get("household_name")}
 
     # -- roster ---------------------------------------------------------------
 

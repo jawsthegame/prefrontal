@@ -1351,6 +1351,87 @@ def test_load_balancing_activates_when_a_second_parent_joins(client, store):
     assert client.get("/household/sheet", headers=_h("lee-tok")).json()["shared"] is True
 
 
+# --- self-serve household setup + invites ------------------------------------
+
+
+def test_create_own_household_joins_and_guards(store):
+    lee = store.scoped(store.get_user("lee")["id"])
+    assert lee.household_id_or_none() is None
+    hid = lee.create_own_household("Lee's place")
+    assert lee.household_id_or_none() == hid
+    with pytest.raises(ValueError):
+        lee.create_own_household("again")  # already in one
+
+
+def test_invite_create_pending_and_revoke(store, dana):
+    inv = dana.create_invite()
+    assert "-" in inv["code"] and inv["code"] == inv["code"].upper()
+    pending = dana.pending_invites()
+    assert [p["code"] for p in pending] == [inv["code"]]
+    assert dana.revoke_invite(pending[0]["id"]) is True
+    assert dana.pending_invites() == []
+
+
+def test_redeem_joins_shared_rows_and_reports_errors(store, dana):
+    lee = store.scoped(store.get_user("lee")["id"])
+    op = store.scoped(store.get_user("op")["id"])
+    code = dana.create_invite()["code"]
+    assert lee.redeem_invite("NOPE-XXXX")["ok"] is False  # invalid
+    # success — lee joins The Kims (codes are case-insensitive)
+    res = lee.redeem_invite(code.lower())
+    assert res["ok"] is True and res["household_name"] == "The Kims"
+    assert lee.household_id_or_none() == dana.household_id_or_none()
+    dana.set_fact(
+        category="sizes", item="shoe size", value="13", updated_by=store.get_user("dana")["id"]
+    )
+    assert [f["value"] for f in lee.facts()] == ["13"]  # now sees shared rows
+    # reused code, and already-in-a-household
+    assert op.redeem_invite(code)["error"] == "That invite has already been used."
+    assert "already in a household" in dana.redeem_invite(dana.create_invite()["code"])["error"]
+
+
+def test_redeem_expired_code(store, dana):
+    lee = store.scoped(store.get_user("lee")["id"])
+    code = dana.create_invite(ttl_days=-1)["code"]  # already past its expiry
+    assert "expired" in lee.redeem_invite(code)["error"]
+    assert lee.household_id_or_none() is None  # not joined
+
+
+def test_self_serve_endpoints_create_invite_redeem(client, store):
+    # lee (no household) creates one, then can't create a second
+    r = client.post("/household/create", json={"name": "Lee Home"}, headers=_h("lee-tok"))
+    assert r.status_code == 201
+    assert client.post(
+        "/household/create", json={"name": "x"}, headers=_h("lee-tok")
+    ).status_code == 409
+    # lee mints an invite; it shows as pending on the sheet
+    inv = client.post("/household/invites", json={}, headers=_h("lee-tok")).json()
+    assert "-" in inv["code"]
+    pending = client.get("/household/sheet", headers=_h("lee-tok")).json()["invites"]
+    assert pending[0]["code"] == inv["code"]
+    # op (no household) redeems → joins Lee Home
+    red = client.post(
+        "/household/invites/redeem", json={"code": inv["code"]}, headers=_h("op-tok")
+    )
+    assert red.status_code == 200 and red.json()["household_name"] == "Lee Home"
+    assert client.get("/household/sheet", headers=_h("op-tok")).json()["sheet"] is not None
+    # a bad code → 400
+    assert client.post(
+        "/household/invites/redeem", json={"code": "NOPE-XXXX"}, headers=_h("dana-tok")
+    ).status_code == 400
+
+
+def test_invite_revoke_endpoint(client):
+    client.post("/household/invites", json={}, headers=_h("dana-tok"))
+    iid = client.get("/household/sheet", headers=_h("dana-tok")).json()["invites"][0]["id"]
+    assert client.post(
+        f"/household/invites/{iid}/revoke", json={}, headers=_h("dana-tok")
+    ).json()["revoked"] is True
+    assert client.post(
+        "/household/invites/999/revoke", json={}, headers=_h("dana-tok")
+    ).status_code == 404
+
+
 # --- migration ---------------------------------------------------------------
 
 

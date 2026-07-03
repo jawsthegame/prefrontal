@@ -87,6 +87,15 @@
   .shop-row .shop-txt { flex: 1; }
   .shop-row.done .shop-txt { text-decoration: line-through; color: var(--muted); }
   .shop-row .shop-sub { color: var(--muted); font-size: 12px; }
+  .invite-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+    border-bottom: 1px dashed var(--line); }
+  .invite-row:last-child { border-bottom: none; }
+  .invite-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700;
+    letter-spacing: 1px; }
+  #invite-out { margin-top: 10px; }
+  #invite-out .code-big { font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 20px; font-weight: 700; letter-spacing: 2px; color: var(--accent); }
+  #invite-out .link { color: var(--muted); font-size: 13px; word-break: break-all; }
   /* assistant */
   #asst-log { margin-top: 10px; }
   .asst-reply { font-size: 15px; margin-bottom: 8px; }
@@ -144,6 +153,13 @@
       <input id="child-bday" type="date" title="Birthday (optional)" />
       <button class="primary" type="submit">Add</button>
     </form>
+  </section>
+
+  <section class="card" id="c-invite">
+    <p class="label">Co-parents</p>
+    <div id="invites"></div>
+    <button class="primary" id="invite-btn" type="button">Invite a co-parent</button>
+    <div id="invite-out"></div>
   </section>
 
   <section class="card" id="c-facts">
@@ -223,9 +239,19 @@
     </form>
   </section>
 
-  <div id="no-household" style="display:none" class="card empty">
-    You're not set up in a household yet. An operator can wire you in with
-    <code>prefrontal household add</code> then <code>prefrontal household join</code>.
+  <div id="no-household" style="display:none" class="card">
+    <p class="label">Set up your household</p>
+    <p class="hint" style="margin-top:-2px">It's just you until you invite a co-parent — you can do that any time.</p>
+    <form class="inline" id="create-hh-form">
+      <input class="grow" id="hh-name" type="text" placeholder="Household name, e.g. The Kims" required />
+      <button class="primary" type="submit">Create household</button>
+    </form>
+    <p class="hint" style="margin-top:12px">Got an invite code from your co-parent?</p>
+    <form class="inline" id="join-hh-form">
+      <input class="grow" id="join-code" type="text" placeholder="Invite code, e.g. PLUM-7F2Q" required />
+      <button class="primary" type="submit">Join</button>
+    </form>
+    <div id="hh-err" class="asst-err"></div>
   </div>
 </div>
 
@@ -317,6 +343,16 @@ function renderBalance(bal) {
       <span class="bal-bar"><span class="bal-fill" style="width:${m.share}%"></span></span>
       <span class="bal-n">${m.count} · ${m.share}%</span></div>`).join("");
   $("#balance-body").innerHTML = rows + `<div class="bal-cap">${esc(v.caption)}</div>`;
+}
+
+function renderInvites(invites) {
+  invites = invites || [];
+  $("#invites").innerHTML = invites.length
+    ? invites.map((i) => `<div class="invite-row">
+        <span class="invite-code">${esc(i.code)}</span>
+        <span class="grow" style="color:var(--muted);font-size:12px">pending</span>
+        <button class="iconbtn del" data-revoke="${i.id}" title="Revoke">🗑</button></div>`).join("")
+    : `<div class="empty">No pending invites.</div>`;
 }
 
 function renderRoster() {
@@ -489,6 +525,8 @@ async function loadSheet() {
       $("#wrap").style.display = "block";
       document.querySelectorAll(".card").forEach((c) => { if (c.id !== "no-household") c.style.display = "none"; });
       $("#no-household").style.display = "block";
+      const invite = new URLSearchParams(location.search).get("invite");
+      if (invite && !$("#join-code").value) $("#join-code").value = invite;
       $("#status").textContent = "not in a household";
       return;
     }
@@ -497,11 +535,16 @@ async function loadSheet() {
   }
   $("#gate").style.display = "none";
   $("#wrap").style.display = "block";
+  // Restore cards (a prior "not in a household" render may have hidden them) and
+  // hide the setup block now that we're in a household.
+  document.querySelectorAll(".card").forEach((c) => { c.style.display = ""; });
+  $("#no-household").style.display = "none";
   const sheet = data.sheet || {};
   vocab = data.vocab || vocab;
   children = sheet.children || [];
   renderRecent(sheet.recently_changed);
   renderDigest(data.digest);
+  renderInvites(data.invites);
   renderRoster();
   renderFacts(sheet.per_child);
   agreements = sheet.agreements || [];
@@ -706,6 +749,47 @@ $("#checkin-form").addEventListener("submit", async (e) => {
     time: $("#ci-time").value || "19:00",
   });
   await loadSheet();
+});
+
+// -- self-serve household setup + invites -------------------------------------
+
+$("#create-hh-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#hh-name").value.trim();
+  if (name) { await post("/household/create", { name }); await loadSheet(); }
+});
+
+$("#join-hh-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("#join-code").value.trim();
+  if (!code) return;
+  const r = await fetch("/household/invites/redeem", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ code }),
+  });
+  if (r.ok) { await loadSheet(); return; }
+  const body = await r.json().catch(() => ({}));
+  $("#hh-err").textContent = body.detail || "Couldn't join with that code.";
+});
+
+$("#invite-btn").addEventListener("click", async () => {
+  const inv = await post("/household/invites", {});
+  const link = inv.join_url
+    ? `<div class="link">Share link: ${esc(inv.join_url)}</div>` : "";
+  $("#invite-out").innerHTML =
+    `<div>Share this with your co-parent (expires in 7 days):</div>
+     <div class="code-big">${esc(inv.code)}</div>${link}`;
+  renderInvites((await api("/household/sheet")).invites);
+});
+
+$("#invites").addEventListener("click", async (e) => {
+  const id = e.target.getAttribute("data-revoke");
+  if (id && confirm("Revoke this invite code?")) {
+    await post(`/household/invites/${id}/revoke`, {});
+    $("#invite-out").innerHTML = "";
+    await loadSheet();
+  }
 });
 
 $("#shop-form").addEventListener("submit", async (e) => {

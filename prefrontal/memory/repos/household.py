@@ -18,9 +18,14 @@ See ``docs/household-sheet.md`` for the full design.
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 from prefrontal.memory._helpers import _row_to_dict
+
+#: Invite-code alphabet — uppercase + digits minus ambiguous glyphs (no O/0/I/1),
+#: so a code read off one phone and typed into another is unambiguous.
+_INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 #: The controlled vocabulary for ``household_facts.category`` — a small, fixed set
 #: mirroring ``todos.KNOWN_CATEGORIES``' single-source-of-truth pattern, so the
@@ -682,6 +687,116 @@ class HouseholdRepo:
             (self._household_id(),),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- self-serve household setup + invites ---------------------------------
+    #
+    # Membership without an operator: a user with no household can create one
+    # (create_own_household) and invite a co-parent with a short code
+    # (create_invite), who joins by redeeming it (redeem_invite). These use the
+    # bound user (_uid) but deliberately NOT _household_id — the redeemer isn't a
+    # member yet, and a creator has no household until the create runs.
+
+    def create_own_household(self, name: str) -> int:
+        """Create a household and put the (bound) caller in it. Raises if already in one."""
+        uid = self._uid()
+        if self.household_id_or_none() is not None:
+            raise ValueError("you're already in a household")
+        cur = self.conn.execute("INSERT INTO households (name) VALUES (?)", (name.strip(),))
+        hid = int(cur.lastrowid)
+        self.conn.execute("UPDATE users SET household_id = ? WHERE id = ?", (hid, uid))
+        self.conn.commit()
+        return hid
+
+    def _new_invite_code(self) -> str:
+        """A short, unambiguous, unique invite code like ``"PLUM-7F2Q"`` (retrying on collision)."""
+        for _ in range(12):
+            code = "-".join(
+                "".join(secrets.choice(_INVITE_ALPHABET) for _ in range(4)) for _ in range(2)
+            )
+            if self.conn.execute(
+                "SELECT 1 FROM household_invites WHERE code = ?", (code,)
+            ).fetchone() is None:
+                return code
+        raise RuntimeError("couldn't generate a unique invite code")
+
+    def create_invite(self, *, ttl_days: int = 7) -> dict[str, Any]:
+        """Mint a shareable invite code for the caller's household (expires in ``ttl_days``)."""
+        hid = self._household_id()
+        code = self._new_invite_code()
+        self.conn.execute(
+            "INSERT INTO household_invites (household_id, code, created_by, expires_at) "
+            "VALUES (?, ?, ?, datetime('now', ?))",
+            # ":+d" keeps the modifier valid for negative ttls too ("-1 days"),
+            # not the malformed "+-1 days".
+            (hid, code, self._uid(), f"{int(ttl_days):+d} days"),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT code, expires_at FROM household_invites WHERE code = ?", (code,)
+        ).fetchone()
+        return {"code": row["code"], "expires_at": row["expires_at"]}
+
+    def pending_invites(self) -> list[dict[str, Any]]:
+        """Unredeemed, unexpired invites for the caller's household (newest first)."""
+        rows = self.conn.execute(
+            """
+            SELECT i.id, i.code, i.expires_at,
+                   COALESCE(u.display_name, u.handle) AS created_by_name
+            FROM household_invites i
+            LEFT JOIN users u ON u.id = i.created_by
+            WHERE i.household_id = ? AND i.redeemed_by IS NULL
+                  AND i.expires_at > datetime('now')
+            ORDER BY i.created_at DESC
+            """,
+            (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def revoke_invite(self, invite_id: int) -> bool:
+        """Delete an unredeemed invite (scoped to the household). ``True`` if removed."""
+        cur = self.conn.execute(
+            "DELETE FROM household_invites "
+            "WHERE id = ? AND household_id = ? AND redeemed_by IS NULL",
+            (invite_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def redeem_invite(self, code: str) -> dict[str, Any]:
+        """Join the caller to the invite's household. Returns ``{ok, error?, household_name?}``.
+
+        A global lookup by code (the caller isn't a member yet), with a specific,
+        friendly reason for each failure — invalid / used / expired / already in a
+        household — so the UI can just show ``error``.
+        """
+        uid = self._uid()
+        row = self.conn.execute(
+            "SELECT id, household_id, redeemed_by, "
+            "(expires_at <= datetime('now')) AS expired "
+            "FROM household_invites WHERE code = ?",
+            (code.strip().upper(),),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "error": "That invite code isn't valid."}
+        if row["redeemed_by"] is not None:
+            return {"ok": False, "error": "That invite has already been used."}
+        if row["expired"]:
+            return {"ok": False, "error": "That invite has expired — ask for a fresh one."}
+        if self.household_id_or_none() is not None:
+            return {"ok": False, "error": "You're already in a household."}
+        self.conn.execute(
+            "UPDATE users SET household_id = ? WHERE id = ?", (row["household_id"], uid)
+        )
+        self.conn.execute(
+            "UPDATE household_invites SET redeemed_by = ?, redeemed_at = datetime('now') "
+            "WHERE id = ?",
+            (uid, row["id"]),
+        )
+        self.conn.commit()
+        name = self.conn.execute(
+            "SELECT name FROM households WHERE id = ?", (row["household_id"],)
+        ).fetchone()
+        return {"ok": True, "household_name": name["name"] if name else None}
 
     # -- operator (unscoped store) --------------------------------------------
     #
