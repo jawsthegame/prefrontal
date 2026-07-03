@@ -19,8 +19,10 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.hyperfocus import (
     build_focus_message,
     focus_level,
+    focus_task_from_title,
     infer_focus_start,
     is_abandoned,
+    is_focus_intent_title,
     is_focus_protected,
     level_rank,
     should_protect,
@@ -199,6 +201,30 @@ def test_infer_focus_start_falls_back_to_generic_block():
     assert got.planned_minutes is None and got.source == "default"
 
 
+def test_infer_focus_start_links_todo_id():
+    """The picked todo's id rides along so the session tags it for learning."""
+    got = infer_focus_start([{"id": 7, "title": "ship it", "estimate_minutes": 30}])
+    assert got.todo_id == 7
+    assert infer_focus_start([]).todo_id is None
+
+
+@pytest.mark.parametrize(
+    "title, intent, task",
+    [
+        ("Deep work: the RFC", True, "the RFC"),
+        ("Deep-Work — auth refactor", True, "auth refactor"),
+        ("Focus time", True, None),
+        ("Focus", True, None),
+        ("heads-down", True, None),
+        ("Team standup", False, "Team standup"),
+    ],
+)
+def test_focus_intent_title_parsing(title, intent, task):
+    assert is_focus_intent_title(title) is intent
+    if intent:
+        assert focus_task_from_title(title) == task
+
+
 def test_start_blank_infers_generic_block_when_no_todos(client):
     """A one-tap start with nothing open still works — a generic block."""
     resp = client.post(
@@ -217,6 +243,84 @@ def test_start_blank_infers_top_todo(client, store):
     assert body["intended_task"] == "the API refactor"
     assert body["planned_minutes"] == 45
     assert "open todos" in body["confirmation"]
+
+
+def test_one_tap_links_inferred_todo_id(client, store):
+    """A one-tap start links the todo it picked, so learning can tag the block."""
+    tid = store.add_todo("the API refactor", estimate_minutes=45, priority=2)
+    body = client.post("/webhooks/focus/start", json={}, headers=_auth()).json()
+    assert store.get_focus_session(body["session_id"])["todo_id"] == tid
+
+
+# -- calendar-armed start ----------------------------------------------------
+
+_NOW = datetime(2026, 6, 15, 13, 0, 0)
+
+
+def _ts(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _freeze_focus_clock(monkeypatch):
+    monkeypatch.setattr("prefrontal.webhooks.routers.focus.utcnow", lambda: _NOW)
+
+
+def test_arm_starts_from_live_focus_event(client, store, monkeypatch):
+    """A live 'Deep work: X' block arms a protected session for its remaining window."""
+    _freeze_focus_clock(monkeypatch)
+    store.upsert_commitment(
+        title="Deep work: the RFC",
+        start_at=_ts(_NOW - timedelta(minutes=30)),
+        end_at=_ts(_NOW + timedelta(minutes=60)),
+        hardness="soft",
+    )
+    body = client.post("/webhooks/focus/arm", headers=_auth()).json()
+    assert body["armed"] is True
+    assert body["intended_task"] == "the RFC"
+    assert 59 <= body["planned_minutes"] <= 61  # ~remaining
+    assert store.get_focus_session(body["session_id"])["intended_task"] == "the RFC"
+
+
+def test_arm_bare_focus_time_protects_top_todo(client, store, monkeypatch):
+    """A label-only 'Focus time' block falls back to protecting your top todo."""
+    _freeze_focus_clock(monkeypatch)
+    tid = store.add_todo("the API refactor", estimate_minutes=45, priority=2)
+    store.upsert_commitment(
+        title="Focus time",
+        start_at=_ts(_NOW - timedelta(minutes=10)),
+        end_at=_ts(_NOW + timedelta(minutes=50)),
+        hardness="soft",
+    )
+    body = client.post("/webhooks/focus/arm", headers=_auth()).json()
+    assert body["armed"] is True and body["intended_task"] == "the API refactor"
+    assert store.get_focus_session(body["session_id"])["todo_id"] == tid
+
+
+def test_arm_skips_when_session_active(client, store, monkeypatch):
+    """Never stack a second session on top of one that's already running."""
+    _freeze_focus_clock(monkeypatch)
+    store.start_focus_session("already going")
+    store.upsert_commitment(
+        title="Deep work: x",
+        start_at=_ts(_NOW - timedelta(minutes=5)),
+        end_at=_ts(_NOW + timedelta(minutes=30)),
+        hardness="soft",
+    )
+    body = client.post("/webhooks/focus/arm", headers=_auth()).json()
+    assert body["armed"] is False and "active" in body["reason"]
+
+
+def test_arm_skips_when_no_live_block(client, store, monkeypatch):
+    """A focus block that already ended doesn't arm anything."""
+    _freeze_focus_clock(monkeypatch)
+    store.upsert_commitment(
+        title="Deep work: earlier",
+        start_at=_ts(_NOW - timedelta(hours=3)),
+        end_at=_ts(_NOW - timedelta(hours=2)),
+        hardness="soft",
+    )
+    body = client.post("/webhooks/focus/arm", headers=_auth()).json()
+    assert body["armed"] is False
 
 
 def test_start_confirmation_notes_protection_and_plan(client):
