@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts_strict as _parse
 from prefrontal.impact import utcnow
 from prefrontal.modules.location_anchor import haversine_m
 
@@ -91,11 +93,6 @@ LEVELS = ("none", "heads_up", "soon", "go")
 def level_rank(level: str) -> int:
     """Return the urgency rank of a departure level (``none`` -> 0)."""
     return LEVELS.index(level)
-
-
-def _parse(ts: str) -> datetime:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` UTC timestamp (naive UTC)."""
-    return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
 
 
 def estimate_travel_minutes(
@@ -299,7 +296,7 @@ def plan_departure(
         level = departure_level(minutes_until, heads_up_minutes, soon_minutes)
     return DeparturePlan(
         commitment=commitment,
-        leave_by=leave_by.strftime("%Y-%m-%d %H:%M:%S"),
+        leave_by=leave_by.strftime(TS_FMT),
         minutes_until_leave=minutes_until,
         travel_minutes=round(travel, 1) if travel is not None else None,
         basis=basis,
@@ -507,7 +504,7 @@ def record_departure_outcome(
         context=f"auto departure: {plan.commitment.get('title') or 'commitment'}",
         outcome=outcome,
         notes=notes,
-        timestamp=departed_at.strftime("%Y-%m-%d %H:%M:%S"),
+        timestamp=departed_at.strftime(TS_FMT),
     )
     return {
         "episode_id": episode_id,

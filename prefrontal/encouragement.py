@@ -28,6 +28,8 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.briefing import DEFAULT_DAY_END_HOUR, DEFAULT_DAY_START_HOUR
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_or_none
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
@@ -98,7 +100,7 @@ ENCOURAGEMENT_SYSTEM_PROMPTS = {
 
 
 def _fmt(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return dt.strftime(TS_FMT)
 
 
 def _commitment_title(context: str | None) -> str | None:
@@ -303,13 +305,6 @@ def build_recovery(
             "minutes": decomp.first_step_minutes,
         }
     return RecoveryPlan(refit=refit, defer=defer, first_step=first_step)
-
-
-def _parse_or_none(ts: Any) -> datetime | None:
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 # --- Rendering ---------------------------------------------------------------

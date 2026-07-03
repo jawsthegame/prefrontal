@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.mail.triage import build_corrections_block
 
 if TYPE_CHECKING:
@@ -39,18 +40,6 @@ _EXAMPLE_LIMIT = 6
 #: denylist is a deterministic gate (not text fed to a model), so it costs
 #: nothing to carry every repeat-offender and we don't want to silently truncate.
 _DENYLIST_LIMIT = 500
-
-
-def _parse_ts(value: Any) -> datetime | None:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` timestamp to naive UTC, or ``None``."""
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.strptime(str(value)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 def record_drop_feedback(

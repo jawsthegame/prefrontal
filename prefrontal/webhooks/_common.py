@@ -56,6 +56,7 @@ from prefrontal.assistant import (
 )
 from prefrontal.briefing import build_briefing, render_briefing
 from prefrontal.classify import classify_kind
+from prefrontal.clock import parse_ts as _parse_dt_or_none
 from prefrontal.coaching import in_quiet_hours, resolve_ack
 from prefrontal.commitments import (
     KINDS,
@@ -946,16 +947,6 @@ class AssistantApply(BaseModel):
     actions: list[dict[str, Any]] = Field(
         default_factory=list, description="Wire-format actions from POST /assistant."
     )
-
-
-def _parse_dt_or_none(ts: str | None) -> Any:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
-    if not ts:
-        return None
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
 
 
 def _fmt_minutes(value: float | None) -> str:

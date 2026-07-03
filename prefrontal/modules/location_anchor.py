@@ -26,6 +26,7 @@ import math
 import re
 from typing import Protocol
 
+from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.impact import analyze_impact, at_risk, impact_phrase, project_free_time
 from prefrontal.integrations.ollama import OllamaError
@@ -620,7 +621,7 @@ def _minutes_between(start: str | None, end: str | None) -> float | None:
         return None
     from datetime import datetime
 
-    fmt = "%Y-%m-%d %H:%M:%S"
+    fmt = TS_FMT
     try:
         # Trim fractional seconds if SQLite included them.
         delta = datetime.strptime(end[:19], fmt) - datetime.strptime(start[:19], fmt)

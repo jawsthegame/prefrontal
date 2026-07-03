@@ -8,6 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.webhooks._common import (
@@ -549,7 +550,7 @@ def build_router(
             result["reason"] = "outside waking hours"
             return result
 
-        fmt = "%Y-%m-%d %H:%M:%S"
+        fmt = TS_FMT
         # Look back far enough to catch an in-progress (or all-day) commitment
         # that started before now; free_windows clips it to the [now, horizon] band.
         commitments = memory.commitments_between(

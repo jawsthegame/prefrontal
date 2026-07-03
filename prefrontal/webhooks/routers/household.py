@@ -12,6 +12,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter
 
+from prefrontal.clock import TS_FMT
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
     BALANCE_WINDOW_DAYS,
@@ -142,7 +143,7 @@ def build_router(
         unseen = unseen_changes(ctx.store, viewer_id=ctx.user["id"], since=since)
         digest = {"enabled": ctx.store.get_digest_enabled(), "unseen": len(unseen)}
         ctx.store.set_state(
-            "household_seen_at", now.strftime("%Y-%m-%d %H:%M:%S"), source="inferred"
+            "household_seen_at", now.strftime(TS_FMT), source="inferred"
         )
         # The load-balance view (opt-in, shared-only). Derived on read from a
         # 30-day provenance window; `view` is null when the toggle is off.
@@ -153,7 +154,7 @@ def build_router(
             view = None
             if bal_enabled:
                 since = (now - timedelta(days=BALANCE_WINDOW_DAYS)).strftime(
-                    "%Y-%m-%d %H:%M:%S"
+                    TS_FMT
                 )
                 view = balance_view(
                     ctx.store.contribution_counts(since),
@@ -582,7 +583,7 @@ def build_router(
         just that member a warm catch-up. Silent when nothing's new; opt-in.
         """
         now = utcnow()
-        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now.strftime(TS_FMT)
         # Nothing to balance in a household of one — skip (and it can't have any
         # "other parent" changes anyway).
         if not ctx.store.is_shared_household() or not ctx.store.get_digest_enabled():

@@ -37,6 +37,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts as _parse_dt
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
@@ -124,14 +126,6 @@ class PanicPlan:
 # --- Timestamp parsing -------------------------------------------------------
 
 
-def _parse_dt(ts: Any) -> datetime | None:
-    """Parse a stored ``YYYY-MM-DD HH:MM:SS`` (naive UTC) timestamp, or ``None``."""
-    try:
-        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        return None
-
-
 def _parse_deadline(ts: Any) -> datetime | None:
     """Parse a todo deadline, which may be a full timestamp or a bare date.
 
@@ -177,7 +171,7 @@ def _commitment_pressures(
     too. Excludes ``fyi`` commitments (somewhere someone else will be, not your
     obligation) and anything that has already ended.
     """
-    fmt = "%Y-%m-%d %H:%M:%S"
+    fmt = TS_FMT
     out: list[Pressure] = []
     for c in store.commitments_between(day_start.strftime(fmt), day_end.strftime(fmt)):
         if c.get("kind") == "fyi":
@@ -659,7 +653,7 @@ def record_panic_step_sent(
     when a resolvable button will actually be delivered (a public origin + signing
     key), so an unresolvable nudge never becomes a phantom miss.
     """
-    when = (now or utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+    when = (now or utcnow()).strftime(TS_FMT)
     return store.log_episode(
         PANIC_EPISODE_TYPE,
         acknowledged=False,
@@ -686,7 +680,7 @@ def sweep_pending_panic_steps(
     recorded, so ``panic`` drift would read as always-on-track. Returns the count
     swept. Mirrors :func:`prefrontal.coaching.sweep_stale_nudges`.
     """
-    cutoff = (now - timedelta(minutes=window_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (now - timedelta(minutes=window_minutes)).strftime(TS_FMT)
     stale = store.pending_episodes(PANIC_EPISODE_TYPE, before=cutoff)
     for ep in stale:
         store.set_episode_outcome(ep["id"], outcome="miss", acknowledged=False)
