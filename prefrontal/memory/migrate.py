@@ -74,6 +74,16 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "focus_sessions": [
         ("switch_impulses", "INTEGER NOT NULL DEFAULT 0"),
         ("switches_deferred", "INTEGER NOT NULL DEFAULT 0"),
+        # Optional link to the todo the block is working — its energy/category
+        # tag the close episode, so the bias can condition on them (learning §5).
+        ("todo_id", "INTEGER"),
+    ],
+    # Context tags on the learning record, so the time-estimation bias can
+    # condition on the task's energy load and category (learning §5), not just
+    # the global multiplier. Stamped at focus-close from the linked todo.
+    "episodes": [
+        ("energy", "TEXT"),
+        ("category", "TEXT"),
     ],
     # Departure nudges expire at their commitment's start_at so a stale "leave
     # now" doesn't linger on the widget for hours (added after nudges shipped).

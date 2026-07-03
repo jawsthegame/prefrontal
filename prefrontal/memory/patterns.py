@@ -180,6 +180,8 @@ class PatternRunSummary:
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = field(default_factory=dict)
     type_bias: dict[str, float] = field(default_factory=dict)
+    energy_bias: dict[str, float] = field(default_factory=dict)
+    category_bias: dict[str, float] = field(default_factory=dict)
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -311,10 +313,42 @@ def compute_bias_by_band(
     return out
 
 
-#: State-key prefix for the per-episode-type bias (learning §5, task-type
-#: dimension). Namespaced with ``:type:`` so it never collides with the
-#: time-of-day band keys (``time_estimation_bias:morning`` etc.).
+#: State-key prefixes for the context-conditioned biases (learning §5). Each is
+#: namespaced so the dimensions never collide with each other or the time-of-day
+#: band keys (``time_estimation_bias:morning`` etc.).
 TYPE_BIAS_PREFIX = "time_estimation_bias:type:"
+ENERGY_BIAS_PREFIX = "time_estimation_bias:energy:"
+CATEGORY_BIAS_PREFIX = "time_estimation_bias:category:"
+
+
+def _bias_by_group(
+    episodes: list[dict[str, Any]],
+    key_fn: Any,
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> dict[str, float]:
+    """Recency-weighted :func:`compute_bias` within each ``key_fn(e)`` bucket.
+
+    Shared machinery for every context-conditioned bias dimension: keep only the
+    predicted/actual episodes, bucket them by ``key_fn`` (a falsy key drops the
+    episode from conditioning), and compute a bias per bucket, omitting any that
+    fall below ``MIN_BIAS_SAMPLES`` so we only condition where there's real signal.
+    """
+    now = now or utcnow()
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+            continue
+        key = key_fn(e)
+        if key:
+            groups[key].append(e)
+    out: dict[str, float] = {}
+    for key, eps in groups.items():
+        group_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
+        if group_bias is not None:
+            out[key] = group_bias
+    return out
 
 
 def compute_bias_by_type(
@@ -339,50 +373,128 @@ def compute_bias_by_type(
     Returns:
         ``{episode_type: multiplier}`` for the types that cleared the floor.
     """
-    now = now or utcnow()
-    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for e in episodes:
-        if not (e.get("predicted_value") and e.get("actual_value") is not None):
-            continue
-        etype = e.get("episode_type")
-        if etype:
-            groups[etype].append(e)
-    out: dict[str, float] = {}
-    for etype, eps in groups.items():
-        type_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
-        if type_bias is not None:
-            out[etype] = type_bias
-    return out
+    return _bias_by_group(
+        episodes, lambda e: e.get("episode_type"), now=now, half_life_days=half_life_days
+    )
+
+
+def _normalized_tag(value: Any) -> str | None:
+    """Lowercase/trim a tag (energy/category), or ``None`` when blank."""
+    return (str(value).strip().lower() or None) if value is not None else None
+
+
+def compute_bias_by_energy(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> dict[str, float]:
+    """Recompute the bias **per task energy load** (low/medium/high) (learning §5).
+
+    Conditions on the ``energy`` tag stamped on task episodes from the todo a
+    focus block was working — a "quick" high-energy task tends to blow its
+    estimate more than a low-energy one. Only tagged predicted/actual episodes
+    contribute; untagged history falls back to the coarser dimensions.
+
+    Returns:
+        ``{energy: multiplier}`` for the loads that cleared the sample floor.
+    """
+    return _bias_by_group(
+        episodes, lambda e: _normalized_tag(e.get("energy")), now=now, half_life_days=half_life_days
+    )
+
+
+def compute_bias_by_category(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> dict[str, float]:
+    """Recompute the bias **per task category** (learning §5).
+
+    Conditions on the ``category`` tag stamped on task episodes from the linked
+    todo, so e.g. "admin" and "creative" work calibrate separately. Same signal
+    floor and fallback behavior as the other dimensions.
+
+    Returns:
+        ``{category: multiplier}`` for the categories that cleared the floor.
+    """
+    return _bias_by_group(
+        episodes,
+        lambda e: _normalized_tag(e.get("category")),
+        now=now,
+        half_life_days=half_life_days,
+    )
 
 
 def resolve_bias(
-    store: MemoryStore, *, local_hour: int | None = None, episode_type: str | None = None
+    store: MemoryStore,
+    *,
+    local_hour: int | None = None,
+    episode_type: str | None = None,
+    energy: str | None = None,
+    category: str | None = None,
 ) -> float:
     """The time-estimation multiplier to apply, preferring the most specific signal.
 
-    Precedence: a learned **time-of-day band** for ``local_hour`` wins first (it's
-    the finer, calibration-validated signal for the "what fits" path); failing
-    that, a learned **per-episode-type** bias for ``episode_type``; then the global
-    ``time_estimation_bias``; then ``1.0``. Each layer is only consulted when the
-    caller supplies its context *and* enough signal was learned there, so a
-    consumer that knows neither keeps the global behavior unchanged, and one that
-    knows both gets the type bias as a fallback when its band has no data yet.
+    Precedence (each layer consulted only when the caller supplies its context
+    *and* enough signal was learned there, else it falls through):
+
+    1. **time-of-day band** for ``local_hour`` — the finer, §4-calibration-validated
+       signal for the "what fits" path, kept first so its shipped behavior is
+       preserved;
+    2. **energy** load — the most task-intrinsic signal (how heavy the task is);
+    3. **category** of the task;
+    4. **episode type** — the coarse kind of prediction;
+    5. the global ``time_estimation_bias``; then ``1.0``.
+
+    A consumer that supplies none keeps the global behavior unchanged; one that
+    supplies several gets each finer layer as a fallback when the layer above it
+    has no data yet — so adding ``energy``/``category`` never regresses a caller
+    whose band already resolves.
     """
+
+    def _state_float(key: str) -> float | None:
+        raw = store.get_state(key)
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+        return None
+
+    candidates: list[str] = []
     if local_hour is not None:
-        banded = store.get_state(f"time_estimation_bias:{time_of_day_band(local_hour)}")
-        if banded:
-            try:
-                return float(banded)
-            except ValueError:
-                pass
-    if episode_type is not None:
-        typed = store.get_state(f"{TYPE_BIAS_PREFIX}{episode_type}")
-        if typed:
-            try:
-                return float(typed)
-            except ValueError:
-                pass
+        candidates.append(f"time_estimation_bias:{time_of_day_band(local_hour)}")
+    if energy:
+        candidates.append(f"{ENERGY_BIAS_PREFIX}{_normalized_tag(energy)}")
+    if category:
+        candidates.append(f"{CATEGORY_BIAS_PREFIX}{_normalized_tag(category)}")
+    if episode_type:
+        candidates.append(f"{TYPE_BIAS_PREFIX}{episode_type}")
+    for key in candidates:
+        value = _state_float(key)
+        if value is not None:
+            return value
     return store.get_float("time_estimation_bias", 1.0)
+
+
+def task_bias_resolver(store: MemoryStore, *, local_hour: int | None = None):
+    """A ``todo -> multiplier`` resolver for the "what fits" path (learning §5).
+
+    Bundles the full precedence for a *task* estimate — time-of-day band, then the
+    todo's energy, then its category, then the ``task`` episode-type bias, then
+    global — so :func:`~prefrontal.scheduling.fit_todos` can pad each todo by its
+    own learned bias via ``bias_fn``. Pass ``local_hour`` when the fit happens at a
+    known moment (all the point-in-time pickers do).
+    """
+    return lambda todo: resolve_bias(
+        store,
+        local_hour=local_hour,
+        episode_type="task",
+        energy=todo.get("energy"),
+        category=todo.get("category"),
+    )
 
 
 def bias_calibration(
@@ -485,6 +597,8 @@ def recompute_patterns(
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = {}
     type_bias: dict[str, float] = {}
+    energy_bias: dict[str, float] = {}
+    category_bias: dict[str, float] = {}
     if update_bias:
         bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
@@ -501,6 +615,14 @@ def recompute_patterns(
         type_bias = compute_bias_by_type(episodes, now=now, half_life_days=half_life_days)
         for etype, value in type_bias.items():
             store.set_state(f"{TYPE_BIAS_PREFIX}{etype}", str(value), source="inferred")
+        # ...and per task energy load / category (§5), from the tags focus blocks
+        # stamp onto their close episodes via the linked todo.
+        energy_bias = compute_bias_by_energy(episodes, now=now, half_life_days=half_life_days)
+        for level, value in energy_bias.items():
+            store.set_state(f"{ENERGY_BIAS_PREFIX}{level}", str(value), source="inferred")
+        category_bias = compute_bias_by_category(episodes, now=now, half_life_days=half_life_days)
+        for cat, value in category_bias.items():
+            store.set_state(f"{CATEGORY_BIAS_PREFIX}{cat}", str(value), source="inferred")
         # Close the loop: does that bias actually improve subsequent estimates?
         # Persist the verdict so the profile and CLI can surface a bad adaptation.
         calibration = bias_calibration(episodes)
@@ -520,6 +642,8 @@ def recompute_patterns(
         calibration=calibration,
         band_bias=band_bias,
         type_bias=type_bias,
+        energy_bias=energy_bias,
+        category_bias=category_bias,
     )
 
 

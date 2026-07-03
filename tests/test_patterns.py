@@ -12,15 +12,20 @@ from datetime import datetime
 import pytest
 
 from prefrontal.memory.patterns import (
+    CATEGORY_BIAS_PREFIX,
+    ENERGY_BIAS_PREFIX,
     TYPE_BIAS_PREFIX,
     compute_bias,
     compute_bias_by_band,
+    compute_bias_by_category,
+    compute_bias_by_energy,
     compute_bias_by_type,
     compute_confidence,
     compute_patterns,
     decay_weight,
     recompute_patterns,
     resolve_bias,
+    task_bias_resolver,
     time_of_day_band,
 )
 from prefrontal.memory.store import MemoryStore
@@ -400,3 +405,79 @@ def test_recompute_persists_type_bias():
         summary = recompute_patterns(store, timezone="UTC")
         assert summary.type_bias.get("task") == 2.0
         assert store.get_state(f"{TYPE_BIAS_PREFIX}task") == "2.0"
+
+
+# -- context-conditioned bias by energy / category (learning §5) -------------
+
+
+def test_compute_bias_by_energy_and_category_condition_on_tags():
+    episodes = (
+        [_ep(predicted_value=10, actual_value=20, energy="high", category="creative")
+         for _ in range(3)]
+        + [_ep(predicted_value=10, actual_value=10, energy="low", category="admin")
+           for _ in range(3)]
+        + [_ep(predicted_value=10, actual_value=30, energy="medium") for _ in range(2)]  # too few
+    )
+    assert compute_bias_by_energy(episodes) == {"high": 2.0, "low": 1.0}
+    assert compute_bias_by_category(episodes) == {"creative": 2.0, "admin": 1.0}
+
+
+def test_compute_bias_by_energy_normalizes_and_skips_untagged():
+    episodes = (
+        [_ep(predicted_value=10, actual_value=20, energy="  High ") for _ in range(3)]
+        + [_ep(predicted_value=10, actual_value=15, energy=None) for _ in range(3)]  # untagged
+    )
+    # Case/space-folded to "high"; untagged episodes never form a bucket.
+    assert compute_bias_by_energy(episodes) == {"high": 2.0}
+
+
+def test_resolve_bias_full_precedence_band_energy_category_type_global():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("time_estimation_bias", "1.4")
+        store.set_state(f"{TYPE_BIAS_PREFIX}task", "1.6")
+        store.set_state(f"{CATEGORY_BIAS_PREFIX}admin", "1.7")
+        store.set_state(f"{ENERGY_BIAS_PREFIX}high", "1.8")
+        store.set_state("time_estimation_bias:morning", "2.0")
+        # All supplied → band wins (finest, shipped-first).
+        assert resolve_bias(
+            store, local_hour=9, episode_type="task", energy="high", category="admin"
+        ) == 2.0
+        # No band for the hour → energy is next.
+        assert resolve_bias(
+            store, local_hour=14, episode_type="task", energy="high", category="admin"
+        ) == 1.8
+        # No energy learned for this load → category.
+        assert resolve_bias(
+            store, local_hour=14, episode_type="task", energy="low", category="admin"
+        ) == 1.7
+        # Neither energy nor category learned → the task-type bias.
+        assert resolve_bias(
+            store, local_hour=14, episode_type="task", energy="low", category="chores"
+        ) == 1.6
+        # Nothing conditioned → global.
+        assert resolve_bias(store, energy="low", category="chores") == 1.4
+
+
+def test_task_bias_resolver_uses_todo_energy_and_category():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("time_estimation_bias", "1.4")
+        store.set_state(f"{ENERGY_BIAS_PREFIX}high", "1.9")
+        resolve = task_bias_resolver(store, local_hour=14)  # afternoon, no band learned
+        assert resolve({"energy": "high", "category": "x"}) == 1.9   # energy hit
+        assert resolve({"energy": "low", "category": "x"}) == 1.4     # falls to global
+
+
+def test_recompute_persists_energy_and_category_bias():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for _ in range(3):
+            store.log_episode(
+                "task", predicted_value=10, actual_value=20, energy="high", category="creative"
+            )
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.energy_bias.get("high") == 2.0
+        assert summary.category_bias.get("creative") == 2.0
+        assert store.get_state(f"{ENERGY_BIAS_PREFIX}high") == "2.0"
+        assert store.get_state(f"{CATEGORY_BIAS_PREFIX}creative") == "2.0"

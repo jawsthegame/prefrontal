@@ -282,6 +282,32 @@ def test_end_logs_episode_with_outcome(store, client):
     assert "next: wire up the poller next" in episode["notes"]
 
 
+def test_end_stamps_linked_todo_energy_and_category(store, client):
+    """A session started with a todo_id tags its close episode with the todo's
+    energy/category, so the bias can condition on them (learning §5)."""
+    tid = store.add_todo("prep the deck", category="work", energy="high")
+    start = client.post(
+        "/webhooks/focus/start",
+        json={"intended_task": "prep the deck", "planned_minutes": 45, "todo_id": tid},
+        headers=_auth(),
+    )
+    assert start.status_code == 201
+    sid = start.json()["session_id"]
+    end = client.post("/webhooks/focus/end", json={"session_id": sid}, headers=_auth())
+    episode = store.get_episode(end.json()["episode_id"])
+    assert episode["energy"] == "high"
+    assert episode["category"] == "work"
+
+
+def test_end_without_todo_link_leaves_tags_null(store, client):
+    """A free-text session (no todo_id) contributes untagged, exactly as before."""
+    sid = store.start_focus_session("free-text focus", started_at=_utc_minutes_ago(20))
+    end = client.post("/webhooks/focus/end", json={"session_id": sid}, headers=_auth())
+    episode = store.get_episode(end.json()["episode_id"])
+    assert episode["energy"] is None
+    assert episode["category"] is None
+
+
 def test_end_defaults_to_most_recent_active(store, client):
     store.start_focus_session("first", started_at=_utc_minutes_ago(20))
     sid2 = store.start_focus_session("second", started_at=_utc_minutes_ago(5))

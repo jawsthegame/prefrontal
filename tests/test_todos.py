@@ -293,6 +293,22 @@ def test_suggest_for_windows_no_double_booking():
     assert out[1]["suggestion"]["title"] == "Long"    # Short used; Long fits 60m
 
 
+def test_fit_todos_bias_fn_is_per_todo():
+    """bias_fn pads each todo by its own multiplier (§5), overriding the flat bias."""
+    todos = [
+        {"id": 1, "title": "heavy", "estimate_minutes": 20, "energy": "high",
+         "priority": 1, "deadline": None},
+        {"id": 2, "title": "light", "estimate_minutes": 20, "energy": "low",
+         "priority": 1, "deadline": None},
+    ]
+    # High-energy tasks blow estimates (2×) so "heavy" overflows a 30m block;
+    # low-energy is on the nose (1×) so "light" fits.
+    by_energy = {"high": 2.0, "low": 1.0}
+    fits = fit_todos(30, todos, bias_fn=lambda t: by_energy[t["energy"]])
+    titles = [f["todo"]["title"] for f in fits]
+    assert titles == ["light"]  # heavy: 20*2=40 > 30; light: 20*1=20 ≤ 30
+
+
 def test_suggest_for_windows_bias_fn_is_per_window():
     """bias_fn resolves the multiplier from *each* window's local hour (§5)."""
     # UTC == local (tz set, no config) so the local hour is the UTC hour.

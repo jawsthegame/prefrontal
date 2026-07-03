@@ -31,7 +31,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from prefrontal.memory.patterns import TYPE_BIAS_PREFIX
+from prefrontal.memory.patterns import (
+    CATEGORY_BIAS_PREFIX,
+    ENERGY_BIAS_PREFIX,
+    TYPE_BIAS_PREFIX,
+)
 from prefrontal.memory.store import MemoryStore
 
 if TYPE_CHECKING:
@@ -150,6 +154,20 @@ def build_profile(
             typed_str = [f"{t} {v}x" for t, v in typed if v]
             if typed_str:
                 lines.append(f"> By task type: {', '.join(typed_str)}.")
+            # ...and by the task's energy load / category, from the tags focus
+            # blocks stamp via their linked todo (learning §5).
+            for prefix, label in (
+                (ENERGY_BIAS_PREFIX, "By energy"),
+                (CATEGORY_BIAS_PREFIX, "By category"),
+            ):
+                dim = [
+                    (k[len(prefix):], v.get("value"))
+                    for k, v in sorted(state.items())
+                    if k.startswith(prefix)
+                ]
+                dim_str = [f"{name} {v}x" for name, v in dim if v]
+                if dim_str:
+                    lines.append(f"> {label}: {', '.join(dim_str)}.")
             lines.append("")
 
     # One section per enabled challenge-area module. Modules that have nothing

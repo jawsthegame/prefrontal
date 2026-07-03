@@ -253,7 +253,11 @@ def _fit_key(item: tuple[dict[str, Any], float]) -> tuple:
 
 
 def fit_todos(
-    available_minutes: float, todos: list[dict[str, Any]], bias: float = 1.0
+    available_minutes: float,
+    todos: list[dict[str, Any]],
+    bias: float = 1.0,
+    *,
+    bias_fn: Callable[[dict[str, Any]], float] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank the open todos that fit in an available block of time.
 
@@ -261,10 +265,17 @@ def fit_todos(
     makes the fit honest about how long things actually take). Todos without an
     estimate are excluded — we can't promise they'll fit.
 
+    When ``bias_fn`` is given it resolves the multiplier *per todo* (so a
+    high-energy or a particular-category task can be padded by its own learned
+    bias, learning §5) instead of the single flat ``bias``; ``bias`` remains the
+    fallback for any todo the resolver can't place.
+
     Args:
         available_minutes: Minutes you have free.
         todos: Open todo dicts.
-        bias: The ``time_estimation_bias`` multiplier.
+        bias: The flat ``time_estimation_bias`` multiplier (fallback).
+        bias_fn: Optional ``todo -> multiplier`` resolver for per-todo,
+            context-conditioned bias.
 
     Returns:
         A list of ``{todo, effective_minutes}`` dicts, best candidate first.
@@ -274,7 +285,7 @@ def fit_todos(
         estimate = todo.get("estimate_minutes")
         if estimate is None:
             continue
-        effective = estimate * bias
+        effective = estimate * (bias_fn(todo) if bias_fn is not None else bias)
         if effective <= available_minutes:
             candidates.append((todo, round(effective, 1)))
     candidates.sort(key=_fit_key)

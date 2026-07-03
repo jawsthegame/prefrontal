@@ -228,6 +228,7 @@ class SessionsRepo:
         planned_minutes: float | None = None,
         aligned: bool = True,
         started_at: str | None = None,
+        todo_id: int | None = None,
     ) -> int:
         """Record a declared focus session and return its id.
 
@@ -241,14 +242,16 @@ class SessionsRepo:
                 the protect window.
             started_at: Optional ISO timestamp for the start; defaults to the
                 DB's ``CURRENT_TIMESTAMP``. Mainly useful for tests.
+            todo_id: Optional link to the todo being worked. Its energy/category
+                tag the close episode so the bias can condition on them (§5).
 
         Returns:
             The new session's ``id``.
         """
         return self._session_start(
             table="focus_sessions",
-            columns=["intended_task", "planned_minutes", "aligned"],
-            values=[intended_task, planned_minutes, 1 if aligned else 0],
+            columns=["intended_task", "planned_minutes", "aligned", "todo_id"],
+            values=[intended_task, planned_minutes, 1 if aligned else 0, todo_id],
             ts_col="started_at",
             ts_value=started_at,
         )

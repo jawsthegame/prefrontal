@@ -92,7 +92,9 @@ CREATE TABLE IF NOT EXISTS episodes (
     channel         TEXT,                       -- notification | sound | tts | sms
     context         TEXT,                       -- free text: location, time of day, task type
     outcome         TEXT,                       -- success | miss | partial
-    notes           TEXT                        -- optional agent or user annotation
+    notes           TEXT,                       -- optional agent or user annotation
+    energy          TEXT,                       -- task's energy load (low|medium|high), when known
+    category        TEXT                        -- task's category, when known (context-conditioned bias)
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodes_type ON episodes (episode_type);
@@ -159,6 +161,7 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id),
     intended_task   TEXT    NOT NULL,                  -- what you're getting into
+    todo_id         INTEGER,                           -- optional link to the todo being worked (its energy/category tag the episode)
     planned_minutes REAL,                              -- optional intended duration
     aligned         BOOLEAN NOT NULL DEFAULT 1,        -- is this the thing you meant to do?
     started_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

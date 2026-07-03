@@ -459,7 +459,7 @@ ordered by leverage; each is independent but builds on denser capture.
    walk-forward check to the channel-choice and drift adaptations, and act on a
    "not helping" verdict automatically — decay the multiplier toward 1.0 or widen
    the confidence gate — rather than only reporting it.)*
-5. **Context-conditioned patterns.** ✅ (v1 — time of day) — the learned
+5. **Context-conditioned patterns.** ✅ (time of day + task type + energy + category) — the learned
    time-estimation bias is now computed **per time-of-day band** (morning /
    afternoon / evening) as well as globally, because the same person often
    mis-estimates very differently across the day. `compute_bias_by_band` buckets
@@ -485,11 +485,25 @@ ordered by leverage; each is independent but builds on denser capture.
    todo-fit path (`/todos/now`, `/todos/fit`, `prefrontal fit`, briefing,
    encouragement) passes `episode_type="task"` and gets the focus-session-learned
    `task` bias as a fallback whenever its band has no data yet. Surfaced in the
-   profile ("By task type: …") and `prefrontal learn`. *(An **energy** dimension
-   is deferred for lack of signal: task actuals come from focus sessions, which
-   aren't todo-linked, and todo closes log `actual_value=None` on purpose — so no
-   per-energy predicted/actual pairs exist to learn from yet. Also still pending:
-   derive `context_switch` once switch events are captured.)*
+   profile ("By task type: …") and `prefrontal learn`. Two further dimensions,
+   **energy** and **category**, condition the same way once the data exists to
+   feed them: a focus session may now be **linked to the todo it's working**
+   (`todo_id` on `focus_sessions`, an optional field on `POST /webhooks/focus/start`),
+   and on close that todo's `energy`/`category` are stamped onto the `task`
+   episode (new nullable `episodes.energy`/`episodes.category`, back-filled by the
+   migrate pass). `compute_bias_by_energy`/`compute_bias_by_category` then bucket
+   those tagged pairs into `time_estimation_bias:energy:<load>` /
+   `:category:<cat>`. `resolve_bias` now takes `energy`/`category` too, with the
+   precedence *band → energy → category → type → global* — each layer a fallback
+   for the one above, so supplying the finer context never regresses a caller
+   whose band already resolves. `fit_todos` grows a per-todo `bias_fn`, and the
+   point-in-time pickers (`/todos/now`, `/todos/fit`, `prefrontal fit`) pass
+   `task_bias_resolver(store, local_hour=…)` so each candidate is padded by *its
+   own* energy/category. Surfaced in the profile ("By energy: …", "By category:
+   …") and `prefrontal learn`. Untagged history (free-text focus, legacy
+   episodes) simply falls through to the coarser dimensions. *(Next: whole-day
+   consumers — briefing/encouragement — could adopt per-todo energy/category too;
+   and derive `context_switch` once switch events are captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in

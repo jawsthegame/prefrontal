@@ -58,6 +58,8 @@ Raw outcome records. One row per agent interaction cycle.
 | `context` | TEXT | Free text — location, time of day, task type |
 | `outcome` | TEXT | `success`, `miss`, `partial` |
 | `notes` | TEXT | Optional agent or user annotation |
+| `energy` | TEXT | Task energy load (`low`/`medium`/`high`) when known — context-conditioned bias (§5) |
+| `category` | TEXT | Task category when known — context-conditioned bias (§5) |
 
 ---
 
@@ -146,7 +148,9 @@ also defines:
   aligned block is shielded from other modules' nudges until it overruns its plan
   (a gentle check) or passes the hard ceiling (a biological break). Also carries
   `switch_impulses`/`switches_deferred` counters — the Impulsivity module's
-  capture-and-defer tally over the session.
+  capture-and-defer tally over the session — and an optional `todo_id` linking
+  the block to the todo it's working, so on close that todo's `energy`/`category`
+  tag the episode for context-conditioned bias (§5).
 - **`commitments`** — upcoming schedule items synced from calendars (or added
   manually), used for double-booking detection and impact analysis. Optional
   `dest_lat`/`dest_lon` enable a local travel-time estimate for departure
