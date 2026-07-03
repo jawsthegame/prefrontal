@@ -290,6 +290,21 @@ hours (`focus_suggest_start_hour`–`focus_suggest_until_hour`, default 8–15),
 when nothing's running, and only if you haven't focused yet today (once/day).
 Off by default, so it never becomes "go focus" nagging.
 
+**Forgot to start one? Log it after (so it still counts):** the flip side of
+one-tap starting is that you'll sometimes just… start working. `POST
+/webhooks/focus/log` records a block that already happened — it's logged as
+ended `minutes` ago, so a forgotten stretch still feeds the learning loop
+instead of vanishing. Blank task infers from your top todo, like the start.
+
+```bash
+curl -s -XPOST $PF/webhooks/focus/log -H "X-Prefrontal-Token: $TOK" \
+  -H 'Content-Type: application/json' -d '{"minutes":90,"intended_task":"the RFC"}'
+```
+
+And to be *asked*: turn on `suggest_focus_recap` and, on an evening with nothing
+logged, the tick offers a one-tap "log a block I didn't see?" — the same opt-in,
+once-a-day, evening bookend to the morning start-suggestion.
+
 ---
 
 ## Daily rhythm
@@ -515,6 +530,7 @@ token client-side).
 | `GET /outings` | Read-only outings snapshot (no side effects) |
 | `POST /webhooks/focus/start` · `/check` · `/end` | Focus session lifecycle (`start` with an empty body = one-tap inferred start) |
 | `POST /webhooks/focus/arm` | Auto-start a session from a live "focus"/"deep work" calendar block (n8n polls) |
+| `POST /webhooks/focus/log` | Log a *past* focus block you forgot to start (records it as already ended) |
 | `GET /focus` | Read-only focus snapshot |
 | `POST /webhooks/calendar/sync` | Sync a batch of calendar events |
 | `POST /webhooks/departure/check` | Poll for a due departure nudge |

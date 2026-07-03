@@ -16,6 +16,7 @@ from prefrontal.webhooks._common import (
     Any,
     Depends,
     FocusEnd,
+    FocusLog,
     FocusStart,
     FocusStarted,
     HTTPException,
@@ -180,6 +181,51 @@ def build_router(
             "intended_task": task,
             "planned_minutes": remaining,
             "from_commitment": live.get("id"),
+        }
+
+    @router.post(
+        "/webhooks/focus/log", status_code=status.HTTP_201_CREATED, tags=["focus"]
+    )
+    def focus_log(
+        payload: FocusLog,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Log a focus block you *forgot to start* — recorded as already finished.
+
+        Forgetting to hit start shouldn't cost you the data. This records a block
+        that ran ``minutes`` ago and closes it now, so it flows into the same
+        ``task`` episode + learning path as a normally-ended session (there's no
+        prediction, so only the actual duration is learned). Task is inferred from
+        your top open todo when omitted, like the one-tap start.
+        """
+        memory = ctx.store
+        now = utcnow()
+        task = payload.intended_task.strip()
+        todo_id = payload.todo_id
+        if not task:
+            guess = _top_todo_guess(memory, now)
+            task = guess.intended_task
+            if todo_id is None:
+                todo_id = guess.todo_id
+
+        started_at = (now - timedelta(minutes=payload.minutes)).strftime(_TS)
+        session_id = memory.start_focus_session(
+            task,
+            planned_minutes=None,  # a forgotten block had no stated plan
+            aligned=payload.aligned,
+            started_at=started_at,
+            todo_id=todo_id,
+        )
+        closed = memory.close_focus_session(
+            session_id, status="ended", outcome=payload.outcome
+        )
+        record_focus_end(memory, closed, outcome=payload.outcome, breadcrumb=None)
+        actual = (closed or {}).get("actual_minutes")
+        return {
+            "logged": True,
+            "session_id": session_id,
+            "intended_task": task,
+            "minutes": round(actual, 1) if actual is not None else round(payload.minutes, 1),
         }
 
     @router.post("/webhooks/focus/check", tags=["focus"])
