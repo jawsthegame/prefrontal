@@ -15,13 +15,30 @@ create an import cycle. Import it directly: ``from prefrontal.integrations.deliv
 import DeliveryClient``.
 """
 
+from typing import Protocol
+
 from prefrontal.integrations.anthropic import AnthropicClient, AnthropicError
 from prefrontal.integrations.n8n import N8nClient, N8nResult
 from prefrontal.integrations.ollama import OllamaClient, OllamaError
 
+
+class Generator(Protocol):
+    """The slice of an LLM client the domain layer calls: a single completion.
+
+    Both :class:`~prefrontal.integrations.ollama.OllamaClient` and
+    :class:`~prefrontal.integrations.anthropic.AnthropicClient` satisfy it
+    structurally, so a call site can accept either without importing a concrete
+    class. Defined here once instead of re-declared in each module that takes a
+    client (the classifier, the todo augmenter, the trip/impulse/anchor inferers).
+    """
+
+    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
+
+
 __all__ = [
     "AnthropicClient",
     "AnthropicError",
+    "Generator",
     "N8nClient",
     "N8nResult",
     "OllamaClient",

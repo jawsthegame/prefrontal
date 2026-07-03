@@ -17,9 +17,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import parse_ts as _parse_ts
+from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.llm_json import extract_json_object
 
@@ -105,10 +106,6 @@ _WEEKDAYS = {
 }
 
 
-class _Generator(Protocol):
-    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -333,7 +330,7 @@ def _coerce_llm(raw: dict[str, Any]) -> dict[str, Any]:
 def _llm_fields(
     title: str,
     today: date,
-    client: _Generator,
+    client: Generator,
     *,
     existing_categories: list[str] | None = None,
     category_cap: int = MAX_CATEGORIES,
@@ -359,7 +356,7 @@ def augment_todo(
     category: str | None = None,
     existing_categories: list[str] | None = None,
     category_cap: int = MAX_CATEGORIES,
-    client: _Generator | None = None,
+    client: Generator | None = None,
     today: date | None = None,
 ) -> AugmentedTodo:
     """Fill in whichever todo fields weren't supplied.
@@ -517,7 +514,7 @@ def decompose_task(
     title: str,
     *,
     max_first_minutes: float = DEFAULT_MAX_FIRST_STEP_MINUTES,
-    client: _Generator | None = None,
+    client: Generator | None = None,
 ) -> Decomposition:
     """Break a task into a tiny first step (+ remaining steps).
 

@@ -22,8 +22,9 @@ category vocabulary, and the episode-recording helpers. The HTTP surface
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
+from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.modules.location_anchor import DEFAULT_HOME_RADIUS_M, haversine_m
 
@@ -53,10 +54,6 @@ TRIP_CATEGORIES: tuple[str, ...] = (
 )
 
 
-class _Generator(Protocol):
-    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 def normalize_trip_category(value: str | None) -> str | None:
@@ -156,7 +153,7 @@ def parse_outcome_reply(reply: str) -> str | None:
 
 
 def classify_reflection(
-    text: str, *, client: _Generator | None = None
+    text: str, *, client: Generator | None = None
 ) -> tuple[str | None, str]:
     """Classify a reflection into an outcome; ``(outcome, source)``.
 
@@ -300,7 +297,7 @@ def apply_reflection(
     reflection: str,
     *,
     outcome: str | None = None,
-    client: _Generator | None = None,
+    client: Generator | None = None,
     sensor_client: Any = None,
 ) -> dict[str, Any]:
     """Record a plain-English reflection on a trip and feed it back into learning.

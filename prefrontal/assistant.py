@@ -22,7 +22,7 @@ Design, in three deliberate layers:
    through simply reports "nothing changed" rather than corrupting anything.
 
 The model client is any object with ``generate(prompt, *, system=None) -> str``
-(see :class:`_Generator`), so the local Ollama client and the optional Claude
+(see :class:`Generator`), so the local Ollama client and the optional Claude
 client are interchangeable — the endpoint prefers Claude when configured and
 falls back to Ollama.
 """
@@ -32,12 +32,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
 from prefrontal.commitments import to_utc
-from prefrontal.integrations.anthropic import AnthropicError
-from prefrontal.integrations.ollama import OllamaError
-from prefrontal.llm_json import extract_json
+from prefrontal.integrations import Generator
+from prefrontal.llm_json import generate_json
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
     FACT_CATEGORIES,
@@ -50,10 +49,6 @@ from prefrontal.todos import (
     MAX_ESTIMATE_MINUTES,
     MIN_ESTIMATE_MINUTES,
 )
-
-#: Expected failures from either model backend — caught by :func:`interpret` so a
-#: down/misconfigured model degrades to "assistant unavailable" rather than a 500.
-_CLIENT_ERRORS = (OllamaError, AnthropicError)
 
 #: Ops the assistant is allowed to emit. The whitelist *is* the security boundary
 #: (with per-user store scoping): anything not here is refused before execution.
@@ -84,11 +79,6 @@ ALLOWED_OPS = frozenset(
 
 _PRIORITY_NAMES = {0: "low", 1: "normal", 2: "high", 3: "urgent"}
 
-
-class _Generator(Protocol):
-    """The slice of the model clients (Ollama/Anthropic) used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 class _ActionError(ValueError):
@@ -279,7 +269,7 @@ def interpret(
     message: str,
     snapshot: dict[str, Any],
     *,
-    client: _Generator,
+    client: Generator,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Ask the model to turn ``message`` into a reply + raw action list.
 
@@ -297,11 +287,7 @@ def interpret(
         f"Current state (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
         f"User message: {message}"
     )
-    try:
-        raw = client.generate(prompt, system=ASSISTANT_SYSTEM)
-    except _CLIENT_ERRORS:
-        return "", []
-    parsed = extract_json(raw)
+    parsed = generate_json(prompt, system=ASSISTANT_SYSTEM, client=client)
     if isinstance(parsed, list):
         return "", [a for a in parsed if isinstance(a, dict)]
     if isinstance(parsed, dict):
@@ -668,7 +654,7 @@ def validate_actions(
     return actions, errors
 
 
-def plan(message: str, memory: Any, *, client: _Generator) -> AssistantPlan:
+def plan(message: str, memory: Any, *, client: Generator) -> AssistantPlan:
     """Interpret a message and return a validated, previewable plan (no writes).
 
     Args:

@@ -12,8 +12,7 @@ short ``task`` episodes that end without an ``outcome``.
 
 from __future__ import annotations
 
-from typing import Protocol
-
+from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -102,10 +101,6 @@ CAPTURE_TITLE_SYSTEM_PROMPT = (
 )
 
 
-class _Generator(Protocol):
-    """The slice of :class:`~prefrontal.integrations.ollama.OllamaClient` used here."""
-
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
 
 def heuristic_capture_title(impulse_text: str) -> str:
@@ -128,7 +123,7 @@ def heuristic_capture_title(impulse_text: str) -> str:
 def infer_capture_title(
     impulse_text: str,
     *,
-    client: _Generator | None = None,
+    client: Generator | None = None,
     fallback: bool = True,
 ) -> str | None:
     """Title a captured impulse via the local LLM, falling back to the heuristic.
