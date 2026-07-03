@@ -116,6 +116,20 @@ def build_profile(
                 f"> Apply a {bias}x multiplier to time estimates "
                 f"(historical ~{pct}% underestimate)."
             )
+            # Whether that multiplier is actually earning its keep (learning §4):
+            # a walk-forward check writes this verdict on each learn pass.
+            helps = state.get("bias_calibration_helps", {}).get("value") if state else None
+            improvement = (
+                state.get("bias_calibration_improvement", {}).get("value") if state else None
+            )
+            if helps == "true":
+                extra = f" (~{improvement} closer)" if improvement else ""
+                lines.append(f"> This multiplier is improving recent estimates{extra} — trust it.")
+            elif helps == "false":
+                lines.append(
+                    "> ⚠️ This multiplier is NOT improving recent estimates — treat it "
+                    "cautiously; a reset toward 1.0 may be due."
+                )
             lines.append("")
 
     # One section per enabled challenge-area module. Modules that have nothing

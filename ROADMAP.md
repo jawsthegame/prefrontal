@@ -403,12 +403,20 @@ ordered by leverage; each is independent but builds on denser capture.
    history equally — the pre-decay behavior). Covered by `tests/test_patterns.py`.
    *(Next: a sliding-window variant, and per-context half-lives once finer
    `context_key` bucketing lands.)*
-4. **Close the loop: measure whether adaptations help.** Nothing today verifies
-   that a learned value actually improves outcomes — e.g. does applying the 1.4×
-   `time_estimation_bias` reduce subsequent `miss` rates? Track prediction error
-   over time (post-bias predicted vs actual) and surface it, so a bad adaptation
-   is visible and self-correcting rather than asserted. This also gives the
-   signal to know when to trust a pattern enough to act on it more assertively.
+4. **Close the loop: measure whether adaptations help.** ✅ — `bias_calibration`
+   (`prefrontal/memory/patterns.py`) runs a **walk-forward** check each learn
+   pass: it learns the `time_estimation_bias` from the older predicted/actual
+   pairs and measures whether applying it lowered the mean absolute error on the
+   *newer* pairs it never saw (`raw_error` → `adjusted_error`, `improvement`,
+   `helps`) — honest, not circular. The verdict is persisted
+   (`bias_calibration_helps` / `_improvement` / `_samples`) and surfaced in the
+   profile ("this multiplier is improving recent estimates — trust it" / "⚠️ NOT
+   improving — a reset may be due") and in `prefrontal learn` output, so a bad
+   adaptation is *visible* rather than silently asserted. Covered by
+   `tests/test_patterns.py` + `tests/test_summarizer.py`. *(Next: extend the same
+   walk-forward check to the channel-choice and drift adaptations, and act on a
+   "not helping" verdict automatically — decay the multiplier toward 1.0 or widen
+   the confidence gate — rather than only reporting it.)*
 5. **Generalize beyond the three hardcoded pattern types.**
    `time_estimation`/`channel_response`/`drift` are fixed in
    `prefrontal/memory/patterns.py`, and `context_key` is just the episode type.
