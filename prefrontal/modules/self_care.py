@@ -34,6 +34,7 @@ reflexive instant-yeses).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -59,6 +60,35 @@ DEFAULT_WATER_DAILY_TARGET = 6
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
 #: Episode type logged on each self-care response (seeds cadence learning).
 SELF_CARE_EPISODE = "self_care"
+
+# -- adaptive cadence (learning §6) ------------------------------------------
+#: A confirm this fast after the nudge reads as a reflexive *dismissal*, not a
+#: genuine "I did it" — the honesty check. Such taps must not be counted as
+#: engagement that justifies backing the cadence off.
+INSTANT_CONFIRM_SECONDS = 30.0
+#: Recent responses to weigh when adapting a check's interval, and the minimum
+#: before we adapt at all.
+ADAPT_LOOKBACK = 30
+MIN_ADAPT_RESPONSES = 5
+#: Snooze rate at/above which the nudge is too frequent → widen the interval.
+SNOOZE_WIDEN_RATE = 0.4
+#: Snooze rate at/below which (with genuine confirms) we ease off slightly.
+EASE_OFF_SNOOZE_RATE = 0.1
+#: Share of *timed* confirms that are instant, at/above which the honesty check
+#: fires and blocks easing off (the taps look like dismissals).
+INSTANT_GUARD_RATE = 0.5
+#: Minimum genuinely-timed confirms before an ease-off is trusted.
+MIN_GENUINE_CONFIRMS = 3
+#: How far a learned interval may drift from the check's default (never below it
+#: in v1 — we only ever nudge *less*, never quietly more).
+MAX_INTERVAL_FACTOR = 3.0
+WIDEN_FACTOR = 1.25
+EASE_OFF_FACTOR = 1.1
+
+
+def _prompt_key(check_key: str) -> str:
+    """Coaching-state cursor holding when this check last nudged (for latency)."""
+    return f"{check_key}_prompt_at"
 
 
 def meal_message(name: str = "") -> str:
@@ -210,6 +240,9 @@ def apply_self_care_action(
     check = _ACTION_CHECK.get(action)
     if check is None:
         return None
+    # Response latency (nudge → this tap) is the honesty-check signal: read and
+    # clear the prompt stamp so it can't be reused by a later tap.
+    lat = _latency_note(store, check, now)
     if action == check.confirm_action:
         count = day_count(store, check, today) + 1
         store.set_state(check.count_key, f"{today}|{count}", source="explicit")
@@ -219,7 +252,7 @@ def apply_self_care_action(
             acknowledged=True,
             context=f"{check.key}: confirmed",
             outcome="confirmed",
-            notes=f"{count}/{target}",
+            notes=f"{count}/{target} {lat}",
         )
         if count >= target:
             return check.done_headline.format(count=count, target=target)
@@ -235,9 +268,151 @@ def apply_self_care_action(
         acknowledged=True,
         context=f"{check.key}: snoozed",
         outcome="snoozed",
-        notes=f"{mins}m",
+        notes=f"{mins}m {lat}",
     )
     return f"Okay — I'll check back in {mins} min."
+
+
+def _latency_note(store: ModuleStore, check: BasicCheck, now: datetime) -> str:
+    """Pop the prompt stamp and render the nudge→tap latency as a note token.
+
+    Returns ``"latency=<n>s"`` when we know when the nudge fired, else
+    ``"latency=?"`` (e.g. a tap with no tracked prompt, or a direct API call).
+    Clearing the stamp means a second tap can't reuse the same delivery time.
+    """
+    prompted = _parse_ts(store.get_state(_prompt_key(check.key)))
+    store.set_state(_prompt_key(check.key), "", source="inferred")
+    if prompted is None:
+        return "latency=?"
+    seconds = max(0, int((now - prompted).total_seconds()))
+    return f"latency={seconds}s"
+
+
+def mark_self_care_prompted(store: ModuleStore, decisions: list[Any], now: datetime) -> None:
+    """Stamp the delivery time for each self-care cue just fired (for latency).
+
+    Called by the coaching tick right after it commits to firing (``record_fired``)
+    — from both ``/webhooks/coach/check`` and ``prefrontal coach --deliver`` — so
+    the next Ate/Drank/Snooze tap can be timed against when the nudge actually
+    went out. A no-op for non-self-care decisions.
+    """
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    for d in decisions:
+        cue = getattr(d, "cue", None)
+        if cue is not None and cue.module == "self_care":
+            store.set_state(_prompt_key(cue.context_key), stamp, source="inferred")
+
+
+def _latency_seconds(notes: str | None) -> float | None:
+    """Parse ``latency=<n>s`` from an episode's notes, or ``None`` if absent."""
+    if not notes:
+        return None
+    m = re.search(r"latency=(\d+)s", notes)
+    return float(m.group(1)) if m else None
+
+
+def _recent_responses(store: ModuleStore, check: BasicCheck) -> list[dict[str, Any]]:
+    """This check's recent self-care responses (newest first), parsed for learning.
+
+    Each item is ``{"outcome": "confirmed"|"snoozed", "latency": float|None}``.
+    """
+    prefix = f"{check.key}: "
+    out: list[dict[str, Any]] = []
+    for e in store.episodes_by_type(SELF_CARE_EPISODE, limit=ADAPT_LOOKBACK * 3):
+        if not str(e.get("context") or "").startswith(prefix):
+            continue
+        out.append({"outcome": e.get("outcome"), "latency": _latency_seconds(e.get("notes"))})
+        if len(out) >= ADAPT_LOOKBACK:
+            break
+    return out
+
+
+def _bounded_interval(value: float, default: int) -> int:
+    """Clamp a proposed interval to ``[default, default × MAX_INTERVAL_FACTOR]``,
+    rounded to the nearest 5 minutes (we only ever widen in v1)."""
+    hi = default * MAX_INTERVAL_FACTOR
+    clamped = min(max(value, default), hi)
+    return int(round(clamped / 5.0) * 5)
+
+
+def adapt_self_care_interval(
+    responses: list[dict[str, Any]], default_interval: int, *, current_interval: int
+) -> tuple[int, str]:
+    """Suggest a check's interval from recent responses — with the honesty check.
+
+    v1 only ever *widens* (nudges less), never quietly more:
+
+    - **Snooze a lot** (explicit "not now") → widen. The clearest signal.
+    - **Honesty check:** if the *timed* confirms are mostly **instant** (a
+      reflexive yes within :data:`INSTANT_CONFIRM_SECONDS`), *hold* — those taps
+      look like dismissals, not genuine "I did it", so they must not justify
+      backing off a scaffold that's really just being swatted away.
+    - **Genuinely on top of it** (few snoozes + enough confirms at a plausible
+      latency) → ease off slightly.
+    - Otherwise the cadence looks right → hold.
+
+    Returns ``(suggested_minutes, reason)``.
+    """
+    n = len(responses)
+    if n < MIN_ADAPT_RESPONSES:
+        return current_interval, "not enough responses yet"
+    snoozes = sum(1 for r in responses if r["outcome"] == "snoozed")
+    snooze_rate = snoozes / n
+    if snooze_rate >= SNOOZE_WIDEN_RATE:
+        widened = _bounded_interval(current_interval * WIDEN_FACTOR, default_interval)
+        if widened > current_interval:
+            return widened, "you snooze often — nudging less frequently"
+        return current_interval, "snoozing often, but already at the max interval"
+
+    timed = [r for r in responses if r["outcome"] == "confirmed" and r["latency"] is not None]
+    instant = [r for r in timed if r["latency"] < INSTANT_CONFIRM_SECONDS]
+    instant_rate = (len(instant) / len(timed)) if timed else 0.0
+    if instant_rate >= INSTANT_GUARD_RATE:
+        # Honesty check: reflexive yeses aren't evidence you need it less.
+        return current_interval, "frequent instant confirms read as dismissals — keeping presence"
+    if (
+        snooze_rate <= EASE_OFF_SNOOZE_RATE
+        and len(timed) >= MIN_GENUINE_CONFIRMS
+    ):
+        eased = _bounded_interval(current_interval * EASE_OFF_FACTOR, default_interval)
+        if eased > current_interval:
+            return eased, "consistently handling it — easing off a little"
+    return current_interval, "cadence looks about right"
+
+
+def adapt_self_care(store: ModuleStore, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Learn each enabled check's interval from response history (learning §6).
+
+    Runs in the nightly ``learn`` pass. Writes the adapted value to the check's
+    own interval key (which the module already reads), so the loop closes with no
+    module change — but never overrides an interval the *user* set explicitly.
+    Returns a per-check summary for the CLI to print.
+    """
+    if (store.get_state("self_care", "off") or "off") != "on":
+        return []
+    state = store.all_state()
+    out: list[dict[str, Any]] = []
+    for check in CHECKS:
+        if (store.get_state(check.enabled_key, "on") or "on") == "off":
+            continue
+        default = check.interval_default
+        current = int(store.get_float(check.interval_key, default))
+        suggested, reason = adapt_self_care_interval(
+            _recent_responses(store, check), default, current_interval=current
+        )
+        user_set = (state.get(check.interval_key, {}) or {}).get("source") == "explicit"
+        changed = suggested != current and not user_set
+        if changed:
+            store.set_state(check.interval_key, str(suggested), source="inferred")
+        out.append(
+            {
+                "check": check.key,
+                "interval": current if user_set else suggested,
+                "changed": changed,
+                "reason": "held (you set this interval)" if user_set else reason,
+            }
+        )
+    return out
 
 
 class SelfCareModule(Module):

@@ -13,14 +13,19 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.coaching import CoachContext
+from prefrontal.coaching import CoachContext, Cue, Decision
 from prefrontal.config import Settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.self_care import (
+    SELF_CARE_EPISODE,
     SNOOZED_UNTIL_KEY,
     SelfCareModule,
+    adapt_self_care,
+    adapt_self_care_interval,
+    apply_self_care_action,
+    mark_self_care_prompted,
     meal_message,
     water_message,
 )
@@ -245,3 +250,86 @@ def test_coach_check_surfaces_water_cue_with_actions(client, store):
     assert [a["label"] for a in water["actions"]] == ["✓ Drank", "Snooze"]
     token = water["actions"][0]["url"].split("t=", 1)[1]
     assert verify_action(token, SIGNING)[1] == "water_drank"
+
+
+# -- adaptive cadence: latency capture + honesty check (learning §6) ----------
+
+
+def _meal_decision():
+    cue = Cue(
+        module="self_care", intervention="meal_check", urgency="nudge",
+        text="eat?", context_key="meal", dedup_key="m", ref={"target": 20260703},
+    )
+    return Decision(cue=cue, channel="push", text="eat?")
+
+
+def _responses(confirmed=0, snoozed=0, latency=None):
+    out = [{"outcome": "confirmed", "latency": latency} for _ in range(confirmed)]
+    out += [{"outcome": "snoozed", "latency": None} for _ in range(snoozed)]
+    return out
+
+
+def test_latency_captured_from_prompt_to_tap(store):
+    """mark_self_care_prompted + a later confirm records the nudge→tap latency."""
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    mark_self_care_prompted(store, [_meal_decision()], t0)
+    apply_self_care_action(store, "meal_ate", now=t0 + timedelta(seconds=90), today="2026-07-03")
+    ep = store.episodes_by_type(SELF_CARE_EPISODE)[0]
+    assert "latency=90s" in ep["notes"]
+
+
+def test_latency_unknown_without_a_prompt(store):
+    """A tap with no tracked prompt logs latency=? rather than a bogus number."""
+    apply_self_care_action(
+        store, "water_drank", now=datetime(2026, 7, 3, 12, 0, 0), today="2026-07-03"
+    )
+    assert "latency=?" in store.episodes_by_type(SELF_CARE_EPISODE)[0]["notes"]
+
+
+def test_adapt_widens_when_snoozed_often():
+    suggested, reason = adapt_self_care_interval(
+        _responses(confirmed=2, snoozed=3), 40, current_interval=40
+    )
+    assert suggested == 50 and "snooze" in reason  # 40 × 1.25 → 50
+
+
+def test_adapt_holds_on_reflexive_instant_confirms():
+    """The honesty check: instant yeses must NOT be read as 'needs it less'."""
+    suggested, reason = adapt_self_care_interval(
+        _responses(confirmed=5, latency=5.0), 40, current_interval=40  # all instant
+    )
+    assert suggested == 40 and "dismissal" in reason
+
+
+def test_adapt_eases_off_on_genuine_engagement():
+    suggested, reason = adapt_self_care_interval(
+        _responses(confirmed=5, latency=200.0), 40, current_interval=40  # plausible gaps
+    )
+    assert suggested == 45 and "easing off" in reason  # 40 × 1.1 → 45
+
+
+def test_adapt_insufficient_data_holds():
+    suggested, reason = adapt_self_care_interval(_responses(confirmed=2), 40, current_interval=40)
+    assert suggested == 40 and "not enough" in reason
+
+
+def _log_response(store, kind, outcome):
+    store.log_episode(SELF_CARE_EPISODE, context=f"{kind}: {outcome}", outcome=outcome, notes="30m")
+
+
+def test_adapt_self_care_writes_key_but_respects_explicit(store):
+    store.set_state("self_care", "on")
+    for _ in range(4):
+        _log_response(store, "meal", "snoozed")
+    _log_response(store, "meal", "confirmed")
+
+    summary = adapt_self_care(store)
+    meal = next(c for c in summary if c["check"] == "meal")
+    assert meal["changed"] and store.get_state("meal_reask_minutes") == "50"
+
+    # A user-pinned interval is reported but never overwritten.
+    store.set_state("water_interval_minutes", "120", source="explicit")
+    for _ in range(5):
+        _log_response(store, "water", "snoozed")
+    water = next(c for c in adapt_self_care(store) if c["check"] == "water")
+    assert not water["changed"] and store.get_state("water_interval_minutes") == "120"

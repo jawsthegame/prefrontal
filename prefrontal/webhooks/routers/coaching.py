@@ -25,6 +25,7 @@ from prefrontal.encouragement import (
     render_encouragement,
 )
 from prefrontal.modules import enabled_modules
+from prefrontal.modules.self_care import mark_self_care_prompted
 from prefrontal.webhooks._common import (
     Annotated,
     Any,
@@ -114,6 +115,9 @@ def build_router(
         # Track the interactive nudges we're handing off so a later tap (or the
         # next sweep) can log which channel landed — the input to choose_channel.
         note_delivered(memory, decisions, now)
+        # Stamp self-care delivery time so a later Ate/Drank/Snooze tap can be
+        # timed (the honesty-check signal for adaptive cadence).
+        mark_self_care_prompted(memory, decisions, now)
         handle = ctx.user.get("handle") or ""
 
         def _actions(d) -> list[dict[str, Any]]:

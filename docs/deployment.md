@@ -550,8 +550,12 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
   `water_daily_target` (default 6; tune `water_start_hour`, `water_interval_minutes`),
   and each Drank counts one and defers a full interval. Both interrupt a focus
   block by design, respect responsive hours, and can be toggled individually
-  (`meal_enabled` / `water_enabled`). New module coaching lights up as each
-  `evaluate()` is filled in.
+  (`meal_enabled` / `water_enabled`). The intervals also **self-tune** in the
+  nightly `learn`: snooze a lot and it widens; respond genuinely and it eases off
+  — but a burst of *instant* confirms (reflexive dismissals) holds it rather than
+  backing off. Pin an interval yourself (set it with `source='explicit'`) and the
+  learner leaves it alone. New module coaching lights up as each `evaluate()` is
+  filled in.
 
 ---
 
