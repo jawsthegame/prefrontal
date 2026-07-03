@@ -1,0 +1,42 @@
+{
+  "name": "Prefrontal — Shared Chores (reminders + miss-handoff)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 15 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/webhooks/household/chores/check",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-Prefrontal-Token", "value": "REPLACE_WITH_A_HOUSEHOLD_MEMBERS_TOKEN" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "chores-check",
+      "name": "Chores Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": { "main": [[{ "node": "Chores Check", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "Recurring shared chores for the token owner's household. On each tick the endpoint fires a lead-time reminder to a chore's owner before its due time, and — if the due time passes with the chore still undone — a still-not-done nudge to the owner plus a gentle heads-up to the OTHER parent so a slip isn't a morning surprise. Each stage dedups to once per local day, so a frequent poll (every 15 min) fires each exactly once; it's silent when nothing's due. A one-tap 'Done' button (or POST /household/chores/{id}/done) clears a chore for the day. Use a household member's per-user token so delivery resolves that household."
+  }
+}

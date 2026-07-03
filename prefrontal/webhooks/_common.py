@@ -672,6 +672,34 @@ class ShoppingGot(BaseModel):
     got: bool = Field(default=True, description="True = bought, false = still needed.")
 
 
+class ChoreSet(BaseModel):
+    """Body of ``POST /household/chores`` — upsert a recurring shared chore."""
+
+    title: str = Field(description="What has to happen, e.g. 'run the dishwasher'.")
+    due_time: str = Field(description="Local time it should be done by, 'HH:MM' 24-hour.")
+    days: list[int] = Field(
+        default_factory=list,
+        description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = every day.",
+    )
+    owner_id: int | None = Field(
+        default=None, description="A member's user id whose job it is; null = either parent."
+    )
+    remind_before: int = Field(
+        default=30, description="Minutes before the due time to nudge the owner."
+    )
+    impact: str | None = Field(
+        default=None,
+        description="Why it matters if it slips, e.g. 'it makes the morning harder'.",
+    )
+    enabled: bool = Field(default=True, description="Whether the chore's reminders fire.")
+
+
+class ChoreEnabled(BaseModel):
+    """Body of ``POST /household/chores/{id}/enabled`` — pause or resume a chore."""
+
+    enabled: bool = Field(default=True, description="True = active, false = paused.")
+
+
 class AppointmentCreate(BaseModel):
     """Body of ``POST /household/appointments`` — add a kid appointment.
 

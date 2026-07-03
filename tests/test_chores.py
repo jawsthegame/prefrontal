@@ -1,0 +1,386 @@
+"""Tests for recurring shared chores — the "load-balancing" notification flow.
+
+Covers the four layers, mirroring test_household.py: the pure timing/message
+logic (no store, no clock), the household-scoped storage (upsert, completion
+log, dedup cursors), the deterministic sheet render, the reminder/miss-handoff
+sweep (:func:`run_chores_check`, with a mock transport asserting who gets what),
+and the HTTP + one-tap endpoints.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from prefrontal.config import Settings
+from prefrontal.household import (
+    build_sheet,
+    chore_missed_owner_message,
+    chore_missed_partner_message,
+    chore_reminder_message,
+    describe_chore_days,
+    fmt_time_12h,
+    format_chore_days,
+    miss_due,
+    normalize_chore,
+    parse_chore_days,
+    reminder_due,
+    render_sheet,
+    run_chores_check,
+)
+from prefrontal.impact import utcnow
+from prefrontal.integrations.delivery import DeliveryClient
+from prefrontal.memory.db import init_db
+from prefrontal.memory.store import MemoryStore, provision_user
+from prefrontal.scheduling import local_datetime
+from prefrontal.webhooks.app import create_app
+from prefrontal.webhooks.oauth import sign_action
+
+BASE = "https://agent-1.tail8b0a.ts.net"
+SIGNING = "chore-signing-key"
+UTC = Settings(timezone="UTC")
+
+# A Wednesday, 9:40pm UTC — inside the reminder window for a 22:00/-30m chore.
+REMIND_NOW = datetime.datetime(2026, 7, 1, 21, 40, 0)
+# Same Wednesday, 10:30pm — past a 22:00 due time (the miss window).
+MISS_NOW = datetime.datetime(2026, 7, 1, 22, 30, 0)
+
+
+# --- fixtures ----------------------------------------------------------------
+
+
+@pytest.fixture()
+def store():
+    """In-memory store: two co-parents (Dana, Alex) sharing one household."""
+    conn = init_db(":memory:")
+    s = MemoryStore(conn)
+    provision_user(s, "dana", display_name="Dana", token="dana-tok")
+    provision_user(s, "alex", display_name="Alex", token="alex-tok")
+    hid = s.create_household("The Kims")
+    s.set_user_household("dana", hid)
+    s.set_user_household("alex", hid)
+    try:
+        yield s
+    finally:
+        conn.close()
+
+
+@pytest.fixture()
+def dana(store):
+    return store.scoped(store.get_user("dana")["id"])
+
+
+@pytest.fixture()
+def alex(store):
+    return store.scoped(store.get_user("alex")["id"])
+
+
+@pytest.fixture()
+def client(store):
+    app = create_app(store=store, settings=Settings(session_secret=SIGNING, oauth_base_url=BASE))
+    with TestClient(app) as c:
+        yield c
+
+
+def _h(token):
+    return {"X-Prefrontal-Token": token}
+
+
+def _capture_client():
+    """A DeliveryClient whose mock transport records every (topic, message) sent."""
+    sent: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.read())
+        sent.append({"topic": body.get("topic", ""), "message": body.get("message", "")})
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    return client, sent
+
+
+# --- pure: parsing + formatting ----------------------------------------------
+
+
+def test_parse_and_format_days_round_trip():
+    assert parse_chore_days("0,2,4") == [0, 2, 4]
+    assert parse_chore_days("") == []  # every-day sentinel
+    assert parse_chore_days("7, x, 3, 3") == [3]  # junk + out-of-range dropped, de-duped
+    assert parse_chore_days([1, 0]) == [0, 1]
+    assert format_chore_days([2, 0, 0]) == "0,2"
+
+
+def test_describe_days_and_time():
+    assert describe_chore_days("") == "every day"
+    assert describe_chore_days("0,1,2,3,4") == "weekdays"
+    assert describe_chore_days("5,6") == "weekends"
+    assert describe_chore_days("0,2") == "Mon, Wed"
+    assert fmt_time_12h("22:00") == "10:00pm"
+    assert fmt_time_12h("09:05") == "9:05am"
+
+
+# --- pure: normalize ---------------------------------------------------------
+
+
+def test_normalize_chore_clean():
+    clean, err = normalize_chore(
+        {"title": "  run the dishwasher ", "due_time": "22:00", "days": [2, 0],
+         "remind_before": 45, "impact": "  it makes the morning harder "}
+    )
+    assert err is None
+    assert clean == {
+        "title": "run the dishwasher",
+        "owner_id": None,
+        "days": "0,2",
+        "due_time": "22:00",
+        "remind_before": 45,
+        "impact": "it makes the morning harder",
+        "enabled": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"title": "", "due_time": "22:00"},
+        {"title": "x", "due_time": "nope"},
+        {"title": "x", "due_time": "22:00", "remind_before": 0},
+        {"title": "x", "due_time": "22:00", "remind_before": 99999},
+        {"title": "x", "due_time": "22:00", "owner_id": "not-an-int"},
+    ],
+)
+def test_normalize_chore_rejects_bad_input(raw):
+    clean, err = normalize_chore(raw)
+    assert clean is None and err
+
+
+# --- pure: timing predicates -------------------------------------------------
+
+
+def _chore(**over):
+    base = {"enabled": True, "days": "", "due_time": "22:00", "remind_before": 30,
+            "impact": None, "owner_id": None}
+    base.update(over)
+    return base
+
+
+def test_reminder_due_only_inside_the_lead_window():
+    c = _chore()
+    assert reminder_due(c, now_local=REMIND_NOW, done_today=False)          # 21:40 in [21:30,22:00)
+    early = REMIND_NOW.replace(hour=21, minute=0)
+    assert not reminder_due(c, now_local=early, done_today=False)           # before the window
+    assert not reminder_due(c, now_local=MISS_NOW, done_today=False)        # past due → miss's job
+
+
+def test_reminder_and_miss_respect_done_and_dedup():
+    c = _chore()
+    assert not reminder_due(c, now_local=REMIND_NOW, done_today=True)       # already done
+    today = REMIND_NOW.strftime("%Y-%m-%d")
+    assert not reminder_due(c, now_local=REMIND_NOW, done_today=False, last_reminded_on=today)
+    assert miss_due(c, now_local=MISS_NOW, done_today=False)
+    assert not miss_due(c, now_local=MISS_NOW, done_today=True)
+    assert not miss_due(c, now_local=MISS_NOW, done_today=False, last_missed_on=today)
+
+
+def test_scheduling_gates_on_weekday():
+    # REMIND_NOW is a Wednesday (weekday 2); a Mon/Fri-only chore shouldn't fire.
+    c = _chore(days="0,4")
+    assert not reminder_due(c, now_local=REMIND_NOW, done_today=False)
+    assert not miss_due(c, now_local=MISS_NOW, done_today=False)
+    assert reminder_due(_chore(days="2"), now_local=REMIND_NOW, done_today=False)
+
+
+def test_disabled_chore_never_fires():
+    c = _chore(enabled=False)
+    assert not reminder_due(c, now_local=REMIND_NOW, done_today=False)
+    assert not miss_due(c, now_local=MISS_NOW, done_today=False)
+
+
+def test_messages_carry_impact_and_title():
+    c = _chore(title="run the dishwasher", impact="it makes the morning harder")
+    assert "run the dishwasher" in chore_reminder_message(c)
+    assert "makes the morning harder" in chore_reminder_message(c)
+    assert "10:00pm" in chore_missed_owner_message(c)
+    assert "Heads up" in chore_missed_partner_message(c)
+
+
+# --- storage -----------------------------------------------------------------
+
+
+def test_set_chore_upsert_and_listing(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="run the dishwasher", due_time="22:00", days="0,2",
+                         owner_id=dana_id, impact="mornings", updated_by=dana_id)
+    # Upsert on title is a full-definition replace (like set_agreement): re-submit
+    # every field an edit form carries.
+    again = dana.set_chore(title="run the dishwasher", due_time="21:30",
+                           owner_id=dana_id, updated_by=dana_id)
+    assert cid == again
+    chores = dana.chores()
+    assert len(chores) == 1
+    assert chores[0]["due_time"] == "21:30"  # last write wins
+    assert chores[0]["owner_name"] == "Dana"
+
+
+def test_co_parents_share_chores(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_chore(title="lunches", due_time="07:30", updated_by=dana_id)
+    assert [c["title"] for c in alex.chores()] == ["lunches"]  # household-scoped
+
+
+def test_completion_log_is_idempotent_and_tracked(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", updated_by=dana_id)
+    first = dana.log_chore_done(chore_id=cid, done_on="2026-07-01", done_by=dana_id)
+    assert first["created"] is True
+    second = dana.log_chore_done(chore_id=cid, done_on="2026-07-01", done_by=dana_id)
+    assert second["created"] is False  # same day → in-place, not a double-log
+    assert dana.chore_ids_done_on("2026-07-01") == {cid}
+    assert dana.chore_ids_done_on("2026-07-02") == set()
+    assert dana.log_chore_done(chore_id=999, done_on="2026-07-01", done_by=dana_id) is None
+
+
+def test_remove_and_enable(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", updated_by=dana_id)
+    assert dana.set_chore_enabled(cid, False) is True
+    assert dana.chores()[0]["enabled"] == 0
+    assert dana.remove_chore(cid) is True
+    assert dana.chores() == []
+    assert dana.remove_chore(cid) is False
+
+
+# --- sheet render ------------------------------------------------------------
+
+
+def test_sheet_shows_chores_with_today_status(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="run the dishwasher", due_time="22:00", owner_id=dana_id,
+                         impact="mornings", updated_by=dana_id)
+    dana.log_chore_done(chore_id=cid, done_on=REMIND_NOW.strftime("%Y-%m-%d"), done_by=dana_id)
+    sheet = build_sheet(dana, now=REMIND_NOW, timezone="UTC")
+    assert sheet.counts["chores"] == 1
+    assert sheet.chores[0]["done_today"] is True
+    md = render_sheet(sheet)
+    assert "## Shared chores" in md
+    assert "[x] run the dishwasher" in md
+    assert "Dana" in md and "mornings" in md
+
+
+# --- the sweep: run_chores_check ---------------------------------------------
+
+
+def test_sweep_reminds_only_the_owner(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="run the dishwasher", due_time="22:00", owner_id=dana_id,
+                   updated_by=dana_id)
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    assert [s["topic"] for s in sent] == ["dana-topic"]  # only the owner
+    assert "Time to run the dishwasher" in sent[0]["message"]
+    assert result[0]["stage"] == "reminder"
+    # Dedup: a second sweep the same window is a no-op.
+    assert run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client) == []
+
+
+def test_sweep_miss_handoff_splits_owner_and_partner(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="run the dishwasher", due_time="22:00", owner_id=dana_id,
+                   impact="it makes Alex's morning harder", updated_by=dana_id)
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=MISS_NOW, client=client)
+    assert result[0]["stage"] == "missed"
+    by_topic = {s["topic"]: s["message"] for s in sent}
+    assert set(by_topic) == {"dana-topic", "alex-topic"}
+    assert "still isn't done" in by_topic["dana-topic"]       # owner nudge
+    assert "Heads up" in by_topic["alex-topic"]               # partner heads-up
+    assert "morning harder" in by_topic["alex-topic"]
+
+
+def test_sweep_skips_a_chore_done_today(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=dana_id, updated_by=dana_id)
+    dana.log_chore_done(chore_id=cid, done_on=MISS_NOW.strftime("%Y-%m-%d"), done_by=dana_id)
+    client, sent = _capture_client()
+    assert run_chores_check(dana, settings=UTC, now=MISS_NOW, client=client) == []
+    assert sent == []
+
+
+def test_sweep_unassigned_chore_reminds_everyone(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="empty the bins", due_time="22:00", updated_by=dana_id)  # no owner
+    client, sent = _capture_client()
+    run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    assert {s["topic"] for s in sent} == {"dana-topic", "alex-topic"}
+
+
+# --- HTTP + one-tap ----------------------------------------------------------
+
+
+def test_chore_endpoints_crud_and_validation(client):
+    r = client.post(
+        "/household/chores",
+        json={"title": "run the dishwasher", "due_time": "22:00", "days": [0, 2],
+              "impact": "mornings"},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    cid = r.json()["id"]
+    # Bad due time → 422.
+    assert client.post(
+        "/household/chores", json={"title": "x", "due_time": "nope"}, headers=_h("dana-tok")
+    ).status_code == 422
+    # Non-member owner → 422.
+    assert client.post(
+        "/household/chores",
+        json={"title": "y", "due_time": "22:00", "owner_id": 9999},
+        headers=_h("dana-tok"),
+    ).status_code == 422
+    # It shows on the shared sheet for the co-parent.
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()
+    assert any(c["title"] == "run the dishwasher" for c in sheet["sheet"]["chores"])
+    # Mark done, then pause, then remove.
+    assert client.post(f"/household/chores/{cid}/done", headers=_h("alex-tok")).json()["created"]
+    assert client.post(
+        f"/household/chores/{cid}/enabled", json={"enabled": False}, headers=_h("dana-tok")
+    ).json()["enabled"] is False
+    assert client.post(f"/household/chores/{cid}/remove", headers=_h("dana-tok")).json()["removed"]
+    assert client.post(f"/household/chores/{cid}/done", headers=_h("dana-tok")).status_code == 404
+
+
+def test_one_tap_done_marks_chore_and_is_idempotent(client, store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=dana_id, updated_by=dana_id)
+    token = sign_action("alex", "chore_done", cid, SIGNING)  # the partner taps Done
+    r = client.get(f"/nudge/act?t={token}")
+    assert r.status_code == 200 and "sorted for today" in r.text
+    # Attributed to whoever tapped (Alex), and idempotent.
+    today = local_datetime(utcnow(), Settings().timezone).strftime("%Y-%m-%d")
+    assert cid in dana.chore_ids_done_on(today)
+    assert client.get(f"/nudge/act?t={token}").status_code == 200  # re-tap is fine
+
+
+def test_one_tap_done_on_missing_chore_is_graceful(client):
+    token = sign_action("dana", "chore_done", 4242, SIGNING)
+    r = client.get(f"/nudge/act?t={token}")
+    assert r.status_code == 200 and "no longer on the list" in r.text
+
+
+def test_chores_check_endpoint(client, store, dana):
+    dana_id = store.get_user("dana")["id"]
+    store.scoped(dana_id).set_state("ntfy_topic", "dana-topic")
+    dana.set_chore(title="dishes", due_time="00:01", owner_id=dana_id, updated_by=dana_id)
+    # due_time is 00:01 local, so by any wall-clock "now" it's already past due → miss fires.
+    out = client.post("/webhooks/household/chores/check", headers=_h("dana-tok")).json()
+    assert isinstance(out["sent"], list)

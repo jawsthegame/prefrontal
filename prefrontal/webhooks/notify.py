@@ -56,6 +56,9 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     # Daily delta digest — acknowledge you've seen the other parent's changes.
     "digest": (("digest_seen", "Caught up 👍"),),
+    # Recurring shared chore — mark it done for today in one tap (whoever taps
+    # gets the credit, so a partner picking up a slipped chore closes the loop).
+    "chore": (("chore_done", "✓ Done"),),
 }
 
 

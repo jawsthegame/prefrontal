@@ -42,6 +42,7 @@ from prefrontal.memory.repos.household import (
     HOUSEHOLD_WIDE,
 )
 from prefrontal.memory.store import MemoryStore
+from prefrontal.scheduling import local_datetime
 
 #: How many recent changes to surface — kept short so the load-balancing signal
 #: (what the other parent hasn't seen) stays legible, not a full changelog.
@@ -96,8 +97,12 @@ class HouseholdSheet:
         upcoming: Upcoming child appointments, soonest first.
         shopping: Shopping-list dicts (id/item/spec/where_to_buy/got/child_name/
             added_by_name), still-needed first.
-        counts: ``{children, facts, agreements, upcoming, shopping}`` for a summary
-            line (``shopping`` is the still-needed count).
+        chores: Recurring-chore dicts (id/title/owner_name/due_time/days/impact/
+            enabled) each carrying ``done_today`` for today's local date, enabled
+            first.
+        counts: ``{children, facts, agreements, upcoming, shopping, chores}`` for a
+            summary line (``shopping`` is the still-needed count; ``chores`` counts
+            the enabled ones).
     """
 
     household_name: str | None
@@ -107,6 +112,7 @@ class HouseholdSheet:
     agreements: list[dict[str, Any]] = field(default_factory=list)
     upcoming: list[Appointment] = field(default_factory=list)
     shopping: list[dict[str, Any]] = field(default_factory=list)
+    chores: list[dict[str, Any]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -172,7 +178,9 @@ def _appt_when(start: datetime | None, now: datetime) -> str:
     return f"{start.strftime('%b %-d')} {time_str}"
 
 
-def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> HouseholdSheet:
+def build_sheet(
+    store: MemoryStore, *, now: datetime | None = None, timezone: str = "UTC"
+) -> HouseholdSheet:
     """Assemble the structured household sheet from memory (deterministic).
 
     Args:
@@ -180,6 +188,8 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
             methods resolve the shared scope). A user with no household will
             raise from the store's ``_household_id`` guard.
         now: Optional naive-UTC "now" (defaults to :func:`prefrontal.impact.utcnow`).
+        timezone: The household's local timezone, used to resolve "today" for each
+            chore's ``done_today`` flag (defaults to UTC).
 
     Returns:
         A :class:`HouseholdSheet`.
@@ -237,12 +247,16 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
     # 5. Shared shopping list — still-needed first.
     shopping = store.shopping_items()
 
+    # 6. Recurring shared chores — with today's local done/pending status.
+    chores = _chores_with_status(store, now, timezone)
+
     counts = {
         "children": len(children),
         "facts": len(facts),
         "agreements": len(agreements),
         "upcoming": len(upcoming),
         "shopping": sum(1 for s in shopping if not s.get("got")),
+        "chores": sum(1 for c in chores if c.get("enabled")),
     }
     return HouseholdSheet(
         household_name=(household or {}).get("name"),
@@ -252,8 +266,23 @@ def build_sheet(store: MemoryStore, *, now: datetime | None = None) -> Household
         agreements=agreements_out,
         upcoming=upcoming,
         shopping=shopping,
+        chores=chores,
         counts=counts,
     )
+
+
+def _chores_with_status(
+    store: MemoryStore, now: datetime, timezone: str
+) -> list[dict[str, Any]]:
+    """Chore rows with a ``done_today`` flag for today's local date (enabled first)."""
+    chores = store.chores()
+    if not chores:
+        return []
+    today = local_datetime(now, timezone).strftime("%Y-%m-%d")
+    done_ids = store.chore_ids_done_on(today)
+    out = [{**c, "done_today": c["id"] in done_ids} for c in chores]
+    out.sort(key=lambda c: (0 if c.get("enabled") else 1, c.get("due_time") or "", c["title"]))
+    return out
 
 
 def _group_facts_by_child(
@@ -811,6 +840,310 @@ def balance_caption(members: list[dict[str, Any]], total: int) -> str:
     )
 
 
+# --- recurring shared chores (pure) ------------------------------------------
+#
+# The active heart of shared load: a chore is one parent's recurring job (run
+# the dishwasher, pack lunches) whose whole point is that forgetting it lands on
+# the *other* parent. The notification flow reads a chore's schedule twice a day:
+# a lead-time **reminder** to the owner before it's due, and — if the due time
+# passes with the chore still undone — a gentle **miss-handoff** to the other
+# parent so the slip isn't a morning surprise. The timing predicates below are
+# pure (fed now/done/last-fired by the sweep), so "should this fire?" is
+# unit-tested without a store or a clock, exactly like `prompt_due`/`checkin_due`.
+
+#: Default lead time (minutes before the due time) for the owner's reminder.
+DEFAULT_CHORE_REMIND_BEFORE_MINUTES = 30
+#: Upper bound on the lead time (12h) — a reminder further out than that is a
+#: config slip, not an intention, so we reject it rather than nudge at dawn.
+MAX_CHORE_REMIND_BEFORE_MINUTES = 720
+
+
+def parse_chore_days(raw: Any) -> list[int]:
+    """Parse a stored weekday CSV (``"0,2,4"``) into sorted ints, or ``[]`` (every day).
+
+    Tolerant of whitespace and junk: only 0–6 survive, de-duped and sorted. An
+    empty list is the "every day" sentinel (the schema's default ``days = ''``).
+    """
+    if isinstance(raw, (list, tuple, set)):
+        parts: list[Any] = list(raw)
+    else:
+        parts = str(raw or "").split(",")
+    days: set[int] = set()
+    for p in parts:
+        try:
+            n = int(str(p).strip())
+        except (ValueError, TypeError):
+            continue
+        if 0 <= n <= 6:
+            days.add(n)
+    return sorted(days)
+
+
+def format_chore_days(days: Any) -> str:
+    """Format a weekday list back to the stored CSV (``[0,2,4]`` → ``"0,2,4"``)."""
+    return ",".join(str(d) for d in parse_chore_days(days))
+
+
+#: Short weekday labels for the human-readable schedule (Mon=0 … Sun=6).
+_WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def describe_chore_days(days: Any) -> str:
+    """A human schedule phrase: "every day", "weekdays", "weekends", or "Mon, Wed"."""
+    parsed = parse_chore_days(days)
+    if not parsed or parsed == list(range(7)):
+        return "every day"
+    if parsed == [0, 1, 2, 3, 4]:
+        return "weekdays"
+    if parsed == [5, 6]:
+        return "weekends"
+    return ", ".join(_WEEKDAY_LABELS[d] for d in parsed)
+
+
+def fmt_time_12h(hhmm: Any) -> str:
+    """Render a stored ``"HH:MM"`` as a friendly 12-hour time ("22:00" → "10:00pm")."""
+    t = _parse_hhmm(hhmm)
+    if t is None:
+        return str(hhmm or "")
+    return datetime(2000, 1, 1, t.hour, t.minute).strftime("%-I:%M%p").lower()
+
+
+def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate a chore definition, returning ``(clean, None)`` or ``(None, error)``.
+
+    ``clean`` carries a storage-ready shape: ``title`` (trimmed, non-empty),
+    ``owner_id`` (int or ``None`` = either parent), ``days`` as a weekday CSV
+    (empty = every day), ``due_time`` as ``"HH:MM"``, ``remind_before`` (1 …
+    :data:`MAX_CHORE_REMIND_BEFORE_MINUTES` minutes), ``impact`` (collapsed,
+    length-capped, or ``None``), and ``enabled``. Membership of ``owner_id`` is
+    the caller's to check — that needs the store.
+    """
+    if not isinstance(raw, dict):
+        return None, "chore must be an object"
+    title = re.sub(r"\s+", " ", str(raw.get("title") or "").strip())
+    if not title:
+        return None, "title must be non-empty"
+    due = _parse_hhmm(raw.get("due_time"))
+    if due is None:
+        return None, "due_time must be 'HH:MM' (24-hour), e.g. '22:00'"
+    days = format_chore_days(raw.get("days", []))
+    remind_before = raw.get("remind_before", DEFAULT_CHORE_REMIND_BEFORE_MINUTES)
+    try:
+        remind_before = int(remind_before)
+    except (ValueError, TypeError):
+        return None, "remind_before must be a whole number of minutes"
+    if not 1 <= remind_before <= MAX_CHORE_REMIND_BEFORE_MINUTES:
+        return None, f"remind_before must be 1–{MAX_CHORE_REMIND_BEFORE_MINUTES} minutes"
+    owner_id = raw.get("owner_id")
+    if owner_id is not None:
+        try:
+            owner_id = int(owner_id)
+        except (ValueError, TypeError):
+            return None, "owner_id must be a member's user id, or null for either parent"
+    impact = raw.get("impact")
+    if impact is not None:
+        impact = re.sub(r"\s+", " ", str(impact).strip())[:160] or None
+    return {
+        "title": title,
+        "owner_id": owner_id,
+        "days": days,
+        "due_time": due.strftime("%H:%M"),
+        "remind_before": remind_before,
+        "impact": impact,
+        "enabled": bool(raw.get("enabled", True)),
+    }, None
+
+
+def chore_scheduled_on(days: Any, now_local: datetime) -> bool:
+    """Whether a chore with ``days`` runs on ``now_local``'s weekday (empty = every day)."""
+    parsed = parse_chore_days(days)
+    return not parsed or now_local.weekday() in parsed
+
+
+def _due_minute(chore: dict[str, Any]) -> int | None:
+    """The chore's due time as a minute-of-day, or ``None`` if it can't be parsed."""
+    due = _parse_hhmm(chore.get("due_time"))
+    return due.hour * 60 + due.minute if due is not None else None
+
+
+def reminder_due(
+    chore: dict[str, Any],
+    *,
+    now_local: datetime,
+    done_today: bool,
+    last_reminded_on: str | None = None,
+) -> bool:
+    """Whether the owner's lead-time reminder should fire at ``now_local``.
+
+    Fires once, on the first sweep inside the ``[due − remind_before, due)``
+    window on a scheduled, still-undone day. Past the due time the reminder
+    yields to :func:`miss_due` (so a long-down server jumps straight to the
+    miss, never a stale "due soon"). ``last_reminded_on`` on today's date
+    suppresses a repeat.
+    """
+    if not chore.get("enabled", True) or done_today:
+        return False
+    if not chore_scheduled_on(chore.get("days"), now_local):
+        return False
+    due_min = _due_minute(chore)
+    if due_min is None:
+        return False
+    if last_reminded_on == now_local.strftime("%Y-%m-%d"):
+        return False
+    now_min = now_local.hour * 60 + now_local.minute
+    remind_min = max(0, due_min - int(chore.get("remind_before") or 0))
+    return remind_min <= now_min < due_min
+
+
+def miss_due(
+    chore: dict[str, Any],
+    *,
+    now_local: datetime,
+    done_today: bool,
+    last_missed_on: str | None = None,
+) -> bool:
+    """Whether the miss-handoff should fire — due time passed with the chore undone.
+
+    Fires once per local day (``last_missed_on`` guards the repeat), on a
+    scheduled day, at or after the due minute. This is the notification that
+    reaches the *other* parent so a slip isn't a morning surprise.
+    """
+    if not chore.get("enabled", True) or done_today:
+        return False
+    if not chore_scheduled_on(chore.get("days"), now_local):
+        return False
+    due_min = _due_minute(chore)
+    if due_min is None:
+        return False
+    if last_missed_on == now_local.strftime("%Y-%m-%d"):
+        return False
+    now_min = now_local.hour * 60 + now_local.minute
+    return now_min >= due_min
+
+
+def _impact_clause(chore: dict[str, Any]) -> str:
+    """" If it slips, <impact>." — the reason the chore matters, or "" if none set."""
+    impact = chore.get("impact")
+    return f" If it slips, {impact}." if impact else ""
+
+
+def chore_reminder_message(chore: dict[str, Any]) -> str:
+    """The owner's lead-time nudge — warm, with the "why" and a one-tap Done."""
+    return (
+        f"🧼 Time to {chore['title']} — ideally by {fmt_time_12h(chore.get('due_time'))}."
+        f"{_impact_clause(chore)} Tap Done once it's sorted."
+    )
+
+
+def chore_missed_owner_message(chore: dict[str, Any]) -> str:
+    """The still-not-done nudge to the owner once the due time has passed (no blame)."""
+    return (
+        f"🧼 “{chore['title']}” still isn't done — it was due by "
+        f"{fmt_time_12h(chore.get('due_time'))}. No stress; do it when you can and tap Done."
+    )
+
+
+def chore_missed_partner_message(chore: dict[str, Any]) -> str:
+    """The gentle heads-up to the *other* parent — so a slip isn't a morning surprise."""
+    return (
+        f"💛 Heads up — “{chore['title']}” didn't get done today (was due "
+        f"{fmt_time_12h(chore.get('due_time'))}).{_impact_clause(chore)} "
+        "Flagging it so it's not a morning surprise — no need to jump on it unless "
+        "you want to. Tap Done if you pick it up."
+    )
+
+
+def run_chores_check(
+    store: MemoryStore,
+    *,
+    settings: Any,
+    now: datetime | None = None,
+    client: Any = None,
+) -> list[dict[str, Any]]:
+    """Fire any chore reminders / miss-handoffs due now, notifying the right parent(s).
+
+    The single orchestration path behind both ``POST /webhooks/household/chores/check``
+    and ``prefrontal household chores-check`` (like :func:`award_stars_and_notify` is
+    the one path behind every way a star is given). For each enabled, still-undone
+    chore scheduled today it sends either the owner's lead-time **reminder** or —
+    once the due time has passed — the owner a still-not-done nudge **and** the
+    *other* parent a gentle **heads-up**. Each stage stamps its per-day cursor so a
+    check running every 15–30 min fires each exactly once. Delivery failures never
+    raise (each transport swallows them); returns one entry per chore that fired.
+
+    Args:
+        store: A store scoped to a household member.
+        settings: Operator settings (timezone + one-tap signing origin/secret).
+        now: Optional naive-UTC "now" (defaults to :func:`prefrontal.impact.utcnow`).
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+    """
+    from prefrontal.integrations.delivery import (
+        deliver_to_household,
+        deliver_to_member,
+        household_chore_notice,
+    )
+
+    now = now or utcnow()
+    now_local = local_datetime(now, settings.timezone)
+    today = now_local.strftime("%Y-%m-%d")
+    hid = store.household_id_or_none()
+    members = [
+        m for m in store.household_members(hid) if m.get("status") in (None, "active")
+    ]
+    done_ids = store.chore_ids_done_on(today)
+    deliver_kw = {
+        "settings": settings,
+        "client": client,
+        "base_url": settings.oauth_base_url,
+        "secret": settings.session_secret,
+    }
+
+    def _to_member(member: dict[str, Any], text: str, cid: int) -> dict[str, Any]:
+        row = deliver_to_member(
+            store.scoped(member["id"]), household_chore_notice(text, cid),
+            handle=member["handle"], **deliver_kw,
+        )
+        return {"handle": member["handle"], "delivery": row}
+
+    sent: list[dict[str, Any]] = []
+    for chore in store.chores():
+        done = chore["id"] in done_ids
+        if reminder_due(
+            chore, now_local=now_local, done_today=done,
+            last_reminded_on=chore.get("last_reminded_on"),
+        ):
+            text = chore_reminder_message(chore)
+            owner_id = chore.get("owner_id")
+            if owner_id and any(m["id"] == owner_id for m in members):
+                owner = next(m for m in members if m["id"] == owner_id)
+                notified = [_to_member(owner, text, chore["id"])]
+            else:  # unassigned — everyone owns it
+                notified = deliver_to_household(
+                    store, hid, household_chore_notice(text, chore["id"]), **deliver_kw
+                )
+            store.mark_chore_reminded(chore["id"], today)
+            sent.append({"chore_id": chore["id"], "title": chore["title"],
+                         "stage": "reminder", "notified": notified})
+        elif miss_due(
+            chore, now_local=now_local, done_today=done,
+            last_missed_on=chore.get("last_missed_on"),
+        ):
+            owner_id = chore.get("owner_id")
+            notified = []
+            for member in members:
+                # The owner (or everyone, if unassigned) gets the still-not-done
+                # nudge; the *other* parent gets the gentle heads-up.
+                if owner_id is None or member["id"] == owner_id:
+                    text = chore_missed_owner_message(chore)
+                else:
+                    text = chore_missed_partner_message(chore)
+                notified.append(_to_member(member, text, chore["id"]))
+            store.mark_chore_missed(chore["id"], today)
+            sent.append({"chore_id": chore["id"], "title": chore["title"],
+                         "stage": "missed", "notified": notified})
+    return sent
+
+
 # --- render ------------------------------------------------------------------
 
 
@@ -862,6 +1195,7 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             sheet.agreements,
             sheet.upcoming,
             sheet.shopping,
+            sheet.chores,
         )
     ):
         lines.append(
@@ -925,6 +1259,21 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             who = f" — {s['child_name']}" if s.get("child_name") else ""
             tail = f" ({detail})" if detail else ""
             lines.append(f"- [{box}] {s['item']}{tail}{who}")
+        lines.append("")
+
+    # 6. Shared chores — today's status, whose job, when it's due, and why.
+    if sheet.chores:
+        lines.append("## Shared chores")
+        for c in sheet.chores:
+            box = "x" if c.get("done_today") else " "
+            owner = c.get("owner_name") or "either"
+            bits = [f"{owner}", describe_chore_days(c.get("days")),
+                    f"by {fmt_time_12h(c.get('due_time'))}"]
+            if not c.get("enabled"):
+                bits.append("paused")
+            meta = " · ".join(bits)
+            impact = f" — {c['impact']}" if c.get("impact") else ""
+            lines.append(f"- [{box}] {c['title']} ({meta}){impact}")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

@@ -117,6 +117,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 6 modules, all wired end-to-end (5 EF challenges + an opt-in Self-Care meal/water check) |
 | Shared household sheet / Parent pack | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Co-parent facts, agreements & star charts, shared shopping list, load-balance view, daily delta digest, weekly mental-load check-in, self-serve invites; `/kids` + `/family` views, `prefrontal household …` |
+| Recurring shared chores | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Owner-assigned daily jobs (run the dishwasher, pack lunches) with a lead-time reminder to the owner and — if it slips past due — a gentle heads-up to the *other* parent so the morning isn't a surprise; one-tap **Done**, `POST /webhooks/household/chores/check`, `prefrontal household chore` |
 | Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes to ntfy / Pushover / TTS with one-tap action buttons; `prefrontal coach --deliver` |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |

@@ -44,14 +44,16 @@ the first test. Code follow-ups below are optional polish.
   to end (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; the `/kids` dashboard + `/family` glance;
   `prefrontal household add|join|leave|show|invite|redeem|star|prompt-check|
-  checkin-check|digest-check|balance|shopping`). It carries: a real **household
-  scope** (`households` + `users.household_id`), **facts** & **agreements**,
-  **star charts** with goals + dual-parent congratulation and scheduled award
-  prompts, a shared **shopping list**, the objective **load-balance view**, the
-  daily **delta digest** (push what your co-parent changed), an optional weekly
-  **mental-load check-in**, **single-parent** support (load-balancing gated), and
-  **self-serve invites** (create/redeem/revoke). n8n workflows drive the sweeps
-  (`star-prompt-check`, `checkin-check`, `digest-check`). Full design:
+  checkin-check|digest-check|balance|shopping|chore|chores-check`). It carries: a
+  real **household scope** (`households` + `users.household_id`), **facts** &
+  **agreements**, **star charts** with goals + dual-parent congratulation and
+  scheduled award prompts, a shared **shopping list**, **recurring shared chores**
+  (owner reminder + miss-handoff to the other parent), the objective
+  **load-balance view**, the daily **delta digest** (push what your co-parent
+  changed), an optional weekly **mental-load check-in**, **single-parent** support
+  (load-balancing gated), and **self-serve invites** (create/redeem/revoke). n8n
+  workflows drive the sweeps (`star-prompt-check`, `checkin-check`, `digest-check`,
+  `chores-check`). Full design:
   [`docs/household-sheet.md`](docs/household-sheet.md).
 - **LLM-as-sensor — free text → candidate updates** ✅ — `prefrontal/sensor.py`
   reads a plain note ("I always blow off admin on Mondays") and *proposes*
@@ -690,7 +692,10 @@ ordered by leverage; each is independent but builds on denser capture.
   [`docs/household-sheet.md`](docs/household-sheet.md). *(Shipped: a real
   `household` entity users belong to; last-write-wins + provenance; the visible
   shared sheet **and** the proactive delta-digest, load-balance view, weekly
-  mental-load check-in, shopping list, and self-serve invites.)*
+  mental-load check-in, shopping list, self-serve invites, and **recurring shared
+  chores** — owner-assigned daily jobs whose lead-time reminder goes to the owner
+  and whose miss-handoff goes to the *other* parent, so a slipped chore isn't a
+  morning surprise.)*
 
 - **"Have you eaten?" — a self-care nudge that pierces flow.** ✅ **(shipped — see
   "Recently shipped")** — the meal check is live as the `self_care` module: from a

@@ -22,10 +22,12 @@ from prefrontal.household import (
     digest_interval_ok,
     digest_message,
     normalize_checkin_config,
+    normalize_chore,
     normalize_prompt,
     parse_structured,
     prompt_due,
     prompt_question,
+    run_chores_check,
     unseen_changes,
     week_key,
 )
@@ -44,6 +46,8 @@ from prefrontal.webhooks._common import (
     CheckinConfig,
     ChildCreate,
     ChildRename,
+    ChoreEnabled,
+    ChoreSet,
     Depends,
     DigestConfig,
     FactClear,
@@ -117,8 +121,8 @@ def build_router(
         ``/kids`` dashboard's category / kind dropdowns off the server.
         """
         _require_member(ctx)
-        sheet = build_sheet(ctx.store)
         now = utcnow()
+        sheet = build_sheet(ctx.store, now=now, timezone=resolved_settings.timezone)
         now_local = local_datetime(now, resolved_settings.timezone)
         week = week_key(now_local)
         config = ctx.store.get_checkin_config()
@@ -630,6 +634,97 @@ def build_router(
         if not ctx.store.remove_shopping_item(item_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
         return {"removed": True}
+
+    # -- recurring shared chores ----------------------------------------------
+
+    def _resolve_owner_id(ctx: ScopedRequest, owner_id: int | None) -> int | None:
+        """Validate ``owner_id`` is an active member (or None), else 422."""
+        if owner_id is None:
+            return None
+        members = {m["id"] for m in ctx.store.household_members(ctx.store.household_id_or_none())}
+        if owner_id not in members:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="owner_id must be a member of this household (or null).",
+            )
+        return owner_id
+
+    @router.post("/household/chores", tags=["household"])
+    def set_chore(
+        payload: ChoreSet,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Upsert a recurring shared chore (keyed on title within the household).
+
+        The chore's schedule drives the notification flow: a lead-time reminder to
+        the owner, and — if it slips past due — a gentle heads-up to the other
+        parent. Editing re-submits the same title; the completion log is untouched.
+        """
+        _require_member(ctx)
+        clean, error = normalize_chore(payload.model_dump())
+        if error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
+            )
+        clean["owner_id"] = _resolve_owner_id(ctx, clean["owner_id"])
+        cid = ctx.store.set_chore(updated_by=ctx.user["id"], **clean)
+        return {"id": cid, "title": clean["title"]}
+
+    @router.post("/household/chores/{chore_id}/enabled", tags=["household"])
+    def set_chore_enabled(
+        chore_id: int,
+        payload: ChoreEnabled,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Pause or resume a chore's reminders without deleting it."""
+        _require_member(ctx)
+        if not ctx.store.set_chore_enabled(chore_id, payload.enabled):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
+        return {"ok": True, "enabled": payload.enabled}
+
+    @router.post("/household/chores/{chore_id}/done", tags=["household"])
+    def mark_chore_done(
+        chore_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mark a chore done for today (idempotent), attributed to the acting parent."""
+        _require_member(ctx)
+        today = local_datetime(utcnow(), resolved_settings.timezone).strftime("%Y-%m-%d")
+        result = ctx.store.log_chore_done(
+            chore_id=chore_id, done_on=today, done_by=ctx.user["id"]
+        )
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
+        return {"ok": True, "created": result["created"], "done_on": today}
+
+    @router.post("/household/chores/{chore_id}/remove", tags=["household"])
+    def remove_chore(
+        chore_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Delete a chore and its completion log (scoped to the household)."""
+        _require_member(ctx)
+        if not ctx.store.remove_chore(chore_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
+        return {"removed": True}
+
+    @router.post("/webhooks/household/chores/check", tags=["household"])
+    def chores_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Fire any chore reminders / miss-handoffs due now for the caller's household.
+
+        A periodic trigger (n8n / launchd, like the coach/panic/star-prompt checks)
+        POSTs here. The sweep + delivery live in :func:`run_chores_check` so the CLI
+        twin shares one code path; each stage dedups to once per local day, so a
+        check running every 15–30 min fires each exactly once. Silent when nothing's
+        due.
+        """
+        _require_member(ctx)
+        now = utcnow()
+        sent = run_chores_check(ctx.store, settings=resolved_settings, now=now)
+        now_local = local_datetime(now, resolved_settings.timezone)
+        return {"sent": sent, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
 
     # -- appointments ---------------------------------------------------------
 
