@@ -19,6 +19,7 @@ Two modes:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -582,6 +583,7 @@ def suggest_for_windows(
     *,
     config: WindowConfig | None = None,
     tz: str | None = None,
+    bias_fn: Callable[[int], float] | None = None,
 ) -> list[dict[str, Any]]:
     """Propose one todo per free window (no todo suggested twice).
 
@@ -591,13 +593,21 @@ def suggest_for_windows(
     — so a focus-hours task isn't proposed for an 8pm gap, and nothing is proposed
     inside the off-zone. Omit them to rank purely by fit (legacy behavior).
 
+    When ``bias_fn`` and ``tz`` are both given, each window's fit uses the bias
+    for *its own* local hour (context-conditioned calibration, §5) instead of the
+    single flat ``bias`` — so a morning gap is sized with the morning bias and an
+    evening gap with the evening one. Falls back to the flat ``bias`` per window
+    when ``bias_fn`` isn't supplied or ``tz`` is unknown.
+
     Args:
         windows: Free windows (chronological).
         todos: Open todo dicts.
-        bias: The time-estimation multiplier.
+        bias: The flat time-estimation multiplier (fallback).
         config: Optional suggestion-window policy.
         tz: IANA timezone for interpreting each window's local time (required for
-            ``config`` to take effect).
+            ``config`` and ``bias_fn`` to take effect).
+        bias_fn: Optional ``local_hour -> multiplier`` resolver for per-window,
+            time-of-day-conditioned bias.
 
     Returns:
         A list of ``{window, suggestion}`` dicts (``suggestion`` may be ``None``).
@@ -606,11 +616,14 @@ def suggest_for_windows(
     out: list[dict[str, Any]] = []
     for window in windows:
         remaining = [t for t in todos if t["id"] not in used]
-        if config is not None and tz is not None:
-            remaining = filter_suggestible(
-                remaining, _window_local_dt(window.start, tz), config
-            )
-        fits = fit_todos(window.minutes, remaining, bias)
+        window_bias = bias
+        if tz is not None:
+            local_dt = _window_local_dt(window.start, tz)
+            if config is not None:
+                remaining = filter_suggestible(remaining, local_dt, config)
+            if bias_fn is not None:
+                window_bias = bias_fn(local_dt.hour)
+        fits = fit_todos(window.minutes, remaining, window_bias)
         pick = fits[0]["todo"] if fits else None
         if pick is not None:
             used.add(pick["id"])

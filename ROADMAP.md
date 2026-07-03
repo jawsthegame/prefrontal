@@ -452,10 +452,13 @@ ordered by leverage; each is independent but builds on denser capture.
    ("By time of day: morning 1.8x…") and `prefrontal learn`. Covered by
    `tests/test_patterns.py` + `tests/test_summarizer.py`. The point-in-time fit
    consumers now adopt it too — `/todos/fit` and `prefrontal fit` calibrate with
-   *this hour's* band, like `/todos/now`. *(Next: adopt `resolve_bias` in the
-   whole-day consumers — briefing, encouragement — per free window; add
-   task-type / energy dimensions; derive `context_switch` once switch events are
-   captured.)*
+   *this hour's* band, like `/todos/now`. The whole-day consumers adopt it as
+   well: `suggest_for_windows` takes an optional `bias_fn(local_hour)`, and the
+   morning **briefing** and the **encouragement** re-fit size *each* free window
+   with the bias for its own time of day — the 9am gap with the morning bias, the
+   4pm gap with the afternoon one — instead of one flat multiplier for the day.
+   *(Next: add task-type / energy dimensions; derive `context_switch` once switch
+   events are captured.)*
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in

@@ -31,6 +31,7 @@ from prefrontal.briefing import DEFAULT_DAY_END_HOUR, DEFAULT_DAY_START_HOUR
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
+from prefrontal.memory.patterns import resolve_bias
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
 from prefrontal.todos import avoided_todos, decompose_task
@@ -228,12 +229,14 @@ def build_recovery(
     if todos and band_end > band_start:
         bias = store.get_float("time_estimation_bias", 1.0)
         window_config = window_config_for(settings, store)
+        # Each remaining window is re-fit with the bias for its own time of day (§5).
         for s in suggest_for_windows(
             free_windows(today, band_start, band_end),
             todos,
             bias,
             config=window_config,
             tz=settings.timezone,
+            bias_fn=lambda hour: resolve_bias(store, local_hour=hour),
         ):
             pick = s["suggestion"]
             if pick is not None:
