@@ -1299,6 +1299,22 @@ def test_shopping_repo_add_check_remove_and_ordering(store, dana, alex):
     assert [i["item"] for i in dana.shopping_items()] == ["shoes"]
 
 
+def test_clear_got_shopping_items(store, dana, alex):
+    """Clearing sweeps every checked-off item at once; still-needed rows stay."""
+    dana_id = store.get_user("dana")["id"]
+    a = dana.add_shopping_item(item="milk", added_by=dana_id)
+    b = dana.add_shopping_item(item="eggs", added_by=dana_id)
+    dana.add_shopping_item(item="bread", added_by=dana_id)
+    dana.set_shopping_got(a, True, user_id=dana_id)
+    dana.set_shopping_got(b, True, user_id=dana_id)
+
+    # A co-parent's clear removes both bought items, leaving the still-needed one.
+    assert alex.clear_got_shopping_items() == 2
+    assert [i["item"] for i in dana.shopping_items()] == ["bread"]
+    # Idempotent — nothing left checked off clears zero.
+    assert dana.clear_got_shopping_items() == 0
+
+
 def test_shopping_renders_and_counts(store, dana):
     dana_id = store.get_user("dana")["id"]
     dana.add_shopping_item(item="milk", added_by=dana_id)
@@ -1342,6 +1358,29 @@ def test_shopping_endpoints_shared_flow_and_validation(client):
     ).status_code == 404
     assert client.post(
         "/household/shopping/999/remove", json={}, headers=_h("dana-tok")
+    ).status_code == 404
+
+
+def test_shopping_clear_got_endpoint(client):
+    """POST /household/shopping/clear-got sweeps checked-off items; member-only."""
+    ids = [
+        client.post("/household/shopping", json={"item": name}, headers=_h("dana-tok")).json()["id"]
+        for name in ("milk", "eggs", "bread")
+    ]
+    client.post(f"/household/shopping/{ids[0]}/got", json={"got": True}, headers=_h("dana-tok"))
+    client.post(f"/household/shopping/{ids[1]}/got", json={"got": True}, headers=_h("alex-tok"))
+
+    cleared = client.post("/household/shopping/clear-got", json={}, headers=_h("alex-tok"))
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared"] == 2
+    listed = client.get("/household/shopping", headers=_h("dana-tok")).json()["items"]
+    assert [s["item"] for s in listed] == ["bread"]
+    # Idempotent, and a loner (no household) is refused.
+    assert client.post(
+        "/household/shopping/clear-got", json={}, headers=_h("dana-tok")
+    ).json()["cleared"] == 0
+    assert client.post(
+        "/household/shopping/clear-got", json={}, headers=_h("lee-tok")
     ).status_code == 404
 
 

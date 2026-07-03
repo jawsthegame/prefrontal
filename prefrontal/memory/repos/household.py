@@ -670,6 +670,21 @@ class HouseholdRepo:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def clear_got_shopping_items(self) -> int:
+        """Delete every checked-off item at once; return how many were cleared.
+
+        The bulk companion to :meth:`remove_shopping_item` — one call to sweep the
+        "got it" rows off a shared list after a shop, rather than deleting each by
+        hand. Still-needed items (``got = 0``) are left untouched. Scoped to the
+        household.
+        """
+        cur = self.conn.execute(
+            "DELETE FROM household_shopping WHERE got = 1 AND household_id = ?",
+            (self._household_id(),),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def shopping_items(self) -> list[dict[str, Any]]:
         """All shopping items — still-needed first, each with child + who-added names."""
         rows = self.conn.execute(

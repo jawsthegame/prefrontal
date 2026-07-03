@@ -681,6 +681,18 @@ def build_router(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such item")
         return {"ok": True, "got": payload.got}
 
+    @router.post("/household/shopping/clear-got", tags=["household"])
+    def clear_got_shopping(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Clear every checked-off ("got it") item at once; still-needed rows stay.
+
+        The bulk sweep after a shop, so a shared list doesn't accumulate a wall of
+        done entries. Idempotent — with nothing checked off it clears ``0``.
+        """
+        _require_member(ctx)
+        return {"cleared": ctx.store.clear_got_shopping_items()}
+
     @router.post("/household/shopping/{item_id}/remove", tags=["household"])
     def remove_shopping(
         item_id: int,

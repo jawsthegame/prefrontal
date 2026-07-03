@@ -285,6 +285,10 @@ def _shopping_cli(store, args) -> int:
             return 1
         print(f"Removed #{args.remove}.")
         return 0
+    if args.clear_got:
+        cleared = scoped.clear_got_shopping_items()
+        print(f"Cleared {cleared} checked-off item{'' if cleared == 1 else 's'}.")
+        return 0
     items = scoped.shopping_items()
     if not items:
         print("Shopping list is empty.")
@@ -1547,6 +1551,9 @@ def build_parser() -> argparse.ArgumentParser:
     h_shop.add_argument("--child", type=int, default=None, help="A children.id (with --add).")
     h_shop.add_argument("--got", type=int, default=None, help="Check off item by id.")
     h_shop.add_argument("--remove", type=int, default=None, help="Remove item by id.")
+    h_shop.add_argument(
+        "--clear-got", action="store_true", help="Remove all checked-off items at once."
+    )
     h_chore = house_sub.add_parser(
         "chore", help="List shared chores (or add/mark-done/pause/remove one)."
     )

@@ -127,6 +127,10 @@
   .shop-row .shop-txt { flex: 1; }
   .shop-row.done .shop-txt { text-decoration: line-through; color: var(--muted); }
   .shop-row .shop-sub { color: var(--muted); font-size: 12px; }
+  .shop-clear { margin-top: 8px; text-align: right; }
+  .linkbtn { border: none; background: none; color: var(--muted); font-size: 12px;
+    cursor: pointer; padding: 2px 4px; }
+  .linkbtn:hover { color: var(--danger); text-decoration: underline; }
   .invite-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
     border-bottom: 1px dashed var(--line); }
   .invite-row:last-child { border-bottom: none; }
@@ -579,7 +583,7 @@ function renderCheckin(ci) {
 function renderShopping(items) {
   items = items || [];
   if (!items.length) { $("#shopping").innerHTML = `<div class="empty">Nothing on the list.</div>`; return; }
-  $("#shopping").innerHTML = items.map((s) => {
+  const rows = items.map((s) => {
     const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
     const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
     return `<div class="shop-row${s.got ? " done" : ""}">
@@ -587,6 +591,11 @@ function renderShopping(items) {
       <span class="shop-txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span>
       <button class="iconbtn del" data-delshop="${s.id}" title="Remove">🗑</button></div>`;
   }).join("");
+  const done = items.filter((s) => s.got).length;
+  const clear = done
+    ? `<div class="shop-clear"><button class="linkbtn" id="shop-clear-got">Clear ${done} bought</button></div>`
+    : "";
+  $("#shopping").innerHTML = rows + clear;
 }
 
 function renderAppts(upcoming) {
@@ -911,6 +920,9 @@ $("#shop-form").addEventListener("submit", async (e) => {
 $("#shopping").addEventListener("click", async (e) => {
   const del = e.target.getAttribute("data-delshop");
   if (del && confirm("Remove this item?")) { await post(`/household/shopping/${del}/remove`, {}); await loadSheet(); }
+  if (e.target.id === "shop-clear-got" && confirm("Clear all checked-off items?")) {
+    await post("/household/shopping/clear-got", {}); await loadSheet();
+  }
 });
 $("#shopping").addEventListener("change", async (e) => {
   const id = e.target.getAttribute("data-got");
