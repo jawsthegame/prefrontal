@@ -297,6 +297,9 @@ def focus_task_from_title(title: str | None) -> str | None:
 #: when deep work tends to land).
 DEFAULT_SUGGEST_START_HOUR = 8
 DEFAULT_SUGGEST_UNTIL_HOUR = 15
+#: Default local-hour band for the end-of-day recap ("log a block I forgot?").
+DEFAULT_RECAP_START_HOUR = 17
+DEFAULT_RECAP_UNTIL_HOUR = 22
 
 
 def should_suggest_focus(
@@ -324,6 +327,35 @@ def build_focus_suggestion(name: str = "") -> str:
     return (
         f"{lead} — no focus block yet today. Want to protect one? Tap to start on "
         "whatever you've been putting off, and I'll shield it from the noise."
+    )
+
+
+def should_recap_focus(
+    *,
+    local_hour: int,
+    start_hour: int,
+    until_hour: int,
+    has_active_session: bool,
+    focused_today: bool,
+) -> bool:
+    """Whether to ask, at day's end, about a focus block you forgot to log (pure).
+
+    ``True`` only in the evening ``[start_hour, until_hour)`` band, when nothing
+    is running and nothing was logged today — the case where a heads-down stretch
+    likely happened but never got recorded. If a block *was* logged, there's
+    nothing to recover, so it stays quiet.
+    """
+    if has_active_session or focused_today:
+        return False
+    return start_hour <= local_hour < until_hour
+
+
+def build_focus_recap(name: str = "") -> str:
+    """The end-of-day 'did you focus and forget to log it?' offer text."""
+    lead = f"Hey {name}" if name else "Hey"
+    return (
+        f"{lead} — no focus block logged today. Did you get heads-down on something "
+        "I didn't see? Tap to log it after the fact so it still counts."
     )
 
 
@@ -515,6 +547,10 @@ class HyperfocusModule(Module):
         "suggest_focus_start": "off",
         "focus_suggest_start_hour": str(DEFAULT_SUGGEST_START_HOUR),
         "focus_suggest_until_hour": str(DEFAULT_SUGGEST_UNTIL_HOUR),
+        # End-of-day "log a block you forgot?" recap — also opt-in.
+        "suggest_focus_recap": "off",
+        "focus_recap_start_hour": str(DEFAULT_RECAP_START_HOUR),
+        "focus_recap_until_hour": str(DEFAULT_RECAP_UNTIL_HOUR),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -550,38 +586,69 @@ class HyperfocusModule(Module):
                 trigger="no block yet today, nothing running, in the focus-friendly hours",
                 status="active",
             ),
+            Intervention(
+                name="recap_prompt",
+                description="At day's end, offer to log a block you forgot to start (opt-in).",
+                trigger="evening, nothing running, and no block logged today",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: ModuleStore, ctx: CoachContext) -> list[Cue]:
-        """Offer a one-tap focus start at a ripe moment (opt-in; see should_suggest_focus).
+        """Offer a focus start (morning) or a forgot-to-log recap (evening) — both opt-in.
 
-        Interrupts stay on ``/webhooks/focus/check``; this only emits the gentle
-        *start* suggestion, and only when ``suggest_focus_start`` is ``on``.
+        Interrupts stay on ``/webhooks/focus/check``; this emits only the gentle
+        *start* suggestion (``suggest_focus_start``) and the end-of-day *recap*
+        (``suggest_focus_recap``). Both stay silent while a session is running or
+        once a block has happened today; their day-part windows don't overlap.
         """
-        if (store.get_state("suggest_focus_start", "off") or "off") != "on":
-            return []
         if store.active_focus_sessions():
             return []
         local = _local(ctx.now, ctx.timezone)
-        if not should_suggest_focus(
+        focused_today = self._focused_today(store, local.date(), ctx.timezone)
+        day = local.date().isoformat()
+
+        def _on(key: str) -> bool:
+            return (store.get_state(key, "off") or "off") == "on"
+
+        if _on("suggest_focus_start") and should_suggest_focus(
             local_hour=local.hour,
             start_hour=int(store.get_float("focus_suggest_start_hour", DEFAULT_SUGGEST_START_HOUR)),
             until_hour=int(store.get_float("focus_suggest_until_hour", DEFAULT_SUGGEST_UNTIL_HOUR)),
             has_active_session=False,
-            focused_today=self._focused_today(store, local.date(), ctx.timezone),
+            focused_today=focused_today,
         ):
-            return []
-        return [
-            Cue(
-                module=self.key,
-                intervention="suggest_start",
-                urgency="nudge",
-                text=build_focus_suggestion(ctx.display_name),
-                context_key="focus",
-                dedup_key=f"focus_suggest:{local.date().isoformat()}",
-                ref={"suggest": "focus_start"},
-            )
-        ]
+            return [
+                Cue(
+                    module=self.key,
+                    intervention="suggest_start",
+                    urgency="nudge",
+                    text=build_focus_suggestion(ctx.display_name),
+                    context_key="focus",
+                    dedup_key=f"focus_suggest:{day}",
+                    ref={"suggest": "focus_start"},
+                )
+            ]
+
+        if _on("suggest_focus_recap") and should_recap_focus(
+            local_hour=local.hour,
+            start_hour=int(store.get_float("focus_recap_start_hour", DEFAULT_RECAP_START_HOUR)),
+            until_hour=int(store.get_float("focus_recap_until_hour", DEFAULT_RECAP_UNTIL_HOUR)),
+            has_active_session=False,
+            focused_today=focused_today,
+        ):
+            return [
+                Cue(
+                    module=self.key,
+                    intervention="recap_prompt",
+                    urgency="nudge",
+                    text=build_focus_recap(ctx.display_name),
+                    context_key="focus",
+                    dedup_key=f"focus_recap:{day}",
+                    ref={"suggest": "focus_log"},
+                )
+            ]
+        return []
 
     @staticmethod
     def _focused_today(store: ModuleStore, today, tz: str) -> bool:

@@ -371,6 +371,24 @@ class FocusEnd(BaseModel):
     )
 
 
+class FocusLog(BaseModel):
+    """Body of ``POST /webhooks/focus/log`` — recording a *past* focus block.
+
+    For a session you forgot to start: it's logged as already finished (started
+    ``minutes`` ago, closed now) so the block still feeds the learning loop.
+    """
+
+    minutes: float = Field(gt=0, le=1440, description="How long you were heads-down, in minutes.")
+    intended_task: str = Field(
+        default="", description="What you were on; blank infers it from your top open todo."
+    )
+    aligned: bool = Field(default=True, description="Was it the thing you meant to be doing?")
+    outcome: Literal["worth_it", "should_have_stopped", "pulled_off"] | None = Field(
+        default=None, description="Optional one-tap rating of how the block went."
+    )
+    todo_id: int | None = Field(default=None, description="Optional linked todo id.")
+
+
 class CaptureImpulse(BaseModel):
     """Body of ``POST /webhooks/impulse/capture`` — park an impulse as a todo."""
 
@@ -1213,6 +1231,7 @@ __all__ = [
     "FastAPI",
     "Field",
     "FocusEnd",
+    "FocusLog",
     "FocusStart",
     "FocusStarted",
     "AgreementSet",

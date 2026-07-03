@@ -28,6 +28,7 @@ from prefrontal.modules.hyperfocus import (
     is_focus_protected,
     level_rank,
     should_protect,
+    should_recap_focus,
     should_suggest_focus,
 )
 from prefrontal.webhooks.app import create_app
@@ -298,6 +299,65 @@ def test_evaluate_silent_when_session_active(store):
     store.set_state("suggest_focus_start", "on", source="explicit")
     store.start_focus_session("deep in it")
     assert HyperfocusModule().evaluate(store, _ctx(9)) == []
+
+
+@pytest.mark.parametrize(
+    "hour, done_today, expected",
+    [
+        (19, False, True),    # evening, nothing logged -> ask
+        (19, True, False),    # a block was logged today -> nothing to recover
+        (12, False, False),   # midday -> not the recap window
+    ],
+)
+def test_should_recap_focus(hour, done_today, expected):
+    assert should_recap_focus(
+        local_hour=hour, start_hour=17, until_hour=22,
+        has_active_session=False, focused_today=done_today,
+    ) is expected
+
+
+def test_evaluate_evening_recap_when_opted_in(store):
+    """Opted in, an evening with no logged block offers to log one after the fact."""
+    store.set_state("suggest_focus_recap", "on", source="explicit")
+    cues = HyperfocusModule().evaluate(store, _ctx(19))
+    assert len(cues) == 1
+    assert cues[0].intervention == "recap_prompt"
+    assert cues[0].dedup_key == "focus_recap:2026-06-15"
+
+
+def test_evaluate_recap_silent_after_a_logged_block(store):
+    """If a block already happened today, the recap stays quiet."""
+    store.set_state("suggest_focus_recap", "on", source="explicit")
+    sid = store.start_focus_session("the RFC", started_at="2026-06-15 10:00:00")
+    store.close_focus_session(sid, status="ended", outcome="worth_it")
+    assert HyperfocusModule().evaluate(store, _ctx(19)) == []
+
+
+# -- retroactive capture (log a block you forgot) ----------------------------
+
+
+def test_focus_log_records_a_past_session(client, store):
+    """Logging a forgotten block records it as ended, with the actual duration."""
+    body = client.post(
+        "/webhooks/focus/log",
+        json={"minutes": 60, "intended_task": "the RFC", "outcome": "worth_it"},
+        headers=_auth(),
+    ).json()
+    assert body["logged"] is True and body["intended_task"] == "the RFC"
+    assert 59 <= body["minutes"] <= 61
+    session = store.get_focus_session(body["session_id"])
+    assert session["status"] == "ended"
+    # It fed the learning loop as a task episode (actual duration, no prediction).
+    episodes = store.episodes_by_type("task")
+    assert episodes and episodes[0]["actual_value"] == pytest.approx(60, abs=1)
+
+
+def test_focus_log_infers_task_and_links_todo(client, store):
+    """A blank log infers the task from the top todo and links it."""
+    tid = store.add_todo("the API refactor", estimate_minutes=45, priority=2)
+    body = client.post("/webhooks/focus/log", json={"minutes": 30}, headers=_auth()).json()
+    assert body["intended_task"] == "the API refactor"
+    assert store.get_focus_session(body["session_id"])["todo_id"] == tid
 
 
 # -- calendar-armed start ----------------------------------------------------
