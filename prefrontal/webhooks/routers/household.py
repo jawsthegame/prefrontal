@@ -693,7 +693,7 @@ def build_router(
     @router.post("/household/routines", tags=["household"])
     def set_routine(
         payload: RoutineSet,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Upsert a routine (keyed on title within the household).
 
@@ -701,7 +701,6 @@ def build_router(
         holder) and carries the schedule its chores inherit. Editing re-submits the
         same title; the chores linked under it are untouched.
         """
-        _require_member(ctx)
         clean, error = normalize_routine(payload.model_dump())
         if error is not None:
             raise HTTPException(
@@ -717,10 +716,9 @@ def build_router(
     def set_routine_enabled(
         routine_id: int,
         payload: RoutineEnabled,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Pause or resume a routine (and the schedule its chores inherit)."""
-        _require_member(ctx)
         if not ctx.store.set_routine_enabled(routine_id, payload.enabled):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
         return {"ok": True, "enabled": payload.enabled}
@@ -728,10 +726,9 @@ def build_router(
     @router.post("/household/routines/{routine_id}/remove", tags=["household"])
     def remove_routine(
         routine_id: int,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
     ) -> dict[str, Any]:
         """Delete a routine; its chores survive, unlinked (they stand alone)."""
-        _require_member(ctx)
         if not ctx.store.remove_routine(routine_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
         return {"removed": True}
