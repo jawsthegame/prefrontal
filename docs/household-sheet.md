@@ -352,7 +352,11 @@ household-scoped table.
   shared sheet — `build_sheet`/`render_sheet` gain a **Shopping** section
   (unchecked/ticked boxes), and `counts["shopping"]` is the still-needed tally.
 - Surfaces: `POST /household/shopping`, `…/{id}/got`, `…/{id}/remove`; the `/kids`
-  dashboard's checklist; and `prefrontal household shopping`.
+  dashboard's checklist; the **`/family`** view's quick-add + tap-to-check-off (the
+  one editable spot on the otherwise read-only shared glance); the natural-language
+  **assistant** (`add_shopping` / `check_shopping` / `remove_shopping`, so "add
+  eggs and milk to the list" works from the dashboard or `/kids` box); and
+  `prefrontal household shopping`.
 
 ### 3.6.5 Recurring shared chores — `household_chores` + `household_chore_log`
 

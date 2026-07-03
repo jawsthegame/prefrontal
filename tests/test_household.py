@@ -238,10 +238,12 @@ def test_upcoming_appointments_from_child_commitments(store, alex):
 
 def test_snapshot_includes_household_for_member_only(dana, lee):
     dana.add_child(name="Sam")
+    dana.add_shopping_item(item="Milk", added_by=dana.user_id)
     snap = build_snapshot(dana)
     assert "household" in snap
     assert snap["household"]["children"][0]["name"] == "Sam"
     assert "sizes" in snap["household"]["fact_categories"]
+    assert snap["household"]["shopping"][0]["item"] == "Milk"
     # A non-member's snapshot omits household entirely.
     assert "household" not in build_snapshot(lee)
 
@@ -296,6 +298,72 @@ def test_assistant_agreement_round_trip(dana):
     acts2, _ = validate_actions([{"op": "remove_agreement", "agreement_id": aid}], snap2)
     execute_actions(dana, acts2)
     assert dana.agreements() == []
+
+
+def test_assistant_adds_shopping_items(store, dana):
+    """A pasted list turns into add_shopping actions that land on the shared list."""
+    snap = build_snapshot(dana)
+    actions, errors = validate_actions(
+        [
+            {"op": "add_shopping", "item": "Almond milk",
+             "spec": "Califia Unsweetened, 48 oz — x1", "where_to_buy": "Whole Foods"},
+            {"op": "add_shopping", "item": "Bananas", "spec": "x6"},
+            {"op": "add_shopping", "item": "  "},  # blank item is dropped
+        ],
+        snap,
+    )
+    assert len(actions) == 2 and errors  # the blank one is refused
+    assert "Add to shopping" in actions[0].summary
+    results = execute_actions(dana, actions)
+    assert all(r["ok"] for r in results)
+    items = {s["item"]: s for s in dana.shopping_items()}
+    assert set(items) == {"Almond milk", "Bananas"}
+    assert items["Almond milk"]["spec"] == "Califia Unsweetened, 48 oz — x1"
+    assert items["Almond milk"]["where_to_buy"] == "Whole Foods"
+    assert items["Almond milk"]["added_by_name"] == "Dana"  # acting user, attributed
+
+
+def test_assistant_checks_off_and_removes_shopping(dana):
+    """check_shopping / remove_shopping resolve ids from a fresh snapshot."""
+    dana.add_shopping_item(item="Eggs", added_by=dana.user_id)
+    dana.add_shopping_item(item="Coffee", added_by=dana.user_id)
+    snap = build_snapshot(dana)
+    ids = {s["item"]: s["id"] for s in snap["household"]["shopping"]}
+    actions, errors = validate_actions(
+        [
+            {"op": "check_shopping", "shopping_id": ids["Eggs"]},
+            {"op": "remove_shopping", "shopping_id": ids["Coffee"]},
+            {"op": "check_shopping", "shopping_id": 9999},  # unknown id dropped
+        ],
+        snap,
+    )
+    assert len(actions) == 2 and errors
+    execute_actions(dana, actions)
+    remaining = {s["item"]: s for s in dana.shopping_items()}
+    assert "Coffee" not in remaining  # removed
+    assert remaining["Eggs"]["got"] == 1  # checked off
+
+
+def test_assistant_shopping_wire_round_trip(dana):
+    """The propose → echo → apply path keeps the shopping fields intact."""
+    snap = build_snapshot(dana)
+    planned, _ = validate_actions(
+        [{"op": "add_shopping", "item": "Ham", "spec": "1 lb"}], snap
+    )
+    wire = [a.to_wire() for a in planned]
+    reapplied, errors = validate_actions(wire, snap)
+    assert not errors
+    execute_actions(dana, reapplied)
+    assert dana.shopping_items()[0]["spec"] == "1 lb"
+
+
+def test_shopping_ops_rejected_for_non_member(lee):
+    snap = build_snapshot(lee)
+    actions, errors = validate_actions(
+        [{"op": "add_shopping", "item": "Milk"}], snap
+    )
+    assert actions == []
+    assert errors and "household" in errors[0]
 
 
 def test_per_child_association_survives_wire_round_trip(dana):

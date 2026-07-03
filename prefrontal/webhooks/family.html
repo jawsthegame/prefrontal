@@ -84,9 +84,18 @@
   .stars .prog { color: var(--accent); font-weight: 650; }
   .thresholds { color: var(--muted); font-size: 12px; margin-top: 3px; }
   .shop-line { display: flex; gap: 9px; padding: 5px 0; align-items: baseline; }
-  .shop-line .box { color: var(--muted); }
+  .shop-line .box { color: var(--muted); cursor: pointer; background: none; border: none;
+    font: inherit; padding: 0; line-height: 1; }
+  .shop-line .box:hover { color: var(--accent); }
   .shop-line.done .txt { text-decoration: line-through; color: var(--muted); }
   .shop-sub { color: var(--muted); font-size: 12px; }
+  .shop-add { display: flex; gap: 8px; margin-top: 12px; }
+  .shop-add input { flex: 1; min-width: 0; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg); font-size: 15px; }
+  .shop-add input:focus { outline: none; border-color: var(--accent); }
+  .shop-add button { padding: 9px 15px; border: none; border-radius: 9px; background: var(--accent);
+    color: var(--accent-fg); font-weight: 650; font-size: 15px; cursor: pointer; }
+  .shop-add button:disabled { opacity: .5; cursor: default; }
   /* balance */
   .bal-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
   .bal-row .bal-name { min-width: 90px; font-weight: 500; }
@@ -153,6 +162,10 @@
   <section class="card" id="c-shopping">
     <p class="label">Shopping</p>
     <div id="shopping"></div>
+    <form class="shop-add" id="shop-add" autocomplete="off">
+      <input id="shop-item" type="text" placeholder="Add an item…" aria-label="Add a shopping item" />
+      <button type="submit" id="shop-add-btn">Add</button>
+    </form>
   </section>
 
   <section class="card" id="c-appts">
@@ -224,6 +237,19 @@ async function api(path) {
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
 }
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "X-Prefrontal-Token": token } : {}),
+    },
+    body: JSON.stringify(body || {}),
+  });
+  if (r.status === 401) { gate("Please sign in again."); throw new Error("unauthorized"); }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json().catch(() => ({}));
+}
 
 // ── Read-only renderers (mirror the /kids layout, without the forms) ──────
 function renderRecent(changes) {
@@ -277,7 +303,7 @@ function renderShopping(items) {
     ? items.map((s) => {
         const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
         const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
-        return `<div class="shop-line${s.got ? " done" : ""}"><span class="box">${s.got ? "☑" : "☐"}</span>
+        return `<div class="shop-line${s.got ? " done" : ""}"><button type="button" class="box" data-id="${s.id}" data-got="${s.got ? 1 : 0}" aria-label="${s.got ? "Un-check" : "Check off"} ${esc(s.item)}">${s.got ? "☑" : "☐"}</button>
           <span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span></div>`;
       }).join("") + (needed.length ? "" : `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`)
     : `<div class="empty">Nothing on the list.</div>`;
@@ -347,6 +373,41 @@ $("#token-save").onclick = () => {
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
+
+// ── Shopping: the one editable spot on the shared view ────────────────────
+$("#shop-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("#shop-item");
+  const item = input.value.trim();
+  if (!item) return;
+  const btn = $("#shop-add-btn");
+  btn.disabled = true;
+  try {
+    await post("/household/shopping", { item });
+    input.value = "";
+    await load();
+  } catch (err) {
+    $("#status").textContent = "couldn't add — try again";
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+});
+// Tap a checkbox to mark bought / un-bought (event delegation survives re-renders).
+$("#shopping").addEventListener("click", async (e) => {
+  const box = e.target.closest(".box");
+  if (!box) return;
+  const id = box.dataset.id;
+  const got = box.dataset.got === "1";
+  box.disabled = true;
+  try {
+    await post(`/household/shopping/${id}/got`, { got: !got });
+    await load();
+  } catch (err) {
+    $("#status").textContent = "couldn't update — try again";
+    box.disabled = false;
+  }
+});
 
 start();  // try the session cookie / saved code; the gate appears only on 401
 </script>
