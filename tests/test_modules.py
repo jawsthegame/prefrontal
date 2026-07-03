@@ -107,6 +107,22 @@ def test_task_paralysis_interventions_all_active():
     }
 
 
+def test_time_blindness_intervention_statuses_are_honest():
+    """Estimate correction + departure timing are wired; elapsed-time callouts aren't.
+
+    The status flags must reflect reality (they drive ``prefrontal modules -v``):
+    ``departure_buffer`` is delivered by the live departure planner
+    (bias-adjusted leave-by + heads_up/soon/go escalation, ``/webhooks/departure``),
+    while ``elapsed_time_callouts`` has no wiring yet, so it stays ``planned``.
+    """
+    ivs = {i.name: i.status for i in get("time_blindness").interventions()}
+    assert ivs == {
+        "estimate_correction": "active",
+        "departure_buffer": "active",
+        "elapsed_time_callouts": "planned",
+    }
+
+
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
     """Two+ misses on a task flag it; a task later completed drops off."""
     episodes = [
