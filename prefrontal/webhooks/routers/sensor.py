@@ -24,6 +24,7 @@ from fastapi import (
 
 from prefrontal.sensor import (
     apply_proposal,
+    avoided_state_keys,
     extract_candidates,
     extract_candidates_from_transcript,
     record_candidates,
@@ -77,11 +78,15 @@ def build_router(services: RouterServices) -> APIRouter:
         ``proposals`` is empty (an honest no-guess result, not an error).
         """
         memory = ctx.store
+        # Feed chronically-rejected settings back into the prompt (calibration loop).
+        avoid = avoided_state_keys(memory)
         turns = [t.model_dump() for t in payload.transcript]
         if any(t["text"].strip() for t in turns):
-            candidates = extract_candidates_from_transcript(turns, client=sensor_client)
+            candidates = extract_candidates_from_transcript(
+                turns, client=sensor_client, avoid_keys=avoid
+            )
         elif payload.text.strip():
-            candidates = extract_candidates(payload.text, client=sensor_client)
+            candidates = extract_candidates(payload.text, client=sensor_client, avoid_keys=avoid)
         else:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

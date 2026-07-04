@@ -58,6 +58,24 @@ class ProposalsRepo(Repo):
         ).fetchall()
         return [self._row(r) for r in rows]
 
+    def all_resolved_proposals(self) -> list[dict[str, Any]]:
+        """Return every accepted/rejected proposal (payload parsed), oldest first.
+
+        The sensor-calibration pass
+        (:func:`prefrontal.sensor.compute_sensor_calibration`) aggregates the
+        sensor's full *resolved* history to measure its precision. Pending rows
+        are excluded — they carry no accept/reject signal yet. Volume is
+        human-paced (a person reviews these), so loading all rows is fine, the
+        same call shape as ``all_episodes``.
+        """
+        rows = self.conn.execute(
+            "SELECT id, kind, payload, rationale, source, status, created_at, resolved_at "
+            "FROM proposals WHERE user_id = ? AND status IN ('accepted', 'rejected') "
+            "ORDER BY id ASC",
+            (self._uid(),),
+        ).fetchall()
+        return [self._row(r) for r in rows]
+
     def get_proposal(self, proposal_id: int) -> dict[str, Any] | None:
         """Return one of this user's proposals by id, or ``None``."""
         row = self.conn.execute(

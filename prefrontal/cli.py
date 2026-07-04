@@ -874,6 +874,20 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"[{label}] bias check: error {cal.raw_error} -> {cal.adjusted_error} "
                     f"on {cal.samples} recent ({verdict})"
                 )
+            # Sensor precision (learning §2 feedback): are the LLM sensor's
+            # proposals worth keeping? Persists the verdict + flags chronically
+            # rejected targets, which the extraction prompt then de-emphasizes.
+            from prefrontal.sensor import recompute_sensor_calibration
+
+            sc = recompute_sensor_calibration(s)
+            if sc.status == "ok":
+                flagged = (
+                    f"; chronically rejected: {', '.join(sc.flagged)}" if sc.flagged else ""
+                )
+                print(
+                    f"[{label}] sensor precision: {sc.accepted}/{sc.resolved} accepted "
+                    f"({sc.accept_rate}){flagged}"
+                )
             for c in adapt_self_care(s):
                 arrow = "->" if c["changed"] else "="
                 print(
@@ -1220,6 +1234,7 @@ def _cmd_note(args: argparse.Namespace) -> int:
 
     from prefrontal.integrations import ProviderResolver
     from prefrontal.sensor import (
+        avoided_state_keys,
         extract_candidates,
         extract_candidates_from_transcript,
         record_candidates,
@@ -1247,10 +1262,13 @@ def _cmd_note(args: argparse.Namespace) -> int:
         return 1
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
+        # Close the calibration loop: de-emphasize settings the user reliably
+        # rejects (from the last `prefrontal learn` pass) in the extraction prompt.
+        avoid = avoided_state_keys(store)
         if turns is not None:
-            candidates = extract_candidates_from_transcript(turns, client=client)
+            candidates = extract_candidates_from_transcript(turns, client=client, avoid_keys=avoid)
         else:
-            candidates = extract_candidates(args.text, client=client)
+            candidates = extract_candidates(args.text, client=client, avoid_keys=avoid)
         if not candidates:
             print("No candidate updates found (or the model was unreachable).")
             return 0
@@ -1264,10 +1282,11 @@ def _cmd_note(args: argparse.Namespace) -> int:
 
 
 def _cmd_proposals(args: argparse.Namespace) -> int:
-    """List pending sensor proposals, or accept/reject one by id.
+    """List pending sensor proposals, show precision stats, or accept/reject by id.
 
     Accepting applies the update with ``source='llm_inferred'``; rejecting just
-    resolves it. Both only move a still-``pending`` proposal.
+    resolves it. Both only move a still-``pending`` proposal. ``stats`` reports the
+    sensor's accept-rate precision (learning §2 feedback) from resolved proposals.
 
     Args:
         args: Parsed arguments; uses ``db_path``, ``user``, ``proposals_action``, ``id``.
@@ -1275,7 +1294,12 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success, 1 if the id isn't a pending proposal).
     """
-    from prefrontal.sensor import apply_proposal, summarize_candidate
+    from prefrontal.sensor import (
+        MIN_SENSOR_CALIBRATION_SAMPLES,
+        apply_proposal,
+        compute_sensor_calibration,
+        summarize_candidate,
+    )
 
     settings = get_settings()
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
@@ -1290,6 +1314,22 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
                 print(f"#{p['id']}  {summarize_candidate(p['kind'], p['payload'])}")
                 if p.get("rationale"):
                     print(f"      ↳ {p['rationale']}")
+            return 0
+        if action == "stats":
+            cal = compute_sensor_calibration(store.all_resolved_proposals())
+            if cal.status != "ok":
+                print(
+                    f"Not enough resolved proposals yet ({cal.resolved}; "
+                    f"need {MIN_SENSOR_CALIBRATION_SAMPLES}) to judge sensor precision."
+                )
+                return 0
+            print(f"Sensor precision: {cal.accepted}/{cal.resolved} accepted ({cal.accept_rate}).")
+            for tp in cal.by_target:
+                flag = "  ⚠ chronically rejected" if tp.target in cal.flagged else ""
+                print(
+                    f"  {tp.target}: {tp.accepted}/{tp.resolved} "
+                    f"({round(tp.accept_rate, 2)}){flag}"
+                )
             return 0
         # accept / reject
         proposal = store.get_proposal(args.id)
@@ -1976,6 +2016,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_proposals.add_argument("--user", default=None, help="Handle of the user to act on.")
     prop_sub = p_proposals.add_subparsers(dest="proposals_action", required=True)
     prop_sub.add_parser("list", help="List pending proposals.")
+    prop_sub.add_parser(
+        "stats", help="Show the sensor's accept-rate precision (overall + per target)."
+    )
     p_prop_accept = prop_sub.add_parser("accept", help="Apply a proposal (source=llm_inferred).")
     p_prop_accept.add_argument("id", type=int, help="Proposal id.")
     p_prop_reject = prop_sub.add_parser("reject", help="Discard a proposal.")

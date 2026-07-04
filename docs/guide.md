@@ -632,7 +632,7 @@ token client-side).
 | `encourage` | Rough-day check: today's recovery message if it's gone sideways |
 | `panic` | Overwhelm triage — what's on fire + one first step; `--llm` |
 | `crunch on\|off\|status` | Deadline mode: suspend the work/life time bands; `--hours N` |
-| `note "…"` (or `note --transcript turns.json`) / `proposals list\|accept\|reject` | LLM-as-sensor: jot a note or feed a conversation → review proposed updates |
+| `note "…"` (or `note --transcript turns.json`) / `proposals list\|stats\|accept\|reject` | LLM-as-sensor: jot a note or feed a conversation → review proposed updates; `stats` shows the sensor's accept-rate precision |
 | `household add\|join\|leave\|show\|invite\|redeem\|star\|balance\|shopping\|chore\|routine\|prompt-check\|checkin-check\|digest-check\|chores-check` | Co-parent household sheet (chores + routines feed the two-facet balance) |
 | `modules [-v]` | List challenge-area modules and status |
 
