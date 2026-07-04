@@ -236,6 +236,31 @@ class BiasCalibration:
     helps: bool = False
 
 
+@dataclass(frozen=True)
+class ChannelCalibration:
+    """Does conditioning on channel actually predict acknowledgement? (§4)
+
+    The channel-choice adaptation (``choose_channel`` bumping a cue up a rung when
+    a channel is reliably ignored) is only worth trusting if a channel's *past*
+    ack-rate predicts its *future* one. This walk-forward checks exactly that:
+    learn each channel's ack-rate from the older *train* slice, then on the newer
+    *test* slice compare the mean absolute error of predicting each ack with its
+    channel's train rate (``adjusted``) versus with a single pooled train rate
+    (``baseline``, i.e. no per-channel conditioning). ``improvement`` = baseline −
+    adjusted (positive ⇒ conditioning on channel helped); ``helps`` is the verdict.
+
+    Report-first, like the bias check began: it makes a noisy channel signal
+    *visible* rather than silently driving escalation.
+    """
+
+    status: str  # "ok" | "insufficient"
+    samples: int  # test-slice deliveries the error was measured on
+    baseline_error: float | None = None
+    adjusted_error: float | None = None
+    improvement: float | None = None
+    helps: bool = False
+
+
 def decay_bias_toward_neutral(bias: float, factor: float = DEFAULT_BIAS_DECAY_ON_MISS) -> float:
     """Shrink a time-estimation multiplier toward the neutral 1.0 (§4 auto-act).
 
@@ -267,6 +292,8 @@ class PatternRunSummary:
     #: and this is the pre value). ``None`` when nothing was auto-decayed.
     bias_pre_decay: float | None = None
     calibration: BiasCalibration | None = None
+    #: Walk-forward verdict on the channel-choice adaptation (§4), report-first.
+    channel_calibration: ChannelCalibration | None = None
     band_bias: dict[str, float] = field(default_factory=dict)
     type_bias: dict[str, float] = field(default_factory=dict)
     energy_bias: dict[str, float] = field(default_factory=dict)
@@ -700,6 +727,58 @@ def bias_calibration(
     )
 
 
+def channel_calibration(
+    episodes: list[dict[str, Any]],
+    *,
+    min_samples: int = MIN_CALIBRATION_SAMPLES,
+    test_fraction: float = DEFAULT_CALIBRATION_TEST_FRACTION,
+) -> ChannelCalibration:
+    """Measure whether per-channel ack-rates predict future acks better than pooled (§4).
+
+    The walk-forward twin of :func:`bias_calibration` for the channel-choice
+    adaptation. Sorts the delivered nudges (those with a ``channel`` and a known
+    ``acknowledged``) by time, learns each channel's ack-rate plus one pooled rate
+    from the older *train* slice, then on the newer *test* slice compares the mean
+    absolute error of predicting each ack with its channel's rate (``adjusted``)
+    versus the pooled rate (``baseline``). ``improvement`` = baseline − adjusted;
+    ``helps`` when conditioning on channel predicted held-out acks better.
+
+    Returns ``status="insufficient"`` (never raises) when there aren't enough
+    deliveries to split.
+    """
+    pairs: list[tuple[datetime, str, float]] = []
+    for e in episodes:
+        if e.get("channel") and e.get("acknowledged") is not None:
+            when = _parse_ts(e.get("timestamp")) or datetime.min
+            pairs.append((when, e["channel"], float(bool(e["acknowledged"]))))
+    n = len(pairs)
+    if n < min_samples:
+        return ChannelCalibration(status="insufficient", samples=n)
+    pairs.sort(key=lambda t: t[0])
+    test_size = max(2, round(n * test_fraction))
+    train, test = pairs[: n - test_size], pairs[n - test_size :]
+    if len(train) < MIN_BIAS_SAMPLES:
+        return ChannelCalibration(status="insufficient", samples=n)
+
+    pooled = fmean(a for _, _, a in train)
+    by_channel: dict[str, list[float]] = defaultdict(list)
+    for _, ch, a in train:
+        by_channel[ch].append(a)
+    channel_rate = {ch: fmean(acks) for ch, acks in by_channel.items()}
+
+    baseline_error = fmean(abs(pooled - a) for _, _, a in test)
+    adjusted_error = fmean(abs(channel_rate.get(ch, pooled) - a) for _, ch, a in test)
+    improvement = baseline_error - adjusted_error
+    return ChannelCalibration(
+        status="ok",
+        samples=len(test),
+        baseline_error=round(baseline_error, 3),
+        adjusted_error=round(adjusted_error, 3),
+        improvement=round(improvement, 3),
+        helps=improvement > 0,
+    )
+
+
 def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None]:
     """Build the per-context half-life lookup used by the bias-by-context passes.
 
@@ -989,6 +1068,24 @@ def recompute_patterns(
                     decayed = "true"
             store.set_state("bias_calibration_decayed", decayed, source="inferred")
 
+    # Close the loop on the *channel-choice* adaptation too (§4): does conditioning
+    # on channel predict held-out acks better than a pooled rate? Report-first —
+    # persisted for the profile/CLI, no auto-act yet (a bad channel signal is made
+    # visible rather than silently driving escalation). Independent of the bias, so
+    # it runs regardless of `update_bias`.
+    channel_cal = channel_calibration(episodes)
+    if channel_cal.status == "ok":
+        store.set_state(
+            "channel_calibration_helps", "true" if channel_cal.helps else "false",
+            source="inferred",
+        )
+        store.set_state(
+            "channel_calibration_improvement", str(channel_cal.improvement), source="inferred"
+        )
+        store.set_state(
+            "channel_calibration_samples", str(channel_cal.samples), source="inferred"
+        )
+
     return PatternRunSummary(
         episodes=len(episodes),
         patterns=len(results),
@@ -996,6 +1093,7 @@ def recompute_patterns(
         bias=bias,
         bias_pre_decay=bias_pre_decay,
         calibration=calibration,
+        channel_calibration=channel_cal,
         band_bias=band_bias,
         type_bias=type_bias,
         energy_bias=energy_bias,

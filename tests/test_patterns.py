@@ -16,6 +16,7 @@ from prefrontal.memory.patterns import (
     ENERGY_BIAS_PREFIX,
     TYPE_BIAS_PREFIX,
     _make_half_life_resolver,
+    channel_calibration,
     compute_bias,
     compute_bias_by_band,
     compute_bias_by_category,
@@ -802,3 +803,39 @@ def test_recompute_auto_half_life_off_by_default_and_respects_explicit():
         summary = recompute_patterns(store, timezone="UTC")
         assert "morning" not in summary.auto_half_lives
         assert store.get_state("learning_half_life_days:morning") == "45"
+
+
+# -- channel-choice walk-forward calibration (§4) ----------------------------
+
+
+def test_channel_calibration_helps_when_channel_predicts_ack():
+    """When one channel is reliably acked and another ignored, conditioning wins."""
+    eps = []
+    for d in range(1, 6):
+        eps.append(_ep(channel="push", acknowledged=True, timestamp=f"2026-01-{d:02d} 09:00:00"))
+        eps.append(_ep(channel="sms", acknowledged=False, timestamp=f"2026-01-{d:02d} 10:00:00"))
+    cal = channel_calibration(eps)
+    assert cal.status == "ok"
+    assert cal.helps and cal.adjusted_error < cal.baseline_error
+
+
+def test_channel_calibration_insufficient_without_enough_deliveries():
+    assert channel_calibration(
+        [_ep(channel="push", acknowledged=True)]
+    ).status == "insufficient"
+
+
+def test_recompute_persists_channel_calibration():
+    """The learn pass runs the channel walk-forward and persists its verdict."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for d in range(1, 6):
+            store.log_episode("reminder", channel="push", acknowledged=True,
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+            store.log_episode("reminder", channel="sms", acknowledged=False,
+                              timestamp=f"2026-01-{d:02d} 10:00:00")
+        summary = recompute_patterns(store)
+        assert summary.channel_calibration.status == "ok"
+        assert summary.channel_calibration.helps
+        assert store.get_state("channel_calibration_helps") == "true"
+        assert store.get_state("channel_calibration_samples") is not None
