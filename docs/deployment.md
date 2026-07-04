@@ -329,6 +329,13 @@ calendar feed URLs, Twilio SID/number/phone — since those aren't Prefrontal's.
 This is a starting template — node `typeVersion`s can differ across n8n
 releases, so adjust any node n8n flags on import.
 
+> **Skip the manual re-import.** Once n8n is running you can push every
+> `deploy/n8n/*.json` into it over its REST API instead of importing each by
+> hand — set `N8N_API_URL` + `N8N_API_KEY` and `deploy/update.sh` (the Update
+> button / `prefrontal update`) will sync workflows on every update. See
+> [**n8n-sync.md**](n8n-sync.md). The one-time credential + `$env` setup above
+> still applies; the sync pushes definitions, not secrets.
+
 ---
 
 ## 8. Module 1 — Location-Aware Task Anchor (Coffee Shop Nudge)

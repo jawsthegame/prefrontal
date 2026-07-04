@@ -22,6 +22,13 @@ it tells you to copy/import.
 | `n8n/encouragement.workflow.json` | **Rough-day recovery** (opt-in): polls `GET /encouragement` a few times an afternoon and, on a genuinely rough & unsent day, publishes the recovery message to ntfy **once**, then `POST /encouragement/sent` to stamp the day. Off unless the `encouragement` coaching key is `on`. | deployment §16 |
 | `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, the "Going out"/"I'm back" outing shortcuts, and the one-tap **"Panic"** shortcut. | deployment §6 |
 
+**Updating the running n8n:** rather than re-importing each file by hand, set
+`N8N_API_URL` + `N8N_API_KEY` in `.env` and `prefrontal n8n push` upserts every
+workflow here into the live n8n over its REST API (matched by name, so re-runs
+update in place — no duplicates). `update.sh` runs it, so the dashboard **Update**
+button syncs workflows too; it's a clean no-op when the n8n API isn't configured.
+See [`../docs/n8n-sync.md`](../docs/n8n-sync.md).
+
 Delivery goes to **ntfy** by default — each publish node posts to `https://ntfy.sh`
 on the `prefrontal-me` topic (change it, and point at a self-hosted ntfy if you
 run one). Nudges carry the endpoint's signed one-tap **action buttons** so a tap

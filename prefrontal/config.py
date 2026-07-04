@@ -62,6 +62,15 @@ class Settings:
         n8n_webhook_url: Outbound n8n webhook URL. Empty means the n8n client
             runs in no-op/log mode and nothing leaves the host.
         n8n_webhook_token: Optional token sent to n8n on outbound calls.
+        n8n_api_url: Base URL of n8n's Public REST API (e.g.
+            ``http://127.0.0.1:5678/api/v1``), used to push the
+            ``deploy/n8n/*.json`` workflow templates into the running n8n as
+            part of an update. Empty (with no ``n8n_api_key``) means the
+            workflow sync is a no-op — nothing is pushed and an update never
+            touches n8n.
+        n8n_api_key: API key sent as the ``X-N8N-API-KEY`` header on workflow
+            sync calls. Both this and ``n8n_api_url`` must be set for the sync
+            to run; otherwise it skips cleanly (local-first).
         modules: The challenge-area modules to enable (e.g. ``time_blindness``).
             An empty tuple means "enable every registered module" — the right
             default for a fresh install, since everyone's ADHD profile differs
@@ -113,6 +122,8 @@ class Settings:
     default_user: str = ""
     n8n_webhook_url: str = ""
     n8n_webhook_token: str = ""
+    n8n_api_url: str = ""
+    n8n_api_key: str = ""
     modules: tuple[str, ...] = ()
     #: Enabled Context Packs (life-context layers, e.g. ``parent``). Unlike
     #: ``modules`` (empty = all), packs default to **none** — a pack is an explicit
@@ -353,6 +364,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         default_user=os.environ.get("PREFRONTAL_DEFAULT_USER", ""),
         n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", ""),
         n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", ""),
+        n8n_api_url=os.environ.get("N8N_API_URL", "").rstrip("/"),
+        n8n_api_key=os.environ.get("N8N_API_KEY", ""),
         modules=modules,
         packs=packs,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),

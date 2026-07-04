@@ -32,4 +32,13 @@ echo "[$(ts)] update: pip install -e ."
 echo "[$(ts)] update: apply schema (init-db)"
 "$PREFRONTAL_BIN" init-db
 
+# Push the latest workflow templates into the running n8n so a repo change
+# becomes live workflows without a manual editor import. Best-effort by design:
+# a no-op unless N8N_API_URL + N8N_API_KEY are set, and never fatal — a down or
+# unconfigured n8n must not block the restart of an otherwise-good update (the
+# same "a down n8n never breaks a path" stance as the outbound client). See
+# docs/n8n-sync.md.
+echo "[$(ts)] update: sync n8n workflows"
+"$PREFRONTAL_BIN" n8n push || echo "[$(ts)] update: n8n sync skipped/failed (non-fatal)"
+
 echo "[$(ts)] update: complete"
