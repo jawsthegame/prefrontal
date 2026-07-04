@@ -509,6 +509,7 @@ def record_departure_outcome(
     departed_at: datetime,
     *,
     grace_minutes: float = DEFAULT_DEPARTURE_GRACE_MINUTES,
+    tz: str = "UTC",
 ) -> dict[str, Any]:
     """Log an actual departure as a ``departure`` episode for pattern tracking.
 
@@ -523,15 +524,21 @@ def record_departure_outcome(
         plan: The matched departure plan.
         departed_at: When the user actually left (naive UTC).
         grace_minutes: Minutes past leave-by still counted as on time.
+        tz: The user's IANA timezone, used only to render the human-readable
+            leave-by clock time in the note (timestamps are stored naive UTC).
 
     Returns:
         ``{"episode_id", "outcome", "lateness_minutes", "commitment_id"}``.
     """
+    from prefrontal.scheduling import local_datetime
+
     outcome, lateness = classify_departure(plan, departed_at, grace_minutes=grace_minutes)
     start = _parse(plan.commitment["start_at"])
     leave_by = _parse(plan.leave_by)
     planned_buffer = round((start - leave_by).total_seconds() / 60.0, 1)
-    hhmm = plan.leave_by[11:16]
+    # `leave_by` is naive UTC; the note is user-facing, so render its local
+    # clock time rather than slicing HH:MM straight out of the UTC string.
+    hhmm = local_datetime(leave_by, tz).strftime("%H:%M")
     if outcome == "miss":
         notes = f"left ~{round(lateness)} min late (leave-by {hhmm})"
     else:

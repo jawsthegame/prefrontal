@@ -169,6 +169,27 @@ def test_compute_bias_needs_minimum_samples():
     assert compute_bias([_ep(predicted_value=10, actual_value=20)]) is None
 
 
+def test_compute_bias_ignores_switch_episodes():
+    """`switch` episodes store impulse *counts*, not minutes, so they must not
+    feed the duration bias — otherwise they'd drag the global multiplier."""
+    clean = [_ep(predicted_value=60, actual_value=60) for _ in range(6)]  # ratio 1.0
+    switch = [
+        _ep(episode_type="switch", context="focus", predicted_value=5, actual_value=1)
+        for _ in range(6)  # ratio 0.2 — would pull the bias below 1.0 if counted
+    ]
+    assert compute_bias(clean) == pytest.approx(1.0)
+    assert compute_bias(clean + switch) == pytest.approx(1.0)  # switch ignored
+
+
+def test_time_estimation_patterns_ignore_switch_episodes():
+    """A `switch` block never produces a bogus `switch` time-estimation pattern."""
+    episodes = [
+        _ep(episode_type="switch", context="focus", predicted_value=5, actual_value=2)
+        for _ in range(4)
+    ]
+    assert _by_key(compute_patterns(episodes), "time_estimation") == {}
+
+
 # -- end to end --------------------------------------------------------------
 
 

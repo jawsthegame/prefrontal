@@ -95,6 +95,16 @@ def test_time_estimation_skips_incomplete_and_bad_pairs(scoped):
     assert te["n"] == 1 and te["ratio"] == 2.0
 
 
+def test_time_estimation_skips_switch_episodes(scoped):
+    """`switch` episodes carry impulse counts (not minutes), so they're excluded
+    from time-estimation accuracy and never form a bogus `switch` context."""
+    scoped.log_episode("task", predicted_value=10, actual_value=20)  # the only real pair
+    scoped.log_episode("switch", predicted_value=5, actual_value=1, context="focus")
+    te = build_stats(scoped)["time_estimation"]
+    assert te["n"] == 1 and te["ratio"] == 2.0
+    assert all(c["context"] != "switch" for c in te["contexts"])
+
+
 def test_time_estimation_points_are_capped(scoped):
     """The plotted points keep only the most-recent MAX_ESTIMATE_POINTS."""
     for _ in range(MAX_ESTIMATE_POINTS + 15):

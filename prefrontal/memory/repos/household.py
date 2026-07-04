@@ -953,8 +953,8 @@ class HouseholdRepo(Repo):
         can't touch another household's chore (reads back ``None`` → 404).
         """
         row = self.conn.execute(
-            "SELECT id, title, owner_id, days, due_time, remind_before, impact, "
-            "enabled, last_reminded_on, last_missed_on "
+            "SELECT id, title, owner_id, routine_id, days, due_time, remind_before, "
+            "impact, enabled, last_reminded_on, last_missed_on "
             "FROM household_chores WHERE id = ? AND household_id = ?",
             (chore_id, self._household_id()),
         ).fetchone()

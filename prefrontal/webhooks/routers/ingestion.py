@@ -128,9 +128,12 @@ def build_router(services: RouterServices) -> APIRouter:
             outcome = ACTION_OUTCOME[payload.action]
 
         # Sensible default for acknowledgement when the Shortcut doesn't say:
-        # a one-tap report means the user engaged, so success/partial imply ack.
+        # any one-tap report (made_it/missed_it/partial) means the user engaged,
+        # so it counts as an ack — matching the ntfy button path in the anchor
+        # router, which records acknowledged=True for a missed_it tap too. Only
+        # an explicit 'log' (programmatic, not a tap) leaves ack as supplied.
         acknowledged = payload.acknowledged
-        if acknowledged is None and payload.action in ("made_it", "partial"):
+        if acknowledged is None and payload.action != "log":
             acknowledged = True
 
         episode_id = memory.log_episode(

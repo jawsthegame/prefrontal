@@ -273,15 +273,22 @@ def test_made_it_creates_success_episode(client, user_store):
     assert ep["acknowledged"] == 1  # one-tap implies acknowledgement
 
 
-def test_missed_it_creates_miss_episode(client, store):
-    """'missed_it' maps to a miss episode."""
+def test_missed_it_creates_miss_episode(client, user_store):
+    """'missed_it' maps to a miss episode and, like made_it, implies an ack.
+
+    A one-tap 'Missed it' is still the user engaging — the ntfy button path
+    records acknowledged=True for it, so the Shortcut default must match rather
+    than leave it NULL (which would undercount acks in channel-response learning).
+    """
     resp = client.post(
         "/webhooks/shortcut",
         json={"action": "missed_it", "episode_type": "reminder"},
         headers={"X-Prefrontal-Token": SECRET},
     )
     assert resp.status_code == 201
-    assert resp.json()["outcome"] == "miss"
+    body = resp.json()
+    assert body["outcome"] == "miss"
+    assert user_store.get_episode(body["episode_id"])["acknowledged"] == 1
 
 
 def test_log_action_requires_outcome(client):
