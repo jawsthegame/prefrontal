@@ -503,13 +503,16 @@ ordered by leverage; each is independent but builds on denser capture.
    *newer* pairs it never saw (`raw_error` → `adjusted_error`, `improvement`,
    `helps`) — honest, not circular. The verdict is persisted
    (`bias_calibration_helps` / `_improvement` / `_samples`) and surfaced in the
-   profile ("this multiplier is improving recent estimates — trust it" / "⚠️ NOT
-   improving — a reset may be due") and in `prefrontal learn` output, so a bad
-   adaptation is *visible* rather than silently asserted. Covered by
-   `tests/test_patterns.py` + `tests/test_summarizer.py`. *(Next: extend the same
-   walk-forward check to the channel-choice and drift adaptations, and act on a
-   "not helping" verdict automatically — decay the multiplier toward 1.0 or widen
-   the confidence gate — rather than only reporting it.)*
+   profile and in `prefrontal learn` output, so a bad adaptation is *visible*
+   rather than silently asserted. And it now **auto-acts**: a "not helping"
+   verdict shrinks the global `time_estimation_bias` toward the neutral 1.0 on the
+   same pass (`decay_bias_toward_neutral`, `bias_decay_on_miss` coaching key —
+   default halve the deviation, set `0` for the old report-only behavior), records
+   `bias_calibration_decayed`, and the profile/CLI report what was done ("auto-
+   decayed 1.4 → 1.2") — so a stale multiplier stops overshooting instead of
+   waiting for recency decay to erode it. Covered by `tests/test_patterns.py` +
+   `tests/test_summarizer.py`. *(Next: extend the same walk-forward check + auto-
+   act to the channel-choice and drift adaptations.)*
 5. **Context-conditioned patterns.** ✅ (time of day + task type + energy + category) — the learned
    time-estimation bias is now computed **per time-of-day band** (morning /
    afternoon / evening) as well as globally, because the same person often

@@ -131,10 +131,20 @@ def build_profile(
                 extra = f" (~{improvement} closer)" if improvement else ""
                 lines.append(f"> This multiplier is improving recent estimates{extra} — trust it.")
             elif helps == "false":
-                lines.append(
-                    "> ⚠️ This multiplier is NOT improving recent estimates — treat it "
-                    "cautiously; a reset toward 1.0 may be due."
-                )
+                # §4 auto-act: the learn pass already pulls a non-helping multiplier
+                # toward 1.0, so say what was done rather than only flagging it.
+                decayed = state.get("bias_calibration_decayed", {}).get("value") if state else None
+                if decayed == "true":
+                    lines.append(
+                        f"> ⚠️ This multiplier was NOT improving recent estimates — it has been "
+                        f"auto-decayed toward 1.0 (now {bias}x); treat it cautiously while it "
+                        "recalibrates."
+                    )
+                else:
+                    lines.append(
+                        "> ⚠️ This multiplier is NOT improving recent estimates — treat it "
+                        "cautiously; a reset toward 1.0 may be due."
+                    )
             # Context-conditioned by time of day (learning §5), where there's
             # enough signal — so estimates are calibrated to *when* they run.
             bands = [

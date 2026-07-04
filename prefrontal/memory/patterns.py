@@ -61,6 +61,14 @@ MIN_CALIBRATION_SAMPLES = 6
 #: checking whether the learned bias actually improved subsequent estimates.
 DEFAULT_CALIBRATION_TEST_FRACTION = 0.34
 
+#: When the walk-forward calibration check (§4) says the learned bias is *not*
+#: improving recent estimates, don't just report it — shrink the global multiplier
+#: toward the neutral 1.0 by this fraction of its deviation on the same learn pass.
+#: 0.5 halves the deviation (1.4 → 1.2); 1.0 resets fully to 1.0; 0.0 disables the
+#: auto-act and keeps the old report-only behavior. Tunable per user via the
+#: ``bias_decay_on_miss`` coaching key.
+DEFAULT_BIAS_DECAY_ON_MISS = 0.5
+
 #: How much each outcome contributes to a drift score (higher = more off-track).
 DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
 
@@ -157,6 +165,24 @@ class BiasCalibration:
     helps: bool = False
 
 
+def decay_bias_toward_neutral(bias: float, factor: float = DEFAULT_BIAS_DECAY_ON_MISS) -> float:
+    """Shrink a time-estimation multiplier toward the neutral 1.0 (§4 auto-act).
+
+    ``1.0 + (bias - 1.0) * (1 - factor)`` — ``factor`` is the *fraction of the
+    deviation from 1.0 to remove*: ``0.0`` leaves the multiplier unchanged (auto-
+    act disabled), ``0.5`` halves the deviation (1.4 → 1.2), ``1.0`` resets fully
+    to neutral. ``factor`` is clamped to ``[0, 1]`` so a stray config value can
+    only ever move the multiplier *toward* 1.0, never past it or away from it.
+
+    This is the corrective applied when the walk-forward check finds the learned
+    bias is hurting recent estimates: rather than waiting for recency decay to
+    erode a stale adaptation, actively pull it back so it stops overshooting
+    before the next learn pass.
+    """
+    factor = min(1.0, max(0.0, factor))
+    return round(1.0 + (bias - 1.0) * (1.0 - factor), 2)
+
+
 @dataclass(frozen=True)
 class PatternRunSummary:
     """Summary of a single :func:`recompute_patterns` run."""
@@ -165,6 +191,10 @@ class PatternRunSummary:
     patterns: int
     by_type: dict[str, int] = field(default_factory=dict)
     bias: float | None = None
+    #: The global multiplier before the §4 auto-act ran, set only when a
+    #: "not helping" verdict decayed it toward 1.0 (so ``bias`` is the post value
+    #: and this is the pre value). ``None`` when nothing was auto-decayed.
+    bias_pre_decay: float | None = None
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = field(default_factory=dict)
     type_bias: dict[str, float] = field(default_factory=dict)
@@ -583,6 +613,7 @@ def recompute_patterns(
         )
 
     bias: float | None = None
+    bias_pre_decay: float | None = None
     calibration: BiasCalibration | None = None
     band_bias: dict[str, float] = {}
     type_bias: dict[str, float] = {}
@@ -622,12 +653,30 @@ def recompute_patterns(
                 "bias_calibration_improvement", str(calibration.improvement), source="inferred"
             )
             store.set_state("bias_calibration_samples", str(calibration.samples), source="inferred")
+            # Auto-act (§4): a bias the walk-forward check found *not* helping is
+            # actively pulled toward the neutral 1.0 rather than only reported, so
+            # a stale adaptation stops overshooting estimates before the next pass.
+            # Skip when it's already neutral (nothing to correct) or the user has
+            # disabled the auto-act (``bias_decay_on_miss`` = 0 → report-only).
+            decay = store.get_float("bias_decay_on_miss", DEFAULT_BIAS_DECAY_ON_MISS)
+            decayed = "false"
+            if not calibration.helps and bias is not None and bias != 1.0 and decay > 0:
+                adjusted = decay_bias_toward_neutral(bias, decay)
+                if adjusted != bias:
+                    store.set_state(
+                        "time_estimation_bias", str(adjusted), source="inferred"
+                    )
+                    bias_pre_decay = bias
+                    bias = adjusted
+                    decayed = "true"
+            store.set_state("bias_calibration_decayed", decayed, source="inferred")
 
     return PatternRunSummary(
         episodes=len(episodes),
         patterns=len(results),
         by_type=dict(Counter(r.pattern_type for r in results)),
         bias=bias,
+        bias_pre_decay=bias_pre_decay,
         calibration=calibration,
         band_bias=band_bias,
         type_bias=type_bias,

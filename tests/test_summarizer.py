@@ -196,6 +196,12 @@ def test_profile_surfaces_bias_calibration_verdict(store):
     hurting = build_profile(store, modules=[])
     assert "NOT improving recent estimates" in hurting
 
+    # When the learn pass auto-acted on the miss (§4), the profile reports what
+    # was done ("auto-decayed toward 1.0") rather than only flagging it.
+    store.set_state("bias_calibration_decayed", "true", source="inferred")
+    acted = build_profile(store, modules=[])
+    assert "auto-decayed toward 1.0" in acted and "now 1.4x" in acted
+
 
 def test_profile_surfaces_time_of_day_bias(store):
     from prefrontal.memory.summarizer import build_profile
