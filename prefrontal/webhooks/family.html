@@ -88,7 +88,12 @@
     font: inherit; padding: 0; line-height: 1; }
   .shop-line .box:hover { color: var(--accent); }
   .shop-line.done .txt { text-decoration: line-through; color: var(--muted); }
+  .shop-line .txt { flex: 1; min-width: 0; }
+  .shop-line .dismiss { margin-left: auto; color: var(--muted); cursor: pointer; background: none;
+    border: none; font: inherit; font-size: 18px; line-height: 1; padding: 0 2px; }
+  .shop-line .dismiss:hover { color: var(--accent); }
   .shop-sub { color: var(--muted); font-size: 12px; }
+  .shop-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .shop-add { display: flex; gap: 8px; margin-top: 12px; }
   .shop-add input { flex: 1; min-width: 0; padding: 9px 11px; border-radius: 9px;
     border: 1px solid var(--line); background: var(--card); color: var(--fg); font-size: 15px; }
@@ -304,9 +309,14 @@ function renderShopping(items) {
     ? items.map((s) => {
         const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
         const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
+        const dismiss = s.got
+          ? `<button type="button" class="dismiss" data-id="${s.id}" aria-label="Dismiss ${esc(s.item)}" title="Dismiss">×</button>`
+          : "";
         return `<div class="shop-line${s.got ? " done" : ""}"><button type="button" class="box" data-id="${s.id}" data-got="${s.got ? 1 : 0}" aria-label="${s.got ? "Un-check" : "Check off"} ${esc(s.item)}">${s.got ? "☑" : "☐"}</button>
-          <span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span></div>`;
-      }).join("") + (needed.length ? "" : `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`)
+          <span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span>${dismiss}</div>`;
+      }).join("")
+        + (needed.length ? "" : `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`)
+        + (items.some((s) => s.got) ? `<div class="shop-note">Bought items clear on their own after a day — or tap × to dismiss.</div>` : "")
     : `<div class="empty">Nothing on the list.</div>`;
 }
 
@@ -394,8 +404,21 @@ $("#shop-add").addEventListener("submit", async (e) => {
     input.focus();
   }
 });
-// Tap a checkbox to mark bought / un-bought (event delegation survives re-renders).
+// Tap a checkbox to mark bought / un-bought, or × to dismiss a bought item
+// (event delegation survives re-renders).
 $("#shopping").addEventListener("click", async (e) => {
+  const dismiss = e.target.closest(".dismiss");
+  if (dismiss) {
+    dismiss.disabled = true;
+    try {
+      await post(`/household/shopping/${dismiss.dataset.id}/remove`, {});
+      await load();
+    } catch (err) {
+      $("#status").textContent = "couldn't dismiss — try again";
+      dismiss.disabled = false;
+    }
+    return;
+  }
   const box = e.target.closest(".box");
   if (!box) return;
   const id = box.dataset.id;
