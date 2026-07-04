@@ -104,6 +104,58 @@ def test_briefing_no_fragile_when_day_has_slack(store):
     assert "Tight stretch" not in render_briefing(b)
 
 
+def test_briefing_surfaces_leave_by_for_travel_commitment(store):
+    """A travel commitment still ahead today gets a leave-by line."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_at(now + timedelta(minutes=120)),
+        end_at=_at(now + timedelta(minutes=150)), external_id="personal:1",
+        lead_minutes=15.0,  # travel+prep buffer -> leave 15 min before start
+    )
+    b = build_briefing(store, now=now)
+    assert [d["title"] for d in b.departures] == ["Dentist"]
+    # leave-by is start − lead (basis "lead", no coords), i.e. 15 min earlier.
+    leave = b.departures[0]["leave_by"]
+    assert leave[11:16] == (now + timedelta(minutes=105)).strftime("%H:%M")
+    text = render_briefing(b)
+    assert "🚶 Leave by:" in text
+    assert "for Dentist" in text
+
+
+def test_briefing_leave_by_skips_attend_mode_and_past(store):
+    """Attend-from-desk (work feed) and already-started commitments get no leave-by."""
+    now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    # A work-calendar meeting today, still ahead → attend mode (no travel).
+    store.upsert_commitment(
+        title="Standup", start_at=_at(now + timedelta(minutes=90)),
+        end_at=_at(now + timedelta(minutes=120)), external_id="work:1",
+    )
+    # A travel commitment that already started → past, excluded.
+    store.upsert_commitment(
+        title="Gym", start_at=_at(now - timedelta(minutes=30)),
+        end_at=_at(now + timedelta(minutes=30)), external_id="personal:1",
+    )
+    b = build_briefing(store, now=now)
+    assert b.departures == []
+    assert "Leave by" not in render_briefing(b)
+
+
+def test_briefing_leave_by_off_when_time_blindness_disabled(store, monkeypatch):
+    """With the Time Blindness module off, no leave-by is computed."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_at(now + timedelta(minutes=120)),
+        external_id="personal:1", lead_minutes=15.0,
+    )
+    # Time Blindness owns departure timing; disable its gate.
+    monkeypatch.setattr(
+        "prefrontal.briefing.module_enabled",
+        lambda key, *a, **k: key != "time_blindness",
+    )
+    b = build_briefing(store, now=now)
+    assert b.departures == []
+
+
 def test_render_short_vs_long(store):
     """Long format lists every commitment; short stays terse for big days."""
     now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)

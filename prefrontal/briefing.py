@@ -30,10 +30,12 @@ from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
+from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.impact import fragile_stretch, utcnow
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
+from prefrontal.modules.registry import is_enabled as module_enabled
 from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
 from prefrontal.todos import avoided_todos
 
@@ -72,6 +74,11 @@ class Briefing:
         slips: Count of recent ``miss`` episodes by ``episode_type``.
         coaching: Selected coaching values surfaced in the briefing.
         spare: Free windows in the rest of the day, each with a suggested todo.
+        departures: Leave-by times for today's *remaining* travel commitments —
+            "when to leave" (bias-adjusted travel estimate, or the static lead),
+            so the morning digest says when to head out, not only when things
+            start. Empty when the Time Blindness module is off or nothing today
+            has travel lead.
         fragile: At-risk links of the tightest back-to-back stretch among today's
             remaining commitments *if* each runs the learned time-bias longer than
             planned — a "before it slips" preview. Empty on a day with slack or
@@ -93,6 +100,7 @@ class Briefing:
     spare: list[dict[str, Any]] = field(default_factory=list)
     avoided: list[dict[str, Any]] = field(default_factory=list)
     surfaced: list[dict[str, Any]] = field(default_factory=list)
+    departures: list[dict[str, Any]] = field(default_factory=list)
     fragile: list[dict[str, Any]] = field(default_factory=list)
     encouragement: str | None = None
     switch_feedback: str | None = None
@@ -203,6 +211,37 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         for i in fragile_stretch(remaining, bias)
     ]
 
+    # Leave-by for today's remaining *travel* commitments — "when to leave," not
+    # just when things start. Plans the same `remaining` list with the same pure
+    # planner (plan_departure + departure_kwargs) the departure nudge and widget
+    # use, so the digest's leave-by matches what it's nudged for. Gated on Time
+    # Blindness (which owns departure timing); attend-mode meetings (you're already
+    # there) and zero-lead items are omitted.
+    departures: list[dict[str, Any]] = []
+    if module_enabled("time_blindness"):
+        loc = store.get_location()
+        dep_kwargs = departure_kwargs(store)
+        for c in remaining:
+            p = plan_departure(
+                c,
+                current_lat=loc["lat"] if loc else None,
+                current_lon=loc["lon"] if loc else None,
+                now=now,
+                **dep_kwargs,
+            )
+            if p.mode != "travel" or _parse_ts(p.leave_by) >= _parse_ts(c["start_at"]):
+                continue  # attend-from-here, or no real lead — nothing to say
+            departures.append(
+                {
+                    "title": c["title"],
+                    "commitment_id": c.get("id"),
+                    "start_at": c["start_at"],
+                    "leave_by": p.leave_by,
+                    "travel_minutes": p.travel_minutes,
+                    "basis": p.basis,
+                }
+            )
+
     # Avoidance: the important things still open and being skipped.
     avoided = [
         {"title": a["todo"]["title"], "days_open": a["days_open"], "todo_id": a["todo"]["id"]}
@@ -239,6 +278,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         spare=spare,
         avoided=avoided,
         surfaced=surfaced,
+        departures=departures,
         fragile=fragile,
         switch_feedback=switch_feedback,
     )
@@ -305,6 +345,19 @@ def render_briefing(briefing: Briefing) -> str:
                 fyi = " · FYI" if c.get("kind") == "fyi" else ""
                 lines.append(f"- {_time_of(c)} — {c['title']}{mark}{cal}{fyi}")
     lines.append("")
+
+    # Leave by — when to head out for today's remaining travel commitments, so the
+    # digest surfaces the actionable time (departure), not only the start time.
+    if briefing.departures:
+        lines.append("**🚶 Leave by:**")
+        for d in briefing.departures:
+            travel = (
+                f" (~{round(d['travel_minutes'])} min travel)"
+                if d.get("travel_minutes") is not None
+                else ""
+            )
+            lines.append(f"- {d['leave_by'][11:16]} for {d['title']}{travel}")
+        lines.append("")
 
     # Conflicts.
     if briefing.conflicts:
