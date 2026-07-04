@@ -22,6 +22,7 @@ from prefrontal.memory.patterns import (
     compute_bias_by_type,
     compute_confidence,
     compute_patterns,
+    decay_bias_toward_neutral,
     decay_weight,
     recompute_patterns,
     resolve_bias,
@@ -331,6 +332,82 @@ def test_recompute_persists_calibration_verdict():
         assert summary.calibration.helps is True
         assert store.get_state("bias_calibration_helps") == "true"
         assert store.get_state("bias_calibration_samples") == "3"
+
+
+# -- bias auto-act on a "not helping" verdict (§4) ---------------------------
+
+
+def test_decay_bias_toward_neutral_shrinks_deviation():
+    assert decay_bias_toward_neutral(1.4, 0.5) == 1.2   # half the deviation removed
+    assert decay_bias_toward_neutral(0.6, 0.5) == 0.8   # works below 1.0 too
+    assert decay_bias_toward_neutral(1.4, 1.0) == 1.0   # full reset to neutral
+    assert decay_bias_toward_neutral(1.4, 0.0) == 1.4   # disabled ⇒ unchanged
+    # factor is clamped, so it can only ever move *toward* 1.0, never past/away.
+    assert decay_bias_toward_neutral(1.4, 5.0) == 1.0
+    assert decay_bias_toward_neutral(1.4, -3.0) == 1.4
+
+
+def _stale_hurting_store(store):
+    """Seed the 'used to run over, now on time' history from the calibration test.
+
+    Global bias lands at 1.33 (>1) but the walk-forward check says it no longer
+    helps recent estimates. Decay is disabled so ``compute_bias`` is exact.
+    """
+    store.set_state("learning_half_life_days", "0")
+    for d in range(1, 7):  # older: 1.5× underestimate
+        store.log_episode(
+            "task", predicted_value=10, actual_value=15, timestamp=f"2026-01-{d:02d} 09:00:00"
+        )
+    for d in range(7, 10):  # recent: on time
+        store.log_episode(
+            "task", predicted_value=10, actual_value=10, timestamp=f"2026-01-{d:02d} 09:00:00"
+        )
+
+
+def test_recompute_auto_decays_a_bias_that_is_not_helping():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        _stale_hurting_store(store)
+        summary = recompute_patterns(store)
+
+        assert summary.calibration is not None and summary.calibration.helps is False
+        # The freshly-computed 1.33 was pulled toward 1.0 before it was persisted.
+        assert summary.bias_pre_decay == 1.33
+        assert summary.bias == decay_bias_toward_neutral(1.33)
+        assert store.get_state("time_estimation_bias") == str(summary.bias)
+        assert store.get_state("bias_calibration_decayed") == "true"
+        assert summary.bias < summary.bias_pre_decay  # strictly toward neutral
+
+
+def test_recompute_can_disable_auto_act():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        _stale_hurting_store(store)
+        store.set_state("bias_decay_on_miss", "0")  # opt back into report-only
+        summary = recompute_patterns(store)
+
+        assert summary.calibration.helps is False
+        assert summary.bias_pre_decay is None
+        assert summary.bias == 1.33  # left exactly as computed
+        assert store.get_state("time_estimation_bias") == "1.33"
+        assert store.get_state("bias_calibration_decayed") == "false"
+
+
+def test_recompute_does_not_decay_a_helping_bias():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("learning_half_life_days", "0")
+        for d in range(1, 10):  # steady 1.5× underestimate — the bias helps
+            store.log_episode(
+                "task", predicted_value=10, actual_value=15, timestamp=f"2026-01-{d:02d} 09:00:00"
+            )
+        summary = recompute_patterns(store)
+
+        assert summary.calibration.helps is True
+        assert summary.bias_pre_decay is None
+        assert summary.bias == 1.5
+        assert store.get_state("time_estimation_bias") == "1.5"
+        assert store.get_state("bias_calibration_decayed") == "false"
 
 
 # -- context-conditioned bias by time of day (learning §5) -------------------

@@ -869,7 +869,15 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 print(f"[{label}] category bias -> {cats}")
             cal = summary.calibration
             if cal is not None and cal.status == "ok":
-                verdict = "helping" if cal.helps else "NOT helping — consider a reset"
+                if cal.helps:
+                    verdict = "helping"
+                elif summary.bias_pre_decay is not None:
+                    verdict = (
+                        f"NOT helping — auto-decayed "
+                        f"{summary.bias_pre_decay} -> {summary.bias}"
+                    )
+                else:
+                    verdict = "NOT helping — consider a reset"
                 print(
                     f"[{label}] bias check: error {cal.raw_error} -> {cal.adjusted_error} "
                     f"on {cal.samples} recent ({verdict})"
