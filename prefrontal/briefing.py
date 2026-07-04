@@ -59,6 +59,9 @@ SLIP_WINDOW_DAYS = 7
 #: How far back the briefing pulls triage ``surface`` items (spec §12: last day).
 SURFACE_WINDOW_HOURS = 24
 
+#: How many todo options to offer per spare window (a primary + up to 2 alts).
+SPARE_OPTIONS_PER_WINDOW = 3
+
 
 @dataclass(frozen=True)
 class Briefing:
@@ -171,14 +174,19 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
                 config=window_config,
                 tz=settings.timezone,
                 resolver_for_hour=lambda hour: task_bias_resolver(store, local_hour=hour),
+                options_per_window=SPARE_OPTIONS_PER_WINDOW,
             ):
                 pick = s["suggestion"]
+                # Alternatives = the fitting options beyond the primary, so a gap
+                # offers a small menu ("or: X, Y"), not a single take-it-or-leave-it.
+                alternatives = [t["title"] for t in s["options"][1:]]
                 spare.append(
                     {
                         "start": s["window"].start,
                         "minutes": s["window"].minutes,
                         "suggestion": pick["title"] if pick else None,
                         "todo_id": pick["id"] if pick else None,
+                        "alternatives": alternatives,
                     }
                 )
 
@@ -364,9 +372,11 @@ def render_briefing(briefing: Briefing) -> str:
     if suggested:
         lines.append("**Spare time:**")
         for s in suggested:
+            alts = s.get("alternatives") or []
+            or_line = f" _(or: {', '.join(alts)})_" if alts else ""
             lines.append(
                 f"- {s['start'][11:16]} ({s['minutes']:g} min free) — good for: "
-                f"{s['suggestion']}"
+                f"{s['suggestion']}{or_line}"
             )
         lines.append("")
 

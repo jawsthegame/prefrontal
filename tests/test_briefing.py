@@ -88,6 +88,17 @@ def test_briefing_flags_fragile_stretch(store):
     assert "1:1" in text and "Design review" in text
 
 
+def test_briefing_spare_offers_alternatives(store):
+    """A spare window offers a primary plus a couple of alternatives ('or: …')."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    for title in ("Tidy the desk", "Water the plants", "Sort the mail"):
+        store.add_todo(title, estimate_minutes=10, priority=1)
+    b = build_briefing(store, now=now)
+    suggested = [s for s in b.spare if s["suggestion"]]
+    assert suggested and suggested[0]["alternatives"]  # primary + >= 1 alternative
+    assert "or:" in render_briefing(b)
+
+
 def test_briefing_no_fragile_when_day_has_slack(store):
     """A spaced-out day surfaces no tight-stretch line."""
     now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)

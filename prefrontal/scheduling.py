@@ -619,14 +619,16 @@ def suggest_for_windows(
     config: WindowConfig | None = None,
     tz: str | None = None,
     resolver_for_hour: Callable[[int], Callable[[dict[str, Any]], float]] | None = None,
+    options_per_window: int = 1,
 ) -> list[dict[str, Any]]:
-    """Propose one todo per free window (no todo suggested twice).
+    """Propose todos per free window (the primary pick never repeats across windows).
 
-    Greedy, chronological: each window takes the best-fitting unused todo. When
-    ``config`` and ``tz`` are both given, a todo is only eligible for a window if
-    it's suggestible at that window's *local* start time (:func:`todo_allowed_at`)
-    — so a focus-hours task isn't proposed for an 8pm gap, and nothing is proposed
-    inside the off-zone. Omit them to rank purely by fit (legacy behavior).
+    Greedy, chronological: each window takes the best-fitting unused todo as its
+    ``suggestion``. When ``config`` and ``tz`` are both given, a todo is only
+    eligible for a window if it's suggestible at that window's *local* start time
+    (:func:`todo_allowed_at`) — so a focus-hours task isn't proposed for an 8pm
+    gap, and nothing is proposed inside the off-zone. Omit them to rank purely by
+    fit (legacy behavior).
 
     When ``resolver_for_hour`` and ``tz`` are both given, each window builds a
     *per-todo* bias resolver for its own local hour (context-conditioned
@@ -645,9 +647,15 @@ def suggest_for_windows(
         resolver_for_hour: Optional ``local_hour -> (todo -> multiplier)`` factory
             (e.g. :func:`prefrontal.memory.patterns.task_bias_resolver`) giving a
             per-todo, context-conditioned bias for each window's time of day.
+        options_per_window: How many best-fitting todos to return per window in
+            ``options`` (default 1). Only the primary (``suggestion``) is reserved
+            against reuse; the rest are advisory *alternatives* for that gap and
+            may reappear as alternatives in other windows.
 
     Returns:
-        A list of ``{window, suggestion}`` dicts (``suggestion`` may be ``None``).
+        A list of ``{window, suggestion, options}`` dicts. ``suggestion`` (the
+        reserved primary, may be ``None``) is ``options[0]`` when any todo fits;
+        ``options`` holds up to ``options_per_window`` fitting todos, best first.
     """
     used: set[int] = set()
     out: list[dict[str, Any]] = []
@@ -661,8 +669,9 @@ def suggest_for_windows(
             if resolver_for_hour is not None:
                 window_resolver = resolver_for_hour(local_dt.hour)
         fits = fit_todos(window.minutes, remaining, bias, bias_fn=window_resolver)
-        pick = fits[0]["todo"] if fits else None
+        options = [f["todo"] for f in fits[: max(1, options_per_window)]]
+        pick = options[0] if options else None
         if pick is not None:
-            used.add(pick["id"])
-        out.append({"window": window, "suggestion": pick})
+            used.add(pick["id"])  # only the primary is reserved across windows
+        out.append({"window": window, "suggestion": pick, "options": options})
     return out
