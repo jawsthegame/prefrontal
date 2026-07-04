@@ -371,6 +371,7 @@ def evaluate_outing(
     bias: float,
     commitments: list[dict[str, Any]],
     name: str = "",
+    lead_override: dict[int, float] | None = None,
 ) -> OutingEvaluation:
     """Decide what one active outing warrants — the body of the old check loop.
 
@@ -378,6 +379,10 @@ def evaluate_outing(
     else the elapsed-time escalation level, whether it's newly crossed (``fire``),
     the at-risk commitment impacts, and the nudge message. The caller performs the
     resulting writes via :func:`apply_outing_evaluation`.
+
+    ``lead_override`` (``{commitment_id: minutes}``) feeds real travel legs into
+    the cascade instead of static ``lead_minutes`` — the caller builds it from the
+    phone's location via :func:`prefrontal.departure.travel_leads`.
     """
     elapsed = outing["elapsed_minutes"] or 0.0
     window = outing["time_window_minutes"]
@@ -405,7 +410,10 @@ def evaluate_outing(
         projected = project_free_time(outing["departure_at"], window, bias)
         # Cascade: propagate the overrun through the chain so a knocked-on
         # commitment two hops down is flagged too, not just the first collision.
-        risky = cascade_at_risk(cascade_impact(projected, commitments))
+        # Travel-aware when the caller supplied real per-leg leads.
+        risky = cascade_at_risk(
+            cascade_impact(projected, commitments, lead_override=lead_override)
+        )
         impacts = [
             {
                 "commitment_id": i.commitment["id"],
@@ -516,6 +524,17 @@ class LocationAnchorModule(Module):
         abandon_ratio = store.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
         bias = store.get_float("time_estimation_bias", 1.0)
         commitments = store.upcoming_commitments()
+        # Travel-aware leads from the current location, matching the endpoint.
+        # Lazy import: departure imports haversine_m from this module, so a
+        # top-level import back would cycle.
+        from prefrontal.departure import departure_kwargs, travel_leads
+
+        dep = departure_kwargs(store)
+        leads = travel_leads(
+            commitments, ctx.current_lat, ctx.current_lon,
+            bias=dep["bias"], speed_kmh=dep["speed_kmh"],
+            road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+        )
         cues: list[Cue] = []
         for outing in store.active_outings():
             ev = evaluate_outing(
@@ -527,6 +546,7 @@ class LocationAnchorModule(Module):
                 bias=bias,
                 commitments=commitments,
                 name=ctx.display_name,
+                lead_override=leads,
             )
             apply_outing_evaluation(store, outing, ev)
             if ev.action == "active" and ev.fire:

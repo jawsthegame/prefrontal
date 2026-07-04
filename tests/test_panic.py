@@ -74,6 +74,28 @@ def test_panic_surfaces_cascade_knock_on(store, noon):
     assert "Knock-on" in render_panic(plan)
 
 
+def test_panic_cascade_is_travel_aware(store, noon):
+    """Far-flung venues topple under real drive time even with tiny static leads."""
+    # Two upcoming commitments with small (5-min) leads — reachable on paper — but
+    # their coordinates are far from the last known location, so the real drive
+    # blows the buffer and both fall (chained).
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Client pitch", start_at=_at(noon + timedelta(minutes=20)),
+        end_at=_at(noon + timedelta(minutes=50)), lead_minutes=5,
+        dest_lat=0.0, dest_lon=0.4, external_id="w:1",
+    )
+    store.upsert_commitment(
+        title="Site visit", start_at=_at(noon + timedelta(minutes=70)),
+        end_at=_at(noon + timedelta(minutes=100)), lead_minutes=5,
+        dest_lat=0.0, dest_lon=0.8, external_id="w:2",
+    )
+    plan = build_panic(store, now=noon)
+    titles = [c["title"] for c in plan.cascade]
+    assert titles == ["Client pitch", "Site visit"]
+    assert "Knock-on" in render_panic(plan)
+
+
 def test_panic_no_cascade_for_a_lone_late_item(store, noon):
     """A single late commitment with nothing after it shows no knock-on chain."""
     store.upsert_commitment(

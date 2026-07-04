@@ -28,6 +28,10 @@ from prefrontal.coaching import (
 from prefrontal.config import (
     Settings,
 )
+from prefrontal.departure import (
+    departure_kwargs,
+    travel_leads,
+)
 from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
@@ -212,6 +216,15 @@ def build_router(services: RouterServices) -> APIRouter:
         abandon_ratio = memory.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
         bias = memory.get_float("time_estimation_bias", 1.0)
         commitments = memory.upcoming_commitments()
+        # Real travel legs from the phone's current location, so "you're behind"
+        # reflects the drive to each venue, not a flat lead. Empty (→ static leads)
+        # when location or destination coords are missing.
+        dep = departure_kwargs(memory)
+        leads = travel_leads(
+            commitments, cur_lat, cur_lon,
+            bias=dep["bias"], speed_kmh=dep["speed_kmh"],
+            road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+        )
         delivery = _delivery_fields(memory)
 
         results: list[dict[str, Any]] = []
@@ -227,6 +240,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 bias=bias,
                 commitments=commitments,
                 name=name,
+                lead_override=leads,
             )
             outing_status, outcome = apply_outing_evaluation(memory, outing, ev)
 
