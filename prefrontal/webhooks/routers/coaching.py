@@ -57,6 +57,7 @@ from prefrontal.webhooks.services import RouterServices
 _CUE_ACTION_KIND = {
     "meal": ("meal", "target"),
     "water": ("water", "target"),
+    "meds": ("meds", "target"),
     "trip": ("trip_label", "trip_id"),
 }
 

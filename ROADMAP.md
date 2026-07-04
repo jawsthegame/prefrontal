@@ -126,8 +126,11 @@ the first test. Code follow-ups below are optional polish.
   & adaptation" §6): it now folds **unanswered** nudges in too —
   `sweep_unanswered_self_care` logs a nudge left un-acted past a window as an
   `ignored` episode, which the learner reads as a "wrong time / too frequent"
-  signal alongside snoozes. *(Next: whether self-care grows into its own basics
-  pack with meds/sleep.)*
+  signal alongside snoozes. A **meds** check now ships as a third basic (one-tap
+  Took / Snooze, its own start hour / interval / daily target for multi-dose
+  regimens) — **off even when self_care is on**, since medication is personal, so
+  it's opt-in per person via `meds_enabled`. *(Next: a sleep/wind-down check to
+  round out the basics pack.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
