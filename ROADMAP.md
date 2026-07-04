@@ -402,6 +402,11 @@ the first test. Code follow-ups below are optional polish.
   or more downstream commitments are at risk). The **iOS widget**
   (`deploy/scriptable/prefrontal-widget.js`) mirrors it: a "running behind" Lock
   Screen facet (`behind` param) and a home-screen line, gated the same way.
+  **Travel-aware leads**: when a location is known, `GET /impact/cascade` replaces
+  each leg's static `lead_minutes` with real bias-adjusted travel between commitment
+  coordinates (`departure.travel_leads` → `cascade_impact(lead_override=…)`), so a
+  leg you can't actually drive in the flat buffer is flagged; `travel_aware` reports
+  when it applied. *(Next: thread the same override into the outing/panic surfaces.)*
 - **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
   commitments, double-bookings, what slipped this past week, and a coaching note
   (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +

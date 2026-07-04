@@ -53,6 +53,7 @@ from prefrontal.departure import (
     plan_departure,
     plan_upcoming_departures,
     record_departure_outcome,
+    travel_leads,
 )
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 from prefrontal.geocode import (
@@ -514,6 +515,8 @@ def build_router(services: RouterServices) -> APIRouter:
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
         free_at: str | None = None,
         over_minutes: float | None = None,
+        current_lat: float | None = None,
+        current_lon: float | None = None,
     ) -> dict[str, Any]:
         """Project a running-late free-time through the day, domino by domino.
 
@@ -525,6 +528,12 @@ def build_router(services: RouterServices) -> APIRouter:
         (``YYYY-MM-DD HH:MM:SS`` or ISO), else ``over_minutes`` from now
         (``now + over_minutes``), else the bias-adjusted projection of the newest
         active outing, else now. ``source`` reports which was used.
+
+        When a location is known (``current_lat``/``current_lon``, else the phone's
+        last fix) the per-leg lead times use **real bias-adjusted travel** between
+        commitment coordinates instead of each event's static ``lead_minutes`` — so
+        a leg you can't actually drive in the flat buffer is flagged. ``travel_aware``
+        reports whether any leg got a travel estimate.
 
         Returns the full chain (schedule order) with each link's
         ``projected_start``/``delay_minutes``/``slack_minutes``/``caused_by``, the
@@ -568,11 +577,25 @@ def build_router(services: RouterServices) -> APIRouter:
                 "hardness": i.commitment.get("hardness"),
             }
 
-        chain = cascade_impact(free, commitments)
+        # Real travel legs (from an explicit location, else the last known fix)
+        # replace static leads where coordinates allow; else the cascade falls back.
+        if current_lat is None or current_lon is None:
+            last = memory.get_location()
+            if last is not None:
+                current_lat, current_lon = last["lat"], last["lon"]
+        dep = departure_kwargs(memory)
+        leads = travel_leads(
+            commitments, current_lat, current_lon,
+            bias=dep["bias"], speed_kmh=dep["speed_kmh"],
+            road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+        )
+
+        chain = cascade_impact(free, commitments, lead_override=leads)
         risky = cascade_at_risk(chain)
         return {
             "projected_free_at": free.strftime(TS_FMT),
             "source": source,
+            "travel_aware": bool(leads),
             "cascade": [dump(i) for i in chain],
             "at_risk": [dump(i) for i in risky],
             "hard_conflict": any(i.commitment.get("hardness") == "hard" for i in risky),
