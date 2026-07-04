@@ -113,21 +113,67 @@ class TripsRepo(Repo):
         return [dict(r) for r in rows]
 
     def label_trip(
-        self, trip_id: int, *, label: str, category: str | None = None
+        self,
+        trip_id: int,
+        *,
+        label: str,
+        category: str | None = None,
+        domain: str | None = None,
     ) -> dict[str, Any] | None:
-        """Record the user's label (and optional category) for a completed trip.
+        """Record the user's label, category, and life-domain for a completed trip.
+
+        ``category`` (errand/social/…) is *what kind of activity* the trip was;
+        ``domain`` (shop/work/home/personal) is *which sphere of life* it served —
+        the axis :mod:`prefrontal.focus_balance` rolls time-out up by. Both are
+        ``COALESCE``-d, so a follow-up label that omits one keeps the earlier value
+        (edit either with :meth:`set_trip_domain` / a re-label).
 
         Returns the updated trip, or ``None`` if no such trip exists for the user.
         """
         cur = self.conn.execute(
-            "UPDATE trips SET label = ?, category = COALESCE(?, category) "
-            "WHERE id = ? AND user_id = ?",
-            (label, category, trip_id, self._uid()),
+            "UPDATE trips SET label = ?, category = COALESCE(?, category), "
+            "domain = COALESCE(?, domain) WHERE id = ? AND user_id = ?",
+            (label, category, domain, trip_id, self._uid()),
         )
         self.conn.commit()
         if cur.rowcount == 0:
             return None
         return self.get_trip(trip_id)
+
+    def set_trip_domain(
+        self, trip_id: int, domain: str | None
+    ) -> dict[str, Any] | None:
+        """Set (or clear) a trip's life-sphere domain; return the updated trip.
+
+        The focus-balance guardrail: ``domain`` (shop/work/home/personal) is what
+        :mod:`prefrontal.focus_balance` sums time-out by, so a misfiled trip can be
+        recategorized without re-labeling it. ``None`` clears it. Returns ``None``
+        if no such trip exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE trips SET domain = ? WHERE id = ? AND user_id = ?",
+            (domain, trip_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_trip(trip_id)
+
+    def completed_trips_since(self, since: str, limit: int = 500) -> list[dict[str, Any]]:
+        """Completed trips whose return landed at/after ``since`` (ISO ts), newest first.
+
+        The window query behind the focus-balance rollup
+        (:func:`prefrontal.focus_balance.build_focus_balance`): only closed loops
+        with a ``returned_at`` count, since an open trip has no measurable time-out
+        yet. ``limit`` caps a pathological backlog at personal scale.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM trips WHERE user_id = ? AND status = 'completed' "
+            "AND returned_at IS NOT NULL AND returned_at >= ? "
+            "ORDER BY returned_at DESC LIMIT ?",
+            (self._uid(), since, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def set_trip_reflection(
         self, trip_id: int, *, reflection: str, outcome: str | None = None

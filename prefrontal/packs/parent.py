@@ -32,12 +32,21 @@ PARENT_PACK = Pack(
     # ``child`` is already a valid commitment kind; declared here as pack vocab.
     commitment_kinds=("child",),
     # Keep parent-category work inside daytime family windows by default (the
-    # scheduler reads these `todo_window:<category>` coaching keys). Absent-only,
-    # so a user's own window override always wins.
+    # scheduler reads these `todo_window:<category>` coaching keys), and turn on the
+    # focus-balance guardrail: closed-loop trips (`prefrontal/focus_balance.py`) roll
+    # their out-of-home time up by life-sphere, and these weekly `focus_target:<domain>`
+    # aims + the `focus_balance_nudge` flag light the gentle "light on home/personal
+    # this week" heads-up. A parent is exactly who wants to make sure home and
+    # personal keep their share against shop/work — so the pack sets modest aims for
+    # both (minutes of *out-of-home* trips per week, not time at home). Absent-only,
+    # so a user's own window/target/flag always wins.
     coaching_defaults=MappingProxyType(
         {
             "todo_window:school": "08:00-15:00",
             "todo_window:childcare": "06:00-20:00",
+            "focus_balance_nudge": "1",
+            "focus_target:home": "300",
+            "focus_target:personal": "120",
         }
     ),
 )

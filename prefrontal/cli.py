@@ -937,6 +937,45 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_balance(args: argparse.Namespace) -> int:
+    """Print the focus-balance rollup — out-of-home time by life-sphere.
+
+    Reads completed closed-loop trips over the last ``--days`` and buckets their
+    time-out into shop/work/home/personal (plus any free-text domain in use),
+    against the per-domain weekly targets in coaching state. A read-only view of
+    "am I spreading my focus the way I mean to?".
+
+    Args:
+        args: Parsed arguments; uses ``args.db_path``, ``args.user``, ``args.days``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.focus_balance import build_focus_balance, format_minutes
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    days = max(1, min(args.days, 365))
+    with MemoryStore.open(db_path) as store:
+        balance = build_focus_balance(_resolve_user_store(store, args.user), days=days)
+
+    if not balance.has_data:
+        print(f"No completed trips in the last {days}d to balance yet.")
+        return 0
+
+    total = format_minutes(balance.total_minutes)
+    print(f"Focus balance — out-of-home time, last {days}d ({total}):")
+    for d in balance.domains:
+        share = f"{round(balance.share(d.domain) * 100):>3d}%"
+        bar = "█" * max(0, round(balance.share(d.domain) * 20))
+        target = ""
+        if d.has_target:
+            flag = "  ⚠ light" if d.underserved else ""
+            target = f"  (aim {format_minutes(d.target_minutes or 0)}{flag})"
+        print(f"  {d.domain:<12} {format_minutes(d.minutes):>6}  {share} {bar}{target}")
+    return 0
+
+
 def _cmd_summarize(args: argparse.Namespace) -> int:
     """LLM-summarize the profile via Ollama, caching it and writing a file.
 
@@ -1924,6 +1963,16 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="Write to a file instead of stdout."
     )
     p_profile.set_defaults(func=_cmd_profile)
+
+    p_balance = sub.add_parser(
+        "balance", help="Show out-of-home time by life-sphere (shop/work/home/personal)."
+    )
+    p_balance.add_argument("--db-path", default=None, help="Override the database path.")
+    p_balance.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_balance.add_argument(
+        "--days", type=int, default=7, help="Look-back window in days (default 7)."
+    )
+    p_balance.set_defaults(func=_cmd_balance)
 
     p_summarize = sub.add_parser(
         "summarize", help="LLM-summarize the profile (Ollama) to profile-<handle>.md."

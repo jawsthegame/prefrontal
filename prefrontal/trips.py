@@ -373,5 +373,5 @@ def trip_label_prompt(trip: dict[str, Any]) -> str:
     span = f" ({', '.join(bits)})" if bits else ""
     return (
         f"You got back from a trip{span} — what was it? "
-        "Tap to label and categorize it (and say how it went)."
+        "Tap to label it, file it (shop/work/home/personal), and say how it went."
     )
