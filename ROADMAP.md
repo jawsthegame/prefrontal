@@ -396,7 +396,9 @@ the first test. Code follow-ups below are optional polish.
   **Panic mode** (`GET /panic`) adds a "⚠️ Knock-on" line — the cascade seeded at
   now over upcoming commitments — so when you're already late it names the
   downstream chain that topples too, not just the first fire (shown only when two
-  or more downstream commitments are at risk).
+  or more downstream commitments are at risk). The **iOS widget**
+  (`deploy/scriptable/prefrontal-widget.js`) mirrors it: a "running behind" Lock
+  Screen facet (`behind` param) and a home-screen line, gated the same way.
 - **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
   commitments, double-bookings, what slipped this past week, and a coaching note
   (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +
