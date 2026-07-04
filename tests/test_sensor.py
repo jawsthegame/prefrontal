@@ -16,12 +16,17 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.sensor import (
+    MIN_SENSOR_CALIBRATION_SAMPLES,
     apply_proposal,
+    avoided_state_keys,
+    compute_sensor_calibration,
     extract_candidates,
     extract_candidates_from_transcript,
+    recompute_sensor_calibration,
     record_candidates,
     render_transcript,
 )
+from prefrontal.sensor import _build_prompt as _sensor_build_prompt
 from tests.conftest import scoped_default
 
 
@@ -329,3 +334,110 @@ def test_observe_422s_when_neither_text_nor_transcript():
         assert client.post(
             "/observe", json={"text": "   ", "transcript": []}, headers=_auth()
         ).status_code == 422
+
+
+# -- sensor calibration feedback (learning §2) -------------------------------
+
+
+def _resolved(kind: str, payload: dict, status: str) -> dict:
+    """A minimal resolved-proposal dict, the shape compute_sensor_calibration reads."""
+    return {"kind": kind, "payload": payload, "status": status}
+
+
+def test_calibration_insufficient_below_sample_gate():
+    proposals = [
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted")
+        for _ in range(MIN_SENSOR_CALIBRATION_SAMPLES - 1)
+    ]
+    cal = compute_sensor_calibration(proposals)
+    assert cal.status == "insufficient"
+    assert cal.resolved == MIN_SENSOR_CALIBRATION_SAMPLES - 1
+    assert cal.accept_rate is None
+
+
+def test_calibration_ignores_pending_and_computes_accept_rate():
+    proposals = [
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("episode", {"episode_type": "task"}, "rejected"),
+        _resolved("episode", {"episode_type": "task"}, "rejected"),
+        _resolved("state", {"key": "encouragement", "value": "off"}, "pending"),  # ignored
+    ]
+    cal = compute_sensor_calibration(proposals)
+    assert cal.status == "ok"
+    assert (cal.resolved, cal.accepted, cal.rejected) == (5, 3, 2)
+    assert cal.accept_rate == 0.6
+    by = {tp.target: tp for tp in cal.by_target}
+    assert (by["state:self_care"].accepted, by["state:self_care"].rejected) == (3, 0)
+    assert by["episode:task"].rejected == 2
+    assert by["episode:task"].accept_rate == 0.0
+
+
+def test_calibration_flags_chronically_rejected_target():
+    # A state key rejected 3× (≥ MIN_TARGET_SAMPLES, 0% accept) is flagged; a
+    # mostly-accepted key alongside it is not.
+    proposals = (
+        [_resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")] * 3
+        + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
+    )
+    cal = compute_sensor_calibration(proposals)
+    assert cal.status == "ok"
+    assert cal.flagged == ("state:responsive_hours_end",)
+
+
+def test_calibration_does_not_flag_under_min_target_samples():
+    # Only 2 rejects for the key (< MIN_TARGET_SAMPLES) → not flagged, even at 0%.
+    proposals = (
+        [_resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")] * 2
+        + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
+    )
+    cal = compute_sensor_calibration(proposals)
+    assert cal.status == "ok"
+    assert cal.flagged == ()
+
+
+def test_recompute_persists_verdict_and_feeds_avoided_keys(store):
+    for _ in range(3):
+        pid = store.add_proposal(
+            kind="state", payload={"key": "responsive_hours_end", "value": "23"}
+        )
+        store.set_proposal_status(pid, "rejected")
+    for _ in range(3):
+        pid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
+        store.set_proposal_status(pid, "accepted")
+
+    cal = recompute_sensor_calibration(store)
+    assert cal.status == "ok"
+    assert store.get_state("sensor_accept_rate") == str(cal.accept_rate)
+    assert store.get_state("sensor_calibration_samples") == "6"
+    assert store.get_state("sensor_rejected_targets") == "state:responsive_hours_end"
+    # the loop reads the flagged state target back as an allowlisted key name
+    assert avoided_state_keys(store) == frozenset({"responsive_hours_end"})
+
+
+def test_recompute_persists_nothing_when_insufficient(store):
+    pid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
+    store.set_proposal_status(pid, "accepted")
+    cal = recompute_sensor_calibration(store)
+    assert cal.status == "insufficient"
+    assert store.get_state("sensor_accept_rate") is None
+    assert avoided_state_keys(store) == frozenset()
+
+
+def test_avoided_state_keys_filters_non_state_and_unknown(store):
+    # Episode targets and keys not on the allowlist are dropped; only live state keys remain.
+    store.set_state(
+        "sensor_rejected_targets",
+        "episode:task,state:self_care,state:bogus_key",
+        source="inferred",
+    )
+    assert avoided_state_keys(store) == frozenset({"self_care"})
+
+
+def test_avoid_keys_surface_in_the_extraction_prompt():
+    prompt = _sensor_build_prompt("note text", avoid_keys=frozenset({"responsive_hours_end"}))
+    assert "repeatedly declined" in prompt
+    assert "responsive_hours_end" in prompt
+    # No avoid set → no de-emphasis instruction.
+    assert "repeatedly declined" not in _sensor_build_prompt("note text")

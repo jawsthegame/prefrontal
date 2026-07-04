@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,30 @@ PROPOSABLE_EPISODE_TYPES = frozenset({"task", "checkin", "reminder", "departure"
 #: outcomes an inferred episode may carry (matches the drift vocabulary).
 PROPOSABLE_OUTCOMES = frozenset({"success", "partial", "miss"})
 
+#: Minimum resolved (accepted + rejected) proposals before the sensor's
+#: accept-rate is worth reporting — below this it's noise. Mirrors §4's
+#: ``MIN_CALIBRATION_SAMPLES`` sample gate: report "not enough data yet" rather
+#: than a verdict drawn from two decisions.
+MIN_SENSOR_CALIBRATION_SAMPLES = 5
+
+#: Minimum resolved proposals for a single *target* (one state key or episode
+#: type) before its accept-rate is trusted enough to flag as chronically rejected.
+MIN_TARGET_SAMPLES = 3
+
+#: A target at/below this accept-rate (with ≥ ``MIN_TARGET_SAMPLES`` decisions) is
+#: "chronically rejected" — the sensor keeps proposing something the human keeps
+#: declining. ``0.34`` ≈ rejected two times out of three or worse.
+LOW_PRECISION_ACCEPT_RATE = 0.34
+
+#: coaching_state keys the calibration pass persists. The verdict is surfaced in
+#: the behavioral profile; ``SENSOR_REJECTED_KEY`` (a comma-joined list of flagged
+#: ``kind:name`` targets) also feeds back into the extraction prompt so the sensor
+#: stops re-proposing settings the user reliably declines. Read side reads these
+#: as literal keys (as the §4 bias verdict is), so there's no import coupling.
+SENSOR_ACCEPT_RATE_KEY = "sensor_accept_rate"
+SENSOR_SAMPLES_KEY = "sensor_calibration_samples"
+SENSOR_REJECTED_KEY = "sensor_rejected_targets"
+
 SENSOR_SYSTEM_PROMPT = (
     "You are a careful note-reader for an ADHD assistant. You turn a free-text "
     "note or a conversation transcript into STRUCTURED CANDIDATE updates that a "
@@ -81,14 +106,22 @@ class Candidate:
     rationale: str = ""
 
 
-def _allowlist_instructions(*, quote_hint: str) -> str:
+def _allowlist_instructions(
+    *, quote_hint: str, avoid_keys: frozenset[str] = frozenset()
+) -> str:
     """The shared "here's the JSON shape + the exact allowlists" body.
 
     Identical for a note and a transcript — the safety model (allowlist,
     no-fabricated-numbers) doesn't change with the input shape; only the framing
     of the source and the ``quote_hint`` (what a good rationale quotes) differ.
+
+    ``avoid_keys`` closes the sensor's calibration feedback loop: state keys the
+    user has *chronically rejected* (per :func:`compute_sensor_calibration`) are
+    named here so the model stops volunteering them. It's a soft de-emphasis, not
+    a hard block — the key stays on the allowlist and a clearly-stated request
+    still proposes it; the human still confirms either way.
     """
-    return (
+    body = (
         "Each item is a JSON object with:\n"
         '  - "kind": "state" or "episode"\n'
         '  - for "state": "key" (one of: '
@@ -103,13 +136,20 @@ def _allowlist_instructions(*, quote_hint: str) -> str:
         "numeric predicted/actual/duration fields on episodes. Return [] if "
         "nothing fits."
     )
+    if avoid_keys:
+        body += (
+            "\nThe user has repeatedly declined changes to these settings — do NOT "
+            "propose them unless the source explicitly and unambiguously asks: "
+            f"{', '.join(sorted(avoid_keys))}."
+        )
+    return body
 
 
-def _build_prompt(text: str) -> str:
+def _build_prompt(text: str, *, avoid_keys: frozenset[str] = frozenset()) -> str:
     """The grounded extraction prompt: the note plus the exact allowlists."""
     return (
         "From the NOTE below, extract candidate updates. "
-        + _allowlist_instructions(quote_hint="the note")
+        + _allowlist_instructions(quote_hint="the note", avoid_keys=avoid_keys)
         + f"\n\nNOTE:\n{text.strip()}"
     )
 
@@ -133,7 +173,9 @@ def render_transcript(turns: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _build_transcript_prompt(transcript: str) -> str:
+def _build_transcript_prompt(
+    transcript: str, *, avoid_keys: frozenset[str] = frozenset()
+) -> str:
     """The grounded extraction prompt for a multi-speaker conversation.
 
     Same allowlist body as :func:`_build_prompt`, but framed to attribute signal
@@ -145,7 +187,9 @@ def _build_transcript_prompt(transcript: str) -> str:
         "(the person this assistant supports). The transcript may include other "
         "speakers; only record things that reflect the USER's own preferences, "
         "behavior, or state — never facts about other participants. "
-        + _allowlist_instructions(quote_hint="the line you drew it from")
+        + _allowlist_instructions(
+            quote_hint="the line you drew it from", avoid_keys=avoid_keys
+        )
         + f"\n\nCONVERSATION:\n{transcript}"
     )
 
@@ -200,7 +244,10 @@ def _validate(raw: dict[str, Any]) -> Candidate | None:
 
 
 def extract_candidates(
-    text: str, *, client: Generator | None = None
+    text: str,
+    *,
+    client: Generator | None = None,
+    avoid_keys: frozenset[str] | None = None,
 ) -> list[Candidate]:
     """Read free text and return validated candidate updates (never writes).
 
@@ -209,6 +256,9 @@ def extract_candidates(
         client: A :class:`~prefrontal.integrations.Generator` — the local Ollama
             client, or Claude when the ``sensor`` agent is opted into the
             Anthropic provider (tests inject one). Defaults to the local server.
+        avoid_keys: State keys the user has chronically rejected — the sensor's
+            calibration feedback (see :func:`avoided_state_keys`). Named in the
+            prompt so the model stops volunteering them; validation is unchanged.
 
     Returns:
         Validated :class:`Candidate` objects. Empty when the note yields nothing,
@@ -217,8 +267,9 @@ def extract_candidates(
     if not text or not text.strip():
         return []
     client = client or OllamaClient.from_settings()
+    prompt = _build_prompt(text, avoid_keys=avoid_keys or frozenset())
     try:
-        reply = client.generate(_build_prompt(text), system=SENSOR_SYSTEM_PROMPT)
+        reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
     except ProviderError:
         return []  # no model → observe nothing rather than invent
     candidates = [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
@@ -226,7 +277,10 @@ def extract_candidates(
 
 
 def extract_candidates_from_transcript(
-    turns: list[dict[str, Any]], *, client: Generator | None = None
+    turns: list[dict[str, Any]],
+    *,
+    client: Generator | None = None,
+    avoid_keys: frozenset[str] | None = None,
 ) -> list[Candidate]:
     """Read a conversation transcript and return validated candidate updates.
 
@@ -247,6 +301,8 @@ def extract_candidates_from_transcript(
             :func:`render_transcript`.
         client: A :class:`~prefrontal.integrations.Generator` (Ollama, or Claude
             when the ``sensor`` agent is opted into Anthropic). Defaults to local.
+        avoid_keys: State keys the user has chronically rejected — de-emphasized
+            in the prompt (see :func:`extract_candidates` / :func:`avoided_state_keys`).
 
     Returns:
         Validated :class:`Candidate` objects (possibly empty).
@@ -255,10 +311,9 @@ def extract_candidates_from_transcript(
     if not transcript.strip():
         return []
     client = client or OllamaClient.from_settings()
+    prompt = _build_transcript_prompt(transcript, avoid_keys=avoid_keys or frozenset())
     try:
-        reply = client.generate(
-            _build_transcript_prompt(transcript), system=SENSOR_SYSTEM_PROMPT
-        )
+        reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
     except ProviderError:
         return []  # no model → observe nothing rather than invent
     return [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
@@ -270,6 +325,147 @@ def record_candidates(store: MemoryStore, candidates: list[Candidate]) -> list[i
         store.add_proposal(kind=c.kind, payload=c.payload, rationale=c.rationale)
         for c in candidates
     ]
+
+
+@dataclass(frozen=True)
+class TargetPrecision:
+    """Accept/reject tally for one proposal *target* (a state key or episode type)."""
+
+    target: str  # a ``kind:name`` label, e.g. "state:responsive_hours_end", "episode:task"
+    accepted: int
+    rejected: int
+
+    @property
+    def resolved(self) -> int:
+        return self.accepted + self.rejected
+
+    @property
+    def accept_rate(self) -> float:
+        return self.accepted / self.resolved if self.resolved else 0.0
+
+
+@dataclass(frozen=True)
+class SensorCalibration:
+    """Is the LLM sensor proposing things worth keeping? (learning §2 feedback.)
+
+    The honest quality signal for a *sensor* is its **precision**: of the
+    proposals a human has resolved, how many were accepted vs rejected — overall
+    and per target. Unlike §4's numeric walk-forward
+    (:func:`prefrontal.memory.patterns.bias_calibration`), this needs no
+    predicted/actual pairs, so it works uniformly across state and episode
+    proposals. A target the user keeps rejecting is surfaced in ``flagged`` and
+    fed back into the extraction prompt so the sensor stops proposing it — a
+    self-correcting loop grounded entirely in recorded accept/reject decisions,
+    nothing inferred. ``status="insufficient"`` (not an exception) when too few
+    proposals have been resolved to say anything, so callers surface "not enough
+    data yet".
+    """
+
+    status: str  # "ok" | "insufficient"
+    resolved: int  # accepted + rejected decisions seen
+    accepted: int = 0
+    rejected: int = 0
+    accept_rate: float | None = None
+    by_target: tuple[TargetPrecision, ...] = ()
+    flagged: tuple[str, ...] = ()  # ``kind:name`` targets chronically rejected
+
+
+def _proposal_target(kind: str, payload: dict[str, Any]) -> str:
+    """A stable ``kind:name`` label a proposal's accept/reject tally groups under."""
+    if kind == "state":
+        return f"state:{payload.get('key')}"
+    if kind == "episode":
+        return f"episode:{payload.get('episode_type')}"
+    return f"{kind}:?"
+
+
+def compute_sensor_calibration(
+    proposals: list[dict[str, Any]],
+    *,
+    min_samples: int = MIN_SENSOR_CALIBRATION_SAMPLES,
+    min_target_samples: int = MIN_TARGET_SAMPLES,
+    low_precision: float = LOW_PRECISION_ACCEPT_RATE,
+) -> SensorCalibration:
+    """Measure the sensor's precision from resolved proposals (pure, no store).
+
+    Counts accepted vs rejected over the resolved proposals, overall and grouped
+    by target (``_proposal_target``), and flags targets with enough decisions
+    whose accept-rate is at/below ``low_precision``. Pending rows are ignored.
+    Returns ``status="insufficient"`` below ``min_samples`` resolved decisions.
+
+    Args:
+        proposals: Proposal dicts (any status; only resolved ones are counted).
+        min_samples: Minimum resolved decisions before reporting a verdict.
+        min_target_samples: Minimum decisions for a target before it can be flagged.
+        low_precision: Accept-rate at/below which a well-sampled target is flagged.
+
+    Returns:
+        A :class:`SensorCalibration`.
+    """
+    resolved_rows = [p for p in proposals if p.get("status") in ("accepted", "rejected")]
+    n = len(resolved_rows)
+    accepted = sum(1 for p in resolved_rows if p["status"] == "accepted")
+    rejected = n - accepted
+    if n < min_samples:
+        return SensorCalibration(
+            status="insufficient", resolved=n, accepted=accepted, rejected=rejected
+        )
+
+    tally: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # target -> [accepted, rejected]
+    for p in resolved_rows:
+        target = _proposal_target(p["kind"], p.get("payload") or {})
+        tally[target][0 if p["status"] == "accepted" else 1] += 1
+    by_target = tuple(
+        TargetPrecision(target=t, accepted=a, rejected=r) for t, (a, r) in sorted(tally.items())
+    )
+    flagged = tuple(
+        tp.target
+        for tp in by_target
+        if tp.resolved >= min_target_samples and tp.accept_rate <= low_precision
+    )
+    return SensorCalibration(
+        status="ok",
+        resolved=n,
+        accepted=accepted,
+        rejected=rejected,
+        accept_rate=round(accepted / n, 2),
+        by_target=by_target,
+        flagged=flagged,
+    )
+
+
+def recompute_sensor_calibration(store: MemoryStore) -> SensorCalibration:
+    """Measure the sensor's precision and persist the verdict (learning §2 feedback).
+
+    The learning-pass counterpart for the sensor, run alongside
+    :func:`~prefrontal.memory.patterns.recompute_patterns`. Reads the full
+    resolved-proposal history, computes accept-rate overall and per target, and
+    persists a compact verdict — ``sensor_accept_rate``,
+    ``sensor_calibration_samples``, and ``sensor_rejected_targets`` (the flagged
+    ``kind:name`` list) — with ``source='inferred'``. The verdict shows in the
+    behavioral profile, and the flagged list feeds back into the extraction
+    prompt via :func:`avoided_state_keys`. Below the sample gate it persists
+    nothing (an honest "not enough data yet"). Returns the full result for CLI use.
+    """
+    calibration = compute_sensor_calibration(store.all_resolved_proposals())
+    if calibration.status == "ok":
+        store.set_state(SENSOR_ACCEPT_RATE_KEY, str(calibration.accept_rate), source="inferred")
+        store.set_state(SENSOR_SAMPLES_KEY, str(calibration.resolved), source="inferred")
+        store.set_state(SENSOR_REJECTED_KEY, ",".join(calibration.flagged), source="inferred")
+    return calibration
+
+
+def avoided_state_keys(store: MemoryStore) -> frozenset[str]:
+    """State keys the sensor should stop volunteering, from the last calibration pass.
+
+    Reads the persisted ``sensor_rejected_targets`` list, keeps the ``state:``
+    targets, and returns their (still-allowlisted) key names — the set to pass as
+    ``extract_candidates(..., avoid_keys=…)`` so the prompt de-emphasizes settings
+    the user reliably declines. Empty until a calibration pass flags something.
+    """
+    raw = store.get_state(SENSOR_REJECTED_KEY) or ""
+    keys = {t.split(":", 1)[1] for t in raw.split(",") if t.startswith("state:")}
+    return frozenset(k for k in keys if k in PROPOSABLE_STATE_KEYS)
 
 
 def summarize_candidate(kind: str, payload: dict[str, Any]) -> str:

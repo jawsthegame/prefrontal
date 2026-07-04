@@ -180,6 +180,26 @@ def build_profile(
                     lines.append(f"> {label}: {', '.join(dim_str)}.")
             lines.append("")
 
+    # Sensor precision (learning §2 feedback): is the LLM sensor proposing things
+    # worth keeping? A low accept-rate — or specific chronically-rejected targets —
+    # is a self-correcting signal, surfaced like the §4 bias verdict above. Read as
+    # literal keys (the recompute writes them), so no import coupling to the sensor.
+    accept_rate = state.get("sensor_accept_rate", {}).get("value") if state else None
+    if accept_rate:
+        samples = state.get("sensor_calibration_samples", {}).get("value") if state else None
+        over = f" over {samples} reviewed" if samples else ""
+        lines.append("## Sensor precision")
+        lines.append("")
+        lines.append(f"- **{accept_rate}** of the LLM sensor's proposals were accepted{over}.")
+        rejected = state.get("sensor_rejected_targets", {}).get("value") if state else None
+        flagged = [t.split(":", 1)[-1] for t in (rejected or "").split(",") if t]
+        if flagged:
+            lines.append(
+                f"- ⚠️ Chronically rejected — de-emphasized in future suggestions: "
+                f"{', '.join(flagged)}."
+            )
+        lines.append("")
+
     # One section per enabled challenge-area module. Modules that have nothing
     # to say (return None/empty) are skipped so the profile stays tight.
     if modules:

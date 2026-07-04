@@ -482,10 +482,25 @@ ordered by leverage; each is independent but builds on denser capture.
    to attribute signal to *the user* and never to other speakers, through the
    exact same allowlist/validation/pending gate. Reachable via `POST /observe`
    (a `transcript` array, which takes precedence over `text`) and
-   `prefrontal note --transcript <turns.json>`. *(Next: letting an accepted state
-   proposal feed the same calibration check as §4 — deferred because none of the
-   sensor's allowlisted keys are the numeric adaptations §4's walk-forward
-   measures, so it needs either a broader allowlist or a generalized check.)*
+   `prefrontal note --transcript <turns.json>`. **Sensor calibration feedback**
+   ✅ — the sensor now gets §4's honesty, applied to its own quality. Rather than
+   the numeric walk-forward (the sensor's allowlisted keys aren't predicted/actual
+   pairs — the original blocker), it measures **precision**: `compute_sensor_calibration`
+   tallies accepted-vs-rejected proposals from the `proposals` table — overall and
+   per `state`-key / `episode`-type target — gated on a sample count like §4.
+   `recompute_sensor_calibration` runs on each `prefrontal learn` pass and persists
+   the verdict (`sensor_accept_rate`, `sensor_calibration_samples`,
+   `sensor_rejected_targets`). Because accept/reject is kind-agnostic it works
+   uniformly over state and episode proposals, needing no broader allowlist. It
+   **closes the loop**: chronically-rejected targets are named back into the
+   extraction prompt (`avoided_state_keys`), so the sensor stops volunteering
+   settings the user reliably declines (a soft de-emphasis — the key stays on the
+   allowlist and a human still confirms). Surfaced in the profile and
+   `prefrontal proposals stats`; covered by `tests/test_sensor.py`. *(Still open:
+   the harder causal check — after a state proposal is accepted, did the downstream
+   numeric calibration (§4) actually improve? — which is a different question from
+   sensor precision and remains blocked on the broader-allowlist / generalized-check
+   design.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
    now weigh each episode by an exponential decay on its age (`decay_weight`,
    `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the
