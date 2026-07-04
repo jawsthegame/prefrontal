@@ -533,6 +533,21 @@ average. Tune it per user in `coaching_state`
 (`sqlite3 prefrontal.db "INSERT OR REPLACE INTO coaching_state (user_id, key, value, source) VALUES (<uid>, 'learning_half_life_days', '45', 'explicit');"`),
 or set it to `0` to weigh all history equally.
 
+Two finer **bucketing** controls sit on top of that decay (both `coaching_state`
+keys, both off by default):
+
+- **Sliding window** — `learning_window_days` drops episodes older than N days
+  *entirely* before `learn` computes anything, a hard cutoff so ancient history
+  can't drag on estimates at all once you've moved on (`0` = no window). The
+  `learn` output notes how many episodes the window excluded.
+- **Per-context half-life** — override the global half-life for a single context
+  with `learning_half_life_days:<suffix>`, where `<suffix>` matches the
+  context-conditioned bias key tail: a time-of-day band (`morning`), a task type
+  (`type:focus`), an energy load (`energy:high`), or a category (`category:admin`).
+  So a context that churns can decay faster while the rest stay put; unset means
+  that context uses the global (and an explicit `0` = no decay for just it). E.g.
+  `… VALUES (<uid>, 'learning_half_life_days:type:focus', '14', 'explicit');`.
+
 `prefrontal summarize` generates the narrative with the local Ollama model from
 `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it falls back to
 the structured profile, so it always produces something. It **caches** the
