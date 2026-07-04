@@ -45,6 +45,7 @@ def test_build_parser_registers_expected_commands():
         "summarize",
         "briefing",
         "todo",
+        "place",
         "fit",
         "mail",
         "modules",
@@ -53,8 +54,25 @@ def test_build_parser_registers_expected_commands():
         # so parsing succeeds, and assert each top-level command binds a `func`.
         argv = {
             "todo": ["todo", "list"],
+            "place": ["place", "list"],
             "mail": ["mail", "list"],
             "fit": ["fit", "30"],
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"
+
+
+def test_place_add_then_list_roundtrip(tmp_path, capsys):
+    """`place add` normalizes + stores an alias; `place list` prints it."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()  # drop setup output
+
+    assert main(
+        ["place", "--db-path", str(db), "add", "Dentist Office", "37.77", "-122.41"]
+    ) == 0
+    assert main(["place", "--db-path", str(db), "list"]) == 0
+    out = capsys.readouterr().out
+    assert "dentist office" in out  # normalized match key
+    assert "37.77" in out and "-122.41" in out
