@@ -70,10 +70,13 @@ def test_normalize_canonical_and_blank():
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("kids", "home"),
-        ("kid", "home"),
-        ("childcare", "home"),
-        ("family", "home"),
+        ("kids", "kids"),
+        ("kid", "kids"),
+        ("childcare", "kids"),
+        ("family", "kids"),
+        ("house", "home"),
+        ("household", "home"),
+        ("chores", "home"),
         ("business", "shop"),
         ("store", "shop"),
         ("office", "work"),
@@ -99,7 +102,7 @@ def test_domain_of_trip_explicit_wins_over_category():
 
 def test_domain_of_trip_category_fallback():
     assert domain_of_trip({"category": "work"}) == "work"
-    assert domain_of_trip({"category": "family"}) == "home"
+    assert domain_of_trip({"category": "family"}) == "kids"
     assert domain_of_trip({"category": "health"}) == "personal"
 
 
@@ -309,7 +312,8 @@ def test_parent_pack_seeds_targets_and_flag(store):
     get_pack("parent").seed(store)
     assert nudge_enabled(store) is True
     targets = read_targets(store)
-    assert targets.get("home") == 300.0
+    assert targets.get("kids") == 300.0
+    assert targets.get("home") == 120.0
     assert targets.get("personal") == 120.0
 
 
@@ -336,7 +340,7 @@ def test_label_endpoint_accepts_domain(client, store):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["domain"] == "home"  # normalized from "kids"
+    assert body["domain"] == "kids"  # canonical
     assert body["category"] == "errand"
 
 

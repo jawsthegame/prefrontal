@@ -151,7 +151,7 @@ also defines:
   plain-English `reflection`, classified into a `reflection_outcome`
   (success/partial/miss) that resolves the `task` episode (`episode_id`) the return
   logged — feeding the learning loop. The nullable `domain` is the orthogonal
-  life-sphere (shop/work/home/personal) the **focus-balance** rollup
+  life-sphere (shop/work/home/kids/personal) the **focus-balance** rollup
   (`prefrontal/focus_balance.py`) sums out-of-home time up by — the same work/home
   domain todos and mail carry, so a work trip and a work todo roll up together;
   optional per-domain weekly `focus_target:<domain>` coaching keys (seeded by the

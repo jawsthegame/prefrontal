@@ -266,7 +266,7 @@ def build_router(services: RouterServices) -> APIRouter:
         history newest-first; ``unlabeled`` are the completed trips still awaiting
         a label, i.e. the ones the system is asking you to name. ``categories`` is
         the suggested activity vocabulary; ``domains`` the life-sphere vocabulary
-        (shop/work/home/personal) the focus-balance rollup buckets time-out by —
+        (shop/work/home/kids/personal) the focus-balance rollup buckets time-out by —
         both for the label form.
         """
         memory = ctx.store

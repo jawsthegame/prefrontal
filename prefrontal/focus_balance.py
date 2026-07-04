@@ -50,27 +50,29 @@ __all__ = [
 #: The canonical life-spheres the rollup buckets time-out by. Free text is still
 #: accepted on a trip (lives don't fit a fixed list), but these are what the label
 #: form offers, what the Parent pack seeds vocabulary for, and what
-#: :func:`normalize_focus_domain` snaps close spellings onto. ``home`` folds in
-#: kids/childcare/family; ``personal`` folds in health, social, and leisure —
-#: everything that's time for *you*.
-FOCUS_DOMAINS: tuple[str, ...] = ("shop", "work", "home", "personal")
+#: :func:`normalize_focus_domain` snaps close spellings onto. ``home`` is household
+#: (chores/errands for the house); ``kids`` is child-and-family time (school runs,
+#: activities) — kept separate so a parent can see each on its own; ``personal``
+#: folds in health, social, and leisure — everything that's time for *you*.
+FOCUS_DOMAINS: tuple[str, ...] = ("shop", "work", "home", "kids", "personal")
 
 #: Default look-back for the rollup — a week is the smallest window over which
 #: "am I spreading my focus right?" is a fair question (a single day is too noisy).
 DEFAULT_BALANCE_DAYS = 7
 
-#: Free-text spellings that snap onto a canonical domain. Keeps "kids"/"childcare"
-#: from fragmenting the "home" bucket and "business"/"store" from splitting "shop".
+#: Free-text spellings that snap onto a canonical domain. Keeps "childcare"/"family"
+#: from fragmenting the "kids" bucket, "house"/"chores" the "home" bucket, and
+#: "business"/"store" from splitting "shop".
 _DOMAIN_SYNONYMS: dict[str, str] = {
-    "kid": "home",
-    "kids": "home",
-    "child": "home",
-    "children": "home",
-    "childcare": "home",
-    "family": "home",
+    "kid": "kids",
+    "child": "kids",
+    "children": "kids",
+    "childcare": "kids",
+    "family": "kids",
     "house": "home",
     "household": "home",
     "chores": "home",
+    "errands": "home",
     "business": "shop",
     "store": "shop",
     "retail": "shop",
@@ -92,7 +94,7 @@ _DOMAIN_SYNONYMS: dict[str, str] = {
 #: fall through to their own slice rather than being guessed into a sphere.
 _CATEGORY_DOMAIN: dict[str, str] = {
     "work": "work",
-    "family": "home",
+    "family": "kids",
     "health": "personal",
     "social": "personal",
     "leisure": "personal",

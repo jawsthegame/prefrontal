@@ -123,7 +123,7 @@ class TripsRepo(Repo):
         """Record the user's label, category, and life-domain for a completed trip.
 
         ``category`` (errand/social/…) is *what kind of activity* the trip was;
-        ``domain`` (shop/work/home/personal) is *which sphere of life* it served —
+        ``domain`` (shop/work/home/kids/personal) is *which sphere of life* it served —
         the axis :mod:`prefrontal.focus_balance` rolls time-out up by. Both are
         ``COALESCE``-d, so a follow-up label that omits one keeps the earlier value
         (edit either with :meth:`set_trip_domain` / a re-label).
@@ -145,7 +145,7 @@ class TripsRepo(Repo):
     ) -> dict[str, Any] | None:
         """Set (or clear) a trip's life-sphere domain; return the updated trip.
 
-        The focus-balance guardrail: ``domain`` (shop/work/home/personal) is what
+        The focus-balance guardrail: ``domain`` (shop/work/home/kids/personal) is what
         :mod:`prefrontal.focus_balance` sums time-out by, so a misfiled trip can be
         recategorized without re-labeling it. ``None`` clears it. Returns ``None``
         if no such trip exists for the user.

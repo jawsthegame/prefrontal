@@ -941,7 +941,7 @@ def _cmd_balance(args: argparse.Namespace) -> int:
     """Print the focus-balance rollup — out-of-home time by life-sphere.
 
     Reads completed closed-loop trips over the last ``--days`` and buckets their
-    time-out into shop/work/home/personal (plus any free-text domain in use),
+    time-out into shop/work/home/kids/personal (plus any free-text domain in use),
     against the per-domain weekly targets in coaching state. A read-only view of
     "am I spreading my focus the way I mean to?".
 
@@ -1965,7 +1965,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile.set_defaults(func=_cmd_profile)
 
     p_balance = sub.add_parser(
-        "balance", help="Show out-of-home time by life-sphere (shop/work/home/personal)."
+        "balance", help="Show out-of-home time by life-sphere (shop/work/home/kids/personal)."
     )
     p_balance.add_argument("--db-path", default=None, help="Override the database path.")
     p_balance.add_argument("--user", default=None, help="Handle of the user to act on.")

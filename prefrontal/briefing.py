@@ -94,7 +94,7 @@ class Briefing:
             ``switch_rate_feedback`` intervention) — set when the last day's focus
             sessions signalled any switch-impulses; ``None`` otherwise.
         balance: Optional one-line focus-balance digest — the week's out-of-home
-            time by life-sphere (shop/work/home/personal) from closed-loop trips;
+            time by life-sphere (shop/work/home/kids/personal) from closed-loop trips;
             ``None`` when no completed trips fall in the window.
     """
 
@@ -282,7 +282,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     )
 
     # Focus balance: a one-line "where the week's out-of-home time went" digest by
-    # life-sphere (shop/work/home/personal), from closed-loop trips. None when no
+    # life-sphere (shop/work/home/kids/personal), from closed-loop trips. None when no
     # completed trips land in the window, so an untracked week adds no noise.
     balance = balance_summary_line(build_focus_balance(store, now=now))
 

@@ -67,7 +67,7 @@ class ClosedLoopTripModule(Module):
                 name="focus_balance",
                 description=(
                     "A gentle weekly heads-up when out-of-home time skews away from a "
-                    "life-sphere you've set a target for (home/personal) — well-being, "
+                    "life-sphere you've set a target for (kids/personal) — well-being, "
                     "not productivity. Opt-in via the `focus_balance_nudge` state flag."
                 ),
                 trigger="a targeted life-domain falls under half its weekly aim",
@@ -165,7 +165,7 @@ class ClosedLoopTripModule(Module):
             )
 
         # Focus balance: where the last week's out-of-home time went, by life-sphere
-        # (shop/work/home/personal) — the axis the coaching note weighs "am I
+        # (shop/work/home/kids/personal) — the axis the coaching note weighs "am I
         # spreading my focus?" against. Silent when no completed trips land in-window.
         balance = build_focus_balance(store)
         if balance.has_data:

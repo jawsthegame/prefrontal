@@ -340,7 +340,7 @@ class TripLabel(BaseModel):
     )
     domain: str | None = Field(
         default=None,
-        description="Optional life-domain for focus balance (shop/work/home/personal).",
+        description="Optional life-domain for focus balance (shop/work/home/kids/personal).",
     )
 
 
@@ -350,7 +350,7 @@ class TripDomain(BaseModel):
     trip_id: int = Field(description="The trip to (re)file into a life-domain.")
     domain: str | None = Field(
         default=None,
-        description="Life-domain (shop/work/home/personal); omit or null to clear.",
+        description="Life-domain (shop/work/home/kids/personal); omit or null to clear.",
     )
 
 
