@@ -275,8 +275,9 @@ class PatternRunSummary:
     #: is how many episodes the window excluded before learning (0 when disabled).
     window_days: float = 0.0
     windowed_out: int = 0
-    #: Per-band recency half-lives auto-derived this pass (``{band: days}``), when
-    #: ``auto_context_half_life`` is on; empty otherwise.
+    #: Per-context recency half-lives auto-derived this pass, keyed by the context
+    #: suffix (``morning``, ``type:focus``, ``energy:high``, ``category:admin``),
+    #: when ``auto_context_half_life`` is on; empty otherwise.
     auto_half_lives: dict[str, float] = field(default_factory=dict)
 
 
@@ -795,6 +796,65 @@ def derive_band_half_lives(
     return out
 
 
+def _half_life_by_group(
+    episodes: list[dict[str, Any]],
+    key_fn: Any,
+    global_half_life: float | None,
+    *,
+    now: datetime | None = None,
+    context_prefix: str = "",
+) -> dict[str, float]:
+    """:func:`derive_half_life` within each ``key_fn(e)`` bucket (the half-life twin
+    of :func:`_bias_by_group`). Keys are ``context_prefix`` + the bucket key, so the
+    result maps the exact suffix a per-context half-life is stored under."""
+    now = now or utcnow()
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+            continue
+        key = key_fn(e)
+        if key:
+            groups[key].append(e)
+    out: dict[str, float] = {}
+    for key, eps in groups.items():
+        hl = derive_half_life(eps, global_half_life, now=now)
+        if hl is not None:
+            out[f"{context_prefix}{key}"] = hl
+    return out
+
+
+def derive_context_half_lives(
+    episodes: list[dict[str, Any]],
+    global_half_life: float | None,
+    *,
+    now: datetime | None = None,
+    timezone: str = "UTC",
+) -> dict[str, float]:
+    """Auto-derived recency half-life for **every** learning context (``{suffix: days}``).
+
+    Keys are the same suffixes the bias-by-context passes and
+    :func:`_make_half_life_resolver` use: a bare time-of-day band (``morning``), or
+    a prefixed tag (``type:focus``, ``energy:high``, ``category:admin``). Each is
+    derived from that context's own drift via :func:`derive_half_life`; contexts
+    without enough signal are omitted, and the map is empty when decay is off.
+    """
+    now = now or utcnow()
+    out = dict(derive_band_half_lives(episodes, global_half_life, now=now, timezone=timezone))
+    out.update(_half_life_by_group(
+        episodes, lambda e: e.get("episode_type"), global_half_life,
+        now=now, context_prefix="type:",
+    ))
+    out.update(_half_life_by_group(
+        episodes, lambda e: _normalized_tag(e.get("energy")), global_half_life,
+        now=now, context_prefix="energy:",
+    ))
+    out.update(_half_life_by_group(
+        episodes, lambda e: _normalized_tag(e.get("category")), global_half_life,
+        now=now, context_prefix="category:",
+    ))
+    return out
+
+
 def recompute_patterns(
     store: MemoryStore,
     *,
@@ -830,21 +890,22 @@ def recompute_patterns(
     # churny context can follow faster and a stable one slower. Unset ⇒ the global.
     half_life_for = _make_half_life_resolver(store)
     # Auto-derived per-context half-lives (opt-in): before the bias passes, set
-    # each time-of-day band's `learning_half_life_days:<band>` from its own
-    # volatility, so a churny band decays faster and a stable one slower without
-    # the user hand-tuning it. Never overrides a band the user set explicitly; the
-    # resolver above reads state lazily, so this pass's band bias uses fresh values.
+    # each context's `learning_half_life_days:<suffix>` from its own volatility, so
+    # a churny context (time-of-day band, episode type, energy, or category) decays
+    # faster and a stable one slower without the user hand-tuning it. Never
+    # overrides a context the user set explicitly; the resolver above reads state
+    # lazily, so this pass's context biases use the fresh values.
     auto_half_lives: dict[str, float] = {}
     if (store.get_state(AUTO_HALF_LIFE_KEY, "off") or "off") == "on":
         state_all = store.all_state()
-        for band, hl in derive_band_half_lives(
+        for suffix, hl in derive_context_half_lives(
             episodes, half_life_days, now=now, timezone=timezone
         ).items():
-            key = f"{HALF_LIFE_KEY}:{band}"
+            key = f"{HALF_LIFE_KEY}:{suffix}"
             if (state_all.get(key, {}) or {}).get("source") == "explicit":
                 continue  # respect a hand-set override
             store.set_state(key, str(hl), source="inferred")
-            auto_half_lives[band] = hl
+            auto_half_lives[suffix] = hl
     results = compute_patterns(
         episodes, confidence_k=confidence_k, now=now, half_life_days=half_life_days
     )
