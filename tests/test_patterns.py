@@ -26,6 +26,7 @@ from prefrontal.memory.patterns import (
     decay_bias_toward_neutral,
     decay_weight,
     derive_band_half_lives,
+    derive_context_half_lives,
     derive_half_life,
     filter_to_window,
     recompute_patterns,
@@ -734,6 +735,40 @@ def test_derive_band_half_lives_buckets_by_time_of_day():
                 for d in range(5, 9)]  # churn → 0.5× global
     out = derive_band_half_lives(morning + evening, 30.0, now=datetime(2026, 2, 1), timezone="UTC")
     assert out["morning"] == 60.0 and out["evening"] == 15.0
+
+
+def test_derive_context_half_lives_covers_type_energy_category():
+    """Auto-derivation spans every context dimension, keyed by its suffix."""
+    def ep(pred, act, day, **tags):
+        return _ep(predicted_value=pred, actual_value=act,
+                   timestamp=f"2026-01-{day:02d} 09:00:00", **tags)
+    eps = [ep(10, 10, d, energy="high", category="admin") for d in range(1, 5)]
+    eps += [ep(10, 20, d, energy="high", category="admin") for d in range(5, 9)]  # churn
+    out = derive_context_half_lives(eps, 30.0, now=datetime(2026, 2, 1), timezone="UTC")
+    assert out["morning"] == 15.0        # time-of-day band
+    assert out["type:task"] == 15.0      # episode type
+    assert out["energy:high"] == 15.0    # energy tag
+    assert out["category:admin"] == 15.0  # category tag
+
+
+def test_recompute_auto_half_life_writes_all_dimension_keys():
+    """The learn pass persists the derived half-life for each context dimension."""
+    with MemoryStore.open(":memory:") as s:
+        store = scoped_default(s)
+        store.set_state("auto_context_half_life", "on")
+        for d in range(1, 5):
+            store.log_episode("task", predicted_value=10, actual_value=10,
+                              energy="high", category="admin",
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+        for d in range(5, 9):
+            store.log_episode("task", predicted_value=10, actual_value=20,
+                              energy="high", category="admin",
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.auto_half_lives["category:admin"] == 15.0
+        assert store.get_state("learning_half_life_days:category:admin") == "15.0"
+        assert store.get_state("learning_half_life_days:type:task") == "15.0"
+        assert store.get_state("learning_half_life_days:energy:high") == "15.0"
 
 
 def test_recompute_auto_half_life_writes_band_keys_when_on():

@@ -585,10 +585,11 @@ ordered by leverage; each is independent but builds on denser capture.
      `auto_context_half_life`): the learn pass measures each time-of-day band's
      *drift* (older-half vs recent-half bias, `derive_half_life`) and sets that
      band's `learning_half_life_days:<band>` to the global × a bounded factor —
-     a churny band decays faster (down to 0.5×), a stable one slower (up to 2×),
+     a churny context decays faster (down to 0.5×), a stable one slower (up to 2×),
      floored at 7 days — never overriding a hand-set value, printed in
-     `prefrontal learn`. *(Still open: extend auto-derivation past time-of-day
-     bands to the type/energy/category dimensions.)*
+     `prefrontal learn`. Auto-derivation now spans **every** context dimension
+     (`derive_context_half_lives`): time-of-day band, episode `type`, `energy`, and
+     `category`, each keyed by the same suffix its bias uses.
 4. **Close the loop: measure whether adaptations help.** ✅ — `bias_calibration`
    (`prefrontal/memory/patterns.py`) runs a **walk-forward** check each learn
    pass: it learns the `time_estimation_bias` from the older predicted/actual
