@@ -97,6 +97,29 @@ def test_both_checks_fire_when_enabled(store):
     assert {c.context_key for c in cues} == {"meal", "water"}
 
 
+def test_meds_off_by_default_but_opt_in_fires(store):
+    """Meds stays silent even with self_care on until meds_enabled is set."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_enabled", "off")
+    store.set_state("water_enabled", "off")
+    at_10 = _ctx(datetime(2026, 7, 2, 10, 0, 0), name="Tom")
+    assert SelfCareModule().evaluate(store, at_10) == []  # off by default
+    store.set_state("meds_enabled", "on")
+    cues = SelfCareModule().evaluate(store, at_10)
+    assert [c.context_key for c in cues] == ["meds"]
+    assert cues[0].intervention == "meds_check"
+    assert "meds" in cues[0].text.lower()
+
+
+def test_act_meds_took_counts_and_logs(client, store):
+    token = sign_action(DEFAULT_HANDLE, "meds_took", 20260702, SIGNING)
+    assert client.get(f"/nudge/act?t={token}").status_code == 200
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("meds_count") == f"{today}|1"
+    eps = store.episodes_by_type("self_care")
+    assert eps and eps[0]["outcome"] == "confirmed" and "meds" in eps[0]["context"]
+
+
 def test_meal_fires_when_due(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
@@ -174,7 +197,8 @@ def test_reask_bucket_advances_dedup_key(store):
 
 
 def test_self_care_actions_in_allowlist():
-    for action in ("meal_ate", "meal_snooze", "water_drank", "water_snooze"):
+    for action in ("meal_ate", "meal_snooze", "water_drank", "water_snooze",
+                   "meds_took", "meds_snooze"):
         token = sign_action(DEFAULT_HANDLE, action, 20260702, SIGNING)
         assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, action, 20260702)
 

@@ -58,6 +58,13 @@ DEFAULT_WATER_START_HOUR = 9
 DEFAULT_WATER_INTERVAL_MINUTES = 90
 DEFAULT_WATER_SNOOZE_MINUTES = 30
 DEFAULT_WATER_DAILY_TARGET = 6
+#: Meds-check defaults (target 1: one "Took" and it's done for the day). More
+#: sensitive than eat/drink, so it's *off* even when self_care is on — opt in per
+#: person via ``meds_enabled``; a multi-dose regimen just raises ``meds_daily_target``.
+DEFAULT_MEDS_START_HOUR = 9
+DEFAULT_MEDS_REASK_MINUTES = 30
+DEFAULT_MEDS_SNOOZE_MINUTES = 30
+DEFAULT_MEDS_DAILY_TARGET = 1
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -111,6 +118,12 @@ def water_message(name: str = "") -> str:
     """The "drink some water" nudge text, greeting by name when we have one."""
     lead = f"{name}, hydration check" if name else "Hydration check"
     return f"{lead} — time for some water. 💧 Tap Drank once you have."
+
+
+def meds_message(name: str = "") -> str:
+    """The "taken your meds?" nudge text, greeting by name when we have one."""
+    lead = f"{name}, meds check" if name else "Meds check"
+    return f"{lead} — have you taken your meds? 💊 Tap Took once you have."
 
 
 @dataclass(frozen=True)
@@ -184,6 +197,26 @@ CHECKS: tuple[BasicCheck, ...] = (
         snooze_action="water_snooze",
         progress_headline="Nice — {count}/{target} today. 💧 I'll remind you again in a bit.",
         done_headline="That's all {target} for today — nicely done. 💧",
+    ),
+    BasicCheck(
+        key="meds",
+        intervention="meds_check",
+        enabled_key="meds_enabled",
+        count_key="meds_count",
+        target_key="meds_daily_target",
+        target_default=DEFAULT_MEDS_DAILY_TARGET,
+        snooze_key="meds_snoozed_until",
+        start_hour_key="meds_start_hour",
+        start_hour_default=DEFAULT_MEDS_START_HOUR,
+        interval_key="meds_reask_minutes",
+        interval_default=DEFAULT_MEDS_REASK_MINUTES,
+        snooze_minutes_key="meds_snooze_minutes",
+        snooze_minutes_default=DEFAULT_MEDS_SNOOZE_MINUTES,
+        message=meds_message,
+        confirm_action="meds_took",
+        snooze_action="meds_snooze",
+        progress_headline="Got it — {count}/{target} today. 💊",
+        done_headline="Meds done for today. 💊 Nice.",
     ),
 )
 
@@ -492,7 +525,7 @@ def adapt_self_care(store: MemoryStore, now: datetime | None = None) -> list[dic
 
 
 class SelfCareModule(Module):
-    """Nudges the basic needs a focus state quietly overrides (meals, water)."""
+    """Nudges the basic needs a focus state quietly overrides (meals, water, meds)."""
 
     key = "self_care"
     title = "Self-Care"
@@ -515,6 +548,13 @@ class SelfCareModule(Module):
         "water_interval_minutes": str(DEFAULT_WATER_INTERVAL_MINUTES),
         "water_snooze_minutes": str(DEFAULT_WATER_SNOOZE_MINUTES),
         "water_daily_target": str(DEFAULT_WATER_DAILY_TARGET),
+        # Meds: off even when self_care is on (medication is personal) — opt in
+        # explicitly. A multi-dose regimen just raises meds_daily_target.
+        "meds_enabled": "off",
+        "meds_start_hour": str(DEFAULT_MEDS_START_HOUR),
+        "meds_reask_minutes": str(DEFAULT_MEDS_REASK_MINUTES),
+        "meds_snooze_minutes": str(DEFAULT_MEDS_SNOOZE_MINUTES),
+        "meds_daily_target": str(DEFAULT_MEDS_DAILY_TARGET),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -538,6 +578,16 @@ class SelfCareModule(Module):
                     "One-tap Drank (counts one, defers an interval) / Snooze on ntfy."
                 ),
                 trigger="through the day, on an interval, up to the daily target",
+                status="active",
+            ),
+            Intervention(
+                name="meds_check",
+                description=(
+                    "From meds_start_hour, ask 'taken your meds?' and re-ask every "
+                    "meds_reask_minutes until you hit meds_daily_target. Off unless "
+                    "meds_enabled — medication is personal. One-tap Took / Snooze on ntfy."
+                ),
+                trigger="from your meds hour, until you confirm the day's dose(s)",
                 status="active",
             ),
         ]
