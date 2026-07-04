@@ -98,7 +98,10 @@ the first test. Code follow-ups below are optional polish.
   todo's domain is now a first-class surface: `POST /todos/{id}/domain` (declared
   before the `{action}` catch-all) and `prefrontal todo domain <id> [value]`
   (omit the value to clear), both normalizing to lowercase and reusing
-  `set_todo_domain`. *(Next: exposing it in the dashboard/widget UI.)*
+  `set_todo_domain`. The **dashboard** exposes it as an outlined pill on each todo
+  (distinct from the solid category chip) with a picker — the in-use domains plus
+  the canonical work/home, "New…", and "Clear" — and the domain is searchable; the
+  **widget** gets it in the `/todos/now` suggestion payload so it can label the pick.
 - **Self-care checks — "have you eaten?" + water** ✅ — the cues that deliberately
   pierce flow (a focus state is exactly when you forget to eat or drink), shipped
   as a sixth module, `prefrontal/modules/self_care.py`. A small registry of

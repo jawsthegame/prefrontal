@@ -602,6 +602,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "effective_minutes": top["effective_minutes"],
             "priority": t.get("priority"),
             "energy": t.get("energy"),
+            "domain": t.get("domain"),  # work/home guardrail, for the widget's label
             "reason": top["reason"],  # "avoided" (been putting it off) | "fits"
         }
         return result

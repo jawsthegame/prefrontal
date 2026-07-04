@@ -128,6 +128,16 @@
   .pill.cat.none { background: transparent; color: var(--muted); border: 1px dashed var(--line); font-weight: 400; }
   .pill.cat:hover { filter: brightness(1.15); }
   .pill.cat .caret { opacity: .65; font-size: 9px; margin-left: 2px; }
+  /* Domain chip: the work/life guardrail (work/home/…). Outlined rather than
+     solid-filled so it reads as distinct from the category chip at a glance,
+     while keeping the same clickable-pill grammar. Text/border color is set
+     inline from a hash of the label; "none" is the muted "+ domain" affordance. */
+  .pill.dom { font-weight: 700; background: transparent; border: 1px solid currentColor; cursor: pointer; }
+  .pill.dom.none { color: var(--muted); border: 1px dashed var(--line); font-weight: 400; }
+  .pill.dom:hover { filter: brightness(1.15); }
+  .pill.dom .caret { opacity: .65; font-size: 9px; margin-left: 2px; }
+  /* One-line explainer at the top of the domain picker popover. */
+  .cat-menu .lead { flex-basis: 100%; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
   /* Category picker: a floating popover of the existing category pills, opened
      by clicking a todo's category pill. */
   .cat-menu { position: absolute; z-index: 60; background: var(--card); border: 1px solid var(--line);
@@ -514,27 +524,41 @@ function catColor(s) {
   return `hsl(${h} 45% 42%)`;
 }
 
+// Floating pill-picker popover, shared by the category and domain editors: only
+// one is ever open at a time, so a single element + dismissal wiring covers both.
+let pillMenuEl = null;
+function closePillMenu() {
+  if (!pillMenuEl) return;
+  pillMenuEl.remove();
+  pillMenuEl = null;
+  document.removeEventListener("click", onPillOutside, true);
+}
+function onPillOutside(e) { if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(); }
+// Drop a freshly-built menu into the page under its anchor (nudged left to stay
+// on-screen) and arm the outside-click dismissal.
+function placePillMenu(menu, anchor) {
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
+  menu.style.top = `${window.scrollY + r.bottom + 4}px`;
+  menu.style.left = `${window.scrollX + Math.max(8, left)}px`;
+  pillMenuEl = menu;
+  // Defer so the click that opened the menu doesn't immediately close it.
+  setTimeout(() => document.addEventListener("click", onPillOutside, true), 0);
+}
+
 // Category picker popover: a floating menu of the existing category pills,
 // anchored under the clicked pill. Picking one PATCHes the todo; "New…" prompts
 // for a novel label (unless the vocabulary is at its cap); "Clear" uncategorizes.
-let catMenuEl = null;
-function closeCatMenu() {
-  if (!catMenuEl) return;
-  catMenuEl.remove();
-  catMenuEl = null;
-  document.removeEventListener("click", onCatOutside, true);
-}
-function onCatOutside(e) { if (catMenuEl && !catMenuEl.contains(e.target)) closeCatMenu(); }
-
 async function openCategoryMenu(anchor, id, current) {
-  closeCatMenu();
+  closePillMenu();
   let data = {};
   try { data = await api("/todos/categories"); } catch (_) {}
   const vocab = data.categories || [];
   const menu = document.createElement("div");
   menu.className = "cat-menu";
   const pick = async (cat) => {
-    closeCatMenu();
+    closePillMenu();
     await post(`/todos/${id}/category`, { category: cat });
     load();
   };
@@ -557,7 +581,7 @@ async function openCategoryMenu(anchor, id, current) {
     nb.onclick = () => {
       const v = prompt("New category:");
       if (v && v.trim()) pick(v.trim());
-      else closeCatMenu();
+      else closePillMenu();
     };
     menu.appendChild(nb);
   }
@@ -568,15 +592,60 @@ async function openCategoryMenu(anchor, id, current) {
     cb.onclick = () => pick(null);
     menu.appendChild(cb);
   }
-  document.body.appendChild(menu);
-  // Anchor under the pill, nudged left if it would overflow the viewport.
-  const r = anchor.getBoundingClientRect();
-  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
-  menu.style.top = `${window.scrollY + r.bottom + 4}px`;
-  menu.style.left = `${window.scrollX + Math.max(8, left)}px`;
-  catMenuEl = menu;
-  // Defer so the click that opened the menu doesn't immediately close it.
-  setTimeout(() => document.addEventListener("click", onCatOutside, true), 0);
+  placePillMenu(menu, anchor);
+}
+
+// Domain picker popover: like the category picker, but the vocabulary is derived
+// client-side — domains have no server registry or cap. Offered options are the
+// distinct domains already in use across the loaded todos, plus the canonical
+// work/home so the picker is useful before any domain exists. "New…" coins any
+// label; "Clear" removes the guardrail (falls back to category-based scheduling).
+async function openDomainMenu(anchor, id, current) {
+  closePillMenu();
+  const inUse = (lastTodos && lastTodos.todos || [])
+    .map((t) => (t.domain || "").trim().toLowerCase()).filter(Boolean);
+  const vocab = [...new Set(["work", "home", ...inUse])];
+  const menu = document.createElement("div");
+  menu.className = "cat-menu";
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.textContent = "Life domain — holds the todo to work/home hours.";
+  menu.appendChild(lead);
+  const pick = async (dom) => {
+    closePillMenu();
+    await post(`/todos/${id}/domain`, { domain: dom });
+    load();
+  };
+  for (const d of vocab) {
+    const b = document.createElement("button");
+    b.className = "pill dom cat-opt" + (d === current ? " sel" : "");
+    b.style.color = catColor(d);
+    b.style.borderColor = catColor(d);
+    b.textContent = d;
+    b.title = d === current ? "Current domain" : `Set to ${d}`;
+    b.onclick = () => pick(d);
+    menu.appendChild(b);
+  }
+  const sep = document.createElement("span");
+  sep.className = "cat-sep";
+  menu.appendChild(sep);
+  const nb = document.createElement("button");
+  nb.className = "cat-act";
+  nb.textContent = "＋ New…";
+  nb.onclick = () => {
+    const v = prompt("New domain (e.g. work, home):");
+    if (v && v.trim()) pick(v.trim());
+    else closePillMenu();
+  };
+  menu.appendChild(nb);
+  if (current) {
+    const cb = document.createElement("button");
+    cb.className = "cat-act";
+    cb.textContent = "✕ Clear";
+    cb.onclick = () => pick(null);
+    menu.appendChild(cb);
+  }
+  placePillMenu(menu, anchor);
 }
 
 function renderOutings(d) {
@@ -613,7 +682,7 @@ function paintTodos() {
   const q = ($("#todo-search").value || "").trim().toLowerCase();
   if (!q) { body.innerHTML = renderTodos(lastTodos); }
   else {
-    const hit = (x) => [x.title, x.category, x.account].some((v) => String(v || "").toLowerCase().includes(q));
+    const hit = (x) => [x.title, x.category, x.domain, x.account].some((v) => String(v || "").toLowerCase().includes(q));
     const matched = (lastTodos.todos || []).filter(hit);
     body.innerHTML = matched.length
       ? renderTodos({ ...lastTodos, todos: matched })
@@ -648,6 +717,15 @@ function renderTodos(d) {
     const cls = cur ? "pill cat" : "pill cat none";
     return ` <button class="${cls}"${style} data-action="todo-category" data-id="${id}" data-category="${esc(cur)}" title="Change category">${esc(label)}<span class="caret">▾</span></button>`;
   };
+  // Domain chip: the work/life guardrail. Outlined (vs the solid category chip)
+  // and colored from the same label hash; clicking opens the domain picker.
+  const domPill = (id, domain) => {
+    const cur = domain || "";
+    const label = cur || "+ domain";
+    const style = cur ? ` style="color:${catColor(cur)};border-color:${catColor(cur)}"` : "";
+    const cls = cur ? "pill dom" : "pill dom none";
+    return ` <button class="${cls}"${style} data-action="todo-domain" data-id="${id}" data-domain="${esc(cur)}" title="Change life domain (work/home)">${esc(label)}<span class="caret">▾</span></button>`;
+  };
   return t.map((x) => {
     const dc = x.decomposition;
     let step = "";
@@ -676,7 +754,7 @@ function renderTodos(d) {
     const src = x.source_url ? ` <a class="src" href="${esc(x.source_url)}" target="_blank" rel="noopener noreferrer" title="Open source email">↗</a>` : "";
     return `<div class="row">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
+        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
       </div>
@@ -1193,6 +1271,11 @@ document.addEventListener("click", async (e) => {
       openCategoryMenu(el, id, el.dataset.category || "");
       return;
     }
+    else if (act === "todo-domain") {
+      // Domain picker anchored under the pill; it POSTs + reloads itself.
+      openDomainMenu(el, id, el.dataset.domain || "");
+      return;
+    }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
     else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
@@ -1221,7 +1304,7 @@ $("#panic-close").onclick = closePanic;
 $("#panic-refresh").onclick = loadPanic;
 // Backdrop tap and Escape both dismiss the overlay.
 $("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closeCatMenu(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closePillMenu(); } });
 $("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
