@@ -339,8 +339,10 @@ the first test. Code follow-ups below are optional polish.
   (`prefrontal/integrations/nominatim.py`, gated by the `geocoding_enabled`
   state flag — off by default). Enrichment runs best-effort on calendar sync and
   manual add, with `POST /commitments/geocode` to backfill. Failures degrade to
-  the `lead_minutes` fallback. *(Next: a CLI for places; reverse-geocode the
-  iOS location ping for nicer context; self-host Nominatim on the mini.)*
+  the `lead_minutes` fallback. A **`prefrontal place`** CLI (`add` / `list`)
+  curates aliases offline from the terminal, the twin of `POST` / `GET /places`.
+  *(Next: reverse-geocode the iOS location ping for nicer context; self-host
+  Nominatim on the mini.)*
 - **Last-known location + travel-aware departure reminders** ✅ —
   `POST /webhooks/location` stores the phone's position (one iOS "Update
   location" automation), so the coffee-shop nudge gates on location **without

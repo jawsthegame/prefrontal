@@ -1488,6 +1488,46 @@ def _cmd_crunch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_place(args: argparse.Namespace) -> int:
+    """Add or list curated place aliases (the offline-first geocoding layer).
+
+    A curated place resolves a commitment's free-text ``location`` to coordinates
+    instantly and offline (before the cache or the network geocoder), so the
+    departure reminder's travel estimate fires. The CLI twin of ``POST`` / ``GET
+    /places``.
+
+    Args:
+        args: Parsed arguments; ``place_action`` plus action-specific fields.
+
+    Returns:
+        Process exit code (0 on success, 1 on an empty name).
+    """
+    from prefrontal.geocode import normalize_query
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if args.place_action == "add":
+            name = normalize_query(args.name)
+            if not name:
+                print("Place name is empty after normalization.")
+                return 1
+            place_id = store.add_place(
+                name, args.lat, args.lon, label=args.label or args.name
+            )
+            print(f"Saved place #{place_id}: {name} ({args.lat:g}, {args.lon:g})")
+        elif args.place_action == "list":
+            places = store.places()
+            if not places:
+                print("No curated places yet.")
+            for p in places:
+                label = p.get("label")
+                extra = f" — {label}" if label and label != p["name"] else ""
+                print(f"{p['name']}{extra}  ({p['lat']:g}, {p['lon']:g})")
+    return 0
+
+
 def _cmd_todo(args: argparse.Namespace) -> int:
     """Add, list, or close open todos.
 
@@ -2191,6 +2231,20 @@ def build_parser() -> argparse.ArgumentParser:
         "domain", nargs="?", default=None, help="work / home / … (omit to clear)."
     )
     p_todo.set_defaults(func=_cmd_todo)
+
+    p_place = sub.add_parser(
+        "place", help="Add/list curated place aliases (offline commitment geocoding)."
+    )
+    p_place.add_argument("--db-path", default=None, help="Override the database path.")
+    p_place.add_argument("--user", default=None, help="Handle of the user to act on.")
+    place_sub = p_place.add_subparsers(dest="place_action", required=True)
+    pl_add = place_sub.add_parser("add", help="Add or update a curated place alias.")
+    pl_add.add_argument("name", help="Alias matched in a location, e.g. 'gym'.")
+    pl_add.add_argument("lat", type=float, help="Latitude in degrees.")
+    pl_add.add_argument("lon", type=float, help="Longitude in degrees.")
+    pl_add.add_argument("--label", default=None, help="Display label (defaults to the name).")
+    place_sub.add_parser("list", help="List curated places (most specific first).")
+    p_place.set_defaults(func=_cmd_place)
 
     p_fit = sub.add_parser("fit", help="Show todos that fit a block of free time.")
     p_fit.add_argument("minutes", type=float, help="Minutes of free time you have.")
