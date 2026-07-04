@@ -15,6 +15,7 @@ from prefrontal.memory.patterns import (
     CATEGORY_BIAS_PREFIX,
     ENERGY_BIAS_PREFIX,
     TYPE_BIAS_PREFIX,
+    _make_half_life_resolver,
     compute_bias,
     compute_bias_by_band,
     compute_bias_by_category,
@@ -24,10 +25,12 @@ from prefrontal.memory.patterns import (
     compute_patterns,
     decay_bias_toward_neutral,
     decay_weight,
+    filter_to_window,
     recompute_patterns,
     resolve_bias,
     task_bias_resolver,
     time_of_day_band,
+    within_window,
 )
 from prefrontal.memory.store import MemoryStore
 from tests.conftest import scoped_default
@@ -582,3 +585,111 @@ def test_recompute_persists_energy_and_category_bias():
         assert summary.category_bias.get("creative") == 2.0
         assert store.get_state(f"{ENERGY_BIAS_PREFIX}high") == "2.0"
         assert store.get_state(f"{CATEGORY_BIAS_PREFIX}creative") == "2.0"
+
+
+# -- learning bucketing: sliding window + per-context half-lives (§3) ---------
+
+
+def test_within_window():
+    now = datetime(2026, 2, 1, 0, 0, 0)
+    assert within_window("2026-01-01 00:00:00", now, 0) is True  # disabled → keep
+    assert within_window("2020-01-01 00:00:00", now, None) is True  # disabled → keep
+    assert within_window("2026-01-20 00:00:00", now, 30) is True  # ~12d old, inside
+    assert within_window("2025-01-01 00:00:00", now, 30) is False  # ~1yr old, outside
+    assert within_window(None, now, 30) is True  # missing ts kept (forgiving)
+    assert within_window("2026-03-01 00:00:00", now, 30) is True  # future (skew) kept
+
+
+def test_filter_to_window():
+    now = datetime(2026, 2, 1, 0, 0, 0)
+    eps = [
+        _ep(timestamp="2020-01-01 00:00:00"),  # ancient
+        _ep(timestamp="2026-01-25 00:00:00"),  # recent
+    ]
+    assert filter_to_window(eps, now, 0) == eps  # disabled → identity (same object)
+    kept = filter_to_window(eps, now, 30)
+    assert len(kept) == 1 and kept[0]["timestamp"] == "2026-01-25 00:00:00"
+
+
+def test_compute_bias_by_type_honors_per_context_half_life():
+    """A per-context half-life overrides the global decay for just that bucket."""
+    now = datetime(2026, 2, 1, 0, 0, 0)
+    episodes = [
+        _ep(episode_type="focus", predicted_value=10, actual_value=20,
+            timestamp="2025-08-01 00:00:00"),  # old 2× overrun
+        _ep(episode_type="focus", predicted_value=10, actual_value=10,
+            timestamp="2026-02-01 00:00:00"),  # recent on time
+        _ep(episode_type="focus", predicted_value=10, actual_value=10,
+            timestamp="2026-02-01 00:00:00"),  # recent on time
+    ]
+    # Global equal-weight (half_life_days=0): the old overrun counts fully.
+    flat = compute_bias_by_type(episodes, now=now, half_life_days=0)["focus"]
+    assert flat == pytest.approx(1.33, abs=0.01)  # (20+10+10)/30
+    # A 30d half-life for type:focus (and nothing else) discounts the old overrun.
+    resolver = lambda suffix: 30.0 if suffix == "type:focus" else None  # noqa: E731
+    tuned = compute_bias_by_type(
+        episodes, now=now, half_life_days=0, half_life_for=resolver
+    )["focus"]
+    assert tuned < flat and tuned == pytest.approx(1.0, abs=0.05)
+
+
+def test_make_half_life_resolver_reads_override_keys():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("learning_half_life_days:type:focus", "7", source="explicit")
+        store.set_state("learning_half_life_days:morning", "0", source="explicit")
+        store.set_state("learning_half_life_days:bad", "notanumber", source="explicit")
+        resolve = _make_half_life_resolver(store)
+        assert resolve("type:focus") == 7.0
+        assert resolve("morning") == 0.0  # explicit 0 honored (no decay for this context)
+        assert resolve("type:admin") is None  # unset → fall back to global
+        assert resolve("bad") is None  # unparseable → treated as unset
+
+
+def test_learning_window_excludes_stale_episodes_end_to_end():
+    """The learning_window_days key drops old episodes before anything is learned."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        # Ancient overruns that would drag the global bias up...
+        for _ in range(4):
+            store.log_episode(
+                "task", predicted_value=10, actual_value=20, timestamp="2020-01-01 00:00:00"
+            )
+        # ...and recent on-time pairs (default timestamp = now).
+        for _ in range(4):
+            store.log_episode("task", predicted_value=10, actual_value=10)
+        store.set_state("learning_half_life_days", "0")  # isolate the window from decay
+        store.set_state("bias_decay_on_miss", "0")  # report-only, so no §4 auto-act interferes
+
+        # No window: all 8 pairs count → (4·20 + 4·10) / (8·10) = 1.5.
+        recompute_patterns(store)
+        assert float(store.get_state("time_estimation_bias")) == pytest.approx(1.5, abs=0.01)
+
+        # A 365d window drops the 2020 pairs → only recent on-time remain → 1.0.
+        store.set_state("learning_window_days", "365")
+        summary = recompute_patterns(store)
+        assert float(store.get_state("time_estimation_bias")) == pytest.approx(1.0, abs=0.01)
+        assert summary.window_days == 365.0
+        assert summary.windowed_out == 4
+        assert summary.episodes == 4
+
+
+def test_per_context_half_life_end_to_end_leaves_others_on_global():
+    """A per-context override changes only its bucket; other buckets keep the global."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        # focus: an old overrun + two recent on-time; admin: same shape.
+        for etype in ("focus", "admin"):
+            store.log_episode(
+                etype, predicted_value=10, actual_value=20, timestamp="2020-01-01 00:00:00"
+            )
+            store.log_episode(etype, predicted_value=10, actual_value=10)
+            store.log_episode(etype, predicted_value=10, actual_value=10)
+        store.set_state("learning_half_life_days", "0")  # global: equal weight
+        # Override only focus with a short (real) half-life so its ancient overrun decays.
+        store.set_state("learning_half_life_days:type:focus", "30", source="explicit")
+
+        summary = recompute_patterns(store)
+        # focus discounts the old overrun (→ ~1.0); admin keeps equal weight (→ 1.33).
+        assert summary.type_bias["focus"] == pytest.approx(1.0, abs=0.05)
+        assert summary.type_bias["admin"] == pytest.approx(1.33, abs=0.01)

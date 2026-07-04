@@ -509,8 +509,24 @@ ordered by leverage; each is independent but builds on denser capture.
    trusted less than the same count of fresh ones. Half-life is the
    `learning_half_life_days` coaching key (default 30d; set `0` to weigh all
    history equally — the pre-decay behavior). Covered by `tests/test_patterns.py`.
-   *(Next: a sliding-window variant, and per-context half-lives once finer
-   `context_key` bucketing lands.)*
+   **Learning bucketing** ✅ — both deferred pieces now ship (the §5 context
+   bucketing they waited on has landed):
+   - **Sliding window** — `learning_window_days` drops episodes older than the
+     window *entirely* before anything is computed (a hard cutoff on top of the
+     softer decay), via `filter_to_window` in `recompute_patterns`, so ancient
+     history can't drag on estimates once you've clearly moved on. `0` (default)
+     = no window (prior behavior). Applied once up front, so patterns, the global
+     + per-context biases, and the §4 walk-forward all see the same slice and the
+     raw sample floors count only what's in it. The `learn` line reports how many
+     episodes the window excluded.
+   - **Per-context half-lives** — a context can override the global decay via
+     `learning_half_life_days:<suffix>` (`morning`, `type:focus`, `energy:high`,
+     `category:admin` — mirroring the bias key tails), so a churny context follows
+     faster and a stable one slower; unset ⇒ that context uses the global (an
+     explicit `0` = no decay for just that context). Resolved per bucket in the
+     `compute_bias_by_*` passes. *(Still open: auto-**deriving** each context's
+     half-life from its volatility — this ships the manual override + global
+     fallback; the adaptive version is a separate, heuristic step.)*
 4. **Close the loop: measure whether adaptations help.** ✅ — `bias_calibration`
    (`prefrontal/memory/patterns.py`) runs a **walk-forward** check each learn
    pass: it learns the `time_estimation_bias` from the older predicted/actual

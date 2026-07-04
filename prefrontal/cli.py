@@ -851,7 +851,12 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 ", ".join(f"{n} {t}" for t, n in sorted(summary.by_type.items()))
                 or "none"
             )
-            print(f"[{label}] recomputed patterns from {summary.episodes} episodes.")
+            windowed = (
+                f" (window {summary.window_days:g}d dropped {summary.windowed_out})"
+                if summary.window_days
+                else ""
+            )
+            print(f"[{label}] recomputed patterns from {summary.episodes} episodes{windowed}.")
             print(f"[{label}] patterns written: {summary.patterns} ({by_type})")
             if summary.bias is not None:
                 print(f"[{label}] time_estimation_bias -> {summary.bias}")

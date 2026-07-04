@@ -36,6 +36,7 @@ episode dicts in, list of :class:`PatternResult` out — trivially testable) and
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import fmean
@@ -79,6 +80,25 @@ DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
 #: user via the ``learning_half_life_days`` coaching key; set it to ``0`` to
 #: disable decay and weigh all history equally (the pre-decay behavior).
 DEFAULT_HALF_LIFE_DAYS = 30.0
+
+#: The coaching key holding the global recency half-life (see above). A
+#: **per-context** override lives at ``{HALF_LIFE_KEY}:{suffix}`` where ``suffix``
+#: mirrors the context-conditioned bias key tail (``morning`` for a time-of-day
+#: band, ``type:focus``, ``energy:high``, ``category:admin``) — so a context that
+#: churns faster than the rest can decay faster, and one that's stable can decay
+#: slower, without moving the global. Unset ⇒ that context uses the global.
+HALF_LIFE_KEY = "learning_half_life_days"
+
+#: Sliding-window length (days) for the learning pass: episodes older than this
+#: are dropped *entirely* before any pattern/bias is computed — a hard cutoff on
+#: top of the (softer) exponential decay, so ancient history can't drag on
+#: estimates at all once a person has clearly moved on. Tunable via the
+#: ``learning_window_days`` coaching key; ``0`` (the default) means **no window**
+#: — the full history is considered, weighted only by decay (prior behavior).
+DEFAULT_WINDOW_DAYS = 0.0
+
+#: The coaching key holding the sliding-window length (see above).
+WINDOW_KEY = "learning_window_days"
 
 
 #: Time-of-day bands for context-conditioned learning (learning §5). The learned
@@ -128,6 +148,39 @@ def decay_weight(ts: Any, now: datetime, half_life_days: float | None) -> float:
     if age_days <= 0:
         return 1.0
     return 0.5 ** (age_days / half_life_days)
+
+
+def within_window(ts: Any, now: datetime, window_days: float | None) -> bool:
+    """Is an episode timestamp inside the sliding learning window?
+
+    ``True`` when ``window_days`` is falsy/≤0 (no window — keep everything), or the
+    episode is at most ``window_days`` old. A missing/unparseable timestamp is
+    **kept** (returns ``True``), mirroring :func:`decay_weight`'s forgiving stance:
+    a bad clock shouldn't silently erase an episode. Future-dated stamps (clock
+    skew) are in-window too.
+    """
+    if not window_days or window_days <= 0:
+        return True
+    t = _parse_ts(ts)
+    if t is None:
+        return True
+    age_days = (now - t).total_seconds() / 86400.0
+    return age_days <= window_days
+
+
+def filter_to_window(
+    episodes: list[dict[str, Any]], now: datetime, window_days: float | None
+) -> list[dict[str, Any]]:
+    """Drop episodes older than the sliding window (a no-op when it's disabled).
+
+    Applied once, up front, by :func:`recompute_patterns`, so every downstream
+    computation — patterns, the global bias, the per-context biases, and the
+    walk-forward calibration — sees the *same* windowed slice and the raw sample
+    counts (e.g. ``MIN_BIAS_SAMPLES``) reflect what's actually in the window.
+    """
+    if not window_days or window_days <= 0:
+        return episodes
+    return [e for e in episodes if within_window(e.get("timestamp"), now, window_days)]
 
 
 @dataclass(frozen=True)
@@ -200,6 +253,10 @@ class PatternRunSummary:
     type_bias: dict[str, float] = field(default_factory=dict)
     energy_bias: dict[str, float] = field(default_factory=dict)
     category_bias: dict[str, float] = field(default_factory=dict)
+    #: Sliding-window length in effect this pass (``0`` = no window). ``windowed_out``
+    #: is how many episodes the window excluded before learning (0 when disabled).
+    window_days: float = 0.0
+    windowed_out: int = 0
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -298,12 +355,32 @@ def compute_bias(
     return round(total_act / total_pred, 2)
 
 
+def _resolve_half_life(
+    half_life_for: Callable[[str], float | None] | None,
+    suffix: str,
+    default: float | None,
+) -> float | None:
+    """Per-context half-life for ``suffix``, falling back to the global ``default``.
+
+    ``half_life_for`` maps a context suffix (``morning``, ``type:focus``, …) to its
+    override half-life, or ``None`` when that context has no override. A returned
+    ``0`` is honored (an explicit "no decay for this context"), distinct from
+    ``None`` (fall back to the global).
+    """
+    if half_life_for is not None:
+        override = half_life_for(suffix)
+        if override is not None:
+            return override
+    return default
+
+
 def compute_bias_by_band(
     episodes: list[dict[str, Any]],
     *,
     now: datetime | None = None,
     half_life_days: float | None = None,
     timezone: str = "UTC",
+    half_life_for: Callable[[str], float | None] | None = None,
 ) -> dict[str, float]:
     """Recompute the time-estimation bias **per time-of-day band** (learning §5).
 
@@ -312,6 +389,10 @@ def compute_bias_by_band(
     with too few pairs (``< MIN_BIAS_SAMPLES``) is simply omitted, so we only
     condition where there's enough signal to trust — everything else keeps
     falling back to the global multiplier.
+
+    ``half_life_for`` supplies an optional **per-context half-life** (looked up by
+    the band name, e.g. ``morning``); a band with no override decays at the global
+    ``half_life_days``.
 
     Returns:
         ``{band: multiplier}`` for the bands that cleared the sample floor.
@@ -326,7 +407,8 @@ def compute_bias_by_band(
             groups[time_of_day_band(hour)].append(e)
     out: dict[str, float] = {}
     for band, eps in groups.items():
-        band_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
+        hl = _resolve_half_life(half_life_for, band, half_life_days)
+        band_bias = compute_bias(eps, now=now, half_life_days=hl)
         if band_bias is not None:
             out[band] = band_bias
     return out
@@ -346,6 +428,8 @@ def _bias_by_group(
     *,
     now: datetime | None = None,
     half_life_days: float | None = None,
+    context_prefix: str = "",
+    half_life_for: Callable[[str], float | None] | None = None,
 ) -> dict[str, float]:
     """Recency-weighted :func:`compute_bias` within each ``key_fn(e)`` bucket.
 
@@ -353,6 +437,10 @@ def _bias_by_group(
     predicted/actual episodes, bucket them by ``key_fn`` (a falsy key drops the
     episode from conditioning), and compute a bias per bucket, omitting any that
     fall below ``MIN_BIAS_SAMPLES`` so we only condition where there's real signal.
+
+    ``context_prefix`` + the bucket key forms the suffix a per-context half-life is
+    looked up under (``type:``+``focus`` → ``type:focus``), so ``half_life_for`` can
+    give each bucket its own decay; a bucket with no override uses ``half_life_days``.
     """
     now = now or utcnow()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -364,7 +452,8 @@ def _bias_by_group(
             groups[key].append(e)
     out: dict[str, float] = {}
     for key, eps in groups.items():
-        group_bias = compute_bias(eps, now=now, half_life_days=half_life_days)
+        hl = _resolve_half_life(half_life_for, f"{context_prefix}{key}", half_life_days)
+        group_bias = compute_bias(eps, now=now, half_life_days=hl)
         if group_bias is not None:
             out[key] = group_bias
     return out
@@ -375,6 +464,7 @@ def compute_bias_by_type(
     *,
     now: datetime | None = None,
     half_life_days: float | None = None,
+    half_life_for: Callable[[str], float | None] | None = None,
 ) -> dict[str, float]:
     """Recompute the time-estimation bias **per episode type** (learning §5).
 
@@ -393,7 +483,12 @@ def compute_bias_by_type(
         ``{episode_type: multiplier}`` for the types that cleared the floor.
     """
     return _bias_by_group(
-        episodes, lambda e: e.get("episode_type"), now=now, half_life_days=half_life_days
+        episodes,
+        lambda e: e.get("episode_type"),
+        now=now,
+        half_life_days=half_life_days,
+        context_prefix="type:",
+        half_life_for=half_life_for,
     )
 
 
@@ -407,6 +502,7 @@ def compute_bias_by_energy(
     *,
     now: datetime | None = None,
     half_life_days: float | None = None,
+    half_life_for: Callable[[str], float | None] | None = None,
 ) -> dict[str, float]:
     """Recompute the bias **per task energy load** (low/medium/high) (learning §5).
 
@@ -419,7 +515,12 @@ def compute_bias_by_energy(
         ``{energy: multiplier}`` for the loads that cleared the sample floor.
     """
     return _bias_by_group(
-        episodes, lambda e: _normalized_tag(e.get("energy")), now=now, half_life_days=half_life_days
+        episodes,
+        lambda e: _normalized_tag(e.get("energy")),
+        now=now,
+        half_life_days=half_life_days,
+        context_prefix="energy:",
+        half_life_for=half_life_for,
     )
 
 
@@ -428,6 +529,7 @@ def compute_bias_by_category(
     *,
     now: datetime | None = None,
     half_life_days: float | None = None,
+    half_life_for: Callable[[str], float | None] | None = None,
 ) -> dict[str, float]:
     """Recompute the bias **per task category** (learning §5).
 
@@ -443,6 +545,8 @@ def compute_bias_by_category(
         lambda e: _normalized_tag(e.get("category")),
         now=now,
         half_life_days=half_life_days,
+        context_prefix="category:",
+        half_life_for=half_life_for,
     )
 
 
@@ -574,6 +678,28 @@ def bias_calibration(
     )
 
 
+def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None]:
+    """Build the per-context half-life lookup used by the bias-by-context passes.
+
+    Returns a function mapping a context suffix (``morning``, ``type:focus``,
+    ``energy:high``, ``category:admin``) to the half-life at
+    ``learning_half_life_days:<suffix>``, or ``None`` when no override is set (so
+    the caller falls back to the global). A ``0`` override is honored (no decay for
+    that context); a blank/unparseable value is treated as unset.
+    """
+
+    def resolve(suffix: str) -> float | None:
+        raw = store.get_state(f"{HALF_LIFE_KEY}:{suffix}")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    return resolve
+
+
 def recompute_patterns(
     store: MemoryStore,
     *,
@@ -595,9 +721,19 @@ def recompute_patterns(
     Returns:
         A :class:`PatternRunSummary` describing what was written.
     """
-    episodes = store.all_episodes()
     now = utcnow()
-    half_life_days = store.get_float("learning_half_life_days", DEFAULT_HALF_LIFE_DAYS)
+    half_life_days = store.get_float(HALF_LIFE_KEY, DEFAULT_HALF_LIFE_DAYS)
+    window_days = store.get_float(WINDOW_KEY, DEFAULT_WINDOW_DAYS)
+    # Sliding window (learning bucketing): drop stale episodes *entirely* before
+    # anything is computed, so patterns, biases, and the walk-forward calibration
+    # all see the same windowed slice and raw sample floors count only what's in it.
+    all_episodes = store.all_episodes()
+    episodes = filter_to_window(all_episodes, now, window_days)
+    windowed_out = len(all_episodes) - len(episodes)
+    # Per-context half-life (learning bucketing): a context can override the global
+    # decay via ``learning_half_life_days:<suffix>`` (e.g. ``:type:focus``), so a
+    # churny context can follow faster and a stable one slower. Unset ⇒ the global.
+    half_life_for = _make_half_life_resolver(store)
     results = compute_patterns(
         episodes, confidence_k=confidence_k, now=now, half_life_days=half_life_days
     )
@@ -626,21 +762,31 @@ def recompute_patterns(
         # Context-conditioned (§5): a per-time-of-day multiplier where there's
         # enough signal, so a morning estimate is calibrated by morning history.
         band_bias = compute_bias_by_band(
-            episodes, now=now, half_life_days=half_life_days, timezone=timezone
+            episodes,
+            now=now,
+            half_life_days=half_life_days,
+            timezone=timezone,
+            half_life_for=half_life_for,
         )
         for band, value in band_bias.items():
             store.set_state(f"time_estimation_bias:{band}", str(value), source="inferred")
         # ...and per episode type (§5, task-type dimension): a focus block is
         # mis-estimated differently from a departure buffer, so calibrate by kind.
-        type_bias = compute_bias_by_type(episodes, now=now, half_life_days=half_life_days)
+        type_bias = compute_bias_by_type(
+            episodes, now=now, half_life_days=half_life_days, half_life_for=half_life_for
+        )
         for etype, value in type_bias.items():
             store.set_state(f"{TYPE_BIAS_PREFIX}{etype}", str(value), source="inferred")
         # ...and per task energy load / category (§5), from the tags focus blocks
         # stamp onto their close episodes via the linked todo.
-        energy_bias = compute_bias_by_energy(episodes, now=now, half_life_days=half_life_days)
+        energy_bias = compute_bias_by_energy(
+            episodes, now=now, half_life_days=half_life_days, half_life_for=half_life_for
+        )
         for level, value in energy_bias.items():
             store.set_state(f"{ENERGY_BIAS_PREFIX}{level}", str(value), source="inferred")
-        category_bias = compute_bias_by_category(episodes, now=now, half_life_days=half_life_days)
+        category_bias = compute_bias_by_category(
+            episodes, now=now, half_life_days=half_life_days, half_life_for=half_life_for
+        )
         for cat, value in category_bias.items():
             store.set_state(f"{CATEGORY_BIAS_PREFIX}{cat}", str(value), source="inferred")
         # Close the loop: does that bias actually improve subsequent estimates?
@@ -682,6 +828,8 @@ def recompute_patterns(
         type_bias=type_bias,
         energy_bias=energy_bias,
         category_bias=category_bias,
+        window_days=window_days,
+        windowed_out=windowed_out,
     )
 
 
