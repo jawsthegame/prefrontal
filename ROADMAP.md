@@ -647,8 +647,11 @@ ordered by leverage; each is independent but builds on denser capture.
      logs a self-care nudge left un-acted past `SELF_CARE_ACK_WINDOW_MINUTES` as an
      `ignored` episode; the learner treats snooze *and* ignore as the same "not
      now" widen signal — catching the common case of ignoring rather than snoozing.
-   *(Next: per step 4, verify the adapted cadence actually reduced misses before
-   trusting it further.)*
+   - **Widens are verified before compounding.** Once an interval is past its
+     default, a *further* widen is only taken if the push-back actually eased since
+     the last one (`_widen_helped` — recent half of responses resists less than the
+     older half); otherwise it holds. So the "nudge less" loop can't keep backing
+     off on the unproven theory that less is better when the last step didn't help.
 
 ## Beyond v1 (from the README architecture)
 

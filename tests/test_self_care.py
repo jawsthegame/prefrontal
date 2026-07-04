@@ -322,6 +322,26 @@ def test_adapt_widens_when_ignored_often():
     assert suggested == 50 and "ignore" in reason  # 3/5 resisted → widen 40×1.25
 
 
+def test_further_widen_held_until_it_helps():
+    """Once widened, a further widen must be earned — if push-back hasn't eased, hold."""
+    # Already at 50 (> default 40). Recent half resists as much as the older half,
+    # so the last widen didn't help → hold rather than compound it.
+    recent = [{"outcome": "snoozed", "latency": None} for _ in range(5)]
+    older = [{"outcome": "snoozed", "latency": None} for _ in range(3)]
+    older += [{"outcome": "confirmed", "latency": 200.0} for _ in range(2)]
+    suggested, reason = adapt_self_care_interval(recent + older, 40, current_interval=50)
+    assert suggested == 50 and "holding to see it help" in reason
+
+
+def test_further_widen_allowed_once_pushback_eases():
+    """If the recent half resists less than the older, the widen earned its keep."""
+    recent = [{"outcome": "confirmed", "latency": 200.0} for _ in range(4)]
+    recent += [{"outcome": "snoozed", "latency": None}]
+    older = [{"outcome": "snoozed", "latency": None} for _ in range(5)]
+    suggested, reason = adapt_self_care_interval(recent + older, 40, current_interval=50)
+    assert suggested == 60 and "less frequently" in reason  # 50 × 1.25 → 60
+
+
 def test_sweep_logs_ignored_and_clears_the_stamp(store):
     """A self-care nudge un-acted past the window becomes an 'ignored' episode."""
     t0 = datetime(2026, 7, 3, 12, 0, 0)
