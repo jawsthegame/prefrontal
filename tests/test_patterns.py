@@ -25,6 +25,8 @@ from prefrontal.memory.patterns import (
     compute_patterns,
     decay_bias_toward_neutral,
     decay_weight,
+    derive_band_half_lives,
+    derive_half_life,
     filter_to_window,
     recompute_patterns,
     resolve_bias,
@@ -693,3 +695,75 @@ def test_per_context_half_life_end_to_end_leaves_others_on_global():
         # focus discounts the old overrun (→ ~1.0); admin keeps equal weight (→ 1.33).
         assert summary.type_bias["focus"] == pytest.approx(1.0, abs=0.05)
         assert summary.type_bias["admin"] == pytest.approx(1.33, abs=0.01)
+
+
+# -- auto-derived per-context half-lives (§ learning: adaptive decay) ---------
+
+
+def _pa(pred, act, day):
+    """A predicted/actual episode at 09:00 (morning band) on 2026-01-<day>."""
+    return _ep(predicted_value=pred, actual_value=act, timestamp=f"2026-01-{day:02d} 09:00:00")
+
+
+def test_derive_half_life_stable_context_decays_slower():
+    """A context whose bias holds steady trusts more history → up to 2× the global."""
+    eps = [_pa(10, 14, d) for d in range(1, 9)]  # 8 pairs, constant 1.4 bias
+    assert derive_half_life(eps, 30.0, now=datetime(2026, 2, 1)) == 60.0
+
+
+def test_derive_half_life_churny_context_decays_faster():
+    """A context whose bias has drifted follows the change → down to 0.5× the global."""
+    older = [_pa(10, 10, d) for d in range(1, 5)]   # bias 1.0
+    recent = [_pa(10, 20, d) for d in range(5, 9)]  # bias 2.0 (big drift)
+    assert derive_half_life(older + recent, 30.0, now=datetime(2026, 2, 1)) == 15.0
+
+
+def test_derive_half_life_guards():
+    """Too few pairs, or decay disabled, yields no suggestion."""
+    assert derive_half_life([_pa(10, 10, d) for d in range(1, 4)], 30.0) is None  # < 2×floor
+    assert derive_half_life([_pa(10, 10, d) for d in range(1, 9)], 0) is None      # decay off
+
+
+def test_derive_band_half_lives_buckets_by_time_of_day():
+    """Each band's half-life is derived from that band's own episodes."""
+    morning = [_ep(predicted_value=10, actual_value=14, timestamp=f"2026-01-{d:02d} 09:00:00")
+               for d in range(1, 9)]  # stable → 2× global
+    evening = [_ep(predicted_value=10, actual_value=10, timestamp=f"2026-01-{d:02d} 20:00:00")
+               for d in range(1, 5)]
+    evening += [_ep(predicted_value=10, actual_value=20, timestamp=f"2026-01-{d:02d} 20:00:00")
+                for d in range(5, 9)]  # churn → 0.5× global
+    out = derive_band_half_lives(morning + evening, 30.0, now=datetime(2026, 2, 1), timezone="UTC")
+    assert out["morning"] == 60.0 and out["evening"] == 15.0
+
+
+def test_recompute_auto_half_life_writes_band_keys_when_on():
+    """With the toggle on, a churny morning band gets a shortened half-life written."""
+    with MemoryStore.open(":memory:") as s:
+        store = scoped_default(s)
+        store.set_state("auto_context_half_life", "on")
+        for d in range(1, 5):  # older: on-time
+            store.log_episode("task", predicted_value=10, actual_value=10,
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+        for d in range(5, 9):  # recent: 2× overrun → churn
+            store.log_episode("task", predicted_value=10, actual_value=20,
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.auto_half_lives.get("morning") == 15.0
+        assert store.get_state("learning_half_life_days:morning") == "15.0"
+
+
+def test_recompute_auto_half_life_off_by_default_and_respects_explicit():
+    """Off unless toggled; and a hand-set band half-life is never overwritten."""
+    with MemoryStore.open(":memory:") as s:
+        store = scoped_default(s)
+        for d in range(1, 9):
+            store.log_episode("task", predicted_value=10, actual_value=20,
+                              timestamp=f"2026-01-{d:02d} 09:00:00")
+        assert recompute_patterns(store, timezone="UTC").auto_half_lives == {}
+        assert not store.get_state("learning_half_life_days:morning")
+
+        store.set_state("auto_context_half_life", "on")
+        store.set_state("learning_half_life_days:morning", "45", source="explicit")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert "morning" not in summary.auto_half_lives
+        assert store.get_state("learning_half_life_days:morning") == "45"
