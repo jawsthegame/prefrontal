@@ -613,8 +613,15 @@ ordered by leverage; each is independent but builds on denser capture.
    `bias_calibration_decayed`, and the profile/CLI report what was done ("auto-
    decayed 1.4 → 1.2") — so a stale multiplier stops overshooting instead of
    waiting for recency decay to erode it. Covered by `tests/test_patterns.py` +
-   `tests/test_summarizer.py`. *(Next: extend the same walk-forward check + auto-
-   act to the channel-choice and drift adaptations.)*
+   `tests/test_summarizer.py`. The **channel-choice** adaptation now gets the same
+   treatment: `channel_calibration` walks forward over delivered nudges and checks
+   whether predicting each ack with its channel's train ack-rate beats a single
+   pooled rate (`baseline_error` → `adjusted_error`, `helps`) — so a channel signal
+   that's really noise is *visible* (persisted as `channel_calibration_*`, printed
+   in `prefrontal learn`) rather than silently driving escalation. Report-first, no
+   auto-act yet. *(Next: an auto-act for a non-predictive channel signal; drift is
+   a surfaced diagnostic, not a predictive adaptation, so it has no held-out error
+   to walk-forward — left as-is.)*
 5. **Context-conditioned patterns.** ✅ (time of day + task type + energy + category) — the learned
    time-estimation bias is now computed **per time-of-day band** (morning /
    afternoon / evening) as well as globally, because the same person often

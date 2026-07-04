@@ -926,6 +926,13 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"[{label}] bias check: error {cal.raw_error} -> {cal.adjusted_error} "
                     f"on {cal.samples} recent ({verdict})"
                 )
+            ccal = summary.channel_calibration
+            if ccal is not None and ccal.status == "ok":
+                cverdict = "helping" if ccal.helps else "NOT helping — channel signal is noise"
+                print(
+                    f"[{label}] channel check: error {ccal.baseline_error} -> "
+                    f"{ccal.adjusted_error} on {ccal.samples} recent ({cverdict})"
+                )
             # Sensor precision (learning §2 feedback): are the LLM sensor's
             # proposals worth keeping? Persists the verdict + flags chronically
             # rejected targets, which the extraction prompt then de-emphasizes.
