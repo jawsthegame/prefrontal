@@ -133,6 +133,7 @@ class SessionsRepo(Repo):
         home_lat: float | None = None,
         home_lon: float | None = None,
         departure_at: str | None = None,
+        domain: str | None = None,
     ) -> int:
         """Record a declared outing and return its id.
 
@@ -143,17 +144,59 @@ class SessionsRepo(Repo):
             home_lon: Optional baseline longitude.
             departure_at: Optional ISO timestamp for the departure; defaults to
                 the DB's ``CURRENT_TIMESTAMP``. Mainly useful for tests.
+            domain: Optional life-sphere (shop/work/home/kids/personal) so a
+                declared outing feeds the focus-balance rollup alongside passive
+                trips (:mod:`prefrontal.focus_balance`); editable later via
+                :meth:`set_outing_domain`.
 
         Returns:
             The new outing's ``id``.
         """
         return self._session_start(
             table="outings",
-            columns=["intention", "time_window_minutes", "home_lat", "home_lon"],
-            values=[intention, time_window_minutes, home_lat, home_lon],
+            columns=["intention", "time_window_minutes", "home_lat", "home_lon", "domain"],
+            values=[intention, time_window_minutes, home_lat, home_lon, domain],
             ts_col="departure_at",
             ts_value=departure_at,
         )
+
+    def set_outing_domain(
+        self, outing_id: int, domain: str | None
+    ) -> dict[str, Any] | None:
+        """Set (or clear) an outing's life-sphere domain; return the updated outing.
+
+        The focus-balance edit path for declared outings, mirroring
+        :meth:`~prefrontal.memory.repos.trips.TripsRepo.set_trip_domain`. ``None``
+        clears it. Returns ``None`` if no such outing exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET domain = ? WHERE id = ? AND user_id = ?",
+            (domain, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
+    def completed_outings_since(
+        self, since: str, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Returned outings whose close landed at/after ``since`` (ISO ts), newest first.
+
+        The declared-outing half of the focus-balance window query (the passive
+        half is :meth:`~prefrontal.memory.repos.trips.TripsRepo.completed_trips_since`).
+        Only ``returned`` outings count — an ``abandoned`` one auto-closed at a
+        ratio of its window, so its duration isn't a trustworthy "time out". Carries
+        a computed ``actual_minutes`` (departure → return) for the rollup.
+        """
+        rows = self.conn.execute(
+            "SELECT *, (julianday(returned_at) - julianday(departure_at)) * 1440.0 "
+            "AS actual_minutes FROM outings "
+            "WHERE user_id = ? AND status = 'returned' AND returned_at IS NOT NULL "
+            "AND returned_at >= ? ORDER BY returned_at DESC LIMIT ?",
+            (self._uid(), since, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_outing(self, outing_id: int) -> dict[str, Any] | None:
         """Return a single outing by id, or ``None`` if it does not exist."""

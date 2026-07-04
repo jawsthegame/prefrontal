@@ -59,6 +59,20 @@ class OutingStart(BaseModel):
     )
     home_lat: float | None = Field(default=None, description="Baseline latitude.")
     home_lon: float | None = Field(default=None, description="Baseline longitude.")
+    domain: str | None = Field(
+        default=None,
+        description="Optional life-domain for focus balance (shop/work/home/kids/personal).",
+    )
+
+
+class OutingDomain(BaseModel):
+    """Body of ``POST /webhooks/outing/domain`` — set/clear an outing's life-domain."""
+
+    outing_id: int = Field(description="The outing to (re)file into a life-domain.")
+    domain: str | None = Field(
+        default=None,
+        description="Life-domain (shop/work/home/kids/personal); omit or null to clear.",
+    )
 
 
 class OutingStarted(BaseModel):

@@ -164,6 +164,11 @@ NUDGE_ACTIONS = (
     "load_heavy",      # weekly load check-in → carried a lot this week
     "digest_seen",     # daily delta digest → mark the sheet seen (all caught up)
     "chore_done",      # shared chore → mark it done for today (whoever tapped)
+    "trip_domain_shop",      # trip-label ask → file this trip under shop
+    "trip_domain_work",      # trip-label ask → file this trip under work
+    "trip_domain_home",      # trip-label ask → file this trip under home
+    "trip_domain_kids",      # trip-label ask → file this trip under kids
+    "trip_domain_personal",  # trip-label ask → file this trip under personal
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

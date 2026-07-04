@@ -80,6 +80,7 @@ _CONTEXT_KIND = {
     "checkin": "load",
     "digest": "digest",
     "chore": "chore",
+    "trip": "trip_label",
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -91,6 +92,7 @@ _KIND_TARGET = {
     "load": "target",
     "digest": "target",
     "chore": "chore_id",
+    "trip_label": "trip_id",
 }
 
 

@@ -355,7 +355,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 {
                     "domain": d.domain,
                     "minutes": d.minutes,
-                    "trips": d.trips,
+                    "count": d.count,
                     "target_minutes": d.target_minutes,
                     "underserved": d.underserved,
                 }

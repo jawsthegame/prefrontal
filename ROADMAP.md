@@ -511,9 +511,14 @@ ordered by leverage; each is independent but builds on denser capture.
    keys turn a shortfall into a gentle, opt-in "light on kids/personal this week"
    ambient nudge — well-being, not productivity. The **Parent pack** seeds the
    kids/home/personal targets and the `focus_balance_nudge` flag, so installing it
-   is what turns the guardrail on. *(Next: a per-trip `context_key` bucket so trips
-   calibrate separately from other tasks, a one-tap label/reflect Shortcut off the
-   ambient ask, and folding declared outings into the same domain rollup.)*
+   is what turns the guardrail on. The rollup covers **both** halves of out-of-home
+   time now: passive trips *and* declared outings that returned (which never
+   overlap in time), the outing's sphere set at declaration (`domain` on
+   `/webhooks/outing/start`), via `POST /webhooks/outing/domain`, or inferred from
+   its intention text. And the trip-label ask carries **one-tap 🏠/🧒/🙋 buttons**
+   (`trip_domain_*` through `/nudge/act`) so a sphere can be filed straight from the
+   notification. *(Next: a per-trip `context_key` bucket so trips calibrate
+   separately from other tasks, and a fuller one-tap label/reflect Shortcut.)*
 2. **LLM-as-sensor, not LLM-as-author.** ✅ (v1) — `prefrontal/sensor.py` turns a
    free-text note ("I always blow off admin on Mondays") into *candidate*
    structured updates: a `coaching_state` key/value or an episode. Crucially the

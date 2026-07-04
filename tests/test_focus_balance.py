@@ -30,7 +30,7 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.registry import get as get_module
 from prefrontal.webhooks.app import create_app
-from tests.conftest import scoped_default
+from tests.conftest import DEFAULT_HANDLE, scoped_default
 
 HOME = (40.0000, -73.0000)
 SECRET = "balance-secret"
@@ -124,7 +124,7 @@ def test_build_focus_balance_buckets_minutes(store):
     balance = build_focus_balance(store)
     by = {d.domain: d for d in balance.domains}
     assert round(by["shop"].minutes) == 90
-    assert by["shop"].trips == 2
+    assert by["shop"].count == 2
     assert round(by["home"].minutes) == 45
     assert round(by["work"].minutes) == 20
     assert round(balance.total_minutes) == 155
@@ -371,7 +371,127 @@ def test_balance_endpoint(client, store):
     assert round(body["total_minutes"]) == 90
     domains = {d["domain"]: d for d in body["domains"]}
     assert round(domains["shop"]["minutes"]) == 60
+    assert domains["shop"]["count"] == 1
     assert body["summary"] and "shop" in body["summary"]
+
+
+# -- declared outings fold into the rollup -----------------------------------
+
+
+def _outing(store, minutes, *, domain=None, intention="coffee"):
+    """A declared outing that returned after ~``minutes``."""
+    oid = store.start_outing(intention, 15.0, departure_at=_minutes_ago(minutes), domain=domain)
+    store.close_outing(oid, status="returned")
+    return oid
+
+
+def test_infer_domain_from_text():
+    from prefrontal.focus_balance import infer_domain_from_text
+
+    assert infer_domain_from_text("shop for parts") == "shop"
+    assert infer_domain_from_text("swim with the kids") == "kids"
+    assert infer_domain_from_text("grab a coffee") is None          # no domain word
+    assert infer_domain_from_text("kids then work stuff") is None    # two domains → ambiguous
+    assert infer_domain_from_text(None) is None
+
+
+def test_domain_of_outing_explicit_then_intention():
+    from prefrontal.focus_balance import domain_of_outing
+
+    assert domain_of_outing({"domain": "shop", "intention": "swim with kids"}) == "shop"
+    assert domain_of_outing({"intention": "school pickup for the kids"}) == "kids"
+    assert domain_of_outing({"intention": "a walk"}) is None
+
+
+def test_returned_outings_count_in_rollup(store):
+    _trip(store, 60, domain="shop")
+    _outing(store, 40, domain="kids")
+    _outing(store, 20, intention="quick shop run")  # inferred → shop
+    balance = build_focus_balance(store)
+    by = {d.domain: d for d in balance.domains}
+    assert round(by["shop"].minutes) == 80          # 60 trip + 20 outing
+    assert by["shop"].count == 2
+    assert round(by["kids"].minutes) == 40
+    assert round(balance.total_minutes) == 120
+
+
+def test_abandoned_outings_are_excluded(store):
+    oid = store.start_outing("errand", 15.0, departure_at=_minutes_ago(30))
+    store.close_outing(oid, status="abandoned")
+    assert not build_focus_balance(store).has_data
+
+
+def test_completed_outings_since_filters(store):
+    _outing(store, 30, domain="home")
+    future = (datetime.utcnow() + timedelta(days=1)).strftime(TS_FMT)
+    past = (datetime.utcnow() - timedelta(days=1)).strftime(TS_FMT)
+    assert store.completed_outings_since(future) == []
+    assert len(store.completed_outings_since(past)) == 1
+
+
+def test_set_outing_domain(store):
+    oid = _outing(store, 20, intention="coffee")
+    assert store.get_outing(oid)["domain"] is None
+    store.set_outing_domain(oid, "personal")
+    assert store.get_outing(oid)["domain"] == "personal"
+
+
+def test_outing_start_and_domain_endpoints(client, store):
+    started = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "supply run", "time_window_minutes": 30, "domain": "business"},
+        headers=_auth(),
+    ).json()
+    oid = started["outing_id"]
+    assert store.get_outing(oid)["domain"] == "shop"  # normalized
+    # Re-file via the domain endpoint.
+    resp = client.post(
+        "/webhooks/outing/domain", json={"outing_id": oid, "domain": "work"}, headers=_auth()
+    )
+    assert resp.status_code == 200 and resp.json()["domain"] == "work"
+    assert client.post(
+        "/webhooks/outing/domain", json={"outing_id": 9999, "domain": "work"}, headers=_auth()
+    ).status_code == 404
+
+
+# -- one-tap domain buttons on the trip-label ask ----------------------------
+
+
+@pytest.fixture()
+def signed_client(store):
+    from prefrontal.config import Settings as _S
+
+    app = create_app(
+        store=store,
+        settings=_S(webhook_secret=SECRET, session_secret="sign-key", oauth_base_url="https://x.ts.net"),
+    )
+    with TestClient(app) as c:
+        yield c
+
+
+def test_trip_label_cue_carries_domain_buttons():
+    """The trip context maps to the trip_label button kind (home/kids/personal)."""
+    from prefrontal.webhooks.notify import nudge_actions
+
+    actions = nudge_actions("trip_label", 7, base_url="https://x.ts.net", secret="k", handle="me")
+    assert [a["label"] for a in actions] == ["🏠 Home", "🧒 Kids", "🙋 Me"]
+
+
+def test_one_tap_files_trip_domain(signed_client, store):
+    from prefrontal.webhooks.oauth import sign_action
+
+    tid = _trip(store, 25, label="pickup")
+    token = sign_action(DEFAULT_HANDLE, "trip_domain_kids", tid, "sign-key")
+    r = signed_client.get(f"/nudge/act?t={token}")
+    assert r.status_code == 200
+    assert store.get_trip(tid)["domain"] == "kids"
+
+
+def test_one_tap_missing_trip_is_friendly(signed_client):
+    from prefrontal.webhooks.oauth import sign_action
+
+    token = sign_action(DEFAULT_HANDLE, "trip_domain_home", 9999, "sign-key")
+    assert signed_client.get(f"/nudge/act?t={token}").status_code == 200
 
 
 def test_trips_list_includes_domains_vocab(client):
