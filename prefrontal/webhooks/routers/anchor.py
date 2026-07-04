@@ -32,6 +32,10 @@ from prefrontal.departure import (
     departure_kwargs,
     travel_leads,
 )
+from prefrontal.focus_balance import (
+    FOCUS_DOMAINS,
+    normalize_focus_domain,
+)
 from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
@@ -85,6 +89,7 @@ from prefrontal.webhooks.oauth import (
     verify_dismiss,
 )
 from prefrontal.webhooks.schemas import (
+    OutingDomain,
     OutingReturn,
     OutingStart,
     OutingStarted,
@@ -101,6 +106,8 @@ _ACT_CONTEXT = {
     "outing_abandon": "outing",
     "made_it": "departure",
     "missed_it": "departure",
+    # One-tap domain filing from the trip-label ask (all resolve the "trip" cue).
+    **{f"trip_domain_{d}": "trip" for d in FOCUS_DOMAINS},
 }
 
 
@@ -152,6 +159,7 @@ def build_router(services: RouterServices) -> APIRouter:
             window,
             home_lat=payload.home_lat,
             home_lon=payload.home_lon,
+            domain=normalize_focus_domain(payload.domain),
         )
         return OutingStarted(
             outing_id=outing_id,
@@ -160,6 +168,27 @@ def build_router(services: RouterServices) -> APIRouter:
             time_window_source=source,
             confirmation=_outing_started_confirmation(payload.intention, window, source),
         )
+
+    @router.post("/webhooks/outing/domain", tags=["anchor"])
+    def outing_domain(
+        payload: OutingDomain,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """(Re)file a declared outing into a life-domain for the focus-balance rollup.
+
+        Mirrors ``/webhooks/trip/domain`` on the passive side — set a sphere on an
+        outing you declared without one, or correct a misfiled one. A null/blank
+        ``domain`` clears it.
+        """
+        updated = ctx.store.set_outing_domain(
+            payload.outing_id, normalize_focus_domain(payload.domain)
+        )
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No outing with id {payload.outing_id}.",
+            )
+        return {"outing_id": updated["id"], "domain": updated["domain"]}
 
     @router.post("/webhooks/outing/check", tags=["anchor"])
     async def outing_check(
@@ -422,6 +451,17 @@ def build_router(services: RouterServices) -> APIRouter:
                 return _dismiss_page("Welcome back — outing logged.")
             record_outing_abandoned(memory, closed)
             return _dismiss_page("Outing closed. No worries.")
+
+        if action.startswith("trip_domain_"):
+            # One-tap file a just-finished trip into a life-sphere (focus balance).
+            # target_id is the trip id; the domain is the action suffix.
+            domain = action[len("trip_domain_") :]
+            if domain not in FOCUS_DOMAINS:
+                return _dismiss_page("That trip filing option is no longer available.")
+            updated = memory.set_trip_domain(target_id, domain)
+            if updated is None:
+                return _dismiss_page("That trip is no longer available.")
+            return _dismiss_page(f"Filed under {domain}. Thanks — that keeps your balance honest.")
 
         if action in ("switch_return", "switch_defer", "switch_switch"):
             # Resolve a reflective pause in one tap (mirrors /webhooks/focus/resolve;

@@ -59,6 +59,16 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Recurring shared chore — mark it done for today in one tap (whoever taps
     # gets the credit, so a partner picking up a slipped chore closes the loop).
     "chore": (("chore_done", "✓ Done"),),
+    # Closed-loop trip label ask — one-tap file into a life-sphere for focus
+    # balance. ntfy caps buttons at 3, so these are the three spheres the balance
+    # feature exists to *protect* (home/kids/personal) — the ones you most want to
+    # log so they aren't undercounted. shop/work (the spheres that tend to dominate)
+    # stay filable via /webhooks/trip/domain or the label form.
+    "trip_label": (
+        ("trip_domain_home", "🏠 Home"),
+        ("trip_domain_kids", "🧒 Kids"),
+        ("trip_domain_personal", "🙋 Me"),
+    ),
 }
 
 

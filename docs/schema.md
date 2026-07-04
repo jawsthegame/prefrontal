@@ -141,7 +141,11 @@ Beyond the three core tables above, the schema (`prefrontal/memory/schema.sql`)
 also defines:
 
 - **`outings`** — active/historical "task anchors" (a stated intention + time
-  window) for the Location-Aware Task Anchor module.
+  window) for the Location-Aware Task Anchor module. Carries the same nullable
+  `domain` (shop/work/home/kids/personal) as `trips`, so a *returned* outing feeds
+  the focus-balance rollup alongside passive trips (`prefrontal/focus_balance.py`);
+  set at declaration or via `POST /webhooks/outing/domain`, and inferred from the
+  free-text `intention` when unset.
 - **`trips`** — closed-loop round trips detected *passively* from location pings
   crossing the home radius (`prefrontal/trips.py`, the Closed-Loop Trip Tracking
   module). Unlike an outing, nothing is declared up front: `departed_at` is when

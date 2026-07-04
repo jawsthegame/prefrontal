@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS outings (
     status              TEXT    NOT NULL DEFAULT 'active',  -- active | returned | abandoned
     last_level          TEXT    NOT NULL DEFAULT 'none',   -- highest escalation already fired
     returned_at         DATETIME,                     -- set when the outing is closed
+    domain              TEXT,                         -- life-sphere for focus balance (shop/work/home/kids/personal)
     created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

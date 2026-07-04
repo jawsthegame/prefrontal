@@ -1,22 +1,26 @@
-"""Focus balance — a life-domain lens over auto-detected trips.
+"""Focus balance — a life-domain lens over your out-of-home time.
 
 Closed-loop trip tracking (:mod:`prefrontal.trips`) answers *what* each undeclared
 round trip was (its ``label``) and *what kind of activity* it was (its ``category``:
 errand / social / health / …). This module adds the orthogonal axis the categories
 don't capture: which **sphere of life** the time out served — ``shop`` / ``work`` /
-``home`` / ``personal`` — the same work/home *domain* todos and mail already carry,
-so a work trip and a work todo roll up together.
+``home`` / ``kids`` / ``personal`` — the same work/home *domain* todos and mail
+already carry, so a work trip and a work todo roll up together.
 
-Rolling the minutes you spent *out* per domain over a week is a focus-balance read:
-am I spreading my attention the way I mean to, or has one sphere quietly eaten the
-others? Optional per-domain weekly **targets** (seeded by the Parent pack) turn that
-read into a gentle "light on home this week" nudge — this is well-being, not
-productivity: the point is making sure home and personal get their share, not
-squeezing more out of the day.
+It rolls up *both* halves of out-of-home time: passively-detected **trips** and
+**declared outings** that returned (:mod:`prefrontal.modules.location_anchor`),
+which never overlap in time — so together they cover every leave-home stretch.
+Summed per domain over a week, that's a focus-balance read: am I spreading my
+attention the way I mean to, or has one sphere quietly eaten the others? Optional
+per-domain weekly **targets** (seeded by the Parent pack) turn that read into a
+gentle "light on kids this week" nudge — well-being, not productivity: the point is
+making sure home, kids, and personal get their share, not squeezing more out of the
+day.
 
 This file is the pure, testable core: the domain vocabulary and normalizer
-(:func:`normalize_focus_domain`), the per-trip domain resolution that falls back to
-the activity category so it works retroactively (:func:`domain_of_trip`), the rollup
+(:func:`normalize_focus_domain`), the per-trip / per-outing domain resolution that
+falls back to the activity category or the intention text so it works retroactively
+(:func:`domain_of_trip` / :func:`domain_of_outing`), the rollup
 (:func:`build_focus_balance`), and the phrasings the briefing / CLI / nudge share.
 The HTTP surface (``/balance``) and the ambient nudge (the trip-tracking module)
 call in here; nothing here writes.
@@ -36,6 +40,8 @@ __all__ = [
     "DEFAULT_BALANCE_DAYS",
     "normalize_focus_domain",
     "domain_of_trip",
+    "domain_of_outing",
+    "infer_domain_from_text",
     "read_targets",
     "target_state_key",
     "nudge_enabled",
@@ -143,6 +149,45 @@ def domain_of_trip(trip: dict[str, Any]) -> str | None:
     return None
 
 
+def infer_domain_from_text(text: str | None) -> str | None:
+    """Best-effort life-domain from free text, or ``None`` when it's not clear-cut.
+
+    Tokenizes the text and maps each word through the canonical vocab + synonyms;
+    returns a domain only when **exactly one** distinct domain is implied — so
+    "shop for parts" → shop and "swim with the kids" → kids, but an ambiguous or
+    domain-less phrase ("grab a coffee", "meet the family lawyer downtown") stays
+    ``None`` rather than being force-fit. Used to place a *declared outing* that
+    carries no explicit ``domain`` (its only signal is the free-text intention),
+    the looser counterpart to a trip's controlled-vocab category fallback.
+    """
+    if not text:
+        return None
+    found: set[str] = set()
+    for raw in text.lower().replace("/", " ").split():
+        word = "".join(ch for ch in raw if ch.isalpha())
+        if not word:
+            continue
+        if word in FOCUS_DOMAINS:
+            found.add(word)
+        elif word in _DOMAIN_SYNONYMS:
+            found.add(_DOMAIN_SYNONYMS[word])
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def domain_of_outing(outing: dict[str, Any]) -> str | None:
+    """The life-domain a declared outing counts toward: explicit → intention scan.
+
+    Prefers the outing's explicitly-set ``domain`` (normalized); absent that, tries
+    a conservative keyword scan of the free-text ``intention``
+    (:func:`infer_domain_from_text`). ``None`` when neither is decisive — the rollup
+    files that time as "unassigned" rather than guessing.
+    """
+    explicit = normalize_focus_domain(outing.get("domain"))
+    if explicit:
+        return explicit
+    return infer_domain_from_text(outing.get("intention"))
+
+
 def target_state_key(domain: str) -> str:
     """Coaching-state key holding a domain's weekly target minutes."""
     return f"focus_target:{domain}"
@@ -182,7 +227,7 @@ class DomainSpend:
 
     domain: str
     minutes: float
-    trips: int
+    count: int  # number of trips + returned outings in this sphere
     target_minutes: float | None = None
 
     @property
@@ -236,7 +281,13 @@ def build_focus_balance(
     days: int = DEFAULT_BALANCE_DAYS,
     targets: dict[str, float] | None = None,
 ) -> FocusBalance:
-    """Roll completed trips over the last ``days`` up into per-domain time-out.
+    """Roll out-of-home time over the last ``days`` up into per-domain totals.
+
+    Both halves of "time out" count: passively-detected closed-loop **trips**
+    (:mod:`prefrontal.trips`) and **declared outings** that returned
+    (:mod:`prefrontal.modules.location_anchor`). The two never overlap in time — a
+    passive trip only opens when no outing is active — so summing them is honest,
+    and together they cover every leave-home → return-home stretch.
 
     Args:
         store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
@@ -248,8 +299,9 @@ def build_focus_balance(
 
     Returns:
         A :class:`FocusBalance`; domains sorted by minutes descending, then name.
-        A domain with a target but no trips still appears (minutes 0), so a wholly
-        neglected sphere shows up rather than silently vanishing.
+        ``DomainSpend.count`` is the number of trips **and** returned outings in the
+        sphere. A domain with a target but no time still appears (minutes 0), so a
+        wholly neglected sphere shows up rather than silently vanishing.
     """
     now = now or utcnow()
     resolved_targets = read_targets(store) if targets is None else targets
@@ -257,13 +309,24 @@ def build_focus_balance(
 
     minutes: dict[str, float] = {}
     counts: dict[str, int] = {}
-    for trip in store.completed_trips_since(since):
-        out = minutes_between(trip.get("departed_at"), trip.get("returned_at"))
+
+    def _add(domain: str | None, out: float | None) -> None:
         if out is None or out <= 0:
-            continue
-        domain = domain_of_trip(trip) or "unassigned"
-        minutes[domain] = minutes.get(domain, 0.0) + out
-        counts[domain] = counts.get(domain, 0) + 1
+            return
+        key = domain or "unassigned"
+        minutes[key] = minutes.get(key, 0.0) + out
+        counts[key] = counts.get(key, 0) + 1
+
+    for trip in store.completed_trips_since(since):
+        _add(
+            domain_of_trip(trip),
+            minutes_between(trip.get("departed_at"), trip.get("returned_at")),
+        )
+    for outing in store.completed_outings_since(since):
+        _add(
+            domain_of_outing(outing),
+            minutes_between(outing.get("departure_at"), outing.get("returned_at")),
+        )
 
     # Scale weekly targets to the actual window so a shorter view isn't unfairly
     # flagged as "behind" (and "unassigned" is never a target — it's the gap).
@@ -273,7 +336,7 @@ def build_focus_balance(
         DomainSpend(
             domain=d,
             minutes=round(minutes.get(d, 0.0), 1),
-            trips=counts.get(d, 0),
+            count=counts.get(d, 0),
             target_minutes=(
                 round(resolved_targets[d] * window_scale, 1)
                 if d in resolved_targets

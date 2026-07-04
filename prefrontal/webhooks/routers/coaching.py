@@ -54,7 +54,11 @@ from prefrontal.webhooks.services import RouterServices
 #: target id), for cues whose tick delivery should carry one-tap action buttons.
 #: Only cues listed here get ``actions``; others deliver as plain text. (The
 #: per-module check endpoints attach their own buttons; this is the fan-over path.)
-_CUE_ACTION_KIND = {"meal": ("meal", "target"), "water": ("water", "target")}
+_CUE_ACTION_KIND = {
+    "meal": ("meal", "target"),
+    "water": ("water", "target"),
+    "trip": ("trip_label", "trip_id"),
+}
 
 
 def build_router(services: RouterServices) -> APIRouter:
