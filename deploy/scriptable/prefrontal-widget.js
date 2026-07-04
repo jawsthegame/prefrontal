@@ -1,9 +1,10 @@
 // Prefrontal — iOS home-screen & Lock Screen widget (Scriptable)
 // ---------------------------------------------------------------------------
 // A glanceable view of "right now": any active outing (with its escalation
-// level), your next commitments today, conflict/todo counts, the most recent
-// nudge Prefrontal sent (so a missed push is still visible), and — when you have
-// an open gap — the one todo that fits it ("25m free · Reply to landlord"), a
+// level), your next commitments today — with *when to leave* for the next one
+// ("leave 4:15 PM · 12m") — conflict/todo counts, the most recent nudge
+// Prefrontal sent (so a missed push is still visible), and — when you have an
+// open gap — the one todo that fits it ("25m free · Reply to landlord"), a
 // low-friction initiation nudge. Reads the Prefrontal API over Tailscale; tap
 // the widget to open the full dashboard.
 //
@@ -111,11 +112,11 @@ const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 // failing call (say /todos) doesn't blank the whole widget — we still render
 // the outing and commitments that did load. "offline" is reserved for the case
 // where *nothing* came back (mini unreachable / bad token).
-let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] }, fitNow = { free_minutes: 0, suggestion: null };
+let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] }, fitNow = { free_minutes: 0, suggestion: null }, departure = { departure: null };
 const settled = await Promise.allSettled([
   getJSON("/outings"), getJSON("/commitments"),
   getJSON("/commitments/conflicts"), getJSON("/todos"), getJSON("/nudges"),
-  getJSON("/todos/now"),
+  getJSON("/todos/now"), getJSON("/departure/next"),
 ]);
 const val = (i, fallback) => (settled[i].status === "fulfilled" ? settled[i].value : fallback);
 outings = val(0, outings);
@@ -124,6 +125,7 @@ conflicts = val(2, conflicts);
 todos = val(3, todos);
 nudges = val(4, nudges);
 fitNow = val(5, fitNow);
+departure = val(6, departure);
 const ok = settled.some((s) => s.status === "fulfilled");
 
 const family = config.widgetFamily || "medium";
@@ -161,6 +163,25 @@ const active = (outings.active || [])[0];
 const todayCommitments = (commitments.commitments || []).filter((c) => isToday(c.start_at));
 const upcomingList = todayCommitments.length ? todayCommitments : (commitments.commitments || []);
 const nextCommitment = upcomingList[0];
+
+// Leave-by for the next commitment — *when to leave*, not just when it starts —
+// from the read-only /departure/next (no nudge side effects). Surfaced only for a
+// *travel* commitment that's today and whose leave-by we're the next for: a
+// leave-by days out, or for a meeting you attend from your desk (mode "attend"),
+// is noise. Colored by the departure level (heads_up → soon → go).
+const dep = departure.departure;
+const DEP_LEVEL_COLOR = { none: C.accent, heads_up: C.soft, soon: C.firm, go: C.call };
+const nextDeparture =
+  dep && dep.mode === "travel" && nextCommitment &&
+  dep.commitment_id === nextCommitment.id && isToday(dep.start_at)
+    ? dep
+    : null;
+// "leave 8:35" (+ travel estimate when known), or "leave now" once it's due.
+function leaveByText(d) {
+  const travel = d.travel_minutes != null ? ` · ${Math.round(d.travel_minutes)}m` : "";
+  if (d.level === "go") return d.minutes_until_leave < 0 ? "leave now — late" : "leave now";
+  return `leave ${fmtTime(d.leave_by)}${travel}`;
+}
 const hard = (conflicts.conflicts || []).length;
 const poss = (conflicts.possible_conflicts || []).length;
 const open = (todos.todos || []).length;
@@ -252,7 +273,10 @@ function facetNext() {
   return {
     glyph: "calendar", value: fmtWhenShort(nextCommitment.start_at),
     label: `${fmtWhen(nextCommitment.start_at)} ${nextCommitment.title}`,
-    sub: nextCommitment.title, color: C.fg,
+    // Rectangular's second line carries the leave-by when we have one, so the
+    // Lock Screen "next" slot says when to leave, not only the title.
+    sub: nextDeparture ? `${nextCommitment.title} · ${leaveByText(nextDeparture)}` : nextCommitment.title,
+    color: C.fg,
   };
 }
 function facetUrgent() {
@@ -420,6 +444,17 @@ function renderHomeScreen() {
       r.centerAlignContent();
       text(r, fmtWhen(c.start_at) + "  ", { color: C.accent, size: 12, bold: true });
       text(r, c.title, { size: small ? 12 : 13 });
+      // When to *leave* for this one (travel commitment, today) — the actionable
+      // number the start time alone doesn't give. A muted second line, colored up
+      // to red as the leave-by bears down.
+      if (nextDeparture && c.id === nextDeparture.commitment_id) {
+        const lr = w.addStack();
+        lr.centerAlignContent();
+        const col = DEP_LEVEL_COLOR[nextDeparture.level] || C.accent;
+        if (!symbol(lr, "figure.walk", 10, col)) text(lr, "🚶", { size: 10, color: col });
+        text(lr, " " + leaveByText(nextDeparture),
+          { color: col, size: 11, bold: nextDeparture.level === "go" });
+      }
     }
   } else if (!active) {
     text(w, "Nothing scheduled. 🎉", { color: C.muted, size: 13 });
@@ -467,6 +502,12 @@ function computeRefreshMinutes() {
   if (!ok) return REFRESH.offline; // mini unreachable — retry before long
   if (active) return active.level === "firm" || active.level === "call" ? REFRESH.live : REFRESH.active;
   if (dueDeparture) return REFRESH.live; // "leave now" is time-critical
+  // A bearing-down leave-by is time-sensitive too — keep the countdown fresh as
+  // it escalates, even before the departure nudge itself fires.
+  if (nextDeparture) {
+    if (nextDeparture.level === "soon" || nextDeparture.level === "go") return REFRESH.live;
+    if (nextDeparture.level === "heads_up") return REFRESH.soon;
+  }
   if (nextCommitment) {
     const startMs = new Date(String(nextCommitment.start_at).replace(" ", "T") + "Z").getTime();
     const minsUntil = (startMs - Date.now()) / 60000;

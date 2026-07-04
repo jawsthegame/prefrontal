@@ -346,8 +346,16 @@ the first test. Code follow-ups below are optional polish.
   heads-up → soon → go and deduped per `(commitment, level)`. Falls back to the
   static `lead_minutes` when coordinates or a recent fix are missing. The
   rewritten `deploy/n8n/departure-reminder.workflow.json` polls it and pushes via
-  Pushover. *(Next: optional geocoding of free-text `location`; per-commitment
-  travel learning; surface the leave-by time in the briefing and widget.)*
+  Pushover. The **widget now surfaces the leave-by time** for the next
+  commitment: a read-only `GET /departure/next` (the side-effect-free companion to
+  `POST /webhooks/departure/check` — no dedup, no nudge, safe to poll) plans the
+  soonest upcoming commitment and returns its `leave_by`, which the Scriptable
+  widget shows as a "leave 4:15 PM · 12m" line under the next commitment (colored
+  by departure level, gated to a *today* travel commitment so a leave-by days out
+  or an attend-from-desk meeting stays quiet). Both surfaces share a new read-only
+  `plan_upcoming_departures` helper. Covered by `tests/test_departure.py`. *(Next:
+  optional geocoding of free-text `location`; per-commitment travel learning;
+  surface the leave-by time in the briefing too.)*
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.

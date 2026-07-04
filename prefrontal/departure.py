@@ -597,6 +597,42 @@ class DepartureCheck:
     location_known: bool
 
 
+def plan_upcoming_departures(
+    store: MemoryStore,
+    *,
+    current_lat: float | None = None,
+    current_lon: float | None = None,
+) -> list[DeparturePlan]:
+    """Plan every upcoming, non-dismissed commitment — read-only, no fire/record.
+
+    The shared plan-building body: resolve current location from the store when
+    coordinates aren't supplied, read the tuning, and plan each upcoming
+    commitment. Both the nudging decision (:func:`evaluate_departure_check`) and
+    read-only surfaces (the widget's leave-by summary) build the same plans this
+    way, so a commitment's displayed leave-by matches the one it's nudged for.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        current_lat: Current latitude, or ``None`` to read the last-known fix.
+        current_lon: Current longitude, or ``None`` to read the last-known fix.
+
+    Returns:
+        A :class:`DeparturePlan` per upcoming non-dismissed commitment, in the
+        store's soonest-first order.
+    """
+    if current_lat is None or current_lon is None:
+        last = store.get_location()
+        if last is not None:
+            current_lat, current_lon = last["lat"], last["lon"]
+    dismissed = store.dismissed_departures()
+    kwargs = departure_kwargs(store)
+    return [
+        plan_departure(c, current_lat=current_lat, current_lon=current_lon, **kwargs)
+        for c in store.upcoming_commitments()
+        if c["id"] not in dismissed
+    ]
+
+
 def evaluate_departure_check(
     store: MemoryStore,
     *,
@@ -617,13 +653,9 @@ def evaluate_departure_check(
         if last is not None:
             current_lat, current_lon = last["lat"], last["lon"]
 
-    dismissed = store.dismissed_departures()
-    kwargs = departure_kwargs(store)
-    plans = [
-        plan_departure(c, current_lat=current_lat, current_lon=current_lon, **kwargs)
-        for c in store.upcoming_commitments()
-        if c["id"] not in dismissed
-    ]
+    plans = plan_upcoming_departures(
+        store, current_lat=current_lat, current_lon=current_lon
+    )
     top = next_departure(plans)
     location_known = current_lat is not None and current_lon is not None
     if top is None:
