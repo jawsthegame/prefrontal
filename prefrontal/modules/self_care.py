@@ -69,6 +69,10 @@ SELF_CARE_EPISODE = "self_care"
 #: genuine "I did it" — the honesty check. Such taps must not be counted as
 #: engagement that justifies backing the cadence off.
 INSTANT_CONFIRM_SECONDS = 30.0
+#: Minutes an un-acted self-care nudge waits before it's counted "ignored" — a
+#: "wrong time / too frequent" signal for the learner. Kept below the shortest
+#: default interval so a stale prompt is swept before the next one fires.
+SELF_CARE_ACK_WINDOW_MINUTES = 30.0
 #: Recent responses to weigh when adapting a check's interval, and the minimum
 #: before we adapt at all.
 ADAPT_LOOKBACK = 30
@@ -299,6 +303,43 @@ def mark_self_care_prompted(store: MemoryStore, decisions: list[Any], now: datet
             store.set_state(_prompt_key(cue.context_key), stamp, source="inferred")
 
 
+def sweep_unanswered_self_care(
+    store: MemoryStore,
+    now: datetime,
+    *,
+    window_minutes: float = SELF_CARE_ACK_WINDOW_MINUTES,
+) -> int:
+    """Count self-care nudges left un-acted past the window as ``ignored``, and clear them.
+
+    A meal/water cue stamps its delivery time (:func:`mark_self_care_prompted`);
+    an Ate/Drank/Snooze tap clears it (:func:`_latency_note`). Anything still
+    stamped past ``window_minutes`` was neither confirmed nor snoozed — an
+    *unanswered* nudge. Logging it as an ``ignored`` ``self_care`` episode gives
+    :func:`adapt_self_care_interval` the "wrong time / too frequent" signal that
+    snoozes alone miss (many people ignore a nudge rather than tapping snooze).
+
+    Mirrors :func:`prefrontal.coaching.sweep_stale_nudges`: run once per coaching
+    tick, before new prompts are stamped. Returns how many were swept.
+    """
+    swept = 0
+    for check in CHECKS:
+        stamped = _parse_ts(store.get_state(_prompt_key(check.key)))
+        if stamped is None:
+            continue
+        if (now - stamped).total_seconds() / 60.0 < window_minutes:
+            continue  # still inside the ack window — a tap may yet arrive
+        store.set_state(_prompt_key(check.key), "", source="inferred")
+        store.log_episode(
+            SELF_CARE_EPISODE,
+            acknowledged=False,
+            context=f"{check.key}: ignored",
+            outcome="ignored",
+            notes="latency=?",
+        )
+        swept += 1
+    return swept
+
+
 def _latency_seconds(notes: str | None) -> float | None:
     """Parse ``latency=<n>s`` from an episode's notes, or ``None`` if absent."""
     if not notes:
@@ -338,13 +379,14 @@ def adapt_self_care_interval(
 
     v1 only ever *widens* (nudges less), never quietly more:
 
-    - **Snooze a lot** (explicit "not now") → widen. The clearest signal.
+    - **Resisted a lot** — an explicit **snooze** or an **ignored** (unanswered)
+      nudge, both "not now" → widen. The clearest signal.
     - **Honesty check:** if the *timed* confirms are mostly **instant** (a
       reflexive yes within :data:`INSTANT_CONFIRM_SECONDS`), *hold* — those taps
       look like dismissals, not genuine "I did it", so they must not justify
       backing off a scaffold that's really just being swatted away.
-    - **Genuinely on top of it** (few snoozes + enough confirms at a plausible
-      latency) → ease off slightly.
+    - **Genuinely on top of it** (little resistance + enough confirms at a
+      plausible latency) → ease off slightly.
     - Otherwise the cadence looks right → hold.
 
     Returns ``(suggested_minutes, reason)``.
@@ -352,13 +394,15 @@ def adapt_self_care_interval(
     n = len(responses)
     if n < MIN_ADAPT_RESPONSES:
         return current_interval, "not enough responses yet"
-    snoozes = sum(1 for r in responses if r["outcome"] == "snoozed")
-    snooze_rate = snoozes / n
-    if snooze_rate >= SNOOZE_WIDEN_RATE:
+    # "Not now" signals: an explicit snooze *or* an unanswered (ignored) nudge —
+    # both say the cadence is too frequent or mistimed.
+    resisted = sum(1 for r in responses if r["outcome"] in ("snoozed", "ignored"))
+    resist_rate = resisted / n
+    if resist_rate >= SNOOZE_WIDEN_RATE:
         widened = _bounded_interval(current_interval * WIDEN_FACTOR, default_interval)
         if widened > current_interval:
-            return widened, "you snooze often — nudging less frequently"
-        return current_interval, "snoozing often, but already at the max interval"
+            return widened, "you often snooze or ignore these — nudging less frequently"
+        return current_interval, "snoozed/ignored often, but already at the max interval"
 
     timed = [r for r in responses if r["outcome"] == "confirmed" and r["latency"] is not None]
     instant = [r for r in timed if r["latency"] < INSTANT_CONFIRM_SECONDS]
@@ -367,7 +411,7 @@ def adapt_self_care_interval(
         # Honesty check: reflexive yeses aren't evidence you need it less.
         return current_interval, "frequent instant confirms read as dismissals — keeping presence"
     if (
-        snooze_rate <= EASE_OFF_SNOOZE_RATE
+        resist_rate <= EASE_OFF_SNOOZE_RATE
         and len(timed) >= MIN_GENUINE_CONFIRMS
     ):
         eased = _bounded_interval(current_interval * EASE_OFF_FACTOR, default_interval)

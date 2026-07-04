@@ -39,7 +39,10 @@ from prefrontal.impact import (
     utcnow,
 )
 from prefrontal.modules import enabled_modules
-from prefrontal.modules.self_care import mark_self_care_prompted
+from prefrontal.modules.self_care import (
+    mark_self_care_prompted,
+    sweep_unanswered_self_care,
+)
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -99,6 +102,10 @@ def build_router(services: RouterServices) -> APIRouter:
                 "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
             ),
         )
+        # Self-care nudges have their own prompt-stamp latency track (not the
+        # coach_ack path), so sweep their unanswered ones into "ignored" episodes
+        # — the "wrong time / too frequent" signal the cadence learner reads.
+        sweep_unanswered_self_care(memory, now)
         coach_ctx = build_context(
             memory,
             now=now,
