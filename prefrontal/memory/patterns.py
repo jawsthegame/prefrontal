@@ -100,6 +100,24 @@ DEFAULT_WINDOW_DAYS = 0.0
 #: The coaching key holding the sliding-window length (see above).
 WINDOW_KEY = "learning_window_days"
 
+#: Coaching key toggling **auto-derivation** of per-context recency half-lives
+#: from each context's own volatility. Off by default: the manual override +
+#: global fallback are the baseline, and this is the adaptive layer on top. When
+#: ``on``, the learn pass sets ``learning_half_life_days:<band>`` for time-of-day
+#: bands that show enough signal — never touching a band the user set explicitly.
+AUTO_HALF_LIFE_KEY = "auto_context_half_life"
+#: A derived half-life is the global × a factor in ``[MIN, MAX]``: a *stable*
+#: context (little drift between its older and recent bias) decays slower (trusts
+#: more history, up to 2× the global); a *churny* one decays faster (down to 0.5×).
+AUTO_HALF_LIFE_MIN_FACTOR = 0.5
+AUTO_HALF_LIFE_MAX_FACTOR = 2.0
+#: Relative drift (``|recent − older| / older`` bias) at/above which the factor
+#: bottoms out at the min (follow as fast as we allow); ``0`` drift → the max.
+AUTO_HALF_LIFE_FULL_DRIFT = 0.3
+#: Absolute floor (days) under a derived half-life, so the factor math can't drive
+#: a context down to a jittery, near-zero window.
+AUTO_HALF_LIFE_FLOOR_DAYS = 7.0
+
 
 #: Time-of-day bands for context-conditioned learning (learning §5). The learned
 #: time-estimation bias is computed per band as well as globally, because the same
@@ -257,6 +275,9 @@ class PatternRunSummary:
     #: is how many episodes the window excluded before learning (0 when disabled).
     window_days: float = 0.0
     windowed_out: int = 0
+    #: Per-band recency half-lives auto-derived this pass (``{band: days}``), when
+    #: ``auto_context_half_life`` is on; empty otherwise.
+    auto_half_lives: dict[str, float] = field(default_factory=dict)
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -700,6 +721,80 @@ def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None
     return resolve
 
 
+def derive_half_life(
+    episodes: list[dict[str, Any]],
+    global_half_life: float | None,
+    *,
+    now: datetime | None = None,
+) -> float | None:
+    """Suggest a recency half-life for one context from its volatility, or ``None``.
+
+    Splits the context's predicted/actual pairs in time order and compares the
+    (equal-weight) bias of the older half to the recent half. A context whose bias
+    has **drifted** — churn — should decay *faster* so learning follows the change;
+    a **stable** one should decay *slower* to trust more of its history. The result
+    is ``global_half_life × factor`` where the factor runs from
+    :data:`AUTO_HALF_LIFE_MAX_FACTOR` at zero drift down to
+    :data:`AUTO_HALF_LIFE_MIN_FACTOR` at :data:`AUTO_HALF_LIFE_FULL_DRIFT`, floored
+    at :data:`AUTO_HALF_LIFE_FLOOR_DAYS`.
+
+    Returns ``None`` when decay is disabled (``global_half_life`` falsy/≤0), there
+    aren't enough pairs to split (``< 2 × MIN_BIAS_SAMPLES``, each half clearing
+    ``MIN_BIAS_SAMPLES``), or the older-half bias is non-positive.
+    """
+    if not global_half_life or global_half_life <= 0:
+        return None
+    now = now or utcnow()
+    pairs = [
+        e for e in episodes
+        if e.get("predicted_value") and e.get("actual_value") is not None
+    ]
+    if len(pairs) < 2 * MIN_BIAS_SAMPLES:
+        return None
+    pairs.sort(key=lambda e: str(e.get("timestamp") or ""))
+    mid = len(pairs) // 2
+    # Equal-weight bias of each half (half_life_days=None) so the drift measure
+    # reflects the raw levels, not values already pre-decayed.
+    older = compute_bias(pairs[:mid], now=now, half_life_days=None)
+    recent = compute_bias(pairs[mid:], now=now, half_life_days=None)
+    if older is None or recent is None or older <= 0:
+        return None
+    rel_drift = abs(recent - older) / older
+    frac = min(1.0, rel_drift / AUTO_HALF_LIFE_FULL_DRIFT) if AUTO_HALF_LIFE_FULL_DRIFT else 1.0
+    span = AUTO_HALF_LIFE_MAX_FACTOR - AUTO_HALF_LIFE_MIN_FACTOR
+    factor = AUTO_HALF_LIFE_MAX_FACTOR - span * frac
+    return round(max(AUTO_HALF_LIFE_FLOOR_DAYS, global_half_life * factor), 1)
+
+
+def derive_band_half_lives(
+    episodes: list[dict[str, Any]],
+    global_half_life: float | None,
+    *,
+    now: datetime | None = None,
+    timezone: str = "UTC",
+) -> dict[str, float]:
+    """Auto-derived recency half-life per time-of-day band (``{band: days}``).
+
+    Buckets the predicted/actual episodes by local band (as
+    :func:`compute_bias_by_band` does) and runs :func:`derive_half_life` in each.
+    Bands without enough signal are omitted. Empty when decay is off.
+    """
+    now = now or utcnow()
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+            continue
+        hour = _local_hour(e.get("timestamp"), timezone)
+        if hour is not None:
+            groups[time_of_day_band(hour)].append(e)
+    out: dict[str, float] = {}
+    for band, eps in groups.items():
+        hl = derive_half_life(eps, global_half_life, now=now)
+        if hl is not None:
+            out[band] = hl
+    return out
+
+
 def recompute_patterns(
     store: MemoryStore,
     *,
@@ -734,6 +829,22 @@ def recompute_patterns(
     # decay via ``learning_half_life_days:<suffix>`` (e.g. ``:type:focus``), so a
     # churny context can follow faster and a stable one slower. Unset ⇒ the global.
     half_life_for = _make_half_life_resolver(store)
+    # Auto-derived per-context half-lives (opt-in): before the bias passes, set
+    # each time-of-day band's `learning_half_life_days:<band>` from its own
+    # volatility, so a churny band decays faster and a stable one slower without
+    # the user hand-tuning it. Never overrides a band the user set explicitly; the
+    # resolver above reads state lazily, so this pass's band bias uses fresh values.
+    auto_half_lives: dict[str, float] = {}
+    if (store.get_state(AUTO_HALF_LIFE_KEY, "off") or "off") == "on":
+        state_all = store.all_state()
+        for band, hl in derive_band_half_lives(
+            episodes, half_life_days, now=now, timezone=timezone
+        ).items():
+            key = f"{HALF_LIFE_KEY}:{band}"
+            if (state_all.get(key, {}) or {}).get("source") == "explicit":
+                continue  # respect a hand-set override
+            store.set_state(key, str(hl), source="inferred")
+            auto_half_lives[band] = hl
     results = compute_patterns(
         episodes, confidence_k=confidence_k, now=now, half_life_days=half_life_days
     )
@@ -830,6 +941,7 @@ def recompute_patterns(
         category_bias=category_bias,
         window_days=window_days,
         windowed_out=windowed_out,
+        auto_half_lives=auto_half_lives,
     )
 
 

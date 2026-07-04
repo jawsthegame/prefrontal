@@ -867,6 +867,9 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             if summary.band_bias:
                 bands = ", ".join(f"{b}={v}" for b, v in sorted(summary.band_bias.items()))
                 print(f"[{label}] time-of-day bias -> {bands}")
+            if summary.auto_half_lives:
+                hls = ", ".join(f"{b}={v:g}d" for b, v in sorted(summary.auto_half_lives.items()))
+                print(f"[{label}] auto half-life -> {hls}")
             if summary.type_bias:
                 types = ", ".join(f"{t}={v}" for t, v in sorted(summary.type_bias.items()))
                 print(f"[{label}] task-type bias -> {types}")
