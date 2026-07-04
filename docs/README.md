@@ -13,6 +13,7 @@ capability with real examples, plus an API/CLI reference.
 **Use it**
 - [**guide.md**](guide.md) — capabilities tour, real-world examples, API & CLI reference. *Start here.*
 - [**deployment.md**](deployment.md) — set it up on a Mac mini: Python, launchd, Ollama, n8n, Tailscale, iOS Shortcuts.
+- [**n8n-sync.md**](n8n-sync.md) — push `deploy/n8n/*.json` into the running n8n on update (the Update button updates n8n too).
 - [**multi-tenant.md**](multi-tenant.md) — users, tokens, per-user scoping, and the `/admin` + `prefrontal user` surfaces.
 
 **Understand it**

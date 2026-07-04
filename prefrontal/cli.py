@@ -832,6 +832,38 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_n8n(args: argparse.Namespace) -> int:
+    """Manage the n8n orchestration layer (currently: push workflow templates).
+
+    ``push`` upserts ``deploy/n8n/*.json`` into the running n8n via its REST API
+    — the "update n8n directly" step that ``deploy/update.sh`` runs so the
+    dashboard Update button syncs workflows too. Skips cleanly (exit 0) when the
+    n8n API isn't configured, so it's safe to wire unconditionally into updates.
+    """
+    from prefrontal.integrations.n8n import DEFAULT_WORKFLOW_DIR, N8nWorkflowSyncer
+
+    if args.n8n_action != "push":  # argparse requires the subcommand, so this is unreachable
+        return 1
+    syncer = N8nWorkflowSyncer.from_settings(get_settings())
+    report = syncer.push(args.dir or DEFAULT_WORKFLOW_DIR, activate=not args.no_activate)
+    if not report["enabled"]:
+        print(report["detail"])  # no-op skip is a success
+        return 0
+    for wf in report["pushed"]:
+        flag = "ok" if wf["ok"] else "FAIL"
+        state = ""
+        if wf.get("active") is not None:
+            state = " → active" if wf["active"] else " → inactive"
+        print(f"[{flag}] {wf['action']:<7} {wf['name']}{state}")
+        if not wf["ok"]:
+            print(f"        {wf['detail']}", file=sys.stderr)
+    if not report["ok"]:
+        print(report["detail"], file=sys.stderr)
+        return 1
+    print(report["detail"] + " to n8n")
+    return 0
+
+
 def _cmd_learn(args: argparse.Namespace) -> int:
     """Recompute derived patterns from accumulated episodes.
 
@@ -1948,6 +1980,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_restart = sub.add_parser("restart", help="Restart the service (no code update).")
     p_restart.set_defaults(func=_cmd_restart)
+
+    p_n8n = sub.add_parser("n8n", help="Manage the n8n orchestration layer.")
+    n8n_sub = p_n8n.add_subparsers(dest="n8n_action", required=True)
+    n8n_push = n8n_sub.add_parser(
+        "push",
+        help="Upsert deploy/n8n/*.json into the running n8n via its REST API.",
+    )
+    n8n_push.add_argument(
+        "--dir", default=None, help="Workflow template directory (default: deploy/n8n)."
+    )
+    n8n_push.add_argument(
+        "--no-activate",
+        action="store_true",
+        help="Upsert definitions only; don't converge each workflow's active state.",
+    )
+    p_n8n.set_defaults(func=_cmd_n8n)
 
     p_learn = sub.add_parser(
         "learn", help="Recompute derived patterns from accumulated episodes."
