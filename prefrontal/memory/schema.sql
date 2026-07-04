@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id),
     timestamp       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    episode_type    TEXT    NOT NULL,           -- departure | task | checkin | reminder
+    episode_type    TEXT    NOT NULL,           -- departure|task|checkin|reminder|mail|panic|switch
     predicted_value REAL,                       -- what the agent estimated
     actual_value    REAL,                       -- what actually happened
     acknowledged    BOOLEAN,                    -- did the user respond to the trigger?

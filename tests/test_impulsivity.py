@@ -23,6 +23,7 @@ from prefrontal.modules.impulsivity import (
     heuristic_capture_title,
     infer_capture_title,
     pause_seconds,
+    switch_rate_feedback,
     switch_response,
 )
 from prefrontal.webhooks.app import create_app
@@ -196,6 +197,35 @@ def test_pause_message_names_task_and_time():
     assert "Tom" in msg
 
 
+# -- pure switch-rate feedback -----------------------------------------------
+
+
+def test_switch_rate_feedback_none_without_signal():
+    assert switch_rate_feedback([]) is None  # no sessions
+    # Sessions but zero impulses signalled → nothing to reflect.
+    assert switch_rate_feedback([{"switch_impulses": 0, "switches_deferred": 0}]) is None
+
+
+def test_switch_rate_feedback_sums_across_sessions():
+    line = switch_rate_feedback(
+        [
+            {"switch_impulses": 4, "switches_deferred": 3},
+            {"switch_impulses": 2, "switches_deferred": 1},
+        ]
+    )
+    assert line == "6 switch-impulses, 4 deferred"
+
+
+def test_switch_rate_feedback_singular_and_baseline():
+    assert switch_rate_feedback([{"switch_impulses": 1, "switches_deferred": 0}]) == (
+        "1 switch-impulse, 0 deferred"
+    )
+    line = switch_rate_feedback(
+        [{"switch_impulses": 6, "switches_deferred": 4}], baseline=1.4
+    )
+    assert line == "6 switch-impulses, 4 deferred (you usually honor ~1.4/session)"
+
+
 # -- HTTP: reflective-pause loop (switch / resolve) --------------------------
 
 
@@ -269,10 +299,15 @@ def test_resolve_switch_closes_block_and_logs_episode(client, store):
     ).json()
     assert body["session_status"] == "switched"
     assert store.get_focus_session(sid)["status"] == "switched"
-    ep = store.recent_episodes(1)[0]
-    assert ep["episode_type"] == "task"
-    assert ep["outcome"] == "partial"  # real block, cut short by a deliberate switch
-    assert "switched" in ep["context"]
+    # Close logs two episodes: the `task` (time-estimation) and the per-session
+    # `switch` (context_switch learning). Find each by type rather than by order.
+    episodes = store.recent_episodes(5)
+    task_ep = next(e for e in episodes if e["episode_type"] == "task")
+    assert task_ep["outcome"] == "partial"  # real block, cut short by a deliberate switch
+    assert "switched" in task_ep["context"]
+    switch_ep = next(e for e in episodes if e["episode_type"] == "switch")
+    assert switch_ep["predicted_value"] == 1.0  # one switch-impulse signalled
+    assert switch_ep["actual_value"] == 0.0  # not deferred (honored)
 
 
 def test_resolve_bad_action_is_422(client, store):

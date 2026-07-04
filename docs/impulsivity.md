@@ -34,21 +34,21 @@ this file wins until the work lands.
 > one-active invariant (it would change Hyperfocus's `protect` semantics), the
 > switch fires against `most_recent_active_focus_session()`.
 >
-> **Not yet built** (spec ship-order steps 3–4, which need a few days of data):
-> the `context_switch` learning derivation (§8) — the `switch_impulses` /
-> `switches_deferred` counters are persisted now so the data accrues —
-> `switch_rate_feedback` (§10 briefing line, still `planned`), the upgraded
-> profile section (§9), and the dashboard "In focus" card.
+> **Now shipped** (spec ship-order steps 3–4): the `context_switch` learning
+> derivation (§8) — focus close logs a per-session `switch` episode
+> (`predicted_value` = impulses, `actual_value` = deferred), and `patterns.py`
+> derives mean impulses/deferrals per focus block — plus `switch_rate_feedback`
+> (§10 briefing line) and the upgraded profile section (§9). The dashboard
+> "In focus" card remains the one optional surface not yet built.
 
-> **Reality note (updated).** Mostly **shipped** — see the "Shipped so far" note
-> above. `reflective_pause` and `capture_and_defer` are `status="active"`; only
-> `switch_rate_feedback` remains `planned` (it needs the accumulated switch
-> history). Option (a) from the original reconciliation won: rather than a new
-> `focus_sessions` table, the Hyperfocus session is the "current block" a switch
-> fires against, and the switch counters (`switch_impulses` / `switches_deferred`)
-> live **on `focus_sessions`**. Capture-and-defer lands in `todos` as designed;
-> the `context_switch` learning loop that feeds `switch_rate_feedback` is the
-> remaining piece.
+> **Reality note (updated).** **Shipped** — all three interventions are
+> `status="active"`. Option (a) from the original reconciliation won: rather than a
+> new `focus_sessions` table, the Hyperfocus session is the "current block" a
+> switch fires against, and the switch counters (`switch_impulses` /
+> `switches_deferred`) live **on `focus_sessions`**. Capture-and-defer lands in
+> `todos` as designed; the `context_switch` learning loop that feeds
+> `switch_rate_feedback` (per-session `switch` episodes → `context_switch` pattern
+> → briefing line + profile) is now closed.
 
 It follows the shape of the one fully-wired module today — the **Location-Aware
 Task Anchor** ([`location_anchor.py`](../prefrontal/modules/location_anchor.py)):

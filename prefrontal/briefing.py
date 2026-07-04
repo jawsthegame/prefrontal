@@ -32,6 +32,7 @@ from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
+from prefrontal.modules.impulsivity import switch_rate_feedback
 from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
 from prefrontal.todos import avoided_todos
 
@@ -73,6 +74,9 @@ class Briefing:
         encouragement: Optional closing encouragement line (spec §6.2) — set when
             the ``encouragement`` layer is on and the day warrants a note; ``None``
             leaves the briefing's usual time-bias reminder in place.
+        switch_feedback: Optional switch-rate reflection (Impulsivity's
+            ``switch_rate_feedback`` intervention) — set when the last day's focus
+            sessions signalled any switch-impulses; ``None`` otherwise.
     """
 
     date: str
@@ -85,6 +89,7 @@ class Briefing:
     avoided: list[dict[str, Any]] = field(default_factory=list)
     surfaced: list[dict[str, Any]] = field(default_factory=list)
     encouragement: str | None = None
+    switch_feedback: str | None = None
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -185,6 +190,18 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         for s in store.surfaced_triage(surface_since)
     ]
 
+    # Switch-rate reflection (Impulsivity, `switch_rate_feedback`): the last day's
+    # closed focus sessions vs the learned baseline. Silent when nothing switched.
+    switch_since = (now - timedelta(days=1)).strftime(fmt)
+    recent_focus = [
+        s
+        for s in store.recent_focus_sessions()
+        if s.get("ended_at") and s["ended_at"] >= switch_since
+    ]
+    switch_feedback = switch_rate_feedback(
+        recent_focus, baseline=_switch_baseline(store)
+    )
+
     briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -195,6 +212,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         spare=spare,
         avoided=avoided,
         surfaced=surfaced,
+        switch_feedback=switch_feedback,
     )
 
     # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
@@ -203,6 +221,24 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     from prefrontal.encouragement import briefing_note
 
     return replace(briefing, encouragement=briefing_note(store, briefing, now=now))
+
+
+#: Confidence floor before the learned switch baseline is worth comparing against.
+_SWITCH_BASELINE_FLOOR = 0.3
+
+
+def _switch_baseline(store: MemoryStore) -> float | None:
+    """The learned mean *honored* switch-impulses per focus session, or ``None``.
+
+    Reads the ``context_switch`` pattern (``variance`` = mean honored/session) and
+    returns it only once confidence clears a small floor, so an early, noisy
+    estimate isn't presented as a norm.
+    """
+    for p in store.get_patterns("context_switch"):
+        variance = p.get("variance")
+        if variance is not None and (p.get("confidence") or 0.0) >= _SWITCH_BASELINE_FLOOR:
+            return float(variance)
+    return None
 
 
 def _time_of(commitment: dict[str, Any]) -> str:
@@ -256,6 +292,11 @@ def render_briefing(briefing: Briefing) -> str:
         total = sum(briefing.slips.values())
         detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
         lines.append(f"**Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
+        lines.append("")
+
+    # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
+    if briefing.switch_feedback:
+        lines.append(f"**Focus switches (last 24h):** {briefing.switch_feedback}.")
         lines.append("")
 
     # Avoidance — the important things you keep skipping.
