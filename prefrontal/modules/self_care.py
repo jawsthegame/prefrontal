@@ -372,6 +372,26 @@ def _bounded_interval(value: float, default: int) -> int:
     return int(round(clamped / 5.0) * 5)
 
 
+def _resist_rate(responses: list[dict[str, Any]]) -> float:
+    """Share of responses that were a "not now" — a snooze or an ignore."""
+    if not responses:
+        return 0.0
+    return sum(1 for r in responses if r["outcome"] in ("snoozed", "ignored")) / len(responses)
+
+
+def _widen_helped(responses: list[dict[str, Any]]) -> bool:
+    """Did an earlier widen actually ease the push-back? (recent vs. older half).
+
+    ``responses`` are newest-first. Splits them in two and asks whether the more
+    recent half resisted *less* than the older half — i.e. widening the interval
+    correlated with fewer snoozes/ignores. Used to verify a widen before trusting
+    it enough to widen *further* (roadmap §6 step 4).
+    """
+    half = len(responses) // 2
+    recent, older = responses[:half], responses[half:]
+    return _resist_rate(recent) < _resist_rate(older)
+
+
 def adapt_self_care_interval(
     responses: list[dict[str, Any]], default_interval: int, *, current_interval: int
 ) -> tuple[int, str]:
@@ -380,7 +400,11 @@ def adapt_self_care_interval(
     v1 only ever *widens* (nudges less), never quietly more:
 
     - **Resisted a lot** — an explicit **snooze** or an **ignored** (unanswered)
-      nudge, both "not now" → widen. The clearest signal.
+      nudge, both "not now" → widen. The clearest signal. But once we've *already*
+      widened, a further widen must be **earned**: if the push-back hasn't eased
+      since (recent half no better than older, :func:`_widen_helped`), *hold* —
+      don't keep nudging less on the unproven theory that less is better, when the
+      last step didn't help (roadmap §6 step 4).
     - **Honesty check:** if the *timed* confirms are mostly **instant** (a
       reflexive yes within :data:`INSTANT_CONFIRM_SECONDS`), *hold* — those taps
       look like dismissals, not genuine "I did it", so they must not justify
@@ -396,9 +420,21 @@ def adapt_self_care_interval(
         return current_interval, "not enough responses yet"
     # "Not now" signals: an explicit snooze *or* an unanswered (ignored) nudge —
     # both say the cadence is too frequent or mistimed.
-    resisted = sum(1 for r in responses if r["outcome"] in ("snoozed", "ignored"))
-    resist_rate = resisted / n
+    resist_rate = _resist_rate(responses)
     if resist_rate >= SNOOZE_WIDEN_RATE:
+        # Verify before widening *further*: if we've already widened past the
+        # default and the last step didn't ease the push-back, hold rather than
+        # compounding a change that isn't helping. The first widen (still at the
+        # default) is always allowed; the check needs enough data to split.
+        if (
+            current_interval > default_interval
+            and n >= 2 * MIN_ADAPT_RESPONSES
+            and not _widen_helped(responses)
+        ):
+            return (
+                current_interval,
+                "already widened but the push-back hasn't eased — holding to see it help",
+            )
         widened = _bounded_interval(current_interval * WIDEN_FACTOR, default_interval)
         if widened > current_interval:
             return widened, "you often snooze or ignore these — nudging less frequently"
