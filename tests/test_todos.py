@@ -995,6 +995,25 @@ def test_todos_now_suggests_fitting_todo(client, store_open, monkeypatch):
     assert r["suggestion"]["title"] == "Reply to landlord"
 
 
+def test_todos_now_suggestion_carries_the_domain(client, store_open, monkeypatch):
+    """The widget's pick echoes the todo's work/life domain so it can label it.
+
+    An unknown domain doesn't gate scheduling (it falls through to category /
+    default, per resolve_window), so the pick surfaces exactly as the base case —
+    but the stored domain now rides along in the suggestion payload.
+    """
+    _all_day(store_open)
+    _freeze_todos_now_clock(monkeypatch)
+    r = client.post("/todos", headers=_auth(),
+                    json={"title": "Reply to landlord", "estimate_minutes": 30})
+    tid = r.json()["todo_id"]
+    assert client.post(f"/todos/{tid}/domain", json={"domain": "misc"},
+                       headers=_auth()).status_code == 200
+    sug = client.get("/todos/now", headers=_auth()).json()["suggestion"]
+    assert sug["title"] == "Reply to landlord"
+    assert sug["domain"] == "misc"
+
+
 def test_todos_now_none_when_nothing_fits(client, store_open, monkeypatch):
     """A todo longer than the (capped) free window yields no suggestion."""
     _all_day(store_open)
