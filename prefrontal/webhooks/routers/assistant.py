@@ -4,20 +4,31 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-from prefrontal.webhooks._common import (
+from typing import (
     Annotated,
     Any,
-    AssistantApply,
-    AssistantMessage,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
-    ScopedRequest,
-    assistant_plan_message,
+)
+
+from prefrontal.assistant import (
     build_snapshot,
     execute_actions,
-    resolve_user,
     validate_actions,
+)
+from prefrontal.assistant import (
+    plan as assistant_plan_message,
+)
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.schemas import (
+    AssistantApply,
+    AssistantMessage,
 )
 from prefrontal.webhooks.services import RouterServices
 

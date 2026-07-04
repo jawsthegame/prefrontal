@@ -5,42 +5,62 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import (
+    Annotated,
+    Any,
+)
 
-from fastapi import APIRouter
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+)
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.webhooks._common import (
+from prefrontal.impact import (
+    utcnow,
+)
+from prefrontal.modules.hyperfocus import (
     DEFAULT_FOCUS_ABANDON_RATIO,
     DEFAULT_HARD_INTERRUPT_MINUTES,
     DEFAULT_SOFT_BLOCK_MINUTES,
-    Annotated,
-    Any,
-    Depends,
+    build_focus_message,
+    focus_level,
+    focus_task_from_title,
+    infer_focus_start,
+    is_focus_intent_title,
+    record_focus_abandoned,
+    record_focus_end,
+    should_protect,
+)
+from prefrontal.modules.hyperfocus import (
+    is_abandoned as focus_is_abandoned,
+)
+from prefrontal.modules.hyperfocus import (
+    level_rank as focus_level_rank,
+)
+from prefrontal.modules.registry import (
+    is_enabled as module_enabled,
+)
+from prefrontal.todos import (
+    avoided_todos,
+)
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    _focus_end_confirmation,
+    _focus_started_confirmation,
+    _nudge_actions,
+)
+from prefrontal.webhooks.schemas import (
     FocusEnd,
     FocusLog,
     FocusStart,
     FocusStarted,
-    HTTPException,
-    ScopedRequest,
-    _focus_end_confirmation,
-    _focus_started_confirmation,
-    _nudge_actions,
-    avoided_todos,
-    build_focus_message,
-    focus_is_abandoned,
-    focus_level,
-    focus_level_rank,
-    focus_task_from_title,
-    infer_focus_start,
-    is_focus_intent_title,
-    module_enabled,
-    record_focus_abandoned,
-    record_focus_end,
-    resolve_user,
-    should_protect,
-    status,
-    utcnow,
 )
 from prefrontal.webhooks.services import RouterServices
 

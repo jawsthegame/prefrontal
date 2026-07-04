@@ -4,56 +4,78 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from typing import Literal
-
-from fastapi import APIRouter
-
-from prefrontal.clock import TS_FMT
-from prefrontal.memory.patterns import task_bias_resolver
-from prefrontal.memory.store import gmail_message_url
-from prefrontal.webhooks._common import (
-    DEFAULT_BODY_DOUBLE_MIN_MISSES,
-    DEFAULT_FIT_CAP_MINUTES,
-    DEFAULT_MAX_FIRST_STEP_MINUTES,
-    DEFAULT_MIN_WINDOW_MINUTES,
-    MAX_CATEGORIES,
+from datetime import (
+    timedelta,
+)
+from typing import (
     Annotated,
     Any,
+    Literal,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
     HTTPException,
+    status,
+)
+
+from prefrontal.clock import TS_FMT
+from prefrontal.commitments import (
+    to_utc,
+)
+from prefrontal.impact import (
+    utcnow,
+)
+from prefrontal.mail.feedback import (
+    record_drop_feedback,
+)
+from prefrontal.memory.patterns import task_bias_resolver
+from prefrontal.memory.store import gmail_message_url
+from prefrontal.modules.task_paralysis import (
+    DEFAULT_BODY_DOUBLE_MIN_MISSES,
+    body_double_message,
+    repeat_stalled_tasks,
+)
+from prefrontal.scheduling import (
+    DEFAULT_FIT_CAP_MINUTES,
+    DEFAULT_MIN_WINDOW_MINUTES,
+    available_now,
+    filter_suggestible,
+    fit_todos,
+    format_window,
+    local_datetime,
+    local_hour_of,
+    parse_window,
+    pick_now,
+    window_config_for,
+    work_window_now,
+)
+from prefrontal.todos import (
+    DEFAULT_MAX_FIRST_STEP_MINUTES,
+    MAX_CATEGORIES,
+    at_category_cap,
+    augment_todo,
+    avoided_todos,
+    category_stats,
+    decompose_task,
+    normalize_category,
+    record_todo_closed,
+)
+from prefrontal.webhooks.deps import (
     ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    _decompose_and_store,
+)
+from prefrontal.webhooks.schemas import (
     StepDone,
     TodoCategoryUpdate,
     TodoCreate,
     TodoDeadlineUpdate,
     TodoDomainUpdate,
     TodoWindowUpdate,
-    _decompose_and_store,
-    at_category_cap,
-    augment_todo,
-    available_now,
-    avoided_todos,
-    body_double_message,
-    category_stats,
-    decompose_task,
-    filter_suggestible,
-    fit_todos,
-    format_window,
-    local_datetime,
-    local_hour_of,
-    normalize_category,
-    parse_window,
-    pick_now,
-    record_drop_feedback,
-    record_todo_closed,
-    repeat_stalled_tasks,
-    resolve_user,
-    status,
-    timedelta,
-    to_utc,
-    utcnow,
-    window_config_for,
-    work_window_now,
 )
 from prefrontal.webhooks.services import RouterServices
 

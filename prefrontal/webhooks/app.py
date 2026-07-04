@@ -2,26 +2,50 @@
 
 The routes live in per-tag modules under :mod:`prefrontal.webhooks.routers`;
 this module builds the shared services, injects them into each router, and
-assembles the app. Shared imports, Pydantic models, constants, and request
-dependencies live in :mod:`prefrontal.webhooks._common`.
+assembles the app. Request/response models live in
+:mod:`prefrontal.webhooks.schemas`, request dependencies in
+:mod:`prefrontal.webhooks.deps`, and shared helpers in
+:mod:`prefrontal.webhooks.helpers`.
 """
 from __future__ import annotations
 
+from contextlib import (
+    asynccontextmanager,
+)
+
+from fastapi import (
+    FastAPI,
+)
+
+from prefrontal.config import (
+    Settings,
+    get_settings,
+)
+from prefrontal.geocode import (
+    enrich_commitments,
+)
 from prefrontal.integrations import ProviderResolver
+from prefrontal.integrations.anthropic import (
+    AnthropicClient,
+)
+from prefrontal.integrations.n8n import (
+    N8nClient,
+)
+from prefrontal.integrations.nominatim import (
+    NominatimGeocoder,
+)
+from prefrontal.integrations.ollama import (
+    OllamaClient,
+)
 from prefrontal.log import configure_logging
+from prefrontal.memory.store import (
+    MemoryStore,
+)
 from prefrontal.webhooks._common import (
     APP_VERSION,
     INFER_TIMEOUT_SECONDS,
-    AnthropicClient,
-    FastAPI,
-    MemoryStore,
-    N8nClient,
-    NominatimGeocoder,
-    OllamaClient,
-    Settings,
-    asynccontextmanager,
-    enrich_commitments,
-    get_settings,
+)
+from prefrontal.webhooks.oauth import (
     register_oauth_routes,
 )
 from prefrontal.webhooks.services import RouterServices

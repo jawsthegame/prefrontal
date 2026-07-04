@@ -4,7 +4,18 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import (
+    Annotated,
+    Any,
+)
+
+from fastapi import (
+    APIRouter,
+    Depends,
+)
+from fastapi.responses import (
+    HTMLResponse,
+)
 
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
@@ -14,10 +25,8 @@ from prefrontal.webhooks._common import (
     KIDS_HTML,
     REVIEW_HTML,
     STATS_HTML,
-    Annotated,
-    Any,
-    Depends,
-    HTMLResponse,
+)
+from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
