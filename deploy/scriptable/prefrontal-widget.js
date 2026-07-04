@@ -81,6 +81,25 @@ function isToday(ts) {
   const n = new Date();
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 }
+// A day label for a commitment that isn't today, so "Next up" can say *when* — a
+// 9am two days out reads "Wed 9:00 AM", not a bare "9:00 AM" that looks like this
+// morning. Empty for today (the time alone is unambiguous). "Tomorrow" for the
+// next day, a weekday name within the coming week, else a short date.
+function dayLabel(ts) {
+  if (!ts || isToday(ts)) return "";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  if (isNaN(d)) return "";
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+  if (dayDiff === 1) return "Tomorrow";
+  if (dayDiff > 1 && dayDiff < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+// Time for a list row, prefixed with a day label when the commitment isn't today.
+function fmtWhen(ts) {
+  const day = dayLabel(ts);
+  return day ? `${day} ${fmtTime(ts)}` : fmtTime(ts);
+}
 const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 
 // --- fetch (degrade gracefully, per-call) ---------------------------------
@@ -213,7 +232,7 @@ function facetNext() {
   if (!nextCommitment) return null;
   return {
     glyph: "calendar", value: fmtTimeShort(nextCommitment.start_at),
-    label: `${fmtTime(nextCommitment.start_at)} ${nextCommitment.title}`,
+    label: `${fmtWhen(nextCommitment.start_at)} ${nextCommitment.title}`,
     sub: nextCommitment.title, color: C.fg,
   };
 }
@@ -380,7 +399,7 @@ function renderHomeScreen() {
     for (const c of upcoming) {
       const r = w.addStack();
       r.centerAlignContent();
-      text(r, fmtTime(c.start_at) + "  ", { color: C.accent, size: 12, bold: true });
+      text(r, fmtWhen(c.start_at) + "  ", { color: C.accent, size: 12, bold: true });
       text(r, c.title, { size: small ? 12 : 13 });
     }
   } else if (!active) {
