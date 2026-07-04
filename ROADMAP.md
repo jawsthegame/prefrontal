@@ -356,9 +356,14 @@ the first test. Code follow-ups below are optional polish.
   widget shows as a "leave 4:15 PM · 12m" line under the next commitment (colored
   by departure level, gated to a *today* travel commitment so a leave-by days out
   or an attend-from-desk meeting stays quiet). Both surfaces share a new read-only
-  `plan_upcoming_departures` helper. Covered by `tests/test_departure.py`. *(Next:
-  optional geocoding of free-text `location`; per-commitment travel learning;
-  surface the leave-by time in the briefing too.)*
+  `plan_upcoming_departures` helper. The **morning briefing now surfaces it too** —
+  a "🚶 Leave by:" section listing today's remaining travel commitments with their
+  leave-by (bias-adjusted travel estimate, or the static lead), planned with the
+  same `plan_departure`/`departure_kwargs` the nudge uses so the digest matches
+  what it's nudged for; attend-mode and zero-lead items are omitted, gated on the
+  Time Blindness module. Covered by `tests/test_departure.py` +
+  `tests/test_briefing.py`. *(Next: optional geocoding of free-text `location`;
+  per-commitment travel learning.)*
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
