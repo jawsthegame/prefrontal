@@ -438,7 +438,7 @@ def build_router(services: RouterServices) -> APIRouter:
             if closed is None:
                 return _dismiss_page("That focus session is already wrapped up.")
             record_focus_end(memory, closed, outcome=None, breadcrumb=None)
-            label = closed.get("intention") or closed.get("task") or "your session"
+            label = closed.get("intended_task") or "your session"
             return _dismiss_page(f"Wrapped up “{label}.” Nice work.")
 
         if action in ("outing_return", "outing_abandon"):

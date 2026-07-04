@@ -308,6 +308,29 @@ def test_execute_bad_date_reports_per_action(memory):
     assert "couldn't apply" in results[0]["detail"]
 
 
+def test_execute_isolates_non_value_error(memory):
+    """A store call raising something *other* than ValueError is still reported
+    per-action rather than propagating — which would abort the batch and 500 the
+    endpoint, dropping every later valid action."""
+
+    class Boom:
+        user_id = memory.user_id
+
+        def set_todo_priority(self, *a, **k):
+            raise RuntimeError("db is on fire")
+
+        def close_todo(self, *a, **k):
+            return True
+
+    actions = [
+        assistant.ValidatedAction("set_priority", {"todo_id": 1, "priority": 3}, "…"),
+        assistant.ValidatedAction("complete_todo", {"todo_id": 1}, "…"),
+    ]
+    results = assistant.execute_actions(Boom(), actions, timezone="UTC")
+    assert results[0]["ok"] is False and "couldn't apply" in results[0]["detail"]
+    assert results[1]["ok"] is True  # the batch continued past the failing action
+
+
 # --- endpoints ------------------------------------------------------------
 
 

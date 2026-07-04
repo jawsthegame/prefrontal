@@ -385,6 +385,14 @@ def expand_recurrences(
     Returns:
         A new event list with masters replaced by their occurrences.
     """
+    # Occurrences generated below are timezone-aware (dtstart is localized via
+    # `_aware`), so the window bounds must be aware too — dateutil raises a
+    # TypeError comparing aware occurrences against a naive bound, which the
+    # `except` in `_expand_master` would swallow, silently dropping every
+    # recurring event. Production passes a naive UTC `now` (clock.utcnow()), so
+    # normalize it here rather than trusting every caller to pre-attach a zone.
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     window_start = now - timedelta(hours=back_hours)
     window_end = now + timedelta(hours=horizon_hours)
 
