@@ -81,6 +81,11 @@ function isToday(ts) {
   const n = new Date();
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 }
+// Whole calendar days from today to `d` (local): 0 = today, 1 = tomorrow, etc.
+function daysFromToday(d) {
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  return Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+}
 // A day label for a commitment that isn't today, so "Next up" can say *when* — a
 // 9am two days out reads "Wed 9:00 AM", not a bare "9:00 AM" that looks like this
 // morning. Empty for today (the time alone is unambiguous). "Tomorrow" for the
@@ -89,8 +94,7 @@ function dayLabel(ts) {
   if (!ts || isToday(ts)) return "";
   const d = new Date(String(ts).replace(" ", "T") + "Z");
   if (isNaN(d)) return "";
-  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
-  const dayDiff = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+  const dayDiff = daysFromToday(d);
   if (dayDiff === 1) return "Tomorrow";
   if (dayDiff > 1 && dayDiff < 7) return d.toLocaleDateString([], { weekday: "short" });
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
@@ -214,6 +218,21 @@ function fmtTimeShort(ts) {
   return `${h}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// The circular-slot value for the next commitment: the short time, prefixed with
+// a compact day token when it isn't today, so a commitment days out doesn't read
+// as a time this morning. Kept terse ("Wed 9:00", "7/14 9:00") to survive the
+// tiny slot's auto-shrink; today stays just the time.
+function fmtWhenShort(ts) {
+  if (!ts || isToday(ts)) return fmtTimeShort(ts);
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  if (isNaN(d)) return fmtTimeShort(ts);
+  const dayDiff = daysFromToday(d);
+  const tok = dayDiff > 0 && dayDiff < 7
+    ? d.toLocaleDateString([], { weekday: "short" })
+    : `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${tok} ${fmtTimeShort(ts)}`;
+}
+
 // A due departure ("leave now") arrives as the most recent *departure* nudge;
 // it already self-expires at the meeting's start, so a live one is genuinely due.
 const dueDeparture = recentNudge && recentNudge.kind === "departure" ? recentNudge : null;
@@ -231,7 +250,7 @@ function facetInProgress() {
 function facetNext() {
   if (!nextCommitment) return null;
   return {
-    glyph: "calendar", value: fmtTimeShort(nextCommitment.start_at),
+    glyph: "calendar", value: fmtWhenShort(nextCommitment.start_at),
     label: `${fmtWhen(nextCommitment.start_at)} ${nextCommitment.title}`,
     sub: nextCommitment.title, color: C.fg,
   };
