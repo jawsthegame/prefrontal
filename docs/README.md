@@ -19,6 +19,7 @@ capability with real examples, plus an API/CLI reference.
 - [**whitepaper.md**](whitepaper.md) — the problem, the design principles, and the architecture in one read.
 - [**schema.md**](schema.md) — the SQLite memory model (episodes, patterns, commitments, todos, household tables, …).
 - [`../ROADMAP.md`](../ROADMAP.md) — what's shipped and what's planned.
+- [**monetization.md**](monetization.md) — the open-source & monetization plan (Mac app, isolated-VPC cloud, licensing).
 
 **Design specs** (the "why" behind individual pieces)
 - [**household-sheet.md**](household-sheet.md) — the shared co-parent sheet / Parent-pack backbone.
