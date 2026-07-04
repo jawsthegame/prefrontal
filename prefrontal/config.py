@@ -114,6 +114,11 @@ class Settings:
     n8n_webhook_url: str = ""
     n8n_webhook_token: str = ""
     modules: tuple[str, ...] = ()
+    #: Enabled Context Packs (life-context layers, e.g. ``parent``). Unlike
+    #: ``modules`` (empty = all), packs default to **none** — a pack is an explicit
+    #: opt-in that switches on modules + seeds vocabulary. See
+    #: ``prefrontal.packs`` and ``PREFRONTAL_PACKS``.
+    packs: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     # Optional Claude/Anthropic provider for the dashboard assistant. Local-first:
@@ -319,6 +324,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     _load_dotenv(dotenv_path)
     raw_modules = os.environ.get("PREFRONTAL_MODULES", "")
     modules = tuple(m.strip() for m in raw_modules.split(",") if m.strip())
+    raw_packs = os.environ.get("PREFRONTAL_PACKS", "")
+    packs = tuple(p.strip() for p in raw_packs.split(",") if p.strip())
     mail_accounts = _parse_mail_accounts(os.environ.get("PREFRONTAL_MAIL_ACCOUNTS", ""))
     account_labels = _parse_account_labels(
         os.environ.get("PREFRONTAL_ACCOUNT_LABELS", "")
@@ -347,6 +354,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", ""),
         n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", ""),
         modules=modules,
+        packs=packs,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),

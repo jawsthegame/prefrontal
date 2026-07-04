@@ -320,6 +320,13 @@ def seed_user_state(store: MemoryStore) -> None:
 
     for module in enabled_modules():
         module.seed(store)
+    # Then each enabled Context Pack seeds its coaching defaults (e.g. parent
+    # time windows). Iterated in configured order so an earlier pack wins a key
+    # conflict; absent-only, so it never clobbers a module or user value above.
+    from prefrontal.packs import enabled_packs
+
+    for pack in enabled_packs():
+        pack.seed(store)
 
 
 def provision_user(

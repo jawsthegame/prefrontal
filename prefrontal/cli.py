@@ -1635,6 +1635,41 @@ def _cmd_modules(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_packs(args: argparse.Namespace) -> int:
+    """List available Context Packs and whether each is enabled.
+
+    Args:
+        args: Parsed arguments; uses ``args.verbose`` to also list the modules a
+            pack switches on and the vocabulary/defaults it seeds.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.packs import available as available_packs
+    from prefrontal.packs import is_enabled as pack_is_enabled
+
+    settings = get_settings()
+    packs = available_packs()
+    if not packs:
+        print("No Context Packs registered.")
+        return 0
+    for pack in packs:
+        mark = "on " if pack_is_enabled(pack.key, settings) else "off"
+        print(f"[{mark}] {pack.key} — {pack.title}")
+        if pack.description:
+            print(f"        {pack.description}")
+        if args.verbose:
+            if pack.modules:
+                print(f"          modules: {', '.join(pack.modules)}")
+            if pack.categories:
+                print(f"          categories: {', '.join(pack.categories)}")
+            if pack.commitment_kinds:
+                print(f"          commitment kinds: {', '.join(pack.commitment_kinds)}")
+            for key, value in pack.coaching_defaults.items():
+                print(f"          seeds {key} = {value}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the top-level argument parser.
 
@@ -2055,6 +2090,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the model; triage with the keyword heuristic (fast backlog clear).",
     )
     p_mail.set_defaults(func=_cmd_mail)
+
+    p_packs = sub.add_parser("packs", help="List Context Packs and their status.")
+    p_packs.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Also list the modules, vocabulary, and defaults each pack contributes.",
+    )
+    p_packs.set_defaults(func=_cmd_packs)
 
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(

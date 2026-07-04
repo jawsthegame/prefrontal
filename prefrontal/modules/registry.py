@@ -74,7 +74,16 @@ def enabled_modules(settings: Settings | None = None) -> list[Module]:
     resolved = settings or get_settings()
     if resolved.all_modules_enabled:
         return available()
-    return [_REGISTRY[k] for k in resolved.modules if k in _REGISTRY]
+    # A specific module list is also *extended* by any modules an enabled Context
+    # Pack switches on (e.g. the Parent pack turns on time_blindness). Lazy import
+    # keeps the modules layer free of a hard dependency on the packs package.
+    from prefrontal.packs.registry import pack_module_keys
+
+    keys: list[str] = list(resolved.modules)
+    for key in pack_module_keys(resolved):
+        if key not in keys:
+            keys.append(key)
+    return [_REGISTRY[k] for k in keys if k in _REGISTRY]
 
 
 def is_enabled(key: str, settings: Settings | None = None) -> bool:
@@ -99,4 +108,10 @@ def is_enabled(key: str, settings: Settings | None = None) -> bool:
     resolved = settings or get_settings()
     if key not in _REGISTRY:
         return False
-    return resolved.all_modules_enabled or key in resolved.modules
+    if resolved.all_modules_enabled or key in resolved.modules:
+        return True
+    # Also enabled if a Context Pack switched it on (lazy import — see
+    # :func:`enabled_modules`).
+    from prefrontal.packs.registry import pack_module_keys
+
+    return key in pack_module_keys(resolved)
