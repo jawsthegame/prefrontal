@@ -699,6 +699,24 @@ class TodoDomainUpdate(BaseModel):
     )
 
 
+class TodoSchedule(BaseModel):
+    """Body of ``POST /todos/{id}/schedule`` — block time for a todo as a commitment.
+
+    Both fields optional: ``at`` pins an explicit UTC/ISO start (else the earliest
+    free window today that fits is used); ``minutes`` overrides the block length
+    (else the bias-adjusted estimate)."""
+
+    at: str | None = Field(
+        default=None,
+        description="Explicit UTC/ISO start; if omitted, the earliest fitting free window today.",
+    )
+    minutes: float | None = Field(
+        default=None,
+        gt=0,
+        description="Block length in minutes; if omitted, the todo's bias-adjusted estimate.",
+    )
+
+
 class ConversationTurn(BaseModel):
     """One turn of a conversation transcript fed to ``POST /observe``."""
 

@@ -109,6 +109,17 @@ def free_windows(
     return windows
 
 
+def first_window_fitting(
+    windows: list[FreeWindow], minutes: float
+) -> FreeWindow | None:
+    """The earliest free window long enough to hold ``minutes``, or ``None``.
+
+    ``windows`` are chronological (as :func:`free_windows` returns them), so the
+    first that fits is also the soonest — where an auto-scheduled block should go.
+    """
+    return next((w for w in windows if w.minutes >= minutes), None)
+
+
 def work_window_now(
     now: datetime,
     tz: str,

@@ -21,6 +21,7 @@ from fastapi import (
 )
 
 from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import (
     to_utc,
 )
@@ -42,8 +43,10 @@ from prefrontal.scheduling import (
     DEFAULT_MIN_WINDOW_MINUTES,
     available_now,
     filter_suggestible,
+    first_window_fitting,
     fit_todos,
     format_window,
+    free_windows,
     local_datetime,
     local_hour_of,
     parse_window,
@@ -75,6 +78,7 @@ from prefrontal.webhooks.schemas import (
     TodoCreate,
     TodoDeadlineUpdate,
     TodoDomainUpdate,
+    TodoSchedule,
     TodoWindowUpdate,
 )
 from prefrontal.webhooks.services import RouterServices
@@ -432,6 +436,104 @@ def build_router(services: RouterServices) -> APIRouter:
                 detail=f"No todo {todo_id}.",
             )
         return {"todo_id": todo_id, "domain": domain}
+
+    @router.post("/todos/{todo_id}/schedule", tags=["todos"])
+    def todo_schedule(
+        todo_id: int,
+        payload: TodoSchedule,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Block time for a todo — place it into a free window as a manual commitment.
+
+        Turns a "good for: X" suggestion into an actual hold on the calendar. The
+        block length is ``minutes`` if given, else the todo's **bias-adjusted**
+        estimate (so the hold is honest about how long it really takes). The start
+        is ``at`` if given, else the **earliest free window today** (within waking
+        hours) that fits. The todo stays open — you've scheduled time to do it, not
+        marked it done. Declared before the ``{action}`` route so "schedule" isn't
+        read as a done/drop action.
+
+        404 if the todo isn't open; 422 if it has no estimate and no ``minutes``;
+        409 if nothing fits today.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo.get("status") != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        now = utcnow()
+        now_local = local_datetime(now, resolved_settings.timezone)
+        fmt = TS_FMT
+
+        # Block length: explicit override, else the todo's bias-adjusted estimate.
+        if payload.minutes is not None:
+            duration = float(payload.minutes)
+        else:
+            fits = fit_todos(
+                float("inf"),
+                [todo],
+                bias_fn=task_bias_resolver(memory, local_hour=now_local.hour),
+            )
+            if not fits:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Todo has no time estimate — pass 'minutes' to schedule it.",
+                )
+            duration = fits[0]["effective_minutes"]
+
+        # Start: an explicit time, else the earliest fitting free window today.
+        if payload.at:
+            try:
+                start = _parse_ts(to_utc(payload.at))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Bad start time: {exc}",
+                ) from exc
+        else:
+            window_config = window_config_for(resolved_settings, memory)
+            day_start, day_end = window_config.awake_band()
+            # cap_minutes huge → horizon is today's waking day_end (not a fit cap):
+            # we're placing a block anywhere left today, not offering "right now".
+            within, horizon = work_window_now(
+                now, resolved_settings.timezone,
+                cap_minutes=24 * 60, day_start=day_start, day_end=day_end,
+            )
+            if not within:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Outside waking hours — nothing to schedule into right now.",
+                )
+            commitments = memory.commitments_between(
+                (now - timedelta(hours=26)).strftime(fmt), horizon.strftime(fmt)
+            )
+            slot = first_window_fitting(free_windows(commitments, now, horizon), duration)
+            if slot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"No free window today fits {round(duration)} min.",
+                )
+            start = _parse_ts(slot.start)
+
+        end = start + timedelta(minutes=duration)
+        commitment_id, _ = memory.upsert_commitment(
+            title=todo["title"],
+            start_at=start.strftime(fmt),
+            end_at=end.strftime(fmt),
+            lead_minutes=0.0,  # a self-work block — no travel/prep buffer
+            hardness="soft",
+            source="manual",
+        )
+        return {
+            "todo_id": todo_id,
+            "commitment_id": commitment_id,
+            "title": todo["title"],
+            "start_at": start.strftime(fmt),
+            "end_at": end.strftime(fmt),
+            "minutes": round(duration),
+        }
 
     @router.post("/todos/{todo_id}/steps/{step_index}/done", tags=["todos"])
     def todo_step_done(
