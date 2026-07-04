@@ -736,11 +736,19 @@ ordered by leverage; each is independent but builds on denser capture.
   todo re-fit into the changed windows). Deliberately mostly declarative + a small
   tool registry, so a Pack is cheap to add and shareable ("install the Parent
   pack") — the same opt-in, modular ethos as challenge modules, on the orthogonal
-  context axis. *(Shipped so far: the **Parent-pack backbone** — a real household
-  scope, the shared co-parent sheet, star charts, shopping list, delta digest,
-  weekly check-in, self-serve invites, and the `/kids` surface. Still open: a
-  formal `Pack` registry/abstraction, and precedence when Packs overlap — two
-  setting the same category/window need merge rules.)*
+  context axis. *(Shipped: the **Parent-pack backbone** (household scope, the
+  shared co-parent sheet, star charts, shopping list, delta digest, weekly
+  check-in, self-serve invites, `/kids`) **plus the `Pack` registry/abstraction
+  itself** (`prefrontal/packs/`): a declarative `Pack` — modules it switches on,
+  todo categories, commitment kinds, coaching/window defaults — a registry enabled
+  via `PREFRONTAL_PACKS` (opt-in, none by default), `prefrontal packs -v`, and the
+  **`Parent`** pack as the first instance (turns on `time_blindness` +
+  `task_paralysis`; declares `school`/`childcare`/`household` + the `child` kind;
+  seeds parent time windows). **Overlap precedence is defined**:
+  `resolve_pack_vocabulary` unions categories/kinds and merges coaching defaults
+  earlier-pack-wins in `PREFRONTAL_PACKS` order (seeding is absent-only, preserving
+  that winner). Still open: more packs (Caregiver / Grad student / New job) and
+  pack-specific situation-tool registries + surface tailoring beyond `/kids`.)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
   ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; `prefrontal household …`) — kept here for the

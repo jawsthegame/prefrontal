@@ -651,6 +651,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_PORT` | `8000` | API port |
 | `PREFRONTAL_DEFAULT_USER` | _(empty)_ | Tokenless requests resolve to this user (single-user mode) |
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
+| `PREFRONTAL_PACKS` | _(none)_ | Comma-separated Context Packs (life-context layers, e.g. `parent`); each switches on modules + seeds vocabulary. Earlier-listed wins a conflict. `prefrontal packs -v` |
 | `PREFRONTAL_TRIAGE_LLM` / `_DROP` | `true` / `0` | Triage: use the model for ambiguous signals / confidence below which "noise" is surfaced not dropped |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
