@@ -343,7 +343,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "departure_grace_minutes", DEFAULT_DEPARTURE_GRACE_MINUTES
         )
         recorded = record_departure_outcome(
-            memory, plan, departed_at, grace_minutes=grace
+            memory, plan, departed_at, grace_minutes=grace, tz=resolved_settings.timezone
         )
         memory.set_state("last_departure_outcome", signature, source="inferred")
         # They've left — stop any further departure nudges for this commitment.

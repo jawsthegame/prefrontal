@@ -625,8 +625,9 @@ def _checkin_cli(store, args, settings) -> int:
     now_local = local_datetime(utcnow(), settings.timezone)
     config = scoped.get_checkin_config()
     last_local = None
-    if config.get("last_sent_at"):
-        last_local = local_datetime(_parse_last(config["last_sent_at"]), settings.timezone)
+    last_dt = _parse_last(config["last_sent_at"]) if config.get("last_sent_at") else None
+    if last_dt is not None:  # a malformed stored stamp reads as "never sent"
+        last_local = local_datetime(last_dt, settings.timezone)
     if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
         print("Weekly check-in not due right now (off, wrong day/time, or already sent).")
         return 0
@@ -712,7 +713,8 @@ def _star_prompts_cli(store, args, settings) -> int:
     for agreement in scoped.agreements():
         structured = parse_structured(agreement.get("structured"))
         last = agreement.get("last_prompted_at")
-        last_local = local_datetime(_parse_last(last), settings.timezone) if last else None
+        last_dt = _parse_last(last) if last else None
+        last_local = local_datetime(last_dt, settings.timezone) if last_dt is not None else None
         if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
             continue
         child_name = next(
@@ -880,7 +882,11 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             targets = [(u["handle"], store.scoped(u["id"])) for u in store.each_user()]
         else:
             scoped = _resolve_user_store(store, args.user)
-            targets = [(scoped.user_id, scoped)]
+            handle = next(
+                (u["handle"] for u in store.list_users() if u["id"] == scoped.user_id),
+                str(scoped.user_id),
+            )
+            targets = [(handle, scoped)]
         for label, s in targets:
             summary = recompute_patterns(s, timezone=settings.timezone)
             by_type = (

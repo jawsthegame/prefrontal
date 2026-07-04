@@ -367,6 +367,22 @@ def compute_patterns(
     return results
 
 
+def _is_estimation_pair(e: dict[str, Any]) -> bool:
+    """Whether an episode's predicted/actual are duration estimates (minutes).
+
+    The ``switch`` type overloads ``predicted_value``/``actual_value`` with
+    switch-impulse *counts* (see :func:`hyperfocus._log_switch_episode`), consumed
+    only by :func:`_context_switch_patterns`. Excluding it keeps that count data
+    out of every time-estimation / bias / calibration computation, which would
+    otherwise read the counts as minutes and skew the global multiplier.
+    """
+    return (
+        e.get("episode_type") != "switch"
+        and bool(e.get("predicted_value"))
+        and e.get("actual_value") is not None
+    )
+
+
 def compute_bias(
     episodes: list[dict[str, Any]],
     *,
@@ -392,7 +408,7 @@ def compute_bias(
     now = now or utcnow()
     pairs: list[tuple[float, float, float]] = []
     for e in episodes:
-        if e.get("predicted_value") and e.get("actual_value") is not None:
+        if _is_estimation_pair(e):
             w = decay_weight(e.get("timestamp"), now, half_life_days)
             pairs.append((e["predicted_value"], e["actual_value"], w))
     if len(pairs) < MIN_BIAS_SAMPLES:
@@ -449,7 +465,7 @@ def compute_bias_by_band(
     now = now or utcnow()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
-        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+        if not _is_estimation_pair(e):
             continue
         hour = _local_hour(e.get("timestamp"), timezone)
         if hour is not None:
@@ -494,7 +510,7 @@ def _bias_by_group(
     now = now or utcnow()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
-        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+        if not _is_estimation_pair(e):
             continue
         key = key_fn(e)
         if key:
@@ -697,7 +713,7 @@ def bias_calibration(
     pairs = [
         (_parse_ts(e.get("timestamp")) or datetime.min, e["predicted_value"], e["actual_value"])
         for e in episodes
-        if e.get("predicted_value") and e.get("actual_value") is not None
+        if _is_estimation_pair(e)
     ]
     n = len(pairs)
     if n < min_samples:
@@ -827,7 +843,7 @@ def derive_half_life(
     now = now or utcnow()
     pairs = [
         e for e in episodes
-        if e.get("predicted_value") and e.get("actual_value") is not None
+        if _is_estimation_pair(e)
     ]
     if len(pairs) < 2 * MIN_BIAS_SAMPLES:
         return None
@@ -862,7 +878,7 @@ def derive_band_half_lives(
     now = now or utcnow()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
-        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+        if not _is_estimation_pair(e):
             continue
         hour = _local_hour(e.get("timestamp"), timezone)
         if hour is not None:
@@ -889,7 +905,7 @@ def _half_life_by_group(
     now = now or utcnow()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
-        if not (e.get("predicted_value") and e.get("actual_value") is not None):
+        if not _is_estimation_pair(e):
             continue
         key = key_fn(e)
         if key:
@@ -1113,7 +1129,13 @@ def _time_estimation_patterns(
     """Recency-weighted mean predicted/actual and variance per episode type."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for e in episodes:
-        if e.get("predicted_value") is not None and e.get("actual_value") is not None:
+        # Skip `switch` — it stores impulse counts in predicted/actual, not
+        # durations (its own pattern is built by `_context_switch_patterns`).
+        if (
+            e.get("episode_type") != "switch"
+            and e.get("predicted_value") is not None
+            and e.get("actual_value") is not None
+        ):
             groups[e["episode_type"]].append(e)
 
     results: list[PatternResult] = []

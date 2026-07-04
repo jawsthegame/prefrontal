@@ -51,6 +51,10 @@ def _time_estimation(episodes: list[dict[str, Any]]) -> dict[str, Any]:
     by_ctx: dict[str, list[float]] = {}
     points: list[dict[str, Any]] = []
     for e in episodes:
+        # `switch` episodes store impulse counts in predicted/actual, not
+        # duration estimates, so they must not enter time-estimation accuracy.
+        if e.get("episode_type") == "switch":
+            continue
         pred, act = e.get("predicted_value"), e.get("actual_value")
         if pred is None or act is None or pred <= 0 or act < 0:
             continue

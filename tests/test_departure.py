@@ -658,6 +658,19 @@ def test_record_departure_outcome_logs_a_departure_episode(store):
     assert "late" in ep["notes"]
 
 
+def test_record_departure_outcome_note_uses_local_time(store):
+    """The leave-by clock time in the note renders in the user's tz, not UTC."""
+    plan = plan_departure(_commit(_at(NOW, 30), lead=10.0), now=NOW)  # leave_by 12:20 UTC
+    # Default tz=UTC keeps the stored clock time.
+    rec = record_departure_outcome(store, plan, NOW + timedelta(minutes=32))
+    assert "leave-by 12:20" in store.get_episode(rec["episode_id"])["notes"]
+    # A NY user (EDT, UTC-4) sees their local 08:20, not the UTC 12:20.
+    rec_ny = record_departure_outcome(
+        store, plan, NOW + timedelta(minutes=32), tz="America/New_York"
+    )
+    assert "leave-by 08:20" in store.get_episode(rec_ny["episode_id"])["notes"]
+
+
 def test_departure_left_records_and_is_idempotent(client, store):
     """POST records the outcome once; a second (chatty geofence) call no-ops."""
     store.upsert_commitment(
