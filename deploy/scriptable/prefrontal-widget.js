@@ -13,7 +13,7 @@
 //   • Lock Screen — the tiny accessory slots around the clock. Each slot shows
 //     ONE facet (a glyph + a short value), because iOS caps the size. Set a
 //     widget's Parameter to pin it to a facet, or leave it blank for "auto":
-//       focus/outing · next · alert/urgent · todos/free   (see PARAM below)
+//       focus/outing · next · alert/urgent · behind · todos/free (see PARAM below)
 //     So you can place several: e.g. circular "focus" + circular "next" + an
 //     inline "alert". Rectangular shows the same facet with a second context
 //     line; circular shows the glyph + value; inline is one line by the clock.
@@ -112,11 +112,11 @@ const mins = (n) => (n == null ? "" : Math.round(n) + "m");
 // failing call (say /todos) doesn't blank the whole widget — we still render
 // the outing and commitments that did load. "offline" is reserved for the case
 // where *nothing* came back (mini unreachable / bad token).
-let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] }, fitNow = { free_minutes: 0, suggestion: null }, departure = { departure: null };
+let outings = { active: [] }, commitments = { commitments: [] }, conflicts = { conflicts: [], possible_conflicts: [] }, todos = { todos: [] }, nudges = { nudges: [] }, fitNow = { free_minutes: 0, suggestion: null }, departure = { departure: null }, cascade = { at_risk: [], hard_conflict: false, source: "now" };
 const settled = await Promise.allSettled([
   getJSON("/outings"), getJSON("/commitments"),
   getJSON("/commitments/conflicts"), getJSON("/todos"), getJSON("/nudges"),
-  getJSON("/todos/now"), getJSON("/departure/next"),
+  getJSON("/todos/now"), getJSON("/departure/next"), getJSON("/impact/cascade"),
 ]);
 const val = (i, fallback) => (settled[i].status === "fulfilled" ? settled[i].value : fallback);
 outings = val(0, outings);
@@ -126,6 +126,7 @@ todos = val(3, todos);
 nudges = val(4, nudges);
 fitNow = val(5, fitNow);
 departure = val(6, departure);
+cascade = val(7, cascade);
 const ok = settled.some((s) => s.status === "fulfilled");
 
 const family = config.widgetFamily || "medium";
@@ -186,6 +187,19 @@ const hard = (conflicts.conflicts || []).length;
 const poss = (conflicts.possible_conflicts || []).length;
 const open = (todos.todos || []).length;
 
+// Cascade knock-on: when you're running behind (an active outing over its window,
+// or already too late to leave for something), which upcoming commitments topple.
+// Surfaced only for a genuine domino (>=2 at risk) — a single at-risk item is
+// already covered by the departure/next facets, so this earns its slot when it
+// reveals a chain those don't. `/impact/cascade` self-gates: it returns nothing
+// unless you're actually behind (see the endpoint's source resolution).
+const cascadeRisky = (cascade.at_risk || []);
+const cascadeChain = cascadeRisky.length >= 2 ? cascadeRisky : [];
+const cascadeColor = cascade.hard_conflict ? C.call : C.firm;
+// Worst (last, most-delayed) link's lateness, for the compact context line.
+const cascadeWorst = cascadeChain.length
+  ? Math.round(-cascadeChain[cascadeChain.length - 1].slack_minutes) : 0;
+
 // "You have time for one thing" — the single open todo that fits the gap until
 // your next commitment (server-computed, bounded by working hours + a cap).
 const fitSug = fitNow.suggestion; // { title, estimate_minutes, effective_minutes, reason, ... } or null
@@ -224,6 +238,7 @@ const recentNudge =
 //   focus / outing  → active outing progress (elapsed of window)
 //   next            → next commitment (start time)
 //   alert / urgent  → conflicts or a due departure ("leave now")
+//   behind / cascade → the knock-on chain when you're running late (>=2 topple)
 //   todos / free    → the todo that fits your free window, else open count
 // ===========================================================================
 
@@ -294,6 +309,18 @@ function facetUrgent() {
   };
   return null;
 }
+function facetCascade() {
+  if (!cascadeChain.length) return null;
+  const titles = cascadeChain.map((c) => c.title);
+  return {
+    // A clock-with-warning reads as "you're behind on the clock"; falls back to
+    // text on the rare device without the symbol.
+    glyph: "clock.badge.exclamationmark", value: String(cascadeChain.length),
+    label: `running behind: ${titles.slice(0, 2).join(" → ")}`,
+    sub: `${cascadeChain.length} topple · ~${cascadeWorst}m worst`,
+    color: cascadeColor,
+  };
+}
 function facetTodos() {
   if (fitSug) return {
     glyph: fitGlyph, value: `${fitFree}m`, label: `${fitLead} · ${fitSug.title}`,
@@ -311,6 +338,7 @@ function emptyFacet(kind) {
   if (kind === "focus" || kind === "outing") return { glyph: "figure.walk", value: "—", label: "No outing", sub: "not out", ...clear };
   if (kind === "next") return { glyph: "calendar", value: "—", label: "Nothing scheduled", sub: "clear", ...clear };
   if (kind === "alert" || kind === "urgent") return { glyph: "checkmark.circle", value: "0", label: "All clear", sub: "nothing urgent", ...clear };
+  if (kind === "cascade" || kind === "behind") return { glyph: "clock.badge.checkmark", value: "0", label: "On track", sub: "nothing toppling", ...clear };
   return { glyph: "checklist", value: String(open), label: `${open} todo${open === 1 ? "" : "s"}`, sub: `${open} open`, ...clear };
 }
 
@@ -318,6 +346,7 @@ const FACET_BY_PARAM = {
   focus: facetInProgress, outing: facetInProgress, "in-progress": facetInProgress,
   next: facetNext, commitment: facetNext,
   alert: facetUrgent, urgent: facetUrgent, conflicts: facetUrgent,
+  cascade: facetCascade, behind: facetCascade, knockon: facetCascade,
   todos: facetTodos, todo: facetTodos, free: facetTodos,
 };
 
@@ -330,8 +359,8 @@ const PARAM = ((typeof args !== "undefined" && args.widgetParameter) || "").trim
 function pickFacet(urgentFirst = false) {
   if (PARAM && FACET_BY_PARAM[PARAM]) return FACET_BY_PARAM[PARAM]() || emptyFacet(PARAM);
   const order = urgentFirst
-    ? [facetUrgent, facetInProgress, facetNext, facetTodos]
-    : [facetInProgress, facetUrgent, facetNext, facetTodos];
+    ? [facetUrgent, facetCascade, facetInProgress, facetNext, facetTodos]
+    : [facetInProgress, facetUrgent, facetCascade, facetNext, facetTodos];
   for (const f of order) { const r = f(); if (r) return r; }
   return facetTodos();
 }
@@ -460,6 +489,20 @@ function renderHomeScreen() {
     text(w, "Nothing scheduled. 🎉", { color: C.muted, size: 13 });
   }
 
+  // Cascade knock-on — one alert line when running behind topples a chain. A
+  // genuine domino only (>=2 at risk); small has no room, so its Lock Screen
+  // facet covers that size.
+  if (cascadeChain.length && !small) {
+    w.addSpacer(6);
+    const cr = w.addStack();
+    cr.centerAlignContent();
+    if (!symbol(cr, "clock.badge.exclamationmark", 11, cascadeColor)) {
+      text(cr, "⚠️", { size: 11, color: cascadeColor });
+    }
+    const titles = cascadeChain.map((c) => c.title).slice(0, 2).join(" → ");
+    text(cr, ` behind · ${titles}`, { color: cascadeColor, size: 11, bold: true });
+  }
+
   // "Time for one thing" — the todo that fits your free window right now. This is
   // the initiation nudge: one concrete action, sized to the time you actually have.
   if (fitSug) {
@@ -508,6 +551,7 @@ function computeRefreshMinutes() {
     if (nextDeparture.level === "soon" || nextDeparture.level === "go") return REFRESH.live;
     if (nextDeparture.level === "heads_up") return REFRESH.soon;
   }
+  if (cascadeChain.length) return REFRESH.soon; // behind & toppling — keep it fresh
   if (nextCommitment) {
     const startMs = new Date(String(nextCommitment.start_at).replace(" ", "T") + "Z").getTime();
     const minsUntil = (startMs - Date.now()) / 60000;
