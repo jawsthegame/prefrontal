@@ -8,13 +8,9 @@ rather than re-declaring it:
 - **Pydantic request/response models** — now defined in
   :mod:`prefrontal.webhooks.schemas` and re-exported here for the routers (the
   first slice of unwinding this grab-bag; dependencies and helpers follow next).
-- **Request dependencies & identity** — :class:`ScopedRequest`, :func:`get_store`,
-  :func:`resolve_user`, :func:`require_operator`. Authentication resolves the
-  ``X-Prefrontal-Token`` header to a user (its ``sha256`` is matched against the
-  ``users`` table) and scopes the request to them, so one person never sees
-  another's data. ``PREFRONTAL_DEFAULT_USER`` lets tokenless requests resolve to
-  one user (single-user / trusted-LAN mode); the legacy
-  ``PREFRONTAL_WEBHOOK_SECRET`` still works as a bootstrap operator token.
+- **Request dependencies & identity** — now in :mod:`prefrontal.webhooks.deps`
+  (:class:`ScopedRequest`, :func:`resolve_user`, :func:`require_operator`,
+  :func:`require_member`, :func:`get_store`) and re-exported here for the routers.
 - **Small formatting/URL helpers** shared across routers (nudge read-backs,
   dismiss links, ``_delivery_fields``) and a couple of constants
   (``DASHBOARD_HTML``, ``APP_VERSION``, …).
@@ -218,6 +214,13 @@ from prefrontal.trips import (
     apply_reflection,
     normalize_trip_category,
     process_location,
+)
+from prefrontal.webhooks.deps import (  # noqa: F401 (re-exported for routers)
+    ScopedRequest,
+    get_store,
+    require_member,
+    require_operator,
+    resolve_user,
 )
 from prefrontal.webhooks.notify import nudge_actions, panic_actions
 from prefrontal.webhooks.oauth import (
@@ -475,125 +478,6 @@ def _decompose_and_store(
     }
 
 
-@dataclass(frozen=True)
-class ScopedRequest:
-    """The resolved identity + per-user store for an authenticated request.
-
-    Produced by the :func:`resolve_user` dependency. ``store`` is already scoped
-    to ``user`` (it injects ``user["id"]`` into every statement), so a handler
-    cannot accidentally read or write another user's rows.
-    """
-
-    user: dict[str, Any]
-    store: MemoryStore
-
-
-def get_store(request: Request) -> MemoryStore:
-    """FastAPI dependency returning the app's **unscoped** memory store.
-
-    Used by the user-resolution layer and the admin surface. Defined at module
-    level (not a closure) so that, with ``from __future__ import annotations`` in
-    effect, FastAPI can resolve the ``Depends(get_store)`` annotation via
-    ``get_type_hints``.
-    """
-    return request.app.state.store
-
-
-def _resolve_user_row(
-    request: Request, token: str | None
-) -> dict[str, Any]:
-    """Resolve an ``X-Prefrontal-Token`` value to an active user row.
-
-    Resolution order:
-
-    1. A blank/absent token resolves to ``PREFRONTAL_DEFAULT_USER`` when one is
-       configured (the single-user / trusted-LAN compatibility mode); without a
-       default user a token is required.
-    2. A token whose ``sha256`` matches an active user resolves to that user.
-    3. The legacy ``PREFRONTAL_WEBHOOK_SECRET`` resolves to the first operator
-       user — a bootstrap so an operator can provision the first real tokens.
-
-    Raises:
-        HTTPException: 401 if no active user can be resolved.
-    """
-    store: MemoryStore = request.app.state.store
-    settings: Settings = request.app.state.settings
-
-    if not token:
-        # Browser surfaces (dashboard/family) carry a Google sign-in session
-        # cookie instead of a token header.
-        cookie_user = session_user(request)
-        if cookie_user is not None:
-            return cookie_user
-        if settings.default_user:
-            row = store.get_user(settings.default_user)
-            if row is not None and row["status"] == "active":
-                return row
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Prefrontal-Token header.",
-        )
-
-    row = store.get_user_by_token_hash(sha256_hex(token))
-    if row is not None and row["status"] == "active":
-        return row
-
-    # Bootstrap: the legacy shared secret maps to the first operator user, so a
-    # fresh deployment can authenticate before any per-user token is minted.
-    if settings.webhook_secret and hmac.compare_digest(token, settings.webhook_secret):
-        for candidate in store.list_users():
-            if candidate["is_operator"] and candidate["status"] == "active":
-                return store.get_user(candidate["handle"])
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or missing X-Prefrontal-Token header.",
-    )
-
-
-def resolve_user(
-    request: Request,
-    x_prefrontal_token: Annotated[str | None, Header()] = None,
-) -> ScopedRequest:
-    """FastAPI dependency: resolve the request's token to a scoped store + user.
-
-    Replaces the old shared-secret check on every data endpoint. Returns a
-    :class:`ScopedRequest` carrying the user row and a store already scoped to
-    that user, so handlers neither see another user's data nor have to remember
-    a ``WHERE user_id = ?``.
-    """
-    user = _resolve_user_row(request, x_prefrontal_token)
-    return ScopedRequest(user=user, store=request.app.state.store.scoped(user["id"]))
-
-
-def require_operator(
-    ctx: Annotated[ScopedRequest, Depends(resolve_user)],
-) -> ScopedRequest:
-    """Like :func:`resolve_user` but also requires the user be an operator (403)."""
-    if not ctx.user.get("is_operator"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operator privileges required.",
-        )
-    return ctx
-
-
-def require_member(
-    ctx: Annotated[ScopedRequest, Depends(resolve_user)],
-) -> ScopedRequest:
-    """Like :func:`resolve_user` but also requires the caller be in a household.
-
-    A caller in no household has nothing shared to touch, so household routes
-    404 rather than surfacing the store's raw scope error. Declared as a
-    dependency (not a per-handler call) so it attaches via ``Depends`` and a new
-    household endpoint can't forget the guard.
-    """
-    if ctx.store.household_id_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="You're not set up in a household.",
-        )
-    return ctx
 
 
 #: Per-request timeout (seconds) for the hot-path window inference. Kept short:
@@ -742,7 +626,6 @@ __all__ = [
     "_outing_return_confirmation",
     "_outing_started_confirmation",
     "_parse_dt_or_none",
-    "_resolve_user_row",
     "_switch_resolved_confirmation",
     "analyze_impact",
     "apply_outing_evaluation",
