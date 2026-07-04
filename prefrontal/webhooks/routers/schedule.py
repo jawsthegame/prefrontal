@@ -51,6 +51,7 @@ from prefrontal.departure import (
     departure_kwargs,
     evaluate_departure_check,
     plan_departure,
+    plan_upcoming_departures,
     record_departure_outcome,
 )
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
@@ -461,6 +462,51 @@ def build_router(services: RouterServices) -> APIRouter:
         return {
             "commitments": memory.upcoming_commitments(),
             "calendars": resolved_settings.calendar_label_map,
+        }
+
+    @router.get("/departure/next", tags=["schedule"])
+    def departure_next(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Leave-by time for the soonest upcoming commitment — read-only.
+
+        The passive, side-effect-free companion to
+        ``POST /webhooks/departure/check``: that endpoint debounces and *records* a
+        nudge (it drives delivery), so a widget polling it would corrupt the
+        fire-once state and expire nudges early. This one only computes the plan for
+        the soonest upcoming commitment and returns its ``leave_by`` for display —
+        no dedup, no nudge, safe to poll.
+
+        Returns ``{"departure": {...} | None, "location_known": bool}``. The
+        ``departure`` mirrors the check endpoint's ``reminder`` fields (minus the
+        one-tap HTTP decoration) so a client can show *when to leave* beside the
+        commitment's start. ``None`` when nothing is upcoming or the Time Blindness
+        module (which owns departure timing) is off.
+        """
+        # Departure timing is a Time Blindness intervention; when it's off there's
+        # no leave-by to surface, matching /webhooks/departure/check.
+        if not module_enabled("time_blindness", resolved_settings):
+            return {"departure": None, "location_known": False}
+        memory = ctx.store
+        location_known = memory.get_location() is not None
+        plans = plan_upcoming_departures(memory)
+        if not plans:
+            return {"departure": None, "location_known": location_known}
+        top = plans[0]  # soonest first (upcoming_commitments order)
+        return {
+            "departure": {
+                "commitment_id": top.commitment["id"],
+                "title": top.commitment["title"],
+                "location": top.commitment.get("location"),
+                "start_at": top.commitment["start_at"],
+                "leave_by": top.leave_by,
+                "minutes_until_leave": top.minutes_until_leave,
+                "travel_minutes": top.travel_minutes,
+                "basis": top.basis,
+                "level": top.level,
+                "mode": top.mode,
+            },
+            "location_known": location_known,
         }
 
     @router.get("/impact/cascade", tags=["schedule"])

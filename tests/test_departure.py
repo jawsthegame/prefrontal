@@ -25,6 +25,7 @@ from prefrontal.departure import (
     evaluate_departure_check,
     next_departure,
     plan_departure,
+    plan_upcoming_departures,
     record_departure_outcome,
 )
 from prefrontal.impact import utcnow
@@ -383,6 +384,49 @@ def test_evaluate_departure_check_falls_back_to_stored_location(store):
     result = evaluate_departure_check(store)  # no current_lat/lon supplied
     assert result.location_known is True
     assert result.reminder is not None
+
+
+def test_plan_upcoming_departures_is_read_only(store):
+    """The read-only helper plans every upcoming commitment and fires nothing."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        location="123 Main St", source="manual",
+    )
+    plans = plan_upcoming_departures(store)  # reads stored location
+    assert len(plans) == 1
+    assert plans[0].commitment["title"] == "Dentist"
+    assert plans[0].level == "soon"
+    # No nudge recorded and no debounce signature written — safe to poll.
+    assert store.recent_nudges() == []
+    assert store.get_state("last_departure_signature", "") == ""
+
+
+def test_departure_next_endpoint_reports_leave_by_without_firing(client, store):
+    """GET /departure/next returns the soonest leave-by and has no side effects."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        location="123 Main St", source="manual",
+    )
+    body = client.get("/departure/next", headers=_auth()).json()
+    dep = body["departure"]
+    assert dep is not None
+    assert dep["title"] == "Dentist"
+    assert dep["level"] == "soon"
+    assert dep["mode"] == "travel"
+    assert body["location_known"] is True
+    # Read-only: polling it neither records a nudge nor arms the check's debounce,
+    # so the real POST /webhooks/departure/check still fires afterwards.
+    assert client.get("/nudges", headers=_auth()).json()["nudges"] == []
+    fired = client.post("/webhooks/departure/check", json={}, headers=_auth()).json()
+    assert fired["fire"] is True
+
+
+def test_departure_next_endpoint_null_when_nothing_upcoming(client, store):
+    """With no upcoming commitments, the endpoint reports no departure."""
+    body = client.get("/departure/next", headers=_auth()).json()
+    assert body["departure"] is None
 
 
 def test_departure_check_records_nudge_and_lists_it(client, store):
