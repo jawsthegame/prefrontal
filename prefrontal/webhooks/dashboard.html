@@ -735,7 +735,12 @@ function renderCategories(d) {
 // that topple — each with scheduled → projected time, how late, and the upstream
 // commitment that pushed it. Empty (renders nothing) when the day holds.
 function renderCascade(cascade) {
-  const risky = (cascade && cascade.at_risk) || [];
+  // Only surface a live overrun (an active outing, or an explicit what-if
+  // free-time). The passive "now" projection would flag any just-past leave-by
+  // as at-risk even when you're already on your way — a permanent red strip that
+  // trains you to ignore it. Idle days stay dark; conflicts/departures own those.
+  if (!cascade || cascade.source === "now") return "";
+  const risky = cascade.at_risk || [];
   if (!risky.length) return "";
   const hard = !!(cascade && cascade.hard_conflict);
   const dominoes = risky.map((i) => {
