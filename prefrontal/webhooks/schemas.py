@@ -338,6 +338,20 @@ class TripLabel(BaseModel):
         default=None,
         description="Optional category (errand/social/work/health/family/leisure/other).",
     )
+    domain: str | None = Field(
+        default=None,
+        description="Optional life-domain for focus balance (shop/work/home/kids/personal).",
+    )
+
+
+class TripDomain(BaseModel):
+    """Body of ``POST /webhooks/trip/domain`` — set/clear a trip's life-domain."""
+
+    trip_id: int = Field(description="The trip to (re)file into a life-domain.")
+    domain: str | None = Field(
+        default=None,
+        description="Life-domain (shop/work/home/kids/personal); omit or null to clear.",
+    )
 
 
 class TripReflect(BaseModel):

@@ -147,9 +147,15 @@ also defines:
   module). Unlike an outing, nothing is declared up front: `departed_at` is when
   the phone left the home radius, `returned_at` when it came back (closing the
   loop), `max_distance_m` the farthest it reached. After the fact the user adds a
-  `label` and `category` and an honest plain-English `reflection`, classified into
-  a `reflection_outcome` (success/partial/miss) that resolves the `task` episode
-  (`episode_id`) the return logged — feeding the learning loop.
+  `label`, a `category` (activity flavor — errand/social/…), and an honest
+  plain-English `reflection`, classified into a `reflection_outcome`
+  (success/partial/miss) that resolves the `task` episode (`episode_id`) the return
+  logged — feeding the learning loop. The nullable `domain` is the orthogonal
+  life-sphere (shop/work/home/kids/personal) the **focus-balance** rollup
+  (`prefrontal/focus_balance.py`) sums out-of-home time up by — the same work/home
+  domain todos and mail carry, so a work trip and a work todo roll up together;
+  optional per-domain weekly `focus_target:<domain>` coaching keys (seeded by the
+  Parent pack) turn a shortfall into a gentle "light on home this week" nudge.
 - **`focus_sessions`** — active/historical deep-work blocks (a stated task, an
   optional planned duration, and an `aligned` "is this what I meant to do?" bit)
   for the Hyperfocus module. Drives the asymmetric protect-vs-interrupt logic: an

@@ -17,6 +17,12 @@ from fastapi import (
     status,
 )
 
+from prefrontal.focus_balance import (
+    FOCUS_DOMAINS,
+    balance_summary_line,
+    build_focus_balance,
+    normalize_focus_domain,
+)
 from prefrontal.mail import (
     ingest_messages,
 )
@@ -57,6 +63,7 @@ from prefrontal.webhooks.schemas import (
     ShortcutPayload,
     TriageForget,
     TriageIn,
+    TripDomain,
     TripLabel,
     TripReflect,
 )
@@ -258,7 +265,9 @@ def build_router(services: RouterServices) -> APIRouter:
         ``active`` is the open trip (if you're out right now); ``recent`` is the
         history newest-first; ``unlabeled`` are the completed trips still awaiting
         a label, i.e. the ones the system is asking you to name. ``categories`` is
-        the suggested vocabulary for the label form.
+        the suggested activity vocabulary; ``domains`` the life-sphere vocabulary
+        (shop/work/home/kids/personal) the focus-balance rollup buckets time-out by —
+        both for the label form.
         """
         memory = ctx.store
         return {
@@ -266,6 +275,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "recent": memory.recent_trips(limit=20),
             "unlabeled": memory.unlabeled_trips(limit=20),
             "categories": list(TRIP_CATEGORIES),
+            "domains": list(FOCUS_DOMAINS),
         }
 
     @router.post("/webhooks/trip/label", tags=["ingestion"])
@@ -273,7 +283,13 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: TripLabel,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Label and categorize a completed trip (the retrospective ask)."""
+        """Label, categorize, and (optionally) domain a completed trip.
+
+        The retrospective ask. ``category`` is the activity flavor; ``domain`` is
+        the life-sphere the focus-balance rollup sums time-out by. Both are
+        optional — a bare label is fine, and the domain can be set later via
+        ``/webhooks/trip/domain``.
+        """
         label = payload.label.strip()
         if not label:
             raise HTTPException(
@@ -284,6 +300,7 @@ def build_router(services: RouterServices) -> APIRouter:
             payload.trip_id,
             label=label,
             category=normalize_trip_category(payload.category),
+            domain=normalize_focus_domain(payload.domain),
         )
         if updated is None:
             raise HTTPException(
@@ -294,6 +311,56 @@ def build_router(services: RouterServices) -> APIRouter:
             "trip_id": updated["id"],
             "label": updated["label"],
             "category": updated["category"],
+            "domain": updated["domain"],
+        }
+
+    @router.post("/webhooks/trip/domain", tags=["ingestion"])
+    def trip_domain(
+        payload: TripDomain,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """(Re)file a trip into a life-domain without touching its label.
+
+        The focus-balance edit path: correct a misfiled trip, or add a domain to
+        one you only labeled. A null/blank ``domain`` clears it.
+        """
+        updated = ctx.store.set_trip_domain(
+            payload.trip_id, normalize_focus_domain(payload.domain)
+        )
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No trip with id {payload.trip_id}.",
+            )
+        return {"trip_id": updated["id"], "domain": updated["domain"]}
+
+    @router.get("/balance", tags=["ingestion"])
+    def focus_balance(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        days: int = 7,
+    ) -> dict[str, Any]:
+        """Focus-balance rollup — time out per life-domain over the last ``days``.
+
+        Read-only, safe to poll. ``summary`` is the one-line digest; ``domains``
+        the per-sphere breakdown with minutes, trip count, weekly target (scaled to
+        the window), and whether it's running under half its aim.
+        """
+        days = max(1, min(days, 365))
+        balance = build_focus_balance(ctx.store, days=days)
+        return {
+            "days": balance.days,
+            "total_minutes": balance.total_minutes,
+            "summary": balance_summary_line(balance),
+            "domains": [
+                {
+                    "domain": d.domain,
+                    "minutes": d.minutes,
+                    "trips": d.trips,
+                    "target_minutes": d.target_minutes,
+                    "underserved": d.underserved,
+                }
+                for d in balance.domains
+            ],
         }
 
     @router.post("/webhooks/trip/reflect", tags=["ingestion"])

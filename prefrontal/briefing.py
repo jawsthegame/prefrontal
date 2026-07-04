@@ -31,6 +31,7 @@ from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
+from prefrontal.focus_balance import balance_summary_line, build_focus_balance
 from prefrontal.impact import fragile_stretch, utcnow
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
@@ -92,6 +93,9 @@ class Briefing:
         switch_feedback: Optional switch-rate reflection (Impulsivity's
             ``switch_rate_feedback`` intervention) — set when the last day's focus
             sessions signalled any switch-impulses; ``None`` otherwise.
+        balance: Optional one-line focus-balance digest — the week's out-of-home
+            time by life-sphere (shop/work/home/kids/personal) from closed-loop trips;
+            ``None`` when no completed trips fall in the window.
     """
 
     date: str
@@ -107,6 +111,7 @@ class Briefing:
     fragile: list[dict[str, Any]] = field(default_factory=list)
     encouragement: str | None = None
     switch_feedback: str | None = None
+    balance: str | None = None
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -276,6 +281,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         recent_focus, baseline=_switch_baseline(store)
     )
 
+    # Focus balance: a one-line "where the week's out-of-home time went" digest by
+    # life-sphere (shop/work/home/kids/personal), from closed-loop trips. None when no
+    # completed trips land in the window, so an untracked week adds no noise.
+    balance = balance_summary_line(build_focus_balance(store, now=now))
+
     briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -289,6 +299,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         departures=departures,
         fragile=fragile,
         switch_feedback=switch_feedback,
+        balance=balance,
     )
 
     # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
@@ -403,6 +414,11 @@ def render_briefing(briefing: Briefing) -> str:
     # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
     if briefing.switch_feedback:
         lines.append(f"**Focus switches (last 24h):** {briefing.switch_feedback}.")
+        lines.append("")
+
+    # Focus balance — where the week's out-of-home time went, by life-sphere.
+    if briefing.balance:
+        lines.append(f"**Focus balance:** {briefing.balance}")
         lines.append("")
 
     # Avoidance — the important things you keep skipping.

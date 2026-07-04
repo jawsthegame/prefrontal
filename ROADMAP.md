@@ -501,9 +501,19 @@ ordered by leverage; each is independent but builds on denser capture.
    an honest plain-English **"how it went"** note (`POST /webhooks/trip/reflect`)
    is classified into an outcome that *resolves* that pending episode — so
    self-report becomes drift signal — while the raw note is also handed to the
-   LLM-as-sensor (§2) to propose deeper structured updates. *(Next: a per-trip
-   `context_key` bucket so trips calibrate separately from other tasks, and a
-   one-tap label/reflect Shortcut off the ambient ask.)*
+   LLM-as-sensor (§2) to propose deeper structured updates. **Focus balance now
+   layers a life-domain lens on top** (`prefrontal/focus_balance.py`): the label
+   ask also files each trip into a life-sphere — `domain` (shop/work/home/kids/personal),
+   the same work/home axis todos and mail carry (`POST /webhooks/trip/domain` to
+   edit) — and `build_focus_balance` rolls out-of-home time up per domain over a
+   week. It surfaces as `GET /balance`, `prefrontal balance`, a briefing line, and
+   a profile section; optional per-domain weekly `focus_target:<domain>` coaching
+   keys turn a shortfall into a gentle, opt-in "light on kids/personal this week"
+   ambient nudge — well-being, not productivity. The **Parent pack** seeds the
+   kids/home/personal targets and the `focus_balance_nudge` flag, so installing it
+   is what turns the guardrail on. *(Next: a per-trip `context_key` bucket so trips
+   calibrate separately from other tasks, a one-tap label/reflect Shortcut off the
+   ambient ask, and folding declared outings into the same domain rollup.)*
 2. **LLM-as-sensor, not LLM-as-author.** ✅ (v1) — `prefrontal/sensor.py` turns a
    free-text note ("I always blow off admin on Mondays") into *candidate*
    structured updates: a `coaching_state` key/value or an episode. Crucially the

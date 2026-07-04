@@ -58,7 +58,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
-| Closed-Loop Trip Tracking | `trip_tracking` | Passively logs undeclared round trips (leave home → return), then asks for a label, category, and an honest plain-English "how it went" that feeds the learning engine |
+| Closed-Loop Trip Tracking | `trip_tracking` | Passively logs undeclared round trips (leave home → return), then asks for a label, category, life-domain, and an honest plain-English "how it went" that feeds the learning engine. Rolls out-of-home time up by life-sphere (shop/work/home/kids/personal) into a **focus-balance** read, with an opt-in "light on kids/personal this week" nudge |
 | Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day) and "drink some water" (to a daily target), re-asked until met (opt-in via the `self_care` key) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
@@ -122,7 +122,8 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Recurring shared chores | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Owner-assigned daily jobs (run the dishwasher, pack lunches) with a lead-time reminder to the owner and — if it slips past due — a gentle heads-up to the *other* parent so the morning isn't a surprise; one-tap **Done**, `POST /webhooks/household/chores/check`, `prefrontal household chore` |
 | Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes to ntfy / Pushover / TTS with one-tap action buttons; `prefrontal coach --deliver` |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
-| Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop |
+| Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,domain,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop |
+| Focus balance (trip life-domains) | `prefrontal/focus_balance.py` | ✅ Rolls out-of-home trip time up by life-sphere (shop/work/home/kids/personal) over a week — `GET /balance`, `prefrontal balance`, a briefing line + profile section; opt-in weekly "light on kids/personal" nudge gated on per-domain targets the **Parent pack** seeds |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Scriptable home-screen widget | `deploy/scriptable/` | ✅ Glanceable "right now" (active outing, next commitments, counts) over Tailscale |
 | Source-agnostic triage agent | `prefrontal/triage.py` | ✅ Classify → route → nudge for any inbound signal (mail/calendar/n8n/manual): `POST /webhooks/n8n` · `/triage` · `GET /triage/recent`, routing into commitments/todos/episodes + a `triage_log`, surfaced in the briefing + a dashboard panel. See `docs/triage-agent.md`. |
@@ -177,6 +178,10 @@ prefrontal panic
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
 prefrontal fit 20      # "with 20 min free, you could knock out…"
+
+# Where did the week's out-of-home time go? (shop/work/home/kids/personal)
+prefrontal balance            # last 7 days by life-sphere, vs your weekly aims
+prefrontal balance --days 30  # zoom out to a month
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v

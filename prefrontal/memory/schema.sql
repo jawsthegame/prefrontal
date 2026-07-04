@@ -158,6 +158,9 @@ CREATE INDEX IF NOT EXISTS idx_outings_user_status ON outings (user_id, status);
 -- submit a plain-English `reflection` on how it went — classified into an
 -- `reflection_outcome` (success/partial/miss) that resolves the `task` episode
 -- (`episode_id`) the return logged, so honest self-report feeds the learning loop.
+-- `domain` is the orthogonal life-sphere (shop/work/home/kids/personal) the focus-balance
+-- rollup (`prefrontal/focus_balance.py`) sums time-out by; it mirrors the work/home
+-- domain todos and mail already carry, so a work trip and a work todo roll up together.
 CREATE TABLE IF NOT EXISTS trips (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id            INTEGER NOT NULL REFERENCES users(id),
@@ -169,6 +172,7 @@ CREATE TABLE IF NOT EXISTS trips (
     max_distance_m     REAL    NOT NULL DEFAULT 0,      -- farthest from home seen while out
     label              TEXT,                           -- user "what was this" (NULL until labeled)
     category           TEXT,                           -- user categorization (errand/social/…)
+    domain             TEXT,                           -- life-sphere for focus balance (shop/work/home/kids/personal)
     reflection         TEXT,                           -- plain-English "how it went", set on reflect
     reflection_outcome TEXT,                           -- classified success | partial | miss
     episode_id         INTEGER,                        -- the task episode the return logged
