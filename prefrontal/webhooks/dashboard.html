@@ -153,6 +153,23 @@
   .pri-2 { background: var(--firm-bg); color: var(--firm); }
   .conflict { background: var(--call-bg); color: var(--call); }
   .possible { background: var(--soft-bg); color: var(--soft); }
+  /* Impact cascade: when you're running behind, the domino chain of upcoming
+     commitments that get pushed late. Soft rows are amber; a hard one that gets
+     toppled is the red "call" treatment (a real deadline is at stake). */
+  .cascade { margin-bottom: 12px; padding: 8px 10px; background: var(--raise);
+    border-left: 3px solid var(--warn); border-radius: 0 6px 6px 0; }
+  .cascade.hard { border-left-color: var(--call); }
+  .domino { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
+    padding: 5px 0; border-top: 1px solid var(--line); }
+  .domino:first-of-type { border-top: none; }
+  .domino .dtitle { font-weight: 600; }
+  .domino.hard .dtitle { color: var(--call); }
+  .domino .dtime { font-size: 12px; color: var(--muted); }
+  .domino .dtime s { opacity: .6; }
+  .domino .dlate { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+    background: var(--soft-bg); color: var(--soft); }
+  .domino.hard .dlate { background: var(--call-bg); color: var(--call); }
+  .domino .dby { flex-basis: 100%; font-size: 12px; color: var(--muted); }
   .avoiding { background: var(--call-bg); color: var(--call); }
   .badge.first { background: var(--good-bg); color: var(--good); }
   .firststep { margin-top: 8px; padding: 8px 10px; background: var(--good-bg);
@@ -441,6 +458,13 @@ function fmt(ts) {
   return isNaN(d) ? ts : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function mins(n) { return n == null ? "—" : Math.round(n) + " min"; }
+// Time-only label (no date) — for the projected-start side of a cascade domino,
+// where the scheduled time beside it already carries the day.
+function hm(ts) {
+  if (!ts) return "—";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d) ? ts : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 // Minimal, safe markdown: escape first, then format a known subset.
 function md(src) {
@@ -707,7 +731,30 @@ function renderCategories(d) {
   }).join("");
   return `<div class="catlead">${s.length}/${d.cap} categories in use${capNote}</div>` + rows;
 }
-function renderCommitments(list, conflicts) {
+// The domino strip: when a cascade projects you late, the chain of commitments
+// that topple — each with scheduled → projected time, how late, and the upstream
+// commitment that pushed it. Empty (renders nothing) when the day holds.
+function renderCascade(cascade) {
+  const risky = (cascade && cascade.at_risk) || [];
+  if (!risky.length) return "";
+  const hard = !!(cascade && cascade.hard_conflict);
+  const dominoes = risky.map((i) => {
+    const isHard = i.hardness === "hard";
+    const late = Math.max(1, Math.round(-i.slack_minutes));
+    const by = i.caused_by
+      ? `<span class="dby">↳ pushed by ${esc(i.caused_by)}</span>`
+      : `<span class="dby">↳ the current overrun</span>`;
+    return `<div class="domino${isHard ? " hard" : ""}">
+      <span class="dtitle">${esc(i.title)}</span>
+      <span class="dtime"><s>${fmt(i.start_at)}</s> → ${hm(i.projected_start)}</span>
+      <span class="dlate">~${late}m late</span>
+      ${by}
+    </div>`;
+  }).join("");
+  return `<div class="cascade${hard ? " hard" : ""}">
+    <div class="subhead">Running behind — this cascades</div>${dominoes}</div>`;
+}
+function renderCommitments(list, conflicts, cascade) {
   const c = (list.commitments || []);
   // Config-driven calendar pills: the /commitments response maps each feed slug
   // (calendar_key) to a {label, color}. A commitment whose calendar has no config
@@ -725,7 +772,7 @@ function renderCommitments(list, conflicts) {
   };
   const ids = new Set();
   (conflicts.conflicts || []).forEach((p) => { ids.add(p.a.id); ids.add(p.b.id); });
-  let html = "";
+  let html = renderCascade(cascade);
   (conflicts.conflicts || []).forEach((p) => {
     html += `<div class="row"><div class="main"><span class="badge conflict">conflict</span>
       <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div></div>`;
@@ -947,12 +994,12 @@ async function load() {
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
-    api("/triage/recent"),
+    api("/triage/recent"), api("/impact/cascade"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade] = results;
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
     $("#c-shopping").style.display = "";
@@ -969,7 +1016,11 @@ async function load() {
   put("#c-triage", triage, renderTriage);
   put("#c-triagelog", triagelog, renderTriageLog);
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
-    ? renderCommitments(commitments.value, conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] })
+    ? renderCommitments(
+        commitments.value,
+        conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] },
+        cascade.status === "fulfilled" ? cascade.value : null,
+      )
     : `<div class="err">unavailable</div>`;
   $("#c-briefing .body").innerHTML = briefing.status === "fulfilled" ? md(briefing.value.text || "") : `<div class="err">unavailable</div>`;
   if (profile.status === "fulfilled") {
