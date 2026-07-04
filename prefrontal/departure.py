@@ -120,6 +120,51 @@ def estimate_travel_minutes(
     return road_m / (speed_kmh * 1000.0 / 60.0)
 
 
+def travel_leads(
+    commitments: list[dict[str, Any]],
+    current_lat: float | None,
+    current_lon: float | None,
+    *,
+    bias: float = 1.0,
+    speed_kmh: float = DEFAULT_TRAVEL_SPEED_KMH,
+    road_factor: float = DEFAULT_ROAD_FACTOR,
+    prep_minutes: float = DEFAULT_PREP_MINUTES,
+) -> dict[int, float]:
+    """Effective per-commitment lead times from real travel along the day's chain.
+
+    Walks the commitments in start order as a sequence of legs: from your current
+    location to the first, then location-to-location between consecutive ones. For
+    each leg where both endpoints have coordinates, the lead is the bias-adjusted
+    travel estimate (:func:`estimate_travel_minutes`) plus a ``prep_minutes`` "out
+    the door" buffer — the same formula the departure reminder uses. Legs with an
+    unknown endpoint are omitted, so :func:`prefrontal.impact.cascade_impact` falls
+    back to their static ``lead_minutes``.
+
+    Returns a ``{commitment_id: minutes}`` map suitable for ``cascade_impact``'s
+    ``lead_override``. Empty when nothing can be estimated (no location, or no
+    destination coordinates anywhere).
+    """
+    prev: tuple[float, float] | None = (
+        (current_lat, current_lon)
+        if current_lat is not None and current_lon is not None
+        else None
+    )
+    leads: dict[int, float] = {}
+    for c in sorted(commitments, key=lambda x: _parse(x["start_at"])):
+        dest_lat, dest_lon = c.get("dest_lat"), c.get("dest_lon")
+        dest = (dest_lat, dest_lon) if dest_lat is not None and dest_lon is not None else None
+        cid = c.get("id")
+        if prev is not None and dest is not None and cid is not None:
+            distance_m = haversine_m(prev[0], prev[1], dest[0], dest[1])
+            travel = estimate_travel_minutes(distance_m, speed_kmh, road_factor) * bias
+            leads[cid] = round(travel + prep_minutes, 1)
+        # Advance the chain to this destination when we know it; an unknown
+        # location leaves ``prev`` as the last place we could pin down.
+        if dest is not None:
+            prev = dest
+    return leads
+
+
 def departure_level(
     minutes_until_leave: float,
     heads_up_minutes: float = DEFAULT_HEADS_UP_MINUTES,

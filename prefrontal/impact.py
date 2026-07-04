@@ -180,6 +180,7 @@ def cascade_impact(
     projected_free_at: datetime,
     commitments: list[dict[str, Any]],
     default_duration_minutes: float = DEFAULT_COMMITMENT_MINUTES,
+    lead_override: dict[int, float] | None = None,
 ) -> list[CascadeImpact]:
     """Propagate a projected free-time through the schedule, domino by domino.
 
@@ -196,6 +197,11 @@ def cascade_impact(
             optional ``end_at``).
         default_duration_minutes: Length assumed for a commitment lacking
             ``end_at``, used only to carry the delay forward through it.
+        lead_override: Optional ``{commitment_id: minutes}`` of *effective* lead
+            times to use instead of the static ``lead_minutes`` — e.g. real,
+            bias-adjusted travel estimates (:func:`prefrontal.departure.travel_leads`)
+            so a leg you can't actually make in the flat buffer is flagged. A
+            commitment absent from the map keeps its static lead.
 
     Returns:
         A list of :class:`CascadeImpact` in schedule order (the reading order of
@@ -204,10 +210,11 @@ def cascade_impact(
     ordered = sorted(commitments, key=lambda c: _parse(c["start_at"]))
     free = projected_free_at
     pusher: str | None = None  # title of the upstream commitment now running late
+    overrides = lead_override or {}
     out: list[CascadeImpact] = []
     for c in ordered:
         start = _parse(c["start_at"])
-        lead = c.get("lead_minutes") or 0.0
+        lead = overrides.get(c.get("id"), c.get("lead_minutes") or 0.0)
         latest_departure = start - timedelta(minutes=lead)
         slack = (latest_departure - free).total_seconds() / 60.0
         # You leave at `free`, travel `lead`, and can't start before the scheduled

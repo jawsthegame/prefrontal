@@ -27,6 +27,7 @@ from prefrontal.departure import (
     plan_departure,
     plan_upcoming_departures,
     record_departure_outcome,
+    travel_leads,
 )
 from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
@@ -698,3 +699,22 @@ def test_departure_left_skipped_when_module_disabled(store):
     with TestClient(app) as c:
         resp = c.post("/webhooks/departure/left", json={}, headers=_auth()).json()
     assert resp["recorded"] is False and resp["skipped"] == "module_disabled"
+
+
+def test_travel_leads_chains_locations_and_skips_unknown():
+    """Legs chain location-to-location; coordinate-less commitments are skipped."""
+    commits = [
+        {"id": 1, "start_at": "2026-07-10 09:00:00", "dest_lat": 0.0, "dest_lon": 0.0},
+        {"id": 2, "start_at": "2026-07-10 10:00:00"},  # no coords → falls back to static
+        {"id": 3, "start_at": "2026-07-10 11:00:00", "dest_lat": 0.5, "dest_lon": 0.5},
+    ]
+    leads = travel_leads(commits, 0.0, 0.0, bias=1.0, prep_minutes=5.0)
+    assert set(leads) == {1, 3}  # commitment 2 (no coords) is omitted
+    assert leads[1] == pytest.approx(5.0)  # current (0,0) → dest1 (0,0): 0 travel + 5 prep
+    assert leads[3] > leads[1]  # leg 3 is measured from dest1, a real distance away
+
+
+def test_travel_leads_empty_without_location():
+    """No current location → nothing to estimate."""
+    commits = [{"id": 1, "start_at": "2026-07-10 09:00:00", "dest_lat": 1.0, "dest_lon": 1.0}]
+    assert travel_leads(commits, None, None) == {}

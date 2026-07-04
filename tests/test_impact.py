@@ -165,6 +165,16 @@ def test_cascade_phrase_single_and_empty():
     assert cascade_at_risk(cascade_impact(_T, [clear])) == []
 
 
+def test_cascade_lead_override_replaces_static_lead():
+    """A travel-based lead override can flag a leg the static lead called safe."""
+    # Starts in 20 min with a 5-min static lead → reachable from now.
+    c = _cc("Client site", 20, lead=5, dur_min=30, cid=7)
+    assert not cascade_impact(_T, [c])[0].at_risk
+    # But if the real drive is 30 min, you can't make it (20 − 30 = −10).
+    risky = cascade_impact(_T, [c], lead_override={7: 30})
+    assert risky[0].at_risk and round(risky[0].slack_minutes) == -10
+
+
 # -- fragile stretch (briefing preview) --------------------------------------
 
 
@@ -256,6 +266,20 @@ def test_cascade_endpoint_propagates_and_reports_source(client, store):
     assert review["caused_by"] == "Standup"         # named upstream domino
     assert body["hard_conflict"] is True            # Standup is hard
     assert "cascades" in body["phrase"]
+
+
+def test_cascade_endpoint_travel_aware_with_location(client, store):
+    """A known location + destination coords make the cascade use real travel legs."""
+    store.upsert_commitment(
+        title="Gym", start_at=_utc(30), dest_lat=1.0, dest_lon=1.0, external_id="work:g",
+    )
+    aware = client.get(
+        "/impact/cascade?over_minutes=0&current_lat=0&current_lon=0", headers=_auth()
+    ).json()
+    assert aware["travel_aware"] is True
+    # With no location (none passed, none stored), it falls back to static leads.
+    fallback = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
+    assert fallback["travel_aware"] is False
 
 
 def test_cascade_endpoint_falls_back_to_now_when_schedule_clear(client, store):
