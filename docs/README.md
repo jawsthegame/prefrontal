@@ -27,6 +27,7 @@ capability with real examples, plus an API/CLI reference.
 - [**triage-agent.md**](triage-agent.md) — classifying and routing inbound signals.
 - [**impulsivity.md**](impulsivity.md) — the reflective-pause / capture-then-defer module.
 - [**encouragement.md**](encouragement.md) — the rough-day reassurance & recovery layer.
+- [**driver-pack.md**](driver-pack.md) — feasibility spec for a Driving-Focus safety module (and why it's a module, not a pack).
 
 **Reader-facing**
 - [**one-sheet.pdf**](one-sheet.pdf) · [**parent-pack.pdf**](parent-pack.pdf) — the visual one-sheets.
