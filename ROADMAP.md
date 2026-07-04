@@ -417,8 +417,10 @@ the first test. Code follow-ups below are optional polish.
   as a `manual` commitment — the block length is the bias-adjusted estimate (or an
   explicit `minutes`), placed at an explicit `at` or the earliest fitting free
   window today (`first_window_fitting` over `free_windows`, within waking hours),
-  turning a "good for: X" suggestion into a real hold. *(Next: multi-suggestion
-  per window.)*
+  turning a "good for: X" suggestion into a real hold. **Multi-suggestion per
+  window** shipped too: `suggest_for_windows(options_per_window=N)` returns a menu
+  per gap (the reserved primary + advisory alternatives), and the briefing's spare
+  section shows them ("good for: X _(or: Y, Z)_").
 
 ## Known stubs in the current code
 

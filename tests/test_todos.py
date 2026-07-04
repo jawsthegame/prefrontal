@@ -306,6 +306,34 @@ def test_suggest_for_windows_no_double_booking():
     assert out[1]["suggestion"]["title"] == "Long"    # Short used; Long fits 60m
 
 
+def test_suggest_for_windows_multi_option():
+    """options_per_window returns a menu per gap; the primary is options[0]."""
+    windows = [FreeWindow("2026-06-29 09:00:00", "2026-06-29 10:00:00", 60)]
+    todos = [
+        {"id": 1, "title": "A", "estimate_minutes": 10, "priority": 1, "deadline": None},
+        {"id": 2, "title": "B", "estimate_minutes": 20, "priority": 1, "deadline": None},
+        {"id": 3, "title": "C", "estimate_minutes": 30, "priority": 1, "deadline": None},
+    ]
+    out = suggest_for_windows(windows, todos, bias=1.0, options_per_window=3)
+    options = out[0]["options"]
+    assert len(options) == 3
+    assert out[0]["suggestion"] is options[0]  # primary is the first option
+
+
+def test_suggest_for_windows_primary_reserved_options_advisory():
+    """The primary never repeats across windows; alternatives may."""
+    windows = [FreeWindow("2026-06-29 09:00:00", "2026-06-29 10:00:00", 60),
+               FreeWindow("2026-06-29 13:00:00", "2026-06-29 14:00:00", 60)]
+    todos = [
+        {"id": 1, "title": "A", "estimate_minutes": 10, "priority": 2, "deadline": None},
+        {"id": 2, "title": "B", "estimate_minutes": 20, "priority": 1, "deadline": None},
+    ]
+    out = suggest_for_windows(windows, todos, bias=1.0, options_per_window=2)
+    # Distinct primaries (reserved), but B is a valid alternative in both gaps.
+    assert out[0]["suggestion"]["id"] != out[1]["suggestion"]["id"]
+    assert any(t["id"] == 2 for t in out[0]["options"])
+
+
 def test_fit_todos_bias_fn_is_per_todo():
     """bias_fn pads each todo by its own multiplier (§5), overriding the flat bias."""
     todos = [
