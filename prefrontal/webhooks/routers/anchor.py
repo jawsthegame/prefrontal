@@ -177,9 +177,11 @@ def build_router(services: RouterServices) -> APIRouter:
           level so it fires once, and includes the ``message``.
 
         For an active outing, **impact analysis** runs: the realistic free-time
-        is projected from the stated window and the learned time bias, and any
-        upcoming commitments that would be at risk are listed (and named in the
-        nudge message). Each returned item reports its post-check ``status``
+        is projected from the stated window and the learned time bias, then
+        *cascaded* through the schedule so knock-on commitments (not just the
+        first collision) are flagged — each ``impact`` item carries
+        ``delay_minutes``/``projected_start``/``caused_by`` and the nudge names the
+        domino chain. Each returned item reports its post-check ``status``
         (``active``/``returned``/``abandoned``); n8n acts on ``fire == true``.
         """
         memory = ctx.store

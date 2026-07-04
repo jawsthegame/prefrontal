@@ -58,6 +58,10 @@ from prefrontal.geocode import (
     normalize_query,
 )
 from prefrontal.impact import (
+    cascade_at_risk,
+    cascade_impact,
+    cascade_phrase,
+    project_free_time,
     utcnow,
 )
 from prefrontal.memory.store import (
@@ -457,6 +461,76 @@ def build_router(services: RouterServices) -> APIRouter:
         return {
             "commitments": memory.upcoming_commitments(),
             "calendars": resolved_settings.calendar_label_map,
+        }
+
+    @router.get("/impact/cascade", tags=["schedule"])
+    def impact_cascade(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        free_at: str | None = None,
+        over_minutes: float | None = None,
+    ) -> dict[str, Any]:
+        """Project a running-late free-time through the day, domino by domino.
+
+        The same cascade that ``/webhooks/outing/check`` runs on an active outing,
+        but queryable on its own so the dashboard, briefing, or any client can ask
+        "if I'm free at X, what topples?" without an outing in flight.
+
+        The free-time is resolved in priority order: an explicit ``free_at``
+        (``YYYY-MM-DD HH:MM:SS`` or ISO), else ``over_minutes`` from now
+        (``now + over_minutes``), else the bias-adjusted projection of the newest
+        active outing, else now. ``source`` reports which was used.
+
+        Returns the full chain (schedule order) with each link's
+        ``projected_start``/``delay_minutes``/``slack_minutes``/``caused_by``, the
+        at-risk subset, a ``hard_conflict`` flag, and a one-line ``phrase``.
+        """
+        memory = ctx.store
+        commitments = memory.upcoming_commitments()
+
+        source = "now"
+        free = utcnow()
+        if free_at:
+            raw = free_at.strip().replace("T", " ", 1)
+            parsed = _parse_dt_or_none(raw)
+            if parsed is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="free_at must be YYYY-MM-DD HH:MM:SS or ISO-8601",
+                )
+            free, source = parsed, "explicit"
+        elif over_minutes is not None:
+            free, source = utcnow() + timedelta(minutes=float(over_minutes)), "over_minutes"
+        else:
+            outing = memory.most_recent_active_outing()
+            if outing is not None:
+                bias = memory.get_float("time_estimation_bias", 1.0)
+                free = project_free_time(
+                    outing["departure_at"], outing["time_window_minutes"], bias
+                )
+                source = "outing"
+
+        def dump(i: Any) -> dict[str, Any]:
+            return {
+                "commitment_id": i.commitment["id"],
+                "title": i.commitment["title"],
+                "start_at": i.commitment["start_at"],
+                "projected_start": i.projected_start,
+                "delay_minutes": i.delay_minutes,
+                "slack_minutes": i.slack_minutes,
+                "at_risk": i.at_risk,
+                "caused_by": i.caused_by,
+                "hardness": i.commitment.get("hardness"),
+            }
+
+        chain = cascade_impact(free, commitments)
+        risky = cascade_at_risk(chain)
+        return {
+            "projected_free_at": free.strftime(TS_FMT),
+            "source": source,
+            "cascade": [dump(i) for i in chain],
+            "at_risk": [dump(i) for i in risky],
+            "hard_conflict": any(i.commitment.get("hardness") == "hard" for i in risky),
+            "phrase": cascade_phrase(chain).strip(),
         }
 
     @router.get("/commitments/conflicts", tags=["schedule"])

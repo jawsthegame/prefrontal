@@ -369,12 +369,18 @@ the first test. Code follow-ups below are optional polish.
   (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,
   `GET /commitments`, and overlap detection at `GET /commitments/conflicts` with
   a Pushover alert in the sync workflow.
-- **Impact analysis** ✅ — `prefrontal/impact.py`: projects realistic free-time
-  from the `time_estimation_bias` and flags upcoming commitments now at risk
-  (`start_at − lead_minutes` vs projection). Surfaced in `/webhooks/outing/check`
-  (an `impact` list + `hard_conflict` flag) and named in the nudge ("…'Team sync'
-  is now at risk"). *(Next: full cascade/domino propagation through the chain;
-  expose impact beyond outings.)*
+- **Impact analysis + cascade** ✅ — `prefrontal/impact.py`: projects realistic
+  free-time from the `time_estimation_bias` and flags upcoming commitments now at
+  risk (`start_at − lead_minutes` vs projection). `cascade_impact()` then
+  propagates the overrun *through* the chain — a late finish carries forward
+  through each commitment's own length, so a meeting two hops down is flagged when
+  the delay reaches it, with `delay_minutes`/`projected_start`/`caused_by` naming
+  the upstream domino; the chain self-heals when a gap absorbs the slip. Surfaced
+  in `/webhooks/outing/check` (an `impact` list + `hard_conflict` flag, message
+  tail "This cascades: 'A' → 'B' → 'C'") and, beyond outings, at
+  `GET /impact/cascade` (queryable from any free-time via `free_at`/`over_minutes`,
+  else the active outing, else now) so the dashboard/briefing can render the
+  domino timeline on demand.
 - **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
   commitments, double-bookings, what slipped this past week, and a coaching note
   (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +
