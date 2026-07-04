@@ -27,6 +27,7 @@ from prefrontal.modules.self_care import (
     apply_self_care_action,
     mark_self_care_prompted,
     meal_message,
+    sweep_unanswered_self_care,
     water_message,
 )
 from prefrontal.webhooks.app import create_app
@@ -311,6 +312,36 @@ def test_adapt_eases_off_on_genuine_engagement():
 def test_adapt_insufficient_data_holds():
     suggested, reason = adapt_self_care_interval(_responses(confirmed=2), 40, current_interval=40)
     assert suggested == 40 and "not enough" in reason
+
+
+def test_adapt_widens_when_ignored_often():
+    """An unanswered (ignored) nudge is a 'not now' signal too — it widens."""
+    responses = [{"outcome": "ignored", "latency": None} for _ in range(3)]
+    responses += [{"outcome": "confirmed", "latency": 200.0} for _ in range(2)]
+    suggested, reason = adapt_self_care_interval(responses, 40, current_interval=40)
+    assert suggested == 50 and "ignore" in reason  # 3/5 resisted → widen 40×1.25
+
+
+def test_sweep_logs_ignored_and_clears_the_stamp(store):
+    """A self-care nudge un-acted past the window becomes an 'ignored' episode."""
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    mark_self_care_prompted(store, [_meal_decision()], t0)
+    # Well within the window → nothing swept yet.
+    assert sweep_unanswered_self_care(store, t0 + timedelta(minutes=5)) == 0
+    # Past the window → one ignored episode, and the stamp is cleared.
+    assert sweep_unanswered_self_care(store, t0 + timedelta(minutes=40)) == 1
+    ep = store.episodes_by_type(SELF_CARE_EPISODE)[0]
+    assert ep["outcome"] == "ignored" and ep["context"] == "meal: ignored"
+    # Idempotent: the stamp is gone, so a second sweep finds nothing.
+    assert sweep_unanswered_self_care(store, t0 + timedelta(minutes=80)) == 0
+
+
+def test_sweep_skips_an_answered_nudge(store):
+    """A nudge that got a tap clears its stamp, so the sweep never flags it."""
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    mark_self_care_prompted(store, [_meal_decision()], t0)
+    apply_self_care_action(store, "meal_ate", now=t0 + timedelta(minutes=2), today="2026-07-03")
+    assert sweep_unanswered_self_care(store, t0 + timedelta(minutes=40)) == 0
 
 
 def _log_response(store, kind, outcome):

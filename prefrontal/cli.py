@@ -68,7 +68,11 @@ from prefrontal.memory.summarizer import (
     summarize_profile,
 )
 from prefrontal.modules import available, enabled_modules
-from prefrontal.modules.self_care import adapt_self_care, mark_self_care_prompted
+from prefrontal.modules.self_care import (
+    adapt_self_care,
+    mark_self_care_prompted,
+    sweep_unanswered_self_care,
+)
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
@@ -1154,6 +1158,11 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         )
         if swept:
             print(f"({swept} unanswered nudge(s) logged as channel misses)")
+        # Self-care nudges track latency separately; sweep their unanswered ones
+        # into "ignored" episodes so the cadence learner sees "too frequent".
+        ignored = sweep_unanswered_self_care(store, now)
+        if ignored:
+            print(f"({ignored} unanswered self-care nudge(s) logged as ignored)")
         decisions = decide(store, cues, ctx)
         if not decisions:
             print(f"Nothing to say right now ({len(cues)} cue(s) held).")

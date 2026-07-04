@@ -122,9 +122,12 @@ the first test. Code follow-ups below are optional polish.
   `deploy/n8n/coach-check.workflow.json` publishes them to ntfy, so the buttons
   render. **Off by default** — set the `self_care` coaching key to `on` (each check
   also has its own `meal_enabled`/`water_enabled`). Covered by
-  `tests/test_self_care.py`. *(Next: the adaptive-cadence learner — see "Learning
-  & adaptation" §6; and whether self-care grows into its own basics pack with
-  meds/sleep.)*
+  `tests/test_self_care.py`. The **adaptive-cadence learner** ships (see "Learning
+  & adaptation" §6): it now folds **unanswered** nudges in too —
+  `sweep_unanswered_self_care` logs a nudge left un-acted past a window as an
+  `ignored` episode, which the learner reads as a "wrong time / too frequent"
+  signal alongside snoozes. *(Next: whether self-care grows into its own basics
+  pack with meds/sleep.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
@@ -639,9 +642,13 @@ ordered by leverage; each is independent but builds on denser capture.
      *eases off* a little. v1 only ever widens, bounded to `MAX_INTERVAL_FACTOR`×
      the default, and never overrides an interval the user set explicitly. The
      verdict prints in `prefrontal learn`. Covered by `tests/test_self_care.py`.
-   *(Next: fold in swept-unanswered as a "wrong channel/time" signal, and — per
-   step 4 — verify the adapted cadence actually reduced misses before trusting it
-   further.)*
+   - **Unanswered nudges now count too.** `sweep_unanswered_self_care` (run each
+     coaching tick, from `/webhooks/coach/check` and `prefrontal coach --deliver`)
+     logs a self-care nudge left un-acted past `SELF_CARE_ACK_WINDOW_MINUTES` as an
+     `ignored` episode; the learner treats snooze *and* ignore as the same "not
+     now" widen signal — catching the common case of ignoring rather than snoozing.
+   *(Next: per step 4, verify the adapted cadence actually reduced misses before
+   trusting it further.)*
 
 ## Beyond v1 (from the README architecture)
 
