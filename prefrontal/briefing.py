@@ -27,9 +27,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
+from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import find_conflicts
 from prefrontal.config import get_settings
-from prefrontal.impact import utcnow
+from prefrontal.impact import fragile_stretch, utcnow
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
@@ -71,6 +72,10 @@ class Briefing:
         slips: Count of recent ``miss`` episodes by ``episode_type``.
         coaching: Selected coaching values surfaced in the briefing.
         spare: Free windows in the rest of the day, each with a suggested todo.
+        fragile: At-risk links of the tightest back-to-back stretch among today's
+            remaining commitments *if* each runs the learned time-bias longer than
+            planned — a "before it slips" preview. Empty on a day with slack or
+            when the bias shows no habitual overrun.
         encouragement: Optional closing encouragement line (spec §6.2) — set when
             the ``encouragement`` layer is on and the day warrants a note; ``None``
             leaves the briefing's usual time-bias reminder in place.
@@ -88,6 +93,7 @@ class Briefing:
     spare: list[dict[str, Any]] = field(default_factory=list)
     avoided: list[dict[str, Any]] = field(default_factory=list)
     surfaced: list[dict[str, Any]] = field(default_factory=list)
+    fragile: list[dict[str, Any]] = field(default_factory=list)
     encouragement: str | None = None
     switch_feedback: str | None = None
 
@@ -176,6 +182,27 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
                     }
                 )
 
+    # Fragile stretch: today's *remaining* commitments previewed under the learned
+    # overrun — if each runs bias× long, which back-to-backs collide? A "before it
+    # slips" heads-up, distinct from the reactive cascade on a live overrun. Silent
+    # on a day with slack or when the bias shows no habitual underestimation.
+    try:
+        bias = float(state.get("time_estimation_bias", {}).get("value", 1.0))
+    except (TypeError, ValueError):
+        bias = 1.0
+    remaining = [c for c in today if _parse_ts(c["start_at"]) >= now]
+    fragile = [
+        {
+            "title": i.commitment["title"],
+            "start_at": i.commitment["start_at"],
+            "projected_start": i.projected_start,
+            "delay_minutes": i.delay_minutes,
+            "caused_by": i.caused_by,
+            "hardness": i.commitment.get("hardness"),
+        }
+        for i in fragile_stretch(remaining, bias)
+    ]
+
     # Avoidance: the important things still open and being skipped.
     avoided = [
         {"title": a["todo"]["title"], "days_open": a["days_open"], "todo_id": a["todo"]["id"]}
@@ -212,6 +239,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         spare=spare,
         avoided=avoided,
         surfaced=surfaced,
+        fragile=fragile,
         switch_feedback=switch_feedback,
     )
 
@@ -285,6 +313,23 @@ def render_briefing(briefing: Briefing) -> str:
             lines.append(
                 f"- '{c['a']}' overlaps '{c['b']}' by {c['overlap_minutes']:g} min"
             )
+        lines.append("")
+
+    # Fragile stretch — a back-to-back run that holds on paper but topples if you
+    # run your usual bit long. A preview, not an alarm: framed as "if things run
+    # long," so it informs without nagging.
+    if briefing.fragile:
+        shown = briefing.fragile[:3]
+        chain = " → ".join(
+            f"{f['title']} (~{round(f['delay_minutes'])} min late)" for f in shown
+        )
+        more = "" if len(briefing.fragile) <= 3 else f" +{len(briefing.fragile) - 3} more"
+        first = briefing.fragile[0]
+        trigger = first.get("caused_by") or "the first"
+        lines.append(
+            f"**⏳ Tight stretch:** if today runs long, {chain}{more} — "
+            f"it starts with '{trigger}' overrunning."
+        )
         lines.append("")
 
     # What slipped.

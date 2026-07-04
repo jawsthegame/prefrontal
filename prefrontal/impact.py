@@ -16,7 +16,7 @@ Pure functions only; the outing check endpoint wires them to live data.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -261,3 +261,58 @@ def cascade_phrase(impacts: list[CascadeImpact]) -> str:
     )
     more = "" if len(risky) <= 3 else f" +{len(risky) - 3} more"
     return f" This cascades: {chain}{more}."
+
+
+def fragile_stretch(
+    commitments: list[dict[str, Any]],
+    bias: float,
+    default_duration_minutes: float = DEFAULT_COMMITMENT_MINUTES,
+) -> list[CascadeImpact]:
+    """Preview which back-to-backs would topple if the day runs habitually long.
+
+    Where :func:`cascade_impact` answers "given I'm *already* behind, what
+    slips?", this is the morning-briefing preview: assume you start the first
+    thing on time but every commitment runs ``bias`` × its planned length (your
+    learned :data:`time_estimation_bias`), and see whether the chain still holds.
+    A stretch that fits on paper but collides under that realistic inflation is
+    what a morning heads-up wants to name — before the day starts.
+
+    Seeds the cascade at the first commitment's on-time departure
+    (``start − lead``), so the first is never itself flagged; only genuine
+    knock-on from an inflated predecessor surfaces.
+
+    Args:
+        commitments: The commitments to preview (e.g. today's remaining ones).
+        bias: The learned ``time_estimation_bias`` multiplier.
+        default_duration_minutes: Length assumed for a commitment lacking
+            ``end_at`` before inflation.
+
+    Returns:
+        The at-risk :class:`CascadeImpact` links (schedule order). Empty when the
+        day has slack, when ``bias <= 1.0`` (no habitual overrun to model), or
+        when there are fewer than two commitments to collide.
+    """
+    if bias <= 1.0 or len(commitments) < 2:
+        return []
+    ordered = sorted(commitments, key=lambda c: _parse(c["start_at"]))
+    inflated: list[dict[str, Any]] = []
+    for c in ordered:
+        start = _parse(c["start_at"])
+        stretched = _commitment_duration(c, default_duration_minutes) * bias
+        inflated.append(
+            {**c, "end_at": (start + timedelta(minutes=stretched)).strftime(TS_FMT)}
+        )
+    lead0 = ordered[0].get("lead_minutes") or 0.0
+    seed = _parse(ordered[0]["start_at"]) - timedelta(minutes=lead0)
+    chain = cascade_impact(seed, inflated, default_duration_minutes)
+    # The overrun here is baked into the inflated durations, not modelled as a
+    # start-delay, so cascade_impact's delay-based `caused_by` reads None. In this
+    # contiguous preview the culprit is simply the commitment right before — the
+    # one whose stretched length ate the buffer — so name it directly.
+    out: list[CascadeImpact] = []
+    for idx, link in enumerate(chain):
+        if not link.at_risk:
+            continue
+        culprit = ordered[idx - 1].get("title") if idx > 0 else None
+        out.append(replace(link, caused_by=culprit))
+    return out

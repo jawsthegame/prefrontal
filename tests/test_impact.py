@@ -18,6 +18,7 @@ from prefrontal.impact import (
     cascade_at_risk,
     cascade_impact,
     cascade_phrase,
+    fragile_stretch,
     impact_phrase,
     project_free_time,
     utcnow,
@@ -162,6 +163,35 @@ def test_cascade_phrase_single_and_empty():
     clear = _cc("Tomorrow", 1440, cid=1)
     assert cascade_phrase(cascade_impact(_T, [clear])) == ""
     assert cascade_at_risk(cascade_impact(_T, [clear])) == []
+
+
+# -- fragile stretch (briefing preview) --------------------------------------
+
+
+def test_fragile_stretch_flags_bias_inflated_collision():
+    """Back-to-backs that fit on paper topple once each runs bias× long."""
+    # Two 30-min meetings, 35 min apart — 5 min of buffer. On paper they hold.
+    a = _cc("Design review", 0, dur_min=30, cid=1)
+    b = _cc("1:1", 35, dur_min=30, cid=2)
+    # No overrun (1.0) → nothing flagged; the day holds as scheduled.
+    assert fragile_stretch([a, b], 1.0) == []
+    # At 1.4×, Design review runs ~42 min and eats the buffer, pushing the 1:1.
+    risky = fragile_stretch([a, b], 1.4)
+    assert [i.commitment["title"] for i in risky] == ["1:1"]
+    assert risky[0].caused_by == "Design review"
+    assert risky[0].delay_minutes > 0
+
+
+def test_fragile_stretch_silent_when_spaced_out():
+    """A day with real gaps stays silent even under a heavy bias."""
+    a = _cc("Morning", 0, dur_min=30, cid=1)
+    b = _cc("Afternoon", 300, dur_min=30, cid=2)  # hours later
+    assert fragile_stretch([a, b], 1.6) == []
+
+
+def test_fragile_stretch_needs_two_commitments():
+    """Nothing to collide with a single commitment."""
+    assert fragile_stretch([_cc("Solo", 0, dur_min=30)], 1.5) == []
 
 
 # -- endpoint integration ----------------------------------------------------
