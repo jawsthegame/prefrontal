@@ -54,6 +54,37 @@ def noon():
     return utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
 
 
+def test_panic_surfaces_cascade_knock_on(store, noon):
+    """Being late to leave for one commitment topples the ones after it."""
+    # Standup in 5 min with a 10-min lead → you're already 5 min late to leave;
+    # it runs 30 min, so its overrun eats into a back-to-back Review.
+    store.upsert_commitment(
+        title="Standup", start_at=_at(noon + timedelta(minutes=5)),
+        end_at=_at(noon + timedelta(minutes=35)), lead_minutes=10, external_id="w:1",
+    )
+    store.upsert_commitment(
+        title="Review", start_at=_at(noon + timedelta(minutes=40)),
+        end_at=_at(noon + timedelta(minutes=70)), lead_minutes=10, external_id="w:2",
+    )
+    plan = build_panic(store, now=noon)
+    titles = [c["title"] for c in plan.cascade]
+    assert titles == ["Standup", "Review"]  # schedule order, both at risk
+    review = next(c for c in plan.cascade if c["title"] == "Review")
+    assert review["caused_by"] == "Standup"
+    assert "Knock-on" in render_panic(plan)
+
+
+def test_panic_no_cascade_for_a_lone_late_item(store, noon):
+    """A single late commitment with nothing after it shows no knock-on chain."""
+    store.upsert_commitment(
+        title="Solo", start_at=_at(noon + timedelta(minutes=5)),
+        end_at=_at(noon + timedelta(minutes=35)), lead_minutes=10, external_id="w:solo",
+    )
+    plan = build_panic(store, now=noon)
+    assert plan.cascade == []
+    assert "Knock-on" not in render_panic(plan)
+
+
 def test_late_commitment_becomes_a_fire_and_drives_the_first_step(store, noon):
     """A commitment whose safe-departure has passed is 'late' and leads the plan."""
     store.upsert_commitment(
