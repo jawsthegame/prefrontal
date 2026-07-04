@@ -468,6 +468,32 @@ the first test. Code follow-ups below are optional polish.
 - **Finer `context_key`** — give outings their own pattern bucket so coffee runs
   calibrate separately from other tasks (still open).
 
+## Focus balance — follow-ups
+
+The life-domain lens over out-of-home time shipped end to end
+(`prefrontal/focus_balance.py`; the 5 spheres shop/work/home/kids/personal, the
+weekly rollup behind `GET /balance` / `prefrontal balance` / the briefing line /
+the profile section, the opt-in "light on kids/personal" nudge the Parent pack
+seeds, declared outings folded in alongside passive trips, and one-tap 🏠/🧒/🙋
+domain buttons on the trip-label ask). Open threads:
+
+- **Per-trip `context_key` bucket** — give trips (and outings) their own pattern
+  bucket so their durations calibrate separately from other `task` episodes,
+  rather than pooling into the shared time-estimation bias. Dovetails with the
+  Module-1 "Finer `context_key`" item above (still open).
+- **Fuller one-tap label/reflect Shortcut** — beyond the three domain buttons on
+  the ambient ask, a proper iOS Shortcut recipe to label + set a domain + drop a
+  one-line reflection in a single interaction, so the whole retrospective closes
+  from the notification without opening the dashboard.
+- **Configurable quick-file domains** — the one-tap trio is fixed to the three
+  "protect" spheres (home/kids/personal) because ntfy caps action buttons at 3.
+  Let the user pick which ≤3 domains those buttons file (e.g. surface `shop` for a
+  shopkeeper) via a coaching-state key, instead of a hard-coded set.
+- **Declared-outing domain at the point of declaration** — the outing-start flow
+  accepts a `domain`, but the iOS Shortcut / n8n recipes don't yet prompt for it;
+  wire the sphere into the "coffee, back in 15" capture so more outings arrive
+  pre-filed rather than needing a retrospective tag.
+
 ## Learning & adaptation — the road past v1
 
 Prefrontal's "it gets better the longer you use it" loop is real but narrow:
