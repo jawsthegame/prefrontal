@@ -703,6 +703,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "late": [dump(p) for p in plan.late],
             "soon": [dump(p) for p in plan.soon],
             "piling_up": [dump(p) for p in plan.piling_up],
+            "cascade": plan.cascade,
             "text": render_panic(plan),
         }
 

@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_dt
-from prefrontal.impact import utcnow
+from prefrontal.impact import cascade_at_risk, cascade_impact, utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
 
@@ -111,6 +111,10 @@ class PanicPlan:
             grounding line (``pressing`` = late + soon).
         headline: A single spoken/notification line — grounding + the first step —
             for a one-tap Shortcut or a proactive push.
+        cascade: The knock-on chain — upcoming commitments that also topple because
+            you're already behind (from :func:`prefrontal.impact.cascade_impact`
+            seeded at now), worst chained first. Empty unless being late here puts
+            two or more downstream commitments at risk.
     """
 
     date: str
@@ -121,6 +125,7 @@ class PanicPlan:
     first_step_for: str | None = None
     counts: dict[str, int] = field(default_factory=dict)
     headline: str = ""
+    cascade: list[dict[str, Any]] = field(default_factory=list)
 
 
 # --- Timestamp parsing -------------------------------------------------------
@@ -345,6 +350,41 @@ def _mail_pressures(store: MemoryStore) -> list[Pressure]:
     return out
 
 
+def _cascade_chain(
+    store: MemoryStore, day_end: datetime, now: datetime
+) -> list[dict[str, Any]]:
+    """The knock-on chain: upcoming commitments toppled by being behind *now*.
+
+    Seeds :func:`prefrontal.impact.cascade_impact` at ``now`` over today's
+    not-yet-started self commitments, so it flags only those you're already too
+    late to leave for and the downstream ones their overrun pushes. Returns the
+    at-risk links (schedule order) only when there are **two or more** — a lone
+    late item is already named in the ``late`` bucket, so the cascade earns its
+    space only when it reveals a genuine domino the buckets don't show.
+    """
+    fmt = TS_FMT
+    upcoming = [
+        c
+        for c in store.commitments_between(now.strftime(fmt), day_end.strftime(fmt))
+        if c.get("kind") != "fyi" and _parse_dt(c.get("start_at")) is not None
+    ]
+    risky = cascade_at_risk(cascade_impact(now, upcoming))
+    if len(risky) < 2:
+        return []
+    return [
+        {
+            "title": i.commitment["title"],
+            "start_at": i.commitment["start_at"],
+            "projected_start": i.projected_start,
+            "delay_minutes": i.delay_minutes,
+            "slack_minutes": i.slack_minutes,
+            "caused_by": i.caused_by,
+            "hardness": i.commitment.get("hardness"),
+        }
+        for i in risky
+    ]
+
+
 # --- First step (the inertia-breaker) ----------------------------------------
 
 
@@ -434,6 +474,7 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
         first_step=first_step,
         first_step_for=first_step_for,
         counts=counts,
+        cascade=_cascade_chain(store, day_end, now),
     )
     return replace(plan, headline=_headline(plan))
 
@@ -520,6 +561,17 @@ def render_panic(plan: PanicPlan) -> str:
     if plan.soon:
         lines.append(f"**🟠 Bearing down soon ({len(plan.soon)}):**")
         lines.extend(_render_item(p) for p in plan.soon)
+        lines.append("")
+
+    # Knock-on: being late now doesn't stay local — name the downstream chain so
+    # the true cost of the current slip is visible, not just the first fire.
+    if plan.cascade:
+        shown = plan.cascade[:3]
+        chain = " → ".join(
+            f"{c['title']} (~{round(-c['slack_minutes'])}m late)" for c in shown
+        )
+        more = "" if len(plan.cascade) <= 3 else f" +{len(plan.cascade) - 3} more"
+        lines.append(f"**⚠️ Knock-on:** running behind here also topples {chain}{more}.")
         lines.append("")
 
     if plan.piling_up:
