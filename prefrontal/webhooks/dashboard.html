@@ -180,6 +180,13 @@
     background: var(--soft-bg); color: var(--soft); }
   .domino.hard .dlate { background: var(--call-bg); color: var(--call); }
   .domino .dby { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+  /* The "what if I'm running behind" scrubber above the strip. */
+  .scrubber { display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    font-size: 12px; color: var(--muted); }
+  .scrubber label { white-space: nowrap; }
+  .scrubber input[type=range] { flex: 1; min-width: 80px; accent-color: var(--warn); }
+  .scrubval { min-width: 46px; text-align: right; font-weight: 700; color: var(--fg); }
+  .cascade-clear { font-size: 13px; color: var(--muted); padding: 2px 0 8px; }
   .avoiding { background: var(--call-bg); color: var(--call); }
   .badge.first { background: var(--good-bg); color: var(--good); }
   .firststep { margin-top: 8px; padding: 8px 10px; background: var(--good-bg);
@@ -444,6 +451,9 @@ let panicRequested = new URLSearchParams(location.search).get("panic") === "1";
 // Last /todos response, kept so the search box can re-filter client-side
 // without re-fetching (and so the filter survives the periodic refresh).
 let lastTodos = null;
+// Last /impact/cascade response, kept so the "running behind" scrubber can
+// restore the live strip when dragged back to 0 without a re-fetch.
+let lastCascade = null;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
@@ -837,6 +847,18 @@ function renderCascade(cascade) {
   return `<div class="cascade${hard ? " hard" : ""}">
     <div class="subhead">Running behind — this cascades</div>${dominoes}</div>`;
 }
+// The "what if I'm running behind" scrubber: a slider that re-projects the
+// cascade at +N minutes so you can see how fragile the day is *before* it slips.
+// Only shown when there are ≥2 upcoming commitments (something can topple).
+function renderScrubber(count) {
+  if (count < 2) return "";
+  return `<div class="scrubber nocap">
+    <label for="cascade-scrub">What if I'm running behind:</label>
+    <input id="cascade-scrub" type="range" min="0" max="60" step="5" value="0"
+      aria-label="Minutes running behind">
+    <span id="cascade-scrub-val" class="scrubval">on time</span>
+  </div>`;
+}
 function renderCommitments(list, conflicts, cascade) {
   const c = (list.commitments || []);
   // Config-driven calendar pills: the /commitments response maps each feed slug
@@ -855,7 +877,7 @@ function renderCommitments(list, conflicts, cascade) {
   };
   const ids = new Set();
   (conflicts.conflicts || []).forEach((p) => { ids.add(p.a.id); ids.add(p.b.id); });
-  let html = renderCascade(cascade);
+  let html = renderScrubber(c.length) + `<div id="cascade-strip" class="nocap">${renderCascade(cascade)}</div>`;
   (conflicts.conflicts || []).forEach((p) => {
     html += `<div class="row"><div class="main"><span class="badge conflict">conflict</span>
       <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div></div>`;
@@ -1098,11 +1120,12 @@ async function load() {
   put("#c-categories", categories, renderCategories);
   put("#c-triage", triage, renderTriage);
   put("#c-triagelog", triagelog, renderTriageLog);
+  lastCascade = cascade.status === "fulfilled" ? cascade.value : null;
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
     ? renderCommitments(
         commitments.value,
         conflicts.status === "fulfilled" ? conflicts.value : { conflicts: [] },
-        cascade.status === "fulfilled" ? cascade.value : null,
+        lastCascade,
       )
     : `<div class="err">unavailable</div>`;
   $("#c-briefing .body").innerHTML = briefing.status === "fulfilled" ? md(briefing.value.text || "") : `<div class="err">unavailable</div>`;
@@ -1197,7 +1220,7 @@ function applyCap(cardId) {
   const old = card.querySelector(":scope > .cap-more");
   if (old) old.remove();
   const cap = layout.caps[cardId] ?? 0;
-  const items = [...body.children].filter((el) => !el.classList.contains("empty") && !el.classList.contains("err"));
+  const items = [...body.children].filter((el) => !el.classList.contains("empty") && !el.classList.contains("err") && !el.classList.contains("nocap"));
   items.forEach((el) => { el.style.display = ""; });  // reset before re-applying
   if (!cap || items.length <= cap) return;  // "All", or nothing to hide
   const more = document.createElement("div");
@@ -1222,6 +1245,31 @@ document.addEventListener("click", (e) => {
     if (capb.dataset.cap === "more") expanded.add(id); else expanded.delete(id);
     applyCap(id);
   }
+});
+// The cascade "running behind" scrubber (also outside the [data-action] flow):
+// re-project the cascade at +N min. Debounced, with a token so a stale response
+// from an earlier drag can't overwrite a newer one. At 0 we restore the live
+// strip from the last load without a re-fetch.
+let scrubToken = 0, scrubTimer = null;
+document.addEventListener("input", (e) => {
+  const sc = e.target.closest("#cascade-scrub");
+  if (!sc) return;
+  const n = Number(sc.value);
+  const valEl = document.getElementById("cascade-scrub-val");
+  if (valEl) valEl.textContent = n === 0 ? "on time" : `+${n} min`;
+  const strip = document.getElementById("cascade-strip");
+  if (!strip) return;
+  clearTimeout(scrubTimer);
+  if (n === 0) { strip.innerHTML = renderCascade(lastCascade); return; }
+  const token = ++scrubToken;
+  scrubTimer = setTimeout(async () => {
+    try {
+      const data = await api(`/impact/cascade?over_minutes=${n}`);
+      if (token !== scrubToken) return;  // superseded by a newer drag
+      strip.innerHTML = renderCascade(data)
+        || `<div class="cascade-clear">Nothing topples at +${n} min. 👍</div>`;
+    } catch (_) { /* transient error — leave the strip as-is */ }
+  }, 150);
 });
 document.addEventListener("change", (e) => {
   const sel = e.target.closest(".capsel");
