@@ -4,31 +4,44 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-from prefrontal.webhooks._common import (
-    DEFAULT_PAUSE_SECONDS,
-    SWITCH_ACTIONS,
+from typing import (
     Annotated,
-    CaptureImpulse,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
     HTTPException,
-    ImpulseCaptured,
+    status,
+)
+
+from prefrontal.modules.hyperfocus import (
+    record_focus_switched,
+)
+from prefrontal.modules.impulsivity import (
+    DEFAULT_PAUSE_SECONDS,
+    SWITCH_ACTIONS,
+    build_pause_message,
+    infer_capture_title,
+    pause_seconds,
+    switch_response,
+)
+from prefrontal.webhooks.deps import (
     ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    _impulse_captured_confirmation,
+    _nudge_actions,
+    _switch_resolved_confirmation,
+)
+from prefrontal.webhooks.schemas import (
+    CaptureImpulse,
+    ImpulseCaptured,
     SwitchImpulse,
     SwitchPause,
     SwitchResolve,
     SwitchResolved,
-    _impulse_captured_confirmation,
-    _nudge_actions,
-    _switch_resolved_confirmation,
-    build_pause_message,
-    infer_capture_title,
-    pause_seconds,
-    record_focus_switched,
-    resolve_user,
-    status,
-    switch_response,
 )
 from prefrontal.webhooks.services import RouterServices
 

@@ -4,58 +4,96 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-from prefrontal.clock import TS_FMT
-from prefrontal.departure import departure_kwargs, evaluate_departure_check
-from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
-from prefrontal.webhooks._common import (
-    DEFAULT_ALERT_COOLDOWN_MINUTES,
-    DEFAULT_ALERT_MIN_PRESSING,
-    DEFAULT_DEPARTURE_GRACE_MINUTES,
-    DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
-    KINDS,
+from datetime import (
+    timedelta,
+)
+from typing import (
     Annotated,
     Any,
+)
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
+
+from prefrontal.briefing import (
+    build_briefing,
+    render_briefing,
+)
+from prefrontal.classify import (
+    classify_kind,
+)
+from prefrontal.clock import TS_FMT
+from prefrontal.clock import (
+    parse_ts as _parse_dt_or_none,
+)
+from prefrontal.coaching import (
+    in_quiet_hours,
+)
+from prefrontal.commitments import (
+    KINDS,
+    conflict_dismissal_key,
+    find_conflicts,
+    normalize_event,
+    partition_conflicts,
+    sync_calendar,
+)
+from prefrontal.config import (
+    Settings,
+)
+from prefrontal.departure import (
+    DEFAULT_DEPARTURE_GRACE_MINUTES,
+    attribute_departure,
+    departure_kwargs,
+    evaluate_departure_check,
+    plan_departure,
+    record_departure_outcome,
+)
+from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
+from prefrontal.geocode import (
+    normalize_query,
+)
+from prefrontal.impact import (
+    utcnow,
+)
+from prefrontal.memory.store import (
+    feed_label,
+)
+from prefrontal.modules.registry import (
+    is_enabled as module_enabled,
+)
+from prefrontal.panic import (
+    DEFAULT_ALERT_COOLDOWN_MINUTES,
+    DEFAULT_ALERT_MIN_PRESSING,
+    DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
+    build_panic,
+    overwhelm_level,
+    panic_alert_message,
+    record_panic_step_sent,
+    render_panic,
+    sweep_pending_panic_steps,
+)
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    _dismiss_url,
+    _nudge_actions,
+)
+from prefrontal.webhooks.notify import (
+    panic_actions,
+)
+from prefrontal.webhooks.schemas import (
     CalendarSync,
     CommitmentCreate,
     CommitmentKind,
     ConflictDismiss,
-    Depends,
-    HTTPException,
     PlaceCreate,
-    Request,
-    ScopedRequest,
-    Settings,
-    _dismiss_url,
-    _nudge_actions,
-    _parse_dt_or_none,
-    attribute_departure,
-    build_briefing,
-    build_panic,
-    classify_kind,
-    conflict_dismissal_key,
-    feed_label,
-    find_conflicts,
-    in_quiet_hours,
-    module_enabled,
-    normalize_event,
-    normalize_query,
-    overwhelm_level,
-    panic_actions,
-    panic_alert_message,
-    partition_conflicts,
-    plan_departure,
-    record_departure_outcome,
-    record_panic_step_sent,
-    render_briefing,
-    render_panic,
-    resolve_user,
-    status,
-    sweep_pending_panic_steps,
-    sync_calendar,
-    timedelta,
-    utcnow,
 )
 from prefrontal.webhooks.services import RouterServices
 

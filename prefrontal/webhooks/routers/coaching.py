@@ -6,7 +6,16 @@ coaching agent's tick endpoint (``docs/coaching-agent.md`` §7) — the sibling 
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import (
+    Annotated,
+    Any,
+)
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request,
+)
 
 from prefrontal.coaching import (
     DEFAULT_ACK_WINDOW_MINUTES,
@@ -26,16 +35,14 @@ from prefrontal.encouragement import (
     mark_sent_today,
     render_encouragement,
 )
+from prefrontal.impact import (
+    utcnow,
+)
 from prefrontal.modules import enabled_modules
 from prefrontal.modules.self_care import mark_self_care_prompted
-from prefrontal.webhooks._common import (
-    Annotated,
-    Any,
-    Depends,
-    Request,
+from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
-    utcnow,
 )
 from prefrontal.webhooks.notify import nudge_actions
 from prefrontal.webhooks.services import RouterServices

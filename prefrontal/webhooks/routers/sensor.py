@@ -9,23 +9,32 @@ a proposal (stamped ``source='llm_inferred'``). See :mod:`prefrontal.sensor`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-from prefrontal.webhooks._common import (
+from typing import (
     Annotated,
     Any,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
     HTTPException,
-    ObserveRequest,
     Query,
-    ScopedRequest,
+    status,
+)
+
+from prefrontal.sensor import (
     apply_proposal,
     extract_candidates,
     extract_candidates_from_transcript,
     record_candidates,
-    resolve_user,
-    status,
     summarize_candidate,
+)
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.schemas import (
+    ObserveRequest,
 )
 from prefrontal.webhooks.services import RouterServices
 

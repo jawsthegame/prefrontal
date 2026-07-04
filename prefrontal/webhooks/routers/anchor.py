@@ -4,57 +4,86 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import (
+    Annotated,
+    Any,
+)
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
+from fastapi.responses import (
+    HTMLResponse,
+)
 
 from prefrontal.clock import TS_FMT
+from prefrontal.coaching import (
+    resolve_ack,
+)
+from prefrontal.config import (
+    Settings,
+)
 from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
     checkin_summary,
     week_key,
 )
-from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
-from prefrontal.scheduling import local_datetime
-from prefrontal.webhooks._common import (
+from prefrontal.impact import (
+    utcnow,
+)
+from prefrontal.memory.store import (
+    MemoryStore,
+)
+from prefrontal.modules.hyperfocus import (
+    record_focus_end,
+    record_focus_switched,
+)
+from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_RADIUS_M,
     LEVELS,
-    Annotated,
-    Any,
-    Depends,
-    HTMLResponse,
-    HTTPException,
-    MemoryStore,
-    OutingReturn,
-    OutingStart,
-    OutingStarted,
-    Query,
-    Request,
+    apply_outing_evaluation,
+    escalation_level,
+    evaluate_outing,
+    infer_time_window,
+    parse_time_window,
+    record_outing_abandoned,
+    record_outing_return,
+)
+from prefrontal.modules.registry import (
+    is_enabled as module_enabled,
+)
+from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
+from prefrontal.panic import (
+    resolve_panic_step,
+)
+from prefrontal.scheduling import local_datetime
+from prefrontal.webhooks.deps import (
     ScopedRequest,
-    Settings,
+    resolve_user,
+)
+from prefrontal.webhooks.helpers import (
     _delivery_fields,
     _dismiss_page,
     _dismiss_url,
     _nudge_actions,
     _outing_return_confirmation,
     _outing_started_confirmation,
-    apply_outing_evaluation,
-    escalation_level,
-    evaluate_outing,
-    infer_time_window,
-    module_enabled,
-    parse_time_window,
-    record_focus_end,
-    record_focus_switched,
-    record_outing_abandoned,
-    record_outing_return,
-    resolve_ack,
-    resolve_panic_step,
-    resolve_user,
-    status,
-    utcnow,
+)
+from prefrontal.webhooks.oauth import (
     verify_action,
     verify_dismiss,
+)
+from prefrontal.webhooks.schemas import (
+    OutingReturn,
+    OutingStart,
+    OutingStarted,
 )
 from prefrontal.webhooks.services import RouterServices
 

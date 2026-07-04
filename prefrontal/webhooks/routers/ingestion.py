@@ -4,38 +4,61 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
-
-from prefrontal.webhooks._common import (
-    ACTION_OUTCOME,
-    TRIP_CATEGORIES,
+from typing import (
     Annotated,
     Any,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
+    HTTPException,
+    Request,
+    status,
+)
+
+from prefrontal.mail import (
+    ingest_messages,
+)
+from prefrontal.mail.feedback import (
+    learned_corrections,
+    learned_denylist,
+)
+from prefrontal.modules.registry import (
+    is_enabled as module_enabled,
+)
+from prefrontal.triage import (
+    apply as triage_apply,
+)
+from prefrontal.triage import (
+    classify as triage_classify,
+)
+from prefrontal.triage import (
+    signal_from_payload,
+)
+from prefrontal.trips import (
+    TRIP_CATEGORIES,
+    apply_reflection,
+    normalize_trip_category,
+    process_location,
+)
+from prefrontal.webhooks._common import (
+    ACTION_OUTCOME,
+)
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
+    resolve_user,
+)
+from prefrontal.webhooks.schemas import (
     EpisodeCreated,
     HomeSet,
-    HTTPException,
     LocationPing,
     MailSync,
-    Request,
-    ScopedRequest,
     ShortcutPayload,
     TriageForget,
     TriageIn,
     TripLabel,
     TripReflect,
-    apply_reflection,
-    ingest_messages,
-    learned_corrections,
-    learned_denylist,
-    module_enabled,
-    normalize_trip_category,
-    process_location,
-    resolve_user,
-    signal_from_payload,
-    status,
-    triage_apply,
-    triage_classify,
 )
 from prefrontal.webhooks.services import RouterServices
 

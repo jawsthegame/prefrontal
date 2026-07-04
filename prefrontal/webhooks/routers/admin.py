@@ -4,22 +4,32 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
-
-from prefrontal.selfupdate import run_restart, run_update
-from prefrontal.webhooks._common import (
+from typing import (
     Annotated,
     Any,
+)
+
+from fastapi import (
+    APIRouter,
     Depends,
-    HouseholdCreate,
-    HouseholdMember,
     HTTPException,
-    ScopedRequest,
-    UserCreate,
+    Request,
+    status,
+)
+
+from prefrontal.memory.store import (
     provision_user,
+)
+from prefrontal.selfupdate import run_restart, run_update
+from prefrontal.webhooks.deps import (
+    ScopedRequest,
     require_operator,
     resolve_user,
-    status,
+)
+from prefrontal.webhooks.schemas import (
+    HouseholdCreate,
+    HouseholdMember,
+    UserCreate,
 )
 from prefrontal.webhooks.services import RouterServices
 
