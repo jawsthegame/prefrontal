@@ -13,7 +13,7 @@ import sqlite3
 from typing import Any
 from urllib.parse import quote_plus
 
-EPISODE_TYPES = ("departure", "task", "checkin", "reminder", "mail", "panic")
+EPISODE_TYPES = ("departure", "task", "checkin", "reminder", "mail", "panic", "switch")
 #: Allowed values for ``episodes.outcome``.
 OUTCOMES = ("success", "miss", "partial")
 

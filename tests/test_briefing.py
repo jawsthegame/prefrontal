@@ -246,3 +246,30 @@ def test_open_day_endpoint_choice_roundtrip(store):
         assert c.get("/briefing", headers=hdr).json()["open_day_choice"] == "accomplish"
         clear = c.post("/briefing/open-day", headers=hdr, json={"choice": "ask"})
         assert clear.json()["open_day_choice"] is None
+
+
+# -- switch-rate feedback (Impulsivity) --------------------------------------
+
+
+def test_briefing_switch_feedback_from_recent_focus(store):
+    """A closed focus session with switch-impulses surfaces the feedback line."""
+    now = utcnow()
+    sid = store.start_focus_session("deep work", planned_minutes=60)
+    store.record_switch_impulse(sid)
+    store.record_switch_impulse(sid)
+    store.mark_switch_deferred(sid)
+    store.close_focus_session(sid, "ended")
+
+    b = build_briefing(store, now=now)
+    assert b.switch_feedback == "2 switch-impulses, 1 deferred"
+    assert "Focus switches" in render_briefing(b)
+
+
+def test_briefing_no_switch_line_when_no_impulses(store):
+    """A clean focus block (no impulses) adds no switch line."""
+    sid = store.start_focus_session("deep work")
+    store.close_focus_session(sid, "ended")
+
+    b = build_briefing(store, now=utcnow())
+    assert b.switch_feedback is None
+    assert "Focus switches" not in render_briefing(b)

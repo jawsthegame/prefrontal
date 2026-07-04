@@ -24,9 +24,9 @@ It derives the three pattern types we currently have source data for:
   actually land).
 - **drift** — how often an episode type goes off-track, scored
   ``success=0, partial=0.5, miss=1.0``.
-
-``context_switch`` from the schema needs switch-event source data Prefrontal does
-not yet capture, so it is not computed here (see ``ROADMAP.md``).
+- **context_switch** — mean switch-impulses per focus session and how many were
+  deferred, from the per-session ``switch`` episodes the Impulsivity module logs
+  on focus close (feeds `switch_rate_feedback` and the profile).
 
 The computation is split into a **pure** :func:`compute_patterns` (list of
 episode dicts in, list of :class:`PatternResult` out — trivially testable) and
@@ -227,6 +227,7 @@ def compute_patterns(
     results += _time_estimation_patterns(episodes, confidence_k, now, half_life_days)
     results += _channel_response_patterns(episodes, confidence_k, now, half_life_days)
     results += _drift_patterns(episodes, confidence_k, now, half_life_days)
+    results += _context_switch_patterns(episodes, confidence_k, now, half_life_days)
     return results
 
 
@@ -715,6 +716,45 @@ def _drift_patterns(
                 pattern_type="drift",
                 context_key=context_key,
                 observed_value=round(score, 3),
+                sample_size=len(eps),
+                confidence=round(compute_confidence(sum(w for _, w in we), k), 3),
+            )
+        )
+    return results
+
+
+def _context_switch_patterns(
+    episodes: list[dict[str, Any]], k: float, now: datetime, half_life_days: float | None
+) -> list[PatternResult]:
+    """Recency-weighted switch-impulse rate per focus context (Impulsivity §8).
+
+    Derives from the per-session ``switch`` episodes logged on focus close
+    (``predicted_value`` = impulses signalled, ``actual_value`` = deferred). Per
+    ``context_key`` (``'focus'`` for all focus blocks): ``observed_value`` = mean
+    impulses/session, ``predicted_value`` = mean deferred/session, ``variance`` =
+    mean *honored* (impulses − deferred) — the switches acted on. This was the
+    loop the roadmap flagged as blocked on captured switch events.
+    """
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for e in episodes:
+        if e.get("episode_type") == "switch" and e.get("predicted_value") is not None:
+            groups[e.get("context") or "focus"].append(e)
+
+    results: list[PatternResult] = []
+    for context_key, eps in groups.items():
+        we = [(e, decay_weight(e.get("timestamp"), now, half_life_days)) for e in eps]
+        impulses = _wmean([(float(e["predicted_value"]), w) for e, w in we])
+        deferred = _wmean([(float(e.get("actual_value") or 0.0), w) for e, w in we])
+        if impulses is None:
+            continue
+        deferred = deferred or 0.0
+        results.append(
+            PatternResult(
+                pattern_type="context_switch",
+                context_key=context_key,
+                observed_value=round(impulses, 3),
+                predicted_value=round(deferred, 3),
+                variance=round(max(impulses - deferred, 0.0), 3),
                 sample_size=len(eps),
                 confidence=round(compute_confidence(sum(w for _, w in we), k), 3),
             )

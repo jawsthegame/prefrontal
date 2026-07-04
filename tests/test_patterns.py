@@ -119,6 +119,30 @@ def test_drift_score_weights_outcomes():
     assert drift["task"].observed_value == pytest.approx(0.5)  # (0 + 1 + 0.5)/3
 
 
+# -- context_switch ----------------------------------------------------------
+
+
+def test_context_switch_means_impulses_and_deferrals():
+    """Per-session `switch` episodes → mean impulses, deferrals, and honored."""
+    episodes = [
+        _ep(episode_type="switch", context="focus", predicted_value=4, actual_value=3),
+        _ep(episode_type="switch", context="focus", predicted_value=2, actual_value=1),
+        # A clean 0-impulse block still counts toward the per-session mean.
+        _ep(episode_type="switch", context="focus", predicted_value=0, actual_value=0),
+    ]
+    cs = _by_key(compute_patterns(episodes), "context_switch")
+    assert cs["focus"].observed_value == pytest.approx(2.0)  # (4+2+0)/3 impulses
+    assert cs["focus"].predicted_value == pytest.approx(4 / 3, abs=1e-3)  # deferrals
+    assert cs["focus"].variance == pytest.approx(2.0 - 4 / 3, abs=1e-3)  # honored
+    assert cs["focus"].sample_size == 3
+
+
+def test_context_switch_ignores_non_switch_episodes():
+    """Only `switch` episodes feed the pattern; a `task` close doesn't."""
+    episodes = [_ep(episode_type="task", predicted_value=30, actual_value=30)]
+    assert _by_key(compute_patterns(episodes), "context_switch") == {}
+
+
 # -- bias --------------------------------------------------------------------
 
 

@@ -360,6 +360,31 @@ def build_focus_recap(name: str = "") -> str:
     )
 
 
+def _log_switch_episode(store: MemoryStore, closed: dict) -> int | None:
+    """Log one ``switch`` episode per closed focus session (Impulsivity, §8).
+
+    Carries the session's switch tally so the ``context_switch`` learning pass can
+    derive a baseline: ``predicted_value`` = switch-impulses signalled,
+    ``actual_value`` = of those, captured-and-deferred. ``context='focus'`` buckets
+    all focus blocks into one pattern; the intention rides in ``notes``. Logged for
+    every close (including a clean 0-impulse block, a real data point), so the
+    per-session mean isn't biased toward busy sessions.
+
+    Returns the new episode id (episodes never fail silently here).
+    """
+    impulses = int(closed.get("switch_impulses") or 0)
+    deferred = int(closed.get("switches_deferred") or 0)
+    intended = closed.get("intended_task")
+    return store.log_episode(
+        "switch",
+        predicted_value=float(impulses),
+        actual_value=float(deferred),
+        acknowledged=True,
+        context="focus",
+        notes=f"focus: {intended}" if intended else None,
+    )
+
+
 def record_focus_end(
     store: MemoryStore,
     closed: dict,
@@ -407,6 +432,7 @@ def record_focus_end(
         energy=energy,
         category=category,
     )
+    _log_switch_episode(store, closed)
     return {"episode_id": episode_id, "outcome": ep_outcome}
 
 
@@ -435,6 +461,7 @@ def record_focus_abandoned(store: MemoryStore, closed: dict) -> dict:
         energy=energy,
         category=category,
     )
+    _log_switch_episode(store, closed)
     return {"episode_id": episode_id, "outcome": "miss"}
 
 
@@ -466,6 +493,7 @@ def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
         energy=energy,
         category=category,
     )
+    _log_switch_episode(store, closed)
     return {"episode_id": episode_id, "outcome": "partial"}
 
 

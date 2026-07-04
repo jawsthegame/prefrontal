@@ -27,6 +27,9 @@ SWITCH_ACTIONS = ("return", "defer", "switch")
 #: Words past this many in the raw impulse get dropped from the heuristic title.
 _CAPTURE_TITLE_MAX_WORDS = 8
 
+#: Don't surface a learned switch tendency in the profile below this confidence.
+_SWITCH_CONFIDENCE_FLOOR = 0.3
+
 
 def pause_seconds(
     elapsed_minutes: float,
@@ -91,6 +94,40 @@ def build_pause_message(intended_task: str, elapsed_minutes: float, *, name: str
         f"Hold on{who} — you're {elapsed} min into “{intended_task}.” "
         "Does the new thing actually need you now, or can it wait?"
     )
+
+def switch_rate_feedback(
+    sessions: list[dict], *, baseline: float | None = None
+) -> str | None:
+    """A one-line end-of-day reflection on switch-impulses across focus sessions.
+
+    Sums the switch-impulses and deferrals over ``sessions`` (closed focus-session
+    dicts carrying ``switch_impulses`` / ``switches_deferred``) and frames the
+    deferrals as the win. Returns ``None`` when there's nothing to say — no
+    sessions, or no impulses were signalled — so the caller simply omits the line
+    (matching the briefing's "quiet when there's no signal" habit).
+
+    Args:
+        sessions: Closed focus-session dicts to summarize (e.g. the last day's).
+        baseline: Optional learned mean *honored* impulses per session (the
+            ``context_switch`` pattern's ``variance``); when given, a gentle
+            comparison is appended so today reads against the norm.
+
+    Returns:
+        A short phrase like ``"6 switch-impulses, 4 deferred"`` (optionally with a
+        baseline clause), or ``None``.
+    """
+    if not sessions:
+        return None
+    impulses = sum(int(s.get("switch_impulses") or 0) for s in sessions)
+    if impulses <= 0:
+        return None
+    deferred = sum(int(s.get("switches_deferred") or 0) for s in sessions)
+    unit = "impulse" if impulses == 1 else "impulses"
+    line = f"{impulses} switch-{unit}, {deferred} deferred"
+    if baseline is not None and baseline >= 0:
+        line += f" (you usually honor ~{baseline:g}/session)"
+    return line
+
 
 #: System prompt for LLM-titling a captured impulse. Kept tight so a local model
 #: returns a clean label, never a paragraph; the heuristic covers it if it doesn't.
@@ -189,6 +226,7 @@ class ImpulsivityModule(Module):
                 name="switch_rate_feedback",
                 description="Surface how often switches happened today vs the baseline.",
                 trigger="the end-of-day check-in",
+                status="active",
             ),
         ]
 
@@ -208,11 +246,18 @@ class ImpulsivityModule(Module):
             )
         for p in store.get_patterns("context_switch"):
             observed = p.get("observed_value")
-            if observed is not None:
-                lines.append(
-                    f"`{p['context_key']}`: ~{observed} switches observed "
-                    f"(confidence {(p.get('confidence') or 0):.0%})."
-                )
+            conf = p.get("confidence") or 0.0
+            # Don't assert a low-confidence tendency (the repo's learning habit).
+            if observed is None or conf < _SWITCH_CONFIDENCE_FLOOR:
+                continue
+            deferred = p.get("predicted_value")
+            defer_clause = ""
+            if deferred is not None and observed > 0:
+                defer_clause = f"; you defer ~{deferred / observed:.0%}"
+            lines.append(
+                f"~{observed:g} switch-impulses per focus block{defer_clause} "
+                f"(confidence {conf:.0%})."
+            )
         return "\n".join(f"- {line}" for line in lines) if lines else None
 
 

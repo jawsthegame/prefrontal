@@ -399,11 +399,12 @@ the first test. Code follow-ups below are optional polish.
   N min" time check fired from `evaluate()` during a focus block, deduped per
   elapsed bucket, off unless `elapsed_callout_minutes` > 0), **Task Paralysis**
   (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below),
-  **Impulsivity** (`reflective_pause` + `capture_and_defer` active), and
-  **Self-Care** (`meal_check` + `water_check` basic-needs nudges, opt-in). One
-  intervention is still `planned`: Impulsivity's `switch_rate_feedback` (needs
-  captured switch events — see `docs/impulsivity.md`). Run `prefrontal modules -v`
-  for the live per-intervention status.
+  **Impulsivity** (`reflective_pause` + `capture_and_defer` + `switch_rate_feedback`
+  active), and **Self-Care** (`meal_check` + `water_check` basic-needs nudges,
+  opt-in). With `switch_rate_feedback` now live (per-session `switch` episodes → a
+  `context_switch` pattern → the briefing's switch-rate line), **every declared
+  module intervention is `active`** — none remain `planned`. Run
+  `prefrontal modules -v` for the live per-intervention status.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
@@ -556,8 +557,10 @@ ordered by leverage; each is independent but builds on denser capture.
    factory (`local_hour -> (todo -> multiplier)`), so the morning **briefing** and
    the **encouragement** re-fit size each free window by its time of day *and*
    each candidate by its own energy/category — the same `task_bias_resolver` the
-   point-in-time pickers use. *(Next: derive `context_switch` once switch events
-   are captured.)*
+   point-in-time pickers use. The **`context_switch`** derivation has now landed
+   too: focus close logs a per-session `switch` episode (impulses vs deferred), and
+   `patterns.py` derives mean impulses/deferrals per focus block — feeding the
+   Impulsivity profile line and the briefing's `switch_rate_feedback`.
 6. **Adaptive self-care cadence (with an honesty check).** ✅ — the self-care
    checks now *learn* their interval from how you actually respond
    (`adapt_self_care` / `adapt_self_care_interval` in
