@@ -379,8 +379,12 @@ the first test. Code follow-ups below are optional polish.
   in `/webhooks/outing/check` (an `impact` list + `hard_conflict` flag, message
   tail "This cascades: 'A' → 'B' → 'C'") and, beyond outings, at
   `GET /impact/cascade` (queryable from any free-time via `free_at`/`over_minutes`,
-  else the active outing, else now) so the dashboard/briefing can render the
-  domino timeline on demand.
+  else the active outing, else now). The **dashboard** renders the domino strip
+  live and a "running behind" scrubber (`over_minutes`) to pre-project it, and the
+  **morning briefing** runs `fragile_stretch()` — today's remaining commitments
+  cascaded under the learned bias-inflated durations — to preview the tightest
+  back-to-back stretch ("⏳ Tight stretch: if today runs long, A → B") before it
+  slips, staying silent on a day with slack or when the bias shows no overrun.
 - **Morning briefing** ✅ — `prefrontal/briefing.py`: a daily digest of today's
   commitments, double-bookings, what slipped this past week, and a coaching note
   (the time bias), honoring `preferred_briefing_format`. `GET /briefing` +

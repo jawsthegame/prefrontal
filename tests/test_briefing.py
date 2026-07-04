@@ -67,6 +67,43 @@ def test_build_briefing_collects_today_conflicts_slips(store):
     assert b.coaching["time_estimation_bias"] == "1.4"
 
 
+def test_briefing_flags_fragile_stretch(store):
+    """Tight back-to-backs that hold on paper are previewed under the time bias."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    # Two 30-min meetings 35 min apart — 5 min buffer, fine as scheduled but
+    # doomed once the default 1.4× overrun eats the buffer.
+    store.upsert_commitment(
+        title="Design review", start_at=_at(now + timedelta(minutes=60)),
+        end_at=_at(now + timedelta(minutes=90)), external_id="work:d1",
+    )
+    store.upsert_commitment(
+        title="1:1", start_at=_at(now + timedelta(minutes=95)),
+        end_at=_at(now + timedelta(minutes=125)), external_id="work:d2",
+    )
+    b = build_briefing(store, now=now)
+    assert [f["title"] for f in b.fragile] == ["1:1"]
+    assert b.fragile[0]["caused_by"] == "Design review"
+    text = render_briefing(b)
+    assert "Tight stretch" in text
+    assert "1:1" in text and "Design review" in text
+
+
+def test_briefing_no_fragile_when_day_has_slack(store):
+    """A spaced-out day surfaces no tight-stretch line."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    store.upsert_commitment(
+        title="Morning", start_at=_at(now + timedelta(minutes=30)),
+        end_at=_at(now + timedelta(minutes=60)), external_id="work:s1",
+    )
+    store.upsert_commitment(
+        title="Afternoon", start_at=_at(now + timedelta(hours=6)),
+        end_at=_at(now + timedelta(hours=6, minutes=30)), external_id="work:s2",
+    )
+    b = build_briefing(store, now=now)
+    assert b.fragile == []
+    assert "Tight stretch" not in render_briefing(b)
+
+
 def test_render_short_vs_long(store):
     """Long format lists every commitment; short stays terse for big days."""
     now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
