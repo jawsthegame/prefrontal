@@ -15,6 +15,9 @@ from prefrontal.config import Settings
 from prefrontal.impact import (
     analyze_impact,
     at_risk,
+    cascade_at_risk,
+    cascade_impact,
+    cascade_phrase,
     impact_phrase,
     project_free_time,
     utcnow,
@@ -86,6 +89,81 @@ def test_impact_phrase_names_top_risk():
     assert impact_phrase([]) == ""
 
 
+# -- cascade / domino propagation --------------------------------------------
+
+_T = datetime(2026, 7, 4, 9, 0, 0)
+
+
+def _at(minutes: float) -> str:
+    """Stored-format UTC timestamp `minutes` after the fixed base `_T`."""
+    return (_T + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _cc(title, start_min, lead=10.0, dur_min=None, hardness="soft", cid=1):
+    c = {
+        "id": cid,
+        "title": title,
+        "start_at": _at(start_min),
+        "lead_minutes": lead,
+        "hardness": hardness,
+    }
+    if dur_min is not None:
+        c["end_at"] = _at(start_min + dur_min)
+    return c
+
+
+def test_cascade_propagates_through_the_chain():
+    """A late finish pushes the next commitment even when it wasn't a collision."""
+    # Free at _T. A starts +5 (10-min lead) so you're 5 min late; it runs 30 min,
+    # finishing at +40. B starts at +45 — reachable from _T on its own, but the
+    # pushed-back finish of A leaves you late for it too.
+    a = _cc("A", 5, dur_min=30, cid=1)
+    b = _cc("B", 45, cid=2)
+
+    chain = cascade_impact(_T, [a, b])
+    assert [c.commitment["title"] for c in chain] == ["A", "B"]  # schedule order
+    ca, cb = chain
+    assert ca.at_risk and ca.caused_by is None  # first domino: root is the overrun
+    assert cb.at_risk and cb.caused_by == "A"   # knocked on by A's overrun
+    assert cb.delay_minutes > 0
+
+    # The independent (non-cascade) analysis would NOT flag B against the raw
+    # free-time — that's the whole point of propagating the chain.
+    independent = at_risk(analyze_impact(_T, [a, b]))
+    assert [i.commitment["title"] for i in independent] == ["A"]
+
+
+def test_cascade_self_heals_across_a_gap():
+    """Enough slack before a commitment ends the chain — its delay resets to 0."""
+    a = _cc("A", 5, dur_min=30, cid=1)          # runs late, ends ~+40
+    later = _cc("Later", 300, cid=2)            # hours away, absorbs the slip
+    chain = cascade_impact(_T, [a, later])
+    tail = chain[1]
+    assert tail.commitment["title"] == "Later"
+    assert not tail.at_risk
+    assert tail.delay_minutes == 0
+    assert tail.caused_by is None
+
+
+def test_cascade_phrase_shows_multi_link_chain():
+    """Several at-risk links render as an arrow chain naming each."""
+    a = _cc("A", 5, dur_min=30, cid=1)
+    b = _cc("B", 45, cid=2)
+    phrase = cascade_phrase(cascade_impact(_T, [a, b]))
+    assert "cascades" in phrase and "→" in phrase
+    assert "'A'" in phrase and "'B'" in phrase
+
+
+def test_cascade_phrase_single_and_empty():
+    """One link reads like a plain heads-up; a clear chain is empty."""
+    a = _cc("Team sync", 5, dur_min=30, cid=1)
+    single = cascade_phrase(cascade_impact(_T, [a]))
+    assert "Team sync" in single and "at risk" in single
+    clear = _cc("Tomorrow", 1440, cid=1)
+    assert cascade_phrase(cascade_impact(_T, [clear])) == ""
+    assert cascade_at_risk(cascade_impact(_T, [clear])) == []
+
+
 # -- endpoint integration ----------------------------------------------------
 
 
@@ -125,6 +203,45 @@ def test_check_surfaces_impact_and_names_it_in_message(client, store):
     assert item["hard_conflict"] is True
     assert any(i["title"] == "Team sync" for i in item["impact"])
     assert "Team sync" in item["message"]
+
+
+def test_cascade_endpoint_propagates_and_reports_source(client, store):
+    """GET /impact/cascade projects a chain from an explicit free-time."""
+    # A starts in 5 min (10-min lead) and runs 30 min; B starts in 45 min. With
+    # over_minutes=0 (free now) you're late to A, which pushes you late for B.
+    store.upsert_commitment(
+        title="Standup", start_at=_utc(5), end_at=_utc(35), lead_minutes=10,
+        hardness="hard", external_id="work:c1",
+    )
+    store.upsert_commitment(
+        title="Review", start_at=_utc(45), lead_minutes=10, external_id="work:c2",
+    )
+    body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
+    assert body["source"] == "over_minutes"
+    titles = [c["title"] for c in body["cascade"]]
+    assert titles == ["Standup", "Review"]          # schedule order
+    at_risk_titles = [c["title"] for c in body["at_risk"]]
+    assert at_risk_titles == ["Standup", "Review"]  # both toppled
+    review = next(c for c in body["cascade"] if c["title"] == "Review")
+    assert review["caused_by"] == "Standup"         # named upstream domino
+    assert body["hard_conflict"] is True            # Standup is hard
+    assert "cascades" in body["phrase"]
+
+
+def test_cascade_endpoint_falls_back_to_now_when_schedule_clear(client, store):
+    """With no free-time hint and nothing tight, the chain is empty and calm."""
+    store.upsert_commitment(title="Tomorrow", start_at=_utc(1440), external_id="work:c3")
+    body = client.get("/impact/cascade", headers=_auth()).json()
+    assert body["source"] == "now"
+    assert body["at_risk"] == []
+    assert body["hard_conflict"] is False
+    assert body["phrase"] == ""
+
+
+def test_cascade_endpoint_rejects_bad_free_at(client, store):
+    """A malformed free_at is a 422, never a silent now-fallback."""
+    r = client.get("/impact/cascade?free_at=not-a-time", headers=_auth())
+    assert r.status_code == 422
 
 
 def test_check_no_impact_when_schedule_clear(client, store):

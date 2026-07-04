@@ -23,6 +23,11 @@ from typing import Any
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.clock import parse_ts_strict as _parse
 
+#: Assumed length of a commitment with no ``end_at`` — used only to propagate the
+#: cascade *through* it. A typical meeting; a lateness arriving into an
+#: unknown-length event carries forward by this much.
+DEFAULT_COMMITMENT_MINUTES = 30.0
+
 
 @dataclass(frozen=True)
 class Impact:
@@ -122,3 +127,137 @@ def impact_phrase(impacts: list[Impact]) -> str:
     title = top.commitment.get("title", "your next commitment")
     late = round(-top.slack_minutes)
     return f" Heads up: '{title}' is now at risk (~{late} min late)."
+
+
+# -- Cascade / domino propagation --------------------------------------------
+#
+# `analyze_impact` scores every commitment against a *single* free-time, so a
+# late finish on the current thing can only ever flag the one meeting it directly
+# collides with. Reality dominoes: you show up late to the 10:30, the 10:30 still
+# runs its half hour, so you leave it late too, and *that* is what threatens the
+# 11:00. `cascade_impact` walks the day in order, carrying the running-late
+# forward through each commitment's own duration, so the whole chain of knock-on
+# risk is visible — not just the first collision.
+
+
+@dataclass(frozen=True)
+class CascadeImpact:
+    """One commitment's place in the domino chain when you're running behind.
+
+    Attributes:
+        commitment: The commitment dict.
+        projected_start: UTC text — when you'll *realistically* start this one,
+            given every upstream commitment ran its full length first. Equals the
+            scheduled ``start_at`` when nothing pushed it.
+        delay_minutes: How far ``projected_start`` is past the scheduled start
+            (``>= 0``); ``0`` means the cascade hasn't reached this one.
+        slack_minutes: Minutes of slack against the propagated free-time; negative
+            means you can't make it on time.
+        at_risk: ``True`` when ``slack_minutes < 0``.
+        caused_by: Title of the immediately-upstream commitment whose overrun
+            pushed this one, or ``None`` when the root cause is the current
+            overrun itself (the first domino) or the schedule was already tight.
+    """
+
+    commitment: dict[str, Any]
+    projected_start: str
+    delay_minutes: float
+    slack_minutes: float
+    at_risk: bool
+    caused_by: str | None
+
+
+def _commitment_duration(commitment: dict[str, Any], default_minutes: float) -> float:
+    """Scheduled length in minutes — from ``end_at`` if present, else the default."""
+    end = commitment.get("end_at")
+    if not end:
+        return default_minutes
+    minutes = (_parse(end) - _parse(commitment["start_at"])).total_seconds() / 60.0
+    return max(0.0, minutes)
+
+
+def cascade_impact(
+    projected_free_at: datetime,
+    commitments: list[dict[str, Any]],
+    default_duration_minutes: float = DEFAULT_COMMITMENT_MINUTES,
+) -> list[CascadeImpact]:
+    """Propagate a projected free-time through the schedule, domino by domino.
+
+    Walks ``commitments`` in start order. Each is assumed attended in sequence:
+    you leave when you're free, spend its ``lead_minutes`` getting there, then it
+    runs its full length — so arriving late pushes its finish late, which becomes
+    the free-time for the next one. The cascade self-heals: a commitment with
+    enough slack before it starts on time, ending the chain until the next crunch.
+
+    Args:
+        projected_free_at: When you'll realistically be free for the *first* one
+            (naive UTC) — e.g. from :func:`project_free_time` for an active outing.
+        commitments: Upcoming commitment dicts (``start_at``, ``lead_minutes``,
+            optional ``end_at``).
+        default_duration_minutes: Length assumed for a commitment lacking
+            ``end_at``, used only to carry the delay forward through it.
+
+    Returns:
+        A list of :class:`CascadeImpact` in schedule order (the reading order of
+        the domino chain).
+    """
+    ordered = sorted(commitments, key=lambda c: _parse(c["start_at"]))
+    free = projected_free_at
+    pusher: str | None = None  # title of the upstream commitment now running late
+    out: list[CascadeImpact] = []
+    for c in ordered:
+        start = _parse(c["start_at"])
+        lead = c.get("lead_minutes") or 0.0
+        latest_departure = start - timedelta(minutes=lead)
+        slack = (latest_departure - free).total_seconds() / 60.0
+        # You leave at `free`, travel `lead`, and can't start before the scheduled
+        # time even if you arrive early.
+        actual_start = max(start, free + timedelta(minutes=lead))
+        delay = (actual_start - start).total_seconds() / 60.0
+        out.append(
+            CascadeImpact(
+                commitment=c,
+                projected_start=actual_start.strftime(TS_FMT),
+                delay_minutes=round(delay, 1),
+                slack_minutes=round(slack, 1),
+                at_risk=slack < 0,
+                caused_by=pusher if delay > 0 else None,
+            )
+        )
+        # Carry forward: this one runs its length from when it actually starts.
+        free = actual_start + timedelta(
+            minutes=_commitment_duration(c, default_duration_minutes)
+        )
+        # If it ended late it becomes the next domino's cause; otherwise the chain
+        # resets — a later commitment slipping is no longer this one's fault.
+        pusher = c.get("title", "an earlier commitment") if delay > 0 else None
+    return out
+
+
+def cascade_at_risk(impacts: list[CascadeImpact]) -> list[CascadeImpact]:
+    """Filter a cascade to only its at-risk links (schedule order preserved)."""
+    return [i for i in impacts if i.at_risk]
+
+
+def cascade_phrase(impacts: list[CascadeImpact]) -> str:
+    """A short message tail describing the domino chain, or ``""``.
+
+    One at-risk commitment reads like :func:`impact_phrase`; several are shown as
+    the chain in time order (``A → B → C``, capped at three) so the knock-on is
+    legible in a nudge.
+    """
+    risky = cascade_at_risk(impacts)
+    if not risky:
+        return ""
+    if len(risky) == 1:
+        top = risky[0]
+        title = top.commitment.get("title", "your next commitment")
+        late = round(-top.slack_minutes)
+        return f" Heads up: '{title}' is now at risk (~{late} min late)."
+    shown = risky[:3]
+    chain = " → ".join(
+        f"'{i.commitment.get('title', '?')}' (~{round(-i.slack_minutes)}m late)"
+        for i in shown
+    )
+    more = "" if len(risky) <= 3 else f" +{len(risky) - 3} more"
+    return f" This cascades: {chain}{more}."

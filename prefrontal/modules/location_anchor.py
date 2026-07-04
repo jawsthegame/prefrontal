@@ -26,7 +26,12 @@ import math
 import re
 
 from prefrontal.coaching import CoachContext, Cue
-from prefrontal.impact import analyze_impact, at_risk, impact_phrase, project_free_time
+from prefrontal.impact import (
+    cascade_at_risk,
+    cascade_impact,
+    cascade_phrase,
+    project_free_time,
+)
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
@@ -398,13 +403,18 @@ def evaluate_outing(
     risky = []
     if commitments:
         projected = project_free_time(outing["departure_at"], window, bias)
-        risky = at_risk(analyze_impact(projected, commitments))
+        # Cascade: propagate the overrun through the chain so a knocked-on
+        # commitment two hops down is flagged too, not just the first collision.
+        risky = cascade_at_risk(cascade_impact(projected, commitments))
         impacts = [
             {
                 "commitment_id": i.commitment["id"],
                 "title": i.commitment["title"],
                 "start_at": i.commitment["start_at"],
+                "projected_start": i.projected_start,
+                "delay_minutes": i.delay_minutes,
                 "slack_minutes": i.slack_minutes,
+                "caused_by": i.caused_by,
                 "hardness": i.commitment.get("hardness"),
             }
             for i in risky
@@ -413,7 +423,7 @@ def evaluate_outing(
     if fire:
         message = build_message(
             level, elapsed_minutes=elapsed, window_minutes=window, name=name
-        ) + impact_phrase(risky)
+        ) + cascade_phrase(risky)
     return OutingEvaluation("active", level, fire, message, impacts, at_home, distance_m)
 
 
