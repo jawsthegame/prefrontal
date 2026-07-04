@@ -368,7 +368,20 @@ def _cascade_chain(
         for c in store.commitments_between(now.strftime(fmt), day_end.strftime(fmt))
         if c.get("kind") != "fyi" and _parse_dt(c.get("start_at")) is not None
     ]
-    risky = cascade_at_risk(cascade_impact(now, upcoming))
+    # Travel-aware leads from the phone's last known fix, so a leg you can't
+    # actually drive in the flat buffer is flagged (empty → static leads).
+    from prefrontal.departure import departure_kwargs, travel_leads
+
+    loc = store.get_location()
+    dep = departure_kwargs(store)
+    leads = travel_leads(
+        upcoming,
+        loc["lat"] if loc else None,
+        loc["lon"] if loc else None,
+        bias=dep["bias"], speed_kmh=dep["speed_kmh"],
+        road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+    )
+    risky = cascade_at_risk(cascade_impact(now, upcoming, lead_override=leads))
     if len(risky) < 2:
         return []
     return [

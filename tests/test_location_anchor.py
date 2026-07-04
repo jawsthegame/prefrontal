@@ -546,6 +546,29 @@ def test_evaluate_outing_fires_a_new_level():
     assert ev2.fire is False
 
 
+def test_evaluate_outing_travel_lead_override_flags_reachable_looking_commitment():
+    """A travel-lead override can flag a commitment the static lead called safe."""
+    from prefrontal.impact import utcnow
+
+    now = utcnow()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    # departure_at in the past → projected free-time is now; over its window so it fires.
+    outing = _outing(
+        elapsed_minutes=22.0, time_window_minutes=20.0,
+        departure_at=(now - timedelta(minutes=60)).strftime(fmt),
+    )
+    # Starts in 20 min with a 5-min static lead → reachable; a 30-min drive isn't.
+    c = {
+        "id": 9, "title": "Client site", "hardness": "soft", "lead_minutes": 5.0,
+        "start_at": (now + timedelta(minutes=20)).strftime(fmt),
+    }
+    kw = dict(cur_lat=None, cur_lon=None, home_radius=100.0, abandon_ratio=3.0, bias=1.0)
+    static = evaluate_outing(outing, commitments=[c], **kw)
+    assert static.impacts == []  # safe on the flat 5-min lead
+    travel = evaluate_outing(outing, commitments=[c], lead_override={9: 30.0}, **kw)
+    assert any(i["title"] == "Client site" for i in travel.impacts)  # flagged by real drive
+
+
 def test_apply_outing_evaluation_advances_level_and_records(client, store):
     oid = store.start_outing("coffee", 20.0, home_lat=0.0, home_lon=0.0)
     outing = next(o for o in store.active_outings() if o["id"] == oid)
