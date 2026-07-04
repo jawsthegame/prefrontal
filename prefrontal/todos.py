@@ -576,6 +576,23 @@ def _days_open(todo: dict[str, Any], now: datetime) -> float | None:
     return max(0.0, (now - created).total_seconds() / 86400.0)
 
 
+def _parse_deadline(value: object) -> datetime | None:
+    """Parse a date-only todo deadline (``YYYY-MM-DD``) to an end-of-day datetime.
+
+    Deadlines are stored date-only (see :class:`AugmentedTodo`), so they can't go
+    through :func:`~prefrontal.clock.parse_ts`, which expects a full timestamp and
+    returns ``None`` for a bare date. A deadline means "due by the end of that
+    day," so this anchors to 23:59:59.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        day = datetime.strptime(value.strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return day.replace(hour=23, minute=59, second=59)
+
+
 def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
     """How strongly an open todo looks avoided (0.0 = not at all).
 
@@ -595,7 +612,7 @@ def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
     estimate = todo.get("estimate_minutes")
     if estimate is not None and estimate <= 30:
         score *= 1.5  # quick task left undone is a stronger avoidance signal
-    deadline = _parse_ts(todo.get("deadline"))
+    deadline = _parse_deadline(todo.get("deadline"))
     if deadline is not None:
         days_to = (deadline - now).total_seconds() / 86400.0
         if days_to < 0:

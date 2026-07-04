@@ -860,6 +860,13 @@ def test_avoidance_scoring_and_exemptions():
         _aged_todo(deadline="2026-06-28 12:00:00"), now
     ) > avoidance_score(_aged_todo(), now)
 
+    # Deadlines are stored *date-only* (YYYY-MM-DD) — the actual production
+    # format. Regression: these went through parse_ts (which needs a full
+    # timestamp) and silently returned None, so deadline pressure never applied.
+    plain = avoidance_score(_aged_todo(), now)
+    assert avoidance_score(_aged_todo(deadline="2026-06-28"), now) > plain  # overdue ×3
+    assert avoidance_score(_aged_todo(deadline="2026-07-02"), now) > plain  # imminent ×2
+
 
 def test_todos_avoided_endpoint_and_flag(client, store_open):
     old = store_open.add_todo("Call insurance", estimate_minutes=10, priority=2)

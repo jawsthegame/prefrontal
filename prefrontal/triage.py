@@ -31,7 +31,7 @@ from typing import Any
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.commitments import to_utc
-from prefrontal.integrations import Generator, OllamaError
+from prefrontal.integrations import Generator, ProviderError
 from prefrontal.llm_json import extract_json_object
 from prefrontal.memory._helpers import EPISODE_TYPES
 from prefrontal.todos import augment_todo
@@ -291,8 +291,9 @@ def _llm_classify(signal: Signal, client: Generator, *, today: date) -> TriageDe
     """One JSON call refining the ambiguous cases; None on any model failure.
 
     Coerced/validated like :func:`prefrontal.todos._coerce_llm` — an unknown
-    ``kind``/``urgency``, malformed JSON, or :class:`OllamaError` all yield
-    ``None`` so the heuristic wins (local-first, never a dropped signal).
+    ``kind``/``urgency``, malformed JSON, or a :class:`ProviderError` (from any
+    backend — local Ollama or a selectable Anthropic agent) all yield ``None`` so
+    the heuristic wins (local-first, never a dropped signal).
     """
     prompt = (
         f"Source: {signal.source}\nFrom: {signal.sender}\nToday: {today.isoformat()}\n"
@@ -300,7 +301,7 @@ def _llm_classify(signal: Signal, client: Generator, *, today: date) -> TriageDe
     )
     try:
         reply = client.generate(prompt, system=_LLM_SYSTEM)
-    except OllamaError:
+    except ProviderError:
         return None
     raw = extract_json_object(reply)
     kind = raw.get("kind")

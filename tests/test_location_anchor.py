@@ -19,6 +19,7 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.location_anchor import (
     DEFAULT_INFERRED_WINDOW_MINUTES,
+    LocationAnchorModule,
     apply_outing_evaluation,
     build_message,
     escalation_level,
@@ -191,6 +192,33 @@ def test_outing_store_lifecycle():
         assert store.active_outings() == []
         # Double-close is a no-op.
         assert store.close_outing(oid) is None
+
+
+def test_profile_section_excludes_abandoned_outings():
+    """Errand punctuality counts only genuinely-returned outings.
+
+    Regression: an abandoned outing is auto-closed with a `returned_at` stamp
+    too, so the old `if o.get("returned_at")` filter counted it — fabricating a
+    duration and inflating the over-window rate, the very thing
+    `record_outing_abandoned` deliberately avoids.
+    """
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        # One real return that ran over its 5-min window (departed 20 min ago).
+        returned = store.start_outing(
+            "getting coffee", 5.0, departure_at=_utc_minutes_ago(20)
+        )
+        store.close_outing(returned, status="returned")
+        # One abandonment of an identical window — never actually returned.
+        abandoned = store.start_outing(
+            "getting milk", 5.0, departure_at=_utc_minutes_ago(20)
+        )
+        store.close_outing(abandoned, status="abandoned")
+
+        section = LocationAnchorModule().profile_section(store)
+        # Only the returned outing is counted, so the denominator is 1, not 2.
+        assert "1/1 recent outings ran over" in section
+        assert "2/2" not in section
 
 
 # -- endpoints ---------------------------------------------------------------

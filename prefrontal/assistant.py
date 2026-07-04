@@ -38,6 +38,7 @@ from typing import Any
 from prefrontal.commitments import to_utc
 from prefrontal.integrations import Generator
 from prefrontal.llm_json import generate_json
+from prefrontal.log import get_logger
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
     FACT_CATEGORIES,
@@ -50,6 +51,8 @@ from prefrontal.todos import (
     MAX_ESTIMATE_MINUTES,
     MIN_ESTIMATE_MINUTES,
 )
+
+_log = get_logger(__name__)
 
 #: Ops the assistant is allowed to emit. The whitelist *is* the security boundary
 #: (with per-user store scoping): anything not here is refused before execution.
@@ -838,7 +841,13 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             result["ok"] = memory.remove_shopping_item(p["shopping_id"])
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
-    except ValueError as exc:  # e.g. to_utc on an unparseable date
+    except Exception as exc:  # noqa: BLE001 — one bad action must never abort the batch
+        # `execute_actions` promises per-action isolation and this helper promises
+        # it never raises. A ValueError (e.g. to_utc on an unparseable date) is the
+        # common case, but a store call can also raise sqlite3 errors or an
+        # unexpected KeyError/TypeError on a surprising row shape — those must be
+        # reported per-action too, not propagated to abort later valid actions.
+        _log.warning("action %r failed: %s", op, exc)
         result["detail"] = f"couldn't apply: {exc}"
     return result
 

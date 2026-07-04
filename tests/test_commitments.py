@@ -157,6 +157,20 @@ def test_expand_weekly_master_yields_todays_occurrence():
     )
 
 
+def test_expand_accepts_naive_now():
+    """A naive UTC `now` (what production passes via clock.utcnow()) still expands.
+
+    Regression: occurrences are timezone-aware, so a naive window bound made
+    dateutil raise TypeError, which was swallowed — silently dropping every
+    recurring event in production even though the aware-`now` tests passed.
+    """
+    naive_now = _wed_noon(7).replace(tzinfo=None)
+    out = expand_recurrences([_WEEKLY_WED], now=naive_now, default_tz="America/New_York")
+    assert len(out) == 1
+    occ = normalize_event(out[0], default_tz="America/New_York")
+    assert occ["start_at"] == "2026-07-01 11:30:00"
+
+
 def test_expand_keeps_wall_clock_across_dst():
     """The same 07:30 local event lands at a different UTC in winter (EST)."""
     out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(1), default_tz="America/New_York")

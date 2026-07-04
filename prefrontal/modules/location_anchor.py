@@ -565,7 +565,11 @@ class LocationAnchorModule(Module):
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Summarize recent errand punctuality from closed outings."""
-        outings = [o for o in store.recent_outings(limit=100) if o.get("returned_at")]
+        # Only genuinely-returned outings have a real duration. An *abandoned*
+        # outing is auto-closed with a `returned_at` stamp too (CURRENT_TIMESTAMP),
+        # but the user never actually returned then — counting it would fabricate a
+        # duration, the very thing `record_outing_abandoned` deliberately avoids.
+        outings = [o for o in store.recent_outings(limit=100) if o.get("status") == "returned"]
         lines: list[str] = []
         if outings:
             over = 0

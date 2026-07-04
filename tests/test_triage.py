@@ -36,6 +36,20 @@ class RaisingGen:
         raise OllamaError("model down")
 
 
+class RaisingAnthropicGen:
+    """A selectable Anthropic triage agent whose call fails.
+
+    AnthropicError is a ProviderError but *not* an OllamaError, so the narrow
+    `except OllamaError` used to let it escape and 500 the request instead of
+    falling back to the heuristic (breaking the local-first contract).
+    """
+
+    def generate(self, prompt, *, system=None):
+        from prefrontal.integrations.anthropic import AnthropicError
+
+        raise AnthropicError("claude down")
+
+
 # --- heuristic contract (model off) ------------------------------------------
 
 
@@ -124,6 +138,12 @@ def test_unknown_kind_from_model_falls_back():
 
 def test_model_error_falls_back_to_heuristic():
     d = classify(mail("follow up on the thing"), client=RaisingGen(), today=TODAY)
+    assert d.source == "heuristic" and d.kind == "action"
+
+
+def test_anthropic_error_also_falls_back_to_heuristic():
+    """A failing selectable Anthropic agent falls back, not just Ollama."""
+    d = classify(mail("follow up on the thing"), client=RaisingAnthropicGen(), today=TODAY)
     assert d.source == "heuristic" and d.kind == "action"
 
 
