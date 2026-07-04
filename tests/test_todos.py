@@ -25,6 +25,7 @@ from prefrontal.scheduling import (
     available_now,
     energy_time_rank,
     filter_suggestible,
+    first_window_fitting,
     fit_todos,
     free_windows,
     parse_window,
@@ -280,6 +281,18 @@ def test_free_windows_carves_gaps():
     assert all(w.minutes >= 10 for w in windows)
 
 
+def test_first_window_fitting_picks_earliest_that_fits():
+    """The soonest window long enough wins; too-short earlier ones are skipped."""
+    windows = [
+        FreeWindow("2026-06-29 09:00:00", "2026-06-29 09:15:00", 15),
+        FreeWindow("2026-06-29 11:00:00", "2026-06-29 12:00:00", 60),
+        FreeWindow("2026-06-29 14:00:00", "2026-06-29 15:00:00", 60),
+    ]
+    assert first_window_fitting(windows, 30).start == "2026-06-29 11:00:00"  # skips the 15m
+    assert first_window_fitting(windows, 10).start == "2026-06-29 09:00:00"  # 15m fits
+    assert first_window_fitting(windows, 90) is None  # nothing that long
+
+
 def test_suggest_for_windows_no_double_booking():
     """Each window gets a distinct fitting todo."""
     windows = [FreeWindow("2026-06-29 09:00:00", "2026-06-29 09:20:00", 20),
@@ -429,6 +442,55 @@ def create_app_with(store):
 
 def _auth():
     return {"X-Prefrontal-Token": SECRET}
+
+
+def test_schedule_todo_at_explicit_time(client, store_open):
+    """Scheduling with an explicit `at` blocks the bias-adjusted estimate as a commitment."""
+    store_open.set_state("time_estimation_bias", "1.0")  # keep the math simple
+    tid = client.post(
+        "/todos", json={"title": "Write report", "estimate_minutes": 45}, headers=_auth()
+    ).json()["todo_id"]
+    r = client.post(
+        f"/todos/{tid}/schedule", json={"at": "2026-07-10 14:00:00"}, headers=_auth()
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["start_at"] == "2026-07-10 14:00:00"
+    assert body["end_at"] == "2026-07-10 14:45:00"  # 45m estimate × 1.0 bias
+    # A real commitment now exists, and the todo is still open (blocked, not done).
+    commits = client.get("/commitments", headers=_auth()).json()["commitments"]
+    assert any(c["title"] == "Write report" for c in commits)
+    assert any(t["id"] == tid for t in client.get("/todos", headers=_auth()).json()["todos"])
+
+
+def test_schedule_todo_minutes_override_and_errors(client, store_open):
+    """`minutes` overrides the estimate; missing-estimate and unknown-todo error cleanly."""
+    tid = client.post("/todos", json={"title": "Sketch idea"}, headers=_auth()).json()["todo_id"]
+    # Explicit minutes wins over any inferred estimate.
+    r = client.post(
+        f"/todos/{tid}/schedule", json={"at": "2026-07-10 14:00:00", "minutes": 20},
+        headers=_auth(),
+    )
+    assert r.json()["end_at"] == "2026-07-10 14:20:00"
+    # Unknown / closed todo → 404.
+    assert client.post("/todos/9999/schedule", json={"at": "2026-07-10 14:00:00"},
+                       headers=_auth()).status_code == 404
+
+
+def test_schedule_todo_auto_finds_free_window(client, store_open, monkeypatch):
+    """With no `at`, it places the block in the earliest fitting free window today."""
+    from prefrontal.impact import utcnow
+
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr("prefrontal.webhooks.routers.todos.utcnow", lambda: now)
+    store_open.set_state("time_estimation_bias", "1.0")
+    tid = client.post(
+        "/todos", json={"title": "Deep work", "estimate_minutes": 30}, headers=_auth()
+    ).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/schedule", json={}, headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["minutes"] == 30 and body["start_at"][11:16] == "09:00"
 
 
 def test_todo_endpoints_crud_and_fit(client, store_open):

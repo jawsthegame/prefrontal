@@ -412,8 +412,13 @@ the first test. Code follow-ups below are optional polish.
   `free_windows()` over the schedule and `fit_todos()` that ranks what fits a gap
   (bias-adjusted). `GET/POST /todos`, `GET /todos/fit?minutes=N`,
   `prefrontal todo`/`fit`, and a "spare time" section in the morning briefing.
-  Energy-aware fitting shipped in the `/todos/now` picker (above). *(Next:
-  multi-suggestion per window; auto-schedule a todo into a window as a commitment.)*
+  Energy-aware fitting shipped in the `/todos/now` picker (above).
+  **Auto-scheduling** shipped: `POST /todos/{id}/schedule` blocks time for a todo
+  as a `manual` commitment — the block length is the bias-adjusted estimate (or an
+  explicit `minutes`), placed at an explicit `at` or the earliest fitting free
+  window today (`first_window_fitting` over `free_windows`, within waking hours),
+  turning a "good for: X" suggestion into a real hold. *(Next: multi-suggestion
+  per window.)*
 
 ## Known stubs in the current code
 
