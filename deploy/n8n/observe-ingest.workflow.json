@@ -1,0 +1,123 @@
+{
+  "name": "Prefrontal — Voice Capture Ingest (glasses/message → POST /observe)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prefrontal-observe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "Inbound message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "prefrontal-observe"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Pull the dictated text out of YOUR inbound source and normalise it.\n// Replace the 'Inbound message' webhook with your provider's trigger (WhatsApp\n// Business Cloud, Telegram, Messenger, an email node, …) and edit the field\n// pick below to match its payload. The captured line is whatever the glasses\n// dictated — e.g. \"Prefrontal, dentist wants me back in six months\". The\n// server strips the leading \"Prefrontal,\" address itself, so send it verbatim.\nconst j = $json.body ?? $json;\nconst text = (j.text || j.message || j.Body || j.content || '').toString().trim();\nreturn { json: { text } };"
+      },
+      "id": "extract-text",
+      "name": "Extract dictated text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "guard-nonempty",
+      "name": "Has text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/observe",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.text) }}\n}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
+      "id": "post-observe",
+      "name": "POST /observe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 220]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build a short spoken confirmation the glasses can read back to you. /observe\n// returns { count, proposals:[{summary}] }. count 0 means the sensor found\n// nothing worth proposing (or the local model was unreachable) — say so, so a\n// hands-free capture is never a silent drop.\nconst r = $json;\nconst n = r.count || 0;\nlet reply;\nif (!n) {\n  reply = \"Heard you, but nothing to file from that — captured no proposal.\";\n} else {\n  const first = (r.proposals && r.proposals[0] && r.proposals[0].summary) || 'a note';\n  reply = n === 1\n    ? `Captured: ${first}. Review it when you're back.`\n    : `Captured ${n} things (${first}, …). Review them when you're back.`;\n}\nreturn { json: { reply } };"
+      },
+      "id": "confirm",
+      "name": "Speakable confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ reply: $json.reply }) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseCode": 204,
+        "responseBody": "",
+        "options": {}
+      },
+      "id": "respond-empty",
+      "name": "No text — ack",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 420]
+    }
+  ],
+  "connections": {
+    "Inbound message": { "main": [[{ "node": "Extract dictated text", "type": "main", "index": 0 }]] },
+    "Extract dictated text": { "main": [[{ "node": "Has text?", "type": "main", "index": 0 }]] },
+    "Has text?": {
+      "main": [
+        [{ "node": "POST /observe", "type": "main", "index": 0 }],
+        [{ "node": "No text — ack", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /observe": { "main": [[{ "node": "Speakable confirmation", "type": "main", "index": 0 }]] },
+    "Speakable confirmation": { "main": [[{ "node": "Reply", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "TEMPLATE — configure before enabling. Bridges a hands-free dictated message (the Ray-Ban Meta glasses' 'Hey Meta, send a message to Prefrontal: …') into POST /observe, the LLM-as-sensor, which records *pending* candidate updates you review later at GET /proposals (nothing authoritative is written until you accept). Replace the 'Inbound message' webhook with your real messaging trigger (WhatsApp Business Cloud, Telegram, Messenger, email) and edit 'Extract dictated text' to match its payload; wire the 'Reply' output back to your channel so the confirmation is spoken in your ear. The server strips the leading 'Prefrontal,' address itself, so forward the dictated line verbatim. Use a per-user Prefrontal token so proposals land in that user's queue. See deploy/meta-glasses.md."
+  }
+}

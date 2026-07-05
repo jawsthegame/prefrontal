@@ -22,6 +22,7 @@ from prefrontal.sensor import (
     compute_sensor_calibration,
     extract_candidates,
     extract_candidates_from_transcript,
+    normalize_voice_note,
     recompute_sensor_calibration,
     record_candidates,
     render_transcript,
@@ -87,6 +88,57 @@ def test_strips_fabricated_numeric_fields_on_episode():
     # The model doesn't get to invent durations — only qualitative fields survive.
     assert cand.payload == {"episode_type": "task", "context": "report"}
     assert "predicted_value" not in cand.payload and "actual_value" not in cand.payload
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # The glasses' "send a message to Prefrontal: …" lands as a vocative.
+        ("Prefrontal, dentist wants me back in six months", "dentist wants me back in six months"),
+        ("Prefrontal: I keep skipping lunch on busy days", "I keep skipping lunch on busy days"),
+        ("Hey Prefrontal remind me to call the plumber", "remind me to call the plumber"),
+        ("note to Prefrontal - buy milk", "buy milk"),
+        ("send a message to Prefrontal that I blew off admin", "I blew off admin"),
+        ("  ok prefrontal, water goal hit  ", "water goal hit"),
+    ],
+)
+def test_normalize_voice_note_strips_leading_address(raw, expected):
+    assert normalize_voice_note(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "remember to call the dentist",  # bare capture verb — real content, keep it
+        "Prefrontal is running slow today",  # a note *about* the assistant, not an address
+        "log the gym trip as a miss",
+        "buy milk on the way home",
+    ],
+)
+def test_normalize_voice_note_keeps_plain_notes(raw):
+    assert normalize_voice_note(raw) == raw.strip()
+
+
+def test_normalize_voice_note_never_empties():
+    # Stripping the address would leave nothing → keep the original rather than "".
+    assert normalize_voice_note("Prefrontal!") == "Prefrontal!"
+    assert normalize_voice_note("   ") == ""
+
+
+def test_extract_candidates_normalizes_before_prompting():
+    """The dictated address is gone before the note reaches the model."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        seen["prompt"] = _json.loads(request.content)["prompt"]
+        return httpx.Response(200, json={"response": "[]"})
+
+    client = OllamaClient(transport=httpx.MockTransport(handler))
+    extract_candidates("Hey Prefrontal, I skipped lunch again", client=client)
+    assert "I skipped lunch again" in seen["prompt"]
+    assert "Hey Prefrontal" not in seen["prompt"]
 
 
 def test_coerces_fenced_and_chatty_json():
@@ -182,8 +234,9 @@ def test_observe_records_pending_proposals():
     ]"""
     client, store = _client_with(reply)
     with client:
-        r = client.post("/observe", json={"text": "turn on self care; I blow off admin"},
-                        headers=_auth())
+        r = client.post(
+            "/observe", json={"text": "turn on self care; I blow off admin"}, headers=_auth()
+        )
         assert r.status_code == 201
         body = r.json()
         assert body["count"] == 2
@@ -210,8 +263,9 @@ def test_proposals_list_accept_applies_and_reject_does_not():
     client, store = _client_with("[]")
     with client:
         sid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
-        eid = store.add_proposal(kind="episode",
-                                 payload={"episode_type": "task", "outcome": "miss"})
+        eid = store.add_proposal(
+            kind="episode", payload={"episode_type": "task", "outcome": "miss"}
+        )
         listed = client.get("/proposals", headers=_auth()).json()["proposals"]
         assert {p["id"] for p in listed} == {sid, eid}
 
@@ -331,9 +385,12 @@ def test_observe_422s_when_neither_text_nor_transcript():
     client, _ = _client_with("[]")
     with client:
         assert client.post("/observe", json={}, headers=_auth()).status_code == 422
-        assert client.post(
-            "/observe", json={"text": "   ", "transcript": []}, headers=_auth()
-        ).status_code == 422
+        assert (
+            client.post(
+                "/observe", json={"text": "   ", "transcript": []}, headers=_auth()
+            ).status_code
+            == 422
+        )
 
 
 # -- sensor calibration feedback (learning §2) -------------------------------
@@ -377,10 +434,9 @@ def test_calibration_ignores_pending_and_computes_accept_rate():
 def test_calibration_flags_chronically_rejected_target():
     # A state key rejected 3× (≥ MIN_TARGET_SAMPLES, 0% accept) is flagged; a
     # mostly-accepted key alongside it is not.
-    proposals = (
-        [_resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")] * 3
-        + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
-    )
+    proposals = [
+        _resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")
+    ] * 3 + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
     cal = compute_sensor_calibration(proposals)
     assert cal.status == "ok"
     assert cal.flagged == ("state:responsive_hours_end",)
@@ -388,10 +444,9 @@ def test_calibration_flags_chronically_rejected_target():
 
 def test_calibration_does_not_flag_under_min_target_samples():
     # Only 2 rejects for the key (< MIN_TARGET_SAMPLES) → not flagged, even at 0%.
-    proposals = (
-        [_resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")] * 2
-        + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
-    )
+    proposals = [
+        _resolved("state", {"key": "responsive_hours_end", "value": "23"}, "rejected")
+    ] * 2 + [_resolved("state", {"key": "self_care", "value": "on"}, "accepted")] * 3
     cal = compute_sensor_calibration(proposals)
     assert cal.status == "ok"
     assert cal.flagged == ()

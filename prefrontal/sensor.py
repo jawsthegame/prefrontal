@@ -106,9 +106,7 @@ class Candidate:
     rationale: str = ""
 
 
-def _allowlist_instructions(
-    *, quote_hint: str, avoid_keys: frozenset[str] = frozenset()
-) -> str:
+def _allowlist_instructions(*, quote_hint: str, avoid_keys: frozenset[str] = frozenset()) -> str:
     """The shared "here's the JSON shape + the exact allowlists" body.
 
     Identical for a note and a transcript — the safety model (allowlist,
@@ -145,6 +143,58 @@ def _allowlist_instructions(
     return body
 
 
+#: The assistant's name, as a caller would speak it into a hands-free capture.
+#: Anchors :func:`normalize_voice_note` — only a leading phrase that *names* the
+#: assistant is treated as an address to strip, never a bare capture verb (which
+#: might be real content, e.g. "remember to call the dentist").
+ASSISTANT_NAME = "prefrontal"
+
+#: Matches a leading "address to the assistant" that dictation-to-message flows
+#: (e.g. Ray-Ban Meta glasses' "Hey Meta, send a message to Prefrontal: …") prepend
+#: to a spoken note. Optional wake word / framing phrase, the assistant's name, then
+#: a separator. See :func:`normalize_voice_note`.
+_VOICE_ADDRESS_RE = re.compile(
+    r"^\s*"
+    r"(?P<lead>(?:hey|hi|ok|okay)\s+|"
+    r"(?:(?:send\s+a\s+)?message\s+to|note\s+to|tell|for|to)\s+)?"
+    rf"{ASSISTANT_NAME}"
+    r"(?P<sep>\s*[,:;.\-—]+\s*|\s+)"
+    r"(?:that\s+)?",  # "tell Prefrontal that …" — drop the dangling connector
+    re.IGNORECASE,
+)
+
+
+def normalize_voice_note(text: str) -> str:
+    """Strip a leading spoken address to the assistant from a dictated note.
+
+    Hands-free capture through the glasses arrives as a message dictated to a
+    contact — *"Hey Meta, send a message to Prefrontal: dentist wants me back in
+    six months"* lands here as ``"Prefrontal, dentist wants me back in six
+    months"``. The vocative "Prefrontal," is noise: it isn't part of the note and
+    would otherwise leak into the sensor's rationale. This removes it.
+
+    Conservative on purpose — it only strips a prefix that *names* the assistant
+    (optionally behind a wake word or "send a message to …" framing), and only
+    when that name is set off as an address: a wake/framing lead, or a punctuation
+    separator. A note that merely starts with the word (``"Prefrontal is slow
+    today"``) or a bare capture verb (``"remember to call the dentist"``) is left
+    untouched. If stripping would empty the note, the original is kept.
+    """
+    if not text or not text.strip():
+        return ""
+    match = _VOICE_ADDRESS_RE.match(text)
+    if not match:
+        return text.strip()
+    lead = match.group("lead")
+    sep = match.group("sep") or ""
+    # Only a vocative — a wake/framing lead or punctuation — counts as an address.
+    # A bare "Prefrontal <word>" (name + space only) is likely a note *about* it.
+    if not lead and not re.search(r"[,:;.\-—]", sep):
+        return text.strip()
+    remainder = text[match.end() :].strip()
+    return remainder or text.strip()
+
+
 def _build_prompt(text: str, *, avoid_keys: frozenset[str] = frozenset()) -> str:
     """The grounded extraction prompt: the note plus the exact allowlists."""
     return (
@@ -173,9 +223,7 @@ def render_transcript(turns: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _build_transcript_prompt(
-    transcript: str, *, avoid_keys: frozenset[str] = frozenset()
-) -> str:
+def _build_transcript_prompt(transcript: str, *, avoid_keys: frozenset[str] = frozenset()) -> str:
     """The grounded extraction prompt for a multi-speaker conversation.
 
     Same allowlist body as :func:`_build_prompt`, but framed to attribute signal
@@ -187,9 +235,7 @@ def _build_transcript_prompt(
         "(the person this assistant supports). The transcript may include other "
         "speakers; only record things that reflect the USER's own preferences, "
         "behavior, or state — never facts about other participants. "
-        + _allowlist_instructions(
-            quote_hint="the line you drew it from", avoid_keys=avoid_keys
-        )
+        + _allowlist_instructions(quote_hint="the line you drew it from", avoid_keys=avoid_keys)
         + f"\n\nCONVERSATION:\n{transcript}"
     )
 
@@ -266,6 +312,7 @@ def extract_candidates(
     """
     if not text or not text.strip():
         return []
+    text = normalize_voice_note(text)  # drop a dictated "Prefrontal, …" address
     client = client or OllamaClient.from_settings()
     prompt = _build_prompt(text, avoid_keys=avoid_keys or frozenset())
     try:
