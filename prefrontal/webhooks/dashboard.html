@@ -44,13 +44,12 @@
     -webkit-text-size-adjust: 100%;
   }
   header {
-    display: flex; align-items: baseline; gap: 10px 12px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap;
     padding: 14px 20px; padding-top: max(14px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--line); background: var(--bg);
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   header .meta { color: var(--muted); font-size: 13px; }
-  header .spacer { flex: 1; }
   button { font-family: inherit; }
   button:disabled { opacity: .5; cursor: progress; }
   .ghost {
@@ -312,20 +311,12 @@
      short list of what's actually on fire. */
   .alarm { background: var(--call-bg); color: var(--call); border-color: var(--call-bg); }
   .alarm:hover { border-color: var(--call); color: var(--fg); }
-  /* Panic is a floating action button, always reachable from any scroll
-     position. z-index sits below the #gate (10) so it's hidden until signed in,
-     and below the #panic overlay (20) so the overlay covers it when open. */
-  .panic-fab {
-    position: fixed; z-index: 8;
-    right: max(16px, env(safe-area-inset-right));
-    bottom: max(16px, env(safe-area-inset-bottom));
-    display: flex; align-items: center; gap: 7px;
-    padding: 12px 18px; border-radius: 999px;
-    background: var(--call-bg); color: var(--call); border: 1px solid var(--call);
-    font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer;
-    box-shadow: 0 8px 24px rgba(0,0,0,.35);
-  }
-  .panic-fab:hover { filter: brightness(1.06); }
+  /* The header's utility buttons (Refresh/Update/Restart/Sign out) are grouped
+     so they wrap together as one right-aligned block instead of scattering
+     (a lone Refresh top-right with the rest dropping to a left-aligned row). */
+  header .hdr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  /* Panic sits apart on the left, by the title, not among the utility buttons. */
+  header .alarm { margin-right: 4px; }
   #panic { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
     background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     align-items: flex-start; justify-content: center;
@@ -390,12 +381,14 @@
 </nav>
 <header>
   <h1>Monitor</h1>
+  <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <span class="meta" id="status">loading…</span>
-  <span class="spacer"></span>
-  <button class="ghost" id="refresh">Refresh</button>
-  <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
-  <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
-  <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
+  <div class="hdr-actions">
+    <button class="ghost" id="refresh">Refresh</button>
+    <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
+    <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
+    <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
+  </div>
 </header>
 
 <div class="banner">
@@ -449,12 +442,6 @@
   <section class="card" id="c-triage"><details class="collapse"><summary><h2>Mail triage — learned from drops</h2></summary><div class="body"></div></details></section>
   <section class="card" id="c-triagelog"><details class="collapse"><summary><h2>Triage — recent decisions</h2></summary><div class="body"></div></details></section>
 </main>
-
-<!-- Panic is an emergency action, so it lives as a floating button that's always
-     reachable (any scroll position, thumb-friendly on mobile) rather than buried
-     among the header's utility buttons. Same id, so the existing handler binds. -->
-<button class="panic-fab" id="panic-btn" type="button"
-  title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
 
 <div id="gate">
   <div class="box">
