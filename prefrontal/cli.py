@@ -1250,6 +1250,18 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         ignored = sweep_unanswered_self_care(store, now)
         if ignored:
             print(f"({ignored} unanswered self-care nudge(s) logged as ignored)")
+        # Break down the tasks being avoided (the model decides whether each is
+        # worth it) — the sibling of the /webhooks/coach/check sweep.
+        from prefrontal.integrations.ollama import OllamaClient
+        from prefrontal.todos import sweep_avoided_decompositions
+
+        broken = sweep_avoided_decompositions(
+            store,
+            OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model),
+            now=now,
+        )
+        if broken:
+            print(f"({broken} avoided task(s) broken down)")
         decisions = decide(store, cues, ctx)
         if not decisions:
             print(f"Nothing to say right now ({len(cues)} cue(s) held).")

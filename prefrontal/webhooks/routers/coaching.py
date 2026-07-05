@@ -43,6 +43,7 @@ from prefrontal.modules.self_care import (
     mark_self_care_prompted,
     sweep_unanswered_self_care,
 )
+from prefrontal.todos import sweep_avoided_decompositions
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -111,6 +112,10 @@ def build_router(services: RouterServices) -> APIRouter:
         # coach_ack path), so sweep their unanswered ones into "ignored" episodes
         # — the "wrong time / too frequent" signal the cadence learner reads.
         sweep_unanswered_self_care(memory, now)
+        # Break down the tasks being avoided (the model judges whether each is even
+        # worth it), before collecting cues so tiny_first_step can use the fresh
+        # first step. Bounded model calls per tick; a no-op if none are avoided.
+        sweep_avoided_decompositions(memory, services.ollama, now=now)
         coach_ctx = build_context(
             memory,
             now=now,

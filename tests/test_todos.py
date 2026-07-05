@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.briefing import build_briefing, render_briefing
+from prefrontal.clock import utcnow
 from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
@@ -859,7 +860,8 @@ def test_dismiss_decomposition_endpoint(client, store_open):
     tid = client.post(
         "/todos", json={"title": "Write report", "estimate_minutes": 90}, headers=_auth()
     ).json()["todo_id"]
-    # Offline ollama → heuristic decomposition is stored on this big todo.
+    # Decomposition isn't auto-made at creation now; create one on demand to dismiss.
+    client.post(f"/todos/{tid}/decompose", headers=_auth())
     assert store_open.get_decomposition(tid) is not None
     r = client.post(
         f"/todos/{tid}/decompose/dismiss", json={"reason": "not_needed"}, headers=_auth()
@@ -877,19 +879,76 @@ def test_dismiss_decomposition_endpoint(client, store_open):
     ).status_code == 422
 
 
-def test_auto_decompose_suppressed_end_to_end(client, store_open):
-    """Once suppressed, creating a big todo skips auto-decompose (on-demand still works)."""
-    store_open.set_state("decomposition_suppress_threshold", "1")
-    store_open.record_decomposition_dismissal(
-        todo_id=None, title="prior", reason="not_needed", first_step="x", steps=[],
+def test_decompose_task_allow_decline():
+    """With allow_decline the model can veto a breakdown; without it, never None."""
+    from prefrontal.todos import decompose_task
+
+    # Explicit model decline → None, but only when the caller opted in.
+    assert decompose_task(
+        "Reply 'yes' to Sam", client=_ollama_json('{"decompose": false}'), allow_decline=True
+    ) is None
+    assert decompose_task(
+        "Reply 'yes' to Sam", client=_ollama_json('{"decompose": false}')
+    ) is not None  # first-step callers still get a (heuristic) breakdown
+    # A usable step comes back as an llm decomposition.
+    d = decompose_task(
+        "Write report",
+        client=_ollama_json(
+            '{"first_step":"Open the doc","first_step_minutes":3,"steps":["Draft"]}'
+        ),
+        allow_decline=True,
     )
-    tid = client.post(
-        "/todos", json={"title": "Big new thing", "estimate_minutes": 120}, headers=_auth()
-    ).json()["todo_id"]
-    assert store_open.get_decomposition(tid) is None  # auto-decompose suppressed
-    # Explicit "Break it down" is unaffected.
-    client.post(f"/todos/{tid}/decompose", headers=_auth())
-    assert store_open.get_decomposition(tid) is not None
+    assert d is not None and d.first_step == "Open the doc" and d.source == "llm"
+    # No model can't judge, so an avoided task still gets a heuristic first step.
+    assert decompose_task("Write report", client=None, allow_decline=True) is not None
+
+
+def _breaks_down():
+    return _ollama_json('{"first_step":"Open it","first_step_minutes":2,"steps":["a"]}')
+
+
+def test_sweep_decomposes_only_avoided_tasks(store):
+    """The sweep breaks down avoided todos, not fresh ones."""
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    tid = store.add_todo("A big task", estimate_minutes=90, priority=2)
+    # Right now it's fresh → nothing avoided → no-op.
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=utcnow()) == 0
+    assert store.get_decomposition(tid) is None
+    # Ten days on it's avoided → the model breaks it down.
+    future = utcnow() + timedelta(days=10)
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 1
+    assert store.get_decomposition(tid)["first_step"] == "Open it"
+    # A second sweep is a no-op — it already has a breakdown.
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 0
+
+
+def test_sweep_records_and_skips_model_declines(store):
+    """A model decline is recorded once so later sweeps don't re-ask."""
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    tid = store.add_todo("Trivial avoided thing", estimate_minutes=90, priority=2)
+    future = utcnow() + timedelta(days=10)
+    decline = _ollama_json('{"decompose": false}')
+    assert sweep_avoided_decompositions(store, decline, now=future) == 0
+    assert store.get_decomposition(tid) is None
+    assert tid in store.decomposition_feedback_todo_ids()  # decline remembered
+    # Even if the model would now break it down, the decided todo is skipped.
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 0
+    assert store.get_decomposition(tid) is None
+
+
+def test_sweep_no_op_when_suppressed(store):
+    """Repeated 'not needed' dismissals switch the whole sweep off."""
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    store.set_state("decomposition_suppress_threshold", "1")
+    store.record_decomposition_dismissal(
+        todo_id=None, title="prior", reason="not_needed", first_step="x", steps=[]
+    )
+    store.add_todo("Big avoided thing", estimate_minutes=120, priority=2)
+    future = utcnow() + timedelta(days=10)
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 0
 
 
 def test_update_todo_deadline_open_only(store):
@@ -906,20 +965,20 @@ def test_update_todo_deadline_open_only(store):
     assert store.update_todo_deadline(999, "2026-09-01 00:00:00") is False  # absent
 
 
-def test_post_big_todo_auto_decomposes(client):
-    """A big todo (heuristic estimate ≥ threshold) gets a stored first step."""
+def test_post_todo_never_auto_decomposes_at_creation(client):
+    """A big todo is no longer broken down at creation — that waits until it's
+    avoided (the coaching sweep), so a fresh task stays uncluttered."""
     r = client.post("/todos", json={"title": "Write the project proposal"}, headers=_auth())
     body = r.json()
     assert body["estimate_minutes"] >= 30
-    assert body["decomposition"] is not None and body["decomposition"]["first_step"]
+    assert body["decomposition"] is None
     listed = client.get("/todos", headers=_auth()).json()["todos"]
     match = next(t for t in listed if t["title"] == "Write the project proposal")
-    assert match["decomposition"]["first_step"]
+    assert match.get("decomposition") is None
 
 
-def test_small_todo_no_auto_but_on_demand_and_no_route_collision(client):
-    """A small todo doesn't auto-decompose; the on-demand route works and
-    doesn't collide with done/drop."""
+def test_on_demand_decompose_works_and_no_route_collision(client):
+    """The on-demand route breaks a task down and doesn't collide with done/drop."""
     r = client.post("/todos", json={"title": "Call Bob"}, headers=_auth())  # ~10 min
     body = r.json()
     assert body["decomposition"] is None

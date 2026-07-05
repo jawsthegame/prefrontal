@@ -59,7 +59,6 @@ from prefrontal.todos import (
     MAX_CATEGORIES,
     at_category_cap,
     augment_todo,
-    auto_decompose_suppressed,
     avoided_todos,
     category_stats,
     decompose_task,
@@ -164,15 +163,10 @@ def build_router(services: RouterServices) -> APIRouter:
             category=aug.category,
             time_window=time_window,
         )
-        # Big tasks stall on starting — auto-decompose into a tiny first step,
-        # unless the user has repeatedly dismissed breakdowns as unnecessary
-        # (learning when *not* to break down; on-demand /decompose still works).
-        threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
-        decomposition = None
-        if aug.estimate_minutes >= threshold and not auto_decompose_suppressed(memory):
-            decomposition = _decompose_and_store(
-                memory, todo_id, payload.title, ollama_client
-            )
+        # Decomposition is help for a *stall*, so it isn't generated at creation
+        # anymore — the coaching sweep breaks a task down only once it's being
+        # avoided, and the model judges whether it's even worth it (see
+        # todos.sweep_avoided_decompositions). On-demand /decompose still works.
         return {
             "todo_id": todo_id,
             "estimate_minutes": aug.estimate_minutes,
@@ -181,7 +175,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "deadline": deadline,
             "category": aug.category,
             "augmented": aug.sources,
-            "decomposition": decomposition,
+            "decomposition": None,
         }
 
     @router.get("/todos", tags=["todos"])
