@@ -19,6 +19,7 @@ from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.panic import (
     build_panic,
+    evaluate_panic_check,
     overwhelm_level,
     panic_alert_message,
     render_panic,
@@ -305,6 +306,42 @@ def test_overwhelm_level_needs_a_real_pileup(store, noon):
     assert overwhelm_level(plan) == "overwhelmed"
     assert "2 already late" in panic_alert_message(plan, name="Tom")
     assert panic_alert_message(plan).startswith("Heads up —")
+
+
+def _overwhelm(store, now):
+    """Three overdue todos → a genuine pile-up (overwhelm_level == overwhelmed)."""
+    for t in ("A", "B", "C"):
+        store.add_todo(t, deadline=(now - timedelta(days=1)).strftime("%Y-%m-%d"))
+
+
+def test_evaluate_panic_check_fires_on_edge_then_holds(store, noon):
+    """The shared decision fires once on the calm→overwhelmed edge, then holds."""
+    _overwhelm(store, noon)
+    first = evaluate_panic_check(store, now=noon, quiet_hours=False)
+    assert first.fire and first.level == "overwhelmed" and first.message and first.first_step
+    second = evaluate_panic_check(store, now=noon, quiet_hours=False)
+    assert second.fire is False and second.level == "overwhelmed"  # edge consumed
+
+
+def test_evaluate_panic_check_defers_in_quiet_hours_preserving_the_edge(store, noon):
+    """quiet_hours=True defers (no fire) without advancing last_panic_level, so the
+    next responsive-hours check still fires."""
+    _overwhelm(store, noon)
+    deferred = evaluate_panic_check(store, now=noon, quiet_hours=True)
+    assert deferred.fire is False and deferred.level == "overwhelmed"
+    awake = evaluate_panic_check(store, now=noon, quiet_hours=False)
+    assert awake.fire is True
+
+
+def test_evaluate_panic_check_records_step_only_when_ackable(store, noon):
+    """A pending 'panic' step (for the Did-it button) is recorded only when ackable."""
+    store.set_state("panic_alert_cooldown_minutes", "0")  # allow back-to-back fires
+    _overwhelm(store, noon)
+    acked = evaluate_panic_check(store, now=noon, quiet_hours=False, ackable=True)
+    assert acked.fire and acked.step_id is not None
+    store.set_state("last_panic_level", "calm")  # re-arm the edge
+    plain = evaluate_panic_check(store, now=noon, quiet_hours=False, ackable=False)
+    assert plain.fire and plain.step_id is None
 
 
 def test_panic_check_edge_triggers_then_stays_quiet(store, noon):
