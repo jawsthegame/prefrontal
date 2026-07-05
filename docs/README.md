@@ -19,6 +19,8 @@ capability with real examples, plus an API/CLI reference.
 **Understand it**
 - [**whitepaper.md**](whitepaper.md) — the problem, the design principles, and the architecture in one read.
 - [**schema.md**](schema.md) — the SQLite memory model (episodes, patterns, commitments, todos, household tables, …).
+- [**entity-relationship.md**](entity-relationship.md) — the ERD: every table and its foreign-key relationships, as a Mermaid diagram.
+- [**interventions.md**](interventions.md) — every module's interventions (what each does, its trigger, its status).
 - [`../ROADMAP.md`](../ROADMAP.md) — what's shipped and what's planned.
 
 **Design specs** (the "why" behind individual pieces)
