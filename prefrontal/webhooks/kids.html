@@ -219,6 +219,19 @@
     </form>
   </section>
 
+  <section class="card" id="c-pets">
+    <p class="label">🐾 Pets</p>
+    <div id="pets"></div>
+    <form class="inline" id="pet-form">
+      <input id="pet-name" type="text" placeholder="Add a pet — name" required />
+      <input id="pet-species" type="text" placeholder="species (dog, cat…)" />
+      <input id="pet-bday" type="date" title="Birthday / adoption day (optional)" />
+      <button class="primary" type="submit">Add</button>
+    </form>
+    <span class="hint">Meds, vet &amp; groomer go under Facts (Health); for
+      recurring meds or grooming due-dates, add a Chore.</span>
+  </section>
+
   <section class="card" id="c-invite">
     <p class="label">Co-parents</p>
     <div id="invites"></div>
@@ -363,6 +376,7 @@ const $ = (s) => document.querySelector(s);
 let token = localStorage.getItem(KEY);
 let vocab = { fact_categories: [], agreement_kinds: [] };
 let children = [];
+let pets = [];
 let agreements = [];
 let members = [];
 let routines = [];
@@ -481,25 +495,41 @@ function renderRoster() {
     : `<div class="empty">No kids added yet — add one below.</div>`;
 }
 
-function renderFacts(per_child) {
-  if (!(per_child || []).length) { $("#facts").innerHTML = `<div class="empty">No facts yet.</div>`; return; }
-  $("#facts").innerHTML = per_child.map((block) => {
-    const cats = block.categories.map((cat) => {
-      const rows = cat.items.map((it) => {
-        const prov = it.updated_by_name ? `<span class="prov">${esc(it.updated_by_name)}</span>` : "";
-        return `<div class="row">
-          <span class="k">${esc(it.item)}</span>
-          <span class="v">${esc(it.value || "—")}</span>${prov}
-          <button class="iconbtn" data-editfact="1" data-child="${block.child_id}"
-            data-cat="${esc(cat.category)}" data-item="${esc(it.item)}" data-value="${esc(it.value || "")}">✎</button>
-          <button class="iconbtn del" data-delfact="1" data-child="${block.child_id}"
-            data-cat="${esc(cat.category)}" data-item="${esc(it.item)}">🗑</button>
-        </div>`;
-      }).join("");
-      return `<div class="cat-h">${esc(cat.label)}</div>${rows}`;
+function renderPets() {
+  $("#pets").innerHTML = pets.length
+    ? pets.map((p) => {
+        const sp = p.species ? ` <span class="prov">${esc(p.species)}</span>` : "";
+        return `<span class="chip">${esc(p.name)}${sp}` +
+          `<button class="iconbtn" data-renamepet="${p.id}" data-name="${esc(p.name)}" ` +
+          `data-species="${esc(p.species || "")}" title="Rename">✎</button></span>`;
+      }).join("")
+    : `<div class="empty">No pets yet — add one below.</div>`;
+}
+
+// One fact block, reused for kids and pets; `paw` marks a pet block so it reads
+// distinctly even though pets and kids share the fact grid.
+function factBlock(block, paw) {
+  const cats = block.categories.map((cat) => {
+    const rows = cat.items.map((it) => {
+      const prov = it.updated_by_name ? `<span class="prov">${esc(it.updated_by_name)}</span>` : "";
+      return `<div class="row">
+        <span class="k">${esc(it.item)}</span>
+        <span class="v">${esc(it.value || "—")}</span>${prov}
+        <button class="iconbtn" data-editfact="1" data-child="${block.child_id}"
+          data-cat="${esc(cat.category)}" data-item="${esc(it.item)}" data-value="${esc(it.value || "")}">✎</button>
+        <button class="iconbtn del" data-delfact="1" data-child="${block.child_id}"
+          data-cat="${esc(cat.category)}" data-item="${esc(it.item)}">🗑</button>
+      </div>`;
     }).join("");
-    return `<div class="child-h">${esc(block.child_name)}</div>${cats}`;
+    return `<div class="cat-h">${esc(cat.label)}</div>${rows}`;
   }).join("");
+  return `<div class="child-h">${paw ? "🐾 " : ""}${esc(block.child_name)}</div>${cats}`;
+}
+
+function renderFacts(per_child, per_pet) {
+  const kid = (per_child || []).map((b) => factBlock(b, false)).join("");
+  const pet = (per_pet || []).map((b) => factBlock(b, true)).join("");
+  $("#facts").innerHTML = (kid + pet) || `<div class="empty">No facts yet.</div>`;
 }
 
 function timeLabel(hhmm) {
@@ -701,9 +731,12 @@ function renderAppts(upcoming) {
 
 function refreshDropdowns() {
   const kidOpts = children.map((c) => ({ value: c.id, label: c.name }));
-  fillSelect($("#fact-child"), kidOpts, { zero: "Household-wide" });
+  // Facts and shopping can target a pet too (meds, dog food…); star charts stay
+  // kids-only. Pets are marked so the picker reads distinctly.
+  const petOpts = pets.map((p) => ({ value: p.id, label: `🐾 ${p.name}` }));
+  fillSelect($("#fact-child"), [...kidOpts, ...petOpts], { zero: "Household-wide" });
   fillSelect($("#agr-child"), kidOpts, { zero: "Whole household" });
-  fillSelect($("#shop-child"), kidOpts, { zero: "Household-wide" });
+  fillSelect($("#shop-child"), [...kidOpts, ...petOpts], { zero: "Household-wide" });
   fillSelect($("#fact-cat"), vocab.fact_categories.map((c) => ({ value: c, label: c })));
   fillSelect($("#agr-kind"), vocab.agreement_kinds.map((k) => ({ value: k, label: k })));
   // Parents for the chore-owner / routine-accountable pickers, and routines for
@@ -743,11 +776,13 @@ async function loadSheet() {
   const sheet = data.sheet || {};
   vocab = data.vocab || vocab;
   children = sheet.children || [];
+  pets = sheet.pets || [];
   renderRecent(sheet.recently_changed);
   renderDigest(data.digest);
   renderInvites(data.invites);
   renderRoster();
-  renderFacts(sheet.per_child);
+  renderPets();
+  renderFacts(sheet.per_child, sheet.per_pet);
   agreements = sheet.agreements || [];
   renderAgreements(agreements);
   renderAppts(sheet.upcoming);
@@ -821,6 +856,27 @@ $("#roster").addEventListener("click", async (e) => {
   if (!id) return;
   const name = prompt("Rename this kid:", e.target.getAttribute("data-name"));
   if (name && name.trim()) { await post(`/household/children/${id}`, { name: name.trim() }); await loadSheet(); }
+});
+
+$("#pet-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await post("/household/pets", {
+    name: $("#pet-name").value.trim(),
+    species: $("#pet-species").value.trim() || null,
+    birthday: $("#pet-bday").value || null,
+  });
+  $("#pet-name").value = ""; $("#pet-species").value = ""; $("#pet-bday").value = "";
+  await loadSheet();
+});
+
+$("#pets").addEventListener("click", async (e) => {
+  const id = e.target.getAttribute("data-renamepet");
+  if (!id) return;
+  const name = prompt("Rename this pet:", e.target.getAttribute("data-name"));
+  if (name === null || !name.trim()) return;
+  const species = prompt("Species (dog, cat…):", e.target.getAttribute("data-species") || "");
+  await post(`/household/pets/${id}`, { name: name.trim(), species: (species || "").trim() || null });
+  await loadSheet();
 });
 
 $("#fact-form").addEventListener("submit", async (e) => {

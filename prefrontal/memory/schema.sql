@@ -504,13 +504,19 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
 -- facts/agreements use the sentinel child_id = 0 (children.id is a positive
 -- AUTOINCREMENT, so 0 never collides with a real child). See docs/household-sheet.md.
 
--- The kids roster: stable identity only (name + birthday). Everything else about
--- a child is a fact (household_facts), not a column here.
+-- The household roster: stable identity only (name + birthday). Everything else
+-- about a member is a fact (household_facts), not a column here. `kind` splits the
+-- roster into the kids ('child', the default) and pets ('pet'); pets reuse the
+-- same facts / appointments / shopping plumbing (all keyed by children.id) but are
+-- surfaced under their own section. `species` labels a pet (dog/cat/…); NULL for a
+-- child.
 CREATE TABLE IF NOT EXISTS children (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     household_id INTEGER NOT NULL REFERENCES households(id),
     name         TEXT NOT NULL,
     birthday     DATE,
+    kind         TEXT NOT NULL DEFAULT 'child',   -- 'child' | 'pet'
+    species      TEXT,                            -- pet species (dog/cat/…); NULL for a child
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (household_id, name)
 );

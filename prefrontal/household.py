@@ -86,12 +86,16 @@ class HouseholdSheet:
 
     Attributes:
         household_name: The household's name, or ``None`` if unnamed.
-        children: Roster dicts (id/name/birthday).
+        children: Kid roster dicts (id/name/birthday).
+        pets: Pet roster dicts (id/name/species/birthday) — same table as the
+            kids, split out so the app surfaces them under their own section.
         recently_changed: Most-recent writes, newest first (the load surface).
         per_child: Ordered blocks ``{child_id, child_name, categories}`` where
             ``categories`` is ``[{category, label, items}]`` in
             :data:`FACT_CATEGORIES` order; the household-wide block (child_id 0)
             comes first when present.
+        per_pet: The same per-member fact blocks for the pets (no household-wide
+            block — that belongs to the kids/household section).
         agreements: Standing-plan dicts (title/kind/body/child_name/structured),
             each also carrying ``star_total`` (the chart's running ledger total)
             and ``next_goal`` (the nearest unreached reward, or ``None``).
@@ -108,8 +112,10 @@ class HouseholdSheet:
 
     household_name: str | None
     children: list[dict[str, Any]] = field(default_factory=list)
+    pets: list[dict[str, Any]] = field(default_factory=list)
     recently_changed: list[Change] = field(default_factory=list)
     per_child: list[dict[str, Any]] = field(default_factory=list)
+    per_pet: list[dict[str, Any]] = field(default_factory=list)
     agreements: list[dict[str, Any]] = field(default_factory=list)
     upcoming: list[Appointment] = field(default_factory=list)
     shopping: list[dict[str, Any]] = field(default_factory=list)
@@ -192,6 +198,7 @@ def build_sheet(
 
     household = store.household()
     children = store.children()
+    pets = store.pets()
     facts = store.facts()
     agreements = store.agreements()
 
@@ -231,6 +238,9 @@ def build_sheet(
 
     # 2. Per-child facts, grouped by category. Household-wide (child_id 0) first.
     per_child = _group_facts_by_child(facts, children)
+    # 2b. Per-pet facts (meds, vet/groomer contacts, food) — same grid, no
+    # household-wide block (that belongs to the kids/household section).
+    per_pet = _group_facts_by_child(facts, pets, include_household_wide=False)
 
     # 3. Agreements — parse structured JSON + attach the chart's star progress.
     agreements_out = [_prepare_agreement(a, star_totals.get(a["id"], 0)) for a in agreements]
@@ -247,6 +257,7 @@ def build_sheet(
 
     counts = {
         "children": len(children),
+        "pets": len(pets),
         "facts": len(facts),
         "agreements": len(agreements),
         "upcoming": len(upcoming),
@@ -257,8 +268,10 @@ def build_sheet(
     return HouseholdSheet(
         household_name=(household or {}).get("name"),
         children=children,
+        pets=pets,
         recently_changed=recently_changed,
         per_child=per_child,
+        per_pet=per_pet,
         agreements=agreements_out,
         upcoming=upcoming,
         shopping=shopping,
@@ -302,12 +315,21 @@ def _chores_with_status(
 
 
 def _group_facts_by_child(
-    facts: list[dict[str, Any]], children: list[dict[str, Any]]
+    facts: list[dict[str, Any]],
+    children: list[dict[str, Any]],
+    *,
+    include_household_wide: bool = True,
 ) -> list[dict[str, Any]]:
-    """Group facts into per-child blocks, each block's items ordered by category."""
+    """Group facts into per-member blocks, each block's items ordered by category.
+
+    Serves both the kids grid (with the household-wide block first) and the pets
+    grid (``include_household_wide=False`` — household-wide facts belong to the
+    kids/household section, not repeated under the pets).
+    """
     names = {c["id"]: c["name"] for c in children}
-    # Deterministic block order: household-wide (0) first, then children by name.
-    order = [HOUSEHOLD_WIDE] + [c["id"] for c in children]
+    # Deterministic block order: household-wide (0) first when included, then
+    # roster members by name.
+    order = ([HOUSEHOLD_WIDE] if include_household_wide else []) + [c["id"] for c in children]
     blocks: list[dict[str, Any]] = []
     for child_id in order:
         owned = [f for f in facts if f["child_id"] == child_id]
@@ -1359,6 +1381,7 @@ def render_sheet(sheet: HouseholdSheet) -> str:
         (
             sheet.recently_changed,
             sheet.per_child,
+            sheet.pets,
             sheet.agreements,
             sheet.upcoming,
             sheet.shopping,
@@ -1390,6 +1413,22 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             for it in cat["items"]:
                 value = it.get("value") or "—"
                 lines.append(f"- {it['item']}: {value}")
+            lines.append("")
+
+    # 2c. Pets — the same fact grid (meds, vet/groomer, food) under their own
+    # heading, so a dog's heartworm schedule doesn't hide among the kids' sizes.
+    if sheet.pets:
+        blocks_by_id = {b["child_id"]: b for b in sheet.per_pet}
+        lines.append("## 🐾 Pets")
+        for p in sheet.pets:
+            species = f" · {p['species']}" if p.get("species") else ""
+            lines.append(f"### {p['name']}{species}")
+            block = blocks_by_id.get(p["id"])
+            for cat in (block["categories"] if block else []):
+                lines.append(f"**{cat['label']}**")
+                for it in cat["items"]:
+                    value = it.get("value") or "—"
+                    lines.append(f"- {it['item']}: {value}")
             lines.append("")
 
     # 3. Standing agreements.
