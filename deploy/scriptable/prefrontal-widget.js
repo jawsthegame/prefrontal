@@ -65,6 +65,32 @@ const C = {
 };
 const LEVEL_COLOR = { none: C.none, soft: C.soft, firm: C.firm, call: C.call };
 
+// Outing escalation → a phase you can read at a glance. The API's `level`
+// (none/soft/firm/call) is the *current* elapsed-vs-window phase, so this ramps
+// the glyph + words as you push past your stated time:
+//   none  beginning, under 50%      → on track  (you're good)
+//   soft  past 50%, first nudge      → heads up  (pushing it)
+//   firm  past 100%, firm nudge      → wrap up   (really pushing it)
+//   call  past 150%, after the call  → you're late  (stop — head home now)
+// Lock Screen slots are monochrome, so the signal leans on the escalating glyph
+// and the words, not the color (which only shows on the Home Screen card).
+const OUTING_PHASE = {
+  none: { glyph: "figure.walk",                   word: "on track",   phrase: "you're good" },
+  soft: { glyph: "exclamationmark.circle",         word: "heads up",   phrase: "pushing it" },
+  firm: { glyph: "exclamationmark.triangle.fill",  word: "wrap up",    phrase: "really pushing it" },
+  call: { glyph: "exclamationmark.octagon.fill",   word: "you're late", phrase: "you're late — head home now" },
+};
+// Resolve an active outing to its phase, plus how deep into the window it is
+// (a percentage: 40% early, 120% past the window, 180% way over — a number that
+// reads as "which phase" even in monochrome).
+function outingPhase(o) {
+  const p = OUTING_PHASE[o.level] || OUTING_PHASE.none;
+  const pct = o.time_window_minutes > 0
+    ? Math.round((o.elapsed_minutes / o.time_window_minutes) * 100)
+    : null;
+  return { ...p, pct };
+}
+
 async function getJSON(path) {
   const req = new Request(BASE_URL + path);
   req.headers = { "X-Prefrontal-Token": TOKEN };
@@ -235,7 +261,8 @@ const recentNudge =
 // Scriptable → Parameter) to pin it to a facet, or leave it blank for "auto"
 // (the most pressing facet right now). This lets you place several dedicated
 // widgets: e.g. a circular "focus" beside a circular "next", an inline "alert".
-//   focus / outing  → active outing progress (elapsed of window)
+//   focus / outing  → active outing: which escalation phase you're in
+//                     (on track → heads up → wrap up → you're late)
 //   next            → next commitment (start time)
 //   alert / urgent  → conflicts or a due departure ("leave now")
 //   behind / cascade → the knock-on chain when you're running late (>=2 topple)
@@ -277,9 +304,16 @@ const dueDeparture = recentNudge && recentNudge.kind === "departure" ? recentNud
 // (rect 2nd line), color }, or null when it has nothing to show right now.
 function facetInProgress() {
   if (!active) return null;
+  const ph = outingPhase(active);
+  // Circular value = how deep into the window you are ("40%" → "120%" → "180%"),
+  // so the phase reads as a number too; the escalating glyph carries it in mono.
+  const value = ph.pct != null ? `${ph.pct}%` : mins(active.elapsed_minutes);
   return {
-    glyph: "figure.walk", value: mins(active.elapsed_minutes), label: `${active.intention} · ${active.level}`,
-    sub: `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${active.level}`,
+    glyph: ph.glyph, value,
+    // Headline names the outing and the phase in words ("Coffee · wrap up").
+    label: `${active.intention} · ${ph.word}`,
+    // Rectangular's second line spells out both the numbers and the phase feeling.
+    sub: `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${ph.phrase}`,
     color: LEVEL_COLOR[active.level] || C.fg,
   };
 }
@@ -453,13 +487,18 @@ function renderHomeScreen() {
     return;
   }
 
-  // Active outing takes priority (time-sensitive).
+  // Active outing takes priority (time-sensitive). The dot + phase word ramp
+  // none→call (here in color), and the second line spells out the phase.
   if (active) {
+    const ph = outingPhase(active);
+    const lvlColor = LEVEL_COLOR[active.level] || C.none;
     const row = w.addStack();
     row.centerAlignContent();
-    text(row, "● ", { color: LEVEL_COLOR[active.level] || C.none, size: 13 });
+    text(row, "● ", { color: lvlColor, size: 13 });
     text(row, active.intention, { bold: true, size: small ? 13 : 14 });
-    text(w, `out ${mins(active.elapsed_minutes)} of ${mins(active.time_window_minutes)} · ${active.level}`,
+    text(row, `  ${ph.word}`, { color: lvlColor, size: 11, bold: true });
+    const pctText = ph.pct != null ? ` · ${ph.pct}%` : "";
+    text(w, `out ${mins(active.elapsed_minutes)} of ${mins(active.time_window_minutes)}${pctText} · ${ph.phrase}`,
       { color: C.muted, size: 12 });
     w.addSpacer(6);
   }
