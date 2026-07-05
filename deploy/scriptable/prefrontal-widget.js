@@ -185,6 +185,27 @@ function symbol(stack, name, size, color = C.fg) {
   return img;
 }
 
+// A live, self-updating elapsed timer (counts up from a past date). iOS ticks a
+// WidgetDate in timer style every second on the Lock Screen *without* a widget
+// reload — so an outing's clock stays current between iOS's throttled refreshes
+// (the phase word/color still only change on reload). Returns the WidgetDate.
+function timer(stack, date, { color = C.fg, size = 13, bold = false, minScale } = {}) {
+  const d = stack.addDate(date);
+  d.applyTimerStyle();
+  d.textColor = color;
+  d.font = bold ? Font.boldSystemFont(size) : Font.systemFont(size);
+  if (minScale) d.minimumScaleFactor = minScale;
+  return d;
+}
+
+// The outing's departure as a Date (stored UTC), or null if unparseable — the
+// anchor for the live elapsed timer.
+function outingStart(o) {
+  if (!o || !o.departure_at) return null;
+  const d = new Date(String(o.departure_at).replace(" ", "T") + "Z");
+  return isNaN(d) ? null : d;
+}
+
 // --- shared "right now" summary (used by every family) --------------------
 const active = (outings.active || [])[0];
 const todayCommitments = (commitments.commitments || []).filter((c) => isToday(c.start_at));
@@ -262,7 +283,8 @@ const recentNudge =
 // (the most pressing facet right now). This lets you place several dedicated
 // widgets: e.g. a circular "focus" beside a circular "next", an inline "alert".
 //   focus / outing  → active outing: which escalation phase you're in
-//                     (on track → heads up → wrap up → you're late)
+//                     (on track → heads up → wrap up → you're late), with a
+//                     live elapsed timer that ticks between iOS's refreshes
 //   next            → next commitment (start time)
 //   alert / urgent  → conflicts or a due departure ("leave now")
 //   behind / cascade → the knock-on chain when you're running late (>=2 topple)
@@ -301,7 +323,11 @@ function fmtWhenShort(ts) {
 const dueDeparture = recentNudge && recentNudge.kind === "departure" ? recentNudge : null;
 
 // Each facet resolves to { glyph, value (circular), label (inline/rect), sub
-// (rect 2nd line), color }, or null when it has nothing to show right now.
+// (rect 2nd line), color }, or null when it has nothing to show right now. The
+// outing facet also carries `timerDate` (its departure): a live elapsed timer the
+// renderers ticks in real time, plus `intention`/`word`/`windowLabel` so they can
+// compose "out <timer> / 15m" around it. Renderers fall back to the static
+// `value`/`sub` when there's no timerDate (e.g. an outing with no departure time).
 function facetInProgress() {
   if (!active) return null;
   const ph = outingPhase(active);
@@ -315,6 +341,10 @@ function facetInProgress() {
     // Rectangular's second line spells out both the numbers and the phase feeling.
     sub: `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${ph.phrase}`,
     color: LEVEL_COLOR[active.level] || C.fg,
+    timerDate: outingStart(active),
+    intention: active.intention,
+    word: ph.word,
+    windowLabel: mins(active.time_window_minutes),
   };
 }
 function facetNext() {
@@ -404,7 +434,14 @@ function renderInline() {
   if (!ok) { symbol(w, "wifi.slash", 12); text(w, "Prefrontal offline", { size: 13 }); return; }
   const f = pickFacet(true);
   symbol(w, f.glyph, 12);
-  text(w, f.label, { size: 13 });
+  // Outing: name + a live elapsed timer ("Coffee 12:34" ticking); the glyph
+  // carries the phase. Everything else is a static label.
+  if (f.timerDate) {
+    text(w, " " + f.intention + " ", { size: 13 });
+    timer(w, f.timerDate, { size: 13 });
+  } else {
+    text(w, f.label, { size: 13 });
+  }
 }
 
 function renderCircular() {
@@ -423,9 +460,12 @@ function renderCircular() {
   }
   const f = pickFacet();
   symbol(top, f.glyph, 15); top.addSpacer();
-  // Auto-shrink so a wider value (a time like "12:30") fits the circle instead
-  // of running off the edge; short values ("5", "go") still render at full size.
-  text(bot, f.value, { size: 16, bold: true, minScale: 0.5 }); bot.addSpacer();
+  // Outing: a live elapsed timer under the phase glyph, so the clock keeps
+  // ticking between reloads. Other facets: the static value, auto-shrunk so a
+  // wider value (a time like "12:30") fits the circle instead of clipping.
+  if (f.timerDate) timer(bot, f.timerDate, { size: 16, bold: true, minScale: 0.5 });
+  else text(bot, f.value, { size: 16, bold: true, minScale: 0.5 });
+  bot.addSpacer();
 }
 
 function renderRectangular() {
@@ -456,7 +496,14 @@ function renderRectangular() {
   }
   const f = pickFacet();
   rowLine(f.glyph, f.label, { size: 14, bold: true, color: f.color });
-  if (f.sub) {
+  if (f.timerDate) {
+    // Outing: a live "out <timer> / 15m" second line — the elapsed ticks.
+    const sub = col.addStack(); sub.centerAlignContent();
+    text(sub, "out ", { size: 12, color: C.muted });
+    timer(sub, f.timerDate, { size: 12, color: C.muted });
+    text(sub, " / " + f.windowLabel, { size: 12, color: C.muted });
+    sub.addSpacer();
+  } else if (f.sub) {
     const sub = col.addStack(); sub.centerAlignContent();
     text(sub, f.sub, { size: 12, color: C.muted });
     sub.addSpacer();
@@ -492,14 +539,20 @@ function renderHomeScreen() {
   if (active) {
     const ph = outingPhase(active);
     const lvlColor = LEVEL_COLOR[active.level] || C.none;
+    const start = outingStart(active);
     const row = w.addStack();
     row.centerAlignContent();
     text(row, "● ", { color: lvlColor, size: 13 });
     text(row, active.intention, { bold: true, size: small ? 13 : 14 });
     text(row, `  ${ph.word}`, { color: lvlColor, size: 11, bold: true });
-    const pctText = ph.pct != null ? ` · ${ph.pct}%` : "";
-    text(w, `out ${mins(active.elapsed_minutes)} of ${mins(active.time_window_minutes)}${pctText} · ${ph.phrase}`,
-      { color: C.muted, size: 12 });
+    // Second line ticks live: "out <timer> of 15m · phrase". Falls back to the
+    // static elapsed when there's no parseable departure time.
+    const line = w.addStack();
+    line.centerAlignContent();
+    text(line, "out ", { color: C.muted, size: 12 });
+    if (start) timer(line, start, { color: C.muted, size: 12 });
+    else text(line, mins(active.elapsed_minutes), { color: C.muted, size: 12 });
+    text(line, ` of ${mins(active.time_window_minutes)} · ${ph.phrase}`, { color: C.muted, size: 12 });
     w.addSpacer(6);
   }
 
