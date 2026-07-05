@@ -350,6 +350,15 @@
     .row .acts .btn-sm { flex: 1; min-height: 38px; }
     /* Give the title room to wrap rather than truncate against the pills. */
     .row .title { overflow-wrap: anywhere; }
+    /* The nav-link strip is a nowrap flex row; on a phone its 5 links are wider
+       than the viewport and scrolled the whole page sideways. Let the strip
+       scroll within itself instead (min-width:0 lets it shrink below its
+       content), so the page never gains horizontal scroll. */
+    .topnav { gap: 8px; }
+    .topnav .links { overflow-x: auto; min-width: 0; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; }
+    .topnav .links::-webkit-scrollbar { display: none; }
+    .topnav .links a { flex: none; white-space: nowrap; }
   }
 </style>
 </head>
