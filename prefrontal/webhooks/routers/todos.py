@@ -59,6 +59,7 @@ from prefrontal.todos import (
     MAX_CATEGORIES,
     at_category_cap,
     augment_todo,
+    auto_decompose_suppressed,
     avoided_todos,
     category_stats,
     decompose_task,
@@ -73,6 +74,7 @@ from prefrontal.webhooks.helpers import (
     _decompose_and_store,
 )
 from prefrontal.webhooks.schemas import (
+    DismissDecomposition,
     StepDone,
     TodoCategoryUpdate,
     TodoCreate,
@@ -162,10 +164,12 @@ def build_router(services: RouterServices) -> APIRouter:
             category=aug.category,
             time_window=time_window,
         )
-        # Big tasks stall on starting — auto-decompose into a tiny first step.
+        # Big tasks stall on starting — auto-decompose into a tiny first step,
+        # unless the user has repeatedly dismissed breakdowns as unnecessary
+        # (learning when *not* to break down; on-demand /decompose still works).
         threshold = memory.get_float("decomposition_threshold_minutes", 30.0)
         decomposition = None
-        if aug.estimate_minutes >= threshold:
+        if aug.estimate_minutes >= threshold and not auto_decompose_suppressed(memory):
             decomposition = _decompose_and_store(
                 memory, todo_id, payload.title, ollama_client
             )
@@ -327,6 +331,41 @@ def build_router(services: RouterServices) -> APIRouter:
             memory, todo_id, todo["title"], ollama_client
         )
         return {"todo_id": todo_id, "decomposition": decomposition}
+
+    @router.post("/todos/{todo_id}/decompose/dismiss", tags=["todos"])
+    def todo_decompose_dismiss(
+        todo_id: int,
+        payload: DismissDecomposition,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Dismiss a todo's breakdown, capturing why so it feeds learning.
+
+        ``reason='not_useful'`` (the steps don't help) folds back into the
+        decomposer as a negative example; ``reason='not_needed'`` (the task didn't
+        need breaking down), once repeated, suppresses the auto-decompose on new
+        todos. The dismissal is recorded *before* the decomposition is removed, so
+        a snapshot of what was rejected is preserved.
+        """
+        memory = ctx.store
+        decomp = memory.get_decomposition(todo_id)
+        if decomp is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no breakdown to dismiss.",
+            )
+        todo = memory.get_todo(todo_id) or {}
+        memory.record_decomposition_dismissal(
+            todo_id=todo_id,
+            title=todo.get("title"),
+            reason=payload.reason,
+            source=decomp.get("source"),
+            first_step=decomp.get("first_step"),
+            steps=decomp.get("steps"),
+            category=todo.get("category"),
+            estimate_minutes=todo.get("estimate_minutes"),
+        )
+        memory.delete_decomposition(todo_id)
+        return {"todo_id": todo_id, "dismissed": True, "reason": payload.reason}
 
     @router.post("/todos/{todo_id}/deadline", tags=["todos"])
     def todo_set_deadline(

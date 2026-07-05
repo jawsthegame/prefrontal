@@ -344,3 +344,94 @@ class TodosRepo(Repo):
         )
         self.conn.commit()
         return True
+
+    def delete_decomposition(self, todo_id: int) -> bool:
+        """Remove a todo's decomposition. Returns ``True`` if a row was deleted.
+
+        Used when the user dismisses a breakdown; the dismissal is captured
+        separately via :meth:`record_decomposition_dismissal` before this drops it.
+        No-ops (returns ``False``) if the todo isn't this user's or had none.
+        """
+        if not self._owns_todo(todo_id):
+            return False
+        cur = self.conn.execute(
+            "DELETE FROM todo_decompositions WHERE todo_id = ?", (todo_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def record_decomposition_dismissal(
+        self,
+        *,
+        todo_id: int | None,
+        title: str | None,
+        reason: str,
+        source: str | None = None,
+        first_step: str | None = None,
+        steps: list[str] | None = None,
+        category: str | None = None,
+        estimate_minutes: float | None = None,
+    ) -> int:
+        """Record that the user dismissed a breakdown, and return the new row id.
+
+        ``reason`` is ``not_useful`` (the steps didn't help — fed back as negative
+        examples to the decomposer) or ``not_needed`` (the task didn't need
+        breaking down — repeated, it suppresses auto-decompose). The rest is a
+        snapshot of what was dismissed, for the learning readers.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO decomposition_feedback (user_id, todo_id, title, reason, "
+            "source, first_step, steps, category, estimate_minutes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self._uid(),
+                todo_id,
+                title,
+                reason,
+                source,
+                first_step,
+                json.dumps(steps) if steps is not None else None,
+                category,
+                estimate_minutes,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def decomposition_feedback_list(
+        self, *, reason: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Recent decomposition dismissals (newest first), optionally by reason.
+
+        ``steps`` is decoded back to a list. Scoped to this user.
+        """
+        sql = (
+            "SELECT id, todo_id, title, reason, source, first_step, steps, category, "
+            "estimate_minutes, created_at FROM decomposition_feedback WHERE user_id = ?"
+        )
+        params: list[Any] = [self._uid()]
+        if reason is not None:
+            sql += " AND reason = ?"
+            params.append(reason)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["steps"] = json.loads(d["steps"]) if d["steps"] else []
+            except (ValueError, TypeError):
+                d["steps"] = []
+            out.append(d)
+        return out
+
+    def decomposition_dismissed_count(self, *, reason: str | None = None) -> int:
+        """How many decomposition dismissals this user has logged (optionally by reason)."""
+        sql = "SELECT COUNT(*) AS n FROM decomposition_feedback WHERE user_id = ?"
+        params: list[Any] = [self._uid()]
+        if reason is not None:
+            sql += " AND reason = ?"
+            params.append(reason)
+        row = self.conn.execute(sql, tuple(params)).fetchone()
+        return int(row["n"])

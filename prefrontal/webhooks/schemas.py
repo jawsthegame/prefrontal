@@ -789,6 +789,19 @@ class StepDone(BaseModel):
     )
 
 
+class DismissDecomposition(BaseModel):
+    """Body of ``POST /todos/{id}/decompose/dismiss`` — reject a breakdown.
+
+    ``not_useful`` = the steps don't help (folds back to improve future
+    breakdowns); ``not_needed`` = the task didn't need breaking down (learn when
+    not to auto-decompose).
+    """
+
+    reason: Literal["not_useful", "not_needed"] = Field(
+        description="Why the breakdown was dismissed.",
+    )
+
+
 class AssistantMessage(BaseModel):
     """Body of ``POST /assistant`` — a natural-language editing request."""
 
