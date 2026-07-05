@@ -13,7 +13,9 @@ env/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-.claude/
+# Ignore local/personal Claude config, but track shared skills.
+.claude/*
+!.claude/skills/
 .coverage
 .coverage.*
 htmlcov/
