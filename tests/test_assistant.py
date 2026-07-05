@@ -141,6 +141,10 @@ def snapshot():
             {"id": 7, "title": "File taxes", "priority": 2},
         ],
         "commitments": [{"id": 2, "title": "Standup", "start_at": "2026-07-02 14:00:00"}],
+        "outings": [
+            {"id": 3, "intention": "Coffee run", "time_window_minutes": 15.0, "status": "active"},
+            {"id": 9, "intention": "Groceries", "time_window_minutes": 45.0, "status": "returned"},
+        ],
         "conflicts": [{"key": "busy::dentist", "label": "Busy vs Dentist"}],
     }
 
@@ -196,6 +200,53 @@ def test_validate_dismiss_conflict_known_key(snapshot):
     assert actions[0].op == "dismiss_conflict"
 
 
+def test_validate_rename_outing_resolves(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "rename_outing", "outing_id": 3, "intention": "Grocery run"}], snapshot
+    )
+    assert errors == []
+    assert actions[0].params == {"outing_id": 3, "intention": "Grocery run"}
+    assert "Grocery run" in actions[0].summary
+
+
+def test_validate_set_outing_window_resolves(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_outing_window", "outing_id": 3, "time_window_minutes": 30}], snapshot
+    )
+    assert errors == []
+    assert actions[0].params == {"outing_id": 3, "time_window_minutes": 30.0}
+
+
+def test_validate_outing_ops_target_past_outings(snapshot):
+    """Editing works on a already-returned outing too, not just the active one."""
+    actions, errors = assistant.validate_actions(
+        [{"op": "rename_outing", "outing_id": 9, "intention": "Weekly shop"}], snapshot
+    )
+    assert errors == []
+    assert actions[0].params["outing_id"] == 9
+
+
+def test_validate_outing_unknown_id(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "set_outing_window", "outing_id": 999, "time_window_minutes": 20}], snapshot
+    )
+    assert any("999" in e for e in errors)
+
+
+def test_validate_outing_window_out_of_range(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "set_outing_window", "outing_id": 3, "time_window_minutes": 99999}], snapshot
+    )
+    assert errors
+
+
+def test_validate_rename_outing_needs_intention(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "rename_outing", "outing_id": 3, "intention": "  "}], snapshot
+    )
+    assert errors
+
+
 def test_wire_roundtrip_revalidates(snapshot):
     """Wire-format actions echoed by the client re-validate identically."""
     actions, _ = assistant.validate_actions(
@@ -241,6 +292,28 @@ def test_store_setters_noop_on_closed_todo(memory):
 
 def test_store_setters_noop_on_absent_todo(memory):
     assert memory.set_todo_estimate(999, 10.0) is False
+
+
+def test_store_setters_outing(memory):
+    oid = memory.start_outing("Coffee run", 15.0)
+    assert memory.set_outing_intention(oid, "Grocery run")["intention"] == "Grocery run"
+    assert memory.set_outing_window(oid, 40.0)["time_window_minutes"] == 40.0
+    row = memory.get_outing(oid)
+    assert row["intention"] == "Grocery run"
+    assert row["time_window_minutes"] == 40.0
+
+
+def test_store_setters_outing_edit_after_close(memory):
+    """A returned outing is still editable (a retroactive correction)."""
+    oid = memory.start_outing("Coffee run", 15.0)
+    memory.close_outing(oid, "returned")
+    assert memory.set_outing_intention(oid, "Espresso run") is not None
+    assert memory.get_outing(oid)["intention"] == "Espresso run"
+
+
+def test_store_setters_noop_on_absent_outing(memory):
+    assert memory.set_outing_intention(999, "x") is None
+    assert memory.set_outing_window(999, 20.0) is None
 
 
 def _plan_and_execute(memory, raw_actions, tz="UTC"):
@@ -294,6 +367,31 @@ def test_execute_add_and_cancel_commitment(memory):
     cancel = _plan_and_execute(memory, [{"op": "cancel_commitment", "commitment_id": cid}])
     assert cancel[0]["ok"] is True
     assert all(c["id"] != cid for c in memory.upcoming_commitments())
+
+
+def test_execute_rename_and_adjust_outing(memory):
+    oid = memory.start_outing("Coffee run", 15.0)
+    results = _plan_and_execute(
+        memory,
+        [
+            {"op": "rename_outing", "outing_id": oid, "intention": "Grocery run"},
+            {"op": "set_outing_window", "outing_id": oid, "time_window_minutes": 30},
+        ],
+    )
+    assert [r["ok"] for r in results] == [True, True]
+    row = memory.get_outing(oid)
+    assert row["intention"] == "Grocery run"
+    assert row["time_window_minutes"] == 30.0
+
+
+def test_execute_outing_op_on_stale_id_reports_softly(memory):
+    """An outing_id that never existed fails per-action, not with a raise."""
+    action = assistant.ValidatedAction(
+        "set_outing_window", {"outing_id": 12345, "time_window_minutes": 20.0}, "…"
+    )
+    results = assistant.execute_actions(memory, [action], timezone="UTC")
+    assert results[0]["ok"] is False
+    assert results[0]["detail"]
 
 
 def test_execute_bad_date_reports_per_action(memory):

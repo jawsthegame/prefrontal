@@ -178,6 +178,44 @@ class SessionsRepo(Repo):
             return None
         return self.get_outing(outing_id)
 
+    def set_outing_intention(
+        self, outing_id: int, intention: str
+    ) -> dict[str, Any] | None:
+        """Correct an outing's stated mission; return the updated outing.
+
+        The natural-language edit path (the dashboard assistant) for fixing what
+        an outing was for — "change my outing to grocery run". Works on any of the
+        user's outings, active or already closed (a retroactive correction).
+        Returns ``None`` if no such outing exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET intention = ? WHERE id = ? AND user_id = ?",
+            (intention, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
+    def set_outing_window(
+        self, outing_id: int, time_window_minutes: float
+    ) -> dict[str, Any] | None:
+        """Adjust an outing's stated "back in N minutes" window; return the outing.
+
+        The edit behind "give me 15 more minutes": on an active outing this
+        re-bases the escalation level (elapsed is compared against the new window);
+        on a past one it corrects the record. Returns ``None`` if no such outing
+        exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET time_window_minutes = ? WHERE id = ? AND user_id = ?",
+            (time_window_minutes, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
     def completed_outings_since(
         self, since: str, limit: int = 500
     ) -> list[dict[str, Any]]:
