@@ -470,6 +470,77 @@ def test_find_conflicts_ignores_fyi(store):
     assert len(find_conflicts(items)) == 1
 
 
+def test_hidden_excluded_from_lists_and_survives_resync(store):
+    """A hidden commitment drops from the listing surfaces and stays hidden on re-sync."""
+    events = [
+        {"title": "Team standup", "start_at": _iso(60), "external_id": "work:1"},
+        {"title": "Optional demo", "start_at": _iso(120), "external_id": "work:2"},
+    ]
+    sync_calendar(store, events)
+    by_title = {c["title"]: c for c in store.upcoming_commitments()}
+    cid = by_title["Optional demo"]["id"]
+
+    # Hide it: gone from upcoming_commitments, present in hidden_commitments.
+    row = store.set_commitment_hidden(cid, True)
+    assert row["hidden"] == 1
+    assert [c["title"] for c in store.upcoming_commitments()] == ["Team standup"]
+    assert [c["title"] for c in store.hidden_commitments()] == ["Optional demo"]
+    # include_hidden=True still sees it (the un-hide affordance's source).
+    assert cid in {c["id"] for c in store.upcoming_commitments(include_hidden=True)}
+
+    # A calendar re-sync (which re-activates the row) must not un-hide it.
+    sync_calendar(store, events)
+    assert [c["title"] for c in store.upcoming_commitments()] == ["Team standup"]
+    assert store.get_commitment(cid)["hidden"] == 1
+
+    # Un-hiding brings it back everywhere.
+    store.set_commitment_hidden(cid, False)
+    assert {c["title"] for c in store.upcoming_commitments()} == {"Team standup", "Optional demo"}
+    assert store.hidden_commitments() == []
+
+
+def test_hidden_commitment_never_conflicts(store):
+    """A hidden commitment overlapping a real one is not flagged as a double-booking."""
+    events = [
+        {"title": "Work mtg", "start_at": _iso(60), "end_at": _iso(120), "external_id": "w:1"},
+        {"title": "Overlap", "start_at": _iso(70), "end_at": _iso(130), "external_id": "w:2"},
+    ]
+    sync_calendar(store, events)
+    cid = {c["title"]: c["id"] for c in store.upcoming_commitments()}["Overlap"]
+    store.set_commitment_hidden(cid, True)
+    # find_conflicts runs over upcoming_commitments (hidden excluded) → no clash.
+    assert find_conflicts(store.upcoming_commitments()) == []
+
+
+def test_set_commitment_hidden_endpoint(client):
+    """POST /commitments/{id}/hidden hides and un-hides; response splits the lists."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "Skippable sync", "start_at": _iso(60), "external_id": "work:h1"},
+        ]},
+    )
+    cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
+
+    r = client.post(f"/commitments/{cid}/hidden", headers=_auth(), json={"hidden": True})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["hidden"] == 1
+
+    data = client.get("/commitments", headers=_auth()).json()
+    assert data["commitments"] == []                       # gone from the widget's stream
+    assert [c["id"] for c in data["hidden"]] == [cid]       # available to the un-hide UI
+
+    # Un-hide → back in the main list, out of hidden.
+    client.post(f"/commitments/{cid}/hidden", headers=_auth(), json={"hidden": False})
+    data = client.get("/commitments", headers=_auth()).json()
+    assert [c["id"] for c in data["commitments"]] == [cid]
+    assert data["hidden"] == []
+
+    assert client.post("/commitments/99999/hidden", headers=_auth(),
+                       json={"hidden": True}).status_code == 404
+
+
 def test_kind_feedback_latest_wins(store):
     """record_kind_feedback collapses by normalized title; latest verdict wins."""
     store.record_kind_feedback("Harlequin Brow Appt", "fyi", llm_kind="self")

@@ -235,6 +235,7 @@ CREATE TABLE IF NOT EXISTS commitments (
     status       TEXT    NOT NULL DEFAULT 'active',   -- active | cancelled
     kind         TEXT    NOT NULL DEFAULT 'self',   -- self (yours) | fyi (where someone will be; never a conflict)
     kind_source  TEXT,                              -- how kind was set: llm | user | default
+    hidden       BOOLEAN NOT NULL DEFAULT 0,        -- user "don't show me this": dropped from every surface (dashboard, widget, conflicts, departures); survives calendar re-sync
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

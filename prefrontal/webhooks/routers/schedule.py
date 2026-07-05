@@ -91,6 +91,7 @@ from prefrontal.webhooks.notify import (
 from prefrontal.webhooks.schemas import (
     CalendarSync,
     CommitmentCreate,
+    CommitmentHidden,
     CommitmentKind,
     ConflictDismiss,
     PlaceCreate,
@@ -452,10 +453,15 @@ def build_router(services: RouterServices) -> APIRouter:
         feed slug). The response also echoes the operator-configured ``calendars``
         label map so the dashboard can render a friendly, colored pill per
         calendar without hard-coding any feed names or colors.
+
+        ``commitments`` excludes hidden ones (so the widget and every other reader
+        drops them); the separate ``hidden`` list carries them for the dashboard's
+        un-hide affordance.
         """
         memory = ctx.store
         return {
             "commitments": memory.upcoming_commitments(),
+            "hidden": memory.hidden_commitments(),
             "calendars": resolved_settings.calendar_label_map,
         }
 
@@ -678,6 +684,28 @@ def build_router(services: RouterServices) -> APIRouter:
         memory.record_kind_feedback(
             current["title"], kind, llm_kind=current.get("kind")
         )
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/hidden", tags=["schedule"])
+    def set_commitment_hidden(
+        commitment_id: int,
+        payload: CommitmentHidden,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Hide (or un-hide) a commitment.
+
+        A hidden commitment is dropped from every surface that reads
+        :meth:`~prefrontal.memory.repos.schedule.ScheduleRepo.upcoming_commitments`
+        — the dashboard list, the widget, conflict detection, departure reminders
+        — while staying in the store so it can be un-hidden and so a calendar
+        re-sync doesn't resurrect it. Returns the updated row.
+        """
+        memory = ctx.store
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_hidden(commitment_id, payload.hidden)
         return {"commitment": updated}
 
     @router.get("/briefing", tags=["schedule"])
