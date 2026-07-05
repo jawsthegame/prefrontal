@@ -341,6 +341,15 @@
     header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); }
     .addrow { flex-wrap: wrap; }
     .addrow input { flex-basis: 100%; }
+    /* Stack each list row so the title/pills get the full width instead of being
+       crushed by the right-hand action column. Actions drop onto their own line
+       as evenly-sized, thumb-sized tap targets (todos: Break it down/Done/Drop,
+       outings: Back/Abandon, etc.). */
+    .row { flex-direction: column; gap: 8px; }
+    .row .acts { width: 100%; }
+    .row .acts .btn-sm { flex: 1; min-height: 38px; }
+    /* Give the title room to wrap rather than truncate against the pills. */
+    .row .title { overflow-wrap: anywhere; }
   }
 </style>
 </head>
