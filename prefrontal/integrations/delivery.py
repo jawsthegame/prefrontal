@@ -405,7 +405,13 @@ class DeliveryClient:
                 message=message,
                 priority=NTFY_PRIORITY.get(channel, 3),
                 actions=actions,
-                icon=route.ntfy_icon,
+                # The app icon and the tap target both come from the box's own
+                # public origin (``base_url``) — the same origin the phone already
+                # reaches for the one-tap action buttons — so branding works for a
+                # private deployment where a public GitHub URL would 404. An
+                # explicit per-user/operator ``ntfy_icon`` (a hosted image) wins;
+                # otherwise fall back to the box-served icon when an origin is set.
+                icon=route.ntfy_icon or (f"{base_url}/brand/app-icon.png" if base_url else ""),
                 # Tapping the push body (not a button) opens the dashboard, so the
                 # notification behaves like a real app's — only when a public
                 # origin is configured, matching the action buttons' own guard.

@@ -217,8 +217,7 @@ def test_resolve_route_icon_defaults_to_settings_and_overrides_per_user(store):
     assert resolve_route(store, settings).ntfy_icon == "https://tom.example/icon.png"
 
 
-def test_deliver_stamps_icon_from_route_and_click_from_base_url():
-    """A routed push carries the route's icon and a dashboard tap target."""
+def _deliver_capture(route, **kw):
     captured: dict = {}
 
     def handler(request):
@@ -227,11 +226,29 @@ def test_deliver_stamps_icon_from_route_and_click_from_base_url():
         captured["body"] = json.loads(request.read())
         return httpx.Response(200)
 
-    client = _mock_client(handler)
+    _mock_client(handler).deliver(_decision("push"), route, **kw)
+    return captured["body"]
+
+
+def test_deliver_defaults_icon_and_click_to_the_box_origin():
+    """With no explicit icon, the box serves its own from base_url (works private)."""
+    body = _deliver_capture(Route(ntfy_topic="me"), base_url=BASE)
+    assert body["icon"] == f"{BASE}/brand/app-icon.png"
+    assert body["click"] == f"{BASE}/dashboard"
+
+
+def test_deliver_explicit_route_icon_overrides_box_default():
+    """A per-user/operator hosted icon wins over the box-served default."""
     route = Route(ntfy_topic="me", ntfy_icon="https://brand.example/icon.png")
-    client.deliver(_decision("push"), route, base_url=BASE)
-    assert captured["body"]["icon"] == "https://brand.example/icon.png"
-    assert captured["body"]["click"] == f"{BASE}/dashboard"
+    body = _deliver_capture(route, base_url=BASE)
+    assert body["icon"] == "https://brand.example/icon.png"
+
+
+def test_deliver_omits_icon_and_click_without_base_url():
+    """No public origin and no explicit icon → a plain push (nothing to point at)."""
+    body = _deliver_capture(Route(ntfy_topic="me"))
+    assert "icon" not in body
+    assert "click" not in body
 
 
 # -- DeliveryClient routing ---------------------------------------------------
