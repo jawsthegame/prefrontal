@@ -495,6 +495,14 @@ _DECOMP_SYSTEM = (
     "steps = the remaining 2-5 short steps to finish."
 )
 
+#: Appended when the caller lets the model *decline* (avoided-task sweep). The
+#: model, not a fixed rule, judges whether a task is even worth breaking down.
+_DECOMP_DECLINE_INSTRUCTION = (
+    " If the task is already a single, simple, obvious action that can't be "
+    "usefully broken down (nothing would be gained by splitting it), reply with "
+    'exactly {"decompose": false} and nothing else — never invent busywork steps.'
+)
+
 
 def _heuristic_decomposition(title: str, max_first_minutes: float) -> Decomposition:
     """A generic-but-actionable first step when the model is unavailable."""
@@ -516,7 +524,8 @@ def decompose_task(
     max_first_minutes: float = DEFAULT_MAX_FIRST_STEP_MINUTES,
     client: Generator | None = None,
     guidance: str | None = None,
-) -> Decomposition:
+    allow_decline: bool = False,
+) -> Decomposition | None:
     """Break a task into a tiny first step (+ remaining steps).
 
     Tries the model first (one JSON call); falls back to a verb-keyed heuristic
@@ -529,19 +538,34 @@ def decompose_task(
         guidance: Optional learned addendum appended to the system prompt — the
             negative examples from breakdowns the user dismissed as unhelpful (see
             :func:`learned_decomposition_guidance`). Ignored on the heuristic path.
+        allow_decline: When ``True``, let the *model* judge whether the task is
+            even worth breaking down; if it declines, return ``None`` instead of a
+            breakdown. Used by the avoided-task sweep. A missing/unusable model
+            can't judge, so it still falls back to a heuristic first step (an
+            avoided task benefits from one). ``False`` (default) always returns a
+            :class:`Decomposition` — for the on-demand / first-step callers.
 
     Returns:
-        A :class:`Decomposition`.
+        A :class:`Decomposition`, or ``None`` only when ``allow_decline`` and the
+        model actively judged the task not worth decomposing.
     """
     if client is not None:
+        system = _DECOMP_SYSTEM + (guidance or "")
+        if allow_decline:
+            system += _DECOMP_DECLINE_INSTRUCTION
         try:
             reply = client.generate(
                 f"Task: {title}\nFirst step max minutes: {int(max_first_minutes)}",
-                system=_DECOMP_SYSTEM + (guidance or ""),
+                system=system,
             )
         except OllamaError:
             reply = ""
         raw = extract_json_object(reply)
+        # The model's explicit "not worth breaking down" verdict (only honored
+        # when the caller opted in). Checked before first_step so a contradictory
+        # reply still respects the decline.
+        if allow_decline and raw.get("decompose") is False:
+            return None
         first = raw.get("first_step")
         if isinstance(first, str) and first.strip():
             mins = raw.get("first_step_minutes")
@@ -623,6 +647,74 @@ def auto_decompose_suppressed(store: MemoryStore, *, threshold: int | None = Non
     if threshold <= 0:
         return False
     return store.decomposition_dismissed_count(reason="not_needed") >= threshold
+
+
+def sweep_avoided_decompositions(
+    store: MemoryStore,
+    client: Generator | None,
+    *,
+    now: datetime,
+    max_attempts: int = 2,
+) -> int:
+    """Break down the tasks the user is actually *avoiding* — not fresh ones.
+
+    Decomposition is help for a stall, so it shouldn't clutter a task the moment
+    it's added. This runs on the coaching tick: for the worst-avoided open todos
+    that don't yet have a breakdown (and haven't already been decided on — a
+    stored breakdown, a user dismissal, or a prior model decline), it asks the
+    model to break the task down *or decline* if it's not worth it
+    (:func:`decompose_task` with ``allow_decline``). A decline is recorded so we
+    don't re-ask every tick. Returns how many breakdowns were created.
+
+    Bounded by ``max_attempts`` model calls per tick (worst-avoided first), and a
+    no-op when the user has switched auto-decompose off
+    (:func:`auto_decompose_suppressed`). On-demand "Break it down" is unaffected.
+    """
+    if auto_decompose_suppressed(store):
+        return 0
+    avoided = avoided_todos(store.open_todos(), now)
+    if not avoided:
+        return 0
+    max_first = store.get_float("max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES)
+    decided = store.decomposition_feedback_todo_ids()
+    guidance = learned_decomposition_guidance(store)
+    made = attempts = 0
+    for a in avoided:
+        if attempts >= max_attempts:
+            break
+        todo = a["todo"]
+        tid = todo["id"]
+        if tid in decided or store.get_decomposition(tid) is not None:
+            continue  # already decided (breakdown, dismissal, or prior decline)
+        attempts += 1
+        d = decompose_task(
+            todo["title"],
+            max_first_minutes=max_first,
+            client=client,
+            guidance=guidance,
+            allow_decline=True,
+        )
+        if d is None:
+            # The model judged it not worth breaking down — remember that so the
+            # next tick doesn't re-ask (it also captures the model's judgment).
+            store.record_decomposition_dismissal(
+                todo_id=tid,
+                title=todo.get("title"),
+                reason="llm_declined",
+                source="llm",
+                category=todo.get("category"),
+                estimate_minutes=todo.get("estimate_minutes"),
+            )
+            continue
+        store.set_decomposition(
+            tid,
+            first_step=d.first_step,
+            first_step_minutes=d.first_step_minutes,
+            steps=d.steps,
+            source=d.source,
+        )
+        made += 1
+    return made
 
 
 # --- Avoidance detection (honest prioritization) -----------------------------

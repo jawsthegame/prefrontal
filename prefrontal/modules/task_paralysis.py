@@ -133,10 +133,12 @@ class TaskParalysisModule(Module):
             Intervention(
                 name="auto_decompose",
                 description=(
-                    "Break a task over decomposition_threshold_minutes into a "
-                    "tiny first step + collapsed remaining steps at creation."
+                    "Break a task the user is *avoiding* into a tiny first step + "
+                    "collapsed remaining steps — but only if the model judges it "
+                    "worth decomposing (it can decline). Runs on the coaching tick "
+                    "(sweep_avoided_decompositions), not at todo creation."
                 ),
-                trigger="a new todo whose estimate exceeds the threshold",
+                trigger="a todo that has reached 'avoided' status",
                 status="active",
             ),
             Intervention(

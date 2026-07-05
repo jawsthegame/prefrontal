@@ -441,7 +441,10 @@ CREATE TABLE IF NOT EXISTS todo_decompositions (
 --   not_needed — the task didn't need breaking down at all. Repeated not_needed
 --                dismissals suppress the auto-decompose on new todos (learning
 --                *when not to* break down); on-demand "Break it down" still works.
--- One row per dismissal — repetition is what makes a signal reliable.
+--   llm_declined — the *model* judged the task not worth breaking down during the
+--                avoided-task sweep. Recorded so the sweep doesn't re-ask, and as
+--                a data point on the model's own judgments.
+-- One row per decision — repetition is what makes a user signal reliable.
 CREATE TABLE IF NOT EXISTS decomposition_feedback (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL REFERENCES users(id),

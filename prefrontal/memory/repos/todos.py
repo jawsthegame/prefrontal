@@ -435,3 +435,16 @@ class TodosRepo(Repo):
             params.append(reason)
         row = self.conn.execute(sql, tuple(params)).fetchone()
         return int(row["n"])
+
+    def decomposition_feedback_todo_ids(self) -> set[int]:
+        """Todo ids that already have a recorded decomposition decision.
+
+        Any todo the user dismissed a breakdown for, or the model declined to
+        break down — so the avoided-task sweep skips them and doesn't re-ask.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT todo_id FROM decomposition_feedback "
+            "WHERE user_id = ? AND todo_id IS NOT NULL",
+            (self._uid(),),
+        ).fetchall()
+        return {int(r["todo_id"]) for r in rows}
