@@ -210,6 +210,36 @@ def test_resolve_route_per_user_overrides_operator(store):
     assert route.tts_enabled is True               # coaching-state bool honored
 
 
+def test_resolve_route_withholds_operator_target_in_multi_user(store):
+    # A second active user makes this a multi-user box: the operator's default
+    # topic/key is one person's device, so an unprovisioned user must NOT inherit
+    # it (that would send their private nudges to someone else). Server/icon —
+    # not a device target — still default.
+    store.create_user("second", display_name="Second")
+    settings = Settings(
+        ntfy_topic="op-topic",
+        ntfy_server="https://ntfy.example",
+        ntfy_icon="https://op.example/icon.png",
+        pushover_token="op-tok",
+        pushover_user_key="op-key",
+    )
+    route = resolve_route(store, settings)
+    assert route.ntfy_topic == ""            # withheld — no cross-account fallback
+    assert route.ntfy_token == ""
+    assert route.pushover_token == ""
+    assert route.pushover_user_key == ""
+    assert route.ntfy_server == "https://ntfy.example"      # not a target — kept
+    assert route.ntfy_icon == "https://op.example/icon.png"  # not a target — kept
+
+
+def test_resolve_route_multi_user_still_honors_per_user_target(store):
+    # Multi-user, but this user HAS their own routing → it is used unchanged.
+    store.create_user("second", display_name="Second")
+    store.set_state("ntfy_topic", "tom-private", source="explicit")
+    settings = Settings(ntfy_topic="op-topic")
+    assert resolve_route(store, settings).ntfy_topic == "tom-private"
+
+
 def test_resolve_route_icon_defaults_to_settings_and_overrides_per_user(store):
     settings = Settings(ntfy_icon="https://op.example/icon.png")
     assert resolve_route(store, settings).ntfy_icon == "https://op.example/icon.png"
