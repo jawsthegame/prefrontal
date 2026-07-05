@@ -131,12 +131,13 @@ ASSISTANT_SYSTEM = (
     '- {"op":"cancel_commitment","commitment_id":int}\n'
     '- {"op":"dismiss_conflict","key":str}\n'
     "An outing is a trip out with a stated 'back in N minutes' window "
-    "(time_window_minutes). You can fix what it was for, or adjust the window "
-    "(e.g. 'give me 15 more minutes' — add to the outing's current "
-    "time_window_minutes from the snapshot). Both work on the current outing and "
-    "past ones:\n"
+    "(time_window_minutes) that started at start_at. You can fix what it was for, "
+    "adjust the window (e.g. 'give me 15 more minutes' — add to the outing's "
+    "current time_window_minutes from the snapshot), or correct when it started. "
+    "All work on the current outing and past ones:\n"
     '- {"op":"rename_outing","outing_id":int,"intention":str}\n'
-    '- {"op":"set_outing_window","outing_id":int,"time_window_minutes":number}\n\n'
+    '- {"op":"set_outing_window","outing_id":int,"time_window_minutes":number}\n'
+    '- {"op":"set_outing_start","outing_id":int,"start_at":"YYYY-MM-DD HH:MM"}\n\n'
     "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
     "If (and ONLY if) the snapshot has a \"household\" object, these shared "
     "co-parent sheet ops are also available. Resolve a kid's name to an id from "
@@ -196,7 +197,7 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
         for c in memory.upcoming_commitments(limit=25)
     ]
     # Current + recent outings (any status), so "my outing" resolves to the active
-    # one and "yesterday's coffee run" to a closed one. status/departure_at let the
+    # one and "yesterday's coffee run" to a closed one. status/start_at let the
     # model tell them apart; time_window_minutes anchors an "N more minutes" edit.
     outings = [
         {
@@ -204,7 +205,9 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
             "intention": o.get("intention"),
             "time_window_minutes": o.get("time_window_minutes"),
             "status": o.get("status"),
-            "departure_at": o.get("departure_at"),
+            # Exposed as ``start_at`` (the row's ``departure_at``) to match the
+            # set_outing_start op's field name and the commitment snapshot.
+            "start_at": o.get("departure_at"),
         }
         for o in memory.recent_outings(limit=10)
     ]
@@ -632,6 +635,17 @@ def _v_set_outing_window(
     )
 
 
+def _v_set_outing_start(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    oid, intention = _require_outing(action, snapshot)
+    start_at = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
+    return ValidatedAction(
+        op, {"outing_id": oid, "start_at": start_at},
+        f"Set “{intention}” start to {start_at}",
+    )
+
+
 def _v_fact(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     household = _require_household(snapshot)
     child_id, who = _resolve_child(action, household)
@@ -727,6 +741,7 @@ _VALIDATORS: dict[
     "dismiss_conflict": _v_dismiss_conflict,
     "rename_outing": _v_rename_outing,
     "set_outing_window": _v_set_outing_window,
+    "set_outing_start": _v_set_outing_start,
     "set_fact": _v_fact,
     "clear_fact": _v_fact,
     "set_agreement": _v_set_agreement,
@@ -883,6 +898,9 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             result["ok"] = (
                 memory.set_outing_window(p["outing_id"], p["time_window_minutes"]) is not None
             )
+        elif op == "set_outing_start":
+            start_at = to_utc(p["start_at"], default_tz=tz)
+            result["ok"] = memory.set_outing_departure(p["outing_id"], start_at) is not None
         elif op == "set_fact":
             # updated_by is the acting (scoped) user — never model-supplied — so
             # every LLM-driven edit is attributed (the raw material for the digest).

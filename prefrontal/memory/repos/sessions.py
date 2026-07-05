@@ -222,6 +222,26 @@ class SessionsRepo(Repo):
             return None
         return self.get_outing(outing_id)
 
+    def set_outing_departure(
+        self, outing_id: int, departure_at: str
+    ) -> dict[str, Any] | None:
+        """Correct an outing's start (``departure_at``); return the updated outing.
+
+        The natural-language edit path for "I actually left at 2, not 2:15".
+        ``departure_at`` is a stored UTC timestamp; because elapsed time (and thus
+        the escalation level) is measured from it, moving it re-bases an active
+        outing's clock. Works on a closed outing too, as a retroactive fix.
+        Returns ``None`` if no such outing exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET departure_at = ? WHERE id = ? AND user_id = ?",
+            (departure_at, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
     def set_outing_home_arrived(
         self, outing_id: int, arrived_at: str | None
     ) -> None:
