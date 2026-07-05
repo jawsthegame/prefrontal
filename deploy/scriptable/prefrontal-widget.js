@@ -71,14 +71,14 @@ const LEVEL_COLOR = { none: C.none, soft: C.soft, firm: C.firm, call: C.call };
 //   none  beginning, under 50%      → on track  (you're good)
 //   soft  past 50%, first nudge      → heads up  (pushing it)
 //   firm  past 100%, firm nudge      → wrap up   (really pushing it)
-//   call  past 150%, after the call  → over      (you effed up — head home)
+//   call  past 150%, after the call  → you're late  (stop — head home now)
 // Lock Screen slots are monochrome, so the signal leans on the escalating glyph
 // and the words, not the color (which only shows on the Home Screen card).
 const OUTING_PHASE = {
-  none: { glyph: "figure.walk",                   word: "on track", phrase: "you're good" },
-  soft: { glyph: "exclamationmark.circle",         word: "heads up", phrase: "pushing it" },
-  firm: { glyph: "exclamationmark.triangle.fill",  word: "wrap up",  phrase: "really pushing it" },
-  call: { glyph: "flame.fill",                     word: "over",     phrase: "way over — head home" },
+  none: { glyph: "figure.walk",                   word: "on track",   phrase: "you're good" },
+  soft: { glyph: "exclamationmark.circle",         word: "heads up",   phrase: "pushing it" },
+  firm: { glyph: "exclamationmark.triangle.fill",  word: "wrap up",    phrase: "really pushing it" },
+  call: { glyph: "exclamationmark.octagon.fill",   word: "you're late", phrase: "you're late — head home now" },
 };
 // Resolve an active outing to its phase, plus how deep into the window it is
 // (a percentage: 40% early, 120% past the window, 180% way over — a number that
@@ -262,7 +262,7 @@ const recentNudge =
 // (the most pressing facet right now). This lets you place several dedicated
 // widgets: e.g. a circular "focus" beside a circular "next", an inline "alert".
 //   focus / outing  → active outing: which escalation phase you're in
-//                     (on track → heads up → wrap up → over)
+//                     (on track → heads up → wrap up → you're late)
 //   next            → next commitment (start time)
 //   alert / urgent  → conflicts or a due departure ("leave now")
 //   behind / cascade → the knock-on chain when you're running late (>=2 topple)
