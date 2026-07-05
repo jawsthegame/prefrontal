@@ -349,9 +349,16 @@ household-scoped table.
   (`got_by`/`got_at`), and `child_id` (0 = household-wide).
 - Repo: `add_shopping_item`, `set_shopping_got` (check off / un-check),
   `remove_shopping_item`, `clear_got_shopping_items` (sweep all checked-off rows
-  at once), `shopping_items` (still-needed first). It rides the
+  at once), `prune_expired_shopping` (drop bought rows past their TTL),
+  `shopping_items` (still-needed first). It rides the
   shared sheet — `build_sheet`/`render_sheet` gain a **Shopping** section
   (unchecked/ticked boxes), and `counts["shopping"]` is the still-needed tally.
+- Self-cleaning: a checked-off item lingers only up to `SHOPPING_GOT_TTL`
+  (24 h) — long enough to undo a mis-tap — then ages out on its own. The sweep
+  runs at read time inside `shopping_items` (keyed on `got_at`), so no cron is
+  needed and the list a caller sees never carries a bought row older than a day.
+  Anyone can also **dismiss** a bought item early: the `×` on a done line on
+  `/family` and `/dashboard` hits `…/{id}/remove`.
 - Surfaces: `GET /household/shopping` (the list alone) + `POST /household/shopping`,
   `…/{id}/got`, `…/{id}/remove`, `…/clear-got` (bulk-clear checked-off items); the
   `/kids` dashboard's checklist (with a **Clear N bought** button once anything is

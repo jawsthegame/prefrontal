@@ -1330,6 +1330,45 @@ def test_clear_got_shopping_items(store, dana, alex):
     assert dana.clear_got_shopping_items() == 0
 
 
+def test_shopping_got_items_expire_after_a_day(store, dana, alex):
+    """A bought item older than the TTL ages out of the list on the next read."""
+    dana_id = store.get_user("dana")["id"]
+    stale = dana.add_shopping_item(item="milk", added_by=dana_id)
+    fresh = dana.add_shopping_item(item="eggs", added_by=dana_id)
+    dana.add_shopping_item(item="bread", added_by=dana_id)
+    dana.set_shopping_got(stale, True, user_id=dana_id)
+    dana.set_shopping_got(fresh, True, user_id=dana_id)
+    # Backdate one bought item's got_at past the 24h window; the other stays recent.
+    store.conn.execute(
+        "UPDATE household_shopping SET got_at = datetime('now', '-2 days') WHERE id = ?",
+        (stale,),
+    )
+    store.conn.commit()
+
+    # The stale bought item is swept; the fresh bought one and still-needed rows stay.
+    items = alex.shopping_items()
+    assert [i["item"] for i in items] == ["bread", "eggs"]
+    # And it's really gone from the table, not just hidden.
+    remaining = store.conn.execute(
+        "SELECT COUNT(*) FROM household_shopping WHERE id = ?", (stale,)
+    ).fetchone()[0]
+    assert remaining == 0
+
+
+def test_prune_expired_shopping_leaves_still_needed(store, dana):
+    """Pruning only touches aged bought rows — never a still-needed or fresh one."""
+    dana_id = store.get_user("dana")["id"]
+    needed = dana.add_shopping_item(item="milk", added_by=dana_id)
+    # A still-needed item with an (irrelevant) old created_at is never pruned.
+    store.conn.execute(
+        "UPDATE household_shopping SET created_at = datetime('now', '-9 days') WHERE id = ?",
+        (needed,),
+    )
+    store.conn.commit()
+    assert dana.prune_expired_shopping() == 0
+    assert [i["item"] for i in dana.shopping_items()] == ["milk"]
+
+
 def test_shopping_renders_and_counts(store, dana):
     dana_id = store.get_user("dana")["id"]
     dana.add_shopping_item(item="milk", added_by=dana_id)

@@ -58,6 +58,11 @@ AGREEMENT_KINDS: tuple[str, ...] = ("reward", "consistency", "routine")
 #: under the UNIQUE constraint (SQLite treats NULLs as distinct — see the schema).
 HOUSEHOLD_WIDE = 0
 
+#: How long a checked-off ("got it") shopping item lingers before it ages out on
+#: its own — a self-cleaning list so bought rows don't pile up when nobody sweeps.
+#: An SQLite ``datetime`` modifier applied to ``got_at`` (stamped in UTC).
+SHOPPING_GOT_TTL = "-1 day"
+
 
 def normalize_fact_category(value: str | None) -> str | None:
     """Return a valid :data:`FACT_CATEGORIES` member, or ``None`` if unrecognized.
@@ -693,8 +698,30 @@ class HouseholdRepo(Repo):
         self.conn.commit()
         return cur.rowcount
 
+    def prune_expired_shopping(self) -> int:
+        """Drop checked-off items older than :data:`SHOPPING_GOT_TTL`; return how many.
+
+        Keeps a bought item around just long enough to undo a mis-tap or notice it
+        got the wrong thing, then ages it out so nobody has to sweep by hand. Only
+        ``got`` rows with a ``got_at`` past the cutoff go — still-needed items and
+        anything freshly checked off stay. Scoped to the household.
+        """
+        cur = self.conn.execute(
+            "DELETE FROM household_shopping "
+            "WHERE got = 1 AND household_id = ? "
+            "AND got_at IS NOT NULL AND got_at <= datetime('now', ?)",
+            (self._household_id(), SHOPPING_GOT_TTL),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def shopping_items(self) -> list[dict[str, Any]]:
-        """All shopping items — still-needed first, each with child + who-added names."""
+        """All shopping items — still-needed first, each with child + who-added names.
+
+        Checked-off items that have outlived :data:`SHOPPING_GOT_TTL` are swept
+        first, so the list a caller sees never carries a bought row older than a day.
+        """
+        self.prune_expired_shopping()
         rows = self.conn.execute(
             """
             SELECT s.id, s.child_id, s.item, s.spec, s.where_to_buy, s.got, s.created_at,

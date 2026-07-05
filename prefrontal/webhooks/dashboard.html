@@ -243,7 +243,12 @@
     font: inherit; padding: 0; line-height: 1; }
   .shop-line .box:hover { color: var(--accent); }
   .shop-line.done .txt { text-decoration: line-through; color: var(--muted); }
+  .shop-line .txt { flex: 1; min-width: 0; }
+  .shop-line .dismiss { margin-left: auto; color: var(--muted); cursor: pointer; background: none;
+    border: none; font: inherit; font-size: 18px; line-height: 1; padding: 0 2px; }
+  .shop-line .dismiss:hover { color: var(--danger); }
   .shop-sub { color: var(--muted); font-size: 12px; }
+  .shop-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .shop-clear { margin-top: 6px; text-align: right; }
   .shop-clear .linkbtn { border: none; background: none; color: var(--muted);
     font: inherit; font-size: 12px; cursor: pointer; padding: 2px 4px; }
@@ -1064,16 +1069,22 @@ function renderShopping(items) {
   const rows = items.map((s) => {
     const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
     const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
+    const dismiss = s.got
+      ? `<button type="button" class="dismiss" data-action="shop-dismiss" data-id="${s.id}" aria-label="Dismiss ${esc(s.item)}" title="Dismiss">×</button>`
+      : "";
     return `<div class="shop-line${s.got ? " done" : ""}"><button type="button" class="box" data-action="shop-check" data-id="${s.id}" data-got="${s.got ? 1 : 0}" aria-label="${s.got ? "Un-check" : "Check off"} ${esc(s.item)}">${s.got ? "☑" : "☐"}</button>`
-      + `<span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span></div>`;
+      + `<span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span>${dismiss}</div>`;
   }).join("");
   const footer = !needed.length
     ? `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`
     : "";
+  const note = done
+    ? `<div class="shop-note">Bought items clear on their own after a day — or tap × to dismiss.</div>`
+    : "";
   const clear = done
     ? `<div class="shop-clear"><button type="button" class="linkbtn" data-action="shop-clear-got">Clear ${done} bought</button></div>`
     : "";
-  return rows + footer + clear;
+  return rows + footer + note + clear;
 }
 
 // Recent triage decisions — what the classify+route step did with inbound signals
@@ -1354,6 +1365,7 @@ document.addEventListener("click", async (e) => {
       $("#shop-item").value = "";
     }
     else if (act === "shop-check") { await post(`/household/shopping/${id}/got`, { got: el.dataset.got !== "1" }); }
+    else if (act === "shop-dismiss") { await post(`/household/shopping/${id}/remove`, {}); }
     else if (act === "shop-clear-got") { if (!confirm("Clear all checked-off items?")) return; await post("/household/shopping/clear-got", {}); }
     else if (act === "todo-done") { await post(`/todos/${id}/done`); }
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }

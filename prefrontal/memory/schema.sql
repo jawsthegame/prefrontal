@@ -602,7 +602,7 @@ CREATE TABLE IF NOT EXISTS household_shopping (
     added_by     INTEGER REFERENCES users(id),
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     got_by       INTEGER REFERENCES users(id),     -- who checked it off
-    got_at       DATETIME
+    got_at       DATETIME                          -- when; a bought row is swept ~24h after this
 );
 
 CREATE INDEX IF NOT EXISTS idx_household_shopping ON household_shopping (household_id, got);
