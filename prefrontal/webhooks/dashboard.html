@@ -88,7 +88,7 @@
   .empty { color: var(--muted); font-style: italic; }
 
   /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
-  .masonry .card > h2, .masonry .card > details > summary { padding-right: 96px; }
+  .masonry .card > h2 { padding-right: 96px; }
   .card-ctl { position: absolute; top: 12px; right: 12px; z-index: 2;
     display: flex; gap: 4px; align-items: center; }
   .card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
@@ -264,10 +264,19 @@
   .md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent);
                    background: var(--raise); color: var(--muted); border-radius: 0 6px 6px 0; }
   details summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
-  .card > details.collapse > summary { margin-bottom: 0; list-style-position: inside; }
-  .card > details.collapse[open] > summary { margin-bottom: 12px; }
-  .card > details.collapse > summary h2 { display: inline; margin: 0; }
-  .card > details.collapse > summary .updated {
+  /* Every card is collapsible: its <h2> is the toggle. A chevron shows the state
+     and the .collapsed class hides everything but the heading (the .card-ctl is
+     absolutely positioned, so it stays). State persists per card in localStorage
+     (see layout.collapsed). */
+  .card > h2 { cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .card > h2::before {
+    content: "▾"; display: inline-block; width: 1em; margin-right: 2px;
+    font-weight: 400; letter-spacing: 0; color: var(--muted);
+  }
+  .card.collapsed > h2 { margin-bottom: 0; }
+  .card.collapsed > h2::before { content: "▸"; }
+  .card.collapsed > *:not(h2):not(.card-ctl) { display: none; }
+  .card > h2 .updated {
     font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: 6px;
   }
   .err { color: var(--call); font-size: 13px; }
@@ -438,9 +447,9 @@
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
-  <section class="card" id="c-profile"><details class="collapse"><summary><h2>Behavioral profile</h2><span class="updated" id="profile-updated"></span></summary><div class="body"></div></details></section>
-  <section class="card" id="c-triage"><details class="collapse"><summary><h2>Mail triage — learned from drops</h2></summary><div class="body"></div></details></section>
-  <section class="card" id="c-triagelog"><details class="collapse"><summary><h2>Triage — recent decisions</h2></summary><div class="body"></div></details></section>
+  <section class="card" id="c-profile"><h2>Behavioral profile<span class="updated" id="profile-updated"></span></h2><div class="body"></div></section>
+  <section class="card" id="c-triage"><h2>Mail triage — learned from drops</h2><div class="body"></div></section>
+  <section class="card" id="c-triagelog"><h2>Triage — recent decisions</h2><div class="body"></div></section>
 </main>
 
 <div id="gate">
@@ -1194,9 +1203,24 @@ let layout = (() => {
 })();
 layout.order = layout.order || [];
 layout.caps = layout.caps || {};
+layout.collapsed = layout.collapsed || {};  // { cardId: true } for collapsed cards
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
 
 const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
+
+// Every card (banner + masonry) collapses to just its heading; state persists.
+function applyCollapsed() {
+  document.querySelectorAll(".card").forEach((card) => {
+    card.classList.toggle("collapsed", !!(card.id && layout.collapsed[card.id]));
+  });
+}
+function toggleCollapsed(card) {
+  const on = card.classList.toggle("collapsed");
+  if (card.id) {
+    if (on) layout.collapsed[card.id] = true; else delete layout.collapsed[card.id];
+    saveLayout();
+  }
+}
 
 function applyOrder() {
   const main = document.querySelector(".masonry");
@@ -1272,6 +1296,12 @@ function applyCaps() { CAPPABLE.forEach(applyCap); }
 
 // Layout controls live outside the [data-action] flow (no server call, no reload).
 document.addEventListener("click", (e) => {
+  // Collapse/expand a card by clicking its heading (card-ctl buttons aren't
+  // inside the h2, so reorder/cap clicks don't trigger this).
+  const h2 = e.target.closest("h2");
+  if (h2 && h2.parentElement && h2.parentElement.classList.contains("card")) {
+    toggleCollapsed(h2.parentElement); return;
+  }
   const arr = e.target.closest("[data-arr]");
   if (arr) { const c = arr.closest(".card"); if (c) moveCard(c.id, arr.dataset.arr === "up" ? -1 : 1); return; }
   const capb = e.target.closest("[data-cap]");
@@ -1360,6 +1390,7 @@ async function doRestart() {
 function start() {
   injectControls();
   applyOrder();
+  applyCollapsed();
   load();
   checkAdmin();
   clearInterval(timer); timer = setInterval(load, REFRESH_MS);
