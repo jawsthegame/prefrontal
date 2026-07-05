@@ -2,7 +2,8 @@
 // ---------------------------------------------------------------------------
 // A glanceable view of "right now": any active outing (with its escalation
 // level), your next commitments today — with *when to leave* for the next one
-// ("leave 4:15 PM · 12m") — conflict/todo counts, the most recent nudge
+// ("leave 4:15 PM · 12m") — shown separately from FYI events (where someone
+// else will be; never yours, never a leave-by), conflict/todo counts, the most recent nudge
 // Prefrontal sent (so a missed push is still visible), and — when you have an
 // open gap — the one todo that fits it ("25m free · Reply to landlord"), a
 // low-friction initiation nudge. Reads the Prefrontal API over Tailscale; tap
@@ -62,6 +63,7 @@ const C = {
   line: new Color("#262b36"), accent: new Color("#6ea8fe"),
   none: new Color("#6b7280"), soft: new Color("#d9a93b"),
   firm: new Color("#e07b39"), call: new Color("#e0556b"), good: new Color("#5bc97a"),
+  fyi: new Color("#8ab4d8"), // "where someone will be" — matches the dashboard's --fyi
 };
 const LEVEL_COLOR = { none: C.none, soft: C.soft, firm: C.firm, call: C.call };
 
@@ -208,9 +210,27 @@ function outingStart(o) {
 
 // --- shared "right now" summary (used by every family) --------------------
 const active = (outings.active || [])[0];
-const todayCommitments = (commitments.commitments || []).filter((c) => isToday(c.start_at));
-const upcomingList = todayCommitments.length ? todayCommitments : (commitments.commitments || []);
-const nextCommitment = upcomingList[0];
+
+// Split commitments into the two streams the user cares about separately:
+//   • self ("your commitments") — things that actually need YOU. These drive
+//     "next up", the leave-by, and the refresh cadence.
+//   • fyi  ("where someone will be") — informational; never a conflict, never
+//     your leave-by. Shown in its own muted section so it can't be mistaken for
+//     something you have to do. (Matches the dashboard's self/FYI split.)
+const allCommitments = commitments.commitments || [];
+const isFyi = (c) => c.kind === "fyi";
+const selfCommitments = allCommitments.filter((c) => !isFyi(c));
+const fyiCommitments = allCommitments.filter(isFyi);
+// Lead each stream with today's items, falling back to the next upcoming when
+// today is clear — computed per stream so "yours" and "FYI" each behave that way.
+const pickShown = (list) => {
+  const today = list.filter((c) => isToday(c.start_at));
+  return today.length ? today : list;
+};
+const todayCommitments = selfCommitments.filter((c) => isToday(c.start_at));
+const upcomingList = pickShown(selfCommitments); // YOUR commitments (never FYI)
+const fyiList = pickShown(fyiCommitments);       // FYI (where someone else will be)
+const nextCommitment = upcomingList[0];          // the next one that's actually yours
 
 // Leave-by for the next commitment — *when to leave*, not just when it starts —
 // from the read-only /departure/next (no nudge side effects). Surfaced only for a
@@ -577,8 +597,24 @@ function renderHomeScreen() {
           { color: col, size: 11, bold: nextDeparture.level === "go" });
       }
     }
-  } else if (!active) {
+  } else if (!active && !fyiList.length) {
+    // Nothing that needs you and no FYIs either — a genuinely clear glance.
     text(w, "Nothing scheduled. 🎉", { color: C.muted, size: 13 });
+  }
+
+  // FYI — where someone else will be. Its own muted section, clearly separated
+  // from your commitments above, so an FYI never reads as something you must do
+  // (and it never carries a leave-by — that's only for your own travel). Small
+  // has no room; medium shows a couple, large a few.
+  if (fyiList.length && !small) {
+    w.addSpacer(6);
+    text(w, "FYI", { color: C.fyi, size: 11, bold: true });
+    for (const c of fyiList.slice(0, family === "large" ? 4 : 2)) {
+      const r = w.addStack();
+      r.centerAlignContent();
+      text(r, fmtWhen(c.start_at) + "  ", { color: C.fyi, size: 12 });
+      text(r, c.title, { color: C.muted, size: small ? 12 : 13 });
+    }
   }
 
   // Cascade knock-on — one alert line when running behind topples a chain. A
