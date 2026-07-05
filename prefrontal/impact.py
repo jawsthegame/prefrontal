@@ -29,24 +29,6 @@ from prefrontal.clock import parse_ts_strict as _parse
 DEFAULT_COMMITMENT_MINUTES = 30.0
 
 
-@dataclass(frozen=True)
-class Impact:
-    """How a projected free-time affects one commitment.
-
-    Attributes:
-        commitment: The commitment dict.
-        latest_departure: UTC text — the latest you can leave and still make it
-            on time (``start_at − lead_minutes``).
-        slack_minutes: Minutes of slack; negative means you'd be late.
-        at_risk: ``True`` when ``slack_minutes < 0``.
-    """
-
-    commitment: dict[str, Any]
-    latest_departure: str
-    slack_minutes: float
-    at_risk: bool
-
-
 def project_free_time(
     departure_at: str,
     window_minutes: float,
@@ -73,67 +55,9 @@ def project_free_time(
     return max(now, realistic)
 
 
-def analyze_impact(
-    projected_free_at: datetime, commitments: list[dict[str, Any]]
-) -> list[Impact]:
-    """Compute slack for each commitment given when you'll be free, worst first.
-
-    Args:
-        projected_free_at: When you'll realistically be available (naive UTC).
-        commitments: Upcoming commitment dicts (each with ``start_at`` and
-            ``lead_minutes``).
-
-    Returns:
-        A list of :class:`Impact`, sorted by ``slack_minutes`` ascending (most
-        at-risk first).
-    """
-    impacts: list[Impact] = []
-    for c in commitments:
-        start = _parse(c["start_at"])
-        lead = c.get("lead_minutes") or 0.0
-        latest = start - timedelta(minutes=lead)
-        slack = (latest - projected_free_at).total_seconds() / 60.0
-        impacts.append(
-            Impact(
-                commitment=c,
-                latest_departure=latest.strftime(TS_FMT),
-                slack_minutes=round(slack, 1),
-                at_risk=slack < 0,
-            )
-        )
-    impacts.sort(key=lambda i: i.slack_minutes)
-    return impacts
-
-
-def at_risk(impacts: list[Impact]) -> list[Impact]:
-    """Filter to only the at-risk impacts (already worst-first)."""
-    return [i for i in impacts if i.at_risk]
-
-
-def impact_phrase(impacts: list[Impact]) -> str:
-    """A short message tail naming the most-threatened commitment, or ``""``.
-
-    Args:
-        impacts: Impacts from :func:`analyze_impact`.
-
-    Returns:
-        e.g. ``" Heads up: 'Team sync' is now at risk (~6 min late)."`` — or an
-        empty string when nothing is at risk.
-    """
-    risky = at_risk(impacts)
-    if not risky:
-        return ""
-    top = risky[0]
-    title = top.commitment.get("title", "your next commitment")
-    late = round(-top.slack_minutes)
-    return f" Heads up: '{title}' is now at risk (~{late} min late)."
-
-
 # -- Cascade / domino propagation --------------------------------------------
 #
-# `analyze_impact` scores every commitment against a *single* free-time, so a
-# late finish on the current thing can only ever flag the one meeting it directly
-# collides with. Reality dominoes: you show up late to the 10:30, the 10:30 still
+# Overrunning the current thing dominoes: you show up late to the 10:30, it still
 # runs its half hour, so you leave it late too, and *that* is what threatens the
 # 11:00. `cascade_impact` walks the day in order, carrying the running-late
 # forward through each commitment's own duration, so the whole chain of knock-on

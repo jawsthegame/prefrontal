@@ -247,17 +247,6 @@ class Settings:
         return out
 
     @property
-    def auth_enabled(self) -> bool:
-        """Whether a token is required to resolve a user.
-
-        Multi-tenant: a request must carry a per-user token unless a
-        :attr:`default_user` is configured (the single-user / trusted-LAN
-        compatibility mode), in which case a tokenless request resolves to that
-        user. Auth is therefore "enforced" exactly when no default user is set.
-        """
-        return not self.default_user
-
-    @property
     def all_modules_enabled(self) -> bool:
         """Whether every registered module should be enabled (no explicit list)."""
         return not self.modules

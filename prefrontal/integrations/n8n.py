@@ -132,30 +132,6 @@ class N8nClient:
         )
 
 
-def parse_inbound_event(body: dict[str, Any]) -> dict[str, Any]:
-    """Normalize an inbound n8n webhook body into a routing decision.
-
-    This is the stub brain behind ``POST /webhooks/n8n``. Today it only
-    classifies the payload; wiring each ``kind`` to a concrete handler is the
-    next step.
-
-    Args:
-        body: The decoded JSON body n8n sent.
-
-    Returns:
-        A dict with at least ``event`` (the event name, defaulting to
-        ``"unknown"``) and ``handled`` (always ``False`` for now, since no
-        concrete handlers are implemented yet).
-
-    .. todo::
-       Route recognized events to real handlers — e.g. an ``episode`` event
-       should write to the memory layer, a ``state`` event should update
-       coaching state — and set ``handled=True`` accordingly.
-    """
-    event = str(body.get("event", "unknown"))
-    return {"event": event, "handled": False, "payload": body}
-
-
 @dataclass(frozen=True)
 class WorkflowSync:
     """Outcome of pushing one workflow template into n8n.

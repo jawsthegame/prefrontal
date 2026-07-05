@@ -856,14 +856,12 @@ def test_award_stars_rejects_foreign_agreement(store, dana):
     assert dana.star_total(aid) == 0  # nothing leaked in
 
 
-def test_star_ledger_and_recent_awards_carry_provenance(store, dana, alex):
+def test_recent_star_awards_carry_provenance(store, dana, alex):
     sam = dana.add_child(name="Sam")
     aid = _star_agreement(dana, store, child_id=sam)
     dana.award_stars(agreement_id=aid, delta=1, awarded_by=store.get_user("dana")["id"],
                      note="made bed")
     alex.award_stars(agreement_id=aid, delta=2, awarded_by=store.get_user("alex")["id"])
-    ledger = dana.star_ledger(aid)
-    assert [row["awarded_by_name"] for row in ledger] == ["Alex", "Dana"]  # newest first
     recent = alex.recent_star_awards()
     assert recent[0]["child_name"] == "Sam"
     assert recent[0]["agreement_title"] == "Star chart"

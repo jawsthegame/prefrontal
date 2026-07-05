@@ -12,7 +12,8 @@ A module is deliberately small. It:
 - declares metadata (``key``, ``title``, ``challenge``);
 - owns a set of ``coaching_state`` defaults that are seeded when it is enabled;
 - contributes a section to the behavioral profile via :meth:`Module.profile_section`;
-- declares the :class:`Intervention`\\ s it provides (mostly planned stubs today).
+- declares the :class:`Intervention`\\ s it provides (each with a trigger and a
+  wired/planned status; see ``prefrontal modules -v``).
 
 Concrete modules live alongside this file (``time_blindness.py`` etc.) and
 register themselves with :mod:`prefrontal.modules.registry` on import.
