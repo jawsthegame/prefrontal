@@ -165,6 +165,31 @@ def test_elapsed_callout_profile_line_when_enabled(store):
     assert "every **30 min**" in section
 
 
+def test_departure_cue_fires_when_leave_by_is_due(store):
+    """A commitment whose leave-by has come due emits a departure_buffer cue on the
+    tick, so `coach --deliver` sends it without the n8n departure poll."""
+    from datetime import timedelta
+
+    # Starts in 5 min with a 10-min lead → leave-by is ~5 min past → "go".
+    soon = (utcnow() + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    store.upsert_commitment(title="Dentist", start_at=soon, lead_minutes=10.0, source="manual")
+    cues = TimeBlindnessModule().evaluate(store, CoachContext(now=utcnow(), display_name="Tom"))
+    dep = [c for c in cues if c.context_key == "departure"]
+    assert len(dep) == 1
+    c = dep[0]
+    assert c.intervention == "departure_buffer"
+    assert c.urgency == "critical"  # past the leave-by → "go" → bypasses quiet hours
+    assert c.dedup_key.endswith(":go") and c.dedup_key.startswith("departure:")
+    assert c.ref.get("commitment_id")
+    assert "Dentist" in c.text
+
+
+def test_no_departure_cue_without_an_upcoming_commitment(store):
+    """No commitments → no departure cue (evaluate stays silent)."""
+    cues = TimeBlindnessModule().evaluate(store, CoachContext(now=utcnow()))
+    assert not [c for c in cues if c.context_key == "departure"]
+
+
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
     """Two+ misses on a task flag it; a task later completed drops off."""
     episodes = [
