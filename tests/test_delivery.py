@@ -251,6 +251,13 @@ def test_deliver_omits_icon_and_click_without_base_url():
     assert "click" not in body
 
 
+def test_deliver_title_carries_brand_emoji():
+    """The title leads with 🧠 — the brand cue that renders even on iOS, where
+    ntfy ignores the icon."""
+    body = _deliver_capture(Route(ntfy_topic="me"))
+    assert body["title"] == "🧠 Prefrontal"
+
+
 # -- DeliveryClient routing ---------------------------------------------------
 
 

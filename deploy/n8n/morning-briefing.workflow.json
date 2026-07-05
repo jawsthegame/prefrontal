@@ -31,7 +31,7 @@
         "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }},\n  \"priority\": 3\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"🧠 Prefrontal — morning briefing\",\n  \"message\": {{ JSON.stringify($json.text) }},\n  \"priority\": 3\n}",
         "options": {}
       },
       "id": "publish-ntfy",
