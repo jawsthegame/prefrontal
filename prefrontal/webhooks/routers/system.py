@@ -15,10 +15,12 @@ from fastapi import (
 )
 from fastapi.responses import (
     HTMLResponse,
+    Response,
 )
 
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
+    APP_ICON_PNG,
     APP_VERSION,
     DASHBOARD_HTML,
     FAMILY_HTML,
@@ -41,6 +43,22 @@ def build_router(services: RouterServices) -> APIRouter:
     def health() -> dict[str, str]:
         """Liveness probe. Returns ``{"status": "ok"}`` with no auth required."""
         return {"status": "ok", "service": "prefrontal", "version": APP_VERSION}
+
+    @router.get("/brand/app-icon.png", tags=["system"])
+    def app_icon() -> Response:
+        """Serve the PREFRONTAL app icon (PNG), unauthenticated.
+
+        Referenced as the ``icon`` of every ntfy push so a notification renders
+        as coming from the PREFRONTAL app. It must be fetchable with no auth (the
+        recipient's ntfy app loads it with no token), which is why it's a public
+        route — it carries no data, only the logo. Served from the box's own
+        origin so it works for a private deployment; cached for a day.
+        """
+        return Response(
+            content=APP_ICON_PNG,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @router.get("/dashboard", response_class=HTMLResponse, tags=["system"])
     def dashboard() -> str:

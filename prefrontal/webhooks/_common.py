@@ -33,6 +33,13 @@ STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8"
 #: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
 REVIEW_HTML = (Path(__file__).with_name("review.html")).read_text(encoding="utf-8")
 
+#: The PREFRONTAL app icon (PNG bytes), read once at import and served
+#: unauthenticated at ``GET /brand/app-icon.png`` so an ntfy push can reference
+#: it as its notification ``icon`` — this is what makes a push render as coming
+#: from the PREFRONTAL app. Served from the box's own (Tailscale) origin, the
+#: same origin the phone already reaches for one-tap action buttons, so it works
+#: for a private deployment where a public GitHub raw URL would 404.
+APP_ICON_PNG = (Path(__file__).with_name("app-icon.png")).read_bytes()
 
 
 INFER_TIMEOUT_SECONDS = 10.0

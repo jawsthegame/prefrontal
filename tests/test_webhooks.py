@@ -73,6 +73,14 @@ def test_profile_requires_auth(client):
     assert client.get("/profile").status_code == 401
 
 
+def test_app_icon_served_public_as_png(client):
+    """The ntfy notification icon is served unauthenticated as a PNG."""
+    resp = client.get("/brand/app-icon.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic — a real image
+
+
 def test_todos_expose_account_and_label_map(store, user_store):
     """/todos tags each todo with its mail account and echoes the label map."""
     from prefrontal.mail.ingest import ingest_messages
