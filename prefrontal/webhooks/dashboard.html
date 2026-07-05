@@ -44,13 +44,12 @@
     -webkit-text-size-adjust: 100%;
   }
   header {
-    display: flex; align-items: baseline; gap: 10px 12px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap;
     padding: 14px 20px; padding-top: max(14px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--line); background: var(--bg);
   }
   header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   header .meta { color: var(--muted); font-size: 13px; }
-  header .spacer { flex: 1; }
   button { font-family: inherit; }
   button:disabled { opacity: .5; cursor: progress; }
   .ghost {
@@ -89,7 +88,7 @@
   .empty { color: var(--muted); font-style: italic; }
 
   /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
-  .masonry .card > h2, .masonry .card > details > summary { padding-right: 96px; }
+  .masonry .card > h2 { padding-right: 96px; }
   .card-ctl { position: absolute; top: 12px; right: 12px; z-index: 2;
     display: flex; gap: 4px; align-items: center; }
   .card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
@@ -265,10 +264,19 @@
   .md blockquote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent);
                    background: var(--raise); color: var(--muted); border-radius: 0 6px 6px 0; }
   details summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
-  .card > details.collapse > summary { margin-bottom: 0; list-style-position: inside; }
-  .card > details.collapse[open] > summary { margin-bottom: 12px; }
-  .card > details.collapse > summary h2 { display: inline; margin: 0; }
-  .card > details.collapse > summary .updated {
+  /* Every card is collapsible: its <h2> is the toggle. A chevron shows the state
+     and the .collapsed class hides everything but the heading (the .card-ctl is
+     absolutely positioned, so it stays). State persists per card in localStorage
+     (see layout.collapsed). */
+  .card > h2 { cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .card > h2::before {
+    content: "▾"; display: inline-block; width: 1em; margin-right: 2px;
+    font-weight: 400; letter-spacing: 0; color: var(--muted);
+  }
+  .card.collapsed > h2 { margin-bottom: 0; }
+  .card.collapsed > h2::before { content: "▸"; }
+  .card.collapsed > *:not(h2):not(.card-ctl) { display: none; }
+  .card > h2 .updated {
     font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: 6px;
   }
   .err { color: var(--call); font-size: 13px; }
@@ -312,20 +320,12 @@
      short list of what's actually on fire. */
   .alarm { background: var(--call-bg); color: var(--call); border-color: var(--call-bg); }
   .alarm:hover { border-color: var(--call); color: var(--fg); }
-  /* Panic is a floating action button, always reachable from any scroll
-     position. z-index sits below the #gate (10) so it's hidden until signed in,
-     and below the #panic overlay (20) so the overlay covers it when open. */
-  .panic-fab {
-    position: fixed; z-index: 8;
-    right: max(16px, env(safe-area-inset-right));
-    bottom: max(16px, env(safe-area-inset-bottom));
-    display: flex; align-items: center; gap: 7px;
-    padding: 12px 18px; border-radius: 999px;
-    background: var(--call-bg); color: var(--call); border: 1px solid var(--call);
-    font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer;
-    box-shadow: 0 8px 24px rgba(0,0,0,.35);
-  }
-  .panic-fab:hover { filter: brightness(1.06); }
+  /* The header's utility buttons (Refresh/Update/Restart/Sign out) are grouped
+     so they wrap together as one right-aligned block instead of scattering
+     (a lone Refresh top-right with the rest dropping to a left-aligned row). */
+  header .hdr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  /* Panic sits apart on the left, by the title, not among the utility buttons. */
+  header .alarm { margin-right: 4px; }
   #panic { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
     background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     align-items: flex-start; justify-content: center;
@@ -390,12 +390,14 @@
 </nav>
 <header>
   <h1>Monitor</h1>
+  <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <span class="meta" id="status">loading…</span>
-  <span class="spacer"></span>
-  <button class="ghost" id="refresh">Refresh</button>
-  <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
-  <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
-  <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
+  <div class="hdr-actions">
+    <button class="ghost" id="refresh">Refresh</button>
+    <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
+    <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
+    <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
+  </div>
 </header>
 
 <div class="banner">
@@ -445,16 +447,10 @@
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
   <section class="card" id="c-recent"><h2>Outings — recent</h2><div class="body"></div></section>
-  <section class="card" id="c-profile"><details class="collapse"><summary><h2>Behavioral profile</h2><span class="updated" id="profile-updated"></span></summary><div class="body"></div></details></section>
-  <section class="card" id="c-triage"><details class="collapse"><summary><h2>Mail triage — learned from drops</h2></summary><div class="body"></div></details></section>
-  <section class="card" id="c-triagelog"><details class="collapse"><summary><h2>Triage — recent decisions</h2></summary><div class="body"></div></details></section>
+  <section class="card" id="c-profile"><h2>Behavioral profile<span class="updated" id="profile-updated"></span></h2><div class="body"></div></section>
+  <section class="card" id="c-triage"><h2>Mail triage — learned from drops</h2><div class="body"></div></section>
+  <section class="card" id="c-triagelog"><h2>Triage — recent decisions</h2><div class="body"></div></section>
 </main>
-
-<!-- Panic is an emergency action, so it lives as a floating button that's always
-     reachable (any scroll position, thumb-friendly on mobile) rather than buried
-     among the header's utility buttons. Same id, so the existing handler binds. -->
-<button class="panic-fab" id="panic-btn" type="button"
-  title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
 
 <div id="gate">
   <div class="box">
@@ -1207,9 +1203,24 @@ let layout = (() => {
 })();
 layout.order = layout.order || [];
 layout.caps = layout.caps || {};
+layout.collapsed = layout.collapsed || {};  // { cardId: true } for collapsed cards
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
 
 const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
+
+// Every card (banner + masonry) collapses to just its heading; state persists.
+function applyCollapsed() {
+  document.querySelectorAll(".card").forEach((card) => {
+    card.classList.toggle("collapsed", !!(card.id && layout.collapsed[card.id]));
+  });
+}
+function toggleCollapsed(card) {
+  const on = card.classList.toggle("collapsed");
+  if (card.id) {
+    if (on) layout.collapsed[card.id] = true; else delete layout.collapsed[card.id];
+    saveLayout();
+  }
+}
 
 function applyOrder() {
   const main = document.querySelector(".masonry");
@@ -1285,6 +1296,12 @@ function applyCaps() { CAPPABLE.forEach(applyCap); }
 
 // Layout controls live outside the [data-action] flow (no server call, no reload).
 document.addEventListener("click", (e) => {
+  // Collapse/expand a card by clicking its heading (card-ctl buttons aren't
+  // inside the h2, so reorder/cap clicks don't trigger this).
+  const h2 = e.target.closest("h2");
+  if (h2 && h2.parentElement && h2.parentElement.classList.contains("card")) {
+    toggleCollapsed(h2.parentElement); return;
+  }
   const arr = e.target.closest("[data-arr]");
   if (arr) { const c = arr.closest(".card"); if (c) moveCard(c.id, arr.dataset.arr === "up" ? -1 : 1); return; }
   const capb = e.target.closest("[data-cap]");
@@ -1373,6 +1390,7 @@ async function doRestart() {
 function start() {
   injectControls();
   applyOrder();
+  applyCollapsed();
   load();
   checkAdmin();
   clearInterval(timer); timer = setInterval(load, REFRESH_MS);
