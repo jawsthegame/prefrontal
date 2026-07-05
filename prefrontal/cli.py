@@ -77,6 +77,7 @@ from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
     heuristic_category,
+    reclassify_hygiene_drops,
     record_todo_closed,
     resolve_category,
 )
@@ -1434,6 +1435,43 @@ def _cmd_notify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cleanup_drops(args: argparse.Namespace) -> int:
+    """Reclassify historical hygiene todo-drops from ``miss`` to ``discarded``.
+
+    A one-off backfill for the fix in
+    :func:`~prefrontal.todos.todo_episode_fields`: before it, *every* dropped todo
+    logged a ``miss``, so quick "this is wrong" clears inflated the ``drift`` score
+    and the briefing's "Slipped" count. This rescans the user's past todo-drop
+    misses and downgrades the hygiene ones (dropped under the avoidance floor) to
+    ``discarded`` — an aging drop is left a ``miss`` (it may be a genuine give-up).
+
+    Dry-run by default (counts only); pass ``--apply`` to write. Idempotent — a
+    re-run finds nothing left to change.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``apply``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        result = reclassify_hygiene_drops(store, apply=args.apply)
+
+    verb = "reclassified" if args.apply else "would reclassify"
+    print(
+        f"scanned {result['scanned']} todo-drop miss episode(s); "
+        f"{verb} {result['reclassified']} as hygiene drops."
+    )
+    for sample in result["samples"]:
+        print(f"  - {sample}")
+    if not args.apply and result["reclassified"]:
+        print("\nDry run — re-run with --apply to write these changes.")
+    return 0
+
+
 def _cmd_panic(args: argparse.Namespace) -> int:
     """Print the panic-mode triage: what's on fire and one first step.
 
@@ -2328,6 +2366,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_notify.add_argument("--db-path", default=None, help="Override the database path.")
     p_notify.add_argument("--user", default=None, help="Handle of the user to notify.")
     p_notify.set_defaults(func=_cmd_notify)
+
+    p_cleanup = sub.add_parser(
+        "cleanup-drops",
+        help="Reclassify past hygiene todo-drops from 'miss' to 'discarded' (one-off).",
+    )
+    p_cleanup.add_argument("--db-path", default=None, help="Override the database path.")
+    p_cleanup.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_cleanup.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write the changes (default is a dry run that only reports counts).",
+    )
+    p_cleanup.set_defaults(func=_cmd_cleanup_drops)
 
     p_note = sub.add_parser(
         "note", help="Feed a free-text note to the LLM sensor (proposes, never writes)."

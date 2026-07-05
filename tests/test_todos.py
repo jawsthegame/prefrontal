@@ -52,8 +52,10 @@ from prefrontal.todos import (
     heuristic_energy,
     heuristic_estimate,
     heuristic_priority,
+    historical_drop_is_hygiene,
     normalize_category,
     normalize_energy,
+    reclassify_hygiene_drops,
     requires_travel,
     resolve_category,
     todo_episode_fields,
@@ -1181,6 +1183,64 @@ def test_todo_closes_feed_drift_pattern(client, store_open):
     assert drift[0]["sample_size"] == 4  # 3 successes + 1 give-up miss; hygiene excluded
     # 3 successes (0.0) + 1 miss (1.0) over 4 ⇒ 0.25
     assert drift[0]["observed_value"] == 0.25
+
+
+# -- historical hygiene-drop cleanup -----------------------------------------
+
+
+def test_historical_drop_is_hygiene_reads_the_age_note():
+    """The classifier keys off the "dropped after Xd open" note the drop wrote."""
+    assert historical_drop_is_hygiene({"notes": "dropped after 0.5d open"})
+    # At/over the avoidance floor → left a miss (may be a real give-up).
+    assert not historical_drop_is_hygiene({"notes": "dropped after 3.0d open"})
+    assert not historical_drop_is_hygiene({"notes": "dropped after 12.0d open"})
+    # A completed note, or no note at all, is never a hygiene drop.
+    assert not historical_drop_is_hygiene({"notes": "completed after 0.2d open"})
+    assert not historical_drop_is_hygiene({"notes": None})
+    assert not historical_drop_is_hygiene({})
+
+
+def _log_drop(store, *, title, age_days, outcome="miss"):
+    """Log a `todo dropped:` episode with the age note the fix writes."""
+    return store.log_episode(
+        "task",
+        context=f"todo dropped: {title}",
+        outcome=outcome,
+        notes=f"dropped after {age_days:.1f}d open",
+    )
+
+
+def test_reclassify_hygiene_drops_only_touches_fresh_misses(store_open):
+    """A fresh drop miss → discarded; an aged one and an outing miss are left."""
+    fresh = _log_drop(store_open, title="mis-captured", age_days=0.5)
+    aged = _log_drop(store_open, title="File taxes", age_days=6.0)
+    # A non-todo miss that happens to be a task episode must be untouched.
+    other = store_open.log_episode(
+        "task", context="outing abandoned: gym", outcome="miss", notes="45m out"
+    )
+
+    dry = reclassify_hygiene_drops(store_open, apply=False)
+    assert dry == {"scanned": 2, "reclassified": 1, "samples": ["todo dropped: mis-captured"]}
+    # Dry run wrote nothing.
+    assert store_open.get_episode(fresh)["outcome"] == "miss"
+
+    applied = reclassify_hygiene_drops(store_open, apply=True)
+    assert applied["scanned"] == 2 and applied["reclassified"] == 1
+    assert store_open.get_episode(fresh)["outcome"] == DISCARDED_OUTCOME
+    assert store_open.get_episode(aged)["outcome"] == "miss"
+    assert store_open.get_episode(other)["outcome"] == "miss"
+
+
+def test_reclassify_hygiene_drops_is_idempotent(store_open):
+    """A second apply finds nothing left (the rewritten row is no longer a miss)."""
+    fresh = _log_drop(store_open, title="quick clear", age_days=0.2)
+    assert reclassify_hygiene_drops(store_open, apply=True)["reclassified"] == 1
+
+    again = reclassify_hygiene_drops(store_open, apply=True)
+    assert again == {"scanned": 0, "reclassified": 0, "samples": []}
+    assert store_open.get_episode(fresh)["outcome"] == DISCARDED_OUTCOME
+
+
 # -- deadline updates & step completion (endpoints) --------------------------
 
 

@@ -54,6 +54,7 @@ def test_build_parser_registers_expected_commands():
         "fit",
         "mail",
         "modules",
+        "cleanup-drops",
     ):
         # Some commands need a sub-action or a positional; supply a minimal one
         # so parsing succeeds, and assert each top-level command binds a `func`.
@@ -168,6 +169,41 @@ def test_deliver_panic_publishes_when_overwhelmed(tmp_path, capsys):
     assert received, "panic nudge should have been published"
     assert received[0]["topic"] == "tom-alerts"
     assert received[0]["priority"] == 4  # sound → high priority, never local TTS
+
+
+def test_cleanup_drops_dry_run_then_apply(tmp_path, capsys):
+    """`cleanup-drops` reports past hygiene todo-drop misses, and only rewrites
+    them to `discarded` when `--apply` is passed (dry-run by default)."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+
+    with MemoryStore.open(str(db)) as raw:
+        uid = next(u["id"] for u in raw.list_users() if u["handle"] == "tester")
+        scoped = raw.scoped(uid)
+        eid = scoped.log_episode(
+            "task",
+            context="todo dropped: mis-captured",
+            outcome="miss",
+            notes="dropped after 0.5d open",
+        )
+
+    # Dry run: reports one, writes nothing.
+    assert main(["cleanup-drops", "--db-path", str(db), "--user", "tester"]) == 0
+    out = capsys.readouterr().out
+    assert "would reclassify 1" in out
+    with MemoryStore.open(str(db)) as raw:
+        assert raw.scoped(uid).get_episode(eid)["outcome"] == "miss"
+
+    # Apply: rewrites it.
+    assert main(
+        ["cleanup-drops", "--db-path", str(db), "--user", "tester", "--apply"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "reclassified 1" in out
+    with MemoryStore.open(str(db)) as raw:
+        assert raw.scoped(uid).get_episode(eid)["outcome"] == "discarded"
 
 
 def test_notify_reports_when_no_transport_configured(tmp_path, capsys, monkeypatch):
