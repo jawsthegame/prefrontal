@@ -501,6 +501,9 @@ let lastTodos = null;
 // Last /impact/cascade response, kept so the "running behind" scrubber can
 // restore the live strip when dragged back to 0 without a re-fetch.
 let lastCascade = null;
+// Last /commitments response, kept so the collapsed-card summary can name the
+// next non-FYI commitment without re-fetching.
+let lastCommitments = null;
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
@@ -1184,6 +1187,7 @@ async function load() {
   put("#c-triage", triage, renderTriage);
   put("#c-triagelog", triagelog, renderTriageLog);
   lastCascade = cascade.status === "fulfilled" ? cascade.value : null;
+  lastCommitments = commitments.status === "fulfilled" ? commitments.value : null;
   $("#c-commitments .body").innerHTML = commitments.status === "fulfilled"
     ? renderCommitments(
         commitments.value,
@@ -1269,11 +1273,56 @@ function summarize(card) {
   return rows.length ? `${rows.length} item${rows.length === 1 ? "" : "s"}${lead}` : "";
 }
 
-// Refresh every card's collapsed-preview line from its current body.
+// Rich, data-driven summaries for the cards where a bare count isn't enough.
+// Each mirrors the morning briefing's breakdown so a collapsed card tells you
+// what's inside; returning null means "no data — use the generic DOM summary"
+// (e.g. the fetch failed, so the body already says "unavailable").
+
+// Todos: a tag breakdown like the briefing — total open, then how many are
+// urgent, due soon, or being avoided. Tags overlap (a todo can be both urgent
+// and avoided), so this is a set of flags, not a partition.
+function summarizeTodos() {
+  if (!lastTodos) return null;
+  const t = lastTodos.todos || [];
+  if (!t.length) return "No open todos.";
+  const now = Date.now();
+  const dueSoon = (x) => {
+    if (!x.deadline) return false;
+    const d = new Date(String(x.deadline).replace(" ", "T") + "Z");
+    return !isNaN(d) && d.getTime() - now <= 48 * 3600 * 1000;  // overdue or within 2 days
+  };
+  const urgent = t.filter((x) => x.priority === 3).length;
+  const soon = t.filter(dueSoon).length;
+  const avoiding = t.filter((x) => x.avoidance).length;
+  const parts = [`${t.length} open`];
+  if (urgent) parts.push(`${urgent} urgent`);
+  if (soon) parts.push(`${soon} due soon`);
+  if (avoiding) parts.push(`${avoiding} avoiding`);
+  return parts.join(" · ");
+}
+
+// Commitments: how many are upcoming, and the next one that's actually yours
+// (skipping FYIs — where someone else will be — since those never need you).
+function summarizeCommitments() {
+  if (!lastCommitments) return null;
+  const c = lastCommitments.commitments || [];
+  if (!c.length) return "No upcoming commitments.";
+  const head = `${c.length} upcoming`;
+  const next = c.find((x) => x.kind !== "fyi");  // soonest-first; first non-FYI is the next that needs you
+  return next ? `${head} · next: ${next.title} — ${fmt(next.start_at)}` : `${head} · all FYI`;
+}
+
+// Cards with a richer summary than the generic count; others fall back below.
+const RICH_SUMMARIES = { "c-todos": summarizeTodos, "c-commitments": summarizeCommitments };
+
+// Refresh every card's collapsed-preview line from its current data (rich
+// summary where one exists, else the generic DOM summary).
 function updateSummaries() {
   document.querySelectorAll(".card").forEach((card) => {
     const s = card.querySelector(":scope > .card-summary");
-    if (s) s.textContent = summarize(card);
+    if (!s) return;
+    const rich = RICH_SUMMARIES[card.id] ? RICH_SUMMARIES[card.id]() : null;
+    s.textContent = rich != null ? rich : summarize(card);
   });
 }
 function toggleCollapsed(card) {
