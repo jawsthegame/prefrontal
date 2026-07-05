@@ -1304,6 +1304,77 @@ def _deliver_decisions(unscoped, store, decisions, settings) -> None:
         print(f"  → {result.transport}: {status} ({result.detail})")
 
 
+def _cmd_notify(args: argparse.Namespace) -> int:
+    """Send a test notification through the user's configured delivery route.
+
+    Exercises the real delivery stack end-to-end — the same
+    :class:`~prefrontal.integrations.delivery.DeliveryClient` and per-user
+    :func:`~prefrontal.integrations.delivery.resolve_route` the coaching tick uses
+    — so it confirms ntfy/Pushover is wired up (server/topic/token or credentials)
+    before you rely on a nudge landing. Prints where it routed and the transport's
+    result; a plain push (no action buttons), so no signing config is needed.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``message``, ``channel``.
+
+    Returns:
+        ``0`` if a send succeeded, ``1`` if nothing was delivered (e.g. no
+        transport configured, or the transport returned an error).
+    """
+    from prefrontal.coaching import Cue, Decision
+    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    message = args.message or "✅ Prefrontal test notification — your delivery route works."
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        handle = next(
+            (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id), ""
+        )
+        route = resolve_route(store, settings)
+        cue = Cue(
+            module="notify",
+            intervention="test",
+            urgency="nudge",
+            text=message,
+            context_key="test",  # unmapped → a plain push, no action buttons
+            dedup_key="notify_test",
+        )
+        decision = Decision(cue=cue, channel=args.channel, text=message)
+        client = DeliveryClient.from_settings(settings)
+        result = client.deliver(
+            decision,
+            route,
+            base_url=settings.oauth_base_url,
+            secret=settings.session_secret,
+            handle=handle,
+        )
+
+    if route.ntfy_topic:
+        dest = f"ntfy → {route.ntfy_server}/{route.ntfy_topic}"
+    elif route.pushover_token and route.pushover_user_key:
+        dest = "pushover"
+    else:
+        dest = "(no transport configured)"
+    print(f"route:   {dest}")
+    print(
+        f"result:  channel={decision.channel} transport={result.transport} "
+        f"delivered={result.delivered} status={result.status_code}"
+    )
+    print(f"detail:  {result.detail}")
+    if not result.delivered:
+        if result.transport == "none":
+            print(
+                "\nNothing was sent — no transport is configured for this user. Set "
+                "NTFY_TOPIC (and NTFY_SERVER/NTFY_TOKEN) or Pushover credentials in "
+                "the environment, or a per-user ntfy_topic in coaching_state.",
+                file=sys.stderr,
+            )
+        return 1
+    return 0
+
+
 def _cmd_panic(args: argparse.Namespace) -> int:
     """Print the panic-mode triage: what's on fire and one first step.
 
@@ -2176,6 +2247,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_panic.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_panic.set_defaults(func=_cmd_panic)
+
+    p_notify = sub.add_parser(
+        "notify",
+        help="Send a test notification through the configured route (ntfy/Pushover).",
+    )
+    p_notify.add_argument(
+        "--test",
+        action="store_true",
+        help="Send a test notification (the default and only action today).",
+    )
+    p_notify.add_argument(
+        "-m", "--message", default=None, help="Custom message text (default: a canned test)."
+    )
+    p_notify.add_argument(
+        "--channel",
+        choices=["push", "sound", "voice"],
+        default="push",
+        help="Delivery channel → priority (push=normal, sound=high, voice=max).",
+    )
+    p_notify.add_argument("--db-path", default=None, help="Override the database path.")
+    p_notify.add_argument("--user", default=None, help="Handle of the user to notify.")
+    p_notify.set_defaults(func=_cmd_notify)
 
     p_note = sub.add_parser(
         "note", help="Feed a free-text note to the LLM sensor (proposes, never writes)."

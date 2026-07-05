@@ -276,6 +276,13 @@ after is just *Import from File → Active*:
    (Self-host note: leave `N8N_BLOCK_ENV_ACCESS_IN_NODE` unset/`false` — the
    default — so expressions can read `$env`.)
 
+   **Verify delivery end-to-end** before wiring the workflows: `prefrontal notify
+   --user <handle>` publishes a test push through the same native delivery client
+   the coaching tick uses (per-user route over the `NTFY_*`/Pushover defaults). It
+   prints where it routed and the transport result, and exits non-zero if nothing
+   is configured — so you can confirm your phone gets the push first. Add `-m` for
+   a custom message or `--channel sound` to make it noisy.
+
 2. **The token credential** — create **one** *Header Auth* credential named
    exactly **`Prefrontal Token`** (Credentials → New → *Header Auth*; header
    **Name** `X-Prefrontal-Token`, **Value** your `PREFRONTAL_WEBHOOK_SECRET` or a
