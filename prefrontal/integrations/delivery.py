@@ -109,6 +109,7 @@ class Route:
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
     ntfy_token: str = ""
+    ntfy_icon: str = ""
     pushover_token: str = ""
     pushover_user_key: str = ""
     tts_enabled: bool = False
@@ -153,6 +154,7 @@ def resolve_route(store: Any, settings: Settings | None = None) -> Route:
         ntfy_server=(_pref("ntfy_server", resolved.ntfy_server) or "https://ntfy.sh").rstrip("/"),
         ntfy_topic=_pref("ntfy_topic", resolved.ntfy_topic),
         ntfy_token=_pref("ntfy_token", resolved.ntfy_token),
+        ntfy_icon=_pref("ntfy_icon", resolved.ntfy_icon),
         pushover_token=_pref("pushover_token", resolved.pushover_token),
         pushover_user_key=_pref("pushover_user_key", resolved.pushover_user_key),
         tts_enabled=store.get_bool("tts_enabled", resolved.tts_enabled),
@@ -181,11 +183,18 @@ class NtfyClient:
         message: str,
         priority: int = 3,
         actions: list[dict[str, Any]] | None = None,
+        icon: str = "",
+        click: str = "",
     ) -> DeliveryResult:
         """POST a JSON message to ``{server}/`` for ``topic``.
 
         Returns a no-op result (nothing sent) when ``server``/``topic`` is empty,
         so the caller can always try ntfy first and fall through when it's off.
+
+        ``icon`` (a public PNG/JPEG URL) makes the push render with the PREFRONTAL
+        app icon rather than the generic ntfy glyph; ``click`` sets the default
+        tap target (the dashboard), so tapping the push body opens the app. Both
+        are omitted from the payload when empty.
         """
         if not server or not topic:
             return DeliveryResult(transport="ntfy", detail="ntfy: no server/topic configured")
@@ -197,6 +206,10 @@ class NtfyClient:
         }
         if actions:
             body["actions"] = actions
+        if icon:
+            body["icon"] = icon
+        if click:
+            body["click"] = click
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -392,6 +405,11 @@ class DeliveryClient:
                 message=message,
                 priority=NTFY_PRIORITY.get(channel, 3),
                 actions=actions,
+                icon=route.ntfy_icon,
+                # Tapping the push body (not a button) opens the dashboard, so the
+                # notification behaves like a real app's — only when a public
+                # origin is configured, matching the action buttons' own guard.
+                click=f"{base_url}/dashboard" if base_url else "",
             )
             return replace(result, channel=channel)
 

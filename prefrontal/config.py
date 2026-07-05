@@ -17,6 +17,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+#: Default notification icon for ntfy pushes — the committed PREFRONTAL app icon,
+#: served raw from the project repo so it's publicly fetchable by the recipient's
+#: ntfy app (which loads it with no session/token). This is what makes a push read
+#: as coming from the *PREFRONTAL app* rather than a generic ntfy topic; point
+#: ``NTFY_ICON`` at your own hosted PNG/JPEG to rebrand, or set it empty to drop it.
+DEFAULT_NTFY_ICON = (
+    "https://raw.githubusercontent.com/jawsthegame/prefrontal/main/"
+    "docs/brand/png/prefrontal-app-icon-256.png"
+)
+
 
 def _load_dotenv(path: str = ".env") -> None:
     """Populate ``os.environ`` from a ``.env`` file if one exists.
@@ -157,6 +167,12 @@ class Settings:
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
     ntfy_token: str = ""
+    # Notification icon URL sent with every ntfy push, so it renders with the
+    # PREFRONTAL app icon instead of the generic ntfy glyph — the main lever for
+    # making a push look like it's from a real app. Defaults to the committed
+    # brand icon (:data:`DEFAULT_NTFY_ICON`); a per-user ``ntfy_icon`` coaching
+    # key overrides it, and an empty value drops the icon entirely.
+    ntfy_icon: str = DEFAULT_NTFY_ICON
     pushover_token: str = ""
     pushover_user_key: str = ""
     # Speak ``voice``-channel nudges aloud on the host via macOS ``say``. Off by
@@ -384,6 +400,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         or "https://ntfy.sh",
         ntfy_topic=os.environ.get("NTFY_TOPIC", ""),
         ntfy_token=os.environ.get("NTFY_TOKEN", ""),
+        ntfy_icon=os.environ.get("NTFY_ICON", DEFAULT_NTFY_ICON),
         pushover_token=os.environ.get("PUSHOVER_TOKEN", ""),
         pushover_user_key=os.environ.get("PUSHOVER_USER_KEY", ""),
         tts_enabled=os.environ.get("PREFRONTAL_TTS_ENABLED", "").strip().lower()
