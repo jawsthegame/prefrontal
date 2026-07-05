@@ -321,13 +321,15 @@ def test_location_ping_stores_and_reads_back(client):
 
 
 def test_outing_check_uses_stored_location_for_gating(client, store):
-    """A stored location within the home radius closes the outing with no body."""
+    """A stored location within the home radius is used for gating (no body needed):
+    it detects the user home and fires the 'end the outing?' prompt."""
     store.start_outing("getting coffee", 15.0, home_lat=0.0, home_lon=0.0)
     store.set_location(0.0, 0.0)  # right at home
     resp = client.post("/webhooks/outing/check", json={}, headers=_auth())
     item = resp.json()["active"][0]
     assert item["at_home"] is True
-    assert item["status"] == "returned"
+    assert item["status"] == "active"  # asked, not silently closed
+    assert item["fire"] is True
 
 
 def test_departure_check_fires_once_per_level(client, store):

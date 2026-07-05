@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import re
 
+from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.impact import (
     cascade_at_risk,
@@ -54,6 +55,10 @@ DEFAULT_HOME_RADIUS_M = 150.0
 #: Default multiple of the stated window after which an unreturned outing is
 #: auto-closed as abandoned (stops it lingering active forever).
 DEFAULT_ABANDON_RATIO = 3.0
+
+#: Default grace (minutes) after location first confirms the user home before an
+#: unanswered "you're home — end the outing?" prompt auto-closes it as returned.
+DEFAULT_HOME_ARRIVE_GRACE_MINUTES = 10.0
 
 
 def level_rank(level: str) -> int:
@@ -145,6 +150,25 @@ def build_message(
             "back by now. Time to wrap up."
         )
     return ""
+
+
+def build_home_arrival_message(intention: str, *, name: str = "") -> str:
+    """Build the "you're home — end the outing?" prompt shown on arrival.
+
+    Fired the first time location puts the user back inside the home radius (and
+    re-fired each poll until they answer or the grace period auto-closes it), so
+    a return is confirmed rather than assumed.
+
+    Args:
+        intention: The outing's stated mission, named in the prompt.
+        name: Optional first name for a warmer greeting.
+
+    Returns:
+        The prompt string.
+    """
+    greeting = f"Hey {name}" if name else "Hey"
+    mission = f"“{intention}”" if intention else "your outing"
+    return f"{greeting}, looks like you're home — want to wrap up {mission}? Tap to end it."
 
 
 # Words/phrases the time-window parser understands beyond plain digits.
@@ -352,13 +376,20 @@ _OUTING_INTERVENTION = {"soft": "soft_nudge", "firm": "firm_nudge", "call": "voi
 class OutingEvaluation:
     """What one active outing warrants right now (pure; no side effects)."""
 
-    action: str                 # "return" | "abandon" | "active"
+    action: str                 # "return" | "abandon" | "at_home" | "active"
     level: str                  # none/soft/firm/call (meaningful when active)
-    fire: bool                  # a new escalation level was crossed (active only)
+    fire: bool                  # a nudge is due — a new escalation level, or the arrival prompt
     message: str                # nudge text (fire only)
     impacts: list[dict[str, Any]]
     at_home: bool | None
     distance_m: float | None
+    # Home-arrival tracking. arrived_at: stamp this as the outing's home_arrived_at
+    # (set on first at-home detection). returned_at: backdated close time for an
+    # "action == return" grace auto-close. reset_home_arrived: clear a stale arrival
+    # stamp because the user left home again before ending the outing.
+    arrived_at: str | None = None
+    returned_at: str | None = None
+    reset_home_arrived: bool = False
 
 
 def evaluate_outing(
@@ -372,13 +403,21 @@ def evaluate_outing(
     commitments: list[dict[str, Any]],
     name: str = "",
     lead_override: dict[int, float] | None = None,
+    now: Any | None = None,
+    home_grace_minutes: float = DEFAULT_HOME_ARRIVE_GRACE_MINUTES,
 ) -> OutingEvaluation:
     """Decide what one active outing warrants — the body of the old check loop.
 
-    Pure: computes distance/at-home, whether to passively return or auto-abandon,
-    else the elapsed-time escalation level, whether it's newly crossed (``fire``),
-    the at-risk commitment impacts, and the nudge message. The caller performs the
-    resulting writes via :func:`apply_outing_evaluation`.
+    Pure: computes distance/at-home, the home-arrival state (prompt on first
+    arrival, backdated auto-return once the grace period lapses), whether to
+    auto-abandon, else the elapsed-time escalation level, whether a nudge is due
+    (``fire``), the at-risk commitment impacts, and the message. The caller
+    performs the resulting writes via :func:`apply_outing_evaluation`.
+
+    Arriving home no longer closes the outing silently: the first at-home poll
+    stamps ``home_arrived_at`` and fires a "you're home — end it?" prompt, which
+    re-fires each poll until the user answers or ``home_grace_minutes`` elapses,
+    at which point it auto-closes as returned **backdated to that first arrival**.
 
     ``lead_override`` (``{commitment_id: minutes}``) feeds real travel legs into
     the cascade instead of static ``lead_minutes`` — the caller builds it from the
@@ -386,6 +425,8 @@ def evaluate_outing(
     """
     elapsed = outing["elapsed_minutes"] or 0.0
     window = outing["time_window_minutes"]
+    now_str = (now or utcnow()).strftime(TS_FMT)
+    home_arrived_at = outing.get("home_arrived_at")
 
     distance_m = None
     if (
@@ -398,9 +439,30 @@ def evaluate_outing(
     at_home = is_at_home(distance_m, home_radius) if distance_m is not None else None
 
     if at_home:
-        return OutingEvaluation("return", "none", False, "", [], at_home, distance_m)
+        if not home_arrived_at:
+            # First time home this outing: remember when, and ask (don't assume).
+            msg = build_home_arrival_message(outing["intention"], name=name)
+            return OutingEvaluation(
+                "at_home", "none", True, msg, [], at_home, distance_m, arrived_at=now_str
+            )
+        # Home for a while with no answer → close as returned, timed to arrival.
+        home_minutes = minutes_between(home_arrived_at, now_str)
+        if home_minutes is not None and home_minutes >= home_grace_minutes:
+            return OutingEvaluation(
+                "return", "none", False, "", [], at_home, distance_m,
+                returned_at=home_arrived_at,
+            )
+        # Still within the grace window — re-ask.
+        msg = build_home_arrival_message(outing["intention"], name=name)
+        return OutingEvaluation("at_home", "none", True, msg, [], at_home, distance_m)
+
+    # Not home (or location unknown). If we'd stamped an arrival, they left before
+    # ending it — clear the stale stamp so a later real arrival re-times correctly.
+    reset = bool(home_arrived_at) and at_home is False
     if is_abandoned(elapsed, window, abandon_ratio):
-        return OutingEvaluation("abandon", "none", False, "", [], at_home, distance_m)
+        return OutingEvaluation(
+            "abandon", "none", False, "", [], at_home, distance_m, reset_home_arrived=reset
+        )
 
     level = escalation_level(elapsed, window)
     fire = level_rank(level) > level_rank(outing["last_level"])
@@ -432,7 +494,10 @@ def evaluate_outing(
         message = build_message(
             level, elapsed_minutes=elapsed, window_minutes=window, name=name
         ) + cascade_phrase(risky)
-    return OutingEvaluation("active", level, fire, message, impacts, at_home, distance_m)
+    return OutingEvaluation(
+        "active", level, fire, message, impacts, at_home, distance_m,
+        reset_home_arrived=reset,
+    )
 
 
 def apply_outing_evaluation(
@@ -440,16 +505,33 @@ def apply_outing_evaluation(
 ) -> tuple[str, str | None]:
     """Perform the writes an :class:`OutingEvaluation` implies; return (status, outcome).
 
-    ``return``/``abandon`` close the outing and log the episode; an ``active``
-    outing that ``fire``\\s advances its one-fire level and records the nudge.
-    Idempotent enough that both the endpoint and the agent can call it.
+    ``return``/``abandon`` close the outing and log the episode (a ``return``
+    backdates to the recorded arrival); ``at_home`` stamps the arrival and records
+    the prompt nudge; an ``active`` outing that ``fire``\\s advances its one-fire
+    level and records the nudge. A stale arrival stamp is cleared when the user has
+    left home again. Idempotent enough that both the endpoint and the agent can
+    call it.
     """
     if ev.action == "return":
-        closed = store.close_outing(outing["id"], status="returned")
+        # returned_at from the eval backdates the close to first arrival; close_outing
+        # would derive the same from home_arrived_at, so this is just explicit.
+        closed = store.close_outing(
+            outing["id"], status="returned", returned_at=ev.returned_at
+        )
         return "returned", record_outing_return(store, closed)["outcome"]
     if ev.action == "abandon":
+        if ev.reset_home_arrived:
+            store.set_outing_home_arrived(outing["id"], None)
         closed = store.close_outing(outing["id"], status="abandoned")
         return "abandoned", record_outing_abandoned(store, closed)["outcome"]
+    if ev.action == "at_home":
+        if ev.arrived_at:
+            store.set_outing_home_arrived(outing["id"], ev.arrived_at)
+        if ev.fire:
+            store.record_nudge(kind="outing", message=ev.message, level="soft")
+        return "active", None
+    if ev.reset_home_arrived:
+        store.set_outing_home_arrived(outing["id"], None)
     if ev.fire:
         store.set_outing_level(outing["id"], ev.level)
         store.record_nudge(kind="outing", message=ev.message, level=ev.level)
@@ -472,6 +554,9 @@ class LocationAnchorModule(Module):
         "home_radius_m": str(int(DEFAULT_HOME_RADIUS_M)),
         # Auto-close an outing as abandoned past this multiple of its window.
         "abandon_after_ratio": str(DEFAULT_ABANDON_RATIO),
+        # Grace (minutes) after arriving home before an unanswered "end it?" prompt
+        # auto-closes the outing as returned (backdated to arrival).
+        "home_arrive_grace_minutes": str(DEFAULT_HOME_ARRIVE_GRACE_MINUTES),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -497,7 +582,11 @@ class LocationAnchorModule(Module):
             ),
             Intervention(
                 name="location_gating",
-                description="Suppress nudges and passively close the outing when home.",
+                description=(
+                    "Suppress nudges and, on arriving home, ask whether to end the "
+                    "outing — auto-closing as returned after a grace period, "
+                    "backdated to first arrival."
+                ),
                 trigger="a location check places the user within the home radius",
                 status="active",
             ),
@@ -522,6 +611,9 @@ class LocationAnchorModule(Module):
         """
         home_radius = store.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = store.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        grace = store.get_float(
+            "home_arrive_grace_minutes", DEFAULT_HOME_ARRIVE_GRACE_MINUTES
+        )
         bias = store.get_float("time_estimation_bias", 1.0)
         commitments = store.upcoming_commitments()
         # Travel-aware leads from the current location, matching the endpoint.
@@ -547,6 +639,7 @@ class LocationAnchorModule(Module):
                 commitments=commitments,
                 name=ctx.display_name,
                 lead_override=leads,
+                home_grace_minutes=grace,
             )
             apply_outing_evaluation(store, outing, ev)
             if ev.action == "active" and ev.fire:
@@ -558,6 +651,20 @@ class LocationAnchorModule(Module):
                         text=ev.message,
                         context_key="outing",
                         dedup_key=f"outing_escalation:{outing['id']}:{ev.level}",
+                        ref={"outing_id": outing["id"]},
+                    )
+                )
+            elif ev.action == "at_home" and ev.fire:
+                # You're home — a soft "want to end it?" cue. Deduped per arrival
+                # (the stamp clears when you leave), so it asks once per homecoming.
+                cues.append(
+                    Cue(
+                        module=self.key,
+                        intervention="location_gating",
+                        urgency="nudge",
+                        text=ev.message,
+                        context_key="outing",
+                        dedup_key=f"outing_home_prompt:{outing['id']}:{ev.arrived_at or 'held'}",
                         ref={"outing_id": outing["id"]},
                     )
                 )

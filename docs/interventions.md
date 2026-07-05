@@ -40,7 +40,7 @@ All interventions below are **active** (wired end-to-end) unless noted.
 | `soft_nudge` | Soft push at 50% of the stated window ("still on track?"). | elapsed time reaches 50% of the stated window |
 | `firm_nudge` | Firm push at 100% of the stated window ("time to wrap up"). | elapsed time reaches 100% of the stated window |
 | `voice_call` | Twilio voice call at 150% of the stated window. | elapsed time reaches 150% of the stated window |
-| `location_gating` | Suppress nudges and passively close the outing when home. | a location check places the user within the home radius |
+| `location_gating` | Suppress nudges and, on arriving home, ask whether to end the outing — auto-closing as returned after a grace period, backdated to first arrival. | a location check places the user within the home radius |
 | `abandoned_auto_close` | Auto-close an outing left open far past its window. | elapsed time exceeds the abandon ratio with no return |
 
 ## Self-Care

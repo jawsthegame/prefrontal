@@ -54,6 +54,7 @@ from prefrontal.modules.hyperfocus import (
 )
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
+    DEFAULT_HOME_ARRIVE_GRACE_MINUTES,
     DEFAULT_HOME_RADIUS_M,
     LEVELS,
     apply_outing_evaluation,
@@ -243,6 +244,9 @@ def build_router(services: RouterServices) -> APIRouter:
         settings: Settings = request.app.state.settings
         home_radius = memory.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = memory.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
+        home_grace = memory.get_float(
+            "home_arrive_grace_minutes", DEFAULT_HOME_ARRIVE_GRACE_MINUTES
+        )
         bias = memory.get_float("time_estimation_bias", 1.0)
         commitments = memory.upcoming_commitments()
         # Real travel legs from the phone's current location, so "you're behind"
@@ -270,6 +274,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 commitments=commitments,
                 name=name,
                 lead_override=leads,
+                home_grace_minutes=home_grace,
             )
             outing_status, outcome = apply_outing_evaluation(memory, outing, ev)
 

@@ -389,12 +389,15 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 
 If you feed the phone's location into the `Check Outings` node body
 (`current_lat`/`current_lon`) and set `home_lat`/`home_lon` when starting an
-outing, Prefrontal will **suppress the call and close the outing automatically
-once you're within the home radius** (`home_radius_m`, default 150 m). That means
-coming home early — or forgetting to tap "I'm back" — never triggers the 150%
-call. Without location it falls back to pure time-based escalation, so this is
-optional. Outings left open past `abandon_after_ratio`× the window (default 3×)
-auto-close as `abandoned`.
+outing, Prefrontal will **suppress the call and, once you're within the home
+radius** (`home_radius_m`, default 150 m), **ask whether to end the outing**
+rather than closing it silently — so coming home early, or forgetting to tap
+"I'm back", never triggers the 150% call. If you don't answer, it auto-closes as
+returned after a short grace (`home_arrive_grace_minutes`, default 10 min), and
+either way the recorded return is **backdated to when you first got home**, not
+when you acknowledge. Without location it falls back to pure time-based
+escalation, so this is optional. Outings left open past `abandon_after_ratio`×
+the window (default 3×) auto-close as `abandoned`.
 
 Two ways to supply location — an iOS arrival geofence (simplest) or continuous
 Home Assistant tracking (full mid-outing gating) — are written up in
