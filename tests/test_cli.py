@@ -55,6 +55,7 @@ def test_build_parser_registers_expected_commands():
         "mail",
         "modules",
         "cleanup-drops",
+        "cleanup-focus-estimates",
     ):
         # Some commands need a sub-action or a positional; supply a minimal one
         # so parsing succeeds, and assert each top-level command binds a `func`.
@@ -204,6 +205,37 @@ def test_cleanup_drops_dry_run_then_apply(tmp_path, capsys):
     assert "reclassified 1" in out
     with MemoryStore.open(str(db)) as raw:
         assert raw.scoped(uid).get_episode(eid)["outcome"] == "discarded"
+
+
+def test_cleanup_focus_estimates_dry_run_then_apply(tmp_path, capsys):
+    """`cleanup-focus-estimates` reports switched focus blocks feeding the estimate
+    bias, and only nulls their actual_value when `--apply` is passed."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+
+    with MemoryStore.open(str(db)) as raw:
+        uid = next(u["id"] for u in raw.list_users() if u["handle"] == "tester")
+        scoped = raw.scoped(uid)
+        eid = scoped.log_episode(
+            "task", predicted_value=60.0, actual_value=8.0,
+            context="focus switched: deep work", outcome="partial",
+        )
+
+    assert main(["cleanup-focus-estimates", "--db-path", str(db), "--user", "tester"]) == 0
+    out = capsys.readouterr().out
+    assert "would clear 1" in out
+    with MemoryStore.open(str(db)) as raw:
+        assert raw.scoped(uid).get_episode(eid)["actual_value"] == 8.0
+
+    assert main(
+        ["cleanup-focus-estimates", "--db-path", str(db), "--user", "tester", "--apply"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "cleared 1" in out
+    with MemoryStore.open(str(db)) as raw:
+        assert raw.scoped(uid).get_episode(eid)["actual_value"] is None
 
 
 def test_notify_reports_when_no_transport_configured(tmp_path, capsys, monkeypatch):

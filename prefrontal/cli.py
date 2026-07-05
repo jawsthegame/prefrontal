@@ -1472,6 +1472,46 @@ def _cmd_cleanup_drops(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cleanup_focus_estimates(args: argparse.Namespace) -> int:
+    """Retract deliberately-switched focus blocks from the time-estimation signal.
+
+    A one-off backfill for the fix in
+    :func:`~prefrontal.modules.hyperfocus.record_focus_switched`: before it, a block
+    you consciously switched away from logged its truncated duration as
+    ``actual_value``, so it fed the ``time_estimation`` bias and dragged the
+    multiplier toward zero (a cut-short block stopped by choice, not because the
+    estimate was wrong). This nulls ``actual_value`` on those past episodes; the
+    ``partial`` outcome is left intact for ``drift``.
+
+    Dry-run by default (counts only); pass ``--apply`` to write. Idempotent. Run
+    ``learn`` afterward to recompute the bias off the corrected history.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``apply``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.modules.hyperfocus import retract_switched_estimates
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        result = retract_switched_estimates(store, apply=args.apply)
+
+    verb = "cleared" if args.apply else "would clear"
+    print(
+        f"scanned {result['scanned']} switched-focus episode(s); "
+        f"{verb} {result['cleared']} from the estimation signal."
+    )
+    for sample in result["samples"]:
+        print(f"  - {sample}")
+    if not args.apply and result["cleared"]:
+        print("\nDry run — re-run with --apply to write, then `learn` to recompute.")
+    return 0
+
+
 def _cmd_panic(args: argparse.Namespace) -> int:
     """Print the panic-mode triage: what's on fire and one first step.
 
@@ -2379,6 +2419,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the changes (default is a dry run that only reports counts).",
     )
     p_cleanup.set_defaults(func=_cmd_cleanup_drops)
+
+    p_cfe = sub.add_parser(
+        "cleanup-focus-estimates",
+        help="Retract deliberately-switched focus blocks from the estimation bias (one-off).",
+    )
+    p_cfe.add_argument("--db-path", default=None, help="Override the database path.")
+    p_cfe.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_cfe.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write the changes (default is a dry run that only reports counts).",
+    )
+    p_cfe.set_defaults(func=_cmd_cleanup_focus_estimates)
 
     p_note = sub.add_parser(
         "note", help="Feed a free-text note to the LLM sensor (proposes, never writes)."

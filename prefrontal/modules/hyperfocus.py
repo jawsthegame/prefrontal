@@ -469,10 +469,16 @@ def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
     """Log a focus block the user deliberately switched away from (Impulsivity).
 
     Distinct from an abandon (a *forgotten* exit): here the user consciously
-    honored a switch-impulse, so the block was real but cut short. ``actual_value``
-    is the time genuinely spent (known, unlike an abandon), and the outcome is
-    ``partial`` — the block happened but didn't run to plan. Feeds
-    ``time_estimation`` like any other focus close.
+    honored a switch-impulse, so the block was real but cut short. The outcome is
+    ``partial`` — the block happened but didn't run to plan — so it feeds ``drift``.
+
+    ``actual_value`` is intentionally ``None`` (like an abandon), even though the
+    end time *is* known here: a block cut short by a deliberate switch stopped
+    because the user chose to, not because the estimate was wrong, so its truncated
+    duration isn't an estimation-accuracy signal — feeding it would drag
+    ``time_estimation`` toward zero. The genuine estimate signal comes from blocks
+    that ran to their natural end (:func:`record_focus_end`). The minutes actually
+    spent are kept in ``notes`` for provenance.
 
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
@@ -486,15 +492,45 @@ def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
     episode_id = store.log_episode(
         "task",
         predicted_value=closed.get("planned_minutes"),
-        actual_value=round(actual, 1) if actual is not None else None,
+        actual_value=None,
         acknowledged=True,
         context=f"focus switched: {closed.get('intended_task')}",
         outcome="partial",
+        notes=f"spent {round(actual, 1)}m before switching" if actual is not None else None,
         energy=energy,
         category=category,
     )
     _log_switch_episode(store, closed)
     return {"episode_id": episode_id, "outcome": "partial"}
+
+
+def retract_switched_estimates(store: MemoryStore, *, apply: bool) -> dict[str, Any]:
+    """Null ``actual_value`` on past deliberately-switched focus blocks (idempotent).
+
+    A one-off backfill matching the fix in :func:`record_focus_switched`: before
+    it, a block cut short by a deliberate switch logged its truncated duration as
+    ``actual_value``, so it fed ``time_estimation`` and dragged the multiplier
+    toward zero. This finds those episodes (a ``task`` whose ``context`` starts with
+    ``"focus switched:"`` that still has an ``actual_value``) and clears the
+    duration, leaving the ``partial`` outcome intact for ``drift``. ``apply``
+    ``False`` is a dry run (counts only). Re-running is a no-op (the cleared rows no
+    longer match). Returns ``{scanned, cleared, samples}``.
+    """
+    scanned = cleared = 0
+    samples: list[str] = []
+    for ep in store.episodes_by_type("task", limit=1_000_000):
+        context = ep.get("context") or ""
+        if not context.startswith("focus switched:"):
+            continue
+        scanned += 1
+        if ep.get("actual_value") is None:
+            continue
+        if apply:
+            store.clear_episode_actual_value(ep["id"])
+        cleared += 1
+        if len(samples) < 5:
+            samples.append(context)
+    return {"scanned": scanned, "cleared": cleared, "samples": samples}
 
 
 def is_focus_protected(store: MemoryStore) -> bool:

@@ -126,6 +126,22 @@ class EpisodesRepo(Repo):
         self.conn.commit()
         return cur.rowcount > 0
 
+    def clear_episode_actual_value(self, episode_id: int) -> bool:
+        """Null out an episode's ``actual_value``, leaving everything else intact.
+
+        For a backfill that retracts a mis-recorded duration from the
+        time-estimation signal without deleting the episode (it may still carry a
+        drift outcome) — the one-off cleanup that stops deliberately-switched focus
+        blocks from feeding ``time_estimation``. Scoped to the caller; returns
+        ``True`` if a row changed.
+        """
+        cur = self.conn.execute(
+            "UPDATE episodes SET actual_value = NULL WHERE id = ? AND user_id = ?",
+            (episode_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def pending_episodes(
         self, episode_type: str, *, before: str
     ) -> list[dict[str, Any]]:

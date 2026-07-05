@@ -299,15 +299,50 @@ def test_resolve_switch_closes_block_and_logs_episode(client, store):
     ).json()
     assert body["session_status"] == "switched"
     assert store.get_focus_session(sid)["status"] == "switched"
-    # Close logs two episodes: the `task` (time-estimation) and the per-session
-    # `switch` (context_switch learning). Find each by type rather than by order.
+    # Close logs two episodes: the `task` (drift) and the per-session `switch`
+    # (context_switch learning). Find each by type rather than by order.
     episodes = store.recent_episodes(5)
     task_ep = next(e for e in episodes if e["episode_type"] == "task")
     assert task_ep["outcome"] == "partial"  # real block, cut short by a deliberate switch
     assert "switched" in task_ep["context"]
+    # A deliberate switch stopped by choice isn't an estimation-accuracy signal, so
+    # the truncated duration is NOT recorded as actual_value (it can't feed the
+    # time-estimation bias); the minutes spent are kept in notes for provenance.
+    assert task_ep["actual_value"] is None
+    assert task_ep["notes"] and "before switching" in task_ep["notes"]
     switch_ep = next(e for e in episodes if e["episode_type"] == "switch")
     assert switch_ep["predicted_value"] == 1.0  # one switch-impulse signalled
     assert switch_ep["actual_value"] == 0.0  # not deferred (honored)
+
+
+def test_retract_switched_estimates_only_touches_switched_blocks(store):
+    """The backfill nulls actual_value on old switched blocks, leaving completed
+    focus blocks (a real estimation signal) alone; dry-run writes nothing."""
+    from prefrontal.modules.hyperfocus import retract_switched_estimates
+
+    # Simulate legacy data: a switched block that (wrongly) recorded its duration.
+    switched = store.log_episode(
+        "task", predicted_value=60.0, actual_value=8.0,
+        context="focus switched: deep work", outcome="partial",
+    )
+    # A completed block — a genuine estimate signal that must be preserved.
+    completed = store.log_episode(
+        "task", predicted_value=30.0, actual_value=32.0,
+        context="focus: emails", outcome="success",
+    )
+
+    dry = retract_switched_estimates(store, apply=False)
+    assert dry == {"scanned": 1, "cleared": 1, "samples": ["focus switched: deep work"]}
+    assert store.get_episode(switched)["actual_value"] == 8.0  # dry run wrote nothing
+
+    applied = retract_switched_estimates(store, apply=True)
+    assert applied["scanned"] == 1 and applied["cleared"] == 1
+    assert store.get_episode(switched)["actual_value"] is None
+    assert store.get_episode(completed)["actual_value"] == 32.0  # untouched
+
+    # Idempotent — the cleared row no longer matches.
+    again = retract_switched_estimates(store, apply=True)
+    assert again == {"scanned": 1, "cleared": 0, "samples": []}
 
 
 def test_resolve_bad_action_is_422(client, store):
