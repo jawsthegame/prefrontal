@@ -83,6 +83,42 @@ def test_ntfy_publish_builds_json_and_reports_success():
     }
 
 
+def test_ntfy_publish_includes_icon_and_click_when_set():
+    """A branded push carries the app icon and a default tap target."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = NtfyClient(transport=httpx.MockTransport(handler))
+    client.publish(
+        "https://ntfy.sh", "prefrontal-me",
+        title="Prefrontal", message="hi",
+        icon="https://example.com/icon.png", click=f"{BASE}/dashboard",
+    )
+    assert captured["body"]["icon"] == "https://example.com/icon.png"
+    assert captured["body"]["click"] == f"{BASE}/dashboard"
+
+
+def test_ntfy_publish_omits_icon_and_click_when_empty():
+    """Empty icon/click stay out of the payload (unbranded/plain push)."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = NtfyClient(transport=httpx.MockTransport(handler))
+    client.publish("https://ntfy.sh", "prefrontal-me", title="Prefrontal", message="hi")
+    assert "icon" not in captured["body"]
+    assert "click" not in captured["body"]
+
+
 def test_ntfy_no_op_without_topic():
     called = False
 
@@ -172,6 +208,30 @@ def test_resolve_route_per_user_overrides_operator(store):
     assert route.ntfy_topic == "tom-private"       # per-user wins
     assert route.pushover_user_key == "tom-key"
     assert route.tts_enabled is True               # coaching-state bool honored
+
+
+def test_resolve_route_icon_defaults_to_settings_and_overrides_per_user(store):
+    settings = Settings(ntfy_icon="https://op.example/icon.png")
+    assert resolve_route(store, settings).ntfy_icon == "https://op.example/icon.png"
+    store.set_state("ntfy_icon", "https://tom.example/icon.png", source="explicit")
+    assert resolve_route(store, settings).ntfy_icon == "https://tom.example/icon.png"
+
+
+def test_deliver_stamps_icon_from_route_and_click_from_base_url():
+    """A routed push carries the route's icon and a dashboard tap target."""
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    route = Route(ntfy_topic="me", ntfy_icon="https://brand.example/icon.png")
+    client.deliver(_decision("push"), route, base_url=BASE)
+    assert captured["body"]["icon"] == "https://brand.example/icon.png"
+    assert captured["body"]["click"] == f"{BASE}/dashboard"
 
 
 # -- DeliveryClient routing ---------------------------------------------------

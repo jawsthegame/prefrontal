@@ -53,7 +53,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4,\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || 'https://raw.githubusercontent.com/jawsthegame/prefrontal/main/docs/brand/png/prefrontal-app-icon-256.png' }}\",\n  \"title\": \"Prefrontal — take a breath\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 4,\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",
