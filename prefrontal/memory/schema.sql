@@ -434,6 +434,30 @@ CREATE TABLE IF NOT EXISTS todo_decompositions (
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Feedback on a *dismissed* decomposition. A breakdown can be wrong two ways, and
+-- the reason decides how it feeds learning (mirrors triage_feedback):
+--   not_useful — the steps don't make sense / don't help. Folded back into the
+--                decomposer prompt as negative examples ("avoid this style").
+--   not_needed — the task didn't need breaking down at all. Repeated not_needed
+--                dismissals suppress the auto-decompose on new todos (learning
+--                *when not to* break down); on-demand "Break it down" still works.
+-- One row per dismissal — repetition is what makes a signal reliable.
+CREATE TABLE IF NOT EXISTS decomposition_feedback (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL REFERENCES users(id),
+    todo_id          INTEGER REFERENCES todos (id),  -- provenance (the todo may later close)
+    title            TEXT,                            -- todo title at dismiss time
+    reason           TEXT NOT NULL,                   -- not_useful | not_needed
+    source           TEXT,                            -- the dismissed breakdown's origin: llm | heuristic
+    first_step       TEXT,                            -- snapshot of the dismissed first step
+    steps            TEXT,                            -- JSON snapshot of the dismissed remaining steps
+    category         TEXT,                            -- todo category at dismiss time
+    estimate_minutes REAL,                            -- todo estimate (the auto-decompose discriminator)
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_decomp_feedback_user
+    ON decomposition_feedback (user_id, created_at);
+
 -- User-curated named places — aliases that map a recurring destination to fixed
 -- coordinates without any network geocoding (e.g. "gym", "the office", "mom's").
 -- Checked against a commitment's location/title *before* the geocoder, so the

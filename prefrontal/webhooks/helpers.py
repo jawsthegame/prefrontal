@@ -13,7 +13,11 @@ from typing import Any
 
 from prefrontal.config import Settings
 from prefrontal.memory.store import MemoryStore
-from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, decompose_task
+from prefrontal.todos import (
+    DEFAULT_MAX_FIRST_STEP_MINUTES,
+    decompose_task,
+    learned_decomposition_guidance,
+)
 from prefrontal.webhooks.notify import nudge_actions
 from prefrontal.webhooks.oauth import sign_dismiss
 
@@ -165,7 +169,12 @@ def _decompose_and_store(
     max_first = memory.get_float(
         "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
     )
-    d = decompose_task(title, max_first_minutes=max_first, client=client)
+    d = decompose_task(
+        title,
+        max_first_minutes=max_first,
+        client=client,
+        guidance=learned_decomposition_guidance(memory),
+    )
     memory.set_decomposition(
         todo_id,
         first_step=d.first_step,

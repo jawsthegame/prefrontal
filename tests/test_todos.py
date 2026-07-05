@@ -797,6 +797,101 @@ def test_regenerating_decomposition_resets_step_progress(store):
     assert store.get_decomposition(tid)["done_steps"] == []
 
 
+# -- dismissing a breakdown (+ the learning it feeds) -------------------------
+
+
+def test_dismiss_decomposition_records_feedback_and_removes_it(store):
+    """A repo-level dismissal captures a snapshot, then drops the decomposition."""
+    tid = store.add_todo("Write the report", estimate_minutes=90, priority=2)
+    store.set_decomposition(
+        tid, first_step="Open the doc", first_step_minutes=3, steps=["Draft"], source="llm"
+    )
+    d = store.get_decomposition(tid)
+    store.record_decomposition_dismissal(
+        todo_id=tid, title="Write the report", reason="not_useful", source=d["source"],
+        first_step=d["first_step"], steps=d["steps"], category=None, estimate_minutes=90,
+    )
+    assert store.delete_decomposition(tid) is True
+    assert store.get_decomposition(tid) is None  # gone
+    assert store.delete_decomposition(tid) is False  # nothing left to delete
+    fb = store.decomposition_feedback_list()
+    assert len(fb) == 1
+    assert fb[0]["reason"] == "not_useful" and fb[0]["steps"] == ["Draft"]
+
+
+def test_learned_guidance_uses_only_not_useful(store):
+    """The decomposer addendum draws on 'not_useful' dismissals, not 'not_needed'."""
+    from prefrontal.todos import learned_decomposition_guidance
+
+    assert learned_decomposition_guidance(store) == ""  # nothing learned yet
+    store.record_decomposition_dismissal(
+        todo_id=None, title="Book dentist", reason="not_needed",
+        first_step="Find the number", steps=[], estimate_minutes=40,
+    )
+    assert learned_decomposition_guidance(store) == ""  # not_needed doesn't feed the prompt
+    store.record_decomposition_dismissal(
+        todo_id=None, title="Write the report", reason="not_useful",
+        first_step="Think about it", steps=[], estimate_minutes=90,
+    )
+    guidance = learned_decomposition_guidance(store)
+    assert "unhelpful" in guidance and "Write the report" in guidance
+    assert "Book dentist" not in guidance
+
+
+def test_auto_decompose_suppressed_after_repeated_not_needed(store):
+    """Enough 'not_needed' dismissals switch off auto-decompose (learn when not to)."""
+    from prefrontal.todos import DEFAULT_DECOMP_SUPPRESS_THRESHOLD, auto_decompose_suppressed
+
+    assert auto_decompose_suppressed(store) is False
+    for i in range(DEFAULT_DECOMP_SUPPRESS_THRESHOLD):
+        store.record_decomposition_dismissal(
+            todo_id=None, title=f"task {i}", reason="not_needed", first_step="do it",
+            steps=[], estimate_minutes=60,
+        )
+    assert auto_decompose_suppressed(store) is True
+    # An operator override of 0 disables suppression entirely.
+    store.set_state("decomposition_suppress_threshold", "0")
+    assert auto_decompose_suppressed(store) is False
+
+
+def test_dismiss_decomposition_endpoint(client, store_open):
+    """POST /decompose/dismiss records feedback, removes the breakdown, 404s when none."""
+    tid = client.post(
+        "/todos", json={"title": "Write report", "estimate_minutes": 90}, headers=_auth()
+    ).json()["todo_id"]
+    # Offline ollama → heuristic decomposition is stored on this big todo.
+    assert store_open.get_decomposition(tid) is not None
+    r = client.post(
+        f"/todos/{tid}/decompose/dismiss", json={"reason": "not_needed"}, headers=_auth()
+    )
+    assert r.status_code == 200 and r.json()["dismissed"] is True
+    assert store_open.get_decomposition(tid) is None
+    assert store_open.decomposition_dismissed_count(reason="not_needed") == 1
+    # Dismissing again → 404 (nothing to dismiss).
+    assert client.post(
+        f"/todos/{tid}/decompose/dismiss", json={"reason": "not_needed"}, headers=_auth()
+    ).status_code == 404
+    # An unknown reason is rejected.
+    assert client.post(
+        f"/todos/{tid}/decompose/dismiss", json={"reason": "meh"}, headers=_auth()
+    ).status_code == 422
+
+
+def test_auto_decompose_suppressed_end_to_end(client, store_open):
+    """Once suppressed, creating a big todo skips auto-decompose (on-demand still works)."""
+    store_open.set_state("decomposition_suppress_threshold", "1")
+    store_open.record_decomposition_dismissal(
+        todo_id=None, title="prior", reason="not_needed", first_step="x", steps=[],
+    )
+    tid = client.post(
+        "/todos", json={"title": "Big new thing", "estimate_minutes": 120}, headers=_auth()
+    ).json()["todo_id"]
+    assert store_open.get_decomposition(tid) is None  # auto-decompose suppressed
+    # Explicit "Break it down" is unaffected.
+    client.post(f"/todos/{tid}/decompose", headers=_auth())
+    assert store_open.get_decomposition(tid) is not None
+
+
 def test_update_todo_deadline_open_only(store):
     """Deadline moves and clears on open todos; closed todos no-op."""
     tid = store.add_todo("Renew passport", estimate_minutes=20, deadline="2026-07-01 00:00:00")

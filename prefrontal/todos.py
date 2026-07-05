@@ -515,6 +515,7 @@ def decompose_task(
     *,
     max_first_minutes: float = DEFAULT_MAX_FIRST_STEP_MINUTES,
     client: Generator | None = None,
+    guidance: str | None = None,
 ) -> Decomposition:
     """Break a task into a tiny first step (+ remaining steps).
 
@@ -525,6 +526,9 @@ def decompose_task(
         title: The task text.
         max_first_minutes: Ceiling for the first step's length.
         client: An Ollama-like client; ``None`` uses the heuristic.
+        guidance: Optional learned addendum appended to the system prompt — the
+            negative examples from breakdowns the user dismissed as unhelpful (see
+            :func:`learned_decomposition_guidance`). Ignored on the heuristic path.
 
     Returns:
         A :class:`Decomposition`.
@@ -533,7 +537,7 @@ def decompose_task(
         try:
             reply = client.generate(
                 f"Task: {title}\nFirst step max minutes: {int(max_first_minutes)}",
-                system=_DECOMP_SYSTEM,
+                system=_DECOMP_SYSTEM + (guidance or ""),
             )
         except OllamaError:
             reply = ""
@@ -555,6 +559,70 @@ def decompose_task(
             )
             return Decomposition(first.strip(), mins, steps, "llm")
     return _heuristic_decomposition(title, max_first_minutes)
+
+
+# --- Learning from dismissed breakdowns --------------------------------------
+#
+# When the user dismisses a breakdown (dashboard "not needed" / "didn't help"),
+# it's captured in `decomposition_feedback` (see the todos repo). Two readers fold
+# that history back in — the mirror of how dropped triage todos evolve the triage
+# prompt (prefrontal/mail/feedback.py):
+#   - not_useful → negative examples appended to the decomposer prompt.
+#   - not_needed → once repeated, suppress the auto-decompose on new todos.
+
+#: How many "not needed" dismissals before auto-decompose is switched off. Small,
+#: since a few explicit "I didn't need this" is a clear signal; an operator can
+#: override via the `decomposition_suppress_threshold` state key (0 = never suppress).
+DEFAULT_DECOMP_SUPPRESS_THRESHOLD = 3
+
+#: Cap on negative examples injected into the decomposer prompt — bounded so the
+#: addendum stays small and can't drown the base instructions.
+_DECOMP_GUIDANCE_LIMIT = 6
+
+
+def learned_decomposition_guidance(
+    store: MemoryStore, *, limit: int = _DECOMP_GUIDANCE_LIMIT
+) -> str:
+    """Prompt addendum from breakdowns the user dismissed as unhelpful.
+
+    Folds recent ``not_useful`` dismissals into the decomposer's system prompt as
+    negative few-shot examples, so the model steers away from first steps the user
+    already rejected. Empty string when there's nothing to learn from (the base
+    prompt is used unchanged).
+    """
+    rows = store.decomposition_feedback_list(reason="not_useful", limit=limit)
+    lines = [
+        f'- "{(r.get("title") or "a task").strip()}" → avoid a first step like: {fs}'
+        for r in rows
+        if (fs := (r.get("first_step") or "").strip())
+    ]
+    if not lines:
+        return ""
+    return (
+        "\n\nThe user found these past breakdowns unhelpful. Do NOT produce first "
+        "steps in this vein — make the first step smaller and more concrete, and "
+        "the remaining steps genuinely useful:\n" + "\n".join(lines)
+    )
+
+
+def auto_decompose_suppressed(store: MemoryStore, *, threshold: int | None = None) -> bool:
+    """Whether repeated "not needed" dismissals mean we should skip auto-decompose.
+
+    Learning *when not to* break down: once the user has dismissed
+    ``threshold`` breakdowns as unnecessary, stop auto-decomposing new todos. The
+    on-demand "Break it down" button is unaffected — that's an explicit request.
+    ``threshold`` defaults to the ``decomposition_suppress_threshold`` state key
+    (or :data:`DEFAULT_DECOMP_SUPPRESS_THRESHOLD`); ``0`` disables suppression.
+    """
+    if threshold is None:
+        threshold = int(
+            store.get_float(
+                "decomposition_suppress_threshold", DEFAULT_DECOMP_SUPPRESS_THRESHOLD
+            )
+        )
+    if threshold <= 0:
+        return False
+    return store.decomposition_dismissed_count(reason="not_needed") >= threshold
 
 
 # --- Avoidance detection (honest prioritization) -----------------------------
