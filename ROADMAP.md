@@ -40,6 +40,22 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Departure reminders on the coaching tick (toward retiring n8n)** ✅ — the
+  `departure_buffer` intervention is now a coach cue: `TimeBlindnessModule.evaluate`
+  emits the most-urgent due departure (reusing the same `plan_upcoming_departures`
+  / `next_departure` / `build_departure_message` the `/webhooks/departure/check`
+  endpoint and the widget's leave-by use), so a single native `prefrontal coach
+  --deliver` tick sends "leave by" nudges without n8n polling that endpoint.
+  Fire-once and escalation are the engine's job — the `dedup_key`
+  (`departure:<id>:<level>`) makes each heads_up→soon→go transition a fresh fire,
+  and `go` maps to `critical` so the final "head out now" bypasses quiet hours
+  like the endpoint does. The `context_key="departure"` cue carries the signed
+  **Made it / Missed it** buttons through the native delivery client. The endpoint
+  stays for now (shares nothing that double-fires — the engine owns the coach-side
+  dedup), to be deprecated once the tick has run clean. Covered by
+  `tests/test_modules.py`. *(Next folds toward a fully n8n-free delivery: panic and
+  the household sweeps as coach cues / native ticks; then a launchd `coach
+  --deliver` schedule replacing the nudge workflows.)*
 - **Parent pack / shared household sheet** ✅ — the co-parent surface shipped end
   to end (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; the `/kids` dashboard + `/family` glance;
@@ -941,24 +957,13 @@ ordered by leverage; each is independent but builds on denser capture.
   (`water_check`, to a daily target), confirm/snooze **log `self_care` episodes**,
   and an adaptive-cadence learner tunes the interval. *(Still open: whether it
   broadens into a self-care/basics pack alongside meds/sleep.)*
-- **Shopify MCP — record-shop assistant + used-collection buying.** Connect to
-  (or self-host) a **Shopify MCP server** so Prefrontal can read the record shop's
-  catalog, inventory, and sales, turning the assistant into a genuine shop
-  co-pilot rather than a personal-only tool. The near-term win is **buying
-  decisions**: sell-through and stock signals from Shopify inform what to reorder
-  and what's dead weight. The bigger prize is **used collections** — when a lot of
-  used records comes in, help appraise and price it: pull comps, weigh
-  condition/rarity against local sell-through, and flag what's worth buying vs
-  passing. Slots onto the existing MCP tool surface (the assistant already reaches
-  MCP tools via tool-search) and the NL-assistant/triage spine; a batch of
-  candidate purchases is naturally a triage problem (`Signal → TriageDecision →
-  apply`) and the actions land as todos/commitments. Architecturally this is the
-  first **non-ADHD, small-business Context Pack** ("Record Shop") on the
-  orthogonal life-context axis — a Shopify tool registry + shop vocabulary, reusing
-  todos, triage, and delivery. Local-first stays the default; the Shopify
-  connection is explicit and opt-in, like the Anthropic provider path. *(Open:
-  Shopify auth/scopes and whether to run our own MCP server vs. a hosted one;
-  comps data source for used pricing; multi-tenant boundary between shop data and
-  personal data.)*
+## Iceboxed (out of scope)
+
+- **Shopify MCP — record-shop assistant / used-collection buying.** ❄️
+  **Permanently iceboxed.** A "Record Shop" small-business Context Pack (Shopify
+  catalog/inventory/sell-through → reorder + used-lot appraisal) is too niche to
+  justify the surface area (Shopify auth/scopes, a comps data source, a shop-vs-
+  personal data boundary). Prefrontal stays focused on the ADHD executive-function
+  mission. Left here as a deliberately-closed idea, not a backlog item.
 
 Contributions toward any of these are welcome — see `CONTRIBUTING.md`.

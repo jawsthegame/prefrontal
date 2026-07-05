@@ -21,6 +21,13 @@ from prefrontal.modules.registry import register
 #: periodic ping (and an aligned deep block is otherwise protected by Hyperfocus).
 DEFAULT_ELAPSED_CALLOUT_MINUTES = 0
 
+#: Departure escalation level → coaching urgency, so the departure_buffer
+#: intervention rides the coaching tick (and its native `coach --deliver`
+#: delivery) instead of a separate n8n poll of /webhooks/departure/check. `go`
+#: maps to ``critical`` so the "head out now" nudge bypasses quiet hours (a hard
+#: leave-by is time-critical), mirroring how the endpoint fires regardless.
+DEPARTURE_URGENCY = {"heads_up": "nudge", "soon": "urgent", "go": "critical"}
+
 
 def elapsed_callout_message(task: str, minutes: int, name: str = "") -> str:
     """A gentle 'you've been on this N min' time check (no judgment, no ask)."""
@@ -73,9 +80,15 @@ class TimeBlindnessModule(Module):
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
-        """Emit a gentle elapsed-time callout at each interval of an active focus block.
+        """Emit the departure reminder (always) and elapsed-time callouts (opt-in).
 
-        Opt-in: silent unless ``elapsed_callout_minutes`` > 0. For each active
+        First, the **departure_buffer** cue: the most-urgent upcoming commitment
+        whose leave-by has come due, so `coach --deliver` sends "leave by" nudges
+        without n8n polling ``/webhooks/departure/check`` (fire-once + escalation
+        are the engine's job — see :data:`DEPARTURE_URGENCY`).
+
+        Then the **elapsed-time callouts**, silent unless ``elapsed_callout_minutes``
+        > 0. For each active
         focus session, once it's run at least one interval, fires a low-key "N min
         so far" cue on each interval boundary — deduped per elapsed *bucket* so a
         tick running every few minutes fires each mark exactly once. This is the
@@ -84,10 +97,50 @@ class TimeBlindnessModule(Module):
         this only surfaces elapsed time for someone who's opted in to piercing
         their own time blindness. ``nudge`` urgency — a gentle push, not a digest.
         """
+        cues: list[Cue] = []
+
+        # Departure reminder (the departure_buffer intervention) as a coach cue, so
+        # a single `coach --deliver` tick delivers "leave by" nudges natively and
+        # the n8n departure workflow can retire. Reuses the same pure planners the
+        # /webhooks/departure/check endpoint and the widget's leave-by both use, so
+        # the nudge matches the displayed leave-by. Fire-once is the engine's
+        # per-dedup_key debounce (the key carries the level, so each
+        # heads_up→soon→go transition is a fresh fire); `go` is critical, so the
+        # final "head out now" bypasses quiet hours like the endpoint does.
+        # Lazy import: departure imports haversine_m from location_anchor, so a
+        # top-level import back into a module would risk a cycle.
+        from prefrontal.departure import (
+            build_departure_message,
+            next_departure,
+            plan_upcoming_departures,
+        )
+
+        top = next_departure(
+            plan_upcoming_departures(
+                store, current_lat=ctx.current_lat, current_lon=ctx.current_lon
+            )
+        )
+        if top is not None:
+            message = build_departure_message(top, name=ctx.display_name)
+            # Attend-mode heads_up/soon return "" (nothing to say until it starts) —
+            # only emit a cue when there's real text.
+            if message:
+                cid = top.commitment["id"]
+                cues.append(
+                    Cue(
+                        module=self.key,
+                        intervention="departure_buffer",
+                        urgency=DEPARTURE_URGENCY.get(top.level, "nudge"),
+                        text=message,
+                        context_key="departure",
+                        dedup_key=f"departure:{cid}:{top.level}",
+                        ref={"commitment_id": cid},
+                    )
+                )
+
         interval = int(store.get_float("elapsed_callout_minutes", DEFAULT_ELAPSED_CALLOUT_MINUTES))
         if interval <= 0:
-            return []
-        cues: list[Cue] = []
+            return cues
         for session in store.active_focus_sessions():
             elapsed = session.get("elapsed_minutes") or 0.0
             if elapsed < interval:

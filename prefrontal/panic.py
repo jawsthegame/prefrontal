@@ -750,3 +750,100 @@ def sweep_pending_panic_steps(
     for ep in stale:
         store.set_episode_outcome(ep["id"], outcome="miss", acknowledged=False)
     return len(stale)
+
+
+@dataclass(frozen=True)
+class PanicCheck:
+    """The proactive-panic decision (the model-free core of ``/webhooks/panic/check``).
+
+    Attributes:
+        fire: Whether an overwhelm nudge should be delivered now.
+        level: ``calm`` | ``overwhelmed`` (:func:`overwhelm_level`).
+        message: The nudge text when ``fire`` (empty otherwise).
+        first_step: The single concrete first step (for display / the ack episode).
+        counts: The plan's bucket counts.
+        headline: The plan's one-line headline.
+        step_id: The pending ``panic`` episode id recorded for a "Did it" ack, or
+            ``None`` when not firing or acks aren't deliverable (``ackable=False``).
+    """
+
+    fire: bool
+    level: str
+    message: str
+    first_step: str | None
+    counts: dict[str, int]
+    headline: str
+    step_id: int | None = None
+
+
+def evaluate_panic_check(
+    store: MemoryStore,
+    *,
+    now: datetime | None = None,
+    quiet_hours: bool = False,
+    ackable: bool = False,
+) -> PanicCheck:
+    """Decide whether to fire a proactive overwhelm nudge, and record it if so.
+
+    The shared decision behind ``POST /webhooks/panic/check`` and the native
+    ``prefrontal coach --deliver`` tick, so both nudge identically without n8n.
+    Edge-triggers on the overwhelm ``level`` (fires once per calm→overwhelmed
+    transition, not every poll), **defers** — never drops — an edge that lands in
+    quiet hours (``quiet_hours=True`` returns without advancing ``last_panic_level``
+    so the first poll back in responsive hours still fires), and honors a cooldown
+    floor. Always sweeps unanswered first-step nudges into a miss first (so drift
+    isn't all "Did it" taps). When it fires and ``ackable`` (a signed one-tap
+    button is deliverable), records a pending ``panic`` episode and returns its
+    ``step_id`` so the caller can attach the "Did it" button; the caller builds the
+    actual action buttons (they need the public origin / signing key / handle).
+    """
+    now = now or utcnow()
+    plan = build_panic(store, now=now)
+
+    # Sweep earlier unanswered first-step nudges regardless of firing (calm polls
+    # and quiet-hours deferrals included), so the learning loop sees the steps that
+    # didn't happen, not only the taps.
+    sweep_pending_panic_steps(
+        store,
+        now,
+        window_minutes=store.get_float(
+            "panic_step_ack_window_minutes", DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES
+        ),
+    )
+
+    try:
+        min_pressing = int(
+            store.get_state("panic_alert_min_pressing") or DEFAULT_ALERT_MIN_PRESSING
+        )
+    except (TypeError, ValueError):
+        min_pressing = DEFAULT_ALERT_MIN_PRESSING
+    cooldown = store.get_float("panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES)
+
+    level = overwhelm_level(plan, min_pressing=min_pressing)
+    prev = store.get_state("last_panic_level", "calm")
+    fire = level == "overwhelmed" and prev != "overwhelmed"
+
+    # Quiet-hours: defer, don't drop — leave last_panic_level untouched so the edge
+    # survives to the next responsive-hours poll.
+    if fire and quiet_hours:
+        return PanicCheck(False, level, "", plan.first_step, plan.counts, plan.headline)
+
+    # Cooldown floor: even on a fresh edge, stay quiet if we alerted recently.
+    if fire:
+        last_at = _parse_dt(store.get_state("last_panic_alert_at"))
+        if last_at is not None and (now - last_at).total_seconds() / 60.0 < cooldown:
+            fire = False
+
+    store.set_state("last_panic_level", level, source="inferred")
+    if not fire:
+        return PanicCheck(False, level, "", plan.first_step, plan.counts, plan.headline)
+
+    name = (store.get_state("user_name") or "").strip() or None
+    message = panic_alert_message(plan, name=name)
+    step_id = None
+    if plan.first_step and ackable:
+        step_id = record_panic_step_sent(store, plan, now=now)
+    store.set_state("last_panic_alert_at", now.strftime(TS_FMT), source="inferred")
+    return PanicCheck(
+        True, level, message, plan.first_step, plan.counts, plan.headline, step_id
+    )

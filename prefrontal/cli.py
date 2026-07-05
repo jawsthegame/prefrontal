@@ -1263,18 +1263,24 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         if broken:
             print(f"({broken} avoided task(s) broken down)")
         decisions = decide(store, cues, ctx)
-        if not decisions:
-            print(f"Nothing to say right now ({len(cues)} cue(s) held).")
-            return 0
         for d in decisions:
             print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
+        if not decisions:
+            print(f"Nothing to say right now ({len(cues)} cue(s) held).")
+        if decisions:
+            if args.deliver:
+                _deliver_decisions(unscoped, store, decisions, settings)
+            record_fired(store, decisions, now)
+            # Track interactive nudges so a tap (or the next sweep) records the channel.
+            note_delivered(store, decisions, now)
+            # Stamp self-care delivery time for the adaptive-cadence latency signal.
+            mark_self_care_prompted(store, decisions, now)
+        # Proactive overwhelm nudge — its own edge/cooldown/quiet-hours-defer
+        # decision, delivered on this same native tick so panic no longer needs an
+        # n8n poll of /webhooks/panic/check. Only on a delivering tick, so a
+        # print-only run doesn't consume the overwhelm edge.
         if args.deliver:
-            _deliver_decisions(unscoped, store, decisions, settings)
-        record_fired(store, decisions, now)
-        # Track interactive nudges so a tap (or the next sweep) records the channel.
-        note_delivered(store, decisions, now)
-        # Stamp self-care delivery time for the adaptive-cadence latency signal.
-        mark_self_care_prompted(store, decisions, now)
+            _deliver_panic(unscoped, store, settings, now)
     return 0
 
 
@@ -1302,6 +1308,59 @@ def _deliver_decisions(unscoped, store, decisions, settings) -> None:
     for result in results:
         status = "sent" if result.delivered else "not sent"
         print(f"  → {result.transport}: {status} ({result.detail})")
+
+
+def _deliver_panic(unscoped, store, settings, now) -> None:
+    """Run the proactive-panic decision and, if it fires, deliver it natively.
+
+    Uses the same :func:`~prefrontal.panic.evaluate_panic_check` the
+    ``/webhooks/panic/check`` endpoint does (edge-trigger + quiet-hours defer +
+    cooldown + pending-step record), then publishes the overwhelm nudge — with the
+    "Open triage" and, when ack-able, signed "✓ Did it" buttons — through the
+    native delivery client. So a scheduled ``coach --deliver`` covers panic without
+    an n8n poll. A no-op when nothing tips into overwhelm.
+    """
+    from prefrontal.coaching import Cue, Decision, in_quiet_hours
+    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+    from prefrontal.panic import evaluate_panic_check
+    from prefrontal.webhooks.notify import nudge_actions, panic_actions
+
+    ackable = bool(settings.oauth_base_url and settings.session_secret)
+    result = evaluate_panic_check(
+        store,
+        now=now,
+        quiet_hours=in_quiet_hours(store, now, settings.timezone),
+        ackable=ackable,
+    )
+    if not result.fire:
+        return
+    handle = next(
+        (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id), ""
+    )
+    actions = panic_actions(settings.oauth_base_url)
+    if result.step_id is not None:
+        actions = (
+            nudge_actions(
+                "panic", result.step_id,
+                base_url=settings.oauth_base_url, secret=settings.session_secret, handle=handle,
+            )
+            + actions
+        )
+    # "sound" (high priority), not "voice": panic must reach the phone with its
+    # buttons, never divert to local TTS on a mini with tts_enabled.
+    cue = Cue(
+        module="panic", intervention="proactive_alert", urgency="critical",
+        text=result.message, context_key="panic", dedup_key="panic_alert",
+    )
+    decision = Decision(cue=cue, channel="sound", text=result.message)
+    route = resolve_route(store, settings)
+    client = DeliveryClient.from_settings(settings)
+    res = client.deliver(
+        decision, route,
+        base_url=settings.oauth_base_url, secret=settings.session_secret, handle=handle,
+        extra_actions=actions,
+    )
+    print(f"  → panic: {'sent' if res.delivered else 'not sent'} ({res.detail})")
 
 
 def _cmd_notify(args: argparse.Namespace) -> int:

@@ -73,15 +73,9 @@ from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
 from prefrontal.panic import (
-    DEFAULT_ALERT_COOLDOWN_MINUTES,
-    DEFAULT_ALERT_MIN_PRESSING,
-    DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES,
     build_panic,
-    overwhelm_level,
-    panic_alert_message,
-    record_panic_step_sent,
+    evaluate_panic_check,
     render_panic,
-    sweep_pending_panic_steps,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -808,98 +802,42 @@ def build_router(services: RouterServices) -> APIRouter:
         got done. ``actions`` is empty unless firing and a public origin is set.
         """
         memory = ctx.store
-        plan = build_panic(memory)
-
-        # Sweep any earlier overwhelm first-step nudges the user never answered
-        # into a miss, so the learning loop sees the steps that didn't happen too
-        # (not just the "Did it" taps). Independent of firing, so it runs every
-        # poll — including calm ones and quiet-hours deferrals.
-        sweep_pending_panic_steps(
+        # Shared decision (edge-trigger + quiet-hours defer + cooldown + sweep +
+        # pending-step record) so the endpoint and the native `coach --deliver`
+        # tick nudge identically. Ack-ability gates whether a pending step is
+        # recorded — a signed one-tap button must be deliverable first.
+        ackable = bool(
+            resolved_settings.oauth_base_url and resolved_settings.session_secret
+        )
+        result = evaluate_panic_check(
             memory,
-            utcnow(),
-            window_minutes=memory.get_float(
-                "panic_step_ack_window_minutes", DEFAULT_PANIC_STEP_ACK_WINDOW_MINUTES
-            ),
+            now=utcnow(),
+            quiet_hours=in_quiet_hours(memory, utcnow(), resolved_settings.timezone),
+            ackable=ackable,
         )
-
-        try:
-            min_pressing = int(
-                memory.get_state("panic_alert_min_pressing")
-                or DEFAULT_ALERT_MIN_PRESSING
-            )
-        except (TypeError, ValueError):
-            min_pressing = DEFAULT_ALERT_MIN_PRESSING
-        cooldown = memory.get_float(
-            "panic_alert_cooldown_minutes", DEFAULT_ALERT_COOLDOWN_MINUTES
-        )
-
-        level = overwhelm_level(plan, min_pressing=min_pressing)
-        prev = memory.get_state("last_panic_level", "calm")
-        fire = level == "overwhelmed" and prev != "overwhelmed"
-
-        # Quiet-hours gate: an overwhelm spike outside responsive hours is
-        # *deferred*, not dropped. Return without advancing last_panic_level, so
-        # the edge is preserved and the first poll back in responsive hours still
-        # fires — otherwise a 3am pile-up would silently consume its own edge and
-        # never nudge. (Unlike the cooldown below, which intentionally consumes
-        # the edge so a sustained pile-up nudges once, not every poll.)
-        if fire and in_quiet_hours(memory, utcnow(), resolved_settings.timezone):
-            return {
-                "fire": False,
-                "level": level,
-                "message": "",
-                "first_step": plan.first_step,
-                "counts": plan.counts,
-                "headline": plan.headline,
-                "actions": [],
-            }
-
-        # Cooldown floor: even on a fresh edge, stay quiet if we alerted recently.
-        if fire:
-            last_at = _parse_dt_or_none(memory.get_state("last_panic_alert_at"))
-            if last_at is not None:
-                elapsed = (utcnow() - last_at).total_seconds() / 60.0
-                if elapsed < cooldown:
-                    fire = False
-
-        memory.set_state("last_panic_level", level, source="inferred")
-        message = ""
         actions: list[dict[str, Any]] = []
-        if fire:
-            name = (memory.get_state("user_name") or "").strip() or None
-            message = panic_alert_message(plan, name=name)
-            # A one-tap "Open triage" button so the nudge is not a dead end: it
-            # carries the first step inline, and this opens the full picture.
+        if result.fire:
+            # A one-tap "Open triage" button so the nudge isn't a dead end, plus a
+            # signed "✓ Did it" button when a pending step was recorded (ackable).
             actions = panic_actions(resolved_settings.oauth_base_url)
-            # When we can deliver a *signed* one-tap button, log a pending "panic"
-            # episode and prepend a "Did it" button, so the drift pass learns
-            # whether the surfaced first step actually got done. Gate on
-            # ack-ability (public origin + signing key): an undeliverable button
-            # must not leave a phantom episode the sweep would count as a miss.
-            ackable = bool(
-                resolved_settings.oauth_base_url and resolved_settings.session_secret
-            )
-            if plan.first_step and ackable:
-                step_id = record_panic_step_sent(memory, plan, now=utcnow())
+            if result.step_id is not None:
                 actions = (
                     _nudge_actions(
-                        resolved_settings, ctx.user.get("handle") or "", "panic", step_id
+                        resolved_settings,
+                        ctx.user.get("handle") or "",
+                        "panic",
+                        result.step_id,
                     )
                     + actions
                 )
-            memory.set_state(
-                "last_panic_alert_at",
-                utcnow().strftime(TS_FMT),
-                source="inferred",
-            )
 
         return {
-            "fire": fire,
-            "level": level,
-            "message": message,
-            "first_step": plan.first_step,
-            "counts": plan.counts,
-            "headline": plan.headline,
+            "fire": result.fire,
+            "level": result.level,
+            "message": result.message,
+            "first_step": result.first_step,
+            "counts": result.counts,
+            "headline": result.headline,
             "actions": actions,
         }
 

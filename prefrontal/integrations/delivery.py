@@ -376,6 +376,7 @@ class DeliveryClient:
         base_url: str = "",
         secret: str = "",
         handle: str = "",
+        extra_actions: list[dict[str, Any]] | None = None,
     ) -> DeliveryResult:
         """Publish one decision on the transport its channel class maps to.
 
@@ -383,6 +384,9 @@ class DeliveryClient:
         locally first when TTS is enabled, otherwise it rides the push transport
         at max priority. ``base_url``/``secret``/``handle`` sign the one-tap
         action buttons (empty → a plain push, matching ``notify``'s own guard).
+        ``extra_actions`` overrides the context-derived buttons — for a cue whose
+        buttons aren't the standard per-context set (e.g. panic's "Open triage" +
+        signed "Did it"), the caller passes the exact button specs to render.
         """
         channel = decision.channel
         message = decision.text
@@ -394,7 +398,11 @@ class DeliveryClient:
             if spoken.delivered:
                 return spoken  # already stamped channel="voice"
 
-        actions = _actions_for_cue(decision.cue, base_url=base_url, secret=secret, handle=handle)
+        actions = (
+            extra_actions
+            if extra_actions is not None
+            else _actions_for_cue(decision.cue, base_url=base_url, secret=secret, handle=handle)
+        )
 
         if route.ntfy_topic:
             result = self.ntfy.publish(

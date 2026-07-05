@@ -135,6 +135,41 @@ def test_notify_delivers_through_configured_route(tmp_path, capsys):
     assert received[0]["priority"] == 4  # sound → priority 4
 
 
+def test_deliver_panic_publishes_when_overwhelmed(tmp_path, capsys):
+    """The native panic delivery (used by `coach --deliver`) publishes an overwhelm
+    nudge through the user's route — so panic no longer needs the n8n poll."""
+    from datetime import timedelta
+
+    from prefrontal.cli import _deliver_panic
+    from prefrontal.config import Settings
+    from prefrontal.impact import utcnow
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tom", "--operator"]) == 0
+    capsys.readouterr()
+
+    srv, url, received = _local_ntfy_server()
+    try:
+        with MemoryStore.open(str(db)) as raw:
+            uid = next(u["id"] for u in raw.list_users() if u["handle"] == "tom")
+            scoped = raw.scoped(uid)
+            scoped.set_state("ntfy_server", url, source="explicit")
+            scoped.set_state("ntfy_topic", "tom-alerts", source="explicit")
+            scoped.set_state("responsive_hours_start", "0")  # always responsive (no defer)
+            scoped.set_state("responsive_hours_end", "0")
+            now = utcnow()
+            for t in ("A", "B", "C"):  # three overdue todos → overwhelmed
+                scoped.add_todo(t, deadline=(now - timedelta(days=1)).strftime("%Y-%m-%d"))
+            _deliver_panic(raw, scoped, Settings(), now)
+    finally:
+        srv.shutdown()
+
+    assert received, "panic nudge should have been published"
+    assert received[0]["topic"] == "tom-alerts"
+    assert received[0]["priority"] == 4  # sound → high priority, never local TTS
+
+
 def test_notify_reports_when_no_transport_configured(tmp_path, capsys, monkeypatch):
     """With no ntfy/Pushover configured, `notify` exits non-zero and says so."""
     # Neutralize any operator defaults leaking from the environment.
