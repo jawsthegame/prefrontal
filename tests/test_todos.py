@@ -38,6 +38,7 @@ from prefrontal.scheduling import (
     work_window_now,
 )
 from prefrontal.todos import (
+    DISCARDED_OUTCOME,
     KNOWN_CATEGORIES,
     MAX_CATEGORIES,
     at_category_cap,
@@ -1109,33 +1110,75 @@ def test_todo_close_endpoint_logs_episode(client, store_open):
     assert eps[0]["context"] == "todo done: Call dentist"
 
 
-def test_todo_drop_endpoint_logs_miss(client, store_open):
-    """Dropping a todo records a miss — the avoidance signal isn't discarded."""
+def test_todo_drop_of_fresh_todo_is_discarded_not_a_miss(client, store_open):
+    """A just-created drop is hygiene ("this is wrong"), not a slip: it's logged
+    as `discarded`, which feeds neither drift nor the briefing's Slipped line."""
     tid = client.post(
         "/todos", json={"title": "Reconcile budget", "estimate_minutes": 25}, headers=_auth()
     ).json()["todo_id"]
 
     client.post(f"/todos/{tid}/drop", headers=_auth())
     eps = store_open.episodes_by_type("task")
+    assert eps and eps[0]["outcome"] == DISCARDED_OUTCOME
+
+
+def test_todo_drop_of_overdue_todo_is_a_miss(client, store_open):
+    """Dropping a commitment you let go overdue reads as "I give up" → a miss, so
+    the avoidance signal isn't lost."""
+    tid = store_open.add_todo("File the taxes", estimate_minutes=25, deadline="2020-01-01")
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+    eps = store_open.episodes_by_type("task")
     assert eps and eps[0]["outcome"] == "miss"
 
 
+def test_todo_episode_fields_classifies_drops(store_open):
+    """The give-up (miss) vs hygiene (discarded) split, at the pure layer."""
+    now = utcnow()
+
+    def dropped(**kw):
+        base = {"status": "dropped", "title": "t", "priority": 1,
+                "created_at": now.strftime("%Y-%m-%d %H:%M:%S")}
+        return {**base, **kw}
+
+    old = (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    # Done is always a success.
+    assert todo_episode_fields({"status": "done", "title": "t"}, now=now)["outcome"] == "success"
+    # Aged past the avoidance floor at a real priority → give up (miss).
+    assert todo_episode_fields(dropped(created_at=old), now=now)["outcome"] == "miss"
+    # Overdue → give up (miss), regardless of age.
+    assert todo_episode_fields(dropped(deadline="2020-01-01"), now=now)["outcome"] == "miss"
+    # Fresh, not overdue → hygiene (discarded).
+    assert todo_episode_fields(dropped(), now=now)["outcome"] == DISCARDED_OUTCOME
+    # Low-priority "someday", even if aged → hygiene, never avoidance.
+    assert (
+        todo_episode_fields(dropped(created_at=old, priority=0), now=now)["outcome"]
+        == DISCARDED_OUTCOME
+    )
+    # No reference time → can't date it → treat as hygiene, not a slip.
+    assert todo_episode_fields(dropped(created_at=old), now=None)["outcome"] == DISCARDED_OUTCOME
+
+
 def test_todo_closes_feed_drift_pattern(client, store_open):
-    """Several closes flow into the learning pass as a `task` drift pattern."""
+    """Successes + a give-up miss flow into the learning pass as a `task` drift
+    pattern; a hygiene drop is excluded, so it can't inflate drift."""
     for i in range(3):
         tid = client.post(
             "/todos", json={"title": f"task {i}", "estimate_minutes": 10}, headers=_auth()
         ).json()["todo_id"]
         client.post(f"/todos/{tid}/done", headers=_auth())
-    tid = client.post(
-        "/todos", json={"title": "skipped", "estimate_minutes": 10}, headers=_auth()
+    # An overdue drop = a genuine give-up miss.
+    gid = store_open.add_todo("skipped", estimate_minutes=10, deadline="2020-01-01")
+    client.post(f"/todos/{gid}/drop", headers=_auth())
+    # A fresh hygiene drop → discarded → NOT counted in drift.
+    hid = client.post(
+        "/todos", json={"title": "mis-captured", "estimate_minutes": 10}, headers=_auth()
     ).json()["todo_id"]
-    client.post(f"/todos/{tid}/drop", headers=_auth())
+    client.post(f"/todos/{hid}/drop", headers=_auth())
 
     recompute_patterns(store_open)
     drift = [p for p in store_open.get_patterns("drift") if p["context_key"] == "task"]
     assert drift, "expected a task drift pattern derived from todo closes"
-    assert drift[0]["sample_size"] == 4
+    assert drift[0]["sample_size"] == 4  # 3 successes + 1 give-up miss; hygiene excluded
     # 3 successes (0.0) + 1 miss (1.0) over 4 ⇒ 0.25
     assert drift[0]["observed_value"] == 0.25
 # -- deadline updates & step completion (endpoints) --------------------------

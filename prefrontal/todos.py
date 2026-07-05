@@ -896,24 +896,63 @@ def category_stats(
 # closes flow into the same episode history every other touchpoint already does.
 
 
+#: Outcome for a "this is wrong" drop — a mis-captured / no-longer-relevant todo
+#: cleared as hygiene. Deliberately NOT ``miss``: it's outside ``DRIFT_WEIGHTS`` so
+#: it never touches the ``drift`` score, and the briefing's "Slipped" counts only
+#: ``miss`` — so hygiene drops don't masquerade as things you let slip. The episode
+#: is still logged (with the age note) for provenance / future capture-quality work.
+DISCARDED_OUTCOME = "discarded"
+
+
+def _dropped_is_give_up(todo: dict[str, Any], ref: datetime | None) -> bool:
+    """Whether dropping ``todo`` reads as "I give up" (a real ``miss``) vs "this is
+    wrong" (hygiene, :data:`DISCARDED_OUTCOME`).
+
+    Give-up = you abandoned a genuine, aging commitment: it was something you'd
+    been avoiding (a real priority, open past the avoidance floor — the same
+    definition behind "You keep putting off") **or** it was already overdue. A
+    quick cleanup drop, a low-priority "someday", or a not-yet-aged item is
+    hygiene, not a slip.
+
+    Recomputes the avoidance inputs directly rather than calling
+    :func:`avoidance_score`, because that is status-gated and the row is already
+    ``dropped`` by the time a close is recorded.
+    """
+    priority = todo.get("priority")
+    priority = 1 if priority is None else int(priority)
+    if priority < 1:
+        return False  # low / "someday" — dropping it is just tidying up
+    if ref is None:
+        return False  # can't tell how long it sat → treat as hygiene, not a slip
+    deadline = _parse_deadline(todo.get("deadline"))
+    if deadline is not None and deadline < ref:
+        return True  # you had a deadline and let it pass, then bailed → giving up
+    days = _days_open(todo, ref)
+    return days is not None and days >= DEFAULT_AVOIDANCE_MIN_DAYS
+
+
 def todo_episode_fields(
     todo: dict[str, Any], *, now: datetime | None = None
 ) -> dict[str, Any]:
     """Derive :meth:`MemoryStore.log_episode` kwargs from a closed todo (pure).
 
-    A ``done`` todo is a task ``success``; anything else (``dropped``) is a
-    ``miss`` — so it folds into the ``drift`` score for ``task``. The estimate is
-    recorded as ``predicted_value``, but ``actual_value`` is deliberately
-    ``None``: a todo's created→closed span is wall-clock, not time spent on task,
-    so treating it as the actual duration would pollute ``time_estimation`` (the
-    same reasoning as ``record_outing_abandoned``). The age is kept in ``notes``
-    for future analysis instead.
+    A ``done`` todo is a task ``success``. A ``dropped`` one is classified: an
+    "I give up" drop (:func:`_dropped_is_give_up` — an aging/overdue commitment you
+    abandoned) is a ``miss`` that folds into the ``task`` ``drift`` score and the
+    briefing's "Slipped" line; a "this is wrong" hygiene drop is
+    :data:`DISCARDED_OUTCOME`, logged for provenance but counted by neither. The
+    estimate is recorded as ``predicted_value``, but ``actual_value`` is
+    deliberately ``None``: a todo's created→closed span is wall-clock, not time
+    spent on task, so treating it as the actual duration would pollute
+    ``time_estimation`` (the same reasoning as ``record_outing_abandoned``). The
+    age is kept in ``notes`` for future analysis instead.
 
     Args:
         todo: A todo dict (as returned by the store), ideally post-close so its
             ``status`` and ``completed_at`` are current.
-        now: Reference time (naive UTC) for the age note when ``completed_at`` is
-            absent (e.g. a dropped todo). ``None`` skips the age note.
+        now: Reference time (naive UTC) for the age note and the give-up-vs-hygiene
+            call when ``completed_at`` is absent (e.g. a dropped todo). ``None``
+            skips the age note and treats a drop as hygiene (we can't date it).
 
     Returns:
         A kwargs dict for :meth:`MemoryStore.log_episode`.
@@ -925,13 +964,19 @@ def todo_episode_fields(
     if start is not None and end is not None:
         days = max(0.0, (end - start).total_seconds() / 86400.0)
         notes = f"{'completed' if done else 'dropped'} after {days:.1f}d open"
+    if done:
+        outcome = "success"
+    elif _dropped_is_give_up(todo, end):
+        outcome = "miss"
+    else:
+        outcome = DISCARDED_OUTCOME
     return {
         "episode_type": "task",
         "predicted_value": todo.get("estimate_minutes"),
         "actual_value": None,
         "acknowledged": None,
         "context": f"todo {'done' if done else 'dropped'}: {todo.get('title')}",
-        "outcome": "success" if done else "miss",
+        "outcome": outcome,
         "notes": notes,
     }
 
