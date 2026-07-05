@@ -127,6 +127,12 @@ ALTER TABLE users ADD COLUMN household_id INTEGER REFERENCES households(id);
 ### 3.3 `children`
 
 The roster. Stable identity only (name + birthday); everything else is a fact.
+`kind` splits the roster into the kids (`child`, the default) and the **pets**
+(`pet`) — a pet reuses the whole facts/appointments/shopping plumbing (all keyed
+by `children.id`) but is surfaced under its own "🐾 Pets" section, so vet/groomer
+contacts and meds live alongside a dog without cluttering the kids' grid.
+`species` labels a pet (dog/cat/…); NULL for a child. `children()` returns kids
+only; `pets()` returns the pets.
 
 ```sql
 CREATE TABLE IF NOT EXISTS children (
@@ -134,10 +140,17 @@ CREATE TABLE IF NOT EXISTS children (
     household_id INTEGER NOT NULL REFERENCES households(id),
     name         TEXT NOT NULL,
     birthday     DATE,
+    kind         TEXT NOT NULL DEFAULT 'child',   -- 'child' | 'pet'
+    species      TEXT,                            -- pet species; NULL for a child
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (household_id, name)
 );
 ```
+
+Recurring pet care — meds due, grooming — rides the existing recurring-chores
+system (§3.6.5): a chore like "Bella — heartworm pill" carries the due-time
+reminder, one-tap done, and miss-handoff to the other parent. One-off vet/grooming
+visits are appointments (§3.7, a `kind='child'` commitment titled for the pet).
 
 ### 3.4 `household_facts`
 

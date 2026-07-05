@@ -58,6 +58,13 @@ AGREEMENT_KINDS: tuple[str, ...] = ("reward", "consistency", "routine")
 #: under the UNIQUE constraint (SQLite treats NULLs as distinct — see the schema).
 HOUSEHOLD_WIDE = 0
 
+#: Roster kinds. The ``children`` table holds the whole household roster; ``kind``
+#: splits it into the kids (``child``, the default) and the pets (``pet``). Pets
+#: reuse the same facts/appointments/shopping plumbing (all keyed by
+#: ``children.id``) but are surfaced under their own section in the app.
+ROSTER_CHILD = "child"
+ROSTER_PET = "pet"
+
 #: How long a checked-off ("got it") shopping item lingers before it ages out on
 #: its own — a self-cleaning list so bought rows don't pile up when nobody sweeps.
 #: An SQLite ``datetime`` modifier applied to ``got_at`` (stamped in UTC).
@@ -194,11 +201,81 @@ class HouseholdRepo(Repo):
         return cur.rowcount > 0
 
     def children(self) -> list[dict[str, Any]]:
-        """The household's children (id/name/birthday), ordered by name."""
+        """The household's kids (id/name/birthday), ordered by name.
+
+        Humans only — pets live in the same table but are read via :meth:`pets`,
+        so existing kid-facing views never suddenly show the dog.
+        """
         rows = self.conn.execute(
             "SELECT id, name, birthday, created_at FROM children "
-            "WHERE household_id = ? ORDER BY name ASC",
-            (self._household_id(),),
+            "WHERE household_id = ? AND kind = ? ORDER BY name ASC",
+            (self._household_id(), ROSTER_CHILD),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_pet(
+        self, *, name: str, species: str | None = None, birthday: str | None = None
+    ) -> int:
+        """Add a pet to the roster (idempotent on name), returning its id.
+
+        A pet is a ``kind='pet'`` row in the shared roster table, so its meds,
+        vet/groomer contacts, and appointments reuse the same facts/commitments
+        plumbing the kids use — it's just surfaced under its own section. Re-adding
+        an existing name updates a newly-supplied species/birthday and returns the
+        same id.
+        """
+        hid = self._household_id()
+        self.conn.execute(
+            """
+            INSERT INTO children (household_id, name, kind, species, birthday)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (household_id, name) DO UPDATE SET
+                kind     = 'pet',
+                species  = COALESCE(excluded.species, children.species),
+                birthday = COALESCE(excluded.birthday, children.birthday)
+            """,
+            (hid, name.strip(), ROSTER_PET, species, birthday),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT id FROM children WHERE household_id = ? AND name = ?",
+            (hid, name.strip()),
+        ).fetchone()
+        return int(row["id"])
+
+    def rename_pet(
+        self,
+        pet_id: int,
+        *,
+        name: str,
+        species: str | None = None,
+        birthday: str | None = None,
+    ) -> bool:
+        """Rename a pet (and optionally set species/birthday). ``True`` if a row changed.
+
+        Scoped to the household and to ``kind='pet'`` so it can't rename a kid (or
+        another household's pet). ``None`` species/birthday leave the stored values
+        untouched (so a rename needn't restate them).
+        """
+        cur = self.conn.execute(
+            """
+            UPDATE children
+               SET name     = ?,
+                   species  = COALESCE(?, species),
+                   birthday = COALESCE(?, birthday)
+             WHERE id = ? AND household_id = ? AND kind = ?
+            """,
+            (name.strip(), species, birthday, pet_id, self._household_id(), ROSTER_PET),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def pets(self) -> list[dict[str, Any]]:
+        """The household's pets (id/name/species/birthday), ordered by name."""
+        rows = self.conn.execute(
+            "SELECT id, name, species, birthday, created_at FROM children "
+            "WHERE household_id = ? AND kind = ? ORDER BY name ASC",
+            (self._household_id(), ROSTER_PET),
         ).fetchall()
         return [dict(r) for r in rows]
 

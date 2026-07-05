@@ -160,6 +160,11 @@
     <div id="facts"></div>
   </section>
 
+  <section class="card" id="c-pets">
+    <p class="label">🐾 Pets</p>
+    <div id="pets"></div>
+  </section>
+
   <section class="card" id="c-agreements">
     <p class="label">Plans &amp; star charts</p>
     <div id="agreements"></div>
@@ -268,14 +273,31 @@ function renderRecent(changes) {
     : `<div class="empty">No changes yet.</div>`;
 }
 
+// The category/items grid for one fact block — shared by the kids and pets.
+function catsHtml(block) {
+  return (block.categories || []).map((cat) =>
+    `<div class="cat-h">${esc(cat.label)}</div>` + cat.items.map((it) =>
+      `<div class="kv"><span class="k">${esc(it.item)}</span><span class="v">${esc(it.value || "—")}</span></div>`
+    ).join("")).join("");
+}
+
 function renderFacts(perChild) {
   if (!(perChild || []).length) { $("#facts").innerHTML = `<div class="empty">No facts yet.</div>`; return; }
-  $("#facts").innerHTML = perChild.map((block) => {
-    const cats = (block.categories || []).map((cat) =>
-      `<div class="cat-h">${esc(cat.label)}</div>` + cat.items.map((it) =>
-        `<div class="kv"><span class="k">${esc(it.item)}</span><span class="v">${esc(it.value || "—")}</span></div>`
-      ).join("")).join("");
-    return `<div class="child-h">${esc(block.child_name)}</div>${cats}`;
+  $("#facts").innerHTML = perChild.map((block) =>
+    `<div class="child-h">${esc(block.child_name)}</div>${catsHtml(block)}`).join("");
+}
+
+// Pets: one block per pet (name · species), then its facts (meds, vet, food).
+function renderPets(pets, perPet) {
+  pets = pets || [];
+  if (!pets.length) { $("#c-pets").style.display = "none"; return; }
+  $("#c-pets").style.display = "";
+  const blocks = {};
+  (perPet || []).forEach((b) => { blocks[b.child_id] = b; });
+  $("#pets").innerHTML = pets.map((p) => {
+    const sp = p.species ? ` <span class="v">· ${esc(p.species)}</span>` : "";
+    const b = blocks[p.id];
+    return `<div class="child-h">${esc(p.name)}${sp}</div>${b ? catsHtml(b) : ""}`;
   }).join("");
 }
 
@@ -366,6 +388,7 @@ async function load() {
   $("#title").textContent = "🏡 " + (sheet.household_name || "Household");
   renderRecent(sheet.recently_changed);
   renderFacts(sheet.per_child);
+  renderPets(sheet.pets, sheet.per_pet);
   renderAgreements(sheet.agreements);
   renderShopping(sheet.shopping);
   renderAppts(sheet.upcoming);

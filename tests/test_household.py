@@ -180,6 +180,66 @@ def test_set_user_household_rejects_unknown_household(store):
         store.set_user_household("dana", 999)
 
 
+def test_pets_are_a_separate_roster_from_children(dana):
+    """A pet lives in the roster but never shows up as a child."""
+    sam = dana.add_child(name="Sam")
+    bella = dana.add_pet(name="Bella", species="dog")
+    assert sam != bella
+    assert [c["name"] for c in dana.children()] == ["Sam"]  # pets excluded
+    pets = dana.pets()
+    assert [p["name"] for p in pets] == ["Bella"]
+    assert pets[0]["species"] == "dog"
+
+
+def test_add_pet_is_idempotent_and_updates_species(dana):
+    first = dana.add_pet(name="Bella")
+    again = dana.add_pet(name="Bella", species="dog", birthday="2020-03-01")
+    assert first == again  # same row, not a duplicate
+    pet = dana.pets()[0]
+    assert pet["species"] == "dog" and pet["birthday"] == "2020-03-01"
+
+
+def test_rename_pet_scoped_to_pets(dana):
+    sam = dana.add_child(name="Sam")
+    bella = dana.add_pet(name="Bella", species="dog")
+    assert dana.rename_pet(bella, name="Bella Jr.", species="cat") is True
+    assert dana.pets()[0]["name"] == "Bella Jr." and dana.pets()[0]["species"] == "cat"
+    # rename_pet won't touch a child row (wrong kind) or a missing id.
+    assert dana.rename_pet(sam, name="Nope") is False
+    assert dana.rename_pet(9999, name="Ghost") is False
+
+
+def test_pet_facts_render_under_their_own_section(store, dana):
+    """A pet's meds/vet facts group under a 🐾 Pets section, apart from the kids."""
+    dana_id = store.get_user("dana")["id"]
+    sam = dana.add_child(name="Sam")
+    bella = dana.add_pet(name="Bella", species="dog")
+    dana.set_fact(category="sizes", item="shoe size", value="13", updated_by=dana_id, child_id=sam)
+    dana.set_fact(
+        category="health", item="heartworm pill", value="monthly, 1st",
+        updated_by=dana_id, child_id=bella,
+    )
+    sheet = build_sheet(dana, now=NOW)
+    assert sheet.counts["pets"] == 1
+    assert [b["child_name"] for b in sheet.per_pet] == ["Bella"]
+    # The pet's fact is in per_pet, not per_child.
+    def _items(blocks):
+        return [it["item"] for b in blocks for c in b["categories"] for it in c["items"]]
+
+    assert "heartworm pill" in _items(sheet.per_pet)
+    assert "heartworm pill" not in _items(sheet.per_child)
+    text = render_sheet(sheet)
+    assert "🐾 Pets" in text
+    assert "Bella · dog" in text
+    assert "heartworm pill: monthly, 1st" in text
+
+
+def test_pet_with_no_facts_still_lists(dana):
+    dana.add_pet(name="Rex", species="dog")
+    text = render_sheet(build_sheet(dana, now=NOW))
+    assert "🐾 Pets" in text and "Rex · dog" in text
+
+
 # --- render ------------------------------------------------------------------
 
 
@@ -247,6 +307,32 @@ def test_snapshot_includes_household_for_member_only(dana, lee):
     assert snap["household"]["shopping"][0]["item"] == "Milk"
     # A non-member's snapshot omits household entirely.
     assert "household" not in build_snapshot(lee)
+
+
+def test_snapshot_includes_pets_and_assistant_sets_a_pet_fact(store, dana):
+    """The assistant can attach a fact (meds) to a pet resolved from the snapshot."""
+    bella = dana.add_pet(name="Bella", species="dog")
+    snap = build_snapshot(dana)
+    assert snap["household"]["pets"][0]["name"] == "Bella"
+    actions, errors = validate_actions(
+        [{"op": "set_fact", "category": "health", "item": "heartworm pill",
+          "value": "monthly", "child": bella}],
+        snap,
+    )
+    assert errors == []
+    results = execute_actions(dana, actions)
+    assert all(r["ok"] for r in results)
+    fact = next(f for f in dana.facts() if f["item"] == "heartworm pill")
+    assert fact["child_name"] == "Bella" and fact["value"] == "monthly"
+
+
+def test_assistant_rejects_unknown_pet_id(dana):
+    dana.add_pet(name="Bella")
+    _actions, errors = validate_actions(
+        [{"op": "set_fact", "category": "health", "item": "x", "value": "y", "child": 9999}],
+        build_snapshot(dana),
+    )
+    assert any("9999" in e for e in errors)
 
 
 def test_assistant_sets_and_clears_facts_with_attribution(store, dana):
@@ -458,6 +544,38 @@ def test_sheet_endpoint_is_shared_across_co_parents(client):
 
 def test_sheet_endpoint_404_for_non_member(client):
     assert client.get("/household/sheet", headers=_h("lee-tok")).status_code == 404
+
+
+def test_pet_endpoints_add_rename_and_surface_on_sheet(client):
+    add = client.post(
+        "/household/pets", json={"name": "Bella", "species": "dog"}, headers=_h("dana-tok")
+    )
+    assert add.status_code == 201
+    pid = add.json()["id"]
+    # A per-pet health fact (meds) lands under the pet.
+    assert client.post(
+        "/household/facts",
+        json={"category": "health", "item": "heartworm pill", "value": "monthly", "child_id": pid},
+        headers=_h("dana-tok"),
+    ).status_code in (200, 201)
+    # Rename + set species sticks.
+    assert client.post(
+        f"/household/pets/{pid}", json={"name": "Bella", "species": "shepherd"},
+        headers=_h("alex-tok"),
+    ).status_code == 200
+    # The other co-parent sees the pet on the shared sheet, apart from the kids.
+    body = client.get("/household/sheet", headers=_h("alex-tok")).json()
+    assert body["sheet"]["counts"]["pets"] == 1
+    assert body["sheet"]["pets"][0]["name"] == "Bella"
+    assert body["sheet"]["pets"][0]["species"] == "shepherd"
+    assert "🐾 Pets" in body["markdown"]
+    assert not body["sheet"]["children"]  # a pet is not a kid
+
+
+def test_rename_pet_unknown_id_is_404(client):
+    assert client.post(
+        "/household/pets/999", json={"name": "Ghost"}, headers=_h("dana-tok")
+    ).status_code == 404
 
 
 def test_operator_creates_household_and_adds_member(client):

@@ -82,6 +82,8 @@ from prefrontal.webhooks.schemas import (
     FactSet,
     HouseholdCreate,
     InviteRedeem,
+    PetCreate,
+    PetRename,
     PromptConfig,
     RoutineEnabled,
     RoutineSet,
@@ -99,12 +101,15 @@ def build_router(services: RouterServices) -> APIRouter:
     resolved_settings = services.settings
 
     def _child_name(ctx: ScopedRequest, child_id: int) -> str | None:
-        """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
+        """The roster name for ``child_id`` (``None`` for household-wide id 0).
+
+        Searches the whole roster — kids and pets — since a fact/agreement can hang
+        off either (they share the ``children.id`` space).
+        """
         if not child_id:
             return None
-        return next(
-            (c["name"] for c in ctx.store.children() if c["id"] == child_id), None
-        )
+        roster = ctx.store.children() + ctx.store.pets()
+        return next((m["name"] for m in roster if m["id"] == child_id), None)
 
     def _valid_category(value: str) -> str:
         cat = normalize_fact_category(value)
@@ -267,6 +272,34 @@ def build_router(services: RouterServices) -> APIRouter:
         if not ctx.store.rename_child(child_id, name=payload.name, birthday=payload.birthday):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such child")
         return {"id": child_id, "name": payload.name}
+
+    @router.post("/household/pets", status_code=status.HTTP_201_CREATED, tags=["household"])
+    def add_pet(
+        payload: PetCreate,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Add a pet to the roster (idempotent on name).
+
+        A pet shares the roster/facts/appointments plumbing with the kids but is
+        surfaced under its own section; ``species`` (dog/cat/…) is optional.
+        """
+        pid = ctx.store.add_pet(
+            name=payload.name, species=payload.species, birthday=payload.birthday
+        )
+        return {"id": pid, "name": payload.name, "species": payload.species}
+
+    @router.post("/household/pets/{pet_id}", tags=["household"])
+    def rename_pet(
+        pet_id: int,
+        payload: PetRename,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Rename a pet (and optionally set species/birthday)."""
+        if not ctx.store.rename_pet(
+            pet_id, name=payload.name, species=payload.species, birthday=payload.birthday
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such pet")
+        return {"id": pet_id, "name": payload.name, "species": payload.species}
 
     # -- facts ----------------------------------------------------------------
 

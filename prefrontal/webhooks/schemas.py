@@ -472,6 +472,22 @@ class ChildRename(BaseModel):
     birthday: str | None = Field(default=None, description="Optional ISO date; omit to keep.")
 
 
+class PetCreate(BaseModel):
+    """Body of ``POST /household/pets`` — add a pet to the roster."""
+
+    name: str = Field(description="The pet's name (unique within the household).")
+    species: str | None = Field(default=None, description="Optional species, e.g. 'dog'.")
+    birthday: str | None = Field(default=None, description="Optional ISO date (YYYY-MM-DD).")
+
+
+class PetRename(BaseModel):
+    """Body of ``POST /household/pets/{id}`` — rename / set species / birthday."""
+
+    name: str = Field(description="The pet's new name.")
+    species: str | None = Field(default=None, description="Optional species; omit to keep.")
+    birthday: str | None = Field(default=None, description="Optional ISO date; omit to keep.")
+
+
 class FactSet(BaseModel):
     """Body of ``POST /household/facts`` — upsert one per-kid (or household-wide) fact."""
 
@@ -858,6 +874,8 @@ __all__ = [
     "OutingReturn",
     "OutingStart",
     "OutingStarted",
+    "PetCreate",
+    "PetRename",
     "PlaceCreate",
     "PromptConfig",
     "RoutineEnabled",

@@ -141,7 +141,8 @@ ASSISTANT_SYSTEM = (
     "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
     "If (and ONLY if) the snapshot has a \"household\" object, these shared "
     "co-parent sheet ops are also available. Resolve a kid's name to an id from "
-    "\"household.children\"; omit \"child\" (or use 0) for a household-wide fact. "
+    "\"household.children\", or a pet's name (e.g. the dog's meds) to an id from "
+    "\"household.pets\"; omit \"child\" (or use 0) for a household-wide fact. "
     "\"category\" MUST be one of \"household.fact_categories\":\n"
     '- {"op":"set_fact","category":str,"item":str,"value":str,"child":int?}\n'
     '- {"op":"clear_fact","category":str,"item":str,"child":int?}\n'
@@ -239,6 +240,10 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
     return {
         "children": [
             {"id": c["id"], "name": c.get("name")} for c in memory.children()
+        ],
+        "pets": [
+            {"id": p["id"], "name": p.get("name"), "species": p.get("species")}
+            for p in memory.pets()
         ],
         "fact_categories": list(FACT_CATEGORIES),
         "agreements": [
@@ -427,8 +432,8 @@ def _resolve_child(action: dict[str, Any], household: dict[str, Any]) -> tuple[i
     """Resolve an optional ``child`` to ``(child_id, label)``.
 
     A missing/zero ``child`` means household-wide (:data:`HOUSEHOLD_WIDE`). A given
-    id must match a child in the snapshot, so the model can't attach a fact to a
-    kid who doesn't exist.
+    id must match a roster member — a kid *or* a pet — in the snapshot, so the
+    model can't attach a fact (e.g. the dog's meds) to a member who doesn't exist.
 
     Accepts the model's ``child`` key *or* the ``child_id`` key that
     :meth:`ValidatedAction.to_wire` emits — the ``/assistant`` → preview →
@@ -446,10 +451,10 @@ def _resolve_child(action: dict[str, Any], household: dict[str, Any]) -> tuple[i
         raise _ActionError("child must be a child id from the snapshot")
     if cid == HOUSEHOLD_WIDE:
         return HOUSEHOLD_WIDE, "the household"
-    for c in household.get("children", []):
-        if c.get("id") == cid:
-            return cid, (c.get("name") or f"child #{cid}")
-    raise _ActionError(f"no child with id {cid}")
+    for m in [*household.get("children", []), *household.get("pets", [])]:
+        if m.get("id") == cid:
+            return cid, (m.get("name") or f"#{cid}")
+    raise _ActionError(f"no child or pet with id {cid}")
 
 
 def _require_agreement(
