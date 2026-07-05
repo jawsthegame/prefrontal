@@ -277,7 +277,14 @@
   }
   .card.collapsed > h2 { margin-bottom: 0; }
   .card.collapsed > h2::before { content: "▸"; }
-  .card.collapsed > *:not(h2):not(.card-ctl) { display: none; }
+  .card.collapsed > *:not(h2):not(.card-ctl):not(.card-summary) { display: none; }
+  /* One-line preview of a collapsed card's contents, so you can tell at a glance
+     whether it's worth expanding. Derived from the rendered body (see summarize)
+     and shown only while collapsed; a lone line truncates rather than wrapping. */
+  .card-summary { display: none; margin-top: 8px; color: var(--muted); font-size: 13px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card.collapsed > .card-summary { display: block; }
+  .card.collapsed > .card-summary:empty { display: none; }
   .card > h2 .updated {
     font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: 6px;
   }
@@ -763,6 +770,7 @@ function paintTodos() {
       : `<div class="empty">No todos match “${esc(q)}”.</div>`;
   }
   if (typeof applyCap === "function") applyCap("c-todos");
+  if (typeof updateSummaries === "function") updateSummaries();  // keep the collapsed preview in sync with the filter
 }
 function renderTodos(d) {
   const t = (d.todos || []);
@@ -1194,6 +1202,7 @@ async function load() {
   }
   $("#status").textContent = "updated " + new Date().toLocaleTimeString();
   applyCaps();  // re-apply per-card item caps after the bodies re-rendered
+  updateSummaries();  // refresh collapsed-card previews from the new bodies
   // Auth succeeded (no gate). If a panic nudge sent us here, open the triage now.
   if (panicRequested) {
     panicRequested = false;
@@ -1223,6 +1232,48 @@ const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
 function applyCollapsed() {
   document.querySelectorAll(".card").forEach((card) => {
     card.classList.toggle("collapsed", !!(card.id && layout.collapsed[card.id]));
+  });
+}
+
+// A one-line preview element under each card's heading, shown only while the card
+// is collapsed (see .card-summary CSS). Injected once, filled by updateSummaries.
+function injectSummaries() {
+  document.querySelectorAll(".card").forEach((card) => {
+    if (card.querySelector(":scope > .card-summary")) return;  // inject once
+    const h2 = card.querySelector(":scope > h2");
+    if (!h2) return;
+    const s = document.createElement("div");
+    s.className = "card-summary";
+    h2.insertAdjacentElement("afterend", s);
+  });
+}
+
+// Boil a card's rendered body down to a single line. Derived from the DOM rather
+// than each card's data so it always matches what's inside and needs no per-card
+// wiring: an empty/unavailable card says so; a prose card (briefing/profile)
+// shows its first line; a list card shows its count and first item's title.
+function summarize(card) {
+  const body = card.querySelector(":scope > .body");
+  if (!body) return "";
+  if (body.querySelector(":scope > .err")) return "unavailable";
+  const kids = [...body.children];
+  if (kids.length === 1 && kids[0].classList.contains("empty")) return kids[0].textContent.trim();
+  const prose = body.querySelector(".md");
+  if (prose) {
+    const first = [...prose.querySelectorAll("h3,h4,p,li")].find((e) => e.textContent.trim());
+    return first ? first.textContent.trim() : "";
+  }
+  const rows = body.querySelectorAll(":scope > .row, :scope > .shop-line");
+  const first = body.querySelector(".title, .shop-line .txt");
+  const lead = first && first.textContent.trim() ? " · " + first.textContent.trim() : "";
+  return rows.length ? `${rows.length} item${rows.length === 1 ? "" : "s"}${lead}` : "";
+}
+
+// Refresh every card's collapsed-preview line from its current body.
+function updateSummaries() {
+  document.querySelectorAll(".card").forEach((card) => {
+    const s = card.querySelector(":scope > .card-summary");
+    if (s) s.textContent = summarize(card);
   });
 }
 function toggleCollapsed(card) {
@@ -1400,6 +1451,7 @@ async function doRestart() {
 
 function start() {
   injectControls();
+  injectSummaries();
   applyOrder();
   applyCollapsed();
   load();
