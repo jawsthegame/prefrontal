@@ -13,13 +13,10 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.impact import (
-    analyze_impact,
-    at_risk,
     cascade_at_risk,
     cascade_impact,
     cascade_phrase,
     fragile_stretch,
-    impact_phrase,
     project_free_time,
     utcnow,
 )
@@ -34,16 +31,6 @@ SECRET = "impact-secret"
 def _utc(delta_minutes: float) -> str:
     """Stored-format UTC timestamp `delta_minutes` from now."""
     return (utcnow() + timedelta(minutes=delta_minutes)).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _commit(title, start_delta, lead=10.0, hardness="soft"):
-    return {
-        "id": 1,
-        "title": title,
-        "start_at": _utc(start_delta),
-        "lead_minutes": lead,
-        "hardness": hardness,
-    }
 
 
 # -- pure functions ----------------------------------------------------------
@@ -63,31 +50,6 @@ def test_project_free_time_floors_at_now():
     dep = "2026-06-28 10:00:00"
     now = datetime(2026, 6, 28, 12, 0, 0)
     assert project_free_time(dep, 15.0, 1.4, now=now) == now
-
-
-def test_analyze_impact_flags_at_risk_and_orders():
-    """Commitments you can't reach in time are flagged, worst-first."""
-    free = utcnow()
-    commitments = [
-        _commit("Safe", 120),       # plenty of slack
-        _commit("Tight", 5),        # start in 5m, 10m lead -> already too late
-        _commit("Doomed", 2),       # even worse
-    ]
-    impacts = analyze_impact(free, commitments)
-    risky = at_risk(impacts)
-    titles = [i.commitment["title"] for i in risky]
-    assert "Safe" not in titles
-    assert titles[0] == "Doomed"  # most negative slack first
-    assert set(titles) == {"Doomed", "Tight"}
-
-
-def test_impact_phrase_names_top_risk():
-    """The phrase names the most-threatened commitment, or is empty."""
-    free = utcnow()
-    risky = at_risk(analyze_impact(free, [_commit("Team sync", 2)]))
-    phrase = impact_phrase(risky)
-    assert "Team sync" in phrase and "at risk" in phrase
-    assert impact_phrase([]) == ""
 
 
 # -- cascade / domino propagation --------------------------------------------
@@ -127,11 +89,6 @@ def test_cascade_propagates_through_the_chain():
     assert ca.at_risk and ca.caused_by is None  # first domino: root is the overrun
     assert cb.at_risk and cb.caused_by == "A"   # knocked on by A's overrun
     assert cb.delay_minutes > 0
-
-    # The independent (non-cascade) analysis would NOT flag B against the raw
-    # free-time — that's the whole point of propagating the chain.
-    independent = at_risk(analyze_impact(_T, [a, b]))
-    assert [i.commitment["title"] for i in independent] == ["A"]
 
 
 def test_cascade_self_heals_across_a_gap():

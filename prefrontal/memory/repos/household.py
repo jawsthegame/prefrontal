@@ -506,22 +506,6 @@ class HouseholdRepo(Repo):
         ).fetchall()
         return {int(r["agreement_id"]): int(r["total"]) for r in rows}
 
-    def star_ledger(self, agreement_id: int, *, limit: int = 10) -> list[dict[str, Any]]:
-        """Recent grants for one chart (newest first), each with who awarded it."""
-        rows = self.conn.execute(
-            """
-            SELECT s.id, s.delta, s.note, s.created_at, s.child_id,
-                   COALESCE(u.display_name, u.handle) AS awarded_by_name
-            FROM household_stars s
-            LEFT JOIN users u ON u.id = s.awarded_by
-            WHERE s.household_id = ? AND s.agreement_id = ?
-            ORDER BY s.created_at DESC, s.id DESC
-            LIMIT ?
-            """,
-            (self._household_id(), agreement_id, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
     def recent_star_awards(self, *, limit: int = 6) -> list[dict[str, Any]]:
         """Recent grants across all charts (newest first) for the load surface.
 
