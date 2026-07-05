@@ -142,8 +142,10 @@ def snapshot():
         ],
         "commitments": [{"id": 2, "title": "Standup", "start_at": "2026-07-02 14:00:00"}],
         "outings": [
-            {"id": 3, "intention": "Coffee run", "time_window_minutes": 15.0, "status": "active"},
-            {"id": 9, "intention": "Groceries", "time_window_minutes": 45.0, "status": "returned"},
+            {"id": 3, "intention": "Coffee run", "time_window_minutes": 15.0,
+             "status": "active", "start_at": "2026-07-02 14:00:00"},
+            {"id": 9, "intention": "Groceries", "time_window_minutes": 45.0,
+             "status": "returned", "start_at": "2026-07-01 10:00:00"},
         ],
         "conflicts": [{"key": "busy::dentist", "label": "Busy vs Dentist"}],
     }
@@ -224,6 +226,23 @@ def test_validate_outing_ops_target_past_outings(snapshot):
     )
     assert errors == []
     assert actions[0].params["outing_id"] == 9
+
+
+def test_validate_set_outing_start_resolves(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_outing_start", "outing_id": 3, "start_at": "2026-07-02 13:30"}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params == {"outing_id": 3, "start_at": "2026-07-02 13:30"}
+    assert "start" in actions[0].summary
+
+
+def test_validate_set_outing_start_needs_value(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "set_outing_start", "outing_id": 3, "start_at": "  "}], snapshot
+    )
+    assert errors
 
 
 def test_validate_outing_unknown_id(snapshot):
@@ -314,6 +333,14 @@ def test_store_setters_outing_edit_after_close(memory):
 def test_store_setters_noop_on_absent_outing(memory):
     assert memory.set_outing_intention(999, "x") is None
     assert memory.set_outing_window(999, 20.0) is None
+    assert memory.set_outing_departure(999, "2026-07-02 14:00:00") is None
+
+
+def test_store_setter_outing_departure(memory):
+    oid = memory.start_outing("Coffee run", 15.0, departure_at="2026-07-02 14:15:00")
+    updated = memory.set_outing_departure(oid, "2026-07-02 14:00:00")
+    assert updated["departure_at"].startswith("2026-07-02 14:00")
+    assert memory.get_outing(oid)["departure_at"].startswith("2026-07-02 14:00")
 
 
 def _plan_and_execute(memory, raw_actions, tz="UTC"):
@@ -382,6 +409,27 @@ def test_execute_rename_and_adjust_outing(memory):
     row = memory.get_outing(oid)
     assert row["intention"] == "Grocery run"
     assert row["time_window_minutes"] == 30.0
+
+
+def test_execute_set_outing_start_moves_departure(memory):
+    oid = memory.start_outing("Coffee run", 15.0, departure_at="2026-07-02 14:15:00")
+    results = _plan_and_execute(
+        memory,
+        [{"op": "set_outing_start", "outing_id": oid, "start_at": "2026-07-02 14:00"}],
+        tz="UTC",
+    )
+    assert results[0]["ok"] is True
+    assert memory.get_outing(oid)["departure_at"].startswith("2026-07-02 14:00")
+
+
+def test_execute_set_outing_start_bad_date_reports_softly(memory):
+    oid = memory.start_outing("Coffee run", 15.0)
+    action = assistant.ValidatedAction(
+        "set_outing_start", {"outing_id": oid, "start_at": "not-a-date"}, "…"
+    )
+    results = assistant.execute_actions(memory, [action], timezone="UTC")
+    assert results[0]["ok"] is False
+    assert "couldn't apply" in results[0]["detail"]
 
 
 def test_execute_outing_op_on_stale_id_reports_softly(memory):
