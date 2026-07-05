@@ -110,6 +110,22 @@ class EpisodesRepo(Repo):
         self.conn.commit()
         return cur.rowcount > 0
 
+    def reclassify_episode_outcome(self, episode_id: int, *, outcome: str) -> bool:
+        """Change **only** an episode's ``outcome``, leaving everything else intact.
+
+        Unlike :meth:`set_episode_outcome` (which also stamps ``acknowledged``),
+        this touches the single column — for a backfill that re-labels an already-
+        resolved outcome (the one-off drop cleanup that downgrades hygiene
+        todo-drops from ``miss`` to ``discarded``). Scoped to the caller; returns
+        ``True`` if a row changed.
+        """
+        cur = self.conn.execute(
+            "UPDATE episodes SET outcome = ? WHERE id = ? AND user_id = ?",
+            (outcome, episode_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def pending_episodes(
         self, episode_type: str, *, before: str
     ) -> list[dict[str, Any]]:

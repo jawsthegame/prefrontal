@@ -998,3 +998,64 @@ def record_todo_closed(
     fields = todo_episode_fields(todo, now=now)
     episode_id = store.log_episode(**fields)
     return {"episode_id": episode_id, "outcome": fields["outcome"]}
+
+
+# --- one-off cleanup: reclassify historical hygiene todo-drops ----------------
+#
+# Before the give-up-vs-hygiene split, every dropped todo logged a `miss`, so
+# past cleanup (mis-captured / no-longer-relevant todos) inflated the briefing's
+# "Slipped" line and the `task` drift score. This backfill downgrades the hygiene
+# ones to `discarded`. The old episode carries only the drop age (in `notes`), not
+# the priority/deadline, so it's classified on age alone — conservatively: only a
+# clearly-quick drop (under the avoidance floor) is downgraded; an aged one is
+# left a `miss` (it may have been a genuine give-up, and we can't prove otherwise).
+
+#: The age note `todo_episode_fields` writes on a dropped todo, e.g. "dropped
+#: after 0.5d open" — the only per-episode signal the backfill has to work with.
+_DROP_AGE_RE = re.compile(r"dropped after ([\d.]+)d open")
+
+
+def historical_drop_is_hygiene(episode: dict[str, Any]) -> bool:
+    """Whether a past ``todo dropped:`` ``miss`` episode was a *hygiene* drop.
+
+    Uses the drop age recorded in ``notes``: under :data:`DEFAULT_AVOIDANCE_MIN_DAYS`
+    is hygiene (a quick "this is wrong" clear). An absent/unparseable age, or one
+    at/over the floor, returns ``False`` — left a ``miss`` rather than risk
+    downgrading a real give-up.
+    """
+    m = _DROP_AGE_RE.search(episode.get("notes") or "")
+    if not m:
+        return False
+    try:
+        return float(m.group(1)) < DEFAULT_AVOIDANCE_MIN_DAYS
+    except ValueError:
+        return False
+
+
+def reclassify_hygiene_drops(store: MemoryStore, *, apply: bool) -> dict[str, Any]:
+    """Downgrade historical hygiene todo-drop misses to ``discarded`` (idempotent).
+
+    Scans the caller's ``task`` ``miss`` episodes that came from a todo drop
+    (``context`` starts with ``"todo dropped:"``) and, for the hygiene ones
+    (:func:`historical_drop_is_hygiene`), rewrites the outcome to
+    :data:`DISCARDED_OUTCOME` so they stop feeding drift + "Slipped". ``apply``
+    ``False`` is a dry run (counts only). Re-running is a no-op (the rewritten
+    rows are no longer ``miss``). Returns ``{scanned, reclassified, samples}``.
+    """
+    scanned = reclassified = 0
+    samples: list[str] = []
+    for ep in store.episodes_by_type("task", limit=1_000_000):
+        if ep.get("outcome") != "miss":
+            continue
+        context = ep.get("context") or ""
+        if not context.startswith("todo dropped:"):
+            continue
+        scanned += 1
+        if not historical_drop_is_hygiene(ep):
+            continue
+        if apply:
+            store.reclassify_episode_outcome(ep["id"], outcome=DISCARDED_OUTCOME)
+        reclassified += 1
+        if len(samples) < 5:
+            samples.append(context)
+    return {"scanned": scanned, "reclassified": reclassified, "samples": samples}
