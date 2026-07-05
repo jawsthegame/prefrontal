@@ -194,6 +194,60 @@ def test_outing_store_lifecycle():
         assert store.close_outing(oid) is None
 
 
+def test_close_outing_backdates_to_home_arrival():
+    """A returned close backdates to home_arrived_at when set (not 'now')."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        oid = store.start_outing(
+            "getting coffee", 15.0, departure_at=_utc_minutes_ago(20)
+        )
+        arrived = _utc_minutes_ago(14)  # left 20 min ago, home 6 min later
+        store.set_outing_home_arrived(oid, arrived)
+        closed = store.close_outing(oid, status="returned")
+        assert closed["returned_at"] == arrived
+        assert closed["actual_minutes"] == pytest.approx(6, abs=0.5)
+
+
+def test_close_outing_explicit_returned_at_wins():
+    """An explicit returned_at overrides both 'now' and the arrival stamp."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        oid = store.start_outing(
+            "getting coffee", 15.0, departure_at=_utc_minutes_ago(30)
+        )
+        store.set_outing_home_arrived(oid, _utc_minutes_ago(6))
+        explicit = _utc_minutes_ago(10)
+        closed = store.close_outing(oid, status="returned", returned_at=explicit)
+        assert closed["returned_at"] == explicit
+
+
+def test_abandon_close_is_not_backdated():
+    """Only a returned close backdates; an abandon still stamps 'now'."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        oid = store.start_outing(
+            "getting coffee", 5.0, departure_at=_utc_minutes_ago(30)
+        )
+        store.set_outing_home_arrived(oid, _utc_minutes_ago(6))
+        closed = store.close_outing(oid, status="abandoned")
+        # actual_minutes ~ 30 (now - departure), not 24 (arrival - departure).
+        assert closed["actual_minutes"] == pytest.approx(30, abs=1.0)
+
+
+def test_set_outing_home_arrived_clears_and_only_touches_active():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        oid = store.start_outing("getting coffee", 15.0)
+        store.set_outing_home_arrived(oid, _utc_minutes_ago(2))
+        assert store.get_outing(oid)["home_arrived_at"] is not None
+        store.set_outing_home_arrived(oid, None)  # cleared (left home again)
+        assert store.get_outing(oid)["home_arrived_at"] is None
+        # A closed outing is not re-stamped.
+        store.close_outing(oid, status="abandoned")
+        store.set_outing_home_arrived(oid, _utc_minutes_ago(1))
+        assert store.get_outing(oid)["home_arrived_at"] is None
+
+
 def test_profile_section_excludes_abandoned_outings():
     """Errand punctuality counts only genuinely-returned outings.
 
@@ -410,25 +464,51 @@ def test_return_logs_episode_with_outcome(client, store):
     assert "18 min" in body["confirmation"]
 
 
-def test_check_at_home_passively_closes(client, store):
-    """Being within the home radius closes the outing (returned) without nudging."""
-    store.start_outing(
+def test_check_at_home_prompts_then_grace_closes(client, store):
+    """Arriving home asks first (stays active); a later poll past grace closes it,
+    backdated to the first arrival rather than the acknowledgement."""
+    oid = store.start_outing(
         "getting coffee", 15.0, home_lat=0.0, home_lon=0.0,
         departure_at=_utc_minutes_ago(8),
     )
-    resp = client.post(
-        "/webhooks/outing/check",
-        json={"current_lat": 0.0001, "current_lon": 0.0},  # ~11 m from home
-        headers=_auth(),
-    ).json()
-    item = resp["active"][0]
+    at_home = {"current_lat": 0.0001, "current_lon": 0.0}  # ~11 m from home
+    # First poll home: prompt fires, outing stays active, arrival stamped.
+    first = client.post("/webhooks/outing/check", json=at_home, headers=_auth()).json()
+    item = first["active"][0]
     assert item["at_home"] is True
-    assert item["fire"] is False
+    assert item["fire"] is True and "wrap up" in item["message"]
+    assert item["status"] == "active"
+    arrived = store.get_outing(oid)["home_arrived_at"]
+    assert arrived is not None
+    assert store.active_outings()  # not closed on arrival
+
+    # Grace elapsed with no answer → auto-close as returned, timed to arrival.
+    store.set_state("home_arrive_grace_minutes", "0")
+    second = client.post("/webhooks/outing/check", json=at_home, headers=_auth()).json()
+    item = second["active"][0]
     assert item["status"] == "returned"
-    assert item["outcome"] == "success"  # 8 min within the 15 min window
-    # No longer active, and a return episode was logged.
+    assert item["outcome"] == "success"  # ~8 min out, within the 15 min window
     assert store.active_outings() == []
+    closed = store.get_outing(oid)
+    assert closed["returned_at"] == arrived  # backdated, not "now"
     assert store.recent_episodes(1)[0]["episode_type"] == "task"
+
+
+def test_check_home_return_backdates_actual_minutes(client, store):
+    """The logged actual time out is measured to arrival, not the ack tap."""
+    oid = store.start_outing(
+        "getting coffee", 15.0, home_lat=0.0, home_lon=0.0,
+        departure_at=_utc_minutes_ago(8),
+    )
+    store.set_state("home_arrive_grace_minutes", "0")
+    at_home = {"current_lat": 0.0001, "current_lon": 0.0}
+    client.post("/webhooks/outing/check", json=at_home, headers=_auth())  # stamp + prompt
+    client.post("/webhooks/outing/check", json=at_home, headers=_auth())  # grace close
+    # Episode's actual ≈ minutes to arrival (~8), well within the 15-min window.
+    ep = store.recent_episodes(1)[0]
+    assert ep["actual_value"] == pytest.approx(8, abs=1.5)
+    assert ep["outcome"] == "success"
+    assert store.get_outing(oid)["status"] == "returned"
 
 
 def test_check_abandoned_auto_closes(client, store):
@@ -537,17 +617,60 @@ def _outing(**kw):
         "id": 1, "intention": "coffee", "elapsed_minutes": 0.0,
         "time_window_minutes": 20.0, "last_level": "none",
         "home_lat": 0.0, "home_lon": 0.0, "departure_at": "2026-07-02 12:00:00",
+        "home_arrived_at": None,
     }
     base.update(kw)
     return base
 
 
-def test_evaluate_outing_returns_home_when_within_radius():
+def test_evaluate_outing_prompts_on_first_arrival_home():
+    """First time home: don't close — stamp arrival and fire the 'end it?' prompt."""
     ev = evaluate_outing(
         _outing(elapsed_minutes=5.0), cur_lat=0.0, cur_lon=0.0, home_radius=100.0,
         abandon_ratio=3.0, bias=1.0, commitments=[],
     )
-    assert ev.action == "return" and ev.at_home is True
+    assert ev.action == "at_home" and ev.at_home is True
+    assert ev.fire is True and "wrap up" in ev.message
+    assert ev.arrived_at is not None  # timestamp to record
+
+
+def test_evaluate_outing_auto_returns_after_grace_backdated():
+    """Home past the grace window with no answer → return, backdated to arrival."""
+    from prefrontal.impact import utcnow
+
+    arrived = (utcnow() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=25.0, home_arrived_at=arrived),
+        cur_lat=0.0, cur_lon=0.0, home_radius=100.0, abandon_ratio=3.0, bias=1.0,
+        commitments=[], home_grace_minutes=10.0,
+    )
+    assert ev.action == "return"
+    assert ev.returned_at == arrived  # close time is when we first saw them home
+
+
+def test_evaluate_outing_reprompts_within_grace():
+    """Home but still inside the grace window: re-ask, don't close yet."""
+    from prefrontal.impact import utcnow
+
+    arrived = (utcnow() - timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S")
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=13.0, home_arrived_at=arrived),
+        cur_lat=0.0, cur_lon=0.0, home_radius=100.0, abandon_ratio=3.0, bias=1.0,
+        commitments=[], home_grace_minutes=10.0,
+    )
+    assert ev.action == "at_home" and ev.fire is True
+    assert ev.arrived_at is None  # already stamped; don't re-stamp
+
+
+def test_evaluate_outing_resets_stale_arrival_when_left_home():
+    """Left home again before ending it → clear the stale arrival stamp."""
+    ev = evaluate_outing(
+        _outing(elapsed_minutes=8.0, home_arrived_at="2026-07-02 12:03:00"),
+        cur_lat=0.05, cur_lon=0.0, home_radius=100.0,  # ~5.5 km away
+        abandon_ratio=3.0, bias=1.0, commitments=[],
+    )
+    assert ev.action == "active" and ev.at_home is False
+    assert ev.reset_home_arrived is True
 
 
 def test_evaluate_outing_abandons_far_past_window():

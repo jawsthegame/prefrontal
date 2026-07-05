@@ -95,17 +95,23 @@ class SessionsRepo(Repo):
         status: str,
         extra_set: str = "",
         extra_params: tuple[Any, ...] = (),
+        closed_at: str | None = None,
     ) -> dict[str, Any] | None:
         """Close an active session and return it with a computed ``actual_minutes``.
 
         ``extra_set``/``extra_params`` let a caller write additional columns in the
         same UPDATE (e.g. focus sessions' ``COALESCE``-guarded breadcrumb/outcome).
-        Returns ``None`` if the session was not active.
+        ``closed_at`` (a stored UTC timestamp) backdates the close instead of using
+        ``CURRENT_TIMESTAMP`` — e.g. an outing return timed to when location first
+        put the user home, not when they acknowledged it. Returns ``None`` if the
+        session was not active.
         """
+        ts_sql = "?" if closed_at is not None else "CURRENT_TIMESTAMP"
+        ts_params: tuple[Any, ...] = (closed_at,) if closed_at is not None else ()
         cur = self.conn.execute(
-            f"UPDATE {table} SET status = ?, {closed_col} = CURRENT_TIMESTAMP{extra_set} "
+            f"UPDATE {table} SET status = ?, {closed_col} = {ts_sql}{extra_set} "
             "WHERE id = ? AND user_id = ? AND status = 'active'",
-            (status, *extra_params, session_id, self._uid()),
+            (status, *ts_params, *extra_params, session_id, self._uid()),
         )
         self.conn.commit()
         if cur.rowcount == 0:
@@ -178,6 +184,62 @@ class SessionsRepo(Repo):
             return None
         return self.get_outing(outing_id)
 
+    def set_outing_intention(
+        self, outing_id: int, intention: str
+    ) -> dict[str, Any] | None:
+        """Correct an outing's stated mission; return the updated outing.
+
+        The natural-language edit path (the dashboard assistant) for fixing what
+        an outing was for — "change my outing to grocery run". Works on any of the
+        user's outings, active or already closed (a retroactive correction).
+        Returns ``None`` if no such outing exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET intention = ? WHERE id = ? AND user_id = ?",
+            (intention, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
+    def set_outing_window(
+        self, outing_id: int, time_window_minutes: float
+    ) -> dict[str, Any] | None:
+        """Adjust an outing's stated "back in N minutes" window; return the outing.
+
+        The edit behind "give me 15 more minutes": on an active outing this
+        re-bases the escalation level (elapsed is compared against the new window);
+        on a past one it corrects the record. Returns ``None`` if no such outing
+        exists for the user.
+        """
+        cur = self.conn.execute(
+            "UPDATE outings SET time_window_minutes = ? WHERE id = ? AND user_id = ?",
+            (time_window_minutes, outing_id, self._uid()),
+        )
+        self.conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return self.get_outing(outing_id)
+
+    def set_outing_home_arrived(
+        self, outing_id: int, arrived_at: str | None
+    ) -> None:
+        """Stamp (or clear) when location first confirmed the user home on an outing.
+
+        Set on the first ``/outing/check`` poll that finds the user within the home
+        radius; cleared (``None``) if a later poll finds them away again (they left
+        before ending it). Only touches an *active* outing. The stored timestamp
+        both backdates the eventual return (see :meth:`close_outing`) and anchors
+        the grace period before an unanswered arrival prompt auto-closes it.
+        """
+        self.conn.execute(
+            "UPDATE outings SET home_arrived_at = ? "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (arrived_at, outing_id, self._uid()),
+        )
+        self.conn.commit()
+
     def completed_outings_since(
         self, since: str, limit: int = 500
     ) -> list[dict[str, Any]]:
@@ -227,24 +289,34 @@ class SessionsRepo(Repo):
         self._session_set_level("outings", outing_id, level)
 
     def close_outing(
-        self, outing_id: int, status: str = "returned"
+        self, outing_id: int, status: str = "returned", *, returned_at: str | None = None
     ) -> dict[str, Any] | None:
         """Close an active outing and return it with a computed ``actual_minutes``.
 
         Args:
             outing_id: The outing to close.
             status: Terminal status to set (``returned`` or ``abandoned``).
+            returned_at: Explicit close time (stored UTC). When omitted for a
+                ``returned`` close, it backdates to the outing's ``home_arrived_at``
+                if set — so the recorded time out reflects when location first put
+                the user home, not when they tapped "I'm back". A location-less
+                return (no ``home_arrived_at``) still closes at "now".
 
         Returns:
             The closed outing dict including ``actual_minutes`` (minutes between
             departure and return), or ``None`` if the outing was not active.
         """
+        if returned_at is None and status == "returned":
+            row = self.get_outing(outing_id)
+            if row and row.get("status") == "active" and row.get("home_arrived_at"):
+                returned_at = row["home_arrived_at"]
         closed = self._session_close(
             table="outings",
             started_col="departure_at",
             closed_col="returned_at",
             session_id=outing_id,
             status=status,
+            closed_at=returned_at,
         )
         # The outing is over, so its "still on track?" nudge is moot — expire it
         # now (every surface reads only unexpired nudges) rather than letting it

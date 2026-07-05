@@ -58,6 +58,11 @@ _log = get_logger(__name__)
 #: (with per-user store scoping): anything not here is refused before execution.
 _PRIORITY_NAMES = {0: "low", 1: "normal", 2: "high", 3: "urgent"}
 
+#: Bounds on an outing's "back in N minutes" window, in minutes — 1 minute to a
+#: full day, wide enough for any real errand while rejecting a fat-fingered value.
+MIN_OUTING_WINDOW_MINUTES = 1.0
+MAX_OUTING_WINDOW_MINUTES = 24 * 60.0
+
 
 
 class _ActionError(ValueError):
@@ -101,10 +106,11 @@ class AssistantPlan:
 ASSISTANT_SYSTEM = (
     "You are the editing assistant inside a personal ADHD executive-function "
     "dashboard. Turn the user's message into concrete edits to THEIR data. You "
-    "are given a snapshot of their open todos, upcoming commitments, and "
-    "dismissable schedule conflicts, each with a numeric id (todos/commitments) "
-    "or key (conflicts). Resolve references like 'the dentist todo' to the "
-    "matching id from the snapshot — NEVER invent an id that is not listed.\n\n"
+    "are given a snapshot of their open todos, upcoming commitments, current and "
+    "recent outings, and dismissable schedule conflicts, each with a numeric id "
+    "(todos/commitments/outings) or key (conflicts). Resolve references like 'the "
+    "dentist todo' or 'my current outing' to the matching id from the snapshot — "
+    "NEVER invent an id that is not listed.\n\n"
     "Reply with ONLY a JSON object, no prose, no markdown fences:\n"
     '{"reply": "<one short sentence to the user>", "actions": [ ...actions ]}\n\n'
     "Your actions are only a PROPOSAL — nothing is saved until the user reviews "
@@ -123,7 +129,14 @@ ASSISTANT_SYSTEM = (
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
-    '- {"op":"dismiss_conflict","key":str}\n\n'
+    '- {"op":"dismiss_conflict","key":str}\n'
+    "An outing is a trip out with a stated 'back in N minutes' window "
+    "(time_window_minutes). You can fix what it was for, or adjust the window "
+    "(e.g. 'give me 15 more minutes' — add to the outing's current "
+    "time_window_minutes from the snapshot). Both work on the current outing and "
+    "past ones:\n"
+    '- {"op":"rename_outing","outing_id":int,"intention":str}\n'
+    '- {"op":"set_outing_window","outing_id":int,"time_window_minutes":number}\n\n'
     "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
     "If (and ONLY if) the snapshot has a \"household\" object, these shared "
     "co-parent sheet ops are also available. Resolve a kid's name to an id from "
@@ -182,8 +195,26 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
         }
         for c in memory.upcoming_commitments(limit=25)
     ]
+    # Current + recent outings (any status), so "my outing" resolves to the active
+    # one and "yesterday's coffee run" to a closed one. status/departure_at let the
+    # model tell them apart; time_window_minutes anchors an "N more minutes" edit.
+    outings = [
+        {
+            "id": o["id"],
+            "intention": o.get("intention"),
+            "time_window_minutes": o.get("time_window_minutes"),
+            "status": o.get("status"),
+            "departure_at": o.get("departure_at"),
+        }
+        for o in memory.recent_outings(limit=10)
+    ]
     conflicts = _possible_conflicts(memory)
-    snapshot = {"todos": todos, "commitments": commitments, "conflicts": conflicts}
+    snapshot = {
+        "todos": todos,
+        "commitments": commitments,
+        "outings": outings,
+        "conflicts": conflicts,
+    }
     household = _household_snapshot(memory)
     if household is not None:
         snapshot["household"] = household
@@ -352,6 +383,33 @@ def _require_commitment(action: dict[str, Any], snapshot: dict[str, Any]) -> tup
         if c.get("id") == cid:
             return cid, (c.get("title") or f"commitment #{cid}")
     raise _ActionError(f"no upcoming commitment with id {cid}")
+
+
+def _require_outing(action: dict[str, Any], snapshot: dict[str, Any]) -> tuple[int, str]:
+    """Resolve ``outing_id`` against the snapshot, returning ``(id, intention)``."""
+    oid = _as_int(action.get("outing_id"))
+    if oid is None:
+        raise _ActionError("outing_id must be an integer")
+    for o in snapshot.get("outings", []):
+        if o.get("id") == oid:
+            return oid, (o.get("intention") or f"outing #{oid}")
+    raise _ActionError(f"no outing with id {oid}")
+
+
+def _as_outing_window(value: Any) -> float:
+    """Validate an in-range outing window in minutes."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise _ActionError("time_window_minutes must be a number")
+    try:
+        mins = float(value)
+    except (TypeError, ValueError):
+        raise _ActionError("time_window_minutes must be a number") from None
+    if not MIN_OUTING_WINDOW_MINUTES <= mins <= MAX_OUTING_WINDOW_MINUTES:
+        raise _ActionError(
+            "time_window_minutes must be "
+            f"{MIN_OUTING_WINDOW_MINUTES:g}–{MAX_OUTING_WINDOW_MINUTES:g}"
+        )
+    return mins
 
 
 def _require_household(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -554,6 +612,26 @@ def _v_dismiss_conflict(
     return ValidatedAction(op, {"key": key}, f"Dismiss conflict: {label}")
 
 
+def _v_rename_outing(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    oid, intention = _require_outing(action, snapshot)
+    new_intention = _nonblank(action.get("intention"), "intention")
+    return ValidatedAction(
+        op, {"outing_id": oid, "intention": new_intention},
+        f"Rename outing “{intention}” → “{new_intention}”",
+    )
+
+
+def _v_set_outing_window(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    oid, intention = _require_outing(action, snapshot)
+    minutes = _as_outing_window(action.get("time_window_minutes"))
+    return ValidatedAction(
+        op, {"outing_id": oid, "time_window_minutes": minutes},
+        f"Set “{intention}” window to {minutes:g}m",
+    )
+
+
 def _v_fact(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     household = _require_household(snapshot)
     child_id, who = _resolve_child(action, household)
@@ -647,6 +725,8 @@ _VALIDATORS: dict[
     "add_commitment": _v_add_commitment,
     "cancel_commitment": _v_cancel_commitment,
     "dismiss_conflict": _v_dismiss_conflict,
+    "rename_outing": _v_rename_outing,
+    "set_outing_window": _v_set_outing_window,
     "set_fact": _v_fact,
     "clear_fact": _v_fact,
     "set_agreement": _v_set_agreement,
@@ -797,6 +877,12 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "dismiss_conflict":
             memory.dismiss_conflict(p["key"])
             result["ok"] = True
+        elif op == "rename_outing":
+            result["ok"] = memory.set_outing_intention(p["outing_id"], p["intention"]) is not None
+        elif op == "set_outing_window":
+            result["ok"] = (
+                memory.set_outing_window(p["outing_id"], p["time_window_minutes"]) is not None
+            )
         elif op == "set_fact":
             # updated_by is the acting (scoped) user — never model-supplied — so
             # every LLM-driven edit is attributed (the raw material for the digest).
