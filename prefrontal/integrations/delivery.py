@@ -54,8 +54,11 @@ if TYPE_CHECKING:  # only a type annotation — importing it at runtime cycles v
 
 logger = get_logger(__name__)
 
-#: Notification title every channel shares, so pushes read as one assistant.
-_TITLE = "Prefrontal"
+#: Notification title every channel shares, so pushes read as one assistant. The
+#: leading 🧠 is a lightweight brand cue that renders on every platform (unlike
+#: the ntfy ``icon``, which the iOS app ignores) — it's the strongest "this is
+#: from PREFRONTAL" signal iOS actually shows on the notification.
+_TITLE = "🧠 Prefrontal"
 
 #: Channel class → ntfy priority (1 min … 5 max/urgent). ``digest`` is quiet.
 NTFY_PRIORITY = {"digest": 2, "push": 3, "sound": 4, "voice": 5}

@@ -43,7 +43,7 @@
         "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"Prefrontal — rough day\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 2\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"🧠 Prefrontal — rough day\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": 2\n}",
         "options": {}
       },
       "id": "publish-ntfy",

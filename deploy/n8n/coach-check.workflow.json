@@ -46,7 +46,7 @@
         "url": "={{ $env.NTFY_SERVER }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"{{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }},\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"icon\": \"{{ $env.NTFY_ICON || ($env.OAUTH_BASE_URL ? $env.OAUTH_BASE_URL + '/brand/app-icon.png' : '') }}\",\n  \"title\": \"🧠 {{ $json.title }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"priority\": {{ $json.priority }},\n  \"actions\": {{ JSON.stringify($json.actions) }}\n}",
         "options": {}
       },
       "id": "publish-ntfy",
