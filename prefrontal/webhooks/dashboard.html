@@ -949,7 +949,8 @@ function renderCommitments(list, conflicts, cascade) {
       <div class="acts"><button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}">Dismiss</button></div>
     </div>`;
   });
-  if (!c.length) return html || `<div class="empty">No upcoming commitments.</div>`;
+  const hidden = (list.hidden || []);
+  if (!c.length && !hidden.length) return html || `<div class="empty">No upcoming commitments.</div>`;
   html += c.map((x) => {
     const fyi = x.kind === "fyi";
     const cal = calPill(x.calendar_key, x.calendar);
@@ -962,9 +963,28 @@ function renderCommitments(list, conflicts, cascade) {
       <div><span class="title">${esc(x.title)}</span>${src}${cal}${fyiBadge}${dbl}</div>
       <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
     </div>
-    <div class="acts"><button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${target}" title="${btnTitle}">${fyi ? "Mine" : "FYI"}</button></div>
+    <div class="acts">
+      <button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${target}" title="${btnTitle}">${fyi ? "Mine" : "FYI"}</button>
+      <button class="btn-sm" data-action="commitment-hide" data-id="${x.id}" title="Hide — remove from the dashboard and widget (reversible below)">Hide</button>
+    </div>
   </div>`;
   }).join("");
+  // Hidden commitments — the user's "don't show me this". Kept out of every other
+  // surface (widget, conflicts, departures); listed here only so they can be
+  // brought back. Collapsed under a muted header so they don't clutter the glance.
+  if (hidden.length) {
+    html += `<div class="sub" style="margin-top:10px;opacity:.85">Hidden · ${hidden.length}</div>`;
+    html += hidden.map((x) => {
+      const cal = calPill(x.calendar_key, x.calendar);
+      const src = x.url ? ` <a class="src" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="Open source event">↗</a>` : "";
+      return `<div class="row" style="opacity:.6"><div class="main">
+        <div><span class="title">${esc(x.title)}</span>${src}${cal}</div>
+        <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""}</div>
+      </div>
+      <div class="acts"><button class="btn-sm" data-action="commitment-unhide" data-id="${x.id}" title="Un-hide — show this commitment again everywhere">Unhide</button></div>
+    </div>`;
+    }).join("");
+  }
   return html;
 }
 
@@ -1540,6 +1560,8 @@ document.addEventListener("click", async (e) => {
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
     else if (act === "commitment-kind") { await post(`/commitments/${id}/kind`, { kind: el.dataset.kind }); }
+    else if (act === "commitment-hide") { await post(`/commitments/${id}/hidden`, { hidden: true }); }
+    else if (act === "commitment-unhide") { await post(`/commitments/${id}/hidden`, { hidden: false }); }
     else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     else if (act === "decompose-dismiss") { await post(`/todos/${id}/decompose/dismiss`, { reason: el.dataset.reason }); }
     else if (act === "todo-deadline") {

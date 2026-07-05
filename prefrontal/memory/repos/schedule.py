@@ -99,24 +99,69 @@ class ScheduleRepo(Repo):
         d = _row_to_dict(row)
         return _with_calendar(d) if d is not None else None
 
-    def upcoming_commitments(self, limit: int = 50) -> list[dict[str, Any]]:
+    def upcoming_commitments(
+        self, limit: int = 50, *, include_hidden: bool = False
+    ) -> list[dict[str, Any]]:
         """Return active commitments starting now or later, soonest first.
+
+        Hidden commitments (the user's "don't show me this") are excluded by
+        default, so they vanish from every surface that reads this — the widget,
+        the dashboard, conflict detection, departure reminders. Pass
+        ``include_hidden=True`` only for the un-hide affordance
+        (:meth:`hidden_commitments`).
 
         Args:
             limit: Maximum number of rows to return.
+            include_hidden: When ``True``, hidden commitments are included too.
 
         Returns:
             A list of commitment dicts ordered by ``start_at`` ascending.
         """
+        hidden_clause = "" if include_hidden else "AND hidden = 0 "
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
-            "AND start_at >= datetime('now') ORDER BY start_at ASC LIMIT ?",
+            f"AND start_at >= datetime('now') {hidden_clause}ORDER BY start_at ASC LIMIT ?",
             (self._uid(), limit),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
+    def hidden_commitments(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return active, *hidden* upcoming commitments, soonest first.
+
+        The complement of :meth:`upcoming_commitments` — what the un-hide UI needs
+        so a hidden commitment can be brought back. Empty for a user who has
+        hidden nothing.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
+            "AND start_at >= datetime('now') AND hidden = 1 ORDER BY start_at ASC LIMIT ?",
+            (self._uid(), limit),
+        ).fetchall()
+        return [_with_calendar(dict(r)) for r in rows]
+
+    def set_commitment_hidden(
+        self, commitment_id: int, hidden: bool
+    ) -> dict[str, Any] | None:
+        """Hide or un-hide a commitment; return the updated row (``None`` if absent).
+
+        ``hidden`` is deliberately *not* touched by :meth:`upsert_commitment`, so
+        the flag persists across calendar re-syncs (like a user's ``kind``
+        override) — a hidden event stays hidden even as its details update.
+        """
+        self.conn.execute(
+            "UPDATE commitments SET hidden = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ?",
+            (1 if hidden else 0, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
     def commitments_between(self, start: str, end: str) -> list[dict[str, Any]]:
-        """Return active commitments starting in ``[start, end)``, soonest first.
+        """Return active, non-hidden commitments starting in ``[start, end)``, soonest first.
+
+        Hidden commitments are excluded (see :meth:`upcoming_commitments`) so the
+        briefing, panic view, and free-time gaps never count a commitment the user
+        has hidden.
 
         Args:
             start: Inclusive UTC lower bound (``YYYY-MM-DD HH:MM:SS``).
@@ -127,7 +172,7 @@ class ScheduleRepo(Repo):
         """
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
-            "AND start_at >= ? AND start_at < ? ORDER BY start_at ASC",
+            "AND hidden = 0 AND start_at >= ? AND start_at < ? ORDER BY start_at ASC",
             (self._uid(), start, end),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]

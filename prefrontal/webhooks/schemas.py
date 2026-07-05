@@ -400,6 +400,15 @@ class CommitmentKind(BaseModel):
     kind: str = Field(description="`self` (your commitment) or `fyi` (where someone will be).")
 
 
+class CommitmentHidden(BaseModel):
+    """Body of ``POST /commitments/{id}/hidden`` — hide or un-hide a commitment."""
+
+    hidden: bool = Field(
+        default=True,
+        description="`true` hides the commitment from every surface; `false` un-hides it.",
+    )
+
+
 class MailSync(BaseModel):
     """Body of ``POST /webhooks/mail/sync`` — a batch of messages for one account.
 
