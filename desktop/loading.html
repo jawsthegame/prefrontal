@@ -50,6 +50,16 @@
         background: color-mix(in srgb, var(--fg) 8%, transparent);
         padding: 0.1rem 0.35rem; border-radius: 5px;
       }
+      .hint { font-size: 13px; opacity: 0.85; }
+      .btn {
+        margin-top: 0.5rem; padding: 0.5rem 1.1rem; font-size: 14px;
+        border-radius: 8px; cursor: pointer; color: inherit;
+        border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+        background: transparent; font-family: inherit;
+      }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      #booting .btn { opacity: 0.7; }
+      #booting .btn:hover { opacity: 1; }
     </style>
   </head>
   <body>
@@ -57,28 +67,33 @@
       <img src="assets/icon.png" alt="Prefrontal" />
       <div id="booting">
         <h1>Starting Prefrontal…</h1>
-        <p>Waiting for the local server to come up.</p>
+        <p>Connecting to the Prefrontal server.</p>
         <div class="spinner"></div>
+        <p><button class="btn" id="set-url-booting">Set Server URL…</button></p>
       </div>
       <div class="error" id="error">
         <h1>Couldn't reach the server</h1>
-        <p>The Prefrontal backend didn't respond.</p>
         <p>
-          If it runs on another machine (e.g. your Mac mini), open
-          <b>Set Server URL…</b> from the menu-bar icon and point at its address.
+          Prefrontal wasn't reachable. If it runs on another machine
+          (e.g. your Mac mini), point this app at its address:
         </p>
-        <p>
-          If it should run on <i>this</i> machine, check the CLI is installed
-          (<code>pip install -e .</code>) and use <b>Restart Local Server</b>.
+        <p><button class="btn primary" id="set-url">Set Server URL…</button></p>
+        <p class="hint">
+          Running the server on <i>this</i> Mac instead? Install the CLI
+          (<code>pip install -e .</code>) and use <b>Restart Local Server</b>
+          from the menu-bar icon.
         </p>
       </div>
     </div>
     <script>
-      // main.js loads this file with #error when the health probe times out.
+      // main.js loads this file with #error when the server can't be reached.
       if (location.hash === '#error') {
         document.getElementById('booting').style.display = 'none';
         document.body.classList.add('error');
       }
+      const openSettings = () => window.prefrontal && window.prefrontal.openSettings();
+      document.getElementById('set-url').addEventListener('click', openSettings);
+      document.getElementById('set-url-booting').addEventListener('click', openSettings);
     </script>
   </body>
 </html>

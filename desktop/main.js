@@ -80,6 +80,7 @@ let mainWindow = null;
 let settingsWindow = null;
 let tray = null;
 let serverProc = null; // the child we spawned (null if remote or already running)
+let spawnError = null; // set if the local `prefrontal` binary can't be spawned
 const logBuffer = [];
 
 function log(line) {
@@ -116,6 +117,8 @@ async function waitForHealth(totalMs, everyMs = 500) {
   const deadline = Date.now() + totalMs;
   for (;;) {
     if (await probeHealth()) return true;
+    // Don't keep polling localhost for 30s if the local server can't even start.
+    if (spawnError) return false;
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, everyMs));
   }
@@ -127,6 +130,7 @@ async function waitForHealth(totalMs, everyMs = 500) {
 
 function startBackend() {
   const port = new URL(serverUrl()).port || '8000';
+  spawnError = null;
   log(`Starting backend: ${PREFRONTAL_BIN} serve --port ${port} (cwd: ${REPO_DIR})`);
   const child = spawn(PREFRONTAL_BIN, ['serve', '--port', String(port)], {
     cwd: REPO_DIR,
@@ -135,13 +139,10 @@ function startBackend() {
   child.stdout.on('data', (d) => log(`[serve] ${d.toString().trimEnd()}`));
   child.stderr.on('data', (d) => log(`[serve] ${d.toString().trimEnd()}`));
   child.on('error', (err) => {
+    // Most commonly ENOENT: no local `prefrontal` (this is a laptop, not the
+    // mini). We surface the "Set Server URL…" screen instead of spinning.
+    spawnError = err;
     log(`Failed to spawn backend: ${err.message}`);
-    dialog.showErrorBox(
-      'Could not start Prefrontal',
-      `Tried to run:\n  ${PREFRONTAL_BIN} serve\n\n${err.message}\n\n` +
-        `If Prefrontal runs on another machine, use "Set Server URL…" in the ` +
-        `menu-bar icon to point at it instead.`
-    );
   });
   child.on('exit', (code, signal) => {
     log(`Backend exited (code=${code}, signal=${signal})`);
@@ -246,6 +247,7 @@ function createSettingsWindow() {
 }
 
 function createTray() {
+  if (tray) tray.destroy(); // avoid a duplicate icon when rebuilt after a URL change
   let image = nativeImage.createFromPath(ICON_PATH);
   if (!image.isEmpty()) {
     image = image.resize({ width: 18, height: 18 });
@@ -297,6 +299,7 @@ function showLogs() {
 // IPC — the settings window reads/writes the server URL through preload
 // ---------------------------------------------------------------------------
 
+ipcMain.handle('open-settings', () => createSettingsWindow());
 ipcMain.handle('get-server-url', () => serverUrl());
 ipcMain.handle('set-server-url', async (_evt, url) => {
   const clean = String(url || '').trim();
@@ -320,6 +323,17 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => mainWindow && mainWindow.show());
+
+  // Prefrontal's dashboard offers "Sign in with Google", which does a real
+  // Google OAuth round-trip inside the window. Google flags embedded frameworks
+  // ("this browser may not be secure") by sniffing the User-Agent — the default
+  // Electron UA carries `Prefrontal/x` and `Electron/x` tokens that trip that.
+  // Strip them so the session looks like plain Chrome and the login goes through.
+  // (Passkeys may still not work in Electron — users fall back to "Try another
+  // way"; the resulting session cookie then lasts ~30 days.)
+  app.userAgentFallback = app.userAgentFallback
+    .replace(/\sPrefrontal\/\S+/i, '')
+    .replace(/\sElectron\/\S+/i, '');
 
   app.whenReady().then(async () => {
     if (process.platform === 'darwin' && fs.existsSync(ICON_PATH)) {
