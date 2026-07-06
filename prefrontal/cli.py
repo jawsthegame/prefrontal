@@ -1294,13 +1294,19 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         from prefrontal.integrations.ollama import OllamaClient
         from prefrontal.todos import sweep_avoided_decompositions
 
-        broken = sweep_avoided_decompositions(
-            store,
-            OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model),
-            now=now,
+        tick_ollama = OllamaClient(
+            base_url=settings.ollama_url, model=settings.ollama_model
         )
+        broken = sweep_avoided_decompositions(store, tick_ollama, now=now)
         if broken:
             print(f"({broken} avoided task(s) broken down)")
+        # Notice newly-ambiguous items and file an inline clarifying question — the
+        # sibling of the /webhooks/coach/check sweep (never re-asks a known item).
+        from prefrontal.clarify import sweep_ambiguous_items
+
+        asked = sweep_ambiguous_items(store, tick_ollama)
+        if asked:
+            print(f"({len(asked)} ambiguous item(s) flagged for clarification)")
         decisions = decide(store, cues, ctx)
         for d in decisions:
             print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")

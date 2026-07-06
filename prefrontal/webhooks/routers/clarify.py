@@ -23,27 +23,22 @@ from fastapi import (
 )
 
 from prefrontal.clarify import (
-    _known_task_type as infer_task_type,
-)
-from prefrontal.clarify import (
-    candidate_view,
-    detect_clarification,
+    MAX_SWEEP_ITEMS,
     known_task_types,
     playbook_view,
     resolve_playbook,
+    sweep_ambiguous_items,
 )
-from prefrontal.memory.repos.clarifications import TARGET_COMMITMENT, TARGET_TODO
+from prefrontal.clarify import (
+    _known_task_type as infer_task_type,
+)
+from prefrontal.memory.repos.clarifications import TARGET_TODO
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
 from prefrontal.webhooks.schemas import ClarificationResolve
 from prefrontal.webhooks.services import RouterServices
-
-#: Cap on how many ambiguous items one sweep looks at, so a tick fires a bounded
-#: number of model calls (worst-avoided/soonest first). Matches the spirit of the
-#: decomposition sweep's ``max_attempts``.
-MAX_SWEEP_ITEMS = 8
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -112,47 +107,21 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """Detect newly-ambiguous todos/commitments and file pending questions.
 
-        Sweeps open todos and upcoming commitments the user hasn't been asked
-        about yet (:meth:`clarified_target_ids` — skips pending, answered, *and*
-        dismissed items so nothing is re-asked), scores each for ambiguity, and
-        for the vague ones proposes a clarifying question via
-        :func:`~prefrontal.clarify.detect_clarification` (local model, heuristic
-        fallback). Bounded to ``limit`` detections per call. n8n/launchd can tick
-        this like the other ``/check`` sweeps. Returns the created questions.
+        The manual twin of the coaching-tick sweep: it runs the same
+        :func:`~prefrontal.clarify.sweep_ambiguous_items` (skips items with any
+        clarification history so nothing is re-asked, scores each for ambiguity,
+        and files ONE question for the vague ones — local model, heuristic
+        fallback), bounded to ``limit`` detections. Also wired into
+        ``POST /webhooks/coach/check`` so the queue fills passively; this endpoint
+        is the on-demand "check now" button. Returns the created questions.
         """
         memory = ctx.store
-        created: list[dict[str, Any]] = []
-        # Todos first (priority-ordered), then upcoming commitments — both loose
-        # refs, each skipped if it already has any clarification history.
-        seen_todos = memory.clarified_target_ids(TARGET_TODO)
-        seen_commits = memory.clarified_target_ids(TARGET_COMMITMENT)
-        candidates: list[tuple[str, dict[str, Any]]] = (
-            [(TARGET_TODO, t) for t in memory.open_todos() if t["id"] not in seen_todos]
-            + [
-                (TARGET_COMMITMENT, c)
-                for c in memory.upcoming_commitments(limit=50)
-                if c["id"] not in seen_commits and c.get("kind") != "fyi"
-            ]
-        )
-        checked = 0
-        for target_type, item in candidates:
-            if checked >= limit:
-                break
-            checked += 1
-            candidate = detect_clarification(item.get("title") or "", client=ollama_client)
-            if candidate is None:
-                continue
-            cid = memory.add_clarification(
-                target_type=target_type,
-                target_id=item["id"],
-                title=candidate.title,
-                question=candidate.question,
-                options=candidate_view(candidate)["options"],
-                source=candidate.source,
-            )
-            row = memory.get_clarification(cid)
-            if row is not None:
-                created.append(_pending_view(row))
+        ids = sweep_ambiguous_items(memory, ollama_client, limit=limit)
+        created = [
+            _pending_view(row)
+            for cid in ids
+            if (row := memory.get_clarification(cid)) is not None
+        ]
         return {"created": len(created), "clarifications": created}
 
     @router.post("/clarifications/{clarification_id}/resolve", tags=["clarify"])

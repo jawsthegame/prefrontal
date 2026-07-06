@@ -135,6 +135,19 @@ def test_playbook_fetch():
         assert get("nope").status_code == 404
 
 
+def test_coaching_tick_fills_the_queue_passively():
+    """POST /webhooks/coach/check runs the same detection sweep, so the queue
+    fills without pressing the dashboard's manual check."""
+    client, store = _app()
+    store.add_todo("Tax", priority=2)
+    with client:
+        # No manual /clarifications/check — a coaching tick alone should file it.
+        r = client.post("/webhooks/coach/check", json={}, headers=_auth())
+        assert r.status_code == 200
+        pending = client.get("/clarifications", headers=_auth()).json()["clarifications"]
+        assert [c["title"] for c in pending] == ["Tax"]
+
+
 def test_clarifications_require_auth():
     client, _ = _app()
     with client:

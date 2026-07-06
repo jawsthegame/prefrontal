@@ -57,12 +57,16 @@ the first test. Code follow-ups below are optional polish.
   `tax_filing`) opens a step-by-step guided *playbook* in a dim-everything overlay
   (the same overlay pattern panic mode uses) — the "pop-up that guides me through
   the task." Dismissing marks an item not-ambiguous so the sweep never re-asks.
-  `POST /clarifications/check` (n8n/launchd-tickable), `GET /clarifications`,
-  `POST /clarifications/{id}/resolve|dismiss`,
-  `GET /clarifications/playbooks/{task_type}`; declared as the Task Paralysis
-  `clarify_ambiguous` intervention and surfaced in its profile section. Covered by
-  `tests/test_clarify.py` + `tests/test_clarify_endpoints.py`. *(Next: fold the
-  detection sweep into the coaching tick, and grow the playbook registry.)*
+  the detection sweep (`sweep_ambiguous_items`) runs **on the coaching tick**
+  (`POST /webhooks/coach/check` and `prefrontal coach --deliver`, beside
+  `sweep_avoided_decompositions`), so the queue fills passively — bounded model
+  calls per tick, and it never re-asks an item it has history for.
+  `POST /clarifications/check` is the on-demand "check now" twin;
+  `GET /clarifications`, `POST /clarifications/{id}/resolve|dismiss`,
+  `GET /clarifications/playbooks/{task_type}` round it out. Declared as the Task
+  Paralysis `clarify_ambiguous` intervention and surfaced in its profile section.
+  Covered by `tests/test_clarify.py` + `tests/test_clarify_endpoints.py`.
+  *(Next: grow the playbook registry.)*
 - **Departure reminders on the coaching tick (toward retiring n8n)** ✅ — the
   `departure_buffer` intervention is now a coach cue: `TimeBlindnessModule.evaluate`
   emits the most-urgent due departure (reusing the same `plan_upcoming_departures`

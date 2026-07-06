@@ -17,6 +17,7 @@ from fastapi import (
     Request,
 )
 
+from prefrontal.clarify import sweep_ambiguous_items
 from prefrontal.coaching import (
     DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
@@ -116,6 +117,11 @@ def build_router(services: RouterServices) -> APIRouter:
         # worth it), before collecting cues so tiny_first_step can use the fresh
         # first step. Bounded model calls per tick; a no-op if none are avoided.
         sweep_avoided_decompositions(memory, services.ollama, now=now)
+        # Notice newly-ambiguous items ("Tax", "Mom") and file an inline clarifying
+        # question, so the "Needs clarification" queue fills passively rather than
+        # only on the dashboard's manual check. Bounded model calls; skips anything
+        # already asked about (pending/answered/dismissed).
+        sweep_ambiguous_items(memory, services.ollama)
         coach_ctx = build_context(
             memory,
             now=now,

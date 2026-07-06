@@ -40,9 +40,16 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.llm_json import extract_json_object
+from prefrontal.memory.repos.clarifications import TARGET_COMMITMENT, TARGET_TODO
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
+    from prefrontal.memory.store import MemoryStore
+
+#: Cap on how many ambiguous items one detection sweep looks at, so a coaching
+#: tick fires a bounded number of model calls (todos first, priority-ordered, then
+#: upcoming commitments). Mirrors the decomposition sweep's ``max_attempts``.
+MAX_SWEEP_ITEMS = 8
 
 #: An item at/above this ambiguity score is worth a clarifying question. Tuned so
 #: a bare noun ("Tax", "Mom") clears it while a spelled-out action ("Call the
@@ -530,3 +537,69 @@ def candidate_view(candidate: ClarificationCandidate) -> dict[str, Any]:
             {"label": o.label, "task_type": o.task_type} for o in candidate.options
         ],
     }
+
+
+# -- Detection sweep (the coaching-tick lever) --------------------------------
+#
+# The tick-driven counterpart of the decomposition sweep
+# (prefrontal.todos.sweep_avoided_decompositions): each coaching tick notices
+# newly-ambiguous items and files a pending clarifying question, so the "Needs
+# clarification" queue fills passively rather than only when the dashboard's
+# manual check is pressed. Bounded model calls per tick, and it never re-asks an
+# item it has history for.
+
+
+def sweep_ambiguous_items(
+    store: MemoryStore,
+    client: Generator | None,
+    *,
+    limit: int = MAX_SWEEP_ITEMS,
+) -> list[int]:
+    """File clarifying questions for ambiguous todos/commitments (tick sweep).
+
+    Sweeps the user's open todos (priority-ordered) then upcoming commitments,
+    skipping any item that already has clarification history
+    (:meth:`~prefrontal.memory.repos.clarifications.ClarificationsRepo.clarified_target_ids`
+    — pending, answered, *or* dismissed, so nothing is re-asked) and any ``fyi``
+    commitment (someone else's event, never the user's task). For each remaining
+    item it scores ambiguity and, for the vague ones, files ONE pending question
+    via :func:`detect_clarification` (local model, heuristic fallback). Bounded to
+    ``limit`` detections per run — the model-call budget for one tick.
+
+    Args:
+        store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        client: An Ollama-like generator (``None`` uses the heuristic detector).
+        limit: Max items inspected/model-called this run.
+
+    Returns:
+        The ids of the clarifications created (possibly empty).
+    """
+    seen_todos = store.clarified_target_ids(TARGET_TODO)
+    seen_commits = store.clarified_target_ids(TARGET_COMMITMENT)
+    candidates: list[tuple[str, dict[str, Any]]] = [
+        (TARGET_TODO, t) for t in store.open_todos() if t["id"] not in seen_todos
+    ] + [
+        (TARGET_COMMITMENT, c)
+        for c in store.upcoming_commitments(limit=50)
+        if c["id"] not in seen_commits and c.get("kind") != "fyi"
+    ]
+    created: list[int] = []
+    checked = 0
+    for target_type, item in candidates:
+        if checked >= limit:
+            break
+        checked += 1
+        candidate = detect_clarification(item.get("title") or "", client=client)
+        if candidate is None:
+            continue
+        created.append(
+            store.add_clarification(
+                target_type=target_type,
+                target_id=item["id"],
+                title=candidate.title,
+                question=candidate.question,
+                options=candidate_view(candidate)["options"],
+                source=candidate.source,
+            )
+        )
+    return created

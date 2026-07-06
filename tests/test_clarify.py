@@ -22,6 +22,7 @@ from prefrontal.clarify import (
     known_task_types,
     playbook_view,
     resolve_playbook,
+    sweep_ambiguous_items,
 )
 from prefrontal.clarify import _known_task_type as infer_task_type
 from prefrontal.integrations.ollama import OllamaClient
@@ -196,6 +197,37 @@ def test_set_todo_notes_round_trip(store):
     tid = store.add_todo("Tax")
     assert store.set_todo_notes(tid, "Clarified: Filing my tax return")
     assert store.get_todo(tid)["notes"] == "Clarified: Filing my tax return"
+
+
+def test_sweep_files_questions_and_never_reasks(store):
+    """The tick sweep flags vague items, skips clear ones, and won't re-ask."""
+    tid = store.add_todo("Tax", priority=2)
+    store.add_todo("Call the dentist to reschedule at 3pm")  # clear → skipped
+    store.upsert_commitment(title="Passport", start_at="2030-01-01 10:00:00", source="calendar")
+    # An FYI commitment (someone else's event) is never the user's task to hone.
+    store.upsert_commitment(
+        title="Mom", start_at="2030-01-02 10:00:00", source="calendar",
+        kind="fyi", kind_source="user",
+    )
+
+    made = sweep_ambiguous_items(store, None)  # heuristic (no client)
+    titles = {r["title"] for r in store.list_clarifications("pending")}
+    assert titles == {"Tax", "Passport"}  # clear todo + FYI commitment both skipped
+    assert len(made) == 2
+
+    # A second sweep asks nothing new — every candidate now has history
+    # (including the clear dentist todo, which was inspected and found fine).
+    assert sweep_ambiguous_items(store, None) == []
+    _ = tid
+
+
+def test_sweep_respects_inspection_budget(store):
+    """``limit`` caps how many items are inspected (the per-tick model budget)."""
+    for t in ("Tax", "Passport", "Benefits"):  # all ambiguous
+        store.add_todo(t)
+    assert len(sweep_ambiguous_items(store, None, limit=2)) == 2
+    # The third, un-inspected item has no history yet — a later sweep still gets it.
+    assert len(sweep_ambiguous_items(store, None, limit=2)) == 1
 
 
 def test_pending_unique_per_item(store):

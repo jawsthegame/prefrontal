@@ -251,9 +251,11 @@ also defines:
   chosen reading in `answer` (+ a recognized `task_type`, which unlocks a guided
   **playbook** overlay), dismissing marks it not-ambiguous. Like a proposal it
   stays pending until the human answers. A partial unique index allows at most one
-  *pending* question per item, and the detection sweep skips any item with history
-  (pending/answered/dismissed) so it never re-asks. `POST /clarifications/check`,
-  `GET /clarifications`, `POST /clarifications/{id}/resolve|dismiss`,
+  *pending* question per item, and the detection sweep (`sweep_ambiguous_items`,
+  run on the coaching tick beside the decomposition sweep) skips any item with
+  history (pending/answered/dismissed) so it never re-asks.
+  `POST /clarifications/check` (the on-demand twin), `GET /clarifications`,
+  `POST /clarifications/{id}/resolve|dismiss`,
   `GET /clarifications/playbooks/{task_type}`.
 
 ---

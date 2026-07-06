@@ -156,8 +156,10 @@ class TaskParalysisModule(Module):
                     "Notice a vague todo/commitment ('Tax', 'Mom') that can't be "
                     "started because it can't be named, ask ONE inline clarifying "
                     "question, and — once it resolves to a recognized task — offer "
-                    "a guided walkthrough (prefrontal/clarify.py; the dashboard "
-                    "clarify card + POST /clarifications/check sweep)."
+                    "a guided walkthrough (prefrontal/clarify.py). The detection "
+                    "sweep runs on the coaching tick (sweep_ambiguous_items, beside "
+                    "the decomposition sweep) and fills the dashboard clarify card; "
+                    "POST /clarifications/check is the on-demand twin."
                 ),
                 trigger="an ambiguous item on the schedule or todo list",
                 status="active",
