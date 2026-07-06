@@ -24,10 +24,22 @@ fi
 
 cd "${REPO_ROOT}" || exit 1
 
+# Handle whose mailboxes to fetch. Leave empty to let the CLI auto-pick when a
+# single user is provisioned; required once more than one user exists, since
+# `prefrontal mail` then refuses to guess. --user is a flag on the `mail` group,
+# so it must precede the `fetch` subcommand. The launchd agent sets this from
+# its PREFRONTAL_USER environment variable (filled by install-launchd.sh).
+PREFRONTAL_USER="${PREFRONTAL_USER:-}"
+user_args=()
+if [[ -n "${PREFRONTAL_USER}" ]]; then
+    user_args=(--user "${PREFRONTAL_USER}")
+fi
+
 status=0
 for account in "$@"; do
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] fetching mail for '${account}'"
-    if ! "${PREFRONTAL}" mail fetch --account "${account}"; then
+    # ${arr[@]+…} guards the empty-array expansion under bash 3.2 (macOS /bin/bash).
+    if ! "${PREFRONTAL}" mail ${user_args[@]+"${user_args[@]}"} fetch --account "${account}"; then
         echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: fetch failed for '${account}'" >&2
         status=1
     fi
