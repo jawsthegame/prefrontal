@@ -39,8 +39,9 @@ installers for Apple Silicon (`arm64`) and Intel (`x64`).
    (Apple Silicon = `arm64`, older Intel Macs = `x64`).
 3. Open the DMG and drag **Prefrontal** to Applications.
 
-The build is **unsigned** (no Apple Developer cert), so on first launch macOS
-Gatekeeper will block it. Right-click the app → **Open** (once), or run:
+The build is **ad-hoc signed but not notarized** (no Apple Developer cert), so
+on first launch macOS Gatekeeper still blocks a browser-downloaded app.
+Right-click the app → **Open** (once), or run:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Prefrontal.app
