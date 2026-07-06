@@ -33,6 +33,9 @@ stamps it. This layer only *routes and sends*. Per-user routing identifiers live
 in ``coaching_state`` (``ntfy_topic``/``pushover_user_key``/… — the multi-tenant
 spec's §6.5 delivery fields), falling back to the operator defaults in
 :class:`~prefrontal.config.Settings` so a single-user box needs no per-user setup.
+On a multi-user / household box that fallback is withheld for the *targeting*
+fields (see :func:`resolve_route`), so an unprovisioned user's private nudges are
+never delivered to the operator's shared device.
 """
 
 from __future__ import annotations
@@ -142,24 +145,42 @@ class DeliveryResult:
 def resolve_route(store: Any, settings: Settings | None = None) -> Route:
     """Resolve a user's :class:`Route`: per-user ``coaching_state`` over operator defaults.
 
-    Each identifier is read from the (scoped) store's ``coaching_state`` and
-    falls back to the matching :class:`~prefrontal.config.Settings` field when
-    unset — so an operator can configure one default target and only override
-    per user for people who have their own topic/key (multi-tenant §6.5).
+    Each identifier is read from the (scoped) store's ``coaching_state``. The
+    *targeting* fields (ntfy topic/token, Pushover token/user key) fall back to
+    the matching :class:`~prefrontal.config.Settings` default **only on a
+    single-user box** — on a multi-user / household deployment the operator
+    default is one person's device, so an unset target stays empty rather than
+    delivering an unprovisioned user's private nudges to someone else (multi-tenant
+    §6.5). Non-targeting fields (``ntfy_server``, ``ntfy_icon``) always default —
+    they set where ntfy lives and how the push looks, not whose device it reaches.
     """
     resolved = settings or get_settings()
 
-    def _pref(key: str, default: str) -> str:
+    # A user with no routing of their own inherits the operator's global default
+    # *target* only on a SINGLE-USER box. On a multi-user / household deployment
+    # that default belongs to a specific person, so inheriting it would publish
+    # an unprovisioned user's PRIVATE nudges to someone else's device — a
+    # cross-account leak. There, an unset target stays empty (the send no-ops)
+    # until the operator gives that user their own topic/key. The non-targeting
+    # fields (server, icon) still default: they say *where ntfy lives* and *what
+    # the push looks like*, not *whose device it reaches*.
+    multi_user = len(store.each_user(status="active")) > 1
+
+    def _target(key: str, default: str) -> str:
         value = store.get_state(key)
-        return value if value else default
+        if value:
+            return value
+        return "" if multi_user else default
 
     return Route(
-        ntfy_server=(_pref("ntfy_server", resolved.ntfy_server) or "https://ntfy.sh").rstrip("/"),
-        ntfy_topic=_pref("ntfy_topic", resolved.ntfy_topic),
-        ntfy_token=_pref("ntfy_token", resolved.ntfy_token),
-        ntfy_icon=_pref("ntfy_icon", resolved.ntfy_icon),
-        pushover_token=_pref("pushover_token", resolved.pushover_token),
-        pushover_user_key=_pref("pushover_user_key", resolved.pushover_user_key),
+        ntfy_server=(
+            store.get_state("ntfy_server") or resolved.ntfy_server or "https://ntfy.sh"
+        ).rstrip("/"),
+        ntfy_topic=_target("ntfy_topic", resolved.ntfy_topic),
+        ntfy_token=_target("ntfy_token", resolved.ntfy_token),
+        ntfy_icon=store.get_state("ntfy_icon") or resolved.ntfy_icon,
+        pushover_token=_target("pushover_token", resolved.pushover_token),
+        pushover_user_key=_target("pushover_user_key", resolved.pushover_user_key),
         tts_enabled=store.get_bool("tts_enabled", resolved.tts_enabled),
     )
 
