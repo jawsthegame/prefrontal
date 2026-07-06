@@ -345,6 +345,24 @@ def test_outing_cue_attaches_signed_action_buttons():
     assert verify_action(token, SIGNING) == ("tom", "outing_return", 7)
 
 
+def test_deliver_drops_click_when_the_nudge_has_action_buttons():
+    """A nudge with buttons omits ``click`` so a body tap can't preempt the buttons."""
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    decision = _decision("push", context_key="outing", ref={"outing_id": 7})
+    client.deliver(decision, Route(ntfy_topic="me"), base_url=BASE, secret=SIGNING, handle="tom")
+
+    assert captured["body"]["actions"]        # buttons are present
+    assert "click" not in captured["body"]    # …so the body tap does nothing
+
+
 def test_self_care_cue_attaches_meal_buttons():
     """A meal cue's synthetic date target drives signed Ate / Snooze buttons."""
     captured: dict = {}

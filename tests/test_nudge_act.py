@@ -138,6 +138,32 @@ def test_act_focus_end_wraps_up_session(client, store):
     assert again.status_code == 200 and "already wrapped up" in again.text
 
 
+def test_act_pushes_confirmation_feedback(client, store, monkeypatch):
+    """A one-tap action pushes its outcome back, so the background tap has feedback.
+
+    An ntfy ``http`` button fires a background GET — the HTML reply is never seen —
+    so ``/nudge/act`` also publishes the confirmation to the tapper's own route.
+    """
+    import prefrontal.integrations.delivery as delivery
+
+    sent: list[dict] = []
+
+    def _capture(store_arg, decision, *, handle, **kwargs):
+        sent.append({"handle": handle, "text": decision.text})
+        return {"handle": handle, "delivered": True, "transport": "ntfy", "detail": ""}
+
+    monkeypatch.setattr(delivery, "deliver_to_member", _capture)
+
+    sid = store.start_focus_session("the API refactor", planned_minutes=25.0)
+    token = sign_action(DEFAULT_HANDLE, "focus_end", sid, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+
+    assert resp.status_code == 200
+    assert len(sent) == 1
+    assert sent[0]["handle"] == DEFAULT_HANDLE
+    assert "Wrapped up" in sent[0]["text"]
+
+
 def test_act_outing_return_closes_outing(client, store):
     oid = store.start_outing("getting coffee", 15.0, home_lat=0.0, home_lon=0.0)
     token = sign_action(DEFAULT_HANDLE, "outing_return", oid, SIGNING)

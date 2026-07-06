@@ -417,6 +417,10 @@ def build_router(services: RouterServices) -> APIRouter:
 
         Idempotent: re-tapping a spent button (session/outing already closed) still
         renders a friendly confirmation rather than erroring.
+
+        Because the background GET's HTML reply is never seen on the phone, every
+        outcome is also pushed back as a short confirmation (see ``_ack``), so a
+        one-tap response gives visible feedback that it landed.
         """
         settings: Settings = request.app.state.settings
         parsed = verify_action(t, settings.session_secret)
@@ -434,6 +438,33 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         memory = root.scoped(user["id"])
 
+        def _ack(headline: str) -> str:
+            """Confirm a one-tap action: push the outcome back, then render the page.
+
+            An ntfy ``http`` action button fires a *background* GET, so the HTML we
+            return here is never shown on the phone — the notification just clears,
+            leaving no sign the tap worked (the user's complaint). So we also push
+            the same one-line confirmation back to the tapper's own route: a plain,
+            button-less notification (reusing the household-notice seam) that gives
+            visible feedback without opening the app. Pushover users tap a link that
+            opens this page in a browser, so they already see it; a user with no
+            route configured simply gets no push (``deliver_to_member`` no-ops).
+            """
+            from prefrontal.integrations.delivery import (  # lazy: avoid import cycle
+                deliver_to_member,
+                household_notice,
+            )
+
+            deliver_to_member(
+                memory,
+                household_notice(headline),
+                handle=handle,
+                settings=settings,
+                base_url=settings.oauth_base_url,
+                secret=settings.session_secret,
+            )
+            return _dismiss_page(headline)
+
         # A tap is an acknowledgement: if the coaching agent delivered this nudge,
         # record which channel landed (feeds channel_response; spec §8). A no-op
         # for nudges the engine didn't originate.
@@ -442,32 +473,32 @@ def build_router(services: RouterServices) -> APIRouter:
         if action == "focus_end":
             closed = memory.close_focus_session(target_id, status="ended")
             if closed is None:
-                return _dismiss_page("That focus session is already wrapped up.")
+                return _ack("That focus session is already wrapped up.")
             record_focus_end(memory, closed, outcome=None, breadcrumb=None)
             label = closed.get("intended_task") or "your session"
-            return _dismiss_page(f"Wrapped up “{label}.” Nice work.")
+            return _ack(f"Wrapped up “{label}.” Nice work.")
 
         if action in ("outing_return", "outing_abandon"):
             status_ = "returned" if action == "outing_return" else "abandoned"
             closed = memory.close_outing(target_id, status=status_)
             if closed is None:
-                return _dismiss_page("That outing is already closed.")
+                return _ack("That outing is already closed.")
             if status_ == "returned":
                 record_outing_return(memory, closed)
-                return _dismiss_page("Welcome back — outing logged.")
+                return _ack("Welcome back — outing logged.")
             record_outing_abandoned(memory, closed)
-            return _dismiss_page("Outing closed. No worries.")
+            return _ack("Outing closed. No worries.")
 
         if action.startswith("trip_domain_"):
             # One-tap file a just-finished trip into a life-sphere (focus balance).
             # target_id is the trip id; the domain is the action suffix.
             domain = action[len("trip_domain_") :]
             if domain not in FOCUS_DOMAINS:
-                return _dismiss_page("That trip filing option is no longer available.")
+                return _ack("That trip filing option is no longer available.")
             updated = memory.set_trip_domain(target_id, domain)
             if updated is None:
-                return _dismiss_page("That trip is no longer available.")
-            return _dismiss_page(f"Filed under {domain}. Thanks — that keeps your balance honest.")
+                return _ack("That trip is no longer available.")
+            return _ack(f"Filed under {domain}. Thanks — that keeps your balance honest.")
 
         if action in ("switch_return", "switch_defer", "switch_switch"):
             # Resolve a reflective pause in one tap (mirrors /webhooks/focus/resolve;
@@ -475,30 +506,30 @@ def build_router(services: RouterServices) -> APIRouter:
             # ride on the SwitchPause response, so the session is the pull's target.
             session = memory.get_focus_session(target_id)
             if session is None or session.get("status") != "active":
-                return _dismiss_page("That focus block is already resolved.")
+                return _ack("That focus block is already resolved.")
             task = session.get("intended_task") or "your task"
             if action == "switch_return":
-                return _dismiss_page(f"Staying on “{task}.” 👊")
+                return _ack(f"Staying on “{task}.” 👊")
             if action == "switch_defer":
                 memory.add_todo(
                     f"Come back to what pulled you off “{task}”", source="impulse"
                 )
                 memory.mark_switch_deferred(target_id)
-                return _dismiss_page(
+                return _ack(
                     "Parked it as a todo — back to what you were doing. "
                     "(Rename it later if you like.)"
                 )
             closed = memory.close_focus_session(target_id, status="switched")
             if closed is not None:
                 record_focus_switched(memory, closed)
-            return _dismiss_page(f"Switched away from “{task}.” Logged it.")
+            return _ack(f"Switched away from “{task}.” Logged it.")
 
         if action == "panic_step_done":
             # target_id is the pending panic episode logged when the nudge fired.
             done = resolve_panic_step(memory, target_id)
             if not done:
-                return _dismiss_page("Already logged — nice work either way.")
-            return _dismiss_page("Logged — you took the first step. 👏 That's the hard part.")
+                return _ack("Already logged — nice work either way.")
+            return _ack("Logged — you took the first step. 👏 That's the hard part.")
 
         if action in SELF_CARE_ACTIONS:
             # A self-care check has no entity id — it acts on "now"/"today", so we
@@ -507,7 +538,7 @@ def build_router(services: RouterServices) -> APIRouter:
             now = utcnow()
             today = local_datetime(now, settings.timezone).strftime("%Y-%m-%d")
             headline = apply_self_care_action(memory, action, now=now, today=today)
-            return _dismiss_page(headline or "Done.")
+            return _ack(headline or "Done.")
 
         if action == "star_award":
             # target_id is the star-chart agreement id. Award one star, attributed
@@ -517,15 +548,15 @@ def build_router(services: RouterServices) -> APIRouter:
                 note="via prompt", settings=settings,
             )
             if result is None:
-                return _dismiss_page("That star chart is no longer available.")
+                return _ack("That star chart is no longer available.")
             who = result["child_name"] or "the kids"
             line = f"⭐ Star added for {who} — {result['total']} total."
             if result["goals_reached"]:
                 line += " 🎉 Reward unlocked!"
-            return _dismiss_page(line)
+            return _ack(line)
 
         if action == "star_skip":
-            return _dismiss_page("No star today — that's okay. 🙂")
+            return _ack("No star today — that's okay. 🙂")
 
         if action in CHECKIN_ACTION_RESPONSE:
             # Weekly mental-load check-in: record how *this* parent's week felt
@@ -552,7 +583,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 deliver_to_household(
                     memory, hid, household_notice(note, channel="push"), settings=settings
                 )
-            return _dismiss_page("Thanks for checking in 💛 That's really helpful.")
+            return _ack("Thanks for checking in 💛 That's really helpful.")
 
         if action == "digest_seen":
             # Mark the shared sheet seen "now" so the delta digest won't re-surface
@@ -561,7 +592,7 @@ def build_router(services: RouterServices) -> APIRouter:
             memory.set_state(
                 "household_seen_at", now.strftime(TS_FMT), source="inferred"
             )
-            return _dismiss_page("All caught up 💛")
+            return _ack("All caught up 💛")
 
         if action == "chore_done":
             # target_id is the chore id. Log it done for today (local date),
@@ -572,8 +603,8 @@ def build_router(services: RouterServices) -> APIRouter:
                 chore_id=target_id, done_on=today, done_by=user["id"]
             )
             if result is None:
-                return _dismiss_page("That chore is no longer on the list.")
-            return _dismiss_page(f"Done — “{result['title']}” is sorted for today. 🙌")
+                return _ack("That chore is no longer on the list.")
+            return _ack(f"Done — “{result['title']}” is sorted for today. 🙌")
 
         if action in ("briefing_helped", "briefing_not_helped"):
             # The morning briefing has no entity id — the vote is about "the digest
@@ -581,7 +612,7 @@ def build_router(services: RouterServices) -> APIRouter:
             # steers the LLM briefing voice via learned_briefing_guidance.
             helped = action == "briefing_helped"
             record_briefing_feedback(memory, helpful=helped)
-            return _dismiss_page(
+            return _ack(
                 "Glad it helped 💛 I'll keep them like this." if helped
                 else "Thanks — I'll make the next one tighter and more focused."
             )
@@ -598,7 +629,7 @@ def build_router(services: RouterServices) -> APIRouter:
             notes=f"one-tap: {'made it' if made else 'missed it'}",
         )
         memory.dismiss_departure(target_id)
-        return _dismiss_page(
+        return _ack(
             f"Logged — you made it to “{title}.” 🎯" if made
             else f"Logged — ran late for “{title}.” It happens."
         )
