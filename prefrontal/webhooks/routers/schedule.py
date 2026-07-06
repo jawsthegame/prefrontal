@@ -77,6 +77,9 @@ from prefrontal.panic import (
     evaluate_panic_check,
     render_panic,
 )
+from prefrontal.scheduling import (
+    local_day_bounds,
+)
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -569,18 +572,21 @@ def build_router(services: RouterServices) -> APIRouter:
                 )
                 source = "outing"
 
-        # Scope the walk to the seed day and to *your own* commitments. Being
-        # "behind" is a within-day notion — a domino chain doesn't survive a
+        # Scope the walk to the seed's *local* day and to *your own* commitments.
+        # Being "behind" is a within-day notion — a domino chain doesn't survive a
         # night's sleep, so a tight back-to-back tomorrow isn't something you're
-        # behind on today. And FYI events (where someone else will be; never
-        # yours to attend) must never be modelled as consuming your time and
-        # pushing a real commitment late — the same exclusion the panic cascade
-        # (:func:`prefrontal.panic._cascade_chain`) and every other surface make.
-        day_end = free.replace(hour=23, minute=59, second=59, microsecond=0)
+        # behind on today. The day boundary must be *local*: at 9pm Eastern the
+        # UTC day has already rolled over, so a plain ``free.replace(hour=23,…)``
+        # UTC window pulls in tomorrow-morning's commitments (see local_day_bounds).
+        # And FYI events (where someone else will be; never yours to attend) must
+        # never be modelled as consuming your time and pushing a real commitment
+        # late — the same exclusion the panic cascade and every other surface make.
+        _day_start, day_end = local_day_bounds(free, resolved_settings.timezone)
+        lower = max(utcnow(), _day_start)
         commitments = [
             c
             for c in memory.commitments_between(
-                utcnow().strftime(TS_FMT), day_end.strftime(TS_FMT)
+                lower.strftime(TS_FMT), day_end.strftime(TS_FMT)
             )
             if c.get("kind") != "fyi"
         ]

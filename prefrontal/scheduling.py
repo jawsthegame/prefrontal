@@ -199,6 +199,35 @@ def local_hour_of(now: datetime, tz: str) -> int:
     return local_datetime(now, tz).hour
 
 
+def local_day_bounds(now: datetime, tz: str) -> tuple[datetime, datetime]:
+    """Naive-UTC ``[start, end)`` of the *local* calendar day containing ``now``.
+
+    "Today" is a local notion: for an Eastern user at 9pm, midnight-to-midnight is
+    01:00–01:00 UTC spanning two UTC dates — not ``00:00`` UTC. Every surface that
+    scopes to "today" (the briefing, panic, the rough-day assessment, the cascade)
+    should bound its query with this rather than ``now.replace(hour=0, …)`` on the
+    naive-UTC instant, which silently rolls the day over hours early or late.
+
+    Args:
+        now: The current instant as naive UTC.
+        tz: IANA timezone name for the local day (falls back to UTC if unknown).
+
+    Returns:
+        ``(day_start, day_end)`` as naive UTC — the ``end`` is the next local
+        midnight (exclusive), ready to pass to ``commitments_between`` /
+        ``episodes_since``. DST-correct: each bound carries the offset in force at
+        that wall-clock instant.
+    """
+    local = local_datetime(now, tz)
+    start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+
+    def _to_naive_utc(dt: datetime) -> datetime:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+    return _to_naive_utc(start_local), _to_naive_utc(end_local)
+
+
 def minutes_between(
     start: str | None, end: str | None, *, default: float | None = None
 ) -> float | None:
