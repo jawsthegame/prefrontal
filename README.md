@@ -53,7 +53,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 
 | Module | `key` | Addresses |
 |---|---|---|
-| Time Blindness | `time_blindness` | Duration estimation, departure timing, elapsed-time awareness |
+| Time Blindness | `time_blindness` | Duration estimation, departure timing, elapsed-time awareness, an evening "early start tomorrow — set an alarm" heads-up |
 | Task Paralysis | `task_paralysis` | Task initiation / activation energy (tiny first steps, decomposition, honing ambiguous items so they can be started) |
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
