@@ -91,6 +91,7 @@ from prefrontal.webhooks.helpers import (
     _nudge_actions,
 )
 from prefrontal.webhooks.notify import (
+    act_url,
     panic_actions,
 )
 from prefrontal.webhooks.schemas import (
@@ -775,14 +776,34 @@ def build_router(services: RouterServices) -> APIRouter:
 
     @router.get("/briefing", tags=["schedule"])
     def briefing(
+        request: Request,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Return today's morning briefing as structured data plus rendered text.
 
         n8n can deliver the ``text`` directly, or feed it to Ollama for prose
         (or call ``prefrontal summarize``-style). Always fast and model-free here.
+
+        The ``text`` ends with a small 👍/👎 "Did this help?" footer when a public
+        origin and signing key are configured — the taps feed
+        :func:`prefrontal.briefing.learned_briefing_guidance` back into the LLM
+        briefing voice. The same signed links are returned under ``feedback`` so a
+        client can render its own buttons instead. Briefing feedback has no entity
+        id (it's about "the digest you just read"), so it rides a synthetic ``0``
+        target like the self-care / check-in one-tap actions.
         """
         memory = ctx.store
+        settings: Settings = request.app.state.settings
+        handle = ctx.user.get("handle") or ""
+        helped = act_url(
+            settings.oauth_base_url, handle, "briefing_helped", 0,
+            settings.session_secret,
+        )
+        not_helped = act_url(
+            settings.oauth_base_url, handle, "briefing_not_helped", 0,
+            settings.session_secret,
+        )
+        feedback_urls = (helped, not_helped) if helped and not_helped else None
         b = build_briefing(memory)
         return {
             "date": b.date,
@@ -794,7 +815,8 @@ def build_router(services: RouterServices) -> APIRouter:
             "spare": b.spare,
             "encouragement": b.encouragement,
             "open_day_choice": memory.get_state(OPEN_DAY_KEY) or None,
-            "text": render_briefing(b),
+            "feedback": {"helped_url": helped, "not_helped_url": not_helped},
+            "text": render_briefing(b, feedback_urls=feedback_urls),
         }
 
     @router.post("/briefing/open-day", tags=["schedule"])

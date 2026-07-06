@@ -168,6 +168,41 @@ def test_act_made_it_and_missed_it_log_departure_outcome(client, store):
     assert cid in store.dismissed_departures()
 
 
+def test_briefing_includes_feedback_footer_and_links(client, store):
+    """GET /briefing appends a 👍/👎 footer and returns the signed links."""
+    body = client.get("/briefing", headers=_auth()).json()
+    assert body["feedback"]["helped_url"].startswith(f"{BASE}/nudge/act?t=")
+    assert body["feedback"]["not_helped_url"].startswith(f"{BASE}/nudge/act?t=")
+    assert "Did this help?" in body["text"]
+    assert "👍 yes" in body["text"] and "👎 no" in body["text"]
+
+
+def test_act_briefing_feedback_records_and_steers_prompt(client, store):
+    """Tapping 👎 (target 0) bumps the tally and tightens the learned guidance."""
+    from prefrontal.briefing import (
+        BRIEFING_NOT_HELPFUL_KEY,
+        learned_briefing_guidance,
+    )
+
+    for _ in range(2):
+        token = sign_action(DEFAULT_HANDLE, "briefing_not_helped", 0, SIGNING)
+        resp = client.get(f"/nudge/act?t={token}")
+        assert resp.status_code == 200 and "tighter" in resp.text.lower()
+
+    assert store.get_float(BRIEFING_NOT_HELPFUL_KEY, 0.0) == 2.0
+    assert "Tighten up" in learned_briefing_guidance(store)
+
+
+def test_act_briefing_helped_records_positive(client, store):
+    """Tapping 👍 records a helpful vote and thanks the user."""
+    from prefrontal.briefing import BRIEFING_HELPFUL_KEY
+
+    token = sign_action(DEFAULT_HANDLE, "briefing_helped", 0, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200 and "helped" in resp.text.lower()
+    assert store.get_float(BRIEFING_HELPFUL_KEY, 0.0) == 1.0
+
+
 def test_focus_switch_pause_includes_resolve_actions(client, store):
     sid = store.start_focus_session("the API refactor", planned_minutes=25.0)
     pause = client.post(

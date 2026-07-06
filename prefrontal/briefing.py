@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts_strict as _parse_ts
-from prefrontal.commitments import find_conflicts
+from prefrontal.commitments import find_conflicts, is_attendable
 from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.focus_balance import balance_summary_line, build_focus_balance
@@ -70,6 +70,63 @@ SURFACE_WINDOW_HOURS = 24
 
 #: How many todo options to offer per spare window (a primary + up to 2 alts).
 SPARE_OPTIONS_PER_WINDOW = 3
+
+#: Coaching-state counters for the briefing's 👍/👎 feedback. A one-tap vote in
+#: the delivered digest bumps one of these; :func:`learned_briefing_guidance`
+#: folds the running tally back into :data:`BRIEFING_SYSTEM_PROMPT`.
+BRIEFING_HELPFUL_KEY = "briefing_helpful_count"
+BRIEFING_NOT_HELPFUL_KEY = "briefing_not_helpful_count"
+
+#: Net lead one way or the other before the feedback tally changes the voice —
+#: small, so a couple of consistent votes are enough, but not a single stray tap.
+_BRIEFING_FEEDBACK_MARGIN = 2
+
+
+def record_briefing_feedback(store: MemoryStore, *, helpful: bool) -> dict[str, int]:
+    """Record a 👍/👎 vote on the morning briefing; return the running tally.
+
+    Bumps the matching coaching-state counter (helpful vs not), which
+    :func:`learned_briefing_guidance` reads to steer the LLM briefing voice.
+    Idempotency isn't attempted — a re-tap is just another honest vote, and the
+    margin-based guidance shrugs off the odd extra one.
+
+    Args:
+        store: An open :class:`~prefrontal.memory.store.MemoryStore`.
+        helpful: ``True`` for 👍, ``False`` for 👎.
+
+    Returns:
+        ``{"helpful": int, "not_helpful": int}`` — the tally after this vote.
+    """
+    key = BRIEFING_HELPFUL_KEY if helpful else BRIEFING_NOT_HELPFUL_KEY
+    store.set_state(key, str(int(store.get_float(key, 0.0)) + 1), source="explicit")
+    return {
+        "helpful": int(store.get_float(BRIEFING_HELPFUL_KEY, 0.0)),
+        "not_helpful": int(store.get_float(BRIEFING_NOT_HELPFUL_KEY, 0.0)),
+    }
+
+
+def learned_briefing_guidance(store: MemoryStore) -> str:
+    """Prompt addendum reflecting the running 👍/👎 feedback on past briefings.
+
+    Folds the standing tally into the LLM briefing prompt so the voice adapts to
+    how the digests have been landing: a run of 👎 steers it shorter and more
+    focused; a run of 👍 tells it to hold the current shape. Empty string when
+    the votes are close (no clear signal yet) — the base prompt is used unchanged.
+    """
+    helpful = int(store.get_float(BRIEFING_HELPFUL_KEY, 0.0))
+    not_helpful = int(store.get_float(BRIEFING_NOT_HELPFUL_KEY, 0.0))
+    if not_helpful - helpful >= _BRIEFING_FEEDBACK_MARGIN:
+        return (
+            "\n\nRecent briefings were marked *not useful*. Tighten up: lead with "
+            "the single most important thing, drop anything that isn't actionable "
+            "today, and keep the whole thing to two or three sentences."
+        )
+    if helpful - not_helpful >= _BRIEFING_FEEDBACK_MARGIN:
+        return (
+            "\n\nRecent briefings were marked useful — keep this shape, warmth, "
+            "and length."
+        )
+    return ""
 
 
 @dataclass(frozen=True)
@@ -223,6 +280,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     except (TypeError, ValueError):
         bias = 1.0
     remaining = [c for c in today if _parse_ts(c["start_at"]) >= now]
+    # Only real, own commitments sit in a "your time" chain: FYI events (where
+    # someone *else* will be) and placeholder holds don't consume your time, so
+    # they can't topple anything or earn a leave-by. This is the same subset every
+    # cascade/departure surface uses (see commitments.is_attendable).
+    attendable = [c for c in remaining if is_attendable(c)]
     fragile = [
         {
             "title": i.commitment["title"],
@@ -232,11 +294,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
             "caused_by": i.caused_by,
             "hardness": i.commitment.get("hardness"),
         }
-        for i in fragile_stretch(remaining, bias)
+        for i in fragile_stretch(attendable, bias)
     ]
 
     # Leave-by for today's remaining *travel* commitments — "when to leave," not
-    # just when things start. Plans the same `remaining` list with the same pure
+    # just when things start. Plans the same `attendable` list with the same pure
     # planner (plan_departure + departure_kwargs) the departure nudge and widget
     # use, so the digest's leave-by matches what it's nudged for. Gated on Time
     # Blindness (which owns departure timing); attend-mode meetings (you're already
@@ -245,7 +307,10 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     if module_enabled("time_blindness"):
         loc = store.get_location()
         dep_kwargs = departure_kwargs(store)
-        for c in remaining:
+        # `attendable` (above) is the same subset the departure nudge itself uses
+        # (departure.plan_upcoming_departures), so the digest's leave-by matches
+        # what it's nudged for — no FYI event or placeholder hold ever gets one.
+        for c in attendable:
             p = plan_departure(
                 c,
                 current_lat=loc["lat"] if loc else None,
@@ -344,14 +409,26 @@ def _time_of(commitment: dict[str, Any]) -> str:
     return commitment["start_at"][11:16]
 
 
-def render_briefing(briefing: Briefing) -> str:
+def render_briefing(
+    briefing: Briefing, *, feedback_urls: tuple[str, str] | None = None
+) -> str:
     """Render a :class:`Briefing` as Markdown (the deterministic digest).
 
+    The layout leads with today and what to act on (schedule → leave-by →
+    risks → opportunities), then closes with the gentler look-back (what slipped,
+    focus, balance) and a one-line note — so the actionable part is up top and the
+    reflective part sits by the encouragement at the end.
+
     Honors ``briefing.format``: ``short`` keeps it to headlines, ``long`` lists
-    every commitment and slip detail.
+    every commitment.
 
     Args:
         briefing: The structured briefing.
+        feedback_urls: Optional ``(helped_url, not_helped_url)`` signed one-tap
+            links. When both are non-empty a small "Did this help?" footer is
+            appended; the taps feed :func:`learned_briefing_guidance` back into the
+            LLM briefing voice. Omit (or pass empty strings) to render no footer —
+            e.g. for a plain CLI print with no public origin to link to.
 
     Returns:
         A Markdown string suitable for printing or delivery.
@@ -359,14 +436,17 @@ def render_briefing(briefing: Briefing) -> str:
     long = briefing.format == "long"
     lines = [f"# Morning briefing — {briefing.date}", ""]
 
+    # --- What today looks like, and what to act on -----------------------------
+
     # Today.
     if not briefing.today:
-        lines.append("**Today:** nothing on the calendar. 🎉")
+        lines.append("**📅 Today:** nothing on the calendar. 🎉")
     else:
+        n = len(briefing.today)
         hard = sum(1 for c in briefing.today if c.get("hardness") == "hard")
+        noun = "commitment" if n == 1 else "commitments"
         lines.append(
-            f"**Today:** {len(briefing.today)} commitment(s)"
-            + (f", {hard} hard." if hard else ".")
+            f"**📅 Today:** {n} {noun}" + (f", {hard} hard." if hard else ".")
         )
         if long or len(briefing.today) <= 5:
             for c in briefing.today:
@@ -415,26 +495,10 @@ def render_briefing(briefing: Briefing) -> str:
         )
         lines.append("")
 
-    # What slipped.
-    if briefing.slips:
-        total = sum(briefing.slips.values())
-        detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
-        lines.append(f"**Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
-        lines.append("")
-
-    # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
-    if briefing.switch_feedback:
-        lines.append(f"**Focus switches (last 24h):** {briefing.switch_feedback}.")
-        lines.append("")
-
-    # Focus balance — where the week's out-of-home time went, by life-sphere.
-    if briefing.balance:
-        lines.append(f"**Focus balance:** {briefing.balance}")
-        lines.append("")
-
-    # Avoidance — the important things you keep skipping.
+    # Avoidance — the important things that keep sliding. Named plainly, but
+    # without a scolding "you keep …": a nudge to pick one up, not a telling-off.
     if briefing.avoided:
-        lines.append("**🔴 You keep putting off:**")
+        lines.append("**🐢 Keeps sliding:**")
         for a in briefing.avoided:
             lines.append(f"- {a['title']} — open {a['days_open']:g} days")
         lines.append("")
@@ -450,7 +514,7 @@ def render_briefing(briefing: Briefing) -> str:
     # Spare time + suggestions.
     suggested = [s for s in briefing.spare if s["suggestion"]]
     if suggested:
-        lines.append("**Spare time:**")
+        lines.append("**✨ Spare time:**")
         for s in suggested:
             alts = s.get("alternatives") or []
             or_line = f" _(or: {', '.join(alts)})_" if alts else ""
@@ -458,6 +522,25 @@ def render_briefing(briefing: Briefing) -> str:
                 f"- {s['start'][11:16]} ({s['minutes']:g} min free) — good for: "
                 f"{s['suggestion']}{or_line}"
             )
+        lines.append("")
+
+    # --- The gentler look-back, down by the closing note -----------------------
+
+    # What slipped.
+    if briefing.slips:
+        total = sum(briefing.slips.values())
+        detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
+        lines.append(f"**📉 Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
+        lines.append("")
+
+    # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
+    if briefing.switch_feedback:
+        lines.append(f"**🔁 Focus switches (last 24h):** {briefing.switch_feedback}.")
+        lines.append("")
+
+    # Focus balance — where the week's out-of-home time went, by life-sphere.
+    if briefing.balance:
+        lines.append(f"**⚖️ Focus balance:** {briefing.balance}")
         lines.append("")
 
     # Closing note. When the encouragement layer flagged the day (spec §6.2), its
@@ -470,14 +553,25 @@ def render_briefing(briefing: Briefing) -> str:
         if bias:
             try:
                 pct = round((float(bias) - 1.0) * 100)
+            except ValueError:
+                pct = 0
+            # Only nudge when there's a real learned overrun — "~0%" is noise.
+            if pct > 0:
                 lines.append(
                     f"_Reminder: you tend to underestimate time by ~{pct}% — "
-                    f"pad today's estimates ({bias}x)._"
+                    f"give today's plans a little extra room._"
                 )
-            except ValueError:
-                pass
 
-    return "\n".join(lines).rstrip() + "\n"
+    body = "\n".join(lines).rstrip()
+
+    # Feedback footer — a small, optional 👍/👎 so a tap can teach the briefing
+    # voice (see learned_briefing_guidance). Appended after the rstrip so it's the
+    # last thing in the digest, and only when both signed links are available.
+    if feedback_urls and all(feedback_urls):
+        helped, not_helped = feedback_urls
+        body += f"\n\n—\n_Did this help? [👍 yes]({helped}) · [👎 no]({not_helped})_"
+
+    return body + "\n"
 
 
 @dataclass(frozen=True)
@@ -518,8 +612,11 @@ def summarize_briefing(
 
     rendered = render_briefing(build_briefing(store, now=now))
     client = client or OllamaClient.from_settings()
+    # Fold the running 👍/👎 feedback into the voice — a run of "not useful" taps
+    # tightens the prose, a run of "useful" taps holds the current shape.
+    system = BRIEFING_SYSTEM_PROMPT + learned_briefing_guidance(store)
     try:
-        prose = client.generate(rendered, system=BRIEFING_SYSTEM_PROMPT).strip()
+        prose = client.generate(rendered, system=system).strip()
     except ProviderError:
         if not fallback:
             raise

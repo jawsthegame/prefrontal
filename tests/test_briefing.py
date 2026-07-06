@@ -114,6 +114,25 @@ def test_briefing_flags_fragile_stretch(store):
     assert "1:1" in text and "Design review" in text
 
 
+def test_briefing_fragile_ignores_fyi(store):
+    """An FYI event can't be toppled by your own overrun — it's not your time."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    # A real meeting, then a back-to-back FYI event that would "collide" under the
+    # bias if it were yours. It isn't — you go nowhere for it, so it's never flagged.
+    store.upsert_commitment(
+        title="Design review", start_at=_at(now + timedelta(minutes=60)),
+        end_at=_at(now + timedelta(minutes=90)), external_id="work:d1",
+    )
+    store.upsert_commitment(
+        title="Partner's brow appt", start_at=_at(now + timedelta(minutes=95)),
+        end_at=_at(now + timedelta(minutes=125)), external_id="personal:fyi",
+        kind="fyi",
+    )
+    b = build_briefing(store, now=now)
+    assert b.fragile == []
+    assert "Tight stretch" not in render_briefing(b)
+
+
 def test_briefing_spare_offers_alternatives(store):
     """A spare window offers a primary plus a couple of alternatives ('or: …')."""
     now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
@@ -171,6 +190,24 @@ def test_briefing_leave_by_skips_attend_mode_and_past(store):
     store.upsert_commitment(
         title="Gym", start_at=_at(now - timedelta(minutes=30)),
         end_at=_at(now + timedelta(minutes=30)), external_id="personal:1",
+    )
+    b = build_briefing(store, now=now)
+    assert b.departures == []
+    assert "Leave by" not in render_briefing(b)
+
+
+def test_briefing_leave_by_skips_fyi_and_placeholder(store):
+    """FYI events and placeholder holds never get a leave-by (you're not going)."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    # An FYI event — where a partner will be. You attend nothing, go nowhere.
+    store.upsert_commitment(
+        title="Partner's brow appt", start_at=_at(now + timedelta(minutes=120)),
+        external_id="personal:fyi", lead_minutes=15.0, kind="fyi",
+    )
+    # A placeholder hold — elastic time, nothing to leave by for.
+    store.upsert_commitment(
+        title="HOLD", start_at=_at(now + timedelta(minutes=180)),
+        external_id="personal:hold", lead_minutes=15.0,
     )
     b = build_briefing(store, now=now)
     assert b.departures == []
@@ -266,6 +303,49 @@ class _FakeClient:
         if self.error:
             raise OllamaError("down")
         return self.reply
+
+
+def test_briefing_feedback_tally_and_guidance(store):
+    """👍/👎 votes accumulate and, past the margin, steer the LLM prompt."""
+    from prefrontal.briefing import (
+        learned_briefing_guidance,
+        record_briefing_feedback,
+    )
+
+    assert learned_briefing_guidance(store) == ""  # no signal yet
+    tally = record_briefing_feedback(store, helpful=False)
+    assert tally == {"helpful": 0, "not_helpful": 1}
+    assert learned_briefing_guidance(store) == ""  # one vote is below the margin
+    record_briefing_feedback(store, helpful=False)
+    assert "Tighten up" in learned_briefing_guidance(store)
+
+    # Enough 👍 to flip the balance back the other way.
+    for _ in range(4):
+        record_briefing_feedback(store, helpful=True)
+    assert "keep this shape" in learned_briefing_guidance(store)
+
+
+class _CapturingClient:
+    """A fake client that records the system prompt it was handed."""
+
+    def __init__(self):
+        self.system = None
+        self.model = "fake"
+
+    def generate(self, prompt, *, system=None):
+        self.system = system
+        return "Morning! Tight and focused today."
+
+
+def test_summarize_briefing_folds_feedback_into_prompt(store):
+    """A run of 👎 reaches the model as an appended 'tighten up' instruction."""
+    from prefrontal.briefing import record_briefing_feedback
+
+    for _ in range(2):
+        record_briefing_feedback(store, helpful=False)
+    client = _CapturingClient()
+    summarize_briefing(store, client=client)
+    assert "Tighten up" in client.system
 
 
 def test_summarize_briefing_llm_and_fallback(store):
