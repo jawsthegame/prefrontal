@@ -161,6 +161,16 @@ class TodosRepo(Repo):
         """
         return self._update_todo_field(todo_id, "title", title)
 
+    def set_todo_notes(self, todo_id: int, notes: str | None) -> bool:
+        """Set (or clear) an open todo's free-text notes. Returns ``True`` if changed.
+
+        Used when a clarification hones an ambiguous item — the chosen reading is
+        appended to the notes so the item reads clearly everywhere, not just on the
+        clarification row. Only open todos are editable (a closed todo's notes are
+        history); the caller composes the new value.
+        """
+        return self._update_todo_field(todo_id, "notes", notes)
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 

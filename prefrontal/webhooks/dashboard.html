@@ -358,6 +358,43 @@
   .panic-sec-h.b-pile { color: var(--soft); }
   .panic-foot { color: var(--muted); font-size: 13px; font-style: italic; margin: 16px 0 0; }
 
+  /* Ambiguity clarifications — an inline "what does this mean?" question per vague
+     item, with one-tap candidate readings. Kept visually distinct (a soft query
+     tint) so it reads as a question, not another todo. */
+  .clarify-item { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 0 10px; }
+  .clarify-item:last-child { margin-bottom: 0; }
+  .clarify-q { font-size: 15px; line-height: 1.4; margin: 0 0 4px; }
+  .clarify-title { font-weight: 700; }
+  .clarify-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .clarify-opts .btn-sm { text-align: left; }
+  .clarify-opts .has-guide::after { content: " ›"; color: var(--good); font-weight: 700; }
+  .clarify-dismiss { margin-top: 8px; }
+  .clarify-guided { margin-top: 4px; }
+  .clarify-guided .row .sub { color: var(--muted); }
+
+  /* Guide overlay — the "walk me through it" popup a resolved item unlocks. Same
+     dim-everything overlay shell as panic mode, so it reads as one focused screen
+     of ordered steps you can tick off. */
+  #guide { position: fixed; inset: 0; z-index: 21; display: none; overflow-y: auto;
+    background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    align-items: flex-start; justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) 16px 32px; }
+  #guide .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px 20px; width: min(620px, 100%); box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+  .guide-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .guide-head h2 { margin: 0; font-size: 18px; }
+  .guide-head .spacer { flex: 1; }
+  .guide-intro { font-size: 15px; line-height: 1.45; color: var(--muted); margin: 0 0 14px; }
+  .guide-step { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line); }
+  .guide-step:first-of-type { border-top: none; }
+  .guide-step.done .guide-step-title { text-decoration: line-through; color: var(--muted); }
+  .guide-check { flex: none; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--good); font-size: 15px; cursor: pointer; }
+  .guide-check.on { background: var(--good-bg); }
+  .guide-step-title { font-size: 16px; line-height: 1.4; font-weight: 600; }
+  .guide-step-detail { font-size: 14px; line-height: 1.45; color: var(--muted); margin-top: 4px; }
+  .guide-foot { color: var(--muted); font-size: 13px; font-style: italic; margin: 16px 0 0; }
+
   @media (max-width: 520px) {
     .banner { padding: 12px 12px 0; }
     .masonry { columns: 1; padding: 12px 12px 24px; }
@@ -452,6 +489,7 @@
     </div>
     <div class="body"></div>
   </section>
+  <section class="card" id="c-clarify"><h2>Needs clarification</h2><div class="body"></div></section>
   <section class="card" id="c-categories"><h2>Todo categories</h2><div class="body"></div></section>
   <section class="card" id="c-commitments"><h2>Commitments</h2><div class="body"></div></section>
   <section class="card" id="c-briefing"><h2>Today's briefing</h2><div class="body"></div></section>
@@ -481,6 +519,17 @@
       <span class="spacer"></span>
       <button class="ghost" id="panic-refresh" title="Recompute">Refresh</button>
       <button class="ghost" id="panic-close">Close</button>
+    </div>
+    <div class="body"><div class="empty">loading…</div></div>
+  </div>
+</div>
+
+<div id="guide" role="dialog" aria-modal="true" aria-label="Task guide">
+  <div class="box">
+    <div class="guide-head">
+      <h2 id="guide-title">Guide</h2>
+      <span class="spacer"></span>
+      <button class="ghost" id="guide-close">Close</button>
     </div>
     <div class="body"><div class="empty">loading…</div></div>
   </div>
@@ -1190,6 +1239,72 @@ function renderTriageLog(data) {
   }).join("");
 }
 
+// Ambiguity clarifications: an inline "what does this mean?" per vague item, with
+// one-tap candidate readings. Resolving one that maps to a known task opens the
+// guide overlay (the "walk me through it" popup); dismissing marks it not-ambiguous.
+// `guided` lists already-resolved items whose reading has a playbook, so the guide
+// can be re-opened.
+function renderClarify(d) {
+  const pending = (d && d.clarifications) || [];
+  const guided = (d && d.guided) || [];
+  if (!pending.length && !guided.length) {
+    return `<div class="empty">Nothing ambiguous right now — vague items get an inline question here.</div>`;
+  }
+  let html = "";
+  html += pending.map((c) => {
+    const opts = (c.options || []).map((o, i) =>
+      `<button class="btn-sm${o.has_playbook ? " has-guide" : ""}" data-action="clarify-answer" data-id="${c.id}" data-index="${i}"${o.has_playbook ? ` title="Has a step-by-step guide"` : ""}>${esc(o.label)}</button>`
+    ).join("");
+    return `<div class="clarify-item">
+        <div class="clarify-q"><span class="clarify-title">${esc(c.title)}</span> — ${esc(c.question)}</div>
+        <div class="clarify-opts">${opts}</div>
+        <div class="clarify-dismiss"><button class="lnk" data-action="clarify-dismiss" data-id="${c.id}" title="This isn't ambiguous — stop asking">not ambiguous</button></div>
+      </div>`;
+  }).join("");
+  if (guided.length) {
+    html += `<div class="clarify-guided">` + guided.map((g) =>
+      `<div class="row"><div class="main">
+        <div class="title">${esc(g.title)}</div>
+        <div class="sub">${esc(g.answer || "")}</div>
+      </div><div class="acts"><button class="btn-sm btn-go" data-action="clarify-guide" data-type="${esc(g.task_type)}">Guide me</button></div></div>`
+    ).join("") + `</div>`;
+  }
+  return html;
+}
+
+// Guide overlay: a dim-everything walkthrough for a resolved task type. Steps can
+// be ticked off; the check state is per-device (localStorage), keyed by task_type,
+// since the playbook itself is static, shared reference content.
+const GUIDE_KEY = "prefrontal_guide_steps";
+let guideState = (() => { try { return JSON.parse(localStorage.getItem(GUIDE_KEY)) || {}; } catch (_) { return {}; } })();
+let guidePlaybook = null;
+function saveGuideState() { try { localStorage.setItem(GUIDE_KEY, JSON.stringify(guideState)); } catch (_) {} }
+
+function renderGuide(pb) {
+  const done = guideState[pb.task_type] || {};
+  const intro = pb.intro ? `<p class="guide-intro">${esc(pb.intro)}</p>` : "";
+  const steps = (pb.steps || []).map((s, i) => {
+    const on = !!done[i];
+    return `<div class="guide-step${on ? " done" : ""}">
+      <button class="guide-check${on ? " on" : ""}" data-action="guide-step" data-step="${i}" aria-label="${on ? "Mark step not done" : "Mark step done"}">${on ? "✓" : ""}</button>
+      <div><div class="guide-step-title">${esc(s.title)}</div>${s.detail ? `<div class="guide-step-detail">${esc(s.detail)}</div>` : ""}</div>
+    </div>`;
+  }).join("");
+  return intro + steps + `<p class="guide-foot">One step at a time — tick them off as you go. Close whenever; it'll remember.</p>`;
+}
+function openGuide(pb) {
+  guidePlaybook = pb;
+  $("#guide-title").textContent = pb.title || "Guide";
+  $("#guide .body").innerHTML = renderGuide(pb);
+  $("#guide").style.display = "flex";
+}
+function closeGuide() { $("#guide").style.display = "none"; }
+async function openGuideByType(taskType) {
+  try {
+    openGuide(await api(`/clarifications/playbooks/${encodeURIComponent(taskType)}`));
+  } catch (_) { /* api() already surfaced the error */ }
+}
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -1198,12 +1313,12 @@ async function load() {
     api("/outings"), api("/todos"), api("/commitments"),
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
-    api("/triage/recent"), api("/impact/cascade"),
+    api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify] = results;
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
     $("#c-shopping").style.display = "";
@@ -1217,6 +1332,7 @@ async function load() {
   lastTodos = todos.status === "fulfilled" ? todos.value : null;
   paintTodos();
   put("#c-categories", categories, renderCategories);
+  put("#c-clarify", clarify, renderClarify);
   put("#c-triage", triage, renderTriage);
   put("#c-triagelog", triagelog, renderTriageLog);
   lastCascade = cascade.status === "fulfilled" ? cascade.value : null;
@@ -1599,6 +1715,25 @@ document.addEventListener("click", async (e) => {
       return;
     }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
+    else if (act === "clarify-answer") {
+      const res = await post(`/clarifications/${id}/resolve`, { option_index: Number(el.dataset.index) });
+      if (res && res.playbook) openGuide(res.playbook);  // a recognized task → walk it through
+      // fall through to load() so the card drops the answered question
+    }
+    else if (act === "clarify-dismiss") { await post(`/clarifications/${id}/dismiss`, {}); }
+    else if (act === "clarify-guide") { await openGuideByType(el.dataset.type); return; }
+    else if (act === "guide-step") {
+      // Local-only: toggle this step's done bit for the open playbook and re-render
+      // the overlay in place. No server call and no dashboard reload.
+      if (guidePlaybook) {
+        const type = guidePlaybook.task_type, step = el.dataset.step;
+        const done = guideState[type] || (guideState[type] = {});
+        done[step] = !done[step];
+        saveGuideState();
+        $("#guide .body").innerHTML = renderGuide(guidePlaybook);
+      }
+      return;
+    }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
     else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
     else if (act === "asst-send") { await askAssistant(); return; }
@@ -1624,9 +1759,11 @@ $("#restart-btn").onclick = doRestart;
 $("#panic-btn").onclick = openPanic;
 $("#panic-close").onclick = closePanic;
 $("#panic-refresh").onclick = loadPanic;
-// Backdrop tap and Escape both dismiss the overlay.
+$("#guide-close").onclick = closeGuide;
+// Backdrop tap and Escape both dismiss an overlay.
 $("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closePillMenu(); } });
+$("#guide").addEventListener("click", (e) => { if (e.target.id === "guide") closeGuide(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closeGuide(); closePillMenu(); } });
 $("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();

@@ -241,6 +241,20 @@ also defines:
   A free-text note is turned into *allowlisted* candidates that stay **pending**
   until a human accepts — nothing authoritative is written by the model.
   `prefrontal note` / `prefrontal proposals list|accept|reject`.
+- **`clarifications`** — ambiguity questions for vague todos/commitments
+  (`prefrontal/clarify.py`, a Task-Paralysis initiation lever): per-user rows with
+  a `target_type` (`todo`/`commitment`), a loose `target_id`, the `title` snapshot,
+  a `question`, JSON `options` (candidate readings, each with an optional
+  `task_type`), a `source` (`llm`/`heuristic`), and a `status`
+  (`pending`/`resolved`/`dismissed`). A one-word item ("Tax") that can't be started
+  because it can't be *named* gets one inline question; answering records the
+  chosen reading in `answer` (+ a recognized `task_type`, which unlocks a guided
+  **playbook** overlay), dismissing marks it not-ambiguous. Like a proposal it
+  stays pending until the human answers. A partial unique index allows at most one
+  *pending* question per item, and the detection sweep skips any item with history
+  (pending/answered/dismissed) so it never re-asks. `POST /clarifications/check`,
+  `GET /clarifications`, `POST /clarifications/{id}/resolve|dismiss`,
+  `GET /clarifications/playbooks/{task_type}`.
 
 ---
 

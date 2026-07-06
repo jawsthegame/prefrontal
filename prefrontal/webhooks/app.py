@@ -148,6 +148,7 @@ def create_app(
         admin,
         anchor,
         assistant,
+        clarify,
         coaching,
         focus,
         household,
@@ -184,6 +185,7 @@ def create_app(
         coaching,
         household,
         sensor,
+        clarify,
         admin,
         assistant,
     ):

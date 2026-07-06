@@ -54,7 +54,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Module | `key` | Addresses |
 |---|---|---|
 | Time Blindness | `time_blindness` | Duration estimation, departure timing, elapsed-time awareness |
-| Task Paralysis | `task_paralysis` | Task initiation / activation energy (tiny first steps, decomposition) |
+| Task Paralysis | `task_paralysis` | Task initiation / activation energy (tiny first steps, decomposition, honing ambiguous items so they can be started) |
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
@@ -110,6 +110,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. Also woven into the morning brief as a day-shaped closing line (`briefing_note`). `prefrontal encourage` / `open-day`, `GET /encouragement`, `POST /briefing/open-day` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
+| Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — `POST /clarifications/check` sweep, `GET /clarifications`, resolve/dismiss |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | Behavioral insights UI | `prefrontal/stats.py` · `webhooks/stats.html` | ✅ `GET /stats` — time-estimation bias, follow-through + streak, channel responsiveness; inline SVG/CSS charts over your episodes (shared light/dark theme + nav) |
