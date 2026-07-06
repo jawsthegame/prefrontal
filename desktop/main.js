@@ -324,6 +324,17 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => mainWindow && mainWindow.show());
 
+  // Prefrontal's dashboard offers "Sign in with Google", which does a real
+  // Google OAuth round-trip inside the window. Google flags embedded frameworks
+  // ("this browser may not be secure") by sniffing the User-Agent — the default
+  // Electron UA carries `Prefrontal/x` and `Electron/x` tokens that trip that.
+  // Strip them so the session looks like plain Chrome and the login goes through.
+  // (Passkeys may still not work in Electron — users fall back to "Try another
+  // way"; the resulting session cookie then lasts ~30 days.)
+  app.userAgentFallback = app.userAgentFallback
+    .replace(/\sPrefrontal\/\S+/i, '')
+    .replace(/\sElectron\/\S+/i, '');
+
   app.whenReady().then(async () => {
     if (process.platform === 'darwin' && fs.existsSync(ICON_PATH)) {
       app.dock.setIcon(ICON_PATH);
