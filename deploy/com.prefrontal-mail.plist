@@ -66,6 +66,11 @@
         <!-- Homebrew (Apple Silicon) on PATH so child processes resolve as expected. -->
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Handle whose mailboxes to fetch; mail-fetch.sh passes it as
+             `mail --user <handle>`. Leave the placeholder empty to auto-pick
+             when there's a single user (required once more than one exists). -->
+        <key>PREFRONTAL_USER</key>
+        <string>__PREFRONTAL_USER__</string>
     </dict>
 </dict>
 </plist>
