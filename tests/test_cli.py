@@ -278,3 +278,59 @@ def test_notify_reports_when_no_transport_configured(tmp_path, capsys, monkeypat
     err = capsys.readouterr().err
     assert "no transport" in err.lower()
     get_settings.cache_clear()
+
+
+def test_clarify_check_list_resolve_and_guide(tmp_path, capsys):
+    """The `clarify` command wires through: check → list → resolve → guide.
+
+    Exercises the argument wiring for the whole group (the coaching tick uses the
+    same sweep). The default Ollama is unreachable in tests, so detection takes
+    the heuristic path — which still recognizes "Tax".
+    """
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    assert main(["todo", "--db-path", str(db), "add", "Tax", "--priority", "2"]) == 0
+    capsys.readouterr()
+
+    # check: flags the ambiguous "Tax" todo.
+    assert main(["clarify", "--db-path", str(db), "check"]) == 0
+    out = capsys.readouterr().out
+    assert "Tax" in out and "has guide" in out
+
+    # list: the pending question is there; grab its id.
+    assert main(["clarify", "--db-path", str(db), "list"]) == 0
+    listed = capsys.readouterr().out
+    cid = int(listed.split("#", 1)[1].split(" ", 1)[0])
+
+    # resolve by option 0 → recognized task type, so the playbook prints.
+    assert main(["clarify", "--db-path", str(db), "resolve", str(cid), "--option", "0"]) == 0
+    resolved = capsys.readouterr().out
+    assert "Resolved" in resolved and "Filing your tax return" in resolved
+
+    # A re-check asks nothing new (the item now has history).
+    assert main(["clarify", "--db-path", str(db), "check"]) == 0
+    assert "No new ambiguous items" in capsys.readouterr().out
+
+    # guide: preview a playbook by type (no store needed); unknown type exits 1.
+    assert main(["clarify", "--db-path", str(db), "guide", "tax_filing"]) == 0
+    assert "Filing your tax return" in capsys.readouterr().out
+    assert main(["clarify", "--db-path", str(db), "guide", "nope"]) == 1
+    assert "No playbook" in capsys.readouterr().err
+
+
+def test_clarify_dismiss_and_bad_ids(tmp_path, capsys):
+    """`clarify dismiss` marks an item not-ambiguous; bad ids exit non-zero."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    assert main(["todo", "--db-path", str(db), "add", "Mom"]) == 0
+    assert main(["clarify", "--db-path", str(db), "check"]) == 0
+    listed_id = int(capsys.readouterr().out.split("#", 1)[1].split(" ", 1)[0])
+
+    assert main(["clarify", "--db-path", str(db), "dismiss", str(listed_id)]) == 0
+    assert "Dismissed" in capsys.readouterr().out
+    # Dismissing again (no longer pending) and an unknown id both exit 1.
+    assert main(["clarify", "--db-path", str(db), "dismiss", str(listed_id)]) == 1
+    assert main(["clarify", "--db-path", str(db), "resolve", "999999", "--option", "0"]) == 1
+    capsys.readouterr()

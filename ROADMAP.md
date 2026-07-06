@@ -63,9 +63,12 @@ the first test. Code follow-ups below are optional polish.
   calls per tick, and it never re-asks an item it has history for.
   `POST /clarifications/check` is the on-demand "check now" twin;
   `GET /clarifications`, `POST /clarifications/{id}/resolve|dismiss`,
-  `GET /clarifications/playbooks/{task_type}` round it out. Declared as the Task
-  Paralysis `clarify_ambiguous` intervention and surfaced in its profile section.
-  Covered by `tests/test_clarify.py` + `tests/test_clarify_endpoints.py`.
+  `GET /clarifications/playbooks/{task_type}` round out the HTTP surface, and a
+  `prefrontal clarify check|list|resolve|dismiss|guide` CLI mirrors it for
+  headless use (the resolve logic is shared via `apply_clarification_answer`, so
+  HTTP and CLI can't drift). Declared as the Task Paralysis `clarify_ambiguous`
+  intervention and surfaced in its profile section. Covered by
+  `tests/test_clarify.py` + `tests/test_clarify_endpoints.py` + `tests/test_cli.py`.
   *(Next: grow the playbook registry.)*
 - **Departure reminders on the coaching tick (toward retiring n8n)** ✅ — the
   `departure_buffer` intervention is now a coach cue: `TimeBlindnessModule.evaluate`

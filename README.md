@@ -110,7 +110,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. Also woven into the morning brief as a day-shaped closing line (`briefing_note`). `prefrontal encourage` / `open-day`, `GET /encouragement`, `POST /briefing/open-day` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
-| Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — the detection sweep runs on the coaching tick (`sweep_ambiguous_items`), with `POST /clarifications/check` as the on-demand twin, plus `GET /clarifications` and resolve/dismiss |
+| Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — the detection sweep runs on the coaching tick (`sweep_ambiguous_items`), with `POST /clarifications/check` as the on-demand twin, plus `GET /clarifications`, resolve/dismiss, and a `prefrontal clarify check/list/resolve/dismiss/guide` CLI |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
 | Behavioral insights UI | `prefrontal/stats.py` · `webhooks/stats.html` | ✅ `GET /stats` — time-estimation bias, follow-through + streak, channel responsiveness; inline SVG/CSS charts over your episodes (shared light/dark theme + nav) |
@@ -179,6 +179,11 @@ prefrontal panic
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
 prefrontal fit 20      # "with 20 min free, you could knock out…"
+
+# Hone in a vague item ("Tax") so it can actually be started (also runs on the tick)
+prefrontal clarify check                 # flag ambiguous todos/commitments
+prefrontal clarify resolve <id> --option 0   # pick a reading; prints a guide if recognized
+prefrontal clarify guide tax_filing      # preview a task's step-by-step walkthrough
 
 # Where did the week's out-of-home time go? (shop/work/home/kids/personal)
 prefrontal balance            # last 7 days by life-sphere, vs your weekly aims

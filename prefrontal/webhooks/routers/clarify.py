@@ -24,15 +24,12 @@ from fastapi import (
 
 from prefrontal.clarify import (
     MAX_SWEEP_ITEMS,
+    apply_clarification_answer,
     known_task_types,
     playbook_view,
     resolve_playbook,
     sweep_ambiguous_items,
 )
-from prefrontal.clarify import (
-    _known_task_type as infer_task_type,
-)
-from prefrontal.memory.repos.clarifications import TARGET_TODO
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -148,50 +145,24 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No pending clarification {clarification_id}.",
             )
-        options = row.get("options") or []
-        answer: str | None = None
-        task_type: str | None = None
-        if payload.option_index is not None:
-            if not (0 <= payload.option_index < len(options)):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"option_index {payload.option_index} is out of range.",
-                )
-            chosen = options[payload.option_index]
-            answer = str(chosen.get("label") or "").strip()
-            task_type = chosen.get("task_type")
-        elif payload.answer and payload.answer.strip():
-            answer = payload.answer.strip()
-            # A free-text answer may still name a recognized task ("file my taxes").
-            task_type = payload.task_type or infer_task_type(answer)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide an 'option_index' or a non-empty 'answer'.",
+        try:
+            result = apply_clarification_answer(
+                memory,
+                row,
+                option_index=payload.option_index,
+                answer=payload.answer,
+                task_type=payload.task_type,
             )
-        # Only a recognized type unlocks a guide; anything else is a plain reading.
-        if task_type not in known_task_types():
-            task_type = None
-
-        memory.resolve_clarification(clarification_id, answer=answer, task_type=task_type)
-
-        # Hone the item itself for a todo: append the chosen reading to its notes
-        # (non-destructive — the title is left alone so a calendar sync can't clash).
-        if row["target_type"] == TARGET_TODO:
-            todo = memory.get_todo(row["target_id"])
-            if todo is not None and todo.get("status") == "open":
-                existing = (todo.get("notes") or "").strip()
-                note = f"Clarified: {answer}"
-                memory.set_todo_notes(
-                    row["target_id"], f"{existing}\n{note}" if existing else note
-                )
-
-        playbook = resolve_playbook(task_type)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        playbook = result["playbook"]
         return {
             "id": clarification_id,
             "status": "resolved",
-            "answer": answer,
-            "task_type": task_type,
+            "answer": result["answer"],
+            "task_type": result["task_type"],
             "playbook": playbook_view(playbook) if playbook is not None else None,
         }
 

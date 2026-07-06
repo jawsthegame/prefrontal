@@ -527,6 +527,59 @@ def playbook_view(playbook: Playbook) -> dict[str, Any]:
     }
 
 
+def apply_clarification_answer(
+    store: MemoryStore,
+    row: dict[str, Any],
+    *,
+    option_index: int | None = None,
+    answer: str | None = None,
+    task_type: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a *pending* clarification with the chosen reading; return its guide.
+
+    Shared by the HTTP resolve endpoint and ``prefrontal clarify resolve`` so the
+    two can't drift. Given the already-fetched, still-pending ``row`` and either an
+    ``option_index`` (pick one offered reading) or a free-text ``answer``, it
+    records the reading, hones a ``todo`` target by appending the reading to its
+    notes (non-destructive — the title is left alone), and returns
+    ``{"answer", "task_type", "playbook"}`` where ``playbook`` is a
+    :class:`Playbook` (or ``None`` when the reading maps to no recognized task).
+
+    Only a recognized ``task_type`` unlocks a guide; anything else is a plain
+    disambiguation. Raises :class:`ValueError` on bad input — no option/answer
+    given, or an out-of-range index — so each caller maps it to its own surface
+    (a 422 for HTTP, stderr for the CLI).
+    """
+    options = row.get("options") or []
+    if option_index is not None:
+        if not (0 <= option_index < len(options)):
+            raise ValueError(f"option_index {option_index} is out of range.")
+        chosen = options[option_index]
+        answer = str(chosen.get("label") or "").strip()
+        task_type = chosen.get("task_type")
+    elif answer and answer.strip():
+        answer = answer.strip()
+        # A free-text answer may still name a recognized task ("file my taxes").
+        task_type = task_type or _known_task_type(answer)
+    else:
+        raise ValueError("Provide an option_index or a non-empty answer.")
+    if task_type not in known_task_types():
+        task_type = None
+
+    store.resolve_clarification(row["id"], answer=answer, task_type=task_type)
+
+    if row["target_type"] == TARGET_TODO:
+        todo = store.get_todo(row["target_id"])
+        if todo is not None and todo.get("status") == "open":
+            existing = (todo.get("notes") or "").strip()
+            note = f"Clarified: {answer}"
+            store.set_todo_notes(
+                row["target_id"], f"{existing}\n{note}" if existing else note
+            )
+
+    return {"answer": answer, "task_type": task_type, "playbook": resolve_playbook(task_type)}
+
+
 def candidate_view(candidate: ClarificationCandidate) -> dict[str, Any]:
     """A JSON-ready view of a clarification candidate (question + options)."""
     return {
