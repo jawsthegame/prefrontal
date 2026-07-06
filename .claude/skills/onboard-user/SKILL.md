@@ -73,9 +73,17 @@ household mints a code and the newcomer redeems it, no operator step:
 prefrontal household invite --user <existing-member-handle>
 #   → Invite code: PLUM-7F2Q  (share it, or the <base-url>/kids?invite=PLUM-7F2Q link)
 
+# ...or text the join link straight to the newcomer via Twilio (needs TWILIO_*
+# configured — the same account the voice-call escalation uses):
+prefrontal household invite --user <existing-member-handle> --sms "+14155551234"
+
 # The new user redeems it (they must be a provisioned user in no household):
 prefrontal household redeem PLUM-7F2Q --user <new-handle>
 ```
+
+(Over HTTP, `POST /household/invites` accepts an optional `{"sms_to": "+1…"}`
+to text the link. Twilio unconfigured → the code is still minted and the `sms`
+result just reports a no-op, so a failed text never blocks the invite.)
 
 Or the **operator wires them in directly** (also used to create the very first
 household):
