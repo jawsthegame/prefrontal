@@ -539,14 +539,19 @@ function renderRectangular() {
 function renderHomeScreen() {
   w.backgroundColor = C.bg;
   w.setPadding(14, 16, 12, 14);
+  // Medium is kept deliberately spare — just the header, your commitments, and a
+  // single most-pressing alert line. FYI, the footer counts, and the last-nudge
+  // line are large-only (large has the room; medium reads as crowded with them).
+  const large = family === "large";
 
-  // header: title + last-updated (or offline)
+  // header: title only (no clock — a home-screen widget sits under the phone's
+  // own clock, so its own timestamp is just noise). Offline is the one thing the
+  // right side still calls out, since a stale card should say so.
   const head = w.addStack();
   head.centerAlignContent();
   text(head, "🧠 Prefrontal", { bold: true, size: small ? 13 : 15 });
   head.addSpacer();
-  text(head, ok ? new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "offline",
-    { color: ok ? C.muted : C.call, size: 11 });
+  if (!ok) text(head, "offline", { color: C.call, size: 11 });
   w.addSpacer(small ? 6 : 8);
 
   if (!ok) {
@@ -577,10 +582,9 @@ function renderHomeScreen() {
     w.addSpacer(6);
   }
 
-  // Next commitments today. Medium stays lean (2) so the card doesn't overflow
-  // once FYI / behind / "time for one thing" / counts stack below; large has the
-  // room for the fuller list.
-  const upcoming = upcomingList.slice(0, small ? 1 : (family === "large" ? 6 : 2));
+  // Next commitments today. Medium stays lean (2) so the card reads at a glance;
+  // large has the room for the fuller list.
+  const upcoming = upcomingList.slice(0, small ? 1 : (large ? 6 : 2));
   if (upcoming.length) {
     if (!active) text(w, todayCommitments.length ? "Today" : "Next up", { color: C.muted, size: 11, bold: true });
     for (const c of upcoming) {
@@ -600,29 +604,29 @@ function renderHomeScreen() {
           { color: col, size: 11, bold: nextDeparture.level === "go" });
       }
     }
-  } else if (!active && !fyiList.length) {
-    // Nothing that needs you and no FYIs either — a genuinely clear glance.
+  } else if (!active && !(fyiList.length && large)) {
+    // Nothing that needs you, and nothing else will be shown (FYI is large-only)
+    // — a genuinely clear glance rather than a near-empty card.
     text(w, "Nothing scheduled. 🎉", { color: C.muted, size: 13 });
   }
 
-  // FYI — where someone else will be. Its own muted section, clearly separated
-  // from your commitments above, so an FYI never reads as something you must do
-  // (and it never carries a leave-by — that's only for your own travel). Small
-  // has no room; medium shows the next one, large a few.
-  if (fyiList.length && !small) {
+  // FYI — where someone else will be. Informational only (never yours to do), so
+  // it's large-only: on medium it's the first thing to cut for a glanceable card.
+  if (fyiList.length && large) {
     w.addSpacer(6);
     text(w, "FYI", { color: C.fyi, size: 11, bold: true });
-    for (const c of fyiList.slice(0, family === "large" ? 4 : 1)) {
+    for (const c of fyiList.slice(0, 4)) {
       const r = w.addStack();
       r.centerAlignContent();
       text(r, fmtWhen(c.start_at) + "  ", { color: C.fyi, size: 12 });
-      text(r, c.title, { color: C.muted, size: small ? 12 : 13 });
+      text(r, c.title, { color: C.muted, size: 13 });
     }
   }
 
-  // Cascade knock-on — one alert line when running behind topples a chain. A
-  // genuine domino only (>=2 at risk); small has no room, so its Lock Screen
-  // facet covers that size.
+  // A single most-pressing alert line. Medium shows ONLY the top one so the card
+  // stays glanceable; large may show both. Priority: running-behind cascade (a
+  // genuine >=2-item domino) outranks the softer "time for one thing" nudge.
+  let alertShown = false;
   if (cascadeChain.length && !small) {
     w.addSpacer(6);
     const cr = w.addStack();
@@ -632,11 +636,13 @@ function renderHomeScreen() {
     }
     const titles = cascadeChain.map((c) => c.title).slice(0, 2).join(" → ");
     text(cr, ` behind · ${titles}`, { color: cascadeColor, size: 11, bold: true });
+    alertShown = true;
   }
 
-  // "Time for one thing" — the todo that fits your free window right now. This is
-  // the initiation nudge: one concrete action, sized to the time you actually have.
-  if (fitSug) {
+  // "Time for one thing" — the todo that fits your free window right now (the
+  // initiation nudge). On medium it yields when the behind line already took the
+  // one alert slot; large can show it alongside.
+  if (fitSug && !small && (large || !alertShown)) {
     w.addSpacer(6);
     const fr = w.addStack();
     fr.centerAlignContent();
@@ -645,8 +651,9 @@ function renderHomeScreen() {
     text(fr, ` · ${fitSug.title}`, { size: 12 });
   }
 
-  // Footer counts: conflicts / possible / todos.
-  if (!small) {
+  // Footer counts and the last-nudge line are large-only — on medium they're the
+  // clutter the "keep it glanceable" pass removes. Large has room for both.
+  if (large) {
     w.addSpacer(8);
     const foot = w.addStack();
     foot.centerAlignContent();
@@ -657,16 +664,14 @@ function renderHomeScreen() {
   }
 
   // Most recent nudge — what Prefrontal last told you, so a missed push is still
-  // visible. Small has no room; on medium it yields to the actionable "time for
-  // one thing" line when that's present (they'd otherwise stack two soft nudges);
-  // large has room to show it regardless, up to two lines.
-  if (recentNudge && !small && (family === "large" || !fitSug)) {
+  // visible. Large-only (up to two lines).
+  if (recentNudge && large) {
     w.addSpacer(6);
     const nrow = w.addStack();
     nrow.centerAlignContent();
     if (!symbol(nrow, "bell.badge", 11, C.accent)) text(nrow, "🔔", { size: 11 });
     const nt = text(nrow, " " + recentNudge.message, { size: 11, color: C.muted });
-    nt.lineLimit = family === "large" ? 2 : 1;
+    nt.lineLimit = 2;
   }
 }
 
