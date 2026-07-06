@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from prefrontal.clock import parse_hour
 from prefrontal.memory._helpers import (
     _row_to_dict,
     sha256_hex,
@@ -79,6 +80,25 @@ class StateRepo(Repo):
         if token in ("0", "false", "no", "off"):
             return False
         return default
+
+    def get_hour(self, key: str, default: int) -> int:
+        """Return a coaching-state value parsed as a clock hour (0–23).
+
+        The typed accessor for hour-of-day preferences (``responsive_hours_start``,
+        ``meal_start_hour`` …). Unlike :meth:`get_float` it accepts both a bare
+        hour (``"8"``) and an ``HH:MM`` clock string (``"08:00"``) — the latter
+        is what a time-picker or hand edit tends to write, and reading it through
+        ``get_float`` silently discarded it (``float("08:00")`` raises). A
+        missing, out-of-range, or unparseable value falls back to ``default``.
+
+        Args:
+            key: The preference name.
+            default: Value to return if the key is absent or not a valid hour.
+
+        Returns:
+            The stored value as an ``int`` hour in ``[0, 23]``, or ``default``.
+        """
+        return parse_hour(self.get_state(key), default)
 
     def set_state(self, key: str, value: str, source: str = "inferred") -> None:
         """Insert or update a coaching-state preference.

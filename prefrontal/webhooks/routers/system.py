@@ -12,6 +12,7 @@ from typing import (
 from fastapi import (
     APIRouter,
     Depends,
+    Request,
 )
 from fastapi.responses import (
     HTMLResponse,
@@ -19,6 +20,8 @@ from fastapi.responses import (
     Response,
 )
 
+from prefrontal.clock import utcnow
+from prefrontal.modules.self_care import self_care_status
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
@@ -147,5 +150,19 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """Aggregated behavioral insights for the signed-in user (JSON for /stats)."""
         return build_stats(ctx.store)
+
+    @router.get("/self-care", tags=["system"])
+    def self_care_data(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Today's self-care status for the signed-in user (JSON for the dashboard card).
+
+        A read-only projection of the self-care coaching state — the master
+        switch plus each check's progress toward its daily target — so the
+        dashboard can show at a glance whether the checks are even on (the
+        common "why am I not getting nudges?" cause) and where today stands.
+        """
+        return self_care_status(ctx.store, utcnow(), services.settings.timezone)
 
     return router

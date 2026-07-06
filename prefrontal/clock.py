@@ -56,3 +56,29 @@ def parse_ts_strict(ts: str) -> datetime:
     a ``None`` to swallow.
     """
     return datetime.strptime(str(ts)[:19], TS_FMT)
+
+
+def parse_hour(raw: object, default: int) -> int:
+    """Parse a coaching-state "clock hour" value, tolerant of ``None``/garbage.
+
+    An hour preference (``responsive_hours_start``, ``meal_start_hour`` …) is a
+    bare hour of the day. It's *meant* to be stored as a plain integer
+    (``"8"``, ``"14"``), but a time-picker UI or a hand edit readily writes an
+    ``HH:MM`` / ``HH:MM:SS`` clock string (``"08:00"``) instead — which
+    ``float("08:00")`` cannot parse, so a naive ``int(get_float(...))`` silently
+    fell back to the default and quietly ignored the user's window. This accepts
+    both forms: it takes the hour component before the first ``:`` and drops the
+    minutes (the windows are hour-granular). A missing, empty, out-of-range
+    (not 0–23), or otherwise unparseable value falls back to ``default`` rather
+    than raising, mirroring :meth:`~prefrontal.memory.repos.state.StateRepo.get_float`.
+    """
+    if raw is None:
+        return default
+    head = str(raw).strip().split(":", 1)[0]
+    if not head:
+        return default
+    try:
+        hour = int(head)
+    except (TypeError, ValueError):
+        return default
+    return hour if 0 <= hour <= 23 else default

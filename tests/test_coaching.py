@@ -14,9 +14,11 @@ from prefrontal.coaching import (
     CoachContext,
     Cue,
     Decision,
+    build_context,
     choose_channel,
     collect_cues,
     decide,
+    in_quiet_hours,
     note_delivered,
     record_fired,
     resolve_ack,
@@ -454,3 +456,45 @@ def test_nudge_act_tap_records_the_delivered_channel():
         assert len(eps) == 1 and eps[0]["acknowledged"] == 1  # tap = acknowledged
     finally:
         conn.close()
+
+
+# -- responsive hours accept "HH:MM" as well as bare hours -------------------
+
+
+def test_responsive_hours_honor_hh_mm_clock_strings():
+    """Regression: a window stored as "08:00"/"14:00" was silently dropped.
+
+    ``float("08:00")`` raises, so the old ``int(get_float(...))`` fell back to
+    the 8–22 defaults — the user's "quiet after 2pm" never took effect. Both
+    ``build_context`` and ``in_quiet_hours`` now parse the clock string.
+    """
+    store = scoped_default(MemoryStore(init_db(":memory:")))
+    store.set_state("responsive_hours_start", "08:00", source="explicit")
+    store.set_state("responsive_hours_end", "14:00", source="explicit")
+
+    ctx = build_context(store, now=NOON)
+    assert (ctx.responsive_start, ctx.responsive_end) == (8, 14)
+
+    # 15:00 UTC is past the 14:00 end → outside the window (quiet).
+    assert in_quiet_hours(store, datetime(2026, 7, 2, 15, 0, 0), "UTC") is True
+    # 12:00 UTC is inside 08:00–14:00 → responsive.
+    assert in_quiet_hours(store, datetime(2026, 7, 2, 12, 0, 0), "UTC") is False
+
+
+def test_responsive_hours_still_accept_bare_integer_hours():
+    store = scoped_default(MemoryStore(init_db(":memory:")))
+    store.set_state("responsive_hours_start", "9", source="explicit")
+    store.set_state("responsive_hours_end", "17", source="explicit")
+    ctx = build_context(store, now=NOON)
+    assert (ctx.responsive_start, ctx.responsive_end) == (9, 17)
+
+
+def test_get_hour_accessor_parses_both_forms_and_falls_back():
+    store = scoped_default(MemoryStore(init_db(":memory:")))
+    store.set_state("meal_start_hour", "08:00", source="explicit")
+    assert store.get_hour("meal_start_hour", 11) == 8
+    store.set_state("meal_start_hour", "13", source="explicit")
+    assert store.get_hour("meal_start_hour", 11) == 13
+    store.set_state("meal_start_hour", "garbage", source="explicit")
+    assert store.get_hour("meal_start_hour", 11) == 11  # unparseable → default
+    assert store.get_hour("never_set_key", 9) == 9  # absent → default
