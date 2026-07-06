@@ -21,6 +21,7 @@ from fastapi.responses import (
     HTMLResponse,
 )
 
+from prefrontal.briefing import record_briefing_feedback
 from prefrontal.clock import TS_FMT
 from prefrontal.coaching import (
     resolve_ack,
@@ -573,6 +574,17 @@ def build_router(services: RouterServices) -> APIRouter:
             if result is None:
                 return _dismiss_page("That chore is no longer on the list.")
             return _dismiss_page(f"Done — “{result['title']}” is sorted for today. 🙌")
+
+        if action in ("briefing_helped", "briefing_not_helped"):
+            # The morning briefing has no entity id — the vote is about "the digest
+            # you just read" (target rides a synthetic 0). Record it; the tally
+            # steers the LLM briefing voice via learned_briefing_guidance.
+            helped = action == "briefing_helped"
+            record_briefing_feedback(memory, helpful=helped)
+            return _dismiss_page(
+                "Glad it helped 💛 I'll keep them like this." if helped
+                else "Thanks — I'll make the next one tighter and more focused."
+            )
 
         # made_it / missed_it — log a commitment's departure outcome.
         commitment = memory.get_commitment(target_id)

@@ -428,10 +428,21 @@ the first test. Code follow-ups below are optional polish.
   a "🚶 Leave by:" section listing today's remaining travel commitments with their
   leave-by (bias-adjusted travel estimate, or the static lead), planned with the
   same `plan_departure`/`departure_kwargs` the nudge uses so the digest matches
-  what it's nudged for; attend-mode and zero-lead items are omitted, gated on the
-  Time Blindness module. Covered by `tests/test_departure.py` +
-  `tests/test_briefing.py`. *(Next: optional geocoding of free-text `location`;
-  per-commitment travel learning.)*
+  what it's nudged for; attend-mode, zero-lead, **FYI** (someone else's event),
+  and placeholder-hold items are omitted — the same real, own-commitment subset
+  the nudge and cascade use via `is_attendable`, so an FYI event never gets a
+  "leave by" (or a tight-stretch flag) — gated on the Time Blindness module.
+  Covered by `tests/test_departure.py` + `tests/test_briefing.py`. *(Next:
+  optional geocoding of free-text `location`; per-commitment travel learning.)*
+- **Briefing layout + feedback loop** ✅ — the deterministic digest now leads with
+  today and what to act on (schedule → leave-by → risks → opportunities) and keeps
+  the gentler look-back (what slipped, focus, balance) down by the closing note,
+  with consistent emoji headers and warmer phrasing. Each delivered digest ends
+  with a small 👍/👎 "Did this help?" footer (signed one-tap `/nudge/act` links,
+  `briefing_helped`/`briefing_not_helped`, riding a synthetic `0` target like the
+  self-care checks). The running tally feeds `learned_briefing_guidance` back into
+  the LLM briefing prompt — a run of 👎 tightens the voice, a run of 👍 holds its
+  shape. Covered by `tests/test_briefing.py` + `tests/test_nudge_act.py`.
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.

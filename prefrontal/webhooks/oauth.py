@@ -165,6 +165,8 @@ NUDGE_ACTIONS = (
     "load_balanced",   # weekly load check-in → felt balanced this week
     "load_heavy",      # weekly load check-in → carried a lot this week
     "digest_seen",     # daily delta digest → mark the sheet seen (all caught up)
+    "briefing_helped",     # morning briefing → 👍 it helped (steers the voice)
+    "briefing_not_helped", # morning briefing → 👎 it didn't (tighten it up)
     "chore_done",      # shared chore → mark it done for today (whoever tapped)
     "trip_domain_shop",      # trip-label ask → file this trip under shop
     "trip_domain_work",      # trip-label ask → file this trip under work

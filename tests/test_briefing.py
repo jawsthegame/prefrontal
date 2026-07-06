@@ -305,6 +305,49 @@ class _FakeClient:
         return self.reply
 
 
+def test_briefing_feedback_tally_and_guidance(store):
+    """👍/👎 votes accumulate and, past the margin, steer the LLM prompt."""
+    from prefrontal.briefing import (
+        learned_briefing_guidance,
+        record_briefing_feedback,
+    )
+
+    assert learned_briefing_guidance(store) == ""  # no signal yet
+    tally = record_briefing_feedback(store, helpful=False)
+    assert tally == {"helpful": 0, "not_helpful": 1}
+    assert learned_briefing_guidance(store) == ""  # one vote is below the margin
+    record_briefing_feedback(store, helpful=False)
+    assert "Tighten up" in learned_briefing_guidance(store)
+
+    # Enough 👍 to flip the balance back the other way.
+    for _ in range(4):
+        record_briefing_feedback(store, helpful=True)
+    assert "keep this shape" in learned_briefing_guidance(store)
+
+
+class _CapturingClient:
+    """A fake client that records the system prompt it was handed."""
+
+    def __init__(self):
+        self.system = None
+        self.model = "fake"
+
+    def generate(self, prompt, *, system=None):
+        self.system = system
+        return "Morning! Tight and focused today."
+
+
+def test_summarize_briefing_folds_feedback_into_prompt(store):
+    """A run of 👎 reaches the model as an appended 'tighten up' instruction."""
+    from prefrontal.briefing import record_briefing_feedback
+
+    for _ in range(2):
+        record_briefing_feedback(store, helpful=False)
+    client = _CapturingClient()
+    summarize_briefing(store, client=client)
+    assert "Tighten up" in client.system
+
+
 def test_summarize_briefing_llm_and_fallback(store):
     """LLM prose when available; deterministic digest on failure."""
     ok = summarize_briefing(store, client=_FakeClient(reply="Morning! Light day ahead."))

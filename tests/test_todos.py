@@ -1054,7 +1054,8 @@ def test_briefing_surfaces_avoided(store):
     store.conn.commit()
     b = build_briefing(store, now=now)
     assert any(a["title"] == "Renew passport" for a in b.avoided)
-    assert "keep putting off" in render_briefing(b).lower()
+    text = render_briefing(b)
+    assert "Keeps sliding" in text and "Renew passport" in text
 
 
 # -- outcome capture (closing a todo feeds the learning loop) -----------------
