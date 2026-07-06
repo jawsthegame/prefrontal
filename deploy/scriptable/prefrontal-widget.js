@@ -258,8 +258,9 @@ const open = (todos.todos || []).length;
 // or already too late to leave for something), which upcoming commitments topple.
 // Surfaced only for a genuine domino (>=2 at risk) — a single at-risk item is
 // already covered by the departure/next facets, so this earns its slot when it
-// reveals a chain those don't. `/impact/cascade` self-gates: it returns nothing
-// unless you're actually behind (see the endpoint's source resolution).
+// reveals a chain those don't. `/impact/cascade` is scoped to today's own
+// commitments (never FYI, never tomorrow), so this reflects a real same-day
+// domino — not a tight back-to-back on a future day (see the endpoint).
 const cascadeRisky = (cascade.at_risk || []);
 const cascadeChain = cascadeRisky.length >= 2 ? cascadeRisky : [];
 const cascadeColor = cascade.hard_conflict ? C.call : C.firm;
@@ -576,8 +577,10 @@ function renderHomeScreen() {
     w.addSpacer(6);
   }
 
-  // Next commitments today.
-  const upcoming = upcomingList.slice(0, small ? 1 : (family === "large" ? 6 : 3));
+  // Next commitments today. Medium stays lean (2) so the card doesn't overflow
+  // once FYI / behind / "time for one thing" / counts stack below; large has the
+  // room for the fuller list.
+  const upcoming = upcomingList.slice(0, small ? 1 : (family === "large" ? 6 : 2));
   if (upcoming.length) {
     if (!active) text(w, todayCommitments.length ? "Today" : "Next up", { color: C.muted, size: 11, bold: true });
     for (const c of upcoming) {
@@ -605,11 +608,11 @@ function renderHomeScreen() {
   // FYI — where someone else will be. Its own muted section, clearly separated
   // from your commitments above, so an FYI never reads as something you must do
   // (and it never carries a leave-by — that's only for your own travel). Small
-  // has no room; medium shows a couple, large a few.
+  // has no room; medium shows the next one, large a few.
   if (fyiList.length && !small) {
     w.addSpacer(6);
     text(w, "FYI", { color: C.fyi, size: 11, bold: true });
-    for (const c of fyiList.slice(0, family === "large" ? 4 : 2)) {
+    for (const c of fyiList.slice(0, family === "large" ? 4 : 1)) {
       const r = w.addStack();
       r.centerAlignContent();
       text(r, fmtWhen(c.start_at) + "  ", { color: C.fyi, size: 12 });
@@ -654,8 +657,10 @@ function renderHomeScreen() {
   }
 
   // Most recent nudge — what Prefrontal last told you, so a missed push is still
-  // visible. Small has no room; medium gets one line, large gets up to two.
-  if (recentNudge && !small) {
+  // visible. Small has no room; on medium it yields to the actionable "time for
+  // one thing" line when that's present (they'd otherwise stack two soft nudges);
+  // large has room to show it regardless, up to two lines.
+  if (recentNudge && !small && (family === "large" || !fitSug)) {
     w.addSpacer(6);
     const nrow = w.addStack();
     nrow.centerAlignContent();

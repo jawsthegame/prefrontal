@@ -529,6 +529,12 @@ def build_router(services: RouterServices) -> APIRouter:
         (``now + over_minutes``), else the bias-adjusted projection of the newest
         active outing, else now. ``source`` reports which was used.
 
+        The walk is scoped to the seed day and to your **own** commitments:
+        being "behind" doesn't carry across a night's sleep (a tight back-to-back
+        tomorrow isn't something you're behind on today), and FYI events (where
+        someone else will be) never consume your time or topple your schedule —
+        the same scoping the panic cascade uses.
+
         When a location is known (``current_lat``/``current_lon``, else the phone's
         last fix) the per-leg lead times use **real bias-adjusted travel** between
         commitment coordinates instead of each event's static ``lead_minutes`` — so
@@ -540,7 +546,6 @@ def build_router(services: RouterServices) -> APIRouter:
         at-risk subset, a ``hard_conflict`` flag, and a one-line ``phrase``.
         """
         memory = ctx.store
-        commitments = memory.upcoming_commitments()
 
         source = "now"
         free = utcnow()
@@ -563,6 +568,22 @@ def build_router(services: RouterServices) -> APIRouter:
                     outing["departure_at"], outing["time_window_minutes"], bias
                 )
                 source = "outing"
+
+        # Scope the walk to the seed day and to *your own* commitments. Being
+        # "behind" is a within-day notion — a domino chain doesn't survive a
+        # night's sleep, so a tight back-to-back tomorrow isn't something you're
+        # behind on today. And FYI events (where someone else will be; never
+        # yours to attend) must never be modelled as consuming your time and
+        # pushing a real commitment late — the same exclusion the panic cascade
+        # (:func:`prefrontal.panic._cascade_chain`) and every other surface make.
+        day_end = free.replace(hour=23, minute=59, second=59, microsecond=0)
+        commitments = [
+            c
+            for c in memory.commitments_between(
+                utcnow().strftime(TS_FMT), day_end.strftime(TS_FMT)
+            )
+            if c.get("kind") != "fyi"
+        ]
 
         def dump(i: Any) -> dict[str, Any]:
             return {
