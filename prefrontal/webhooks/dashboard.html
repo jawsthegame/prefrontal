@@ -837,9 +837,14 @@ function renderSelfCare(d) {
       return `<span class="sc-chip sc-off">${m.icon} ${esc(m.label)} <span class="sc-sub">off</span></span>`;
     }
     const cls = c.done ? "sc-chip sc-done" : "sc-chip";
-    const mark = c.done ? " ✓" : "";
+    // A once-a-day check (target 1) reads as done ✓ / not-yet — the "N/1"
+    // fraction adds nothing and looks broken when extra taps push the count
+    // past 1 (e.g. "3/1"). A recurring check (target > 1) shows real progress.
+    const progress = c.target > 1
+      ? `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`
+      : (c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`);
     const cadence = c.target > 1 ? ` · every ${mins(c.interval_minutes)}` : "";
-    return `<span class="${cls}">${m.icon} ${esc(m.label)} <b>${c.count}/${c.target}</b>${mark}`
+    return `<span class="${cls}">${m.icon} ${esc(m.label)} ${progress}`
       + `<span class="sc-sub">from ${c.start_hour}:00${cadence}</span></span>`;
   });
   return `<div class="sc-row">${chips.join("")}</div>`;
