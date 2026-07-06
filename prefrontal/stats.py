@@ -148,7 +148,11 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
         prefix = f"{check.key}: "
         mine = [e for e in episodes if str(e.get("context") or "").startswith(prefix)]
         counts = {o: sum(1 for e in mine if e.get("outcome") == o) for o in SELF_CARE_OUTCOMES}
-        n = sum(counts.values())
+        # `n` is every episode for the check; anything whose outcome isn't one of
+        # the three known verbs is "unknown" (unaccounted) — the composition bar
+        # renders that remainder as a neutral grey segment.
+        n = len(mine)
+        unknown = n - sum(counts.values())
         latencies = [
             lat
             for e in mine
@@ -162,6 +166,7 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
                 "confirmed": counts["confirmed"],
                 "snoozed": counts["snoozed"],
                 "ignored": counts["ignored"],
+                "unknown": unknown,
                 "response_rate": round(counts["confirmed"] / n, 2) if n else None,
                 "avg_latency_seconds": round(fmean(latencies), 1) if latencies else None,
                 "interval_minutes": max(
