@@ -114,6 +114,25 @@ def test_briefing_flags_fragile_stretch(store):
     assert "1:1" in text and "Design review" in text
 
 
+def test_briefing_fragile_ignores_fyi(store):
+    """An FYI event can't be toppled by your own overrun — it's not your time."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    # A real meeting, then a back-to-back FYI event that would "collide" under the
+    # bias if it were yours. It isn't — you go nowhere for it, so it's never flagged.
+    store.upsert_commitment(
+        title="Design review", start_at=_at(now + timedelta(minutes=60)),
+        end_at=_at(now + timedelta(minutes=90)), external_id="work:d1",
+    )
+    store.upsert_commitment(
+        title="Partner's brow appt", start_at=_at(now + timedelta(minutes=95)),
+        end_at=_at(now + timedelta(minutes=125)), external_id="personal:fyi",
+        kind="fyi",
+    )
+    b = build_briefing(store, now=now)
+    assert b.fragile == []
+    assert "Tight stretch" not in render_briefing(b)
+
+
 def test_briefing_spare_offers_alternatives(store):
     """A spare window offers a primary plus a couple of alternatives ('or: …')."""
     now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
@@ -171,6 +190,24 @@ def test_briefing_leave_by_skips_attend_mode_and_past(store):
     store.upsert_commitment(
         title="Gym", start_at=_at(now - timedelta(minutes=30)),
         end_at=_at(now + timedelta(minutes=30)), external_id="personal:1",
+    )
+    b = build_briefing(store, now=now)
+    assert b.departures == []
+    assert "Leave by" not in render_briefing(b)
+
+
+def test_briefing_leave_by_skips_fyi_and_placeholder(store):
+    """FYI events and placeholder holds never get a leave-by (you're not going)."""
+    now = utcnow().replace(hour=9, minute=0, second=0, microsecond=0)
+    # An FYI event — where a partner will be. You attend nothing, go nowhere.
+    store.upsert_commitment(
+        title="Partner's brow appt", start_at=_at(now + timedelta(minutes=120)),
+        external_id="personal:fyi", lead_minutes=15.0, kind="fyi",
+    )
+    # A placeholder hold — elastic time, nothing to leave by for.
+    store.upsert_commitment(
+        title="HOLD", start_at=_at(now + timedelta(minutes=180)),
+        external_id="personal:hold", lead_minutes=15.0,
     )
     b = build_briefing(store, now=now)
     assert b.departures == []

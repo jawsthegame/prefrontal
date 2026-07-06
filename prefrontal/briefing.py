@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts_strict as _parse_ts
-from prefrontal.commitments import find_conflicts
+from prefrontal.commitments import find_conflicts, is_attendable
 from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.focus_balance import balance_summary_line, build_focus_balance
@@ -223,6 +223,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     except (TypeError, ValueError):
         bias = 1.0
     remaining = [c for c in today if _parse_ts(c["start_at"]) >= now]
+    # Only real, own commitments sit in a "your time" chain: FYI events (where
+    # someone *else* will be) and placeholder holds don't consume your time, so
+    # they can't topple anything or earn a leave-by. This is the same subset every
+    # cascade/departure surface uses (see commitments.is_attendable).
+    attendable = [c for c in remaining if is_attendable(c)]
     fragile = [
         {
             "title": i.commitment["title"],
@@ -232,11 +237,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
             "caused_by": i.caused_by,
             "hardness": i.commitment.get("hardness"),
         }
-        for i in fragile_stretch(remaining, bias)
+        for i in fragile_stretch(attendable, bias)
     ]
 
     # Leave-by for today's remaining *travel* commitments — "when to leave," not
-    # just when things start. Plans the same `remaining` list with the same pure
+    # just when things start. Plans the same `attendable` list with the same pure
     # planner (plan_departure + departure_kwargs) the departure nudge and widget
     # use, so the digest's leave-by matches what it's nudged for. Gated on Time
     # Blindness (which owns departure timing); attend-mode meetings (you're already
@@ -245,7 +250,10 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     if module_enabled("time_blindness"):
         loc = store.get_location()
         dep_kwargs = departure_kwargs(store)
-        for c in remaining:
+        # `attendable` (above) is the same subset the departure nudge itself uses
+        # (departure.plan_upcoming_departures), so the digest's leave-by matches
+        # what it's nudged for — no FYI event or placeholder hold ever gets one.
+        for c in attendable:
             p = plan_departure(
                 c,
                 current_lat=loc["lat"] if loc else None,
@@ -363,10 +371,11 @@ def render_briefing(briefing: Briefing) -> str:
     if not briefing.today:
         lines.append("**Today:** nothing on the calendar. 🎉")
     else:
+        n = len(briefing.today)
         hard = sum(1 for c in briefing.today if c.get("hardness") == "hard")
+        noun = "commitment" if n == 1 else "commitments"
         lines.append(
-            f"**Today:** {len(briefing.today)} commitment(s)"
-            + (f", {hard} hard." if hard else ".")
+            f"**Today:** {n} {noun}" + (f", {hard} hard." if hard else ".")
         )
         if long or len(briefing.today) <= 5:
             for c in briefing.today:
@@ -470,12 +479,14 @@ def render_briefing(briefing: Briefing) -> str:
         if bias:
             try:
                 pct = round((float(bias) - 1.0) * 100)
+            except ValueError:
+                pct = 0
+            # Only nudge when there's a real learned overrun — "~0%" is noise.
+            if pct > 0:
                 lines.append(
                     f"_Reminder: you tend to underestimate time by ~{pct}% — "
-                    f"pad today's estimates ({bias}x)._"
+                    f"give today's plans a little extra room._"
                 )
-            except ValueError:
-                pass
 
     return "\n".join(lines).rstrip() + "\n"
 
