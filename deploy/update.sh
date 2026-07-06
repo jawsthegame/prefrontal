@@ -41,4 +41,13 @@ echo "[$(ts)] update: apply schema (init-db)"
 echo "[$(ts)] update: sync n8n workflows"
 "$PREFRONTAL_BIN" n8n push || echo "[$(ts)] update: n8n sync skipped/failed (non-fatal)"
 
+# Re-package the built artifacts (Python wheel, client handout PDFs, macOS
+# desktop app) from the freshly-pulled code. Best-effort and non-fatal by
+# design — each step self-skips when its toolchain/source is absent, and a
+# packaging failure must never block the restart of an otherwise-good update
+# (same stance as the n8n sync above). See deploy/package.sh.
+echo "[$(ts)] update: re-package artifacts"
+PREFRONTAL_HOME="$PREFRONTAL_HOME" bash "$PREFRONTAL_HOME/deploy/package.sh" \
+    || echo "[$(ts)] update: packaging skipped/failed (non-fatal)"
+
 echo "[$(ts)] update: complete"
