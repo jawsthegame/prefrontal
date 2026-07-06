@@ -307,6 +307,28 @@ def _utc(delta_minutes: float) -> str:
     return (utcnow() + timedelta(minutes=delta_minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def test_plan_upcoming_departures_skips_fyi_and_placeholders(store):
+    """A leave-by is only for real, own commitments — never FYI events or holds.
+
+    An FYI is where someone *else* will be (you're not going anywhere for it),
+    and a placeholder/hold has nothing to leave by — so neither must ever
+    produce a departure plan (and therefore never a nudge).
+    """
+    store.upsert_commitment(
+        title="Vistar Weekly Business Review", start_at=_utc(30),
+        lead_minutes=10, external_id="work:vistar",
+    )
+    store.upsert_commitment(
+        title="Elliott 7y checkup", start_at=_utc(60), kind="fyi",
+        lead_minutes=10, external_id="cal:checkup",
+    )
+    store.upsert_commitment(
+        title="HOLD", start_at=_utc(90), lead_minutes=10, external_id="cal:hold",
+    )
+    plans = plan_upcoming_departures(store)
+    assert [p.commitment["title"] for p in plans] == ["Vistar Weekly Business Review"]
+
+
 def test_location_ping_requires_auth(client):
     assert client.post("/webhooks/location", json={"lat": 1, "lon": 2}).status_code == 401
 

@@ -38,6 +38,7 @@ from prefrontal.commitments import (
     KINDS,
     conflict_dismissal_key,
     find_conflicts,
+    is_attendable,
     normalize_event,
     partition_conflicts,
     sync_calendar,
@@ -578,7 +579,9 @@ def build_router(services: RouterServices) -> APIRouter:
         # behind on today. The day boundary must be *local*: at 9pm Eastern the
         # UTC day has already rolled over, so a plain ``free.replace(hour=23,…)``
         # UTC window pulls in tomorrow-morning's commitments (see local_day_bounds).
-        # And FYI events (where someone else will be; never yours to attend) must
+        # ``is_attendable`` then keeps only real, own commitments: FYI events (where
+        # someone else will be; never yours to attend) and placeholder/hold blocks
+        # ("HOLD", "OOO", "Focus", …; elastic time you'd yield in a pinch) must
         # never be modelled as consuming your time and pushing a real commitment
         # late — the same exclusion the panic cascade and every other surface make.
         _day_start, day_end = local_day_bounds(free, resolved_settings.timezone)
@@ -588,7 +591,7 @@ def build_router(services: RouterServices) -> APIRouter:
             for c in memory.commitments_between(
                 lower.strftime(TS_FMT), day_end.strftime(TS_FMT)
             )
-            if c.get("kind") != "fyi"
+            if is_attendable(c)
         ]
 
         def dump(i: Any) -> dict[str, Any]:

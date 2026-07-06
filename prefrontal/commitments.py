@@ -163,6 +163,35 @@ def is_placeholder_title(title: str | None) -> bool:
     return _normalize_title(title) in GENERIC_TITLES
 
 
+def is_attendable(commitment: dict[str, Any]) -> bool:
+    """Whether a commitment is a real event *you* personally attend at a fixed time.
+
+    The two surfaces that model your time as a sequence of fixed blocks — the
+    running-behind cascade (:func:`prefrontal.impact.cascade_impact`) and the
+    departure reminder (:func:`prefrontal.departure.plan_upcoming_departures`) —
+    both want the same subset: events that are actually yours to show up to. Two
+    kinds of calendar entry are *not* that, and must be excluded from both:
+
+    - **FYI** events (``kind == "fyi"``) — where someone *else* will be (a
+      partner's appointment, a kid's lesson). They're never yours to attend, so
+      they can happen simultaneously with your own commitments: they must not
+      consume your time, topple anything in the cascade, or fire a departure
+      nudge (you're not going anywhere for them).
+    - **Placeholder/hold** blocks ("HOLD", "OOO", "Focus", "Block", …; see
+      :data:`GENERIC_TITLES`) — elastic time you'd yield the instant a real
+      commitment needed it. A domino that only pushes a hold isn't something
+      you're "behind" on, and there's nothing to "leave by" for a hold. A hold
+      overlapping a real meeting is a soft possible-conflict
+      (:func:`is_possible_conflict`), not a serial predecessor or a nudge.
+
+    Anything else is a real, own commitment: it consumes time, can be toppled,
+    and is worth a leave-by reminder.
+    """
+    if commitment.get("kind") == "fyi":
+        return False
+    return not is_placeholder_title(commitment.get("title"))
+
+
 def is_possible_conflict(conflict: Conflict) -> bool:
     """A *possible* (soft) conflict — at least one side is a placeholder title."""
     return is_placeholder_title(conflict.a.get("title")) or is_placeholder_title(
