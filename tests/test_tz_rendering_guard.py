@@ -81,7 +81,9 @@ def _clock_strftime_offenders(path: pathlib.Path, src: str, tree: ast.AST) -> li
         if LOCAL_HINT in recv:
             continue
         end = getattr(n, "end_lineno", n.lineno) or n.lineno
-        spanned = "\n".join(lines[n.lineno - 1 : end])
+        # Accept the marker on the call's own line(s) or the line directly above it,
+        # where an explanatory comment most naturally sits.
+        spanned = "\n".join(lines[max(0, n.lineno - 2) : end])
         if ALLOW_MARKER in spanned:
             continue
         seg = ast.get_source_segment(src, n) or "<strftime>"
@@ -106,3 +108,31 @@ def test_clock_strftime_is_local_or_marked() -> None:
         src = path.read_text()
         offenders += _clock_strftime_offenders(path, src, ast.parse(src))
     assert not offenders, "Wall-clock strftime not proven local:\n" + "\n".join(offenders)
+
+
+# --- the detectors themselves (lock the behavior these guards rely on) --------
+
+FAKE = pathlib.Path("prefrontal/fake.py")
+
+
+def _clock_hits(src: str) -> int:
+    return len(_clock_strftime_offenders(FAKE, src, ast.parse(src)))
+
+
+def _slice_hits(src: str) -> int:
+    return len(_slice_offenders(FAKE, src, ast.parse(src)))
+
+
+def test_slice_detector_flags_hhmm_slices_only() -> None:
+    assert _slice_hits('x = ts[11:16]\n') == 1          # HH:MM
+    assert _slice_hits('x = ts[11:19]\n') == 1          # HH:MM:SS
+    assert _slice_hits('x = ts[:10]\n') == 0            # date slice — not a wall clock
+
+
+def test_clock_strftime_detector_local_and_markers() -> None:
+    assert _clock_hits('y = start.strftime("%H:%M")\n') == 1          # non-local receiver → flagged
+    assert _clock_hits('y = local_dt.strftime("%H:%M")\n') == 0       # names "local" → skipped
+    assert _clock_hits('y = start_local.strftime("%H:%M")\n') == 0    # ..._local suffix too
+    assert _clock_hits('y = due.strftime("%H:%M")  # tz-ok: schedule\n') == 0   # same-line marker
+    assert _clock_hits('# tz-ok: schedule\ny = due.strftime("%H:%M")\n') == 0   # above-line marker
+    assert _clock_hits('y = d.strftime("%Y-%m-%d")\n') == 0           # date-only → out of scope

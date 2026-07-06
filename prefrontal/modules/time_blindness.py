@@ -339,6 +339,7 @@ class TimeBlindnessModule(Module):
         # commitment; the start itself when you attend from here).
         routine = int(store.get_float("morning_routine_minutes", DEFAULT_MORNING_ROUTINE_MINUTES))
         up_by = start_local if p.mode == "attend" else leave_local
+        # tz-ok: up_by is already local (start_local/leave_local, both via local_datetime)
         wake_at = (up_by - timedelta(minutes=max(0, routine))).strftime("%H:%M")
         shortcut = store.get_state("alarm_shortcut_name") or DEFAULT_ALARM_SHORTCUT
         return [
