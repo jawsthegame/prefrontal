@@ -163,19 +163,26 @@ def _star_grant_what(grant: dict[str, Any]) -> str:
     return f"{who_for} · {sign}{delta}⭐ ({title})"
 
 
-def _appt_when(start: datetime | None, now: datetime) -> str:
-    """Friendly "when" for an appointment ("today 3:00pm", "Thu 3:00pm", "in 5d")."""
+def _appt_when(start: datetime | None, now: datetime, tz: str) -> str:
+    """Friendly "when" for an appointment ("today 3:00pm", "Thu 3:00pm", "in 5d").
+
+    ``start``/``now`` are naive UTC; convert both to the household's local zone
+    before formatting the clock time and computing the day delta, so an Eastern
+    family's 3pm appointment doesn't read as 7pm (raw UTC) or slip a day.
+    """
     if start is None:
         return ""
-    time_str = start.strftime("%-I:%M%p").lower()
-    days = (start.date() - now.date()).days
+    local_start = local_datetime(start, tz)
+    local_now = local_datetime(now, tz)
+    time_str = local_start.strftime("%-I:%M%p").lower()
+    days = (local_start.date() - local_now.date()).days
     if days == 0:
         return f"today {time_str}"
     if days == 1:
         return f"tomorrow {time_str}"
     if 0 < days < 7:
-        return f"{start.strftime('%a')} {time_str}"
-    return f"{start.strftime('%b %-d')} {time_str}"
+        return f"{local_start.strftime('%a')} {time_str}"
+    return f"{local_start.strftime('%b %-d')} {time_str}"
 
 
 def build_sheet(
@@ -246,7 +253,7 @@ def build_sheet(
     agreements_out = [_prepare_agreement(a, star_totals.get(a["id"], 0)) for a in agreements]
 
     # 4. Upcoming child appointments — the viewer's kind='child' commitments.
-    upcoming = _upcoming_child_appts(store, now)
+    upcoming = _upcoming_child_appts(store, now, timezone)
 
     # 5. Shared shopping list — still-needed first.
     shopping = store.shopping_items()
@@ -387,7 +394,9 @@ def _prepare_agreement(a: dict[str, Any], star_total: int = 0) -> dict[str, Any]
     }
 
 
-def _upcoming_child_appts(store: MemoryStore, now: datetime) -> list[Appointment]:
+def _upcoming_child_appts(
+    store: MemoryStore, now: datetime, tz: str
+) -> list[Appointment]:
     """The viewer's near-window child appointments (``kind='child'`` commitments)."""
     horizon = now + timedelta(days=UPCOMING_APPT_DAYS)
     out: list[Appointment] = []
@@ -400,7 +409,7 @@ def _upcoming_child_appts(store: MemoryStore, now: datetime) -> list[Appointment
         out.append(
             Appointment(
                 title=c.get("title") or "appointment",
-                when=_appt_when(start, now),
+                when=_appt_when(start, now, tz),
                 start_at=str(c.get("start_at")),
                 location=c.get("location"),
             )

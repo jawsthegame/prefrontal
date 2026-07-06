@@ -223,6 +223,24 @@ def test_render_tone_warm_vs_plain(store):
     assert "ran rough" in plain and "referendum" not in plain
 
 
+def test_render_uses_local_time_for_refit_windows(store):
+    """Rough-day refit window times read in the local zone, not raw UTC.
+
+    The re-fit windows are naive UTC; _NOW (12:00 UTC) is 08:00 EDT. The digest
+    must show "8:00", not "12:00" (the old bug sliced the UTC string).
+    """
+    now = _NOW
+    for _ in range(3):
+        store.log_episode("task", outcome="miss")  # make the day rough
+    store.add_todo("Sort the mail", estimate_minutes=30, priority=1)
+    assessment = assess_day(store, now=now)
+    plan = build_recovery(store, assessment, now=now)
+    text = render_encouragement(assessment, plan, tz="America/New_York")
+    assert "What still fits today" in text and plan.refit  # a window was fit
+    assert "8:00" in text  # 12:00 UTC window start, shown in EDT
+    assert "12:00" not in text  # the UTC wall clock never leaks through
+
+
 # -- debounce cursor ---------------------------------------------------------
 
 

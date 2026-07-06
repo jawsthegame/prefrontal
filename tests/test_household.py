@@ -294,6 +294,24 @@ def test_upcoming_appointments_from_child_commitments(store, alex):
     assert "Upcoming appointments" in render_sheet(sheet)
 
 
+def test_upcoming_appointment_time_is_local(store, alex):
+    """A child appointment's 'when' reads in the household's zone, not raw UTC.
+
+    15:00 UTC is 11:00am EDT — the sheet must say "11:00am", not "3:00pm".
+    """
+    alex.add_child(name="Sam")
+    alex.upsert_commitment(
+        title="Sam dentist",
+        start_at="2026-07-07 15:00:00",
+        location="Dr. Lin",
+        source="manual",
+        kind="child",
+        kind_source="user",
+    )
+    sheet = build_sheet(alex, now=NOW, timezone="America/New_York")
+    assert sheet.upcoming[0].when == "Tue 11:00am"  # 5 days out → weekday; local time
+
+
 # --- assistant ops -----------------------------------------------------------
 
 

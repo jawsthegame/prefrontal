@@ -364,7 +364,9 @@ def build_recovery(
 # --- Rendering ---------------------------------------------------------------
 
 
-def render_encouragement(assessment: DayAssessment, plan: RecoveryPlan) -> str:
+def render_encouragement(
+    assessment: DayAssessment, plan: RecoveryPlan, *, tz: str | None = None
+) -> str:
     """Render the assessment + plan as tone-calibrated Markdown (deterministic).
 
     ``warm`` acknowledges the rough day; ``plain`` states it matter-of-factly.
@@ -372,6 +374,7 @@ def render_encouragement(assessment: DayAssessment, plan: RecoveryPlan) -> str:
     """
     if not assessment.rough:
         return ""
+    tz = tz or get_settings().timezone
     warm = assessment.tone != "plain"
     lines: list[str] = []
     if warm:
@@ -394,7 +397,7 @@ def render_encouragement(assessment: DayAssessment, plan: RecoveryPlan) -> str:
     if fits:
         lines.append("**What still fits today:**")
         lines.extend(
-            f"- {_hhmm(r['start'])} (~{round(r['minutes'])}m) — {r['suggestion']}"
+            f"- {_hhmm(r['start'], tz)} (~{round(r['minutes'])}m) — {r['suggestion']}"
             for r in fits
         )
         lines.append("")
@@ -411,8 +414,15 @@ def render_encouragement(assessment: DayAssessment, plan: RecoveryPlan) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _hhmm(ts: str) -> str:
-    return str(ts)[11:16] or str(ts)
+def _hhmm(ts: str, tz: str) -> str:
+    """Render a stored naive-UTC timestamp as local ``HH:MM`` in ``tz``.
+
+    Window starts are naive UTC; slicing ``[11:16]`` off the string would print
+    the UTC wall clock (hours ahead for a non-UTC user). Convert first, the same
+    way the briefing renders its times.
+    """
+    dt = _parse_or_none(ts)
+    return local_datetime(dt, tz).strftime("%H:%M") if dt else str(ts)
 
 
 # --- Optional prose pass -----------------------------------------------------
@@ -513,7 +523,7 @@ def _open_relax_note(briefing: Briefing, warm: bool) -> str:
 def _open_accomplish_note(briefing: Briefing, warm: bool) -> str:
     picks = [s for s in briefing.spare if s.get("suggestion")][:2]
     if picks:
-        shape = ", ".join(f"{_hhmm(s['start'])} {s['suggestion']}" for s in picks)
+        shape = ", ".join(f"{_hhmm(s['start'], briefing.tz)} {s['suggestion']}" for s in picks)
         if warm:
             return (
                 "Today's wide open and you're in make-it-count mode — here's a light "
