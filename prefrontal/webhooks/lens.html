@@ -227,12 +227,16 @@ async function api(path) {
 }
 
 // ── Read-only renderers (mirror the /household layout, without the forms) ──
-// The category/items grid for one fact block — shared by the kids and pets.
-function catsHtml(block) {
-  return (block.categories || []).map((cat) =>
-    `<div class="cat-h">${esc(cat.label)}</div>` + cat.items.map((it) =>
+// The category/items grid for one fact block. Facts share one set of category
+// keys across the household; `labels` optionally re-titles them for the lens
+// (pets read "Vet & meds" where kids read "Health"), keyed by cat.category.
+function catsHtml(block, labels) {
+  return (block.categories || []).map((cat) => {
+    const heading = (labels && labels[cat.category]) || cat.label;
+    return `<div class="cat-h">${esc(heading)}</div>` + cat.items.map((it) =>
       `<div class="kv"><span class="k">${esc(it.item)}</span><span class="v">${esc(it.value || "—")}</span></div>`
-    ).join("")).join("");
+    ).join("");
+  }).join("");
 }
 
 function renderFacts(perChild) {
@@ -241,16 +245,46 @@ function renderFacts(perChild) {
     `<div class="child-h">${esc(block.child_name)}</div>${catsHtml(block)}`).join("");
 }
 
-// Pets: one block per pet (name · species), then its facts (meds, vet, food).
+// Pet-flavoured names for the shared fact categories — a vet contact reads very
+// differently from a kid's "School & activities". Keys not listed keep their
+// default label.
+const PET_CATEGORY_LABELS = {
+  health: "Vet & meds",
+  contact: "Vet & groomer",
+  food: "Food & feeding",
+  routine: "Daily routine",
+  school: "Training & activities",
+  sizes: "Size & gear",
+};
+
+// A pet's age from its birthday ("3 yr" / "5 mo"), or "" when unknown/unparseable.
+function petAge(birthday) {
+  if (!birthday) return "";
+  const born = new Date(String(birthday).slice(0, 10) + "T00:00:00");
+  if (isNaN(born)) return "";
+  const months = Math.floor((Date.now() - born.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+  if (months < 0) return "";
+  return months >= 12 ? `${Math.floor(months / 12)} yr` : `${months} mo`;
+}
+
+// Pets: one card per pet — name, species + age tags, then its pet-labelled facts
+// (vet & meds, food & feeding, daily routine). No agreements/stars by design.
 function renderPets(pets, perPet) {
   pets = pets || [];
-  if (!pets.length) { $("#pets").innerHTML = `<div class="empty">No pets yet.</div>`; return; }
+  if (!pets.length) {
+    $("#pets").innerHTML = `<div class="empty">No pets yet. Add one on the ` +
+      `<a href="/household">Household</a> page.</div>`;
+    return;
+  }
   const blocks = {};
   (perPet || []).forEach((b) => { blocks[b.child_id] = b; });
   $("#pets").innerHTML = pets.map((p) => {
-    const sp = p.species ? ` <span class="v">· ${esc(p.species)}</span>` : "";
+    const age = petAge(p.birthday);
+    const tags = [p.species, age].filter(Boolean)
+      .map((t) => ` <span class="tag">${esc(t)}</span>`).join("");
     const b = blocks[p.id];
-    return `<div class="child-h">${esc(p.name)}${sp}</div>${b ? catsHtml(b) : ""}`;
+    const facts = b ? catsHtml(b, PET_CATEGORY_LABELS) : `<div class="empty">No details yet.</div>`;
+    return `<div class="child-h">${esc(p.name)}${tags}</div>${facts}`;
   }).join("");
 }
 
