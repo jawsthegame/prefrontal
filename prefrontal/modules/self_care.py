@@ -256,6 +256,44 @@ def day_count(store: MemoryStore, check: BasicCheck, today: str) -> int:
         return 0
 
 
+def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, Any]:
+    """Today's self-care state for the read-only surfaces (the dashboard card).
+
+    A pure read that mirrors what :meth:`SelfCareModule.evaluate` gates on, so a
+    surface can show *why* a check is or isn't nudging: the ``enabled`` master
+    switch, and per check whether it's individually enabled, today's progress
+    toward its target, whether that target is already met, and the effective
+    start hour + cadence. No side effects — it never fires or records anything.
+
+    The whole point is visibility: a silently-``off`` master switch (the common
+    "why aren't I getting nudges?" cause) shows up as ``enabled: false`` rather
+    than as nothing at all.
+    """
+    local = local_datetime(now, tz)
+    today = local.strftime("%Y-%m-%d")
+    checks: list[dict[str, Any]] = []
+    for check in CHECKS:
+        count = day_count(store, check, today)
+        target = _target(store, check)
+        checks.append(
+            {
+                "key": check.key,
+                "enabled": (store.get_state(check.enabled_key, "on") or "on") == "on",
+                "count": count,
+                "target": target,
+                "done": count >= target,
+                "start_hour": store.get_hour(check.start_hour_key, check.start_hour_default),
+                "interval_minutes": max(
+                    1, int(store.get_float(check.interval_key, check.interval_default))
+                ),
+            }
+        )
+    return {
+        "enabled": (store.get_state("self_care", "off") or "off") == "on",
+        "checks": checks,
+    }
+
+
 def apply_self_care_action(
     store: MemoryStore, action: str, *, now: datetime, today: str
 ) -> str | None:
@@ -616,7 +654,7 @@ class SelfCareModule(Module):
             if snoozed_until is not None and ctx.now < snoozed_until:
                 continue  # deferred (snooze, or the interval after a confirm)
 
-            start_hour = int(store.get_float(check.start_hour_key, check.start_hour_default))
+            start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
             interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
             start_min = start_hour * 60
             if minute_of_day < start_min:
@@ -649,7 +687,7 @@ class SelfCareModule(Module):
         for check in CHECKS:
             if (store.get_state(check.enabled_key, "on") or "on") == "off":
                 continue
-            start = store.get_state(check.start_hour_key) or str(check.start_hour_default)
+            start = store.get_hour(check.start_hour_key, check.start_hour_default)
             every = store.get_state(check.interval_key) or str(check.interval_default)
             target = _target(store, check)
             goal = "" if target == 1 else f" (up to {target}/day)"

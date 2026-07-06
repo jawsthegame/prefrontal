@@ -27,6 +27,7 @@ from prefrontal.modules.self_care import (
     apply_self_care_action,
     mark_self_care_prompted,
     meal_message,
+    self_care_status,
     sweep_unanswered_self_care,
     water_message,
 )
@@ -408,3 +409,52 @@ def test_adapt_self_care_writes_key_but_respects_explicit(store):
         _log_response(store, "water", "snoozed")
     water = next(c for c in adapt_self_care(store) if c["check"] == "water")
     assert not water["changed"] and store.get_state("water_interval_minutes") == "120"
+
+
+# -- self_care_status (dashboard card / GET /self-care) ----------------------
+
+
+def test_status_reports_off_master_switch(store):
+    """The whole point of the surface: a silently-off switch is visible as off."""
+    status = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    assert status["enabled"] is False
+    # Even off, the per-check shape is present so the card can render it.
+    keys = {c["key"] for c in status["checks"]}
+    assert keys == {"meal", "water", "meds"}
+
+
+def test_status_reports_progress_and_meds_disabled(store):
+    store.set_state("self_care", "on")
+    store.set_state("meal_count", "2026-07-02|1")   # meal target is 1 → done
+    store.set_state("water_count", "2026-07-02|3")  # 3 of 6
+    status = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    assert status["enabled"] is True
+    by_key = {c["key"]: c for c in status["checks"]}
+    assert by_key["meal"]["count"] == 1 and by_key["meal"]["done"] is True
+    assert by_key["water"]["count"] == 3 and by_key["water"]["target"] == 6
+    assert by_key["water"]["done"] is False
+    # Meds ships disabled even under the master switch (medication is personal).
+    assert by_key["meds"]["enabled"] is False
+    assert by_key["meal"]["start_hour"] == 11 and by_key["water"]["start_hour"] == 9
+
+
+def test_status_start_hour_tolerates_hh_mm(store):
+    """A start hour hand-edited to "HH:MM" still reports the right hour."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_start_hour", "12:30", source="explicit")
+    status = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    meal = next(c for c in status["checks"] if c["key"] == "meal")
+    assert meal["start_hour"] == 12
+
+
+def test_self_care_endpoint_requires_auth(client):
+    assert client.get("/self-care").status_code == 401
+
+
+def test_self_care_endpoint_returns_status(client, store):
+    store.set_state("self_care", "on")
+    store.set_state("water_count", f"{utcnow().strftime('%Y-%m-%d')}|2")
+    body = client.get("/self-care", headers=_auth()).json()
+    assert body["enabled"] is True
+    water = next(c for c in body["checks"] if c["key"] == "water")
+    assert water["count"] == 2 and water["target"] == 6

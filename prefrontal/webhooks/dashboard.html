@@ -86,6 +86,14 @@
     color: var(--muted); margin: 0 0 12px;
   }
   .empty { color: var(--muted); font-style: italic; }
+  /* Self-care card: a compact row of per-check status chips. */
+  .sc-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sc-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 15px; }
+  .sc-chip b { font-variant-numeric: tabular-nums; }
+  .sc-chip .sc-sub { color: var(--muted); font-size: 12px; }
+  .sc-chip.sc-done { border-color: var(--good); }
+  .sc-chip.sc-off { color: var(--muted); }
 
   /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
   .masonry .card > h2 { padding-right: 96px; }
@@ -467,6 +475,8 @@
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
 </div>
 
+<section class="card" id="c-selfcare" style="display:none"><h2>Self-care — today</h2><div class="body"></div></section>
+
 <div class="banner">
   <section class="card" id="c-assistant">
     <h2>Assistant — ask for changes</h2>
@@ -809,6 +819,30 @@ async function openDomainMenu(anchor, id, current) {
     menu.appendChild(cb);
   }
   placePillMenu(menu, anchor);
+}
+
+function renderSelfCare(d) {
+  if (!d || !d.enabled) {
+    return `<div class="empty">Checks are off — meal &amp; water nudges won't fire. `
+      + `Set the <code>self_care</code> coaching key to <code>on</code> to enable them.</div>`;
+  }
+  const META = {
+    meal: { icon: "🍽️", label: "Meals" },
+    water: { icon: "💧", label: "Water" },
+    meds: { icon: "💊", label: "Meds" },
+  };
+  const chips = (d.checks || []).map((c) => {
+    const m = META[c.key] || { icon: "", label: c.key };
+    if (!c.enabled) {
+      return `<span class="sc-chip sc-off">${m.icon} ${esc(m.label)} <span class="sc-sub">off</span></span>`;
+    }
+    const cls = c.done ? "sc-chip sc-done" : "sc-chip";
+    const mark = c.done ? " ✓" : "";
+    const cadence = c.target > 1 ? ` · every ${mins(c.interval_minutes)}` : "";
+    return `<span class="${cls}">${m.icon} ${esc(m.label)} <b>${c.count}/${c.target}</b>${mark}`
+      + `<span class="sc-sub">from ${c.start_hour}:00${cadence}</span></span>`;
+  });
+  return `<div class="sc-row">${chips.join("")}</div>`;
 }
 
 function renderOutings(d) {
@@ -1360,11 +1394,21 @@ async function load() {
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
     api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
+    api("/self-care"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare] = results;
+  // Self-care card: shown whenever the endpoint answers — including when the
+  // checks are off, so a silently-disabled switch (the common "why no nudges?"
+  // cause) is visible rather than absent. Hidden only if the fetch itself fails.
+  if (selfcare.status === "fulfilled") {
+    $("#c-selfcare").style.display = "";
+    $("#c-selfcare .body").innerHTML = renderSelfCare(selfcare.value);
+  } else {
+    $("#c-selfcare").style.display = "none";
+  }
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
     $("#c-shopping").style.display = "";

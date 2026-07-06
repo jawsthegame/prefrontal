@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, parse_hour
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.log import get_logger
 from prefrontal.scheduling import local_hour_of
@@ -137,8 +137,12 @@ def build_context(
         now=now,
         timezone=timezone,
         display_name=display_name,
-        responsive_start=int(store.get_float("responsive_hours_start", DEFAULT_RESPONSIVE_START)),
-        responsive_end=int(store.get_float("responsive_hours_end", DEFAULT_RESPONSIVE_END)),
+        responsive_start=parse_hour(
+            store.get_state("responsive_hours_start"), DEFAULT_RESPONSIVE_START
+        ),
+        responsive_end=parse_hour(
+            store.get_state("responsive_hours_end"), DEFAULT_RESPONSIVE_END
+        ),
         debounce_minutes=store.get_float("coach_debounce_minutes", DEFAULT_DEBOUNCE_MINUTES),
         ignore_ack_rate=store.get_float("coach_ignore_ack_rate", DEFAULT_IGNORE_ACK_RATE),
         min_channel_samples=int(
@@ -190,8 +194,8 @@ def in_quiet_hours(store: Any, now: datetime, tz: str) -> bool:
     per-user ``responsive_hours_start`` / ``responsive_hours_end`` state, like
     :func:`build_context`.
     """
-    start = int(store.get_float("responsive_hours_start", DEFAULT_RESPONSIVE_START))
-    end = int(store.get_float("responsive_hours_end", DEFAULT_RESPONSIVE_END))
+    start = parse_hour(store.get_state("responsive_hours_start"), DEFAULT_RESPONSIVE_START)
+    end = parse_hour(store.get_state("responsive_hours_end"), DEFAULT_RESPONSIVE_END)
     return not _within_hours(local_hour_of(now, tz), start, end)
 
 
