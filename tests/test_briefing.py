@@ -7,7 +7,7 @@ path, and the /briefing endpoint.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +35,32 @@ def _at(dt) -> str:
 def store():
     with MemoryStore.open(":memory:") as s:
         yield scoped_default(s)
+
+
+def test_build_briefing_scopes_to_local_day(store, monkeypatch):
+    """"Today" follows the user's *local* day, not the UTC day.
+
+    At 9pm Eastern the UTC day has already rolled over. A UTC-day briefing would
+    drop this-morning's commitment and pull in tomorrow-morning's; scoping to the
+    local day keeps today's and excludes tomorrow's.
+    """
+    from prefrontal import briefing as briefing_mod
+
+    monkeypatch.setattr(
+        briefing_mod, "get_settings",
+        lambda: Settings(webhook_secret=SECRET, timezone="America/New_York"),
+    )
+    # now = 2026-07-07 01:00 UTC = 2026-07-06 21:00 EDT → local day is the 6th.
+    now = datetime(2026, 7, 7, 1, 0, 0)
+    store.upsert_commitment(  # 10:00 EDT on the 6th — today (local)
+        title="This morning", start_at="2026-07-06 14:00:00", external_id="x:today",
+    )
+    store.upsert_commitment(  # 09:00 EDT on the 7th — tomorrow (local)
+        title="Tomorrow AM", start_at="2026-07-07 13:00:00", external_id="x:tmrw",
+    )
+    titles = {c["title"] for c in build_briefing(store, now=now).today}
+    assert "This morning" in titles
+    assert "Tomorrow AM" not in titles
 
 
 def test_build_briefing_collects_today_conflicts_slips(store):

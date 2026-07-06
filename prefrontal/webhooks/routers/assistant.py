@@ -22,6 +22,7 @@ from prefrontal.assistant import (
 from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
+from prefrontal.clock import utcnow
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -57,7 +58,13 @@ def build_router(services: RouterServices) -> APIRouter:
         message that can't be provided at all yields 503.
         """
         client, provider_name = provider.select("assistant")
-        result = assistant_plan_message(payload.message, ctx.store, client=client)
+        result = assistant_plan_message(
+            payload.message,
+            ctx.store,
+            client=client,
+            now=utcnow(),
+            tz=resolved_settings.timezone,
+        )
         return {
             "reply": result.reply,
             "actions": [a.to_wire() for a in result.actions],

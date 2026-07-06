@@ -73,6 +73,40 @@ def test_interpret_model_down_degrades_gracefully():
     assert raw == []
 
 
+class _CapturingClient(_FakeClient):
+    """Like :class:`_FakeClient`, but records the prompt it was handed."""
+
+    def __init__(self, reply: str = "") -> None:
+        super().__init__(reply)
+        self.prompt: str | None = None
+
+    def generate(self, prompt: str, *, system: str | None = None) -> str:
+        self.prompt = prompt
+        return super().generate(prompt, system=system)
+
+
+def test_interpret_anchors_prompt_to_local_now_and_timezone():
+    """The prompt names the user's *local* now + zone so relative times resolve.
+
+    Without this the model has no "now" and no zone, guesses a date, and often
+    emits a UTC-assumed time — the bug where a "3pm" edit lands hours off.
+    """
+    from datetime import datetime
+
+    client = _CapturingClient(json.dumps({"reply": "ok", "actions": []}))
+    # 2026-07-07 03:30 UTC is 2026-07-06 23:30 EDT.
+    assistant.interpret(
+        "add lunch tomorrow at noon", {}, client=client,
+        now=datetime(2026, 7, 7, 3, 30, 0), tz="America/New_York",
+    )
+    assert client.prompt is not None
+    assert "America/New_York" in client.prompt
+    # The *local* wall clock, not the UTC 03:30.
+    assert "2026-07-06 23:30" in client.prompt
+    assert "03:30" not in client.prompt
+    assert "LOCAL" in client.prompt
+
+
 def test_interpret_unparseable_reply_yields_empty():
     reply, raw = assistant.interpret("x", {}, client=_FakeClient("no json here"))
     assert (reply, raw) == ("", [])

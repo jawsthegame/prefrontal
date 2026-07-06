@@ -37,7 +37,13 @@ from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
 from prefrontal.modules.registry import is_enabled as module_enabled
-from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
+from prefrontal.scheduling import (
+    free_windows,
+    local_day_bounds,
+    local_time_utc,
+    suggest_for_windows,
+    window_config_for,
+)
 from prefrontal.todos import avoided_todos
 
 #: Default available-hours band (UTC hours) for fitting todos into the day.
@@ -125,8 +131,11 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         A :class:`Briefing`.
     """
     now = now or utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+    tz = get_settings().timezone
+    # "Today" is the user's *local* calendar day, not the UTC day — otherwise a
+    # morning briefing pulled before local midnight (or an evening one after the
+    # UTC rollover) shows the wrong day's commitments and slips.
+    day_start, day_end = local_day_bounds(now, tz)
     fmt = TS_FMT
 
     today = store.commitments_between(day_start.strftime(fmt), day_end.strftime(fmt))
@@ -169,8 +178,10 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
             bias = float(state.get("time_estimation_bias", {}).get("value", 1.0))
         except (TypeError, ValueError):
             bias = 1.0
-        band_start = max(now, day_start.replace(hour=DEFAULT_DAY_START_HOUR))
-        band_end = day_start.replace(hour=DEFAULT_DAY_END_HOUR)
+        # The available-hours band is *local* (8am–8pm your time), converted to
+        # UTC — not day_start.replace(hour=8), which would be 8am UTC.
+        band_start = max(now, local_time_utc(now, tz, DEFAULT_DAY_START_HOUR))
+        band_end = local_time_utc(now, tz, DEFAULT_DAY_END_HOUR)
         if band_end > band_start:
             # Only propose a todo into a window its category/source/off-zone
             # policy actually allows (e.g. no focus work at 8pm, nothing overnight).

@@ -44,6 +44,9 @@ from prefrontal.modules.hyperfocus import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
+from prefrontal.scheduling import (
+    local_day_bounds,
+)
 from prefrontal.todos import (
     avoided_todos,
 )
@@ -150,8 +153,8 @@ def build_router(services: RouterServices) -> APIRouter:
             return {"armed": False, "reason": "a focus session is already active"}
 
         now = utcnow()
-        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
+        # The candidate focus blocks are today's in the user's *local* day.
+        day_start, day_end = local_day_bounds(now, resolved_settings.timezone)
         live: dict[str, Any] | None = None
         end_at: datetime | None = None
         for c in memory.commitments_between(

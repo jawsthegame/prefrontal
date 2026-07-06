@@ -742,7 +742,9 @@ def _parse_deadline(value: object) -> datetime | None:
     Deadlines are stored date-only (see :class:`AugmentedTodo`), so they can't go
     through :func:`~prefrontal.clock.parse_ts`, which expects a full timestamp and
     returns ``None`` for a bare date. A deadline means "due by the end of that
-    day," so this anchors to 23:59:59.
+    day" in the user's *local* zone, so this anchors to local 23:59:59 (converted
+    to UTC) — anchoring to 23:59 UTC would flag a "due today" item as overdue
+    hours early for a western-hemisphere user.
     """
     if not isinstance(value, str):
         return None
@@ -750,7 +752,12 @@ def _parse_deadline(value: object) -> datetime | None:
         day = datetime.strptime(value.strip()[:10], "%Y-%m-%d")
     except ValueError:
         return None
-    return day.replace(hour=23, minute=59, second=59)
+    # Lazy imports: prefrontal.scheduling imports from this module, so importing
+    # it (and config) at module top would be circular.
+    from prefrontal.config import get_settings
+    from prefrontal.scheduling import end_of_local_day_utc
+
+    return end_of_local_day_utc(day, get_settings().timezone)
 
 
 def avoidance_score(todo: dict[str, Any], now: datetime) -> float:

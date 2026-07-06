@@ -39,8 +39,10 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_dt
+from prefrontal.config import get_settings
 from prefrontal.impact import cascade_at_risk, cascade_impact, utcnow
 from prefrontal.memory.store import MemoryStore
+from prefrontal.scheduling import end_of_local_day_utc, local_day_bounds
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
 
 if TYPE_CHECKING:
@@ -136,8 +138,9 @@ def _parse_deadline(ts: Any) -> datetime | None:
 
     Todos created via :func:`prefrontal.todos.augment_todo` store a date-only
     deadline (``YYYY-MM-DD``); the endpoint accepts full ``YYYY-MM-DD HH:MM:SS``.
-    A bare date is treated as end-of-day so a todo due "today" isn't flagged
-    overdue until the day is actually over.
+    A bare date is treated as end-of-day *in the user's local zone* (converted to
+    UTC) so a todo due "today" isn't flagged overdue hours early in a western
+    zone — nor until the local day is actually over.
     """
     dt = _parse_dt(ts)
     if dt is not None:
@@ -146,7 +149,7 @@ def _parse_deadline(ts: Any) -> datetime | None:
         day = datetime.strptime(str(ts)[:10], "%Y-%m-%d")
     except (ValueError, TypeError):
         return None
-    return day.replace(hour=23, minute=59, second=59)
+    return end_of_local_day_utc(day, get_settings().timezone)
 
 
 # --- Human phrasing ----------------------------------------------------------
@@ -437,8 +440,10 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
         A :class:`PanicPlan`.
     """
     now = now or utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    # "Today" is the user's *local* day: an evening panic check (after the UTC
+    # rollover for a western-hemisphere user) must still reason about tonight's
+    # commitments, not tomorrow-UTC's. day_end is the next local midnight.
+    day_start, day_end = local_day_bounds(now, get_settings().timezone)
 
     pressures: list[Pressure] = []
     pressures.extend(_commitment_pressures(store, day_start, now, day_end))

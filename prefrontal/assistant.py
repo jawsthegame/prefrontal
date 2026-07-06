@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from prefrontal.clock import utcnow
 from prefrontal.commitments import to_utc
 from prefrontal.integrations import Generator
 from prefrontal.llm_json import generate_json
@@ -46,6 +47,7 @@ from prefrontal.memory.repos.household import (
     normalize_fact_category,
     normalize_fact_item,
 )
+from prefrontal.scheduling import local_datetime
 from prefrontal.todos import (
     ENERGY_LEVELS,
     MAX_ESTIMATE_MINUTES,
@@ -288,6 +290,8 @@ def interpret(
     snapshot: dict[str, Any],
     *,
     client: Generator,
+    now: datetime | None = None,
+    tz: str = "UTC",
 ) -> tuple[str, list[dict[str, Any]]]:
     """Ask the model to turn ``message`` into a reply + raw action list.
 
@@ -295,13 +299,30 @@ def interpret(
         message: The user's chat message.
         snapshot: Output of :func:`build_snapshot`.
         client: A model client (Ollama or Anthropic).
+        now: Current instant as naive UTC (defaults to :func:`utcnow`). Anchors
+            the model's resolution of relative dates/times ("tomorrow", "in an
+            hour", "next Tuesday").
+        tz: The user's IANA timezone. The model is told the current *local* time
+            and instructed to emit local wall-clock times — without it the model
+            has no "now" and no zone, so it guesses a date and often emits a
+            UTC-assumed time, which is how a "3pm" edit lands hours off.
 
     Returns:
         ``(reply, raw_actions)`` — ``raw_actions`` is a list of unvalidated
         dicts. Returns ``("", [])`` if the model is unreachable or its reply
         can't be parsed as JSON, so the caller degrades gracefully.
     """
+    now_local = local_datetime(now or utcnow(), tz)
+    when = (
+        f"Right now it is {now_local:%A %Y-%m-%d %H:%M} local time ({tz}). "
+        "Resolve every relative date/time the user gives (\"today\", \"tomorrow\", "
+        "\"tonight\", \"next Tuesday\", \"in 2 hours\") against this. Emit all "
+        "start_at/end_at/deadline values as the user's LOCAL wall-clock time in "
+        "the required format — never append a 'Z' or a UTC offset; the server "
+        "converts to UTC."
+    )
     prompt = (
+        f"{when}\n\n"
         f"Current state (JSON):\n{json.dumps(snapshot, default=str)}\n\n"
         f"User message: {message}"
     )
@@ -797,16 +818,26 @@ def validate_actions(
     return actions, errors
 
 
-def plan(message: str, memory: Any, *, client: Generator) -> AssistantPlan:
+def plan(
+    message: str,
+    memory: Any,
+    *,
+    client: Generator,
+    now: datetime | None = None,
+    tz: str = "UTC",
+) -> AssistantPlan:
     """Interpret a message and return a validated, previewable plan (no writes).
 
     Args:
         message: The user's chat message.
         memory: A **scoped** store.
         client: A model client (Ollama or Anthropic).
+        now: Current instant as naive UTC (defaults to :func:`utcnow`).
+        tz: The user's IANA timezone, so relative dates/times resolve in *their*
+            zone and are emitted as local wall-clock (see :func:`interpret`).
     """
     snapshot = build_snapshot(memory)
-    reply, raw_actions = interpret(message, snapshot, client=client)
+    reply, raw_actions = interpret(message, snapshot, client=client, now=now, tz=tz)
     actions, errors = validate_actions(raw_actions, snapshot)
     # Fall back to the honest, deterministic acknowledgement when the model gave
     # no reply, OR when it *tried* to edit but every action was dropped in
