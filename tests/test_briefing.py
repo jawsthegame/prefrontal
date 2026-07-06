@@ -63,6 +63,31 @@ def test_build_briefing_scopes_to_local_day(store, monkeypatch):
     assert "Tomorrow AM" not in titles
 
 
+def test_briefing_renders_times_in_local_zone(store, monkeypatch):
+    """Commitment/leave-by/spare times read in the local zone, not raw UTC.
+
+    Stored times are naive UTC; an Eastern user's 10:00 EDT commitment is stored
+    as 14:00 UTC. The digest must show "10:00", not "14:00" (the old bug: it
+    sliced the UTC string and printed times 4h ahead).
+    """
+    from prefrontal import briefing as briefing_mod
+
+    monkeypatch.setattr(
+        briefing_mod, "get_settings",
+        lambda: Settings(webhook_secret=SECRET, timezone="America/New_York"),
+    )
+    # now = 2026-07-06 13:00 UTC = 09:00 EDT — morning, local day is the 6th.
+    now = datetime(2026, 7, 6, 13, 0, 0)
+    store.upsert_commitment(  # 14:00 UTC == 10:00 EDT
+        title="Dentist", start_at="2026-07-06 14:00:00",
+        end_at="2026-07-06 14:30:00", external_id="personal:1", lead_minutes=15.0,
+    )
+    text = render_briefing(build_briefing(store, now=now))
+    assert "- 10:00 — Dentist" in text  # commitment line in local time
+    assert "14:00" not in text  # the UTC wall clock never leaks through
+    assert "- 09:45 for Dentist" in text  # leave-by (start − 15 min) in local time
+
+
 def test_build_briefing_collects_today_conflicts_slips(store):
     """The structured briefing gathers today's events, conflicts, and slips."""
     now = utcnow()
