@@ -31,6 +31,7 @@ class ScheduleRepo(Repo):
         dest_lon: float | None = None,
         lead_minutes: float = 10.0,
         hardness: str = "soft",
+        hardness_source: str | None = None,
         source: str = "calendar",
         kind: str = "self",
         kind_source: str | None = None,
@@ -59,7 +60,11 @@ class ScheduleRepo(Repo):
                 estimation for departure reminders).
             dest_lon: Optional destination longitude.
             lead_minutes: Travel+prep buffer needed before ``start_at``.
-            hardness: ``hard`` or ``soft``.
+            hardness: ``hard`` (firm) or ``soft`` (elastic, the default).
+            hardness_source: How ``hardness`` was set (``feed``/``user``/
+                ``default``). The sync passes back a stored ``user`` value so a
+                calendar re-sync never clobbers the user's override (see
+                :meth:`hardness_by_external_id` and :meth:`set_commitment_hardness`).
             source: ``calendar`` or ``manual``.
 
         Returns:
@@ -74,13 +79,13 @@ class ScheduleRepo(Repo):
                 self.conn.execute(
                     "UPDATE commitments SET title = ?, start_at = ?, end_at = ?, "
                     "location = ?, source_url = ?, dest_lat = ?, dest_lon = ?, "
-                    "lead_minutes = ?, hardness = ?, source = ?, kind = ?, "
-                    "kind_source = ?, status = 'active', "
+                    "lead_minutes = ?, hardness = ?, hardness_source = ?, "
+                    "source = ?, kind = ?, kind_source = ?, status = 'active', "
                     "updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = ? AND user_id = ?",
                     (title, start_at, end_at, location, source_url, dest_lat,
-                     dest_lon, lead_minutes, hardness, source, kind, kind_source,
-                     existing["id"], self._uid()),
+                     dest_lon, lead_minutes, hardness, hardness_source, source,
+                     kind, kind_source, existing["id"], self._uid()),
                 )
                 self.conn.commit()
                 return int(existing["id"]), False
@@ -88,11 +93,11 @@ class ScheduleRepo(Repo):
         cur = self.conn.execute(
             "INSERT INTO commitments (user_id, external_id, title, start_at, end_at, "
             "location, notes, source_url, dest_lat, dest_lon, lead_minutes, hardness, "
-            "source, kind, kind_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "hardness_source, source, kind, kind_source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._uid(), external_id, title, start_at, end_at, location, notes,
-             source_url, dest_lat, dest_lon, lead_minutes, hardness, source, kind,
-             kind_source),
+             source_url, dest_lat, dest_lon, lead_minutes, hardness,
+             hardness_source, source, kind, kind_source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True
@@ -286,6 +291,45 @@ class ScheduleRepo(Repo):
             [self._uid(), *ids],
         ).fetchall()
         return {r["external_id"]: (r["kind"], r["kind_source"]) for r in rows}
+
+    def hardness_by_external_id(
+        self, external_ids: set[str]
+    ) -> dict[str, tuple[str, str | None]]:
+        """Return ``{external_id: (hardness, hardness_source)}`` for the given ids.
+
+        The hardness twin of :meth:`kinds_by_external_id`: the sync uses it to keep
+        a user's ``hardness`` override (``hardness_source == 'user'``) across a
+        re-sync, rather than letting the feed reset it. Ids absent from the table
+        are simply missing from the result.
+        """
+        if not external_ids:
+            return {}
+        ids = list(external_ids)
+        placeholders = sql_placeholders(len(ids))
+        rows = self.conn.execute(
+            f"SELECT external_id, hardness, hardness_source FROM commitments "
+            f"WHERE user_id = ? AND external_id IN ({placeholders})",
+            [self._uid(), *ids],
+        ).fetchall()
+        return {r["external_id"]: (r["hardness"], r["hardness_source"]) for r in rows}
+
+    def set_commitment_hardness(
+        self, commitment_id: int, hardness: str
+    ) -> dict[str, Any] | None:
+        """Set a commitment's ``hardness`` as a user override; return the updated row.
+
+        Stamps ``hardness_source = 'user'`` so the choice is sticky — the sync's
+        :meth:`hardness_by_external_id` reuse keeps it across calendar re-syncs, the
+        same way a user's ``kind`` correction survives. Returns ``None`` if no such
+        commitment exists.
+        """
+        self.conn.execute(
+            "UPDATE commitments SET hardness = ?, hardness_source = 'user', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (hardness, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
 
     def set_commitment_kind(
         self, commitment_id: int, kind: str, source: str

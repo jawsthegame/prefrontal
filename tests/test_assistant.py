@@ -261,6 +261,25 @@ def test_validate_set_commitment_notes(snapshot):
     assert errs
 
 
+def test_validate_set_commitment_hardness(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_commitment_hardness", "commitment_id": 2, "hardness": "Hard"}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params == {"commitment_id": 2, "hardness": "hard"}
+    assert "hard" in actions[0].summary
+    # Bad value → dropped; unknown commitment → dropped.
+    _a, errs = assistant.validate_actions(
+        [{"op": "set_commitment_hardness", "commitment_id": 2, "hardness": "firm"}], snapshot
+    )
+    assert errs
+    _a, errs = assistant.validate_actions(
+        [{"op": "set_commitment_hardness", "commitment_id": 999, "hardness": "soft"}], snapshot
+    )
+    assert errs
+
+
 def test_validate_add_commitment_with_notes(snapshot):
     actions, errors = assistant.validate_actions(
         [{"op": "add_commitment", "title": "Dentist", "start_at": "2026-07-07 09:00",

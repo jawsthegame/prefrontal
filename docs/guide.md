@@ -581,6 +581,7 @@ token client-side).
 | `GET /commitments/conflicts` | Hard + possible conflicts |
 | `POST /commitments/conflicts/dismiss` | Dismiss a possible conflict (by `key`) |
 | `POST /commitments/{id}/kind` | Set `self` vs `fyi` |
+| `POST /commitments/{id}/hardness` | Set `hard` vs `soft` (a user override; sticky across re-syncs) |
 | `POST /commitments/{id}/notes` | Set / clear a note (folded into the departure nudge; kept across re-syncs) |
 | `POST /todos` · `GET /todos` | Add (auto-augmented) / list (with decomposition + avoidance) |
 | `GET /todos/fit?minutes=N` | Todos that fit a free block |

@@ -231,7 +231,8 @@ CREATE TABLE IF NOT EXISTS commitments (
     dest_lat     REAL,                              -- optional destination coordinates, used to
     dest_lon     REAL,                              --   estimate travel time for departure reminders
     lead_minutes REAL    NOT NULL DEFAULT 10,       -- travel+prep buffer before start
-    hardness     TEXT    NOT NULL DEFAULT 'soft',   -- hard | soft
+    hardness     TEXT    NOT NULL DEFAULT 'soft',   -- hard (firm, must-happen) | soft (elastic/optional block)
+    hardness_source TEXT,                            -- how hardness was set: feed | user | default. Mirrors `kind_source`: a `user` value is preserved across calendar re-syncs (the feed can't clobber your override), everything else is refreshed from the feed.
     source       TEXT    NOT NULL DEFAULT 'calendar', -- calendar | manual
     status       TEXT    NOT NULL DEFAULT 'active',   -- active | cancelled
     kind         TEXT    NOT NULL DEFAULT 'self',   -- self (yours) | fyi (where someone will be; never a conflict)

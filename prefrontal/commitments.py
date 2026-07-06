@@ -148,6 +148,16 @@ OUTCOME_MADE = "made"
 OUTCOME_MISSED = "missed"
 OUTCOMES = (OUTCOME_MADE, OUTCOME_MISSED)
 
+#: Commitment ``hardness`` — is this a firm, must-happen obligation (``hard``) or an
+#: elastic/optional block you'd yield in a pinch (``soft``, the default)? It gates
+#: whether panic/cascade treats a slipping commitment as a genuine fire (see
+#: :mod:`prefrontal.panic`). ``hardness_source`` mirrors ``kind_source``: a value
+#: set by the user (``set_commitment_hardness``) is preserved across calendar
+#: re-syncs, while a ``feed``/``default`` one is refreshed from the calendar.
+HARDNESS_HARD = "hard"
+HARDNESS_SOFT = "soft"
+HARDNESS = (HARDNESS_HARD, HARDNESS_SOFT)
+
 #: Placeholder/hold titles that aren't real events. When one of these overlaps a
 #: specifically-titled event (e.g. a work "Block" mirroring a real personal
 #: meeting), it's a *possible* conflict — surfaced softly and dismissable —
@@ -341,6 +351,17 @@ def normalize_event(
     dest_lon = event.get("dest_lon")
     tzid = event.get("tzid")
     end_tzid = event.get("end_tzid") or tzid
+    raw_source = event.get("source") or "calendar"
+    is_hard = bool(event.get("hard"))
+    # Provenance of the hardness value (mirrors kind_source). Only a `user` value
+    # is sticky across re-sync; a manual hard commitment is a user assertion, a
+    # calendar hard flag is `feed`, and a plain soft default is `default`.
+    if not is_hard:
+        hardness_source = "default"
+    elif raw_source == "manual":
+        hardness_source = "user"
+    else:
+        hardness_source = "feed"
     return {
         "title": title,
         "start_at": to_utc(event["start_at"], tzid=tzid, default_tz=default_tz),
@@ -357,8 +378,9 @@ def normalize_event(
         "dest_lat": float(dest_lat) if dest_lat is not None else None,
         "dest_lon": float(dest_lon) if dest_lon is not None else None,
         "lead_minutes": float(lead) if lead is not None else 10.0,
-        "hardness": "hard" if event.get("hard") else "soft",
-        "source": event.get("source") or "calendar",
+        "hardness": HARDNESS_HARD if is_hard else HARDNESS_SOFT,
+        "hardness_source": hardness_source,
+        "source": raw_source,
     }
 
 
@@ -560,9 +582,9 @@ def sync_calendar(
     normalized = [  # validate all up front
         normalize_event(e, default_tz=default_tz) for e in events
     ]
-    existing_kinds = store.kinds_by_external_id(
-        {f["external_id"] for f in normalized if f["external_id"]}
-    )
+    eids = {f["external_id"] for f in normalized if f["external_id"]}
+    existing_kinds = store.kinds_by_external_id(eids)
+    existing_hardness = store.hardness_by_external_id(eids)
     added = updated = 0
     keep: set[str] = set()
     for fields in normalized:
@@ -573,6 +595,11 @@ def sync_calendar(
             kind, kind_source = classify(fields["title"])
         else:
             kind, kind_source = KIND_SELF, "default"
+        # A user's hardness override is sticky — reuse it so the feed can't reset
+        # a commitment you deliberately marked hard/soft (mirrors the kind reuse).
+        # A feed/default value stays feed-driven, refreshed from this event.
+        if eid and existing_hardness.get(eid, (None, None))[1] == "user":
+            fields["hardness"], fields["hardness_source"] = existing_hardness[eid]
         _, created = store.upsert_commitment(
             **fields, kind=kind, kind_source=kind_source
         )

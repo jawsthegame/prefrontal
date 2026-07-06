@@ -353,6 +353,44 @@ def test_set_commitment_notes_updates_and_clears(store):
     assert store.set_commitment_notes(999999, "x") is None
 
 
+def test_hardness_defaults_and_manual_hard_is_user_sourced(store):
+    """A plain commitment is soft/default; a manual hard one is a user assertion."""
+    soft_id, _ = store.upsert_commitment(title="Lunch", start_at=to_utc(_iso(60)))
+    soft = store.get_commitment(soft_id)
+    assert (soft["hardness"], soft["hardness_source"]) == ("soft", None)
+
+    # A manual hard commitment (via the normalized create path) is user-sourced.
+    fields = normalize_event(
+        {"title": "Court", "start_at": _iso(120), "hard": True, "source": "manual"}
+    )
+    hard_id, _ = store.upsert_commitment(**fields)
+    hard = store.get_commitment(hard_id)
+    assert (hard["hardness"], hard["hardness_source"]) == ("hard", "user")
+
+
+def test_set_commitment_hardness_is_sticky_across_resync(store):
+    """A user hardness override survives a calendar re-sync; a feed value refreshes."""
+    sync_calendar(store, [{"title": "Dentist", "start_at": _iso(120), "external_id": "personal:d"}])
+    cid = store.upcoming_commitments()[0]["id"]
+    assert store.get_commitment(cid)["hardness"] == "soft"
+
+    # User marks it hard → sticky.
+    updated = store.set_commitment_hardness(cid, "hard")
+    assert (updated["hardness"], updated["hardness_source"]) == ("hard", "user")
+    sync_calendar(store, [{"title": "Dentist", "start_at": _iso(120), "external_id": "personal:d"}])
+    assert store.get_commitment(cid)["hardness"] == "hard"  # feed didn't reset it
+
+    # A feed-sourced hardness, by contrast, stays refreshable from the feed.
+    sync_calendar(store, [{"title": "Board", "start_at": _iso(60), "external_id": "work:b", "hard": True}])
+    bid = next(c["id"] for c in store.upcoming_commitments() if c["external_id"] == "work:b")
+    assert store.get_commitment(bid)["hardness_source"] == "feed"
+    sync_calendar(store, [{"title": "Board", "start_at": _iso(60), "external_id": "work:b"}])
+    assert store.get_commitment(bid)["hardness"] == "soft"  # feed relaxed it
+
+    # Unknown id → None.
+    assert store.set_commitment_hardness(999999, "hard") is None
+
+
 def test_upcoming_commitment_url_falls_back_to_derived(store):
     """Without a source_url, a Google commitment exposes a derived search link."""
     store.upsert_commitment(
@@ -716,6 +754,30 @@ def test_set_commitment_kind_endpoint_records_feedback(client):
                        json={"kind": "nope"}).status_code == 422
     assert client.post("/commitments/99999/kind", headers=_auth(),
                        json={"kind": "fyi"}).status_code == 404
+
+
+def test_set_commitment_hardness_endpoint(client):
+    """POST /commitments/{id}/hardness sets a sticky user override; validates input."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "Deadline", "start_at": _iso(60), "external_id": "work:h1"},
+        ]},
+    )
+    cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
+    assert client.get("/commitments", headers=_auth()).json()["commitments"][0]["hardness"] == "soft"
+
+    r = client.post(f"/commitments/{cid}/hardness", headers=_auth(), json={"hardness": "hard"})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["hardness"] == "hard"
+    assert r.json()["commitment"]["hardness_source"] == "user"
+
+    # Bad value → 422; unknown id → 404.
+    assert client.post(f"/commitments/{cid}/hardness", headers=_auth(),
+                       json={"hardness": "firm"}).status_code == 422
+    assert client.post("/commitments/99999/hardness", headers=_auth(),
+                       json={"hardness": "hard"}).status_code == 404
 
 
 def test_commitments_expose_calendar_key_and_label_map(store_open):
