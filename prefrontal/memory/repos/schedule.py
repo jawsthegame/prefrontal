@@ -156,6 +156,56 @@ class ScheduleRepo(Repo):
         self.conn.commit()
         return self.get_commitment(commitment_id)
 
+    def previous_commitments(
+        self, limit: int = 50, *, window_hours: float = 24.0
+    ) -> list[dict[str, Any]]:
+        """Return recently-elapsed commitments still awaiting a made/missed answer.
+
+        The counterpart to :meth:`upcoming_commitments`: commitments whose
+        effective end (``end_at``, or ``start_at`` when there's no end) has passed
+        but is within the last ``window_hours``, so the dashboard can ask "did you
+        make it?" for about a day and then let the row age out on its own. Excludes
+        the ones already answered (``outcome`` set) and the hidden ones — so
+        answering *or* hiding drops a row immediately, while an untouched one
+        lingers only for the window. Most-recent first.
+
+        Args:
+            limit: Maximum number of rows to return.
+            window_hours: How far back an elapsed commitment stays surfaced.
+
+        Returns:
+            A list of commitment dicts ordered by ``start_at`` descending.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
+            "AND hidden = 0 AND outcome IS NULL "
+            "AND datetime(COALESCE(end_at, start_at)) < datetime('now') "
+            "AND datetime(COALESCE(end_at, start_at)) >= datetime('now', ?) "
+            "ORDER BY start_at DESC LIMIT ?",
+            (self._uid(), f"-{window_hours} hours", limit),
+        ).fetchall()
+        return [_with_calendar(dict(r)) for r in rows]
+
+    def set_commitment_outcome(
+        self, commitment_id: int, outcome: str | None
+    ) -> dict[str, Any] | None:
+        """Record (or clear) a commitment's made/missed outcome; return the row.
+
+        ``outcome`` is a user judgement — like :meth:`set_commitment_hidden`'s
+        ``hidden``, it's deliberately *not* touched by :meth:`upsert_commitment`,
+        so a calendar re-sync never clobbers it. Passing ``None`` clears the
+        answer (and its timestamp), surfacing the commitment again if it's still
+        within the window. Returns ``None`` if no such commitment exists.
+        """
+        self.conn.execute(
+            "UPDATE commitments SET outcome = ?, "
+            "outcome_at = CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (outcome, outcome, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
     def commitments_between(self, start: str, end: str) -> list[dict[str, Any]]:
         """Return active, non-hidden commitments starting in ``[start, end)``, soonest first.
 

@@ -382,6 +382,60 @@ def test_upcoming_excludes_past(store):
     assert titles == ["Soon"]
 
 
+def test_previous_commitments_window_and_ordering(store):
+    """Recently-elapsed commitments surface (newest first); older/future ones don't."""
+    store.upsert_commitment(title="Upcoming", start_at=to_utc(_iso(30)))
+    store.upsert_commitment(title="An hour ago", start_at=to_utc(_iso(-60)))
+    store.upsert_commitment(title="Ten min ago", start_at=to_utc(_iso(-10)))
+    store.upsert_commitment(title="Long over", start_at=to_utc(_iso(-60 * 30)))  # 30h
+    titles = [c["title"] for c in store.previous_commitments()]
+    assert titles == ["Ten min ago", "An hour ago"]  # DESC, both within 24h; others out
+
+
+def test_previous_uses_end_at_so_in_progress_is_neither(store):
+    """A commitment that's started but not ended is neither upcoming nor previous."""
+    store.upsert_commitment(
+        title="In progress", start_at=to_utc(_iso(-10)), end_at=to_utc(_iso(50))
+    )
+    assert store.upcoming_commitments() == []          # start already passed
+    assert store.previous_commitments() == []          # not over yet (end in future)
+
+
+def test_set_commitment_outcome_resolves_and_survives_resync(store):
+    """Answering made/missed drops the row from previous; the outcome survives re-sync."""
+    sync_calendar(
+        store, [{"title": "Ended", "start_at": _iso(-90), "external_id": "work:done"}]
+    )
+    (row,) = store.previous_commitments()
+    cid = row["id"]
+
+    updated = store.set_commitment_outcome(cid, "made")
+    assert updated["outcome"] == "made"
+    assert updated["outcome_at"] is not None
+    assert store.previous_commitments() == []          # answered → resolved, drops off
+
+    # A re-sync re-activates the row but must not clobber the user's answer.
+    sync_calendar(
+        store, [{"title": "Ended", "start_at": _iso(-90), "external_id": "work:done"}]
+    )
+    assert store.get_commitment(cid)["outcome"] == "made"
+    assert store.previous_commitments() == []
+
+    # Clearing the answer surfaces it again (still in-window) and wipes the stamp.
+    cleared = store.set_commitment_outcome(cid, None)
+    assert cleared["outcome"] is None
+    assert cleared["outcome_at"] is None
+    assert [c["id"] for c in store.previous_commitments()] == [cid]
+
+
+def test_hidden_past_commitment_absent_from_previous(store):
+    """Hiding an elapsed commitment removes it from the 'did you make it?' list too."""
+    cid, _ = store.upsert_commitment(title="Ended", start_at=to_utc(_iso(-30)))
+    assert [c["id"] for c in store.previous_commitments()] == [cid]
+    store.set_commitment_hidden(cid, True)
+    assert store.previous_commitments() == []
+
+
 # -- sync --------------------------------------------------------------------
 
 
@@ -540,6 +594,36 @@ def test_set_commitment_hidden_endpoint(client):
 
     assert client.post("/commitments/99999/hidden", headers=_auth(),
                        json={"hidden": True}).status_code == 404
+
+
+def test_commitment_outcome_endpoint(client):
+    """POST /commitments/{id}/outcome records made/missed and resolves the row."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "Elapsed", "start_at": _iso(-90), "external_id": "work:o1"},
+        ]},
+    )
+    data = client.get("/commitments", headers=_auth()).json()
+    assert [c["title"] for c in data["previous"]] == ["Elapsed"]  # surfaced for a day
+    cid = data["previous"][0]["id"]
+
+    r = client.post(f"/commitments/{cid}/outcome", headers=_auth(), json={"outcome": "made"})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["outcome"] == "made"
+
+    # Answered → drops off the "did you make it?" list.
+    assert client.get("/commitments", headers=_auth()).json()["previous"] == []
+
+    # Clearing (outcome: null) brings it back; bad outcome → 422; unknown id → 404.
+    client.post(f"/commitments/{cid}/outcome", headers=_auth(), json={"outcome": None})
+    back = client.get("/commitments", headers=_auth()).json()["previous"]
+    assert [c["id"] for c in back] == [cid]
+    assert client.post(f"/commitments/{cid}/outcome", headers=_auth(),
+                       json={"outcome": "nope"}).status_code == 422
+    assert client.post("/commitments/99999/outcome", headers=_auth(),
+                       json={"outcome": "made"}).status_code == 404
 
 
 def test_kind_feedback_latest_wins(store):
