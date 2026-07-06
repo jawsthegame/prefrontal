@@ -813,6 +813,20 @@ class ClarificationResolve(BaseModel):
     )
 
 
+class ClarificationLocalization(BaseModel):
+    """Body of ``POST /clarifications/localization`` — opt in/out + set the home ZIP.
+
+    Both fields optional: ``enabled`` toggles ZIP-localized guides, ``zip`` sets the
+    home ZIP. Omit a field to leave it unchanged."""
+
+    enabled: bool | None = Field(
+        default=None, description="Turn ZIP-localized guides on/off. Omit to leave as-is."
+    )
+    zip: str | None = Field(
+        default=None, description="Home ZIP used to localize guides. Omit to leave as-is."
+    )
+
+
 class ConversationTurn(BaseModel):
     """One turn of a conversation transcript fed to ``POST /observe``."""
 
