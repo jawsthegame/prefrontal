@@ -27,6 +27,7 @@ from dateutil.rrule import rrulestr
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.clock import parse_ts_strict as _parse_utc
+from prefrontal.focus_balance import normalize_focus_domain
 from prefrontal.memory.store import MemoryStore
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
@@ -381,6 +382,10 @@ def normalize_event(
         "hardness": HARDNESS_HARD if is_hard else HARDNESS_SOFT,
         "hardness_source": hardness_source,
         "source": raw_source,
+        # Life-sphere, snapped onto the canonical vocab (child/family → kids, …).
+        # Usually absent on a raw calendar event (→ None); supplied by a manual add
+        # or a domain-aware feed. A user's later edit survives re-sync (INSERT-only).
+        "domain": normalize_focus_domain(event.get("domain")),
     }
 
 

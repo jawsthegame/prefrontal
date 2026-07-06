@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS commitments (
     status       TEXT    NOT NULL DEFAULT 'active',   -- active | cancelled
     kind         TEXT    NOT NULL DEFAULT 'self',   -- self (yours) | fyi (where someone will be; never a conflict)
     kind_source  TEXT,                              -- how kind was set: llm | user | default
+    domain       TEXT,                              -- work | home | kids | ... — life sphere (shop/work/home/kids/personal), the same axis todos/trips carry; snapped onto the canonical vocab on write so a kid's appt is domain='kids' rather than overloading `kind`. A user field kept across calendar re-sync (like notes/hidden/outcome).
     hidden       BOOLEAN NOT NULL DEFAULT 0,        -- user "don't show me this": dropped from every surface (dashboard, widget, conflicts, departures); survives calendar re-sync
     outcome      TEXT,                              -- user self-report on a past commitment: made | missed (NULL = undecided); like `hidden`, never touched by re-sync
     outcome_at   DATETIME,                          -- when the outcome was recorded (NULL until answered)

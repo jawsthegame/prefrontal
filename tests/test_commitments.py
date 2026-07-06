@@ -263,6 +263,14 @@ def test_normalize_event_accepts_url_aliases():
         assert out["source_url"] == "https://e/1"
 
 
+def test_normalize_event_snaps_domain_onto_vocab():
+    """An inbound domain is normalized (child/family → kids); absent → None."""
+    base = {"title": "x", "start_at": "2026-06-28T10:00:00Z"}
+    assert normalize_event(base)["domain"] is None
+    assert normalize_event({**base, "domain": "childcare"})["domain"] == "kids"
+    assert normalize_event({**base, "domain": "  Work "})["domain"] == "work"
+
+
 # -- deeplinks ---------------------------------------------------------------
 
 
@@ -351,6 +359,32 @@ def test_set_commitment_notes_updates_and_clears(store):
     assert store.set_commitment_notes(cid, "later")["notes"] == "later"
     assert store.set_commitment_notes(cid, None)["notes"] is None
     assert store.set_commitment_notes(999999, "x") is None
+
+
+def test_commitment_domain_set_on_insert_and_survives_resync(store):
+    """A domain set on insert persists and is not clobbered by a calendar re-sync."""
+    cid, _ = store.upsert_commitment(
+        title="Swim lesson",
+        start_at=to_utc(_iso(60)),
+        external_id="personal:s1",
+        domain="kids",
+    )
+    assert store.get_commitment(cid)["domain"] == "kids"
+    # A re-sync (the update branch) leaves the user's domain untouched, like notes.
+    store.upsert_commitment(
+        title="Swim lesson (moved)", start_at=to_utc(_iso(90)), external_id="personal:s1"
+    )
+    assert store.get_commitment(cid)["domain"] == "kids"
+
+
+def test_set_commitment_domain_updates_and_clears(store):
+    """set_commitment_domain edits the domain; blank/None clears it; unknown id → None."""
+    cid, _ = store.upsert_commitment(title="Standup", start_at=to_utc(_iso(60)))
+    assert store.set_commitment_domain(cid, "  work  ")["domain"] == "work"
+    assert store.set_commitment_domain(cid, "   ")["domain"] is None  # whitespace clears
+    assert store.set_commitment_domain(cid, "home")["domain"] == "home"
+    assert store.set_commitment_domain(cid, None)["domain"] is None
+    assert store.set_commitment_domain(999999, "work") is None
 
 
 def test_hardness_defaults_and_manual_hard_is_user_sourced(store):
@@ -724,6 +758,29 @@ def test_commitment_notes_endpoint(client):
                        json={"notes": "x"}).status_code == 404
 
 
+def test_set_commitment_domain_endpoint(client):
+    """POST /commitments/{id}/domain sets a normalized life-sphere; clears; 404 on miss."""
+    client.post(
+        "/webhooks/calendar/sync", headers=_auth(),
+        json={"events": [
+            {"title": "Swim lesson", "start_at": _iso(120), "external_id": "personal:s"},
+        ]},
+    )
+    cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
+
+    # A kid's appointment: 'family' snaps onto the canonical 'kids' bucket.
+    r = client.post(f"/commitments/{cid}/domain", headers=_auth(), json={"domain": "family"})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["domain"] == "kids"
+    # Surfaces on the commitment list.
+    assert client.get("/commitments", headers=_auth()).json()["commitments"][0]["domain"] == "kids"
+    # Clearing works; unknown id → 404.
+    assert client.post(f"/commitments/{cid}/domain", headers=_auth(),
+                       json={"domain": None}).json()["commitment"]["domain"] is None
+    assert client.post("/commitments/99999/domain", headers=_auth(),
+                       json={"domain": "work"}).status_code == 404
+
+
 def test_kind_feedback_latest_wins(store):
     """record_kind_feedback collapses by normalized title; latest verdict wins."""
     store.record_kind_feedback("Harlequin Brow Appt", "fyi", llm_kind="self")
@@ -956,6 +1013,18 @@ def test_manual_commitment_and_list(client, store_open):
     listed = client.get("/commitments", headers=_auth()).json()["commitments"]
     assert listed[0]["title"] == "Call mom"
     assert listed[0]["source"] == "manual"
+
+
+def test_manual_commitment_accepts_domain(client, store_open):
+    """A manual commitment carries a domain, snapped onto the canonical vocab."""
+    created = client.post(
+        "/commitments",
+        json={"title": "Dentist for Sam", "start_at": _iso(45), "domain": "childcare"},
+        headers=_auth(),
+    )
+    assert created.status_code == 201
+    listed = client.get("/commitments", headers=_auth()).json()["commitments"]
+    assert listed[0]["domain"] == "kids"
 
 
 def test_conflicts_endpoint(client, store_open):
