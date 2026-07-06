@@ -804,7 +804,7 @@ cp deploy/coach.sh deploy/com.morningstatic.prefrontal-coach.plist ~/… # (repo
 #   - coach.sh:  PREFRONTAL_HOME (repo root), PREFRONTAL_USER (handle, or blank to auto-pick)
 #   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, PREFRONTAL_USER, Std{Out,Err}Path
 cp deploy/com.morningstatic.prefrontal-coach.plist ~/Library/LaunchAgents/
-PREFRONTAL_HOME=$HOME/prefrontal deploy/coach.sh   # run once by hand — should print what fires
+PREFRONTAL_HOME=$HOME/src/prefrontal deploy/coach.sh   # run once by hand — should print what fires
 launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-coach.plist
 ```
 

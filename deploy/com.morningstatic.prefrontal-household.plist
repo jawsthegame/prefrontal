@@ -17,7 +17,7 @@
     # then edit the paths below to match your username and install location
     launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-household.plist
     # run the wrapper once by hand first to confirm it works:
-    PREFRONTAL_HOME=/Users/tom/prefrontal deploy/household-sweeps.sh
+    PREFRONTAL_HOME=/Users/tom/src/prefrontal deploy/household-sweeps.sh
 -->
 <plist version="1.0">
 <dict>
@@ -26,11 +26,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/prefrontal/deploy/household-sweeps.sh</string>
+        <string>/Users/tom/src/prefrontal/deploy/household-sweeps.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/prefrontal</string>
+    <string>/Users/tom/src/prefrontal</string>
 
     <key>StartInterval</key>
     <integer>900</integer>
@@ -51,7 +51,7 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Install location; the wrapper cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
-        <string>/Users/tom/prefrontal</string>
+        <string>/Users/tom/src/prefrontal</string>
         <!-- Any household member; the sweep resolves the household from them. -->
         <key>PREFRONTAL_USER</key>
         <string>tom</string>

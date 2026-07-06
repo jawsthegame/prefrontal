@@ -16,7 +16,7 @@
 # one being not-due (or erroring) never blocks the others.
 set -uo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/prefrontal}"
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 # Any member of the household; the sweep resolves the household from this user.
 PREFRONTAL_USER="${PREFRONTAL_USER:-}"
