@@ -197,6 +197,7 @@ def test_self_care_empty_history_is_zeroed(scoped):
     for r in rows:
         assert r["n"] == 0
         assert r["confirmed"] == 0 and r["snoozed"] == 0 and r["ignored"] == 0
+        assert r["unknown"] == 0
         assert r["response_rate"] is None
         assert r["avg_latency_seconds"] is None
         # interval falls back to the check's default when unset
@@ -217,12 +218,24 @@ def test_self_care_counts_rate_and_latency(scoped):
     meal = rows["meal"]
     assert meal["n"] == 4
     assert meal["confirmed"] == 2 and meal["snoozed"] == 1 and meal["ignored"] == 1
+    assert meal["unknown"] == 0  # every episode had a known outcome
     assert meal["response_rate"] == 0.5  # 2 confirmed / 4
     # avg latency over the two confirmed taps that carry a numeric latency only
     assert meal["avg_latency_seconds"] == 15.0
     # water saw exactly its one confirm; meds saw nothing
     assert rows["water"]["confirmed"] == 1 and rows["water"]["n"] == 1
     assert rows["meds"]["n"] == 0
+
+
+def test_self_care_unknown_outcome_counts_toward_the_bar_remainder(scoped):
+    """Episodes whose outcome isn't confirmed/snoozed/ignored show up as `unknown`."""
+    _log_self_care(scoped, "meal", "confirmed", "1/1 latency=10s")
+    _log_self_care(scoped, "meal", "expired", "latency=?")  # not one of the three verbs
+    meal = {r["key"]: r for r in build_stats(scoped)["self_care"]}["meal"]
+    assert meal["n"] == 2  # every episode counts toward the total
+    assert meal["confirmed"] == 1 and meal["snoozed"] == 0 and meal["ignored"] == 0
+    assert meal["unknown"] == 1  # the non-verb episode is the grey remainder
+    assert meal["response_rate"] == 0.5  # 1 confirmed / 2
 
 
 def test_self_care_avg_latency_none_without_timed_confirms(scoped):
