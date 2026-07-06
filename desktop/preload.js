@@ -6,4 +6,5 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('prefrontal', {
   getServerUrl: () => ipcRenderer.invoke('get-server-url'),
   setServerUrl: (url) => ipcRenderer.invoke('set-server-url', url),
+  openSettings: () => ipcRenderer.invoke('open-settings'),
 });
