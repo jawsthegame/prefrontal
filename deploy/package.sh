@@ -1,9 +1,17 @@
 #!/bin/bash
 #
-# Re-package the built artifacts after an update: a Python wheel + sdist, the
-# client handout PDFs, and the macOS desktop (Electron) app. This is the
-# "re-package" half of a deploy — run by deploy/update.sh right after the code is
-# pulled and installed, and safe to run by hand.
+# Re-package the built artifacts after a pull: a Python wheel + sdist, the
+# client handout PDFs, and the macOS desktop (Electron) app. Run this explicitly,
+# out of band, whenever you actually want fresh artifacts:
+#
+#     bash deploy/package.sh
+#
+# It is intentionally NOT called by deploy/update.sh. The desktop build (npm +
+# electron-builder + signing) takes minutes — long enough to blow the update's
+# UPDATE_TIMEOUT_SECONDS (see prefrontal.selfupdate), which then *skips the
+# restart* of an otherwise-good update, leaving the box serving old code after a
+# "successful" pull. The dashboard server needs only pull + restart to pick up a
+# code change; rebuilding artifacts is this separate, explicit step (or CI).
 #
 # BEST-EFFORT AND NON-FATAL by design: each step is skipped (with a log line)
 # when its toolchain or source isn't present, and a failing step never aborts the
