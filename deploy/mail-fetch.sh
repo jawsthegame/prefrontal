@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Fetch + triage mail for one or more accounts (the no-n8n ingestion path).
+# Fetch + triage every user's mail (the no-n8n ingestion path).
 #
-# Driven by the com.prefrontal-mail launchd agent, which passes
-# the account names as arguments. Each account is fetched independently; a
-# failure on one (e.g. a transient IMAP timeout) is logged and does not stop the
-# others. Run from the repo root so `.env` (with MAIL_IMAP_*_<ACCOUNT> and
-# PREFRONTAL_MAIL_ACCOUNTS) is loaded by the CLI.
+# Driven by the com.prefrontal-mail launchd agent. Runs `prefrontal mail fetch
+# --all-users`: one job fans over every active user, fetching each user's own
+# accounts from the per-user `sources` registry (`prefrontal mail add-source`).
+# A user with no connected source is skipped — the global MAIL_IMAP_* env is one
+# mailbox and is NOT inherited across users (that would be a cross-account leak).
+# Run from the repo root so `.env` (PREFRONTAL_SECRET_KEY, which opens the sealed
+# credentials) is loaded by the CLI.
 #
-# Usage: deploy/mail-fetch.sh <account> [<account> ...]
-
+# Usage: deploy/mail-fetch.sh
 set -u
 
 # Resolve the repo root from this script's location, so the job works no matter
@@ -17,31 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PREFRONTAL="${REPO_ROOT}/.venv/bin/prefrontal"
 
-if [[ "$#" -eq 0 ]]; then
-    echo "usage: mail-fetch.sh <account> [<account> ...]" >&2
-    exit 2
-fi
-
 cd "${REPO_ROOT}" || exit 1
 
-# Handle whose mailboxes to fetch. Leave empty to let the CLI auto-pick when a
-# single user is provisioned; required once more than one user exists, since
-# `prefrontal mail` then refuses to guess. --user is a flag on the `mail` group,
-# so it must precede the `fetch` subcommand. The launchd agent sets this from
-# its PREFRONTAL_USER environment variable (filled by install-launchd.sh).
-PREFRONTAL_USER="${PREFRONTAL_USER:-}"
-user_args=()
-if [[ -n "${PREFRONTAL_USER}" ]]; then
-    user_args=(--user "${PREFRONTAL_USER}")
-fi
-
-status=0
-for account in "$@"; do
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] fetching mail for '${account}'"
-    # ${arr[@]+…} guards the empty-array expansion under bash 3.2 (macOS /bin/bash).
-    if ! "${PREFRONTAL}" mail ${user_args[@]+"${user_args[@]}"} fetch --account "${account}"; then
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: fetch failed for '${account}'" >&2
-        status=1
-    fi
-done
-exit "${status}"
+echo "[$(date '+%Y-%m-%dT%H:%M:%S')] fetching mail for all users"
+exec "${PREFRONTAL}" mail fetch --all-users

@@ -4,10 +4,11 @@ description: >-
   Onboard a person onto a Prefrontal deployment end-to-end — provision their
   user (or mint a household invite code for a co-parent), then hand them a
   personalized setup sheet for ntfy notifications, iOS Shortcuts, and the
-  Scriptable widget. Use when asked to "invite a user", "add someone",
+  Scriptable widget — and optionally connects their own email (IMAP) and calendar
+  (private ICS feed) sources. Use when asked to "invite a user", "add someone",
   "onboard a co-parent", "set up a new phone/user", or "get <name> onto
-  Prefrontal". Runs the `prefrontal user`/`prefrontal household` CLI and fills
-  the new person's handle, token, base URL, and ntfy topic into the client
+  Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar` CLI and
+  fills the new person's handle, token, base URL, and ntfy topic into the client
   instructions.
 ---
 
@@ -25,6 +26,7 @@ steps into the repo, cite them:
 - `deploy/scriptable/README.md` — the home/lock-screen widget
 - `docs/deployment.md` (§"Configure once") — ntfy env vars + the token credential
 - `docs/multi-tenant.md` — the per-user token / household model
+- `docs/design/per-user-sources.md` — per-user email (IMAP) + calendar (ICS) sources
 
 ## Step 0 — figure out which flow this is
 
@@ -126,7 +128,50 @@ prefrontal notify --user <handle> --channel sound -m "hello from Prefrontal"
 It prints where it routed (ntfy vs Pushover) and the transport result, and exits
 non-zero if nothing is configured. Have the person confirm the push arrived.
 
-## Step 4 — produce the personalized setup sheet
+## Step 4 — connect their email + calendars (optional)
+
+Per-user ingestion is opt-in: a user gets triaged mail and calendar-conflict
+detection only for the accounts **they** connect. Each secret (IMAP password /
+ICS feed URL) is **sealed at rest**, so this needs a one-time key.
+
+**One-time per deployment** — mint the at-rest key if `prefrontal secrets status`
+says it's unset:
+
+```sh
+prefrontal secrets init          # prints PREFRONTAL_SECRET_KEY=… → add it to .env
+```
+
+Back it up. (Mail is recoverable without it — re-import from env — but a lost key
+means re-adding calendar feeds.)
+
+**Mail (IMAP).** Gmail needs an app password (with 2FA on):
+
+```sh
+prefrontal mail --user <handle> add-source --account personal \
+    --host imap.gmail.com --username <email>    # prompts for the password (not echoed)
+prefrontal mail --user <handle> fetch --account personal --heuristic   # verify
+```
+
+`--account` is the logical name; repeat per mailbox (work, …). Gmail defaults to
+Important-only (`--no-important-only` to fetch all). `list-sources` shows the
+accounts, never the passwords. Migrating an existing single-user box off the
+global `MAIL_IMAP_*` env? `prefrontal mail --user <handle> import-env-sources`
+seals them all in one shot.
+
+**Calendar (private ICS feed).** Paste each calendar's read-only "secret address
+in iCal format" (Google: *Settings → Secret address in iCal format*):
+
+```sh
+prefrontal calendar --user <handle> add-source --account personal \
+    --url '<secret-ics-url>' --me <email>       # --me drops events you've declined
+prefrontal calendar --user <handle> sync                              # verify
+```
+
+Both keep syncing on a schedule via the `com.prefrontal-mail` /
+`com.prefrontal-calendar` launchd jobs (`--all-users`). Full reference:
+`docs/design/per-user-sources.md`.
+
+## Step 5 — produce the personalized setup sheet
 
 Now write the newcomer a short, copy-pasteable handoff with **their** values
 already substituted, then point to the full docs for depth. Fill the blanks:
