@@ -67,6 +67,33 @@ DEFAULT_DEBOUNCE_MINUTES = 120.0
 DEFAULT_RESPONSIVE_START = 8
 DEFAULT_RESPONSIVE_END = 22
 
+#: Longest note we fold into a nudge before truncating — a note is a quick "don't
+#: forget" hint, not a document, and an over-long one would bury the nudge itself.
+NOTE_HINT_MAX_CHARS = 160
+
+
+def note_hint(notes: str | None, *, max_chars: int = NOTE_HINT_MAX_CHARS) -> str:
+    """Render a todo/commitment's notes as a suffix to fold into a nudge, or ``""``.
+
+    The single place a stored note becomes part of a delivered nudge, so the
+    departure reminder and the task-initiation nudge phrase it the same way: a
+    leading separator plus ``Note: …`` (whitespace collapsed, over-long notes
+    truncated to ``max_chars`` with an ellipsis). Blank/``None`` notes yield an
+    empty string so the caller can unconditionally append it.
+
+    This is why a note is worth writing — it is *consulted whenever a nudge is
+    connected to the thing it annotates* ("leave now for the dentist — Note:
+    bring the insurance card"), not just shown on a detail screen.
+    """
+    if not isinstance(notes, str):
+        return ""
+    text = " ".join(notes.split())
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip() + "…"
+    return f" Note: {text}"
+
 
 class ModuleLike(Protocol):
     """The slice of a module the engine uses — just its key and evaluator."""

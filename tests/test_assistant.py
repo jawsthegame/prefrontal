@@ -228,6 +228,49 @@ def test_validate_dismiss_conflict_unknown_key(snapshot):
     assert errors
 
 
+def test_validate_set_todo_notes(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_todo_notes", "todo_id": 4, "notes": "  needs the account number "}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params == {"todo_id": 4, "notes": "needs the account number"}
+    # A blank/null note clears it (params carries None).
+    cleared, errors = assistant.validate_actions(
+        [{"op": "set_todo_notes", "todo_id": 4, "notes": "   "}], snapshot
+    )
+    assert errors == [] and cleared[0].params == {"todo_id": 4, "notes": None}
+    assert "Clear note" in cleared[0].summary
+    # Unknown todo id → dropped with a reason.
+    _a, errs = assistant.validate_actions(
+        [{"op": "set_todo_notes", "todo_id": 999, "notes": "x"}], snapshot
+    )
+    assert errs
+
+
+def test_validate_set_commitment_notes(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_commitment_notes", "commitment_id": 2, "notes": "bring the card"}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params == {"commitment_id": 2, "notes": "bring the card"}
+    _a, errs = assistant.validate_actions(
+        [{"op": "set_commitment_notes", "commitment_id": 999, "notes": "x"}], snapshot
+    )
+    assert errs
+
+
+def test_validate_add_commitment_with_notes(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "add_commitment", "title": "Dentist", "start_at": "2026-07-07 09:00",
+          "notes": "bring the insurance card"}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params["notes"] == "bring the insurance card"
+
+
 def test_validate_dismiss_conflict_known_key(snapshot):
     actions, errors = assistant.validate_actions(
         [{"op": "dismiss_conflict", "key": "busy::dentist"}], snapshot

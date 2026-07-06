@@ -79,6 +79,7 @@ from prefrontal.webhooks.schemas import (
     TodoCreate,
     TodoDeadlineUpdate,
     TodoDomainUpdate,
+    TodoNotesUpdate,
     TodoSchedule,
     TodoWindowUpdate,
 )
@@ -390,6 +391,31 @@ def build_router(services: RouterServices) -> APIRouter:
                 detail=f"Todo {todo_id} is not open.",
             )
         return {"todo_id": todo_id, "deadline": deadline}
+
+    @router.post("/todos/{todo_id}/notes", tags=["todos"])
+    def todo_set_notes(
+        todo_id: int,
+        payload: TodoNotesUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) an open todo's free-text notes.
+
+        The note is consulted when a nudge is built for this todo — the
+        initiation nudge that surfaces a task you keep putting off folds it on as
+        a ``Note: …`` hint, so the context you left ("needs the account number")
+        rides along. ``null``/empty clears it; only open todos are editable (404
+        otherwise). Whitespace-only is treated as clear. Declared before the
+        ``{action}`` route so "notes" isn't read as a done/drop action.
+        """
+        memory = ctx.store
+        raw = payload.notes
+        notes = raw.strip() if isinstance(raw, str) and raw.strip() else None
+        if not memory.set_todo_notes(todo_id, notes):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "notes": notes}
 
     @router.post("/todos/{todo_id}/category", tags=["todos"])
     def todo_set_category(

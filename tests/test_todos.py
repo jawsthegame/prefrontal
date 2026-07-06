@@ -1655,6 +1655,30 @@ def test_todo_window_endpoint_set_clear_and_validation(client, store_open):
     assert store_open.get_todo(tid)["time_window"] is None
 
 
+def test_todo_notes_endpoint_set_clear_and_missing(client, store_open):
+    """POST /todos/{id}/notes sets, clears (blank/None), and 404s on a closed/absent todo."""
+    tid = client.post("/todos", headers=_auth(), json={
+        "title": "Call the accountant", "notes": "needs the account number",
+    }).json()["todo_id"]
+    assert store_open.get_todo(tid)["notes"] == "needs the account number"
+
+    r = client.post(f"/todos/{tid}/notes", headers=_auth(),
+                    json={"notes": "  bring last year's return  "})
+    assert r.status_code == 200 and r.json()["notes"] == "bring last year's return"
+    assert store_open.get_todo(tid)["notes"] == "bring last year's return"
+
+    # Blank clears; the todo surfaces the cleared value.
+    client.post(f"/todos/{tid}/notes", headers=_auth(), json={"notes": "   "})
+    assert store_open.get_todo(tid)["notes"] is None
+
+    # A closed todo isn't editable (404); an absent one too.
+    client.post(f"/todos/{tid}/done", headers=_auth())
+    assert client.post(f"/todos/{tid}/notes", headers=_auth(),
+                       json={"notes": "x"}).status_code == 404
+    assert client.post("/todos/99999/notes", headers=_auth(),
+                       json={"notes": "x"}).status_code == 404
+
+
 def test_todos_now_respects_category_window(client, store_open, monkeypatch):
     """At 8pm, a focus-hours todo is withheld while an anytime one is surfaced."""
     _freeze_todos_now_clock(monkeypatch, when=datetime(2026, 6, 15, 20, 0, 0))

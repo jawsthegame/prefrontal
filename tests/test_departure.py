@@ -50,6 +50,7 @@ def _commit(
     location=None,
     cid=1,
     calendar_key=None,
+    notes=None,
 ):
     """Build a commitment dict for the pure functions."""
     c = {
@@ -58,6 +59,7 @@ def _commit(
         "start_at": start,
         "lead_minutes": lead,
         "location": location,
+        "notes": notes,
         "dest_lat": dest[0] if dest else None,
         "dest_lon": dest[1] if dest else None,
         "calendar_key": calendar_key,
@@ -179,6 +181,32 @@ def test_build_departure_message_per_level():
     msg = build_departure_message(late, name="Tom")
     assert msg.startswith("Hey Tom,")
     assert "past your leave time" in msg
+
+
+def test_build_departure_message_consults_commitment_notes():
+    """A commitment's notes ride along with the departure nudge, at every level."""
+    note = "bring the insurance card"
+    soon = plan_departure(
+        _commit("2026-06-29 12:08:00", lead=5.0, notes=note), now=NOW
+    )
+    assert build_departure_message(soon).endswith(f"Note: {note}")
+
+    late = plan_departure(_commit("2026-06-29 11:58:00", lead=5.0, notes=note), now=NOW)
+    assert f"Note: {note}" in build_departure_message(late)
+
+    # No note → no trailing hint (the message ends at its own period).
+    plain = plan_departure(_commit("2026-06-29 12:08:00", lead=5.0), now=NOW)
+    assert "Note:" not in build_departure_message(plain)
+
+
+def test_build_departure_message_attend_mode_consults_notes():
+    """Attend-mode ('starts soon') reminders carry the note too."""
+    plan = plan_departure(
+        _commit(_at(NOW, -1), calendar_key="work", notes="dial in early"),
+        now=NOW,
+    )
+    assert plan.mode == "attend" and plan.level == "go"
+    assert build_departure_message(plan).endswith("Note: dial in early")
 
 
 # -- attend mode: "I'm already where I need to be" ---------------------------

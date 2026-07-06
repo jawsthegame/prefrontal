@@ -180,7 +180,11 @@ also defines:
   `dest_lat`/`dest_lon` enable a local travel-time estimate for departure
   reminders (`prefrontal/departure.py`); without them the static `lead_minutes`
   buffer is used. `source_url` keeps the verbatim deeplink back to the source
-  event/email.
+  event/email. Optional free-text `notes` (like `todos.notes`) are a user field —
+  set on manual creation or via `POST /commitments/{id}/notes`, kept across
+  calendar re-syncs like `hidden`/`outcome` — and are folded into any nudge built
+  for the commitment (e.g. the departure reminder: "leave now — Note: bring the
+  insurance card").
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
   Each carries an inferred, editable `category` (a short topic label). The

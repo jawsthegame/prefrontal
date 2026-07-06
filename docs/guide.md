@@ -579,6 +579,7 @@ token client-side).
 | `GET /commitments/conflicts` | Hard + possible conflicts |
 | `POST /commitments/conflicts/dismiss` | Dismiss a possible conflict (by `key`) |
 | `POST /commitments/{id}/kind` | Set `self` vs `fyi` |
+| `POST /commitments/{id}/notes` | Set / clear a note (folded into the departure nudge; kept across re-syncs) |
 | `POST /todos` · `GET /todos` | Add (auto-augmented) / list (with decomposition + avoidance) |
 | `GET /todos/fit?minutes=N` | Todos that fit a free block |
 | `GET /todos/now` | The one todo that fits your free time right now (avoidance-biased, low-energy-later) |
@@ -586,6 +587,7 @@ token client-side).
 | `POST /todos/{id}/decompose` | First step + remaining steps |
 | `POST /todos/{id}/steps/{i}/done` | Tick a decomposed step |
 | `POST /todos/{id}/deadline` | Move or clear a deadline |
+| `POST /todos/{id}/notes` | Set / clear a note (folded into the "you keep putting this off" nudge) |
 | `POST /todos/{id}/done` · `/drop` | Complete / drop (logs an episode) |
 | `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |

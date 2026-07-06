@@ -314,9 +314,10 @@ def normalize_event(
 
     Args:
         event: A raw event dict. Requires ``title`` and ``start_at``; optional
-            ``external_id``, ``end_at``, ``location``, ``url`` (a.k.a.
-            ``source_url`` / ``html_link``, a deeplink to the source event),
-            ``dest_lat``, ``dest_lon``, ``lead_minutes``, ``hard``, and
+            ``external_id``, ``end_at``, ``location``, ``notes`` (free-text
+            detail consulted when a nudge is built for the commitment), ``url``
+            (a.k.a. ``source_url`` / ``html_link``, a deeplink to the source
+            event), ``dest_lat``, ``dest_lon``, ``lead_minutes``, ``hard``, and
             ``tzid`` / ``end_tzid`` (source zones for naive ``start_at`` /
             ``end_at``, as sent by the ICS parser). ``end_tzid`` defaults to
             ``tzid`` when absent.
@@ -348,6 +349,7 @@ def normalize_event(
             to_utc(end_raw, tzid=end_tzid, default_tz=default_tz) if end_raw else None
         ),
         "location": event.get("location") or None,
+        "notes": (event.get("notes") or "").strip() or None,
         "source_url": (
             event.get("url") or event.get("source_url") or event.get("html_link")
         )
