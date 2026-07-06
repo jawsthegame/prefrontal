@@ -86,21 +86,22 @@
     color: var(--muted); margin: 0 0 12px;
   }
   .empty { color: var(--muted); font-style: italic; }
-  /* Self-care card: an editable master toggle + one control row per check. */
+  /* Self-care card: log what you did today — one "mark done" row per check.
+     Configuring targets/cadence lives on the Settings page. */
   .sc-controls { display: flex; flex-direction: column; gap: 8px; }
-  .sc-master { display: flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
   .sc-hint { color: var(--muted); font-size: 13px; }
-  .sc-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  .sc-hint a { color: var(--accent); text-decoration: none; }
+  .sc-hint a:hover { text-decoration: underline; }
+  .sc-check { display: flex; align-items: center; gap: 8px 12px;
     padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
-  .sc-en { display: inline-flex; align-items: center; gap: 6px; min-width: 120px; cursor: pointer; }
-  .sc-field { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
-  .sc-num { width: 52px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--card); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
-  .sc-num:disabled { opacity: .5; }
+  .sc-label { display: inline-flex; align-items: center; gap: 6px; }
   .sc-prog { margin-left: auto; }
   .sc-prog b { font-variant-numeric: tabular-nums; }
   .sc-sub { color: var(--muted); font-size: 12px; }
-  .sc-check-off { opacity: .6; }
+  .sc-mark { padding: 6px 12px; min-height: 34px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .sc-mark:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .sc-mark:disabled { opacity: .55; cursor: default; }
 
   /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
   .masonry .card > h2 { padding-right: 96px; }
@@ -463,6 +464,7 @@
     <a href="/pets">Pets</a>
     <a href="/stats">Insights</a>
     <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
   </div>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
 </nav>
@@ -847,33 +849,30 @@ function scProgress(c) {
 
 function scRow(c) {
   const m = SC_META[c.key] || { icon: "", label: c.key };
-  const num = (field, val, attrs) =>
-    `<input class="sc-num" type="number" ${attrs} data-sc-check="${c.key}" `
-    + `data-sc-field="${field}" value="${val}"${c.enabled ? "" : " disabled"} />`;
-  // Cadence only matters for a recurring check (target > 1).
-  const cadence = c.target > 1
-    ? `<span class="sc-field">every ${num("interval_minutes", c.interval_minutes, 'min="1"')}m</span>`
-    : "";
-  return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
-    <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
-    + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
-    <span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>
-    <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
-    ${cadence}
+  const recurring = c.target > 1;
+  // A once-a-day check has nothing left to log once it's done — lock the button.
+  const locked = !recurring && c.done;
+  const label = recurring ? "＋ Log one" : (c.done ? "Done ✓" : "Mark done");
+  return `<div class="sc-check">
+    <span class="sc-label">${m.icon} ${esc(m.label)}</span>
     <span class="sc-prog">${scProgress(c)}</span>
+    <button class="sc-mark" data-sc-mark="${c.key}"${locked ? " disabled" : ""}>${label}</button>
   </div>`;
 }
 
 function renderSelfCare(d) {
+  // Card is now log-only: "mark what I did today" for the checks that are on.
+  // Turning checks on/off and setting targets/cadence lives on /settings; when
+  // nothing's active we point there rather than showing empty controls.
   const on = !!(d && d.enabled);
-  const master = `<label class="sc-master"><input type="checkbox" data-sc-master`
-    + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;
   if (!on) {
-    return `<div class="sc-controls">${master}`
-      + `<span class="sc-hint">Turn on to get meal &amp; water nudges.</span></div>`;
+    return `<div class="sc-controls"><span class="sc-hint">`
+      + `Self-care checks are off — <a href="/settings">turn them on in Settings →</a></span></div>`;
   }
-  const rows = (d.checks || []).map(scRow).join("");
-  return `<div class="sc-controls">${master}${rows}</div>`;
+  const rows = (d.checks || []).filter((c) => c.enabled).map(scRow).join("");
+  const body = rows
+    || `<span class="sc-hint">No checks enabled — <a href="/settings">configure in Settings →</a></span>`;
+  return `<div class="sc-controls">${body}</div>`;
 }
 
 function renderOutings(d) {
@@ -1436,9 +1435,9 @@ async function load() {
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
   if (selfcare.status === "fulfilled") {
     $("#c-selfcare-banner").style.display = "";
-    // Don't clobber a control the user is mid-edit on: a poll fires every few
-    // seconds, so skip the re-render while focus is inside the card (a change
-    // commits on blur and re-renders from the response anyway).
+    // Don't clobber the card mid-interaction: a poll fires every few seconds, so
+    // skip the re-render while focus is inside it (e.g. a just-tapped "mark done"
+    // button, whose own handler re-renders from the POST response anyway).
     const card = $("#c-selfcare");
     if (!card.contains(document.activeElement)) {
       card.querySelector(".body").innerHTML = renderSelfCare(selfcare.value);
@@ -1808,25 +1807,18 @@ document.addEventListener("change", (e) => {
   applyCap(card.id);
 });
 
-// Self-care card controls: a change to the master toggle or any per-check field
-// writes a partial config to POST /self-care and re-renders from the response.
-document.addEventListener("change", async (e) => {
-  const inp = e.target.closest("#c-selfcare input");
-  if (!inp) return;
-  let body;
-  if (inp.hasAttribute("data-sc-master")) {
-    body = { enabled: inp.checked };
-  } else {
-    const key = inp.dataset.scCheck, field = inp.dataset.scField;
-    if (!key || !field) return;
-    const val = field === "enabled" ? inp.checked : Number(inp.value);
-    if (field !== "enabled" && !Number.isFinite(val)) return;  // ignore a cleared box
-    body = { checks: { [key]: { [field]: val } } };
-  }
+// Self-care card: "Mark done" logs a confirm for that check today — the way to
+// record something you did after missing (or ignoring) its notification. It
+// counts one toward the daily target exactly like a one-tap notification would.
+// Settings (master switch, targets, cadence) live on /settings, not here.
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest("#c-selfcare [data-sc-mark]");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;  // guard against a double-tap logging two
   try {
-    const status = await post("/self-care", body);
+    const status = await post("/self-care/mark", { key: btn.dataset.scMark });
     $("#c-selfcare .body").innerHTML = renderSelfCare(status);
-  } catch (_) { /* post() surfaced the error; leave the card as-is */ }
+  } catch (_) { btn.disabled = false; /* post() surfaced the error */ }
 });
 
 // Show the operator-only Update / Restart controls only when the signed-in user

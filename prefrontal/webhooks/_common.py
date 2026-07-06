@@ -45,6 +45,9 @@ STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8"
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
 #: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
 REVIEW_HTML = (Path(__file__).with_name("review.html")).read_text(encoding="utf-8")
+#: The Settings page — config that adjusts behavior (currently the self-care
+#: master switch + per-check knobs), reading/writing GET + POST /self-care.
+SETTINGS_HTML = (Path(__file__).with_name("settings.html")).read_text(encoding="utf-8")
 
 #: The PREFRONTAL app icon (PNG bytes), read once at import and served
 #: unauthenticated at ``GET /brand/app-icon.png`` so an ntfy push can reference
