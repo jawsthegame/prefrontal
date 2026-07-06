@@ -17,7 +17,7 @@
     # then edit the paths below to match your username and install location
     launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-coach.plist
     # run the wrapper once by hand first to confirm it delivers:
-    PREFRONTAL_HOME=/Users/tom/prefrontal deploy/coach.sh
+    PREFRONTAL_HOME=/Users/tom/src/prefrontal deploy/coach.sh
 
   StartInterval fires every 60s (matching the old every-minute n8n poll). The
   tick self-suppresses via quiet hours + debounce, so a minute cadence only
@@ -30,11 +30,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/prefrontal/deploy/coach.sh</string>
+        <string>/Users/tom/src/prefrontal/deploy/coach.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/prefrontal</string>
+    <string>/Users/tom/src/prefrontal</string>
 
     <key>StartInterval</key>
     <integer>60</integer>
@@ -55,7 +55,7 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Install location; coach.sh cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
-        <string>/Users/tom/prefrontal</string>
+        <string>/Users/tom/src/prefrontal</string>
         <!-- Handle to coach; leave unset to auto-pick when there's one user. -->
         <key>PREFRONTAL_USER</key>
         <string>tom</string>
