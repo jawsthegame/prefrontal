@@ -39,6 +39,7 @@ from prefrontal.modules.impulsivity import switch_rate_feedback
 from prefrontal.modules.registry import is_enabled as module_enabled
 from prefrontal.scheduling import (
     free_windows,
+    local_datetime,
     local_day_bounds,
     local_time_utc,
     suggest_for_windows,
@@ -134,8 +135,12 @@ class Briefing:
     """Structured morning briefing.
 
     Attributes:
-        date: The briefing date (UTC, ``YYYY-MM-DD``).
+        date: The briefing date (local calendar day, ``YYYY-MM-DD``).
         format: ``short`` or ``long`` (from coaching state).
+        tz: IANA timezone the times are rendered in (the deployment's home
+            zone). Stored ``start_at``/``leave_by`` values are naive UTC; the
+            renderer converts them to this zone so the digest reads in local
+            wall-clock time, not UTC.
         today: Today's commitments (dicts), soonest first.
         conflicts: Double-booking pairs among upcoming commitments.
         slips: Count of recent ``miss`` episodes by ``episode_type``.
@@ -163,6 +168,7 @@ class Briefing:
 
     date: str
     format: str
+    tz: str = "UTC"
     today: list[dict[str, Any]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     slips: dict[str, int] = field(default_factory=dict)
@@ -365,6 +371,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
+        tz=tz,
         today=today,
         conflicts=conflicts,
         slips=dict(slip_counter),
@@ -404,9 +411,19 @@ def _switch_baseline(store: MemoryStore) -> float | None:
     return None
 
 
-def _time_of(commitment: dict[str, Any]) -> str:
-    """Render a commitment's UTC start as ``HH:MM`` (UTC)."""
-    return commitment["start_at"][11:16]
+def _local_hm(ts: str, tz: str) -> str:
+    """Render a stored naive-UTC timestamp as local ``HH:MM`` in ``tz``.
+
+    Stored times are naive UTC; slicing ``[11:16]`` off the string would print
+    the UTC wall clock (e.g. 4h ahead for an Eastern user). Convert first so the
+    digest reads in the reader's own time.
+    """
+    return local_datetime(_parse_ts(ts), tz).strftime("%H:%M")
+
+
+def _time_of(commitment: dict[str, Any], tz: str) -> str:
+    """Render a commitment's start as local ``HH:MM`` in ``tz``."""
+    return _local_hm(commitment["start_at"], tz)
 
 
 def render_briefing(
@@ -453,7 +470,7 @@ def render_briefing(
                 mark = " (hard)" if c.get("hardness") == "hard" else ""
                 cal = f" · {c['calendar']}" if c.get("calendar") else ""
                 fyi = " · FYI" if c.get("kind") == "fyi" else ""
-                lines.append(f"- {_time_of(c)} — {c['title']}{mark}{cal}{fyi}")
+                lines.append(f"- {_time_of(c, briefing.tz)} — {c['title']}{mark}{cal}{fyi}")
     lines.append("")
 
     # Leave by — when to head out for today's remaining travel commitments, so the
@@ -466,7 +483,7 @@ def render_briefing(
                 if d.get("travel_minutes") is not None
                 else ""
             )
-            lines.append(f"- {d['leave_by'][11:16]} for {d['title']}{travel}")
+            lines.append(f"- {_local_hm(d['leave_by'], briefing.tz)} for {d['title']}{travel}")
         lines.append("")
 
     # Conflicts.
@@ -519,7 +536,7 @@ def render_briefing(
             alts = s.get("alternatives") or []
             or_line = f" _(or: {', '.join(alts)})_" if alts else ""
             lines.append(
-                f"- {s['start'][11:16]} ({s['minutes']:g} min free) — good for: "
+                f"- {_local_hm(s['start'], briefing.tz)} ({s['minutes']:g} min free) — good for: "
                 f"{s['suggestion']}{or_line}"
             )
         lines.append("")
