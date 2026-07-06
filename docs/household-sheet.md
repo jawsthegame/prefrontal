@@ -40,9 +40,10 @@ multi-tenancy ([`multi-tenant.md`](multi-tenant.md)), the NL assistant
 - **Plain-English editing** through the existing assistant ("Sam's shoe size is
   13 now", "add a dentist appt for Sam next Tuesday 3pm") with the same
   validate → preview → confirm safety as todo/commitment edits.
-- A single **visible sheet** rendered at the **`/kids` dashboard** (with a calm
-  read-only partner glance at `/family`), backed by `GET /household/sheet` —
-  reusing the profile-render pattern, *not* a new bespoke UI.
+- A single **visible sheet** edited at the **`/household` hub** (the one writable
+  surface) with focused **read-only lenses** at `/kids` and `/pets`, all backed by
+  `GET /household/sheet` — reusing the profile-render pattern, *not* a new bespoke
+  UI. (`/family` is retired and redirects to `/household`.)
 
 **Non-goals (for v1)**
 

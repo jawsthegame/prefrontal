@@ -241,7 +241,7 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         invite = ctx.store.create_invite()
         base = resolved_settings.oauth_base_url
-        join_url = f"{base}/kids?invite={invite['code']}" if base else ""
+        join_url = f"{base}/household?invite={invite['code']}" if base else ""
         result: dict[str, Any] = {**invite, "join_url": join_url}
         if sms_to is not None:
             household = ctx.store.household()

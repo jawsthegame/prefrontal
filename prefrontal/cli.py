@@ -285,9 +285,10 @@ def _cmd_household(args: argparse.Namespace) -> int:
                 return 1
             inv = scoped.create_invite()
             base = settings.oauth_base_url
-            join_url = f"{base}/kids?invite={inv['code']}" if base else ""
+            join_url = f"{base}/household?invite={inv['code']}" if base else ""
             print(f"Invite code: {inv['code']}  (expires {inv['expires_at']} UTC)")
-            print("Share it, or send: " + (join_url or "<base-url>/kids?invite=" + inv["code"]))
+            fallback = join_url or f"<base-url>/household?invite={inv['code']}"
+            print("Share it, or send: " + fallback)
             if args.sms:
                 household = scoped.household()
                 sms = send_invite_sms(

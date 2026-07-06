@@ -479,15 +479,15 @@ and every path keeps its deterministic fallback when both are down.
   the header (shown only when `PREFRONTAL_SELF_UPDATE` is on) — one tap to pull +
   deploy + restart, or just restart. Open it over Tailscale; it asks for your
   token once and remembers it.
-- **`GET /family`** — a calm, mostly read-only *shared household* glance for
-  everyone in the household: kids & facts, standing plans + star progress, the
-  shopping list, upcoming appointments, recent changes, and (if enabled) the
-  load-balance view. The one editable spot is the **shopping list** — a quick-add
-  box and tap-to-check-off, since that's the inherently collaborative list; all
-  other editing lives on `/kids`.
-- **`GET /kids`** — the editable face of the same shared household sheet: add
-  facts, agreements, children and appointments, award stars, and drive it all
-  from a plain-English assistant box.
+- **`GET /household`** — the editable **Household** hub: the one writable surface
+  for the shared sheet. Add kids, pets, facts, agreements, children and
+  appointments, award stars, manage shopping and routines, and drive it all from
+  a plain-English assistant box. Every edit happens here.
+- **`GET /kids`** and **`GET /pets`** — focused, **read-only lenses** over the
+  same shared sheet. `/kids` shows the roster & facts, standing plans + star
+  progress, and upcoming appointments; `/pets` shows the pet roster and their
+  facts (meds, vet/groomer, food). No edit forms — those live on `/household`.
+  (`GET /family` is retired and redirects to `/household`.)
 - **`GET /stats`** — the behavioral **Insights** page: charts over your learning
   data — time-estimation accuracy (the bias multiplier, overall and per context),
   follow-through (success rate, current streak, the success/partial/miss split
@@ -523,7 +523,7 @@ prefrontal user rotate tom                               # mint a new token (old
 
 Two ways to authenticate, used by different clients:
 
-- **Web pages** (`/dashboard`, `/family`, `/kids`, `/stats`) — **Sign in with Google**. You click the
+- **Web pages** (`/dashboard`, `/household`, `/kids`, `/pets`, `/stats`) — **Sign in with Google**. You click the
   button, approve Google's consent once, and a signed session cookie carries you
   after that (no token to paste). Only emails in the `GOOGLE_OAUTH_ALLOWED`
   allowlist may sign in, each mapped to a user handle.
@@ -602,7 +602,7 @@ token client-side).
 | `GET /mail/triage/learned` · `/forget` · `/clear` | Learned triage corrections (repeat/quick-drop senders) |
 | `GET /household/sheet` · `GET /household/shopping` · `POST /household/{create,facts,agreements,shopping,chores,routines,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping (list/add/check/remove), chores, routines (grouping + accountability), load-balance (doing + carrying), check-in, digest, invites |
 | `POST /webhooks/household/{star-prompts,checkin,digest,chores}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest, chore reminders/miss-handoffs) |
-| `GET /dashboard` · `/family` · `/kids` · `/stats` · `/review` | Web surfaces — dashboard, partner glance, editable household sheet, behavioral insights, LLM-sensor review (no auth on the shell) |
+| `GET /dashboard` · `/household` · `/kids` · `/pets` · `/stats` · `/review` | Web surfaces — dashboard, editable household hub, read-only kids/pets lenses, behavioral insights, LLM-sensor review (no auth on the shell). `/family` redirects to `/household`. |
 | `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |

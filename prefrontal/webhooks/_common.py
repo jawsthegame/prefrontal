@@ -23,10 +23,23 @@ ACTION_OUTCOME: dict[str, str] = {
 
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
 DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
-#: The calm, read-only family view (a friendly subset of the dashboard).
-FAMILY_HTML = (Path(__file__).with_name("family.html")).read_text(encoding="utf-8")
-#: The editable kids dashboard for the shared household sheet.
-KIDS_HTML = (Path(__file__).with_name("kids.html")).read_text(encoding="utf-8")
+#: The editable household hub — the one writable surface for the shared sheet
+#: (kids, pets, facts, agreements, shopping, routines).
+HOUSEHOLD_HTML = (Path(__file__).with_name("household.html")).read_text(encoding="utf-8")
+#: The read-only lens shell, parameterized per focus by replacing ``__LENS__``
+#: with ``kids`` / ``pets`` (see :func:`lens_html`). One file backs both lenses.
+LENS_HTML = (Path(__file__).with_name("lens.html")).read_text(encoding="utf-8")
+
+
+def lens_html(lens: str) -> str:
+    """The read-only lens shell wired to a specific focus (``kids`` / ``pets``).
+
+    The shell carries a ``__LENS__`` token the client reads to pick which slices
+    of ``GET /household/sheet`` to render; we bind it server-side so each route
+    (``/kids``, ``/pets``) serves a self-contained page. ``lens`` is a fixed
+    internal literal, never user input.
+    """
+    return LENS_HTML.replace("__LENS__", lens)
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
 STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8")
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
