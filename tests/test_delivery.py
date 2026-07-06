@@ -383,6 +383,33 @@ def test_self_care_cue_attaches_meal_buttons():
     assert verify_action(token, SIGNING) == ("tom", "meal_ate", 20260703)
 
 
+def test_self_care_cue_attaches_meds_buttons():
+    """A meds cue drives signed Took / Snooze buttons and drops the dashboard click.
+
+    Regression: ``meds`` was absent from the delivery context→kind maps (unlike
+    ``meal``/``water``), so a meds nudge got no buttons and fell back to opening
+    the dashboard — the reported "it still navigates to the dashboard" symptom.
+    """
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    decision = _decision("push", context_key="meds", ref={"target": 20260703})
+    client.deliver(decision, Route(ntfy_topic="me"), base_url=BASE, secret=SIGNING, handle="tom")
+
+    actions = captured["body"]["actions"]
+    assert [a["label"] for a in actions] == ["✓ Took", "Snooze"]
+    token = actions[0]["url"].split("t=", 1)[1]
+    assert verify_action(token, SIGNING) == ("tom", "meds_took", 20260703)
+    # buttons present → the notification body no longer opens the dashboard
+    assert "click" not in captured["body"]
+
+
 def test_morning_prep_cue_attaches_set_alarm_button():
     """The evening morning-prep nudge carries a client-side Set-alarm view button
     built from its ref (no signing needed), deep-linking to the iOS Shortcut."""
