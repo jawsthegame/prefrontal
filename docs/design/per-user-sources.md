@@ -36,8 +36,12 @@ Each user connects **their own, and only their own** email and calendar.
 ## Decisions (locked)
 
 1. **Secrets at rest:** Fernet-encrypted, stored in the DB.
-2. **Calendar:** real per-user **Google Calendar OAuth**
-   (`calendar.readonly` + refresh tokens), not ICS.
+2. **Calendar:** per-user **private ICS feed URLs**, synced in-app.
+   *(Revised from the original Google Calendar OAuth plan: OAuth's sensitive-scope
+   verification + 7-day-refresh-token-in-testing-mode friction wasn't worth it
+   when a sealed ICS "secret address" per feed gives the same result and reuses
+   the existing ICS ingestion. The feed URL is itself a bearer secret, so Phase 0
+   crypto still earns its keep.)*
 3. Deliver as a **phased** build; this doc is the plan reviewed first.
 
 ## Architecture: a per-user source registry
@@ -162,27 +166,29 @@ Document all three in `.env.example`.
   derived from env account names, so a DB-only Gmail account may not get Gmail
   deep-links on its todos. Cosmetic; fold into a later polish pass.
 
-## Phase 2 — Per-user calendar (Google OAuth)
+## Phase 2 — Per-user calendar (private ICS feeds) ✅ CODE DONE
 
-- `oauth.py`: when `google_calendar_enabled`, extend the login authorize URL
-  (`oauth.py:290,294-295`) with `calendar.readonly`, `access_type=offline`,
-  `prompt=consent`. In `_exchange_code_for_email` (`oauth.py:240-274`) capture
-  the `refresh_token` currently discarded at L259; in the callback
-  (`oauth.py:316-329`) Fernet-seal it and store as a `gcal` source. No Google
-  client library — reuse the existing httpx-direct pattern.
-- `prefrontal/calendar/google.py`: exchange refresh token → access token
-  (`grant_type=refresh_token`), call Calendar `events.list` for the selected
-  calendars, map into the event shape the existing ingestion already consumes
-  (`commitments.sync_calendar` / `store.upsert_commitment`,
-  `commitments.py:518`, `:576`). Same `external_id` namespacing as today.
-- `prefrontal calendar sync --all-users`; new `deploy/com.prefrontal-calendar.plist`
-  (StartInterval 900). `install-launchd.sh` already auto-discovers new templates.
-- Calendar selection: `prefrontal calendar list-remote` / `enable <id>`
-  (default to `primary`), stored in the `gcal` source `config`.
-- Retire the n8n `calendar-sync` workflow; **keep** the push webhook
-  (`POST /webhooks/calendar/sync`) for other/legacy sources.
-- Onboarding: "connect your calendar" → visit `/auth/google/login`.
-- **Tests:** token-refresh (mock httpx), event mapping, fan-out, isolation.
+- ✅ `prefrontal/ics.py`: `fetch_ics(url)` (httpx) + `parse_ics(text, namespace,
+  me_emails)` — a faithful in-app port of the old n8n "Parse ICS" nodes (line
+  unfolding, `DTSTART;TZID`, `EXDATE`/`RECURRENCE-ID`, namespaced `external_id`,
+  declined-attendee drop; also drops `STATUS:CANCELLED`). Emits the event dicts
+  `commitments.sync_calendar` already consumes, so recurrence expansion + TZID→UTC
+  + conflict detection are reused unchanged.
+- ✅ `ics` connector in `prefrontal/sources.py`: `IcsSource`, `put_ics_source`
+  (seals the feed URL — a bearer secret), `ics_sources`. Config carries
+  `namespace`, `me_emails`, `label`.
+- ✅ `prefrontal calendar sync [--all-users]` (fetch → parse all a user's feeds →
+  one `sync_calendar` call, classify via Ollama when up, best-effort geocode) +
+  `calendar add-source/list-sources/remove-source`.
+- ✅ `deploy/calendar-sync.sh` + `deploy/com.prefrontal-calendar.plist`
+  (StartInterval 900, `--all-users`); `install-launchd.sh` auto-discovers it.
+- ✅ Retired the n8n `calendar-sync` workflow; the push webhook
+  (`POST /webhooks/calendar/sync`) is **kept** for other/legacy sources.
+- ✅ **Tests** (`test_calendar_sources.py`): parser (TZID/all-day/UTC/declined/
+  cancelled/unfolding/namespacing), URL sealed at rest, add/list/remove CLI,
+  `sync --all-users` isolation, no-feeds + missing-key exits.
+- ⏳ **Deferred:** onboarding "add a calendar feed" step in the `onboard-user`
+  skill.
 
 ## Phase 3 — Scheduling unification & cleanup
 
@@ -194,32 +200,30 @@ Document all three in `.env.example`.
 
 ---
 
-## Risks / gotchas to confirm before Phase 2
+## Risks / gotchas
 
-1. **Google sensitive-scope verification.** `calendar.readonly` is a *sensitive*
-   scope. An unverified app in **"Testing"** mode issues refresh tokens that
-   **expire after 7 days** — always-on sync would then break weekly and need
-   re-auth. Options: (a) publish + verify the OAuth app (removes the 7-day
-   expiry; verification review for a personal Gmail project can take days), or
-   (b) accept weekly re-consent for the household, or (c) if any account is
-   Google Workspace, use an "Internal" app (no 7-day limit). **This is the
-   single biggest operational decision in the calendar phase** — flag before
-   building.
-2. **Secret-key durability.** Key loss = all stored IMAP passwords + Google
-   refresh tokens unrecoverable. Back up `PREFRONTAL_SECRET_KEY`; document
-   recovery (re-enter mail creds, re-run OAuth).
-3. **Migration ordering.** Keep the env → DB fallback for IMAP until
+1. **ICS feed URL is a bearer secret.** Anyone with the "secret address" URL can
+   read the calendar, so it's Fernet-sealed at rest and never printed by
+   `list-sources`. (This is why the ICS route still needs Phase 0 crypto.)
+2. **Secret-key durability.** Key loss = stored IMAP passwords + ICS feed URLs
+   unrecoverable. Back up `PREFRONTAL_SECRET_KEY`; recovery = re-enter mail creds
+   / re-add calendar feeds.
+3. **Migration ordering (mail).** Keep the env → DB fallback for IMAP until
    `import-env-sources` has run and been verified, so a half-migrated deploy
    still fetches Tom's mail.
+4. **Cutover double-ingest.** Deactivate the n8n `calendar-sync` workflow in the
+   n8n UI before enabling the launchd job, or events land twice (harmless when
+   feed slugs match — `sync_calendar` upserts by `external_id` — but avoid it).
 
 ## Files touched (summary)
 
 New: `prefrontal/crypto.py`, `prefrontal/sources.py`,
-`prefrontal/memory/repos/sources.py`, `prefrontal/calendar/google.py`,
-`deploy/com.prefrontal-calendar.plist`, tests (`test_sources.py`, additions to
-`test_multi_tenant.py`, `test_cli.py`).
+`prefrontal/memory/repos/sources.py`, `prefrontal/ics.py`,
+`deploy/calendar-sync.sh`, `deploy/com.prefrontal-calendar.plist`, tests
+(`test_crypto.py`, `test_sources.py`, `test_mail_sources.py`,
+`test_calendar_sources.py`, additions to `test_multi_tenant.py`, `test_cli.py`).
 Edited: `pyproject.toml`, `prefrontal/config.py`, `prefrontal/memory/schema.sql`,
-`prefrontal/memory/store.py`, `prefrontal/mail/imap.py`, `prefrontal/cli.py`,
-`prefrontal/webhooks/oauth.py`, `deploy/mail-fetch.sh`,
-`deploy/com.prefrontal-mail.plist`, `.env.example`, onboarding skill.
-Retired: `deploy/n8n/calendar-sync.workflow.json` (calendar push kept).
+`prefrontal/memory/store.py`, `prefrontal/cli.py`, `deploy/mail-fetch.sh`,
+`deploy/com.prefrontal-mail.plist`, `.env.example`, `deploy/README.md`, docs.
+Retired: `deploy/n8n/calendar-sync.workflow.json` (the push webhook is kept).
+Deferred: onboarding "connect a mailbox / add a calendar feed" steps.

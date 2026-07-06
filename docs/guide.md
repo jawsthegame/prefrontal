@@ -129,10 +129,12 @@ detection.
 **Solves:** Calendars scattered across platforms; double-bookings hiding in the
 noise.
 
-**How:** The [`calendar-sync`](../deploy/n8n/calendar-sync.workflow.json) n8n
-workflow fetches each calendar's secret **ICS** URL, parses + dedupes them, and
-POSTs the batch to `/webhooks/calendar/sync`. Events you've RSVP'd *no* to are
-dropped; the same event appearing on two calendars is de-duplicated by UID.
+**How:** Add each calendar's secret **ICS** feed URL per user with `prefrontal
+calendar add-source` (URLs are sealed at rest), then the `com.prefrontal-calendar`
+launchd job runs `prefrontal calendar sync --all-users` every 15 min: it fetches
+each feed, parses + dedupes them, and upserts the batch into `commitments`.
+Events you've RSVP'd *no* to are dropped; the same event on two calendars is
+de-duplicated by UID.
 
 ```bash
 curl -s "$PF/commitments" -H "X-Prefrontal-Token: $TOK"   # upcoming, soonest first
