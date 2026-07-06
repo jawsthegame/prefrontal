@@ -71,7 +71,17 @@
     border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
   .theme-toggle:hover { border-color: var(--accent); }
 
-  .banner { padding: 16px 20px 0; max-width: 1400px; margin: 0 auto; }
+  /* Header/banner cards (Outings, Self-care, Assistant): stacked on narrow
+     screens, two columns once there's room, so the top strip doesn't stretch a
+     lone card across the full width. Below them the .masonry region flows the
+     smaller cards into as many columns as fit (up to three at max width). */
+  .banners {
+    display: grid; grid-template-columns: 1fr; gap: 16px;
+    padding: 16px 20px 0; max-width: 1400px; margin: 0 auto;
+  }
+  @media (min-width: 760px) {
+    .banners { grid-template-columns: 1fr 1fr; }
+  }
   .masonry {
     columns: 360px; column-gap: 16px; padding: 16px 20px 28px;
     max-width: 1400px; margin: 0 auto;
@@ -80,7 +90,7 @@
     background: var(--card); border: 1px solid var(--line); border-radius: 12px;
     padding: 16px 18px; margin: 0 0 16px; break-inside: avoid; position: relative;
   }
-  .banner .card { margin-bottom: 0; }
+  .banners .card { margin: 0; }
   .card h2 {
     font-size: 13px; text-transform: uppercase; letter-spacing: .6px;
     color: var(--muted); margin: 0 0 12px;
@@ -433,7 +443,7 @@
   .guide-foot { color: var(--muted); font-size: 13px; font-style: italic; margin: 16px 0 0; }
 
   @media (max-width: 520px) {
-    .banner { padding: 12px 12px 0; }
+    .banners { padding: 12px 12px 0; }
     .masonry { columns: 1; padding: 12px 12px 24px; }
     header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); }
     .addrow { flex-wrap: wrap; }
@@ -485,15 +495,9 @@
   </div>
 </header>
 
-<div class="banner">
+<div class="banners">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
-</div>
-
-<div class="banner" id="c-selfcare-banner" style="display:none">
-  <section class="card" id="c-selfcare"><h2>Self-care — today</h2><div class="body"></div></section>
-</div>
-
-<div class="banner">
+  <section class="card" id="c-selfcare" style="display:none"><h2>Self-care — today</h2><div class="body"></div></section>
   <section class="card" id="c-assistant">
     <h2>Assistant — ask for changes</h2>
     <div class="addrow">
@@ -1460,7 +1464,7 @@ async function load() {
   // checks are off, so a silently-disabled switch (the common "why no nudges?"
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
   if (selfcare.status === "fulfilled") {
-    $("#c-selfcare-banner").style.display = "";
+    $("#c-selfcare").style.display = "";
     // Don't clobber the card mid-interaction: a poll fires every few seconds, so
     // skip the re-render while focus is inside it (e.g. a just-tapped "mark done"
     // button, whose own handler re-renders from the POST response anyway).
@@ -1469,7 +1473,7 @@ async function load() {
       card.querySelector(".body").innerHTML = renderSelfCare(selfcare.value);
     }
   } else {
-    $("#c-selfcare-banner").style.display = "none";
+    $("#c-selfcare").style.display = "none";
   }
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
