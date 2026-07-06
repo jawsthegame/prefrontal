@@ -26,7 +26,7 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.oauth import verify_action
 from tests.conftest import scoped_default
 
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 SIGNING = "delivery-signing-key"
 
 

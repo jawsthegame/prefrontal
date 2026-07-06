@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch + triage mail for one or more accounts (the no-n8n ingestion path).
 #
-# Driven by the com.morningstatic.prefrontal-mail launchd agent, which passes
+# Driven by the com.prefrontal-mail launchd agent, which passes
 # the account names as arguments. Each account is fetched independently; a
 # failure on one (e.g. a transient IMAP timeout) is logged and does not stop the
 # others. Run from the repo root so `.env` (with MAIL_IMAP_*_<ACCOUNT> and

@@ -43,7 +43,7 @@ from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action
 
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 SIGNING = "chore-signing-key"
 UTC = Settings(timezone="UTC")
 

@@ -188,7 +188,7 @@ def build_router(services: RouterServices) -> APIRouter:
         Each todo carries an ``account`` (the mail inbox it was ingested from, or
         ``None`` for manual/impulse todos). The response also echoes the
         operator-configured ``accounts`` label map so the dashboard can render a
-        friendly, colored pill (e.g. ``work`` → an orange "Vistar" pill) without
+        friendly, colored pill (e.g. ``work`` → an orange "Acme" pill) without
         hard-coding any account names or colors.
         """
         memory = ctx.store

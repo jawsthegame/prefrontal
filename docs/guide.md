@@ -34,7 +34,7 @@ iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
 Examples below assume two shell variables:
 
 ```bash
-PF=http://localhost:8000          # or http://agent-1.tail8b0a.ts.net:8000 over Tailscale
+PF=http://localhost:8000          # or http://mac-mini.tailnet.ts.net:8000 over Tailscale
 TOK=your-X-Prefrontal-Token       # see deployment.md / "Users & access"
 ```
 
@@ -498,7 +498,7 @@ and every path keeps its deterministic fallback when both are down.
   Tapping opens the family view.
 
 All of these share one light/dark theme and a common top nav, are reached over
-Tailscale (e.g. `http://agent-1.tail8b0a.ts.net:8000/dashboard`), and
+Tailscale (e.g. `http://mac-mini.tailnet.ts.net:8000/dashboard`), and
 authenticate with your `X-Prefrontal-Token` (or a Google sign-in session).
 
 ---
@@ -657,7 +657,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
 | `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage`, `all`, or empty for all-local |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
-| `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Vistar:orange`) |
+| `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Acme:orange`) |
 | `PREFRONTAL_CALENDAR_LABELS` | _(empty)_ | `feed=label:color` calendar pills (e.g. `personal=Personal:blue`) |
 | `GEOCODER_URL` | Nominatim | Geocoding endpoint (opt-in) |
 | `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | _(empty)_ | Google sign-in client (off until both set) |
@@ -667,4 +667,4 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_SELF_UPDATE` | `off` | Enable `POST /admin/update` · `/admin/restart` (operator-only; runs deployed code) |
 | `PREFRONTAL_REPO_DIR` | _(repo root)_ | Where the update runs `git` |
 | `PREFRONTAL_UPDATE_CMD` | `bash deploy/update.sh` | Override the update command |
-| `PREFRONTAL_RESTART_CMD` | `launchctl kickstart -k gui/<uid>/com.morningstatic.prefrontal` | Override the restart command (systemd/docker/etc.) |
+| `PREFRONTAL_RESTART_CMD` | `launchctl kickstart -k gui/<uid>/com.prefrontal` | Override the restart command (systemd/docker/etc.) |

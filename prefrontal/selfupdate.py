@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 #: launchd job label for the reference Mac-mini deployment (see docs/deployment.md).
-DEFAULT_LAUNCHD_LABEL = "com.morningstatic.prefrontal"
+DEFAULT_LAUNCHD_LABEL = "com.prefrontal"
 
 #: Seconds the synchronous update step may run before we give up (git + pip).
 UPDATE_TIMEOUT_SECONDS = 600.0

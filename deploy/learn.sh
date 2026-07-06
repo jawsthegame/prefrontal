@@ -3,7 +3,7 @@
 # Nightly learning pass: recompute the behavioral profile from accumulated
 # episodes, then regenerate the prose profile.md via Ollama.
 #
-# Run on a schedule by deploy/com.morningstatic.prefrontal-learn.plist, or by
+# Run on a schedule by deploy/com.prefrontal-learn.plist, or by
 # hand / from cron. launchd's ProgramArguments can't chain `learn && summarize`,
 # so the two steps live here.
 #
@@ -12,7 +12,9 @@
 # needed.
 set -euo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
+# Default to the repo root (this script lives in <repo>/deploy/), so no path is
+# hard-coded; override PREFRONTAL_HOME to run against a different checkout.
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 
 cd "$PREFRONTAL_HOME"

@@ -23,7 +23,7 @@ from tests.conftest import DEFAULT_HANDLE, scoped_default
 
 SECRET = "act-webhook-secret"
 SIGNING = "act-signing-key"
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 
 
 # -- signed token round-trip -------------------------------------------------

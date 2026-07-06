@@ -36,7 +36,7 @@ from tests.conftest import DEFAULT_HANDLE, scoped_default
 
 SECRET = "self-care-secret"
 SIGNING = "self-care-signing"
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 
 
 @pytest.fixture()

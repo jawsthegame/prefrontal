@@ -309,11 +309,11 @@ def test_load_settings_resolves_gmail_accounts(monkeypatch):
 
 def test_parse_account_labels():
     parsed = _parse_account_labels(
-        "work=Vistar:orange, outlook=t-mobile:magenta"
+        "work=Acme:orange, outlook=telco:magenta"
     )
     assert parsed == (
-        ("work", "Vistar", "orange"),
-        ("outlook", "t-mobile", "magenta"),
+        ("work", "Acme", "orange"),
+        ("outlook", "telco", "magenta"),
     )
 
 
@@ -326,11 +326,11 @@ def test_parse_account_labels_optional_color_and_skips():
 
 def test_settings_account_label_map():
     s = Settings(
-        account_labels=(("work", "Vistar", "orange"), ("outlook", "t-mobile", "magenta"))
+        account_labels=(("work", "Acme", "orange"), ("outlook", "telco", "magenta"))
     )
     assert s.account_label_map == {
-        "work": {"label": "Vistar", "color": "orange"},
-        "outlook": {"label": "t-mobile", "color": "magenta"},
+        "work": {"label": "Acme", "color": "orange"},
+        "outlook": {"label": "telco", "color": "magenta"},
     }
     assert Settings().account_label_map == {}
 
@@ -345,22 +345,22 @@ def test_parse_account_domains_and_map():
 
 def test_parse_calendar_labels():
     parsed = _parse_calendar_labels(
-        "personal=Personal:blue, work=Vistar:orange, outlook=T-Mobile:magenta"
+        "personal=Personal:blue, work=Acme:orange, outlook=Telco:magenta"
     )
     assert parsed == (
         ("personal", "Personal", "blue"),
-        ("work", "Vistar", "orange"),
-        ("outlook", "T-Mobile", "magenta"),
+        ("work", "Acme", "orange"),
+        ("outlook", "Telco", "magenta"),
     )
 
 
 def test_settings_calendar_label_map():
     s = Settings(
-        calendar_labels=(("personal", "Personal", "blue"), ("work", "Vistar", "orange"))
+        calendar_labels=(("personal", "Personal", "blue"), ("work", "Acme", "orange"))
     )
     assert s.calendar_label_map == {
         "personal": {"label": "Personal", "color": "blue"},
-        "work": {"label": "Vistar", "color": "orange"},
+        "work": {"label": "Acme", "color": "orange"},
     }
     assert Settings().calendar_label_map == {}
 
@@ -742,7 +742,7 @@ def test_suppress_reason_allows_a_real_reply():
 @pytest.mark.parametrize(
     "sender_email",
     [
-        "no-reply@vistarmedia.com",
+        "no-reply@acme.com",
         "noreply@service.com",
         "notifications@github.com",
         "DoNotReply@bank.com",
@@ -789,7 +789,7 @@ def test_ingest_suppresses_todo_for_no_reply_sender_but_keeps_record(store):
         {"needs_action": True, "urgency": "normal", "category": "reply", "summary": "x"}
     )
     msg = _msg(
-        message_id="<vistar-1@x>", **{"from": "Vistar <no-reply@vistarmedia.com>"}
+        message_id="<acme-1@x>", **{"from": "Acme <no-reply@acme.com>"}
     )
     summary = ingest_messages(store, [msg], account="personal", client=client)
 

@@ -87,7 +87,7 @@ pip install -e . && prefrontal init-db && prefrontal user add me --operator
 ```
 
 For a truly always-on host that survives reboots, the launchd agent in
-[`../deploy/`](../deploy/com.morningstatic.prefrontal.plist) is still the
+[`../deploy/`](../deploy/com.prefrontal.plist) is still the
 recommended way to run the server — this app happily **attaches** to it rather
 than starting a second copy.
 

@@ -9,14 +9,16 @@
 # twin of its /webhooks/household/*/check endpoint and self-gates on due-ness
 # (off, wrong day/time, already sent, nothing new) — so it's safe to run this on
 # a coarse interval and let each one decide whether to actually send. Scheduled
-# by deploy/com.morningstatic.prefrontal-household.plist (every 15 min).
+# by deploy/com.prefrontal-household.plist (every 15 min).
 #
 # A single-parent household is a clean no-op for the shared checks. Edit
 # PREFRONTAL_HOME / PREFRONTAL_USER to taste; each check runs independently so
 # one being not-due (or erroring) never blocks the others.
 set -uo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
+# Default to the repo root (this script lives in <repo>/deploy/), so no path is
+# hard-coded; override PREFRONTAL_HOME to run against a different checkout.
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 # Any member of the household; the sweep resolves the household from this user.
 PREFRONTAL_USER="${PREFRONTAL_USER:-}"

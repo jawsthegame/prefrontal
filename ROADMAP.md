@@ -17,7 +17,7 @@ bring-up runbook is kept below for reference / a fresh deploy (see
 
 1. **Stand up Prefrontal** — clone, `pip install -e .`, set a strong
    `PREFRONTAL_WEBHOOK_SECRET` in `.env`, `prefrontal init-db`, load the launchd
-   agent (`deploy/com.morningstatic.prefrontal.plist`). Confirm `GET /health`.
+   agent (`deploy/com.prefrontal.plist`). Confirm `GET /health`.
 2. **Ollama** — `ollama pull qwen2.5:14b` (24GB mini), set `OLLAMA_MODEL`.
 3. **n8n** — import `deploy/n8n/coffee-shop-nudge.workflow.json`; set the
    Prefrontal token, the Twilio Basic-Auth credential + `To`/`From`, and Pushover
@@ -31,7 +31,7 @@ bring-up runbook is kept below for reference / a fresh deploy (see
    ~30s (50%), push at ~1m (100%), Twilio call at ~90s (150%), and that
    `/return` (or coming home) logs the episode.
 7. **Schedule learning** ✅ — nightly `prefrontal learn && prefrontal summarize`
-   via `deploy/learn.sh` + `deploy/com.morningstatic.prefrontal-learn.plist`
+   via `deploy/learn.sh` + `deploy/com.prefrontal-learn.plist`
    (launchd `StartCalendarInterval`, 03:30); see deployment §12. Load it and the
    profile recalibrates on its own.
 
