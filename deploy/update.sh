@@ -43,13 +43,15 @@ echo "[$(ts)] update: apply schema (init-db)"
 echo "[$(ts)] update: sync n8n workflows"
 "$PREFRONTAL_BIN" n8n push || echo "[$(ts)] update: n8n sync skipped/failed (non-fatal)"
 
-# Re-package the built artifacts (Python wheel, client handout PDFs, macOS
-# desktop app) from the freshly-pulled code. Best-effort and non-fatal by
-# design — each step self-skips when its toolchain/source is absent, and a
-# packaging failure must never block the restart of an otherwise-good update
-# (same stance as the n8n sync above). See deploy/package.sh.
-echo "[$(ts)] update: re-package artifacts"
-PREFRONTAL_HOME="$PREFRONTAL_HOME" bash "$PREFRONTAL_HOME/deploy/package.sh" \
-    || echo "[$(ts)] update: packaging skipped/failed (non-fatal)"
+# NOTE: re-packaging the built artifacts (Python wheel, client PDFs, and the
+# macOS desktop/Electron app) is deliberately NOT part of this script. That
+# build runs npm + electron-builder + signing and takes minutes — long enough to
+# blow the caller's UPDATE_TIMEOUT_SECONDS (see prefrontal.selfupdate), which
+# then *skips the restart* of an otherwise-good update, so the box keeps serving
+# the old code even though the pull succeeded (the failure mode that made the
+# web/Electron "Update" buttons look broken). The server that serves /dashboard
+# does not need rebuilt artifacts to pick up a code change — it just needs the
+# pull + a restart. Package artifacts explicitly, out of band, when you actually
+# want new ones: `bash deploy/package.sh` (or in CI). See deploy/package.sh.
 
 echo "[$(ts)] update: complete"
