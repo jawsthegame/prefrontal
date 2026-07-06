@@ -1519,6 +1519,16 @@ function summarize(card) {
     const first = [...prose.querySelectorAll("h3,h4,p,li")].find((e) => e.textContent.trim());
     return first ? first.textContent.trim() : "";
   }
+  // The clarify card uses its own markup (.clarify-item, not .row) and always
+  // carries a settings control up top, so count its pending questions directly
+  // rather than falling through to the generic "no rows → blank" path — a
+  // collapsed card with a question waiting should say so, not sit empty.
+  const clarify = body.querySelectorAll(":scope > .clarify-item");
+  if (clarify.length) {
+    const q = body.querySelector(".clarify-title");
+    const lead = q && q.textContent.trim() ? " · " + q.textContent.trim() : "";
+    return `${clarify.length} waiting${lead}`;
+  }
   const rows = body.querySelectorAll(":scope > .row, :scope > .shop-line");
   const first = body.querySelector(".title, .shop-line .txt");
   const lead = first && first.textContent.trim() ? " · " + first.textContent.trim() : "";
