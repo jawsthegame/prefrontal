@@ -14,6 +14,10 @@ from fastapi.testclient import TestClient
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
+from prefrontal.modules.self_care import (
+    DEFAULT_MEAL_REASK_MINUTES,
+    DEFAULT_WATER_INTERVAL_MINUTES,
+)
 from prefrontal.stats import (
     FOLLOW_SERIES_LEN,
     MAX_ESTIMATE_POINTS,
@@ -170,6 +174,73 @@ def test_channels_skip_episodes_without_channel_or_ack(scoped):
     scoped.log_episode("reminder", channel="sms", acknowledged=True)
     rows = build_stats(scoped)["channels"]
     assert len(rows) == 1 and rows[0]["channel"] == "sms" and rows[0]["n"] == 1
+
+
+# --- self-care ---------------------------------------------------------------
+
+
+def _log_self_care(scoped, key, outcome, notes):
+    """Log one self-care response the way the module does (context = '<key>: <outcome>')."""
+    scoped.log_episode(
+        "self_care",
+        acknowledged=outcome != "ignored",
+        context=f"{key}: {outcome}",
+        outcome=outcome,
+        notes=notes,
+    )
+
+
+def test_self_care_empty_history_is_zeroed(scoped):
+    """No self-care episodes ⇒ one zeroed row per check, in order, at default cadence."""
+    rows = build_stats(scoped)["self_care"]
+    assert [r["key"] for r in rows] == ["meal", "water", "meds"]
+    for r in rows:
+        assert r["n"] == 0
+        assert r["confirmed"] == 0 and r["snoozed"] == 0 and r["ignored"] == 0
+        assert r["response_rate"] is None
+        assert r["avg_latency_seconds"] is None
+        # interval falls back to the check's default when unset
+        assert r["interval_minutes"] == r["default_interval_minutes"]
+    meal = rows[0]
+    assert meal["default_interval_minutes"] == DEFAULT_MEAL_REASK_MINUTES
+
+
+def test_self_care_counts_rate_and_latency(scoped):
+    """A confirmed/snoozed/ignored mix yields the right split, rate, and avg latency."""
+    _log_self_care(scoped, "meal", "confirmed", "1/1 latency=10s")
+    _log_self_care(scoped, "meal", "confirmed", "1/1 latency=20s")
+    _log_self_care(scoped, "meal", "snoozed", "30m latency=5s")
+    _log_self_care(scoped, "meal", "ignored", "latency=?")
+    # A response for another check must not bleed into meal's row.
+    _log_self_care(scoped, "water", "confirmed", "1/6 latency=99s")
+    rows = {r["key"]: r for r in build_stats(scoped)["self_care"]}
+    meal = rows["meal"]
+    assert meal["n"] == 4
+    assert meal["confirmed"] == 2 and meal["snoozed"] == 1 and meal["ignored"] == 1
+    assert meal["response_rate"] == 0.5  # 2 confirmed / 4
+    # avg latency over the two confirmed taps that carry a numeric latency only
+    assert meal["avg_latency_seconds"] == 15.0
+    # water saw exactly its one confirm; meds saw nothing
+    assert rows["water"]["confirmed"] == 1 and rows["water"]["n"] == 1
+    assert rows["meds"]["n"] == 0
+
+
+def test_self_care_avg_latency_none_without_timed_confirms(scoped):
+    """Confirms with no numeric latency (latency=?) leave avg_latency None."""
+    _log_self_care(scoped, "meds", "confirmed", "1/1 latency=?")
+    _log_self_care(scoped, "meds", "snoozed", "30m latency=40s")  # snooze latency ignored
+    meds = {r["key"]: r for r in build_stats(scoped)["self_care"]}["meds"]
+    assert meds["confirmed"] == 1 and meds["snoozed"] == 1
+    assert meds["response_rate"] == 0.5
+    assert meds["avg_latency_seconds"] is None
+
+
+def test_self_care_interval_reflects_coaching_state_override(scoped):
+    """A learned/explicit interval override is surfaced against the default."""
+    scoped.set_state("water_interval_minutes", "120", source="explicit")
+    water = {r["key"]: r for r in build_stats(scoped)["self_care"]}["water"]
+    assert water["interval_minutes"] == 120
+    assert water["default_interval_minutes"] == DEFAULT_WATER_INTERVAL_MINUTES
 
 
 # --- endpoints ---------------------------------------------------------------
