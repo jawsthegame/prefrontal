@@ -1,6 +1,6 @@
 {
   "name": "prefrontal-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Minimal macOS Electron wrapper for Prefrontal — runs `prefrontal serve` and shows the dashboard.",
   "author": "Tom Fleischer",
   "license": "MIT",
