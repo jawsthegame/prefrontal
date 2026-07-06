@@ -49,7 +49,7 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.notify import nudge_actions
+from prefrontal.webhooks.notify import alarm_actions_for_cue, nudge_actions
 from prefrontal.webhooks.services import RouterServices
 
 #: Coaching ``context_key`` → (ntfy button ``kind``, ``cue.ref`` key holding the
@@ -146,6 +146,10 @@ def build_router(services: RouterServices) -> APIRouter:
 
         def _actions(d) -> list[dict[str, Any]]:
             """One-tap ntfy buttons for a cue whose kind is in _CUE_ACTION_KIND."""
+            # Morning-prep's "Set alarm" button is a client-side view action built
+            # from the cue's ref — no signing/handle needed (see notify.py).
+            if d.cue.context_key == "morning_prep":
+                return alarm_actions_for_cue(d.cue)
             kind_ref = _CUE_ACTION_KIND.get(d.cue.context_key)
             if not kind_ref or not handle:
                 return []

@@ -949,6 +949,8 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             if summary.auto_half_lives:
                 hls = ", ".join(f"{b}={v:g}d" for b, v in sorted(summary.auto_half_lives.items()))
                 print(f"[{label}] auto half-life -> {hls}")
+            if summary.early_start_threshold is not None:
+                print(f"[{label}] early_start_threshold -> {summary.early_start_threshold}")
             if summary.type_bias:
                 types = ", ".join(f"{t}={v}" for t, v in sorted(summary.type_bias.items()))
                 print(f"[{label}] task-type bias -> {types}")

@@ -376,6 +376,37 @@ def test_coach_check_fires_a_cue_then_debounces():
         conn.close()
 
 
+def test_coach_check_surfaces_morning_prep_alarm_button():
+    """The evening morning-prep nudge comes back from the tick with a client-side
+    Set-alarm view button (built from the cue's ref, no signing)."""
+    conn = init_db(":memory:")
+    try:
+        unscoped = MemoryStore(conn)
+        provision_user(unscoped, "tester", display_name="T", token=SECRET, is_operator=True)
+        scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+        scoped.set_state("responsive_hours_start", "0", source="explicit")
+        scoped.set_state("responsive_hours_end", "0", source="explicit")
+        scoped.set_state("morning_prep_hour", "0")  # open the evening gate for the test
+        start = (
+            (utcnow() + timedelta(days=1))
+            .replace(hour=8, minute=0, second=0, microsecond=0)
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+        scoped.upsert_commitment(title="Flight", start_at=start, lead_minutes=45.0, source="manual")
+        app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET, timezone="UTC"))
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": SECRET}
+            cues = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
+            prep = next(cue for cue in cues if cue["context_key"] == "morning_prep")
+            assert prep["module"] == "time_blindness"
+            actions = prep["actions"]
+            assert len(actions) == 1
+            assert actions[0]["action"] == "view" and actions[0]["label"] == "⏰ Set alarm"
+            assert actions[0]["url"].startswith("shortcuts://run-shortcut?name=Set%20Alarm")
+    finally:
+        conn.close()
+
+
 def _http_store():
     """A bare unscoped store (for create_app) with one operator user."""
     conn = init_db(":memory:")

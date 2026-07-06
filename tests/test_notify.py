@@ -6,7 +6,13 @@ when the public origin / signing key isn't configured.
 
 from __future__ import annotations
 
-from prefrontal.webhooks.notify import act_url, nudge_actions, panic_actions
+from prefrontal.webhooks.notify import (
+    act_url,
+    alarm_actions,
+    alarm_actions_for_cue,
+    nudge_actions,
+    panic_actions,
+)
 from prefrontal.webhooks.oauth import verify_action
 
 SIGNING = "notify-signing-key"
@@ -69,3 +75,32 @@ def test_panic_actions_open_the_triage_overlay():
     assert btn["url"] == f"{BASE}/dashboard?panic=1"
     # No public origin → no button (feature simply off), like the signed buttons.
     assert panic_actions("") == []
+
+
+def test_alarm_actions_deep_link_to_the_shortcut():
+    """An unsigned `view` button opening the iOS Shortcuts URL scheme with the time."""
+    actions = alarm_actions("Set Alarm", "07:15")
+    assert len(actions) == 1
+    btn = actions[0]
+    assert btn["action"] == "view"  # opens the Shortcuts app, no server round-trip
+    assert btn["label"] == "⏰ Set alarm"
+    assert btn["url"] == "shortcuts://run-shortcut?name=Set%20Alarm&input=text&text=07%3A15"
+
+
+def test_alarm_actions_empty_without_name_or_time():
+    assert alarm_actions("", "07:15") == []
+    assert alarm_actions("Set Alarm", "") == []
+
+
+class _Cue:
+    def __init__(self, ref):
+        self.ref = ref
+
+
+def test_alarm_actions_for_cue_reads_ref():
+    """The button is built from the cue's ref (alarm_shortcut + alarm_at)."""
+    actions = alarm_actions_for_cue(_Cue({"alarm_shortcut": "Wake Up", "alarm_at": "06:45"}))
+    assert len(actions) == 1
+    assert actions[0]["url"] == "shortcuts://run-shortcut?name=Wake%20Up&input=text&text=06%3A45"
+    # Missing payload → no button (a plain push).
+    assert alarm_actions_for_cue(_Cue({})) == []

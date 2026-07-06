@@ -23,6 +23,7 @@ from prefrontal.memory.patterns import (
     compute_bias_by_energy,
     compute_bias_by_type,
     compute_confidence,
+    compute_early_start_threshold,
     compute_patterns,
     decay_bias_toward_neutral,
     decay_weight,
@@ -860,3 +861,59 @@ def test_recompute_persists_channel_calibration():
         assert summary.channel_calibration.helps
         assert store.get_state("channel_calibration_helps") == "true"
         assert store.get_state("channel_calibration_samples") is not None
+
+
+# -- early-start threshold learning (Time Blindness morning_prep) -------------
+
+
+def _late_departure(hhmm, day=5):
+    """A late (missed) departure episode at a given local clock time."""
+    return _ep(episode_type="departure", outcome="miss", timestamp=f"2026-01-{day:02d} {hhmm}:00")
+
+
+def test_early_start_threshold_learns_from_late_morning_departures():
+    """The cutoff = recency-weighted mean late-departure time + the 30-min margin."""
+    eps = [_late_departure("07:00", d) for d in range(1, 5)]  # four late 7am departures
+    assert compute_early_start_threshold(eps, timezone="UTC", half_life_days=None) == "07:30"
+
+
+def test_early_start_threshold_none_below_sample_floor():
+    eps = [_late_departure("07:00", d) for d in range(1, 4)]  # only three
+    assert compute_early_start_threshold(eps, timezone="UTC") is None
+
+
+def test_early_start_threshold_ignores_on_time_and_non_morning():
+    """Only *late* *morning* departures inform the cutoff."""
+    on_time = [
+        _ep(episode_type="departure", outcome="success", timestamp=f"2026-01-{d:02d} 07:00:00")
+        for d in range(1, 5)
+    ]
+    assert compute_early_start_threshold(on_time, timezone="UTC") is None
+    afternoon = [_late_departure("14:00", d) for d in range(1, 5)]
+    assert compute_early_start_threshold(afternoon, timezone="UTC") is None
+
+
+def test_early_start_threshold_is_clamped():
+    late = [_late_departure("09:55", d) for d in range(1, 5)]  # +30 → 10:25, clamp → 10:00
+    assert compute_early_start_threshold(late, timezone="UTC", half_life_days=None) == "10:00"
+
+
+def test_recompute_learns_and_persists_early_start_threshold():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for d in range(1, 5):
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 07:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.early_start_threshold == "07:30"
+        assert store.get_state("early_start_threshold") == "07:30"
+
+
+def test_recompute_respects_explicit_early_start_threshold():
+    """A hand-set cutoff is never overwritten by the learner (like the half-lives)."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("early_start_threshold", "08:30", source="explicit")
+        for d in range(1, 5):
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 07:00:00")
+        recompute_patterns(store, timezone="UTC")
+        assert store.get_state("early_start_threshold") == "08:30"

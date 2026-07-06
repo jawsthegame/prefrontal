@@ -129,11 +129,15 @@ Persistent preferences and working memory for the coaching layer.
 
 > **Module-contributed keys.** Each enabled challenge-area module
 > (`prefrontal/modules/`) seeds its own additional `coaching_state` rows when the
-> database is initialized — e.g. `departure_buffer_minutes` (time blindness),
+> database is initialized — e.g. `departure_buffer_minutes` and the evening
+> early-start heads-up's `early_start_threshold` / `morning_prep_hour` /
+> `morning_routine_minutes` / `alarm_shortcut_name` (time blindness),
 > `max_first_step_minutes` (task paralysis), `hyperfocus_block_minutes` /
 > `protect_aligned_hyperfocus` (hyperfocus), `pause_seconds` (impulsivity).
-> Seeding never clobbers an existing value. Run `prefrontal modules -v` to see
-> what's active.
+> Seeding never clobbers an existing value. `early_start_threshold` is also
+> **learned** from late morning departures on the nightly `learn` pass (it moves
+> off the seeded default once there's signal, unless you set it explicitly). Run
+> `prefrontal modules -v` to see what's active.
 
 ---
 

@@ -47,6 +47,18 @@ DEFAULT_EARLY_START_HM = (8, 30)
 #: ``[morning_prep_hour, responsive_end)``. Tunable via ``morning_prep_hour``.
 DEFAULT_MORNING_PREP_HOUR = 21
 
+#: Minutes of morning routine (shower, breakfast, …) subtracted from the leave-by
+#: to suggest a wake time for the one-tap "Set alarm" button. Tunable via
+#: ``morning_routine_minutes``.
+DEFAULT_MORNING_ROUTINE_MINUTES = 60
+
+#: Default iOS Shortcut name the "Set alarm" button runs. Mirrors
+#: :data:`prefrontal.webhooks.notify.DEFAULT_ALARM_SHORTCUT` (kept as a plain
+#: literal here rather than imported — the ``webhooks`` package pulls in the whole
+#: FastAPI app, which would cycle during module registration). Tunable per user
+#: via ``alarm_shortcut_name``.
+DEFAULT_ALARM_SHORTCUT = "Set Alarm"
+
 
 def elapsed_callout_message(task: str, minutes: int, name: str = "") -> str:
     """A gentle 'you've been on this N min' time check (no judgment, no ask)."""
@@ -168,6 +180,10 @@ class TimeBlindnessModule(Module):
         # this local hour when tomorrow's earliest leave-by is before the threshold.
         "early_start_threshold": DEFAULT_EARLY_START_THRESHOLD,
         "morning_prep_hour": str(DEFAULT_MORNING_PREP_HOUR),
+        # The nudge's one-tap "Set alarm" button deep-links to this iOS Shortcut,
+        # passing a wake time = leave-by minus this many minutes of morning routine.
+        "alarm_shortcut_name": DEFAULT_ALARM_SHORTCUT,
+        "morning_routine_minutes": str(DEFAULT_MORNING_ROUTINE_MINUTES),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -299,6 +315,8 @@ class TimeBlindnessModule(Module):
         alarm" the night before, so an early obligation doesn't get forgotten until
         you're rushing.
         """
+        from datetime import timedelta
+
         from prefrontal.clock import parse_hour, parse_ts_strict
         from prefrontal.scheduling import local_datetime, local_hour_of
 
@@ -316,6 +334,13 @@ class TimeBlindnessModule(Module):
         start_local = local_datetime(parse_ts_strict(p.commitment["start_at"]), ctx.timezone)
         leave_local = local_datetime(parse_ts_strict(p.leave_by), ctx.timezone)
         location = p.commitment.get("location")
+        # A suggested wake time for the one-tap "Set alarm" button: back off the
+        # morning routine from when you must be up-and-moving (leave-by for a travel
+        # commitment; the start itself when you attend from here).
+        routine = int(store.get_float("morning_routine_minutes", DEFAULT_MORNING_ROUTINE_MINUTES))
+        up_by = start_local if p.mode == "attend" else leave_local
+        wake_at = (up_by - timedelta(minutes=max(0, routine))).strftime("%H:%M")
+        shortcut = store.get_state("alarm_shortcut_name") or DEFAULT_ALARM_SHORTCUT
         return [
             Cue(
                 module=self.key,
@@ -336,6 +361,11 @@ class TimeBlindnessModule(Module):
                     "commitment_id": cid,
                     "start_at": p.commitment["start_at"],
                     "leave_by": p.leave_by,
+                    # Payload for the one-tap "Set alarm" button (see
+                    # notify.alarm_actions_for_cue) — a suggested wake time and the
+                    # iOS Shortcut to run.
+                    "alarm_at": wake_at,
+                    "alarm_shortcut": shortcut,
                 },
                 suggested_channel="push",
             )

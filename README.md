@@ -53,7 +53,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 
 | Module | `key` | Addresses |
 |---|---|---|
-| Time Blindness | `time_blindness` | Duration estimation, departure timing, elapsed-time awareness, an evening "early start tomorrow — set an alarm" heads-up |
+| Time Blindness | `time_blindness` | Duration estimation, departure timing, elapsed-time awareness, an evening "early start tomorrow — set an alarm" heads-up (one-tap into an iOS alarm Shortcut; its cutoff self-tunes from your late mornings) |
 | Task Paralysis | `task_paralysis` | Task initiation / activation energy (tiny first steps, decomposition, honing ambiguous items so they can be started) |
 | Hyperfocus | `hyperfocus` | Protects *good* hyperfocus, interrupts *misdirected* hyperfocus |
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
@@ -100,7 +100,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Layer | Module | Status |
 |---|---|---|
 | Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state + feature tables |
-| Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias |
+| Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias, and tunes the early-start alarm cutoff from late morning departures |
 | Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |

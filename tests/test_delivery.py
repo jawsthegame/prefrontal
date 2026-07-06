@@ -383,6 +383,34 @@ def test_self_care_cue_attaches_meal_buttons():
     assert verify_action(token, SIGNING) == ("tom", "meal_ate", 20260703)
 
 
+def test_morning_prep_cue_attaches_set_alarm_button():
+    """The evening morning-prep nudge carries a client-side Set-alarm view button
+    built from its ref (no signing needed), deep-linking to the iOS Shortcut."""
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    decision = _decision(
+        "push",
+        context_key="morning_prep",
+        ref={"alarm_at": "06:15", "alarm_shortcut": "Set Alarm"},
+    )
+    # No base_url / secret needed — the button is a client-side view action.
+    client.deliver(decision, Route(ntfy_topic="me"))
+
+    actions = captured["body"]["actions"]
+    assert len(actions) == 1
+    assert actions[0]["action"] == "view" and actions[0]["label"] == "⏰ Set alarm"
+    assert actions[0]["url"] == (
+        "shortcuts://run-shortcut?name=Set%20Alarm&input=text&text=06%3A15"
+    )
+
+
 def test_falls_back_to_pushover_when_no_ntfy_topic():
     captured: dict = {}
 
