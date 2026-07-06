@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT, parse_ts
 from prefrontal.clock import parse_ts_strict as _parse
+from prefrontal.commitments import is_attendable
 from prefrontal.impact import utcnow
 from prefrontal.modules.location_anchor import haversine_m
 
@@ -681,7 +682,11 @@ def plan_upcoming_departures(
     return [
         plan_departure(c, current_lat=current_lat, current_lon=current_lon, **kwargs)
         for c in store.upcoming_commitments()
-        if c["id"] not in dismissed
+        # Only real, own commitments earn a leave-by. An FYI event is where
+        # someone else will be — you're not going anywhere for it, so it must
+        # never fire a departure nudge; a placeholder/hold has nothing to leave
+        # by either (see is_attendable).
+        if c["id"] not in dismissed and is_attendable(c)
     ]
 
 

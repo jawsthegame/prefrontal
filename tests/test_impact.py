@@ -266,6 +266,24 @@ def test_cascade_endpoint_excludes_fyi_commitments(client, store):
     assert body["at_risk"] == []              # Tax alone has slack, nothing topples
 
 
+def test_cascade_endpoint_excludes_placeholder_holds(client, store):
+    """A generic HOLD/OOO block is elastic time, never a topple in the chain."""
+    # Standup runs long (55 min) and would push anything sitting after it. A
+    # bare "HOLD" block in its shadow must NOT be walked as a real commitment
+    # that topples — it's elastic time you'd yield the moment a real meeting
+    # needed it (is_attendable excludes it), so it neither appears in the chain
+    # nor manufactures an at-risk domino.
+    store.upsert_commitment(
+        title="Standup", start_at=_utc(5), end_at=_utc(60), lead_minutes=0,
+        external_id="work:standup",
+    )
+    store.upsert_commitment(title="HOLD", start_at=_utc(20), external_id="cal:hold")
+    body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
+    titles = [c["title"] for c in body["cascade"]]
+    assert "HOLD" not in titles                              # excluded from the walk
+    assert all(c["title"] != "HOLD" for c in body["at_risk"])
+
+
 def test_cascade_endpoint_does_not_reach_across_days(client, store):
     """A tight back-to-back tomorrow isn't something you're 'behind' on today."""
     # Two back-to-back commitments a full day out. Seeded at now, an unbounded

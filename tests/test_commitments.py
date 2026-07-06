@@ -15,6 +15,7 @@ from prefrontal.commitments import (
     RECUR_OCCURRENCE_SEP,
     expand_recurrences,
     find_conflicts,
+    is_attendable,
     is_placeholder_title,
     normalize_event,
     sync_calendar,
@@ -792,6 +793,22 @@ def test_commitment_endpoints_require_auth(client):
 def test_is_placeholder_title(title, expected):
     """Generic holds are placeholders; specific titles (even containing a word) aren't."""
     assert is_placeholder_title(title) is expected
+
+
+@pytest.mark.parametrize(
+    ("commitment", "expected"),
+    [
+        ({"title": "Vistar Weekly Business Review", "kind": "self"}, True),
+        ({"title": "Tax", "kind": "self"}, True),
+        ({"title": "Kids at grandma's", "kind": "fyi"}, False),   # someone else's
+        ({"title": "HOLD", "kind": "self"}, False),               # placeholder
+        ({"title": "Focus time", "kind": "self"}, False),         # placeholder
+        ({"title": "OOO", "kind": "fyi"}, False),                 # both grounds
+    ],
+)
+def test_is_attendable(commitment, expected):
+    """A real, own event is attendable; FYI events and placeholder/holds are not."""
+    assert is_attendable(commitment) is expected
 
 
 #: Fixed base for _clash(), captured once at import. The possible-conflict

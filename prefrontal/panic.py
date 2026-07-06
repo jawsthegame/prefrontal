@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_dt
+from prefrontal.commitments import is_attendable
 from prefrontal.config import get_settings
 from prefrontal.impact import cascade_at_risk, cascade_impact, utcnow
 from prefrontal.memory.store import MemoryStore
@@ -369,7 +370,7 @@ def _cascade_chain(
     upcoming = [
         c
         for c in store.commitments_between(now.strftime(fmt), day_end.strftime(fmt))
-        if c.get("kind") != "fyi" and _parse_dt(c.get("start_at")) is not None
+        if is_attendable(c) and _parse_dt(c.get("start_at")) is not None
     ]
     # Travel-aware leads from the phone's last known fix, so a leg you can't
     # actually drive in the flat buffer is flagged (empty → static leads).

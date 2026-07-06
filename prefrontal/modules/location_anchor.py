@@ -27,6 +27,7 @@ import re
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.coaching import CoachContext, Cue
+from prefrontal.commitments import is_attendable
 from prefrontal.impact import (
     cascade_at_risk,
     cascade_impact,
@@ -468,13 +469,19 @@ def evaluate_outing(
     fire = level_rank(level) > level_rank(outing["last_level"])
     impacts: list[dict[str, Any]] = []
     risky = []
-    if commitments:
+    # Only real, own commitments topple: FYI events and placeholder/hold blocks
+    # are never yours to attend as a fixed slot, so they neither consume the
+    # overrun nor count as knocked-on (the same scoping the panic + endpoint
+    # cascades use). ``upcoming_commitments`` doesn't pre-filter these, so do it
+    # here where the chain is actually walked.
+    walk = [c for c in commitments if is_attendable(c)]
+    if walk:
         projected = project_free_time(outing["departure_at"], window, bias)
         # Cascade: propagate the overrun through the chain so a knocked-on
         # commitment two hops down is flagged too, not just the first collision.
         # Travel-aware when the caller supplied real per-leg leads.
         risky = cascade_at_risk(
-            cascade_impact(projected, commitments, lead_override=lead_override)
+            cascade_impact(projected, walk, lead_override=lead_override)
         )
         impacts = [
             {
