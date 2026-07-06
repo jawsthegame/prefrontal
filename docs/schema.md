@@ -184,7 +184,12 @@ also defines:
   set on manual creation or via `POST /commitments/{id}/notes`, kept across
   calendar re-syncs like `hidden`/`outcome` — and are folded into any nudge built
   for the commitment (e.g. the departure reminder: "leave now — Note: bring the
-  insurance card").
+  insurance card"). `hardness` (`hard`/`soft`) marks how firm a commitment is —
+  `hard` (a must-happen obligation panic/cascade treats as a fire when it slips)
+  vs `soft` (an elastic block); `hardness_source` (`feed`/`user`/`default`) mirrors
+  `kind_source`, so a user override (`POST /commitments/{id}/hardness`, the
+  assistant, or the dashboard toggle) sticks across calendar re-syncs while a
+  feed-provided value stays refreshable.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
   Each carries an inferred, editable `category` (a short topic label). The

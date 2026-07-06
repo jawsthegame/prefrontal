@@ -36,6 +36,7 @@ from prefrontal.coaching import (
     in_quiet_hours,
 )
 from prefrontal.commitments import (
+    HARDNESS,
     KINDS,
     OUTCOMES,
     conflict_dismissal_key,
@@ -98,6 +99,7 @@ from prefrontal.webhooks.notify import (
 from prefrontal.webhooks.schemas import (
     CalendarSync,
     CommitmentCreate,
+    CommitmentHardness,
     CommitmentHidden,
     CommitmentKind,
     CommitmentNotes,
@@ -722,6 +724,34 @@ def build_router(services: RouterServices) -> APIRouter:
         memory.record_kind_feedback(
             current["title"], kind, llm_kind=current.get("kind")
         )
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/hardness", tags=["schedule"])
+    def set_commitment_hardness(
+        commitment_id: int,
+        payload: CommitmentHardness,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set a commitment's hardness (``hard`` vs ``soft``).
+
+        Marks how firm the commitment is — ``hard`` (a must-happen obligation that
+        panic/cascade treats as a genuine fire when it slips) vs ``soft`` (an
+        elastic block you'd yield in a pinch). Stamps ``hardness_source='user'`` so
+        the choice sticks across calendar re-syncs, exactly like a ``kind``
+        correction. 422 on an unknown value, 404 if no such commitment.
+        """
+        memory = ctx.store
+        hardness = payload.hardness.strip().lower()
+        if hardness not in HARDNESS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"hardness must be one of {HARDNESS}",
+            )
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_hardness(commitment_id, hardness)
         return {"commitment": updated}
 
     @router.post("/commitments/{commitment_id}/hidden", tags=["schedule"])

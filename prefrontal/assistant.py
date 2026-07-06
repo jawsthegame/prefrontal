@@ -134,12 +134,17 @@ ASSISTANT_SYSTEM = (
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
     '- {"op":"set_commitment_notes","commitment_id":int,"notes":str or null}\n'
+    '- {"op":"set_commitment_hardness","commitment_id":int,"hardness":"hard"|"soft"}\n'
     '- {"op":"dismiss_conflict","key":str}\n'
     "A note is free-text detail attached to a todo or commitment (\"bring the "
     "insurance card\", \"needs the account number\"). It rides along with any "
     "nudge or reminder about that item, so use set_todo_notes / "
     "set_commitment_notes when the user wants to remember something *about* a "
     'task or event (notes:null clears it).\n'
+    "A commitment's hardness is how firm it is: \"hard\" = a must-happen "
+    "obligation (a slip is a real problem), \"soft\" = an elastic/optional block "
+    "you could move. Use set_commitment_hardness for \"this one's non-negotiable\" "
+    "or \"that's just a soft hold\".\n"
     "An outing is a trip out with a stated 'back in N minutes' window "
     "(time_window_minutes) that started at start_at. You can fix what it was for, "
     "adjust the window (e.g. 'give me 15 more minutes' — add to the outing's "
@@ -188,10 +193,11 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
 
     Only the fields needed for reference-resolution are included, to keep the
     prompt small: open todos (id/title/priority/estimate/deadline/notes), upcoming
-    commitments (id/title/start/location/notes), and dismissable possible-conflict
-    keys. ``notes`` is carried so the model can reference or clear an existing note
-    ("drop the note on the dentist"). Ids come straight from the store, so the
-    model can only target things that actually exist.
+    commitments (id/title/start/location/notes/hardness), and dismissable
+    possible-conflict keys. ``notes`` is carried so the model can reference or clear
+    an existing note ("drop the note on the dentist"), and ``hardness`` so it can
+    honor "leave that one soft". Ids come straight from the store, so the model can
+    only target things that actually exist.
 
     Args:
         memory: A **scoped** store (one user).
@@ -218,6 +224,7 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
             "start_at": c.get("start_at"),
             "location": c.get("location"),
             "notes": c.get("notes"),
+            "hardness": c.get("hardness"),
         }
         for c in memory.upcoming_commitments(limit=25)
     ]
@@ -691,6 +698,20 @@ def _v_set_commitment_notes(
     )
 
 
+def _v_set_commitment_hardness(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    cid, title = _require_commitment(action, snapshot)
+    raw = action.get("hardness")
+    hardness = str(raw).strip().lower() if raw is not None else ""
+    if hardness not in ("hard", "soft"):
+        raise _ActionError('hardness must be "hard" or "soft"')
+    return ValidatedAction(
+        op, {"commitment_id": cid, "hardness": hardness},
+        f"Mark “{title}” {hardness}",
+    )
+
+
 def _v_add_commitment(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     title = _as_title(action.get("title"))
     start_at = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
@@ -902,6 +923,7 @@ _VALIDATORS: dict[
     "add_commitment": _v_add_commitment,
     "cancel_commitment": _v_cancel_commitment,
     "set_commitment_notes": _v_set_commitment_notes,
+    "set_commitment_hardness": _v_set_commitment_hardness,
     "dismiss_conflict": _v_dismiss_conflict,
     "rename_outing": _v_rename_outing,
     "set_outing_window": _v_set_outing_window,
@@ -1072,6 +1094,10 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "set_commitment_notes":
             result["ok"] = memory.set_commitment_notes(
                 p["commitment_id"], p.get("notes")
+            ) is not None
+        elif op == "set_commitment_hardness":
+            result["ok"] = memory.set_commitment_hardness(
+                p["commitment_id"], p["hardness"]
             ) is not None
         elif op == "dismiss_conflict":
             memory.dismiss_conflict(p["key"])

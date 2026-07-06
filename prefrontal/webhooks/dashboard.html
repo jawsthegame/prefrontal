@@ -1120,6 +1120,13 @@ function renderCommitments(list, conflicts, cascade) {
     const dbl = (!fyi && ids.has(x.id)) ? ' <span class="pill conflict">double-booked</span>' : "";
     const target = fyi ? "self" : "fyi";
     const btnTitle = fyi ? "Not FYI — mark as your own commitment" : "Mark FYI (where someone will be — never a conflict)";
+    const isHard = x.hardness === "hard";
+    // Toggle firmness: hard = a must-happen obligation (panic treats a slip as a
+    // fire); soft = an elastic block you'd yield in a pinch. The button flips it.
+    const hardTarget = isHard ? "soft" : "hard";
+    const hardTitle = isHard
+      ? "Mark soft — an elastic/optional block you'd yield in a pinch"
+      : "Mark hard — a must-happen obligation (a slip is a real problem)";
     const src = x.url ? ` <a class="src" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="Open source event">↗</a>` : "";
     return `<div class="row"><div class="main">
       <div><span class="title">${esc(x.title)}</span>${src}${cal}${fyiBadge}${dbl}</div>
@@ -1127,6 +1134,7 @@ function renderCommitments(list, conflicts, cascade) {
     </div>
     <div class="acts">
       <button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${target}" title="${btnTitle}">${fyi ? "Mine" : "FYI"}</button>
+      <button class="btn-sm" data-action="commitment-hardness" data-id="${x.id}" data-hardness="${hardTarget}" title="${hardTitle}">${isHard ? "Soft" : "Hard"}</button>
       <button class="btn-sm" data-action="commitment-hide" data-id="${x.id}" title="Hide — remove from the dashboard and widget (reversible below)">Hide</button>
     </div>
   </div>`;
@@ -1923,6 +1931,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
     else if (act === "commitment-kind") { await post(`/commitments/${id}/kind`, { kind: el.dataset.kind }); }
+    else if (act === "commitment-hardness") { await post(`/commitments/${id}/hardness`, { hardness: el.dataset.hardness }); }
     else if (act === "commitment-hide") { await post(`/commitments/${id}/hidden`, { hidden: true }); }
     else if (act === "commitment-unhide") { await post(`/commitments/${id}/hidden`, { hidden: false }); }
     else if (act === "commitment-made") { await post(`/commitments/${id}/outcome`, { outcome: "made" }); }

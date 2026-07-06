@@ -408,6 +408,17 @@ class CommitmentKind(BaseModel):
     kind: str = Field(description="`self` (your commitment) or `fyi` (where someone will be).")
 
 
+class CommitmentHardness(BaseModel):
+    """Body of ``POST /commitments/{id}/hardness`` — set a commitment's firmness."""
+
+    hardness: str = Field(
+        description=(
+            "`hard` (a firm, must-happen obligation) or `soft` (an elastic/optional "
+            "block). Marks a user override that survives calendar re-syncs."
+        ),
+    )
+
+
 class CommitmentHidden(BaseModel):
     """Body of ``POST /commitments/{id}/hidden`` — hide or un-hide a commitment."""
 
