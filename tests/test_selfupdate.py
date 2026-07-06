@@ -8,6 +8,8 @@ stub runner (or harmless ``true`` commands).
 from __future__ import annotations
 
 import os
+import plistlib
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,6 +27,27 @@ def test_restart_command_default_targets_launchd():
     cmd = selfupdate.restart_command(Settings())
     assert cmd[:3] == ["launchctl", "kickstart", "-k"]
     assert cmd[3] == f"gui/{os.getuid()}/{selfupdate.DEFAULT_LAUNCHD_LABEL}"
+
+
+def test_default_label_matches_the_shipped_service_plist():
+    """The restart target must name the *actual* launchd job, or update silently no-ops.
+
+    ``restart_command`` kickstarts ``gui/<uid>/DEFAULT_LAUNCHD_LABEL``. If that
+    constant ever drifts from the ``Label`` in the service's plist (a launchd
+    namespace change that touches one but not the other), ``kickstart`` targets a
+    job that doesn't exist — it fails, but the restart is spawned detached with
+    output to /dev/null, so a "successful" update never bounces the box and it
+    keeps serving the old code. Tie the two together so that drift fails here.
+    """
+    plist = Path(__file__).resolve().parent.parent / "deploy" / "com.prefrontal.plist"
+    # The template's __PLACEHOLDER__ paths are ordinary string values, so plistlib
+    # parses it fine; we only care about the (literal) Label.
+    label = plistlib.loads(plist.read_bytes()).get("Label")
+    assert label == selfupdate.DEFAULT_LAUNCHD_LABEL, (
+        f"deploy/com.prefrontal.plist Label={label!r} but "
+        f"DEFAULT_LAUNCHD_LABEL={selfupdate.DEFAULT_LAUNCHD_LABEL!r} — restart would "
+        f"target a non-existent job. Update both, or set PREFRONTAL_RESTART_CMD."
+    )
 
 
 def test_restart_command_env_override_is_shlex_split():
