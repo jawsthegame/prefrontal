@@ -444,10 +444,15 @@ class DeliveryClient:
                 # explicit per-user/operator ``ntfy_icon`` (a hosted image) wins;
                 # otherwise fall back to the box-served icon when an origin is set.
                 icon=route.ntfy_icon or (f"{base_url}/brand/app-icon.png" if base_url else ""),
-                # Tapping the push body (not a button) opens the dashboard, so the
-                # notification behaves like a real app's — only when a public
-                # origin is configured, matching the action buttons' own guard.
-                click=f"{base_url}/dashboard" if base_url else "",
+                # Tapping the push *body* opens the dashboard — but only for a
+                # notification with no action buttons. When a nudge carries buttons,
+                # a body tap would open the app and pull focus away from the one-tap
+                # response (the whole reason the buttons exist), so we drop ``click``
+                # and let the buttons be the only interaction. Guarded on a public
+                # origin, like the buttons themselves.
+                click=(
+                    "" if actions else (f"{base_url}/dashboard" if base_url else "")
+                ),
             )
             return replace(result, channel=channel)
 
