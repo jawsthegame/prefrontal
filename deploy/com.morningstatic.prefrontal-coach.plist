@@ -58,7 +58,7 @@
         <string>/Users/tom/src/prefrontal</string>
         <!-- Handle to coach; leave unset to auto-pick when there's one user. -->
         <key>PREFRONTAL_USER</key>
-        <string>tom</string>
+        <string>Tom</string>
     </dict>
 </dict>
 </plist>
