@@ -138,6 +138,12 @@
     <div id="channels-body"></div>
   </section>
 
+  <section class="card" id="c-selfcare" style="display:none">
+    <p class="label">Self-care</p>
+    <p class="sub">How you answer the basic-needs checks — and the learned cadence.</p>
+    <div id="selfcare-body"></div>
+  </section>
+
   <footer>Learned from your logged outcomes · updates as you go</footer>
 </div>
 
@@ -165,6 +171,9 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
 const pct = (r) => Math.round((r || 0) * 100);
 const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 const OUT_COLOR = { success: "var(--good)", partial: "var(--warn)", miss: "var(--danger)" };
+const SC_COLOR = { confirmed: "var(--good)", snoozed: "var(--warn)", ignored: "var(--danger)" };
+const SC_LABEL = { meal: "Meals", water: "Water", meds: "Meds" };
+const secs = (s) => s == null ? "" : (s < 60 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m ${Math.round(s % 60)}s`);
 
 // ── Theme toggle (shared) ────────────────────────────────────────────────
 (function () {
@@ -258,6 +267,42 @@ function renderChannels(rows) {
   ).join("");
 }
 
+function renderSelfCare(rows) {
+  const active = (rows || []).filter((r) => r.n > 0);
+  if (!active.length) {
+    // No self-care responses yet — hide the whole section (mirrors empty states).
+    $("#c-selfcare").style.display = "none";
+    return;
+  }
+  $("#c-selfcare").style.display = "";
+  $("#selfcare-body").innerHTML = active.map((r) => {
+    const name = SC_LABEL[r.key] || cap(r.key);
+    const rate = pct(r.response_rate);
+    const parts = ["confirmed", "snoozed", "ignored"];
+    // response-rate meter: the share genuinely acted on
+    let html = `<div class="barrow" title="${esc(name)}: ${rate}% acted of ${r.n}">
+      <span class="bl">${esc(name)}</span>
+      <span class="track"><span class="fill" style="width:${Math.max(4, rate)}%"></span></span>
+      <span class="bv">${rate}% · ${r.n}</span></div>`;
+    // confirmed / snoozed / ignored split (status colours), all labelled below
+    const segs = parts.filter((k) => r[k]);
+    html += `<div class="compbar">` + segs.map((k) =>
+      `<span class="seg" title="${esc(cap(k))}: ${r[k]}" style="width:${(r[k] / r.n) * 100}%;background:${SC_COLOR[k]}"></span>`
+    ).join("") + `</div>`;
+    html += `<div class="legend">` + parts.map((k) =>
+      `<span class="k"><span class="dot" style="background:${SC_COLOR[k]}"></span>${cap(k)} · ${r[k] || 0}</span>`
+    ).join("");
+    if (r.avg_latency_seconds != null) {
+      html += `<span class="k">⏱ ${esc(secs(r.avg_latency_seconds))} to tap</span>`;
+    }
+    const drift = r.interval_minutes !== r.default_interval_minutes
+      ? ` (default ${r.default_interval_minutes}m)` : "";
+    html += `<span class="k">every ${r.interval_minutes}m${esc(drift)}</span>`;
+    html += `</div>`;
+    return `<div style="margin:0 0 18px">${html}</div>`;
+  }).join("");
+}
+
 async function load() {
   $("#status").textContent = "updating…";
   let data;
@@ -273,6 +318,7 @@ async function load() {
   renderTime(data.time_estimation);
   renderFollow(data.follow_through);
   renderChannels(data.channels);
+  renderSelfCare(data.self_care);
   const n = (data.counts || {}).episodes || 0;
   $("#status").textContent = `${n} event${n === 1 ? "" : "s"} · updated ` +
     new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });

@@ -15,16 +15,21 @@ three signature views the Insights page renders (all pure and model-free, mirror
 3. **Channel responsiveness** — the acknowledgement rate per delivery channel
    ("which channel you actually answer"), from episodes that recorded a channel
    and whether you responded.
+4. **Self-care** — per basic-needs check (meal, water, meds): how often you
+   genuinely acted on the nudge vs. snoozed/ignored it, the average nudge→tap
+   latency on the taps you confirmed, and the learned cadence vs. its default.
 
 Everything is derived straight from ``episodes`` (not the ``patterns`` table), so
 the page is meaningful even before ``prefrontal learn`` has ever run.
 """
 from __future__ import annotations
 
-from statistics import median
+import re
+from statistics import fmean, median
 from typing import Any
 
 from prefrontal.memory.store import MemoryStore
+from prefrontal.modules.self_care import CHECKS, SELF_CARE_EPISODE
 
 #: Outcome values we treat as terminal for the follow-through view, in display order.
 OUTCOMES: tuple[str, ...] = ("success", "partial", "miss")
@@ -113,6 +118,61 @@ def _channels(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+#: Self-care outcomes we tally per check, in display order.
+SELF_CARE_OUTCOMES: tuple[str, ...] = ("confirmed", "snoozed", "ignored")
+
+
+def _self_care_latency(notes: str | None) -> float | None:
+    """Parse ``latency=<n>s`` from an episode's notes, or ``None`` if absent.
+
+    A tiny local re-implementation of the self-care module's own latency parse
+    (private there), so this stays a leaf that only reads public episode fields.
+    """
+    if not notes:
+        return None
+    m = re.search(r"latency=(\d+)s", notes)
+    return float(m.group(1)) if m else None
+
+
+def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
+    """Per basic-needs check: response split, act-on-it rate, latency, and cadence.
+
+    One row per :data:`~prefrontal.modules.self_care.CHECKS` entry (stable order
+    meal, water, meds). Each ``self_care`` episode's ``context`` is
+    ``"<key>: confirmed|snoozed|ignored"`` and its ``outcome`` echoes that verb;
+    confirmed taps carry a ``latency=<n>s`` note. Safe/zeroed on empty history.
+    """
+    episodes = store.episodes_by_type(SELF_CARE_EPISODE, limit=10_000)
+    rows: list[dict[str, Any]] = []
+    for check in CHECKS:
+        prefix = f"{check.key}: "
+        mine = [e for e in episodes if str(e.get("context") or "").startswith(prefix)]
+        counts = {o: sum(1 for e in mine if e.get("outcome") == o) for o in SELF_CARE_OUTCOMES}
+        n = sum(counts.values())
+        latencies = [
+            lat
+            for e in mine
+            if e.get("outcome") == "confirmed"
+            and (lat := _self_care_latency(e.get("notes"))) is not None
+        ]
+        rows.append(
+            {
+                "key": check.key,
+                "n": n,
+                "confirmed": counts["confirmed"],
+                "snoozed": counts["snoozed"],
+                "ignored": counts["ignored"],
+                "response_rate": round(counts["confirmed"] / n, 2) if n else None,
+                "avg_latency_seconds": round(fmean(latencies), 1) if latencies else None,
+                "interval_minutes": max(
+                    1, int(store.get_float(check.interval_key, check.interval_default))
+                ),
+                "default_interval_minutes": check.interval_default,
+            }
+        )
+    return rows
+
+
 def build_stats(store: MemoryStore) -> dict[str, Any]:
     """Assemble the Insights payload from the (scoped) user's episodes.
 
@@ -120,14 +180,15 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
         store: A user-scoped :class:`MemoryStore`.
 
     Returns:
-        ``{time_estimation, follow_through, channels, counts}`` — see the module
-        docstring. All fields are JSON-serializable and safe on an empty history
-        (counts are 0, ratios/rates are ``None``).
+        ``{time_estimation, follow_through, channels, self_care, counts}`` — see
+        the module docstring. All fields are JSON-serializable and safe on an
+        empty history (counts are 0, ratios/rates are ``None``).
     """
     episodes = store.all_episodes()
     return {
         "time_estimation": _time_estimation(episodes),
         "follow_through": _follow_through(episodes),
         "channels": _channels(episodes),
+        "self_care": _self_care(store),
         "counts": {"episodes": len(episodes)},
     }

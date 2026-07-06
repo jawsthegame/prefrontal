@@ -590,6 +590,34 @@ class BalanceConfig(BaseModel):
     )
 
 
+class SelfCareCheckConfig(BaseModel):
+    """One check's settings in ``POST /self-care``. All optional — a partial
+    update writes only the fields present, leaving the rest as they were."""
+
+    enabled: bool | None = Field(default=None, description="Turn this check on/off.")
+    target: int | None = Field(
+        default=None, ge=1, description="Daily target (confirms that end the check for the day)."
+    )
+    start_hour: int | None = Field(
+        default=None, ge=0, le=23, description="Local hour the check starts nudging."
+    )
+    interval_minutes: int | None = Field(
+        default=None, ge=1, description="Minutes between nudges (re-ask / recurring cadence)."
+    )
+
+
+class SelfCareConfig(BaseModel):
+    """Body of ``POST /self-care`` — adjust the self-care settings from the dashboard.
+
+    Every field is optional so the UI can send a partial update (e.g. just the
+    master switch, or just one check's target). ``checks`` is keyed by check key
+    (``meal`` / ``water`` / ``meds``); unknown keys are ignored server-side.
+    """
+
+    enabled: bool | None = Field(default=None, description="Master self-care switch.")
+    checks: dict[str, SelfCareCheckConfig] = Field(default_factory=dict)
+
+
 class InviteCreate(BaseModel):
     """Body of ``POST /household/invites`` — optionally text the link to a co-parent.
 
