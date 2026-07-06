@@ -6,15 +6,15 @@ it tells you to copy/import.
 
 | File | What it is | Used in |
 |---|---|---|
-| `com.morningstatic.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
+| `com.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
 | `learn.sh` | Chains the nightly learning pass: `prefrontal learn` then `prefrontal summarize`, with timestamped logging. | deployment §12 |
-| `com.morningstatic.prefrontal-learn.plist` | launchd agent that runs `learn.sh` nightly at 03:30 (periodic, no `KeepAlive`). | deployment §12 |
-| `com.morningstatic.prefrontal-mail.plist` | launchd agent that runs `mail-fetch.sh` every 15 min to fetch + triage mail (the no-n8n path; edit paths + account list). | deployment §13 |
+| `com.prefrontal-learn.plist` | launchd agent that runs `learn.sh` nightly at 03:30 (periodic, no `KeepAlive`). | deployment §12 |
+| `com.prefrontal-mail.plist` | launchd agent that runs `mail-fetch.sh` every 15 min to fetch + triage mail (the no-n8n path; edit paths + account list). | deployment §13 |
 | `mail-fetch.sh` | Wrapper the mail agent calls: runs `prefrontal mail fetch` once per account, from the repo root so `.env` loads. | deployment §13 |
 | `coach.sh` | Wrapper the coach agent calls: runs `prefrontal coach --deliver` (fans over every enabled module + the overwhelm check), from the repo root so `.env` loads. | deployment §19 |
-| `com.morningstatic.prefrontal-coach.plist` | launchd agent that runs `coach.sh` every 60s — the **native replacement** for the `coach-check`, `hyperfocus-check`, `departure-reminder`, and `panic-check` n8n workflows (deactivate those before enabling). | deployment §19 |
+| `com.prefrontal-coach.plist` | launchd agent that runs `coach.sh` every 60s — the **native replacement** for the `coach-check`, `hyperfocus-check`, `departure-reminder`, and `panic-check` n8n workflows (deactivate those before enabling). | deployment §19 |
 | `household-sweeps.sh` | Wrapper: runs the shared-household checks (`household chores-check` / `checkin-check` / `digest-check` / `prompt-check`), each self-gating on due-ness. | deployment §19 |
-| `com.morningstatic.prefrontal-household.plist` | launchd agent that runs `household-sweeps.sh` every 15 min — the **native replacement** for the `chores-check`, `checkin-check`, `digest-check`, and `star-prompt-check` n8n workflows (deactivate those before enabling). | deployment §19 |
+| `com.prefrontal-household.plist` | launchd agent that runs `household-sweeps.sh` every 15 min — the **native replacement** for the `chores-check`, `checkin-check`, `digest-check`, and `star-prompt-check` n8n workflows (deactivate those before enabling). | deployment §19 |
 | `package.sh` | Re-packages the built artifacts after a pull: a Python wheel + sdist (`dist/`), the client handout PDFs rendered from their HTML (`dist/handouts/`), and the macOS desktop app (`desktop/dist/`). **Best-effort and non-fatal** — each step self-skips when its toolchain/source is absent (no `build` module, no Chrome, no `npm`) and only writes gitignored dirs, so it never dirties the checkout or blocks a restart. Run automatically by `update.sh`. | deployment §12 |
 | `n8n/departure-reminder.workflow.json` | Importable n8n workflow: schedule → `POST /webhooks/departure/check` → **ntfy** (with the signed **Made it / Missed it** buttons the endpoint returns) → `POST /webhooks/n8n`. A template — adjust nodes for your n8n version. **Superseded by `coach.sh`** (native). | deployment §7 |
 | `n8n/coffee-shop-nudge.workflow.json` | Location-Aware Task Anchor: every-minute poll of `/webhooks/outing/check` → **ntfy at 50%/100%** (with **I'm back / Abandon** buttons) → **Twilio voice call at 150%**. | deployment §8 |

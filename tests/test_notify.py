@@ -10,7 +10,7 @@ from prefrontal.webhooks.notify import act_url, nudge_actions, panic_actions
 from prefrontal.webhooks.oauth import verify_action
 
 SIGNING = "notify-signing-key"
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 
 
 def test_act_url_signs_and_round_trips():

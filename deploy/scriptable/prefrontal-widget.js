@@ -40,7 +40,7 @@
 //   Works anywhere your phone can reach the mini over Tailscale.
 
 // --- config ---------------------------------------------------------------
-const BASE_URL = "http://agent-1.tail8b0a.ts.net:8000";
+const BASE_URL = "http://mac-mini.tailnet.ts.net:8000";
 const TOKEN = "PASTE_YOUR_PREFRONTAL_TOKEN"; // solo: webhook secret · multi-user: your per-user token
 // Adaptive refresh cadence (minutes). iOS budgets widget reloads (~40-70/day for
 // a visible widget) and treats refreshAfterDate as the *earliest* reload, not a

@@ -315,8 +315,8 @@ def test_plan_upcoming_departures_skips_fyi_and_placeholders(store):
     produce a departure plan (and therefore never a nudge).
     """
     store.upsert_commitment(
-        title="Vistar Weekly Business Review", start_at=_utc(30),
-        lead_minutes=10, external_id="work:vistar",
+        title="Acme Weekly Business Review", start_at=_utc(30),
+        lead_minutes=10, external_id="work:acme",
     )
     store.upsert_commitment(
         title="Elliott 7y checkup", start_at=_utc(60), kind="fyi",
@@ -326,7 +326,7 @@ def test_plan_upcoming_departures_skips_fyi_and_placeholders(store):
         title="HOLD", start_at=_utc(90), lead_minutes=10, external_id="cal:hold",
     )
     plans = plan_upcoming_departures(store)
-    assert [p.commitment["title"] for p in plans] == ["Vistar Weekly Business Review"]
+    assert [p.commitment["title"] for p in plans] == ["Acme Weekly Business Review"]
 
 
 def test_location_ping_requires_auth(client):

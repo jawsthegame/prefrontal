@@ -12,12 +12,16 @@
   in the n8n UI so a cue isn't sent twice (dedup/debounce catches most doubles,
   but don't rely on it).
 
-  Install:
-    cp deploy/com.morningstatic.prefrontal-coach.plist ~/Library/LaunchAgents/
-    # then edit the paths below to match your username and install location
-    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-coach.plist
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ / __PREFRONTAL_USER__ placeholders below with
+  your real repo root, home directory, and coaching handle, then loads the
+  agent. The committed file is a template with no machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal-coach.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal-coach.plist
     # run the wrapper once by hand first to confirm it delivers:
-    PREFRONTAL_HOME=/Users/tom/src/prefrontal deploy/coach.sh
+    deploy/coach.sh
 
   StartInterval fires every 60s (matching the old every-minute n8n poll). The
   tick self-suppresses via quiet hours + debounce, so a minute cadence only
@@ -26,15 +30,15 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.morningstatic.prefrontal-coach</string>
+    <string>com.prefrontal-coach</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/src/prefrontal/deploy/coach.sh</string>
+        <string>__PREFRONTAL_HOME__/deploy/coach.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/src/prefrontal</string>
+    <string>__PREFRONTAL_HOME__</string>
 
     <key>StartInterval</key>
     <integer>60</integer>
@@ -43,10 +47,10 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.coach.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.coach.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.coach.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.coach.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -55,10 +59,11 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Install location; coach.sh cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
-        <string>/Users/tom/src/prefrontal</string>
-        <!-- Handle to coach; leave unset to auto-pick when there's one user. -->
+        <string>__PREFRONTAL_HOME__</string>
+        <!-- Handle to coach; leave the placeholder empty to auto-pick when
+             there's a single user. -->
         <key>PREFRONTAL_USER</key>
-        <string>Tom</string>
+        <string>__PREFRONTAL_USER__</string>
     </dict>
 </dict>
 </plist>

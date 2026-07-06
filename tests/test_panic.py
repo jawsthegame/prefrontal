@@ -373,7 +373,7 @@ def test_panic_check_fire_carries_first_step_inline_and_a_triage_button(store, n
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
     _disable_quiet_hours(store)
-    settings = Settings(webhook_secret=SECRET, oauth_base_url="https://agent-1.tail8b0a.ts.net")
+    settings = Settings(webhook_secret=SECRET, oauth_base_url="https://mac-mini.tailnet.ts.net")
     app = create_app(store=store, settings=settings)
     with TestClient(app) as c:
         body = c.post("/webhooks/panic/check", headers={"X-Prefrontal-Token": SECRET}).json()
@@ -384,7 +384,7 @@ def test_panic_check_fire_carries_first_step_inline_and_a_triage_button(store, n
     assert len(body["actions"]) == 1
     btn = body["actions"][0]
     assert btn["action"] == "view"
-    assert btn["url"] == "https://agent-1.tail8b0a.ts.net/dashboard?panic=1"
+    assert btn["url"] == "https://mac-mini.tailnet.ts.net/dashboard?panic=1"
 
 
 def test_panic_check_action_empty_without_public_origin(store, noon):
@@ -429,7 +429,7 @@ def test_panic_check_offers_did_it_button_and_captures_the_step(store, noon):
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))
     _disable_quiet_hours(store)
-    base = "https://agent-1.tail8b0a.ts.net"
+    base = "https://mac-mini.tailnet.ts.net"
     settings = Settings(webhook_secret=SECRET, session_secret="sign-key", oauth_base_url=base)
     app = create_app(store=store, settings=settings)
     h = {"X-Prefrontal-Token": SECRET}

@@ -23,7 +23,7 @@ from tests.conftest import DEFAULT_HANDLE, scoped_default
 
 SECRET = "nudge-webhook-secret"
 SIGNING = "nudge-signing-key"
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 
 
 # -- signed token round-trip -------------------------------------------------

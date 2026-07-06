@@ -9,14 +9,16 @@
 # fans over hyperfocus, outing/arrival (location_anchor), departure
 # (time_blindness), self-care, task-paralysis, impulsivity, and trip-tracking,
 # so a single launchd job covers what those four workflows did. Scheduled by
-# deploy/com.morningstatic.prefrontal-coach.plist (every 60s).
+# deploy/com.prefrontal-coach.plist (every 60s).
 #
 # `--deliver` publishes; without it the tick only prints (safe to run by hand to
 # see what would fire). Edit PREFRONTAL_HOME / PREFRONTAL_USER to taste; the
 # venv's `prefrontal` is used directly (no activation needed).
 set -euo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
+# Default to the repo root (this script lives in <repo>/deploy/), so no path is
+# hard-coded; override PREFRONTAL_HOME to run against a different checkout.
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 # Handle to coach. Leave empty to let the CLI auto-pick when there's one user.
 PREFRONTAL_USER="${PREFRONTAL_USER:-}"

@@ -664,8 +664,8 @@ def test_commitments_expose_calendar_key_and_label_map(store_open):
         webhook_secret=SECRET,
         calendar_labels=(
             ("personal", "Personal", "blue"),
-            ("work", "Vistar", "orange"),
-            ("outlook", "T-Mobile", "magenta"),
+            ("work", "Acme", "orange"),
+            ("outlook", "Telco", "magenta"),
         ),
     )
     app = create_app(store=store_open, settings=settings)
@@ -680,8 +680,8 @@ def test_commitments_expose_calendar_key_and_label_map(store_open):
         data = c.get("/commitments", headers=_auth()).json()
     assert data["calendars"] == {
         "personal": {"label": "Personal", "color": "blue"},
-        "work": {"label": "Vistar", "color": "orange"},
-        "outlook": {"label": "T-Mobile", "color": "magenta"},
+        "work": {"label": "Acme", "color": "orange"},
+        "outlook": {"label": "Telco", "color": "magenta"},
     }
     ev = data["commitments"][0]
     assert ev["calendar_key"] == "work"
@@ -882,7 +882,7 @@ def test_is_placeholder_title(title, expected):
 @pytest.mark.parametrize(
     ("commitment", "expected"),
     [
-        ({"title": "Vistar Weekly Business Review", "kind": "self"}, True),
+        ({"title": "Acme Weekly Business Review", "kind": "self"}, True),
         ({"title": "Tax", "kind": "self"}, True),
         ({"title": "Kids at grandma's", "kind": "fyi"}, False),   # someone else's
         ({"title": "HOLD", "kind": "self"}, False),               # placeholder

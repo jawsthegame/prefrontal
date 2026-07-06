@@ -15,7 +15,7 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.morningstatic.prefrontal.desktop",
+    "appId": "com.prefrontal.desktop",
     "productName": "Prefrontal",
     "afterPack": "afterPack.js",
     "files": [

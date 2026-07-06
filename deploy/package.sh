@@ -17,7 +17,9 @@
 # toolchain paths via the env vars below.
 set -uo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
+# Default to the repo root (this script lives in <repo>/deploy/), so no path is
+# hard-coded; override PREFRONTAL_HOME to run against a different checkout.
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
 PREFRONTAL_PY="${PREFRONTAL_PY:-$PREFRONTAL_HOME/.venv/bin/python}"
 
 cd "$PREFRONTAL_HOME"

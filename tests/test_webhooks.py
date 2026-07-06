@@ -100,13 +100,13 @@ def test_todos_expose_account_and_label_map(store, user_store):
     )
     manual_id = user_store.add_todo("buy milk")
 
-    settings = Settings(account_labels=(("work", "Vistar", "orange"),))
+    settings = Settings(account_labels=(("work", "Acme", "orange"),))
     app = create_app(store=store, settings=settings)
     with TestClient(app) as c:
         resp = c.get("/todos", headers={"X-Prefrontal-Token": SECRET})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["accounts"] == {"work": {"label": "Vistar", "color": "orange"}}
+    assert data["accounts"] == {"work": {"label": "Acme", "color": "orange"}}
     by_id = {t["id"]: t for t in data["todos"]}
     assert by_id[manual_id]["account"] is None
     mail_todo = next(t for t in data["todos"] if t["id"] != manual_id)

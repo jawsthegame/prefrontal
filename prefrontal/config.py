@@ -96,14 +96,14 @@ class Settings:
         account_labels: Per-account display labels for the dashboard, mapping a
             logical account name to a ``(label, color)`` pair — so a todo that
             came from mail shows a colored pill naming the real account (e.g.
-            ``work`` → an orange "Vistar" pill). Purely cosmetic and operator-set,
+            ``work`` → an orange "Acme" pill). Purely cosmetic and operator-set,
             so the account name in the data stays stable while the surface shows a
             friendly name. Accounts absent here render no pill.
         calendar_labels: Per-calendar display labels for the dashboard, the exact
             analogue of ``account_labels`` for commitments: maps a calendar feed
             slug (the ``external_id`` namespace, e.g. ``personal``/``work``/
             ``outlook``) to a ``(label, color)`` pair, so a commitment shows a
-            colored pill naming its calendar (e.g. ``work`` → an orange "Vistar"
+            colored pill naming its calendar (e.g. ``work`` → an orange "Acme"
             pill). A feed absent here falls back to its default title-cased label
             with no color.
         timezone: IANA name of the deployment's home timezone (e.g.
@@ -219,7 +219,7 @@ class Settings:
     # (n8n, iOS Shortcuts, the widget) keep using per-user tokens regardless.
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
-    oauth_base_url: str = ""        # public https origin, e.g. https://agent-1.tail8b0a.ts.net
+    oauth_base_url: str = ""        # public https origin, e.g. https://mac-mini.tailnet.ts.net
     session_secret: str = ""        # HMAC key signing the browser session cookie
     google_oauth_allowed: str = ""  # "email=handle,email2=handle2" allowlist
     # Remote self-update: pull the latest code + restart the service from an
@@ -464,7 +464,7 @@ def _parse_label_pills(raw: str) -> tuple[tuple[str, str, str], ...]:
     """Parse a ``key=label:color`` pill spec into ``(key, label, color)`` triples.
 
     The format is a comma-separated list of ``key=label:color`` entries, e.g.
-    ``work=Vistar:orange,outlook=t-mobile:magenta``. The ``:color`` part is
+    ``work=Acme:orange,outlook=telco:magenta``. The ``:color`` part is
     optional (``key=label`` yields an empty color, letting the surface pick a
     default), and the label may itself contain ``:`` — the color is split from the
     last colon. Entries without ``=`` or with an empty key/label are skipped, so a

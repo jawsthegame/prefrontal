@@ -135,7 +135,7 @@ def build_corrections_block(
 #: Sender-address fragments that mark a structurally un-repliable sender. Mail
 #: from one of these never becomes a todo, whatever the model decides — you can't
 #: reply to a no-reply box, and its "action" is almost always a false positive
-#: (see the vistarmedia/github flood that motivated this gate).
+#: (see the acme/github flood that motivated this gate).
 _NO_REPLY_SENDER_MARKERS = (
     "no-reply",
     "noreply",

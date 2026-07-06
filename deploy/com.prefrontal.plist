@@ -3,26 +3,30 @@
 <!--
   launchd agent that runs `prefrontal serve` always-on.
 
-  Install:
-    cp deploy/com.morningstatic.prefrontal.plist ~/Library/LaunchAgents/
-    # then edit the paths below to match your username and install location
-    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
+  home directory, then loads the agent. The committed file is a template with no
+  machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal.plist
 
   WorkingDirectory must be the repo root so the `.env` next to it is loaded.
 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.morningstatic.prefrontal</string>
+    <string>com.prefrontal</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/src/prefrontal/.venv/bin/prefrontal</string>
+        <string>__PREFRONTAL_HOME__/.venv/bin/prefrontal</string>
         <string>serve</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/src/prefrontal</string>
+    <string>__PREFRONTAL_HOME__</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -48,10 +52,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.out.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.err.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

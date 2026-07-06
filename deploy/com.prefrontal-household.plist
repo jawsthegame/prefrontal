@@ -12,25 +12,29 @@
   n8n UI so a notice isn't sent twice. A single-parent household is a clean
   no-op for the shared checks.
 
-  Install:
-    cp deploy/com.morningstatic.prefrontal-household.plist ~/Library/LaunchAgents/
-    # then edit the paths below to match your username and install location
-    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-household.plist
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ / __PREFRONTAL_USER__ placeholders below with
+  your real repo root, home directory, and household handle, then loads the
+  agent. The committed file is a template with no machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal-household.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal-household.plist
     # run the wrapper once by hand first to confirm it works:
-    PREFRONTAL_HOME=/Users/tom/src/prefrontal deploy/household-sweeps.sh
+    deploy/household-sweeps.sh
 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.morningstatic.prefrontal-household</string>
+    <string>com.prefrontal-household</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/src/prefrontal/deploy/household-sweeps.sh</string>
+        <string>__PREFRONTAL_HOME__/deploy/household-sweeps.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/src/prefrontal</string>
+    <string>__PREFRONTAL_HOME__</string>
 
     <key>StartInterval</key>
     <integer>900</integer>
@@ -39,10 +43,10 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.household.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.household.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/tom/Library/Logs/prefrontal.household.log</string>
+    <string>__HOME__/Library/Logs/prefrontal.household.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -51,10 +55,11 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Install location; the wrapper cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
-        <string>/Users/tom/src/prefrontal</string>
-        <!-- Any household member; the sweep resolves the household from them. -->
+        <string>__PREFRONTAL_HOME__</string>
+        <!-- Any household member; the sweep resolves the household from them.
+             Leave the placeholder empty to auto-pick when there's a single user. -->
         <key>PREFRONTAL_USER</key>
-        <string>Tom</string>
+        <string>__PREFRONTAL_USER__</string>
     </dict>
 </dict>
 </plist>

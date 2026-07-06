@@ -75,7 +75,7 @@ cp .env.example .env
 Edit `.env`. At minimum set a strong webhook secret:
 
 ```ini
-PREFRONTAL_DB_PATH=/Users/tom/src/prefrontal/prefrontal.db
+PREFRONTAL_DB_PATH=/Users/you/src/prefrontal/prefrontal.db
 PREFRONTAL_HOST=0.0.0.0
 PREFRONTAL_PORT=8000
 
@@ -106,8 +106,8 @@ Copy the bundled launch agent and edit the paths inside it to match your
 username and install location:
 
 ```bash
-cp deploy/com.morningstatic.prefrontal.plist ~/Library/LaunchAgents/
-# Edit ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist:
+cp deploy/com.prefrontal.plist ~/Library/LaunchAgents/
+# Edit ~/Library/LaunchAgents/com.prefrontal.plist:
 #   - ProgramArguments[0] -> /Users/<you>/prefrontal/.venv/bin/prefrontal
 #   - WorkingDirectory    -> /Users/<you>/prefrontal
 #   - Std{Out,Err}Path    -> /Users/<you>/Library/Logs/prefrontal.*.log
@@ -116,7 +116,7 @@ cp deploy/com.morningstatic.prefrontal.plist ~/Library/LaunchAgents/
 Load and start it:
 
 ```bash
-launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
+launchctl load -w ~/Library/LaunchAgents/com.prefrontal.plist
 launchctl list | grep prefrontal           # should show the job
 curl -s http://localhost:8000/health       # {"status":"ok",...}
 ```
@@ -125,8 +125,8 @@ curl -s http://localhost:8000/health       # {"status":"ok",...}
 or reload after editing:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
-launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal.plist
+launchctl unload ~/Library/LaunchAgents/com.prefrontal.plist
+launchctl load -w ~/Library/LaunchAgents/com.prefrontal.plist
 ```
 
 Logs: `tail -f ~/Library/Logs/prefrontal.err.log`.
@@ -587,18 +587,18 @@ has gone stale relative to the current facts (i.e. it's time to re-run
 `deploy/learn.sh` chains the two steps (launchd can't run `learn && summarize`
 in one `ProgramArguments`), with timestamped logging (a `summarize` failure is
 logged but treated as non-fatal), and
-`deploy/com.morningstatic.prefrontal-learn.plist` runs it nightly at 03:30 —
+`deploy/com.prefrontal-learn.plist` runs it nightly at 03:30 —
 a *periodic* job (no `KeepAlive`), distinct from the always-on server agent in
 §3.
 
 ```bash
-cp deploy/com.morningstatic.prefrontal-learn.plist ~/Library/LaunchAgents/
+cp deploy/com.prefrontal-learn.plist ~/Library/LaunchAgents/
 # Edit the paths inside both files to match your install:
 #   - learn.sh:  PREFRONTAL_HOME (repo root, so the adjacent .env loads)
 #   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME,
 #                Std{Out,Err}Path, and Hour/Minute if 03:30 doesn't suit
-launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-learn.plist
-launchctl start com.morningstatic.prefrontal-learn   # run once now, don't wait
+launchctl load -w ~/Library/LaunchAgents/com.prefrontal-learn.plist
+launchctl start com.prefrontal-learn   # run once now, don't wait
 tail -f ~/Library/Logs/prefrontal.learn.log          # watch it work
 ```
 
@@ -610,15 +610,15 @@ schedule node instead? Either works — they just call the same two commands.
 
 If you triage email through Prefrontal, run the built-in mail fetch on a timer
 (the mail analogue of §12). `deploy/mail-fetch.sh` pulls and syncs a batch;
-`deploy/com.morningstatic.prefrontal-mail.plist` runs it on an interval via
+`deploy/com.prefrontal-mail.plist` runs it on an interval via
 launchd.
 
 ```bash
-cp deploy/com.morningstatic.prefrontal-mail.plist ~/Library/LaunchAgents/
+cp deploy/com.prefrontal-mail.plist ~/Library/LaunchAgents/
 # Edit the paths inside mail-fetch.sh + the plist to match your install
 # (PREFRONTAL_HOME, ProgramArguments[0], Std{Out,Err}Path, and the interval),
 # then load it:
-launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-mail.plist
+launchctl load -w ~/Library/LaunchAgents/com.prefrontal-mail.plist
 ```
 
 (Alternatively an n8n Gmail/IMAP workflow can POST batches to
@@ -807,20 +807,20 @@ quiet-hours + debounce, and publishes what fires — plus the proactive overwhel
 (panic) check on the same tick.
 
 ```sh
-cp deploy/coach.sh deploy/com.morningstatic.prefrontal-coach.plist ~/… # (repo already has them)
+cp deploy/coach.sh deploy/com.prefrontal-coach.plist ~/… # (repo already has them)
 # Edit paths inside both to match your install:
 #   - coach.sh:  PREFRONTAL_HOME (repo root), PREFRONTAL_USER (handle, or blank to auto-pick)
 #   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, PREFRONTAL_USER, Std{Out,Err}Path
-cp deploy/com.morningstatic.prefrontal-coach.plist ~/Library/LaunchAgents/
+cp deploy/com.prefrontal-coach.plist ~/Library/LaunchAgents/
 PREFRONTAL_HOME=$HOME/src/prefrontal deploy/coach.sh   # run once by hand — should print what fires
-launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-coach.plist
+launchctl load -w ~/Library/LaunchAgents/com.prefrontal-coach.plist
 ```
 
 **b) The household sweeps** — replaces `chores-check`, `checkin-check`,
 `digest-check`, and `star-prompt-check`. `deploy/household-sweeps.sh` runs the
 four `prefrontal household …-check` twins; each self-gates on due-ness (off,
 wrong day/time, already sent, nothing new), so a 15-min interval only means
-"check often." Same install shape with `com.morningstatic.prefrontal-household.plist`.
+"check often." Same install shape with `com.prefrontal-household.plist`.
 
 **Cutover — do this per agent to avoid double-sends:** the n8n workflow and its
 launchd replacement both deliver, so once a launchd agent is confirmed working,

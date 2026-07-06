@@ -53,7 +53,7 @@ from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action, verify_action
 
-BASE = "https://agent-1.tail8b0a.ts.net"
+BASE = "https://mac-mini.tailnet.ts.net"
 SIGNING = "household-signing-key"
 
 STAR_CHART = {
