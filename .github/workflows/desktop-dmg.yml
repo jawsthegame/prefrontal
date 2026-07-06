@@ -6,7 +6,7 @@ name: Build Prefrontal Desktop (.dmg)
 #     workflow. When it finishes, download the DMGs from the run's Artifacts.
 #   • Or push a tag like `desktop-v0.1.0` to also attach them to a GitHub Release.
 #
-# The app is ad-hoc signed (see desktop/build/afterPack.js) but NOT notarized —
+# The app is ad-hoc signed (see desktop/afterPack.js) but NOT notarized —
 # there's no Apple Developer cert. On first launch macOS Gatekeeper still blocks
 # a browser-downloaded app: right-click the app → Open (once), or run
 # `xattr -dr com.apple.quarantine /Applications/Prefrontal.app`.
