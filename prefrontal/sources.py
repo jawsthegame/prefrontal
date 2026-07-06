@@ -6,14 +6,12 @@ plaintext *out* here, while the sealed bytes never leave this module and the
 as JSON in the ``sources.config`` column; the helpers here shape it per kind and
 return typed views.
 
-Two connectors exist:
+The first connector is ``imap`` — a mailbox, one row per logical account
+(``personal``, ``work``). A calendar connector (per-user ICS feeds) lands in a
+later phase (see docs/design/per-user-sources.md).
 
-- ``imap`` — a mailbox, one row per logical account (``personal``, ``work``).
-- ``gcal`` — Google Calendar, a single row per user (``account="google"``)
-  holding the OAuth refresh token and which calendars to sync.
-
-Phase 0 provides storage + resolution; the mail-fetch and calendar-sync paths
-that consume these land in later phases (see docs/design/per-user-sources.md).
+Phase 0 provides storage + resolution; the mail-fetch path that consumes these
+lands in Phase 1.
 """
 
 from __future__ import annotations
@@ -21,15 +19,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import seal, unseal
+from prefrontal.mail.imap import ImapAccount
 from prefrontal.memory.store import MemoryStore
 
 #: Connector kinds stored in the ``sources`` table.
 IMAP = "imap"
-GCAL = "gcal"
-
-#: The single logical account name a Google Calendar source uses per user.
-GCAL_ACCOUNT = "google"
 
 
 @dataclass(frozen=True)
@@ -43,16 +39,6 @@ class ImapSource:
     mailbox: str = "INBOX"
     important_only: bool = False
     retention: str = "signals"
-    enabled: bool = True
-
-
-@dataclass(frozen=True)
-class GcalSource:
-    """A resolved Google Calendar source, with its refresh token decrypted."""
-
-    refresh_token: str
-    calendar_ids: tuple[str, ...]
-    namespace: str
     enabled: bool = True
 
 
@@ -117,40 +103,59 @@ def imap_accounts(store: MemoryStore, *, include_disabled: bool = False) -> list
     return [r["account"] for r in rows]
 
 
-def put_gcal_source(
-    store: MemoryStore,
-    *,
-    refresh_token: str | None,
-    calendar_ids: tuple[str, ...] = ("primary",),
-    namespace: str = "gcal",
-    enabled: bool = True,
-) -> int:
-    """Create or update the user's Google Calendar source; return its row id.
+# -- mail fetch bridge: registry source -> ImapAccount + retention policy ------
 
-    ``refresh_token=None`` leaves an existing sealed token untouched (e.g. when a
-    re-consent returns no new refresh token but the calendar selection changed).
+
+@dataclass(frozen=True)
+class MailFetchSource:
+    """What the mail-fetch path needs for one account: connection + retention."""
+
+    imap: ImapAccount
+    policy: str
+
+
+def resolve_mail_fetch(
+    store: MemoryStore, account: str, *, settings: Settings | None = None
+) -> MailFetchSource | None:
+    """Resolve how to fetch ``account`` for the (scoped) user: DB source, else env.
+
+    Prefers the user's registry ``imap`` source (credentials decrypted, retention
+    from its config). Falls back to the global ``MAIL_IMAP_*_<ACCOUNT>`` env +
+    :meth:`Settings.policy_for` so a not-yet-migrated deploy keeps working. A
+    disabled or credential-incomplete DB source falls through to env rather than
+    silently fetching nothing.
+
+    Returns ``None`` when neither a usable DB source nor env credentials exist.
     """
-    config = json.dumps({"calendar_ids": list(calendar_ids), "namespace": namespace})
-    secret_enc = seal(refresh_token) if refresh_token is not None else None
-    return store.upsert_source(
-        kind=GCAL,
-        account=GCAL_ACCOUNT,
-        config=config,
-        secret_enc=secret_enc,
-        enabled=enabled,
-    )
-
-
-def resolve_gcal(store: MemoryStore) -> GcalSource | None:
-    """Return the user's Google Calendar source (refresh token decrypted), or ``None``."""
-    row = store.get_source(GCAL, GCAL_ACCOUNT)
-    if row is None:
+    settings = settings or get_settings()
+    src = resolve_imap(store, account)
+    if src is not None and src.enabled and src.host and src.username and src.password:
+        imap = ImapAccount(
+            name=account,
+            host=src.host,
+            user=src.username,
+            password=src.password,
+            mailbox=src.mailbox,
+            important_only=src.important_only,
+        )
+        return MailFetchSource(imap=imap, policy=src.retention or "signals")
+    imap = ImapAccount.from_env(account)
+    if imap is None:
         return None
-    cfg = json.loads(row["config"] or "{}")
-    refresh = unseal(row["secret_enc"]) if row["secret_enc"] is not None else ""
-    return GcalSource(
-        refresh_token=refresh,
-        calendar_ids=tuple(cfg.get("calendar_ids", ["primary"])),
-        namespace=cfg.get("namespace", "gcal"),
-        enabled=bool(row["enabled"]),
-    )
+    return MailFetchSource(imap=imap, policy=settings.policy_for(account))
+
+
+def mail_fetch_accounts(
+    store: MemoryStore, *, settings: Settings | None = None
+) -> list[str]:
+    """Return the account names to fetch for the (scoped) user.
+
+    The user's enabled ``imap`` registry sources when they have any; otherwise the
+    globally-configured ``PREFRONTAL_MAIL_ACCOUNTS`` names — so a user with no
+    connected sources still fetches the legacy env-configured accounts.
+    """
+    settings = settings or get_settings()
+    db = imap_accounts(store, include_disabled=False)
+    if db:
+        return db
+    return [name for name, _ in settings.mail_accounts]
