@@ -93,6 +93,46 @@ def test_user_resolution_is_case_insensitive(tmp_path, capsys):
         main(["learn", "--db-path", str(db), "--user", "nobody"])
 
 
+def test_user_route_sets_and_clears_per_user_ntfy_topic(tmp_path, capsys):
+    """`user route` writes a user's own ntfy topic to their coaching-state, so a
+    co-parent's nudges reach *their* phone rather than falling back to the
+    operator default (there was no CLI/UI to set this before)."""
+    from prefrontal.cli import _resolve_user_store
+    from prefrontal.integrations.delivery import resolve_route
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "jamie"]) == 0
+    capsys.readouterr()
+
+    # Set her own topic → command echoes it and it persists as per-user routing.
+    assert main([
+        "user", "--db-path", str(db), "route", "jamie",
+        "--ntfy-topic", "prefrontal-jamie-abc123",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "prefrontal-jamie-abc123" in out and "Updated: ntfy_topic" in out
+    with MemoryStore.open(str(db)) as store:
+        route = resolve_route(_resolve_user_store(store, "jamie"))
+    assert route.ntfy_topic == "prefrontal-jamie-abc123"
+
+    # Empty string clears it (no per-user topic + no operator default → empty).
+    assert main(["user", "--db-path", str(db), "route", "jamie", "--ntfy-topic", ""]) == 0
+    with MemoryStore.open(str(db)) as store:
+        assert resolve_route(_resolve_user_store(store, "jamie")).ntfy_topic == ""
+
+    # A secret (ntfy token) is never echoed back in the clear.
+    capsys.readouterr()
+    assert main([
+        "user", "--db-path", str(db), "route", "jamie", "--ntfy-token", "tk_supersecret",
+    ]) == 0
+    assert "tk_supersecret" not in capsys.readouterr().out
+
+    # Unknown user fails clearly.
+    with pytest.raises(SystemExit, match="No such user"):
+        main(["user", "--db-path", str(db), "route", "nobody"])
+
+
 def test_place_add_then_list_roundtrip(tmp_path, capsys):
     """`place add` normalizes + stores an alias; `place list` prints it."""
     db = tmp_path / "prefrontal.db"

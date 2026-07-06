@@ -269,6 +269,39 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 print(f"No such user '{args.handle}'.", file=sys.stderr)
                 return 1
             print(f"Disabled '{args.handle}'.")
+        elif args.user_action == "route":
+            from prefrontal.integrations.delivery import resolve_route
+
+            scoped = _resolve_user_store(store, args.handle)  # SystemExits if unknown
+            # Only the flags actually passed are written; an empty string clears a
+            # field (resolve_route treats "" as unset and falls back). All keys are
+            # written source="explicit" so the coaching learner never overwrites a
+            # deliberately-set route.
+            fields = {
+                "ntfy_topic": args.ntfy_topic,
+                "ntfy_server": args.ntfy_server,
+                "ntfy_token": args.ntfy_token,
+                "pushover_user_key": args.pushover_user_key,
+                "pushover_token": args.pushover_token,
+            }
+            changed = {k: v for k, v in fields.items() if v is not None}
+            for key, value in changed.items():
+                scoped.set_state(key, value.strip(), source="explicit")
+            route = resolve_route(scoped, settings)
+            shown = lambda s: "set" if s else "—"  # noqa: E731 — never print secret values
+            topic = route.ntfy_topic or "(none — nudges go nowhere)"
+            print(f"Delivery route for '{args.handle}':")
+            print(f"  ntfy        {route.ntfy_server}/{topic}")
+            print(f"  ntfy token  {shown(route.ntfy_token)}")
+            print(
+                f"  pushover    user_key {shown(route.pushover_user_key)} · "
+                f"token {shown(route.pushover_token)}"
+            )
+            if changed:
+                print(
+                    f"Updated: {', '.join(sorted(changed))}. "
+                    f"Verify with `prefrontal notify --user {args.handle}`."
+                )
     return 0
 
 
@@ -2697,7 +2730,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_secrets.set_defaults(func=_cmd_secrets)
 
-    p_user = sub.add_parser("user", help="Provision users (add/list/rotate/disable).")
+    p_user = sub.add_parser(
+        "user", help="Provision users (add/list/rotate/disable/route)."
+    )
     p_user.add_argument("--db-path", default=None, help="Override the database path.")
     user_sub = p_user.add_subparsers(dest="user_action", required=True)
     u_add = user_sub.add_parser("add", help="Provision a new user (prints a token).")
@@ -2711,6 +2746,30 @@ def build_parser() -> argparse.ArgumentParser:
     u_rotate.add_argument("handle", help="The user's handle.")
     u_disable = user_sub.add_parser("disable", help="Disable a user's access.")
     u_disable.add_argument("handle", help="The user's handle.")
+    u_route = user_sub.add_parser(
+        "route",
+        help="Set/show a user's per-user delivery route (their own ntfy topic, etc.).",
+    )
+    u_route.add_argument("handle", help="The user's handle.")
+    u_route.add_argument(
+        "--ntfy-topic",
+        default=None,
+        help="Their own ntfy topic, so nudges hit THEIR phone (pass '' to clear).",
+    )
+    u_route.add_argument(
+        "--ntfy-server", default=None, help="Override the ntfy server (pass '' to clear)."
+    )
+    u_route.add_argument(
+        "--ntfy-token",
+        default=None,
+        help="ntfy access token for a protected topic (pass '' to clear).",
+    )
+    u_route.add_argument(
+        "--pushover-user-key", default=None, help="Pushover user key (pass '' to clear)."
+    )
+    u_route.add_argument(
+        "--pushover-token", default=None, help="Pushover app token (pass '' to clear)."
+    )
     p_user.set_defaults(func=_cmd_user)
 
     p_house = sub.add_parser(
