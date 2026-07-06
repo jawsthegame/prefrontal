@@ -37,6 +37,7 @@ from typing import Any
 
 from prefrontal.clock import utcnow
 from prefrontal.commitments import to_utc
+from prefrontal.household import normalize_routine
 from prefrontal.integrations import Generator
 from prefrontal.llm_json import generate_json
 from prefrontal.log import get_logger
@@ -151,6 +152,17 @@ ASSISTANT_SYSTEM = (
     '- {"op":"set_agreement","title":str,"body":str,'
     '"kind":"reward"|"consistency"|"routine"?,"child":int?,"structured":object?}\n'
     '- {"op":"remove_agreement","agreement_id":int}\n'
+    "A routine groups chores under an accountable owner and carries a schedule "
+    "(days: 0=Mon…6=Sun, empty = every day; due_time \"HH:MM\", blank = not "
+    "time-tied). Create with set_routine (a new routine starts unassigned — who's "
+    "accountable is set on the dashboard). To rename or change an existing one, use "
+    "edit_routine with its id from \"household.routines\" — set_routine can't rename. "
+    "Pass enabled:false to pause, true to resume:\n"
+    '- {"op":"set_routine","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
+    '"impact":str?,"enabled":bool?}\n'
+    '- {"op":"edit_routine","routine_id":int,"title":str?,"due_time":"HH:MM"?,'
+    '"days":[0-6]?,"impact":str?,"enabled":bool?}\n'
+    '- {"op":"remove_routine","routine_id":int}\n'
     "Shared shopping list — add things to buy, check them off, or remove them. "
     "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
     "resolve the item to an id from \"household.shopping\"; \"got\" defaults to "
@@ -255,6 +267,10 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
         "shopping": [
             {"id": s["id"], "item": s.get("item"), "got": bool(s.get("got"))}
             for s in memory.shopping_items()
+        ],
+        "routines": [
+            {"id": r["id"], "title": r.get("title"), "enabled": bool(r.get("enabled"))}
+            for r in memory.routines()
         ],
     }
 
@@ -504,6 +520,19 @@ def _require_shopping(
     raise _ActionError(f"no shopping item with id {sid}")
 
 
+def _require_routine(
+    action: dict[str, Any], household: dict[str, Any]
+) -> tuple[int, str]:
+    """Resolve ``routine_id`` against the snapshot, returning ``(id, title)``."""
+    rid = _as_int(action.get("routine_id"))
+    if rid is None:
+        raise _ActionError("routine_id must be an integer")
+    for r in household.get("routines", []):
+        if r.get("id") == rid:
+            return rid, (r.get("title") or f"routine #{rid}")
+    raise _ActionError(f"no routine with id {rid}")
+
+
 def _as_fact_category(value: Any) -> str:
     """Validate a fact category against the controlled vocab."""
     cat = normalize_fact_category(value if isinstance(value, str) else None)
@@ -747,6 +776,60 @@ def _v_remove_shopping(
     return ValidatedAction(op, {"shopping_id": sid}, f"Remove from shopping: “{item}”")
 
 
+def _v_set_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    clean, error = normalize_routine(action)
+    if error is not None:
+        raise _ActionError(error)
+    title = clean["title"]
+    # set_routine is title-keyed, so re-using an existing name overwrites that
+    # routine (and would reset its accountable owner). Point the model at
+    # edit_routine (by id) instead of silently clobbering.
+    for r in household.get("routines", []):
+        if (r.get("title") or "").strip().lower() == title.lower():
+            raise _ActionError(
+                f"a routine named “{title}” already exists — "
+                "edit it with edit_routine and its routine_id"
+            )
+    # Who's accountable is a dashboard choice (needs the adult roster), not
+    # something the assistant resolves — a new routine starts unassigned.
+    clean["accountable_id"] = None
+    return ValidatedAction(op, clean, f"Add routine “{title}”")
+
+
+def _v_edit_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    rid, cur_title = _require_routine(action, household)
+    params: dict[str, Any] = {"routine_id": rid}
+    changes: list[str] = []
+    if action.get("title") is not None:
+        params["title"] = _as_title(action.get("title"))
+        changes.append(f"rename to “{params['title']}”")
+    if "due_time" in action:
+        params["due_time"] = action.get("due_time")
+        changes.append("change time")
+    if "days" in action:
+        params["days"] = action.get("days")
+        changes.append("change days")
+    if action.get("impact") is not None:
+        params["impact"] = action.get("impact")
+        changes.append("update why-it-matters")
+    if "enabled" in action:
+        params["enabled"] = bool(action.get("enabled"))
+        changes.append("resume" if params["enabled"] else "pause")
+    if len(params) == 1:  # only routine_id — nothing to do
+        raise _ActionError("edit_routine needs at least one field to change")
+    return ValidatedAction(op, params, f"Edit routine “{cur_title}”: {', '.join(changes)}")
+
+
+def _v_remove_routine(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    household = _require_household(snapshot)
+    rid, title = _require_routine(action, household)
+    return ValidatedAction(op, {"routine_id": rid}, f"Remove routine: “{title}”")
+
+
 #: op → validator. This registry *is* the whitelist: :data:`ALLOWED_OPS` is
 #: derived from its keys, so adding a capability is one entry here and cannot
 #: drift from the security boundary. The household ops (set_fact … remove_shopping)
@@ -775,6 +858,9 @@ _VALIDATORS: dict[
     "add_shopping": _v_add_shopping,
     "check_shopping": _v_check_shopping,
     "remove_shopping": _v_remove_shopping,
+    "set_routine": _v_set_routine,
+    "edit_routine": _v_edit_routine,
+    "remove_routine": _v_remove_routine,
 }
 
 #: The ops the assistant may emit — the security boundary, derived from the
@@ -979,6 +1065,37 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             )
         elif op == "remove_shopping":
             result["ok"] = memory.remove_shopping_item(p["shopping_id"])
+        elif op == "set_routine":
+            rid = memory.set_routine(
+                title=p["title"],
+                days=p["days"],
+                due_time=p["due_time"],
+                accountable_id=p.get("accountable_id"),
+                impact=p.get("impact"),
+                enabled=p.get("enabled", True),
+                updated_by=memory.user_id,
+            )
+            result.update(ok=True, detail=f"routine #{rid}")
+        elif op == "edit_routine":
+            cur = memory.routine(p["routine_id"])
+            if cur is None:
+                result["detail"] = "no such routine"
+            else:
+                # Merge the requested changes over the current row, then normalize
+                # the whole thing — so unspecified fields (incl. the accountable
+                # owner) are preserved rather than reset.
+                merged = {**cur, **{k: v for k, v in p.items() if k != "routine_id"}}
+                clean, err = normalize_routine(merged)
+                if err is not None:
+                    raise ValueError(err)
+                outcome = memory.update_routine(
+                    p["routine_id"], updated_by=memory.user_id, **clean
+                )
+                result["ok"] = outcome == "ok"
+                if outcome == "duplicate":
+                    result["detail"] = "another routine already has that name"
+        elif op == "remove_routine":
+            result["ok"] = memory.remove_routine(p["routine_id"])
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except Exception as exc:  # noqa: BLE001 — one bad action must never abort the batch

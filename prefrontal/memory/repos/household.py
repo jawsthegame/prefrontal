@@ -850,6 +850,53 @@ class HouseholdRepo(Repo):
         ).fetchone()
         return int(row["id"])
 
+    def update_routine(
+        self,
+        routine_id: int,
+        *,
+        title: str,
+        days: str = "",
+        due_time: str = "",
+        accountable_id: int | None = None,
+        impact: str | None = None,
+        enabled: bool = True,
+        updated_by: int | None,
+    ) -> str:
+        """Edit a routine by id — including **renaming** it, which the title-keyed
+        upsert in :meth:`set_routine` can't do.
+
+        Returns a status string so the caller can pick the right response:
+        ``"ok"`` (updated), ``"missing"`` (no such routine in this household), or
+        ``"duplicate"`` (the new title collides with another routine — the
+        ``UNIQUE (household_id, title)`` key). Chores linked under the routine are
+        untouched; they keep following it (and its schedule) across a rename.
+        """
+        hid = self._household_id()
+        title = title.strip()
+        if self.conn.execute(
+            "SELECT 1 FROM household_routines WHERE id = ? AND household_id = ?",
+            (routine_id, hid),
+        ).fetchone() is None:
+            return "missing"
+        if self.conn.execute(
+            "SELECT 1 FROM household_routines "
+            "WHERE household_id = ? AND title = ? AND id <> ?",
+            (hid, title, routine_id),
+        ).fetchone() is not None:
+            return "duplicate"
+        self.conn.execute(
+            """
+            UPDATE household_routines SET
+                title = ?, accountable_id = ?, days = ?, due_time = ?,
+                impact = ?, enabled = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND household_id = ?
+            """,
+            (title, accountable_id, days, due_time, impact,
+             1 if enabled else 0, updated_by, routine_id, hid),
+        )
+        self.conn.commit()
+        return "ok"
+
     def set_routine_enabled(self, routine_id: int, enabled: bool) -> bool:
         """Pause or resume a routine without deleting it. ``True`` if a row changed."""
         cur = self.conn.execute(

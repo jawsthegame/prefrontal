@@ -799,6 +799,36 @@ def build_router(services: RouterServices) -> APIRouter:
         rid = ctx.store.set_routine(updated_by=ctx.user["id"], **clean)
         return {"id": rid, "title": clean["title"]}
 
+    @router.post("/household/routines/{routine_id}/update", tags=["household"])
+    def update_routine(
+        routine_id: int,
+        payload: RoutineSet,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Edit a routine by id — the one path that can **rename** it.
+
+        The create route (``POST /household/routines``) is keyed on title, so
+        re-submitting a new name makes a *second* routine. This edits the row in
+        place, so a rename keeps the same routine (and its linked chores).
+        """
+        clean, error = normalize_routine(payload.model_dump())
+        if error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error
+            )
+        clean["accountable_id"] = _resolve_member_id(
+            ctx, clean["accountable_id"], "accountable_id"
+        )
+        outcome = ctx.store.update_routine(routine_id, updated_by=ctx.user["id"], **clean)
+        if outcome == "missing":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such routine")
+        if outcome == "duplicate":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="another routine already has that name",
+            )
+        return {"id": routine_id, "title": clean["title"]}
+
     @router.post("/household/routines/{routine_id}/enabled", tags=["household"])
     def set_routine_enabled(
         routine_id: int,

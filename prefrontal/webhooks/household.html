@@ -129,6 +129,11 @@
   .task-row.done .task-txt { text-decoration: line-through; color: var(--muted); }
   .task-txt { flex: 1; }
   .task-sub { color: var(--muted); font-size: 12px; }
+  .rowbtns { display: flex; gap: 6px; flex-shrink: 0; }
+  .task-row.edit { align-items: stretch; }
+  .edit-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%; }
+  .edit-fields input[type=text] { flex: 1 1 160px; }
+  .re-enabled-l { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
   .task-badge { font-size: 11px; font-weight: 600; color: var(--accent);
     background: var(--line); border-radius: 999px; padding: 1px 8px; }
   .shop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
@@ -698,22 +703,51 @@ function renderChores(chores) {
   }).join("");
 }
 
+let _routines = [];  // last-rendered routines, so the edit form can prefill from an id
+
 function renderRoutines(routines) {
-  routines = routines || [];
-  if (!routines.length) {
+  _routines = routines || [];
+  if (!_routines.length) {
     $("#routines").innerHTML = `<div class="empty">No routines yet — group related chores under one accountable owner.</div>`;
     return;
   }
-  $("#routines").innerHTML = routines.map((r) => {
+  $("#routines").innerHTML = _routines.map((r) => {
     const holder = r.accountable_name || "unassigned";
     const when = r.due_time ? " · by " + fmtTime(r.due_time) : "";
     const n = r.chore_count || 0;
     const paused = r.enabled ? "" : " · paused";
-    return `<div class="task-row${r.enabled ? "" : " done"}">
+    return `<div class="task-row${r.enabled ? "" : " done"}" data-routinerow="${r.id}">
       <span class="task-txt">${esc(r.title)}
         <span class="task-sub">accountable: ${esc(holder)}${when} · ${n} chore${n === 1 ? "" : "s"}${paused}</span></span>
-      <button class="iconbtn del" data-delroutine="${r.id}" title="Remove (its chores stay)">🗑</button></div>`;
+      <span class="rowbtns">
+        <button class="iconbtn" data-editroutine="${r.id}" title="Edit">✎</button>
+        <button class="iconbtn del" data-delroutine="${r.id}" title="Remove (its chores stay)">🗑</button></span></div>`;
   }).join("");
+}
+
+// Inline edit form for one routine — the create form is title-keyed and can't
+// rename, so editing goes through POST /household/routines/{id}/update.
+function routineEditForm(r) {
+  const days = new Set((r.days || "").split(",").filter((s) => s !== "").map(Number));
+  const memberOpts = [{ value: 0, label: "Unassigned" },
+    ...members.map((m) => ({ value: m.id, label: m.name }))];
+  const acc = r.accountable_id || 0;
+  const options = memberOpts.map((o) =>
+    `<option value="${o.value}"${o.value === acc ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+  const dayPicker = DAY_NAMES.map((n, i) =>
+    `<span class="day${days.has(i) ? " on" : ""}" data-day="${i}">${n}</span>`).join("");
+  return `<div class="task-row edit" data-routineedit="${r.id}">
+    <div class="edit-fields">
+      <input class="re-title" type="text" value="${esc(r.title)}" placeholder="Routine name" required />
+      <select class="re-accountable" title="Who holds the mental load">${options}</select>
+      <input class="re-due" type="time" value="${esc(r.due_time || "")}" title="Time its chores inherit (optional)" />
+      <div class="days" title="Days it recurs (none = every day)">${dayPicker}</div>
+      <input class="re-impact" type="text" value="${esc(r.impact || "")}" placeholder="Why it matters if it slips (optional)" />
+      <label class="re-enabled-l"><input class="re-enabled" type="checkbox" ${r.enabled ? "checked" : ""} /> active</label>
+      <span class="rowbtns">
+        <button class="primary" data-saveroutine="${r.id}">Save</button>
+        <button class="ghost" data-cancelroutine="${r.id}">Cancel</button></span>
+    </div></div>`;
 }
 
 function fmtTime(hhmm) {
@@ -1133,9 +1167,41 @@ $("#routine-form").addEventListener("submit", async (e) => {
   await loadSheet();
 });
 $("#routines").addEventListener("click", async (e) => {
-  const del = e.target.getAttribute("data-delroutine");
+  const t = e.target;
+  // Toggle a weekday chip inside an open edit form.
+  if (t.classList.contains("day")) { t.classList.toggle("on"); return; }
+
+  const del = t.getAttribute("data-delroutine");
   if (del && confirm("Remove this routine? Its chores stay (unlinked).")) {
-    await post(`/household/routines/${del}/remove`, {}); await loadSheet();
+    await post(`/household/routines/${del}/remove`, {}); await loadSheet(); return;
+  }
+
+  const edit = t.getAttribute("data-editroutine");
+  if (edit) {
+    const r = _routines.find((x) => String(x.id) === edit);
+    const row = $(`[data-routinerow="${edit}"]`);
+    if (r && row) row.outerHTML = routineEditForm(r);
+    return;
+  }
+
+  const cancel = t.getAttribute("data-cancelroutine");
+  if (cancel) { await loadSheet(); return; }
+
+  const save = t.getAttribute("data-saveroutine");
+  if (save) {
+    const ed = $(`[data-routineedit="${save}"]`);
+    const title = ed.querySelector(".re-title").value.trim();
+    if (!title) { alert("A routine needs a name."); return; }
+    const days = [...ed.querySelectorAll(".day.on")].map((d) => Number(d.getAttribute("data-day")));
+    await post(`/household/routines/${save}/update`, {
+      title,
+      accountable_id: _sel(ed.querySelector(".re-accountable").value),
+      due_time: ed.querySelector(".re-due").value || "",
+      days,
+      impact: ed.querySelector(".re-impact").value.trim() || null,
+      enabled: ed.querySelector(".re-enabled").checked,
+    });
+    await loadSheet();
   }
 });
 
