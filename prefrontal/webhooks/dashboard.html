@@ -475,7 +475,9 @@
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
 </div>
 
-<section class="card" id="c-selfcare" style="display:none"><h2>Self-care — today</h2><div class="body"></div></section>
+<div class="banner" id="c-selfcare-banner" style="display:none">
+  <section class="card" id="c-selfcare"><h2>Self-care — today</h2><div class="body"></div></section>
+</div>
 
 <div class="banner">
   <section class="card" id="c-assistant">
@@ -1409,10 +1411,10 @@ async function load() {
   // checks are off, so a silently-disabled switch (the common "why no nudges?"
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
   if (selfcare.status === "fulfilled") {
-    $("#c-selfcare").style.display = "";
+    $("#c-selfcare-banner").style.display = "";
     $("#c-selfcare .body").innerHTML = renderSelfCare(selfcare.value);
   } else {
-    $("#c-selfcare").style.display = "none";
+    $("#c-selfcare-banner").style.display = "none";
   }
   // Shopping card appears only for a household member (solo users 404 → stays hidden).
   if (shopping.status === "fulfilled") {
