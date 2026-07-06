@@ -618,6 +618,18 @@ class SelfCareConfig(BaseModel):
     checks: dict[str, SelfCareCheckConfig] = Field(default_factory=dict)
 
 
+class SelfCareMark(BaseModel):
+    """Body of ``POST /self-care/mark`` — log a confirm for one check today.
+
+    Backs the dashboard card's "mark what I did today" buttons: a signed-in
+    user records a check they completed (e.g. after missing the notification),
+    which counts one toward that check's daily target exactly as a one-tap
+    notification confirm would.
+    """
+
+    key: str = Field(description="Which check to confirm: meal / water / meds.")
+
+
 class InviteCreate(BaseModel):
     """Body of ``POST /household/invites`` — optionally text the link to a co-parent.
 

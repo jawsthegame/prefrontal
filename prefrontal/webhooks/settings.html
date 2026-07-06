@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
-<title>Prefrontal — Review</title>
+<title>Prefrontal — Settings</title>
 <script>
 (function () {
   try {
@@ -16,7 +16,7 @@
 })();
 </script>
 <style>
-  /* ── Shared theme (identical across /family, /kids, /dashboard, /stats) ─── */
+  /* ── Shared theme (identical across /dashboard, /household, /stats, /review) ─ */
   :root {
     --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
     --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
@@ -52,36 +52,25 @@
   .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
     padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .card h2 { font-size: 17px; margin: 0 0 2px; font-weight: 660; }
   .label { font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
     color: var(--muted); margin: 0 0 4px; font-weight: 700; }
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .empty { color: var(--muted); font-style: italic; }
 
-  /* Note composer */
-  textarea { width: 100%; min-height: 80px; padding: 12px; border-radius: 10px; resize: vertical;
-    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    padding: 11px 16px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--card); color: var(--fg); font-weight: 600; font-size: 15px; cursor: pointer; }
-  .btn:hover { border-color: var(--accent); }
-  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  .btn.good { background: var(--good); color: var(--accent-fg); border-color: var(--good); }
-  .btn.ghost { background: transparent; color: var(--muted); }
-  .btn:disabled { opacity: .5; cursor: default; }
-  .composer-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
-  .composer-row .note { flex: 1; color: var(--muted); font-size: 13px; min-height: 16px; }
-
-  /* Proposal rows */
-  .prop { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0 0; }
-  .prop .top { display: flex; align-items: baseline; gap: 8px; }
-  .prop .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700;
-    color: var(--accent-fg); background: var(--accent); border-radius: 999px; padding: 2px 9px; }
-  .prop .summary { font-weight: 600; flex: 1; }
-  .prop .why { color: var(--muted); font-size: 13px; margin: 6px 0 0; font-style: italic; }
-  .prop .actions { display: flex; gap: 8px; margin-top: 12px; }
-  .prop .actions .btn { flex: 1; }
-
-  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+  /* ── Self-care config controls (moved off the dashboard card) ──────────── */
+  .sc-controls { display: flex; flex-direction: column; gap: 8px; }
+  .sc-master { display: flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
+  .sc-hint { color: var(--muted); font-size: 13px; }
+  .sc-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .sc-en { display: inline-flex; align-items: center; gap: 6px; min-width: 120px; cursor: pointer; }
+  .sc-field { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .sc-num { width: 56px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
+  .sc-num:disabled { opacity: .5; }
+  .sc-check-off { opacity: .6; }
+  .saved { color: var(--good); font-size: 13px; min-height: 16px; margin-top: 10px; }
 
   #gate { position: fixed; inset: 0; background: var(--bg); display: none;
     align-items: center; justify-content: center; padding: 18px; z-index: 40; }
@@ -109,37 +98,26 @@
     <a href="/kids">Kids</a>
     <a href="/pets">Pets</a>
     <a href="/stats">Insights</a>
-    <a href="/review" aria-current="page">Review</a>
-    <a href="/settings">Settings</a>
+    <a href="/review">Review</a>
+    <a href="/settings" aria-current="page">Settings</a>
   </div>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
 </nav>
 
 <header>
-  <h1>📝 Review</h1>
+  <h1>⚙️ Settings</h1>
   <div class="meta" id="status">loading…</div>
 </header>
 
 <div class="wrap" id="wrap" style="display:none">
   <section class="card">
-    <p class="label">Jot a note</p>
-    <p class="sub">Anything you notice about how you work. The assistant proposes
-      small updates for you to confirm — it never saves anything on its own.</p>
-    <textarea id="note" placeholder="e.g. I always blow off admin on Mondays"></textarea>
-    <div class="composer-row">
-      <button class="btn primary" id="observe" type="button">Observe</button>
-      <span class="note" id="observe-note"></span>
-    </div>
+    <h2>Self-care checks</h2>
+    <p class="sub">Meal, water, and meds nudges. Turn the whole thing on or off,
+      and set each check's daily target, the hour it starts, and how often it
+      re-asks. Logging what you've done today happens on the Dashboard card.</p>
+    <div id="selfcare"></div>
+    <div class="saved" id="sc-saved"></div>
   </section>
-
-  <section class="card">
-    <p class="label">Pending proposals</p>
-    <p class="sub">Candidate updates awaiting your review. Accept to apply
-      (recorded as LLM-inferred), or reject to dismiss.</p>
-    <div id="proposals"></div>
-  </section>
-
-  <footer>Human-in-the-loop · nothing is written until you accept</footer>
 </div>
 
 <div id="gate">
@@ -190,69 +168,86 @@ async function api(path, opts) {
   return r.json();
 }
 
-// ── Render + actions ───────────────────────────────────────────────────────
-function renderProposals(rows) {
-  if (!rows.length) {
-    $("#proposals").innerHTML = `<p class="empty">Nothing to review — jot a note above and I'll suggest updates.</p>`;
-    return;
-  }
-  $("#proposals").innerHTML = rows.map((p) => `
-    <div class="prop" data-id="${p.id}">
-      <div class="top">
-        <span class="kind">${esc(p.kind)}</span>
-        <span class="summary">${esc(p.summary)}</span>
-      </div>
-      ${p.rationale ? `<p class="why">“${esc(p.rationale)}”</p>` : ""}
-      <div class="actions">
-        <button class="btn good" type="button" data-act="accept" data-id="${p.id}">✓ Accept</button>
-        <button class="btn ghost" type="button" data-act="reject" data-id="${p.id}">Reject</button>
-      </div>
-    </div>`).join("");
+// ── Self-care config: a master toggle + one control row per check ────────────
+const SC_META = {
+  meal: { icon: "🍽️", label: "Meals" },
+  water: { icon: "💧", label: "Water" },
+  meds: { icon: "💊", label: "Meds" },
+};
+
+function scProgress(c) {
+  if (c.target > 1) return `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`;
+  return c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`;
 }
 
-async function resolve(id, action, btn) {
-  const buttons = btn.parentElement.querySelectorAll("button");
-  buttons.forEach((b) => (b.disabled = true));
-  try {
-    await api(`/proposals/${id}/${action}`, { method: "POST" });
-  } catch (err) {
-    if (err.code === 401) { gate("Session expired."); return; }
-    buttons.forEach((b) => (b.disabled = false));
-    $("#status").textContent = "couldn't save — retry";
-    return;
-  }
-  await load();
+function scRow(c) {
+  const m = SC_META[c.key] || { icon: "", label: c.key };
+  const num = (field, val, attrs) =>
+    `<input class="sc-num" type="number" ${attrs} data-sc-check="${c.key}" `
+    + `data-sc-field="${field}" value="${val}"${c.enabled ? "" : " disabled"} />`;
+  // Cadence only matters for a recurring check (target > 1).
+  const cadence = c.target > 1
+    ? `<span class="sc-field">every ${num("interval_minutes", c.interval_minutes, 'min="1"')}m</span>`
+    : "";
+  return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
+    + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
+    <span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>
+    <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
+    ${cadence}
+  </div>`;
 }
 
-async function observe() {
-  const el = $("#note");
-  const text = el.value.trim();
-  if (!text) return;
-  const btn = $("#observe");
-  btn.disabled = true;
-  $("#observe-note").textContent = "reading…";
-  let res;
-  try {
-    res = await api("/observe", { method: "POST", body: JSON.stringify({ text }) });
-  } catch (err) {
-    btn.disabled = false;
-    if (err.code === 401) { gate("Session expired."); return; }
-    $("#observe-note").textContent = "couldn't reach the model — try again";
-    return;
+function renderSelfCare(d) {
+  const on = !!(d && d.enabled);
+  const master = `<label class="sc-master"><input type="checkbox" data-sc-master`
+    + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;
+  if (!on) {
+    return `<div class="sc-controls">${master}`
+      + `<span class="sc-hint">Turn on to get meal, water &amp; meds nudges.</span></div>`;
   }
-  btn.disabled = false;
-  el.value = "";
-  $("#observe-note").textContent = res.count
-    ? `Proposed ${res.count} update${res.count === 1 ? "" : "s"} — review below.`
-    : "Nothing worth recording in that note.";
-  await load();
+  const rows = (d.checks || []).map(scRow).join("");
+  return `<div class="sc-controls">${master}${rows}</div>`;
 }
+
+let flashTimer = null;
+function flashSaved() {
+  const el = $("#sc-saved");
+  el.textContent = "Saved ✓";
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.textContent = ""; }, 1600);
+}
+
+// A change to the master toggle or any per-check field writes a partial config
+// to POST /self-care and re-renders from the response.
+$("#selfcare").addEventListener("change", async (e) => {
+  const inp = e.target.closest("input");
+  if (!inp) return;
+  let body;
+  if (inp.hasAttribute("data-sc-master")) {
+    body = { enabled: inp.checked };
+  } else {
+    const key = inp.dataset.scCheck, field = inp.dataset.scField;
+    if (!key || !field) return;
+    const val = field === "enabled" ? inp.checked : Number(inp.value);
+    if (field !== "enabled" && !Number.isFinite(val)) return;  // ignore a cleared box
+    body = { checks: { [key]: { [field]: val } } };
+  }
+  try {
+    const status = await api("/self-care", { method: "POST", body: JSON.stringify(body) });
+    $("#selfcare").innerHTML = renderSelfCare(status);
+    flashSaved();
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    $("#sc-saved").textContent = "couldn't save — retry";
+  }
+});
 
 async function load() {
-  $("#status").textContent = "updating…";
+  $("#status").textContent = "loading…";
   let data;
   try {
-    data = await api("/proposals?status=pending");
+    data = await api("/self-care");
   } catch (err) {
     if (err.code === 401) { gate("That code didn't work."); return; }
     $("#status").textContent = "couldn't load — retry";
@@ -260,18 +255,13 @@ async function load() {
   }
   $("#gate").style.display = "none";
   $("#wrap").style.display = "block";
-  const rows = data.proposals || [];
-  renderProposals(rows);
-  $("#status").textContent = rows.length
-    ? `${rows.length} pending`
-    : "all caught up";
+  // Don't clobber a control mid-edit (no poll here, but keep it safe on refocus).
+  if (!$("#selfcare").contains(document.activeElement)) {
+    $("#selfcare").innerHTML = renderSelfCare(data);
+  }
+  $("#status").textContent = "your preferences";
 }
 
-$("#observe").onclick = observe;
-$("#proposals").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-act]");
-  if (b) resolve(b.dataset.id, b.dataset.act, b);
-});
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
   if (!v) return;

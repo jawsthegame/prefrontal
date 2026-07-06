@@ -26,6 +26,7 @@ from prefrontal.modules.self_care import (
     adapt_self_care_interval,
     apply_self_care_action,
     apply_self_care_config,
+    apply_self_care_mark,
     mark_self_care_prompted,
     meal_message,
     self_care_status,
@@ -518,3 +519,42 @@ def test_self_care_post_rejects_out_of_range(client):
     # Pydantic bounds (start_hour 0..23, target/interval >= 1) → 422, no write.
     r = client.post("/self-care", json={"checks": {"water": {"start_hour": 99}}}, headers=_auth())
     assert r.status_code == 422
+
+
+# -- apply_self_care_mark + POST /self-care/mark -----------------------------
+# The dashboard card's "mark what I did today" path: a signed-in user records a
+# confirm by check key, with the same count/episode semantics as a notification
+# tap — but no signed one-tap token (they're already authenticated).
+
+
+def test_apply_mark_counts_and_logs_like_a_tap(store):
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    headline = apply_self_care_mark(store, "meal", now=t0, today="2026-07-03")
+    assert headline  # confirmation copy for the caller to flash
+    assert store.get_state("meal_count") == "2026-07-03|1"
+    eps = store.episodes_by_type("self_care")
+    assert eps and eps[0]["outcome"] == "confirmed" and "meal" in eps[0]["context"]
+
+
+def test_apply_mark_unknown_key_is_none(store):
+    assert apply_self_care_mark(store, "nope", now=utcnow(), today="2026-07-03") is None
+
+
+def test_self_care_mark_requires_auth(client):
+    assert client.post("/self-care/mark", json={"key": "meal"}).status_code == 401
+
+
+def test_self_care_mark_endpoint_counts_and_returns_status(client, store):
+    resp = client.post("/self-care/mark", json={"key": "meal"}, headers=_auth())
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["headline"]
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("meal_count") == f"{today}|1"
+    # Fresh status rides along so the card re-renders: meal now reads done.
+    by_key = {c["key"]: c for c in data["checks"]}
+    assert by_key["meal"]["count"] == 1 and by_key["meal"]["done"] is True
+
+
+def test_self_care_mark_unknown_key_404(client):
+    assert client.post("/self-care/mark", json={"key": "nope"}, headers=_auth()).status_code == 404

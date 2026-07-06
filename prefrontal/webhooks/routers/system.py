@@ -12,6 +12,7 @@ from typing import (
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
     Request,
 )
 from fastapi.responses import (
@@ -21,7 +22,12 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import utcnow
-from prefrontal.modules.self_care import apply_self_care_config, self_care_status
+from prefrontal.modules.self_care import (
+    apply_self_care_config,
+    apply_self_care_mark,
+    self_care_status,
+)
+from prefrontal.scheduling import local_datetime
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
@@ -29,6 +35,7 @@ from prefrontal.webhooks._common import (
     DASHBOARD_HTML,
     HOUSEHOLD_HTML,
     REVIEW_HTML,
+    SETTINGS_HTML,
     STATS_HTML,
     lens_html,
 )
@@ -36,7 +43,7 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.schemas import SelfCareConfig
+from prefrontal.webhooks.schemas import SelfCareConfig, SelfCareMark
 from prefrontal.webhooks.services import RouterServices
 
 
@@ -145,6 +152,19 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         return REVIEW_HTML
 
+    @router.get("/settings", response_class=HTMLResponse, tags=["system"])
+    def settings_page() -> str:
+        """Serve the Settings page — the one place for config that adjusts behavior.
+
+        Self-contained shell (unauthenticated, carries no data); it signs in via
+        Google session or an access code, then reads/writes the same JSON config
+        endpoints the dashboard cards used to embed. Today it holds the self-care
+        settings (master switch + each check's target, start hour, and cadence)
+        via ``GET`` / ``POST /self-care`` — moved off the dashboard card so the
+        card is purely "mark what I did today." Shares the unified theme + nav.
+        """
+        return SETTINGS_HTML
+
     @router.get("/stats/data", tags=["system"])
     def stats_data(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
@@ -184,5 +204,26 @@ def build_router(services: RouterServices) -> APIRouter:
             checks={k: v.model_dump(exclude_none=True) for k, v in payload.checks.items()},
         )
         return self_care_status(ctx.store, utcnow(), services.settings.timezone)
+
+    @router.post("/self-care/mark", tags=["system"])
+    def mark_self_care(
+        payload: SelfCareMark,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Log that the signed-in user did a self-care check today.
+
+        Backs the dashboard card's "mark done" buttons — the way to record a
+        check you completed after missing (or ignoring) its notification. Counts
+        one toward the check's daily target with the same semantics as a one-tap
+        notification confirm, then returns the fresh status (plus a short
+        ``headline`` for feedback) so the card re-renders from the response.
+        """
+        now = utcnow()
+        tz = services.settings.timezone
+        today = local_datetime(now, tz).strftime("%Y-%m-%d")
+        headline = apply_self_care_mark(ctx.store, payload.key, now=now, today=today)
+        if headline is None:
+            raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
+        return {"headline": headline, **self_care_status(ctx.store, now, tz)}
 
     return router

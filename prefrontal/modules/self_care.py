@@ -386,6 +386,26 @@ def apply_self_care_action(
     return f"Okay — I'll check back in {mins} min."
 
 
+def apply_self_care_mark(
+    store: MemoryStore, key: str, *, now: datetime, today: str
+) -> str | None:
+    """Log a self-care confirm *by check key* from an authenticated surface.
+
+    The dashboard's "mark what I did today" buttons need to record a confirm
+    without the signed one-tap token that ``/nudge/act`` carries — a signed-in
+    user is already authenticated. This resolves the check by its ``key``
+    (``meal`` / ``water`` / ``meds``) and defers to
+    :func:`apply_self_care_action`, so the count/target and episode-logging
+    semantics stay identical to a notification tap.
+
+    Returns the confirmation copy, or ``None`` for an unknown key.
+    """
+    check = next((c for c in CHECKS if c.key == key), None)
+    if check is None:
+        return None
+    return apply_self_care_action(store, check.confirm_action, now=now, today=today)
+
+
 def _latency_note(store: MemoryStore, check: BasicCheck, now: datetime) -> str:
     """Pop the prompt stamp and render the nudge→tap latency as a note token.
 
