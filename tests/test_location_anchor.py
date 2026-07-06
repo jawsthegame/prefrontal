@@ -613,6 +613,10 @@ def test_pets_lens_served_and_bound_to_pets(client):
     resp = client.get("/pets")
     assert resp.status_code == 200
     assert 'const LENS = "pets"' in resp.text
+    # Its own projection: pet-flavoured category labels + an age helper, not a
+    # relabeled Kids page.
+    assert "PET_CATEGORY_LABELS" in resp.text and "Vet & meds" in resp.text
+    assert "function petAge" in resp.text
 
 
 def test_family_redirects_to_household(client):
