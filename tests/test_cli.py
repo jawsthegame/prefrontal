@@ -46,6 +46,7 @@ def test_build_parser_registers_expected_commands():
     parser = build_parser()
     for command in (
         "init-db",
+        "secrets",
         "serve",
         "learn",
         "profile",
@@ -66,6 +67,7 @@ def test_build_parser_registers_expected_commands():
             "place": ["place", "list"],
             "mail": ["mail", "list"],
             "fit": ["fit", "30"],
+            "secrets": ["secrets", "status"],
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"

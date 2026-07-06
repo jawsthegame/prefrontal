@@ -32,6 +32,9 @@ dependencies = [
     # feeds ship an unmodified repeat as a single past-dated master, so without
     # this a weekly event never lands in the near-term sync window.
     "python-dateutil>=2.9",
+    # Seals per-user source credentials (IMAP passwords, Google refresh tokens)
+    # at rest with Fernet before they touch the DB — see prefrontal/crypto.py.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

@@ -52,6 +52,7 @@ from prefrontal.memory.repos.patterns import PatternsRepo
 from prefrontal.memory.repos.proposals import ProposalsRepo
 from prefrontal.memory.repos.schedule import ScheduleRepo
 from prefrontal.memory.repos.sessions import SessionsRepo
+from prefrontal.memory.repos.sources import SourcesRepo
 from prefrontal.memory.repos.state import StateRepo
 from prefrontal.memory.repos.todos import TodosRepo
 from prefrontal.memory.repos.triage import TriageRepo
@@ -87,6 +88,7 @@ class MemoryStore(
     ClarificationsRepo,
     HouseholdRepo,
     TriageRepo,
+    SourcesRepo,
 ):
     """A high-level, dict-returning interface to the Prefrontal memory tables.
 
