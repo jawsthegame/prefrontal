@@ -150,6 +150,20 @@ class TaskParalysisModule(Module):
                 trigger="repeated misses on the same task",
                 status="active",
             ),
+            Intervention(
+                name="clarify_ambiguous",
+                description=(
+                    "Notice a vague todo/commitment ('Tax', 'Mom') that can't be "
+                    "started because it can't be named, ask ONE inline clarifying "
+                    "question, and — once it resolves to a recognized task — offer "
+                    "a guided walkthrough (prefrontal/clarify.py). The detection "
+                    "sweep runs on the coaching tick (sweep_ambiguous_items, beside "
+                    "the decomposition sweep) and fills the dashboard clarify card; "
+                    "POST /clarifications/check is the on-demand twin."
+                ),
+                trigger="an ambiguous item on the schedule or todo list",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
@@ -223,6 +237,17 @@ class TaskParalysisModule(Module):
                     f"Keeps bailing on: {top}. A solo start isn't working — offer "
                     "a body-double / start-together window, not another reminder."
                 )
+        # Ambiguous items stall before they even become a "task" — surface the
+        # ones awaiting a clarifying answer so coaching honesty covers naming, not
+        # just starting (see prefrontal/clarify.py).
+        pending = store.list_clarifications("pending", limit=20)
+        if pending:
+            titles = ", ".join(f"“{c['title']}”" for c in pending[:3])
+            lines.append(
+                f"Ambiguous, not yet honed: {titles} ({len(pending)} awaiting a "
+                "clarifying answer). These stall on being *named*, not started — "
+                "surface the inline question, don't just nudge to begin."
+            )
         step = store.get_state("max_first_step_minutes")
         if step:
             lines.append(f"Keep proposed first steps under **{step} minutes**.")

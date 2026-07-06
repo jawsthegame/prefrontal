@@ -103,12 +103,13 @@ def test_task_paralysis_reports_stall_rate(store):
 
 
 def test_task_paralysis_interventions_all_active():
-    """All three initiation interventions are wired (status active)."""
+    """All initiation interventions are wired (status active)."""
     ivs = {i.name: i.status for i in get("task_paralysis").interventions()}
     assert ivs == {
         "tiny_first_step": "active",
         "auto_decompose": "active",
         "body_double_nudge": "active",
+        "clarify_ambiguous": "active",
     }
 
 

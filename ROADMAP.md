@@ -40,6 +40,36 @@ the first test. Code follow-ups below are optional polish.
 
 ## Recently shipped
 
+- **Ambiguity clarification + guided playbooks (a Task-Paralysis lever)** ✅ —
+  task paralysis has a quieter cause than size: you can't start what you can't
+  *name*. A calendar event called "Tax" or a todo that just says "Mom" stalls
+  because it could mean several different things. `prefrontal/clarify.py` gives the
+  system a way to notice that ambiguity and hone it in before it becomes another
+  avoided loop: a pure `ambiguity_score` heuristic (short / single-word /
+  known-ambiguous titles, discounted when a clear action verb or a concrete detail
+  is present) gates a local-model pass that proposes ONE clarifying question with a
+  few candidate readings (`detect_clarification`, LLM-first with a hand-authored
+  heuristic fallback so the "Tax" case works fully offline). The question lands as
+  a **pending** `clarifications` row — the same propose-then-confirm safety model
+  as the LLM sensor — and is surfaced inline in a dashboard "Needs clarification"
+  card. Answering it records the chosen reading (a `todo`'s notes are honed
+  non-destructively), and a reading that maps to a recognized **task type** (e.g.
+  `tax_filing`) opens a step-by-step guided *playbook* in a dim-everything overlay
+  (the same overlay pattern panic mode uses) — the "pop-up that guides me through
+  the task." Dismissing marks an item not-ambiguous so the sweep never re-asks.
+  the detection sweep (`sweep_ambiguous_items`) runs **on the coaching tick**
+  (`POST /webhooks/coach/check` and `prefrontal coach --deliver`, beside
+  `sweep_avoided_decompositions`), so the queue fills passively — bounded model
+  calls per tick, and it never re-asks an item it has history for.
+  `POST /clarifications/check` is the on-demand "check now" twin;
+  `GET /clarifications`, `POST /clarifications/{id}/resolve|dismiss`,
+  `GET /clarifications/playbooks/{task_type}` round out the HTTP surface, and a
+  `prefrontal clarify check|list|resolve|dismiss|guide` CLI mirrors it for
+  headless use (the resolve logic is shared via `apply_clarification_answer`, so
+  HTTP and CLI can't drift). Declared as the Task Paralysis `clarify_ambiguous`
+  intervention and surfaced in its profile section. Covered by
+  `tests/test_clarify.py` + `tests/test_clarify_endpoints.py` + `tests/test_cli.py`.
+  *(Next: grow the playbook registry.)*
 - **Departure reminders on the coaching tick (toward retiring n8n)** ✅ — the
   `departure_buffer` intervention is now a coach cue: `TimeBlindnessModule.evaluate`
   emits the most-urgent due departure (reusing the same `plan_upcoming_departures`

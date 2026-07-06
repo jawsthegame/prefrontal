@@ -604,6 +604,37 @@ CREATE TABLE IF NOT EXISTS proposals (
 
 CREATE INDEX IF NOT EXISTS idx_proposals_user ON proposals (user_id, status);
 
+-- Ambiguity clarifications (task-initiation lever; see prefrontal/clarify.py). A
+-- vague todo/commitment title ("Tax", "Mom") stalls because it can't be named, so
+-- the system proposes ONE clarifying question with a few candidate readings and
+-- surfaces it inline. Like a sensor proposal it stays `pending` until the human
+-- answers: `resolved` records the chosen reading in `answer` (+ a recognized
+-- `task_type`, which unlocks a guided playbook overlay); `dismissed` marks the
+-- item not-actually-ambiguous. The target is referenced loosely by
+-- (target_type, target_id) — a calendar re-sync can replace a commitment row, so
+-- there's deliberately no hard foreign key to it.
+CREATE TABLE IF NOT EXISTS clarifications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    target_type TEXT    NOT NULL,                       -- 'todo' | 'commitment'
+    target_id   INTEGER NOT NULL,                       -- the item's row id (loose ref)
+    title       TEXT    NOT NULL,                        -- snapshot of the title at detection
+    question    TEXT    NOT NULL,                        -- the clarifying question shown inline
+    options     TEXT    NOT NULL,                        -- JSON: [{label, task_type?}] candidate readings
+    source      TEXT    NOT NULL DEFAULT 'heuristic',    -- llm | heuristic (how it was phrased)
+    status      TEXT    NOT NULL DEFAULT 'pending',      -- pending | resolved | dismissed
+    answer      TEXT,                                    -- the chosen reading (resolved)
+    task_type   TEXT,                                    -- recognized playbook key (resolved), if any
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_clarifications_user ON clarifications (user_id, status);
+-- At most one *pending* question per item; answered/dismissed rows don't block a
+-- future one (though the sweep skips any item with history via clarified_target_ids).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clarifications_pending
+    ON clarifications (user_id, target_type, target_id) WHERE status = 'pending';
+
 -- Weekly "how did the invisible load feel for you?" self-reports — one row per
 -- parent per ISO week. Deliberately subjective and non-judgmental: we store how
 -- each parent *felt* (light / balanced / heavy), never who did what, and surface

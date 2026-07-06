@@ -36,6 +36,7 @@ from pathlib import Path
 
 from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
+from prefrontal.clarify import MAX_SWEEP_ITEMS
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_last
 from prefrontal.coaching import (
@@ -1294,13 +1295,19 @@ def _cmd_coach(args: argparse.Namespace) -> int:
         from prefrontal.integrations.ollama import OllamaClient
         from prefrontal.todos import sweep_avoided_decompositions
 
-        broken = sweep_avoided_decompositions(
-            store,
-            OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model),
-            now=now,
+        tick_ollama = OllamaClient(
+            base_url=settings.ollama_url, model=settings.ollama_model
         )
+        broken = sweep_avoided_decompositions(store, tick_ollama, now=now)
         if broken:
             print(f"({broken} avoided task(s) broken down)")
+        # Notice newly-ambiguous items and file an inline clarifying question — the
+        # sibling of the /webhooks/coach/check sweep (never re-asks a known item).
+        from prefrontal.clarify import sweep_ambiguous_items
+
+        asked = sweep_ambiguous_items(store, tick_ollama)
+        if asked:
+            print(f"({len(asked)} ambiguous item(s) flagged for clarification)")
         decisions = decide(store, cues, ctx)
         for d in decisions:
             print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
@@ -1710,6 +1717,119 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
         else:  # reject
             store.set_proposal_status(args.id, "rejected")
             print(f"Rejected #{args.id}.")
+    return 0
+
+
+def _cmd_clarify(args: argparse.Namespace) -> int:
+    """Ambiguity clarifications: check / list / resolve / dismiss / guide.
+
+    The CLI twin of the ``/clarifications`` surface (and the coaching-tick sweep).
+    ``check`` runs the same :func:`~prefrontal.clarify.sweep_ambiguous_items` a tick
+    does — filing an inline question for each newly-ambiguous todo/commitment
+    (local model, heuristic fallback), never re-asking a known item. ``resolve``
+    records the chosen reading (and prints the guided playbook when it maps to a
+    recognized task); ``dismiss`` marks an item not-ambiguous; ``guide`` previews a
+    playbook's steps by task type (static content, needs no store).
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``clarify_action`` and
+            the per-action fields (``limit``/``status``/``id``/``option``/
+            ``answer``/``task_type``).
+
+    Returns:
+        Process exit code (0 on success, 1 on a bad id / unknown task type / input).
+    """
+    from prefrontal.clarify import (
+        apply_clarification_answer,
+        known_task_types,
+        resolve_playbook,
+        sweep_ambiguous_items,
+    )
+    from prefrontal.integrations.ollama import OllamaClient
+
+    def _show_playbook(pb) -> None:
+        print(f"Guide: {pb.title}")
+        if pb.intro:
+            print(f"  {pb.intro}")
+        for i, step in enumerate(pb.steps, 1):
+            print(f"  {i}. {step.title}")
+            if step.detail:
+                print(f"     {step.detail}")
+
+    def _show(row) -> None:
+        mark = {"pending": "?", "resolved": "✓", "dismissed": "—"}.get(row["status"], "?")
+        print(f"#{row['id']} [{mark}] {row['title']} ({row['target_type']}) — {row['question']}")
+        if row["status"] == "pending":
+            known = known_task_types()
+            for i, opt in enumerate(row.get("options") or []):
+                guide = "  ▸ has guide" if opt.get("task_type") in known else ""
+                print(f"    [{i}] {opt.get('label')}{guide}")
+        elif row.get("answer"):
+            tail = f"  → guide: {row['task_type']}" if row.get("task_type") else ""
+            print(f"    answered: {row['answer']}{tail}")
+
+    settings = get_settings()
+    action = args.clarify_action
+
+    # `guide` is static playbook content — no store needed.
+    if action == "guide":
+        playbook = resolve_playbook(args.task_type)
+        if playbook is None:
+            known = ", ".join(sorted(known_task_types()))
+            print(
+                f"No playbook for task type {args.task_type!r}. Known: {known}",
+                file=sys.stderr,
+            )
+            return 1
+        _show_playbook(playbook)
+        return 0
+
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if action == "check":
+            client = OllamaClient(
+                base_url=settings.ollama_url, model=settings.ollama_model
+            )
+            ids = sweep_ambiguous_items(store, client, limit=args.limit)
+            if not ids:
+                print("No new ambiguous items found.")
+                return 0
+            print(f"Flagged {len(ids)} item(s) for clarification:")
+            for cid in ids:
+                row = store.get_clarification(cid)
+                if row is not None:
+                    _show(row)
+            return 0
+        if action == "list":
+            rows = store.list_clarifications(args.status)
+            if not rows:
+                print(f"No {args.status} clarifications.")
+                return 0
+            for row in rows:
+                _show(row)
+            return 0
+        if action == "dismiss":
+            if not store.dismiss_clarification(args.id):
+                print(f"No pending clarification #{args.id}.", file=sys.stderr)
+                return 1
+            print(f"Dismissed #{args.id} — marked not ambiguous.")
+            return 0
+        # resolve
+        row = store.get_clarification(args.id)
+        if row is None or row["status"] != "pending":
+            print(f"No pending clarification #{args.id}.", file=sys.stderr)
+            return 1
+        try:
+            result = apply_clarification_answer(
+                store, row, option_index=args.option, answer=args.answer
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"Resolved #{args.id}: {result['answer']}")
+        if result["playbook"] is not None:
+            print()
+            _show_playbook(result["playbook"])
     return 0
 
 
@@ -2510,6 +2630,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_prop_reject = prop_sub.add_parser("reject", help="Discard a proposal.")
     p_prop_reject.add_argument("id", type=int, help="Proposal id.")
     p_proposals.set_defaults(func=_cmd_proposals)
+
+    p_clarify = sub.add_parser(
+        "clarify",
+        help="Ambiguity clarifications: check / list / resolve / dismiss / guide.",
+    )
+    p_clarify.add_argument("--db-path", default=None, help="Override the database path.")
+    p_clarify.add_argument("--user", default=None, help="Handle of the user to act on.")
+    cl_sub = p_clarify.add_subparsers(dest="clarify_action", required=True)
+    cl_check = cl_sub.add_parser(
+        "check", help="Detect ambiguous items and file inline questions (the tick sweep)."
+    )
+    cl_check.add_argument(
+        "--limit",
+        type=int,
+        default=MAX_SWEEP_ITEMS,
+        help=f"Max items inspected this run (default {MAX_SWEEP_ITEMS}).",
+    )
+    cl_list = cl_sub.add_parser("list", help="List clarifications by status.")
+    cl_list.add_argument(
+        "--status",
+        default="pending",
+        choices=["pending", "resolved", "dismissed"],
+        help="Which to list (default pending).",
+    )
+    cl_resolve = cl_sub.add_parser("resolve", help="Answer a pending clarification by id.")
+    cl_resolve.add_argument("id", type=int, help="Clarification id.")
+    cl_resolve.add_argument(
+        "--option", type=int, default=None, help="Index of a candidate reading to pick."
+    )
+    cl_resolve.add_argument(
+        "--answer", default=None, help="Free-text reading (when not picking an --option)."
+    )
+    cl_dismiss = cl_sub.add_parser("dismiss", help="Mark a pending clarification not-ambiguous.")
+    cl_dismiss.add_argument("id", type=int, help="Clarification id.")
+    cl_guide = cl_sub.add_parser("guide", help="Print a task type's guided playbook.")
+    cl_guide.add_argument("task_type", help="e.g. tax_filing.")
+    p_clarify.set_defaults(func=_cmd_clarify)
 
     p_crunch = sub.add_parser(
         "crunch", help="Suspend work/life time bands for a deadline stretch (on/off/status)."
