@@ -642,7 +642,13 @@ enabled module — it asks each "anything due?", picks a channel (urgency floor 
 learned `channel_response` bump), and suppresses on quiet hours + debounce.
 
 - Preview: `prefrontal coach` (add `--dry-run` to see cues before suppression).
-- Deliver: import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json)
+- Deliver (recommended, native): run `prefrontal coach --deliver` on a launchd
+  timer — see [§19](#19-native-scheduling-retiring-the-n8n-nudge-workflows). This
+  publishes each fired cue itself (ntfy/Pushover/TTS with the signed one-tap
+  buttons) and runs the overwhelm check on the same tick, so it replaces the
+  `coach-check`, `hyperfocus-check`, `departure-reminder`, and `panic-check` n8n
+  workflows in one job.
+- Deliver (legacy, n8n): import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json)
   (token credential + `$env` from *Configure once*). It polls `POST /webhooks/coach/check` and publishes
   each returned cue to ntfy at a priority matching the agent's chosen channel,
   passing through any signed one-tap `actions` a cue carries (so ntfy renders the
@@ -773,6 +779,53 @@ kids' facts, agreements/star charts, a shopping list — with load-balancing pus
      miss-handoff to the *other* parent if a chore slips past due (every 15 min).
 
 Full design and data model: [`household-sheet.md`](household-sheet.md).
+
+---
+
+## 19. Native scheduling (retiring the n8n nudge workflows)
+
+Most n8n workflows are just *"on a schedule, poll a Prefrontal endpoint and
+republish to ntfy."* That logic already lives in the `prefrontal` CLI and is
+unit-tested, so those workflows can move to launchd timers — one fewer service,
+one delivery path, and no config that can drift out of sync (the class of bug
+behind [ntfy pushes silently stopping](n8n-sync.md)). Two launchd agents cover
+the clear cases:
+
+**a) The coaching tick** — replaces `coach-check`, `hyperfocus-check`,
+`departure-reminder`, and `panic-check` in one job. `prefrontal coach --deliver`
+fans over every enabled module (hyperfocus, outing/arrival, departure,
+self-care, task-paralysis, impulsivity, trip-tracking), applies channel choice +
+quiet-hours + debounce, and publishes what fires — plus the proactive overwhelm
+(panic) check on the same tick.
+
+```sh
+cp deploy/coach.sh deploy/com.morningstatic.prefrontal-coach.plist ~/… # (repo already has them)
+# Edit paths inside both to match your install:
+#   - coach.sh:  PREFRONTAL_HOME (repo root), PREFRONTAL_USER (handle, or blank to auto-pick)
+#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, PREFRONTAL_USER, Std{Out,Err}Path
+cp deploy/com.morningstatic.prefrontal-coach.plist ~/Library/LaunchAgents/
+PREFRONTAL_HOME=$HOME/prefrontal deploy/coach.sh   # run once by hand — should print what fires
+launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-coach.plist
+```
+
+**b) The household sweeps** — replaces `chores-check`, `checkin-check`,
+`digest-check`, and `star-prompt-check`. `deploy/household-sweeps.sh` runs the
+four `prefrontal household …-check` twins; each self-gates on due-ness (off,
+wrong day/time, already sent, nothing new), so a 15-min interval only means
+"check often." Same install shape with `com.morningstatic.prefrontal-household.plist`.
+
+**Cutover — do this per agent to avoid double-sends:** the n8n workflow and its
+launchd replacement both deliver, so once a launchd agent is confirmed working,
+**deactivate the workflows it replaces** in the n8n UI (toggle Active off). Watch
+`~/Library/Logs/prefrontal.coach.log` / `prefrontal.household.log` for a tick or
+two first. Debounce catches most accidental doubles, but don't lean on it.
+
+**Deliberately still on n8n:** `calendar-sync` and `triage-ingest` pull external
+data *in* (Google/ICS, mail/Signal) using n8n's connectors + OAuth; `coffee-shop-nudge`
+adds a Twilio **voice call** at 150% that native delivery doesn't place;
+`morning-briefing`, `encouragement`, and `focus-arm-check` don't have a native
+`--deliver` path yet. These stay until there's a first-class replacement — see
+`ROADMAP.md`.
 
 ---
 

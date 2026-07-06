@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that runs the shared-household sweeps (deploy/household-sweeps.sh):
+  chores due, the weekly mental-load check-in, the daily delta digest, and the
+  ⭐ star-agreement prompts.
+
+  This replaces four n8n workflows — chores-check, checkin-check, digest-check,
+  and star-prompt-check. Each sweep self-gates on due-ness (off, wrong day/time,
+  already sent, nothing new), so running every 15 min just means "check often";
+  it only sends when actually due. Before enabling, DEACTIVATE those four in the
+  n8n UI so a notice isn't sent twice. A single-parent household is a clean
+  no-op for the shared checks.
+
+  Install:
+    cp deploy/com.morningstatic.prefrontal-household.plist ~/Library/LaunchAgents/
+    # then edit the paths below to match your username and install location
+    launchctl load -w ~/Library/LaunchAgents/com.morningstatic.prefrontal-household.plist
+    # run the wrapper once by hand first to confirm it works:
+    PREFRONTAL_HOME=/Users/tom/prefrontal deploy/household-sweeps.sh
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.morningstatic.prefrontal-household</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/tom/prefrontal/deploy/household-sweeps.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tom/prefrontal</string>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.household.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tom/Library/Logs/prefrontal.household.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so Ollama and other tools resolve. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Install location; the wrapper cd's here so the adjacent .env loads. -->
+        <key>PREFRONTAL_HOME</key>
+        <string>/Users/tom/prefrontal</string>
+        <!-- Any household member; the sweep resolves the household from them. -->
+        <key>PREFRONTAL_USER</key>
+        <string>tom</string>
+    </dict>
+</dict>
+</plist>
