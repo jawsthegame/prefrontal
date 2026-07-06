@@ -517,16 +517,16 @@ def test_dashboard_deep_link_auto_opens_the_triage(store):
 def test_dashboard_wires_the_panic_button(store):
     """The dashboard shell exposes a panic entry point backed by /panic.
 
-    (The family view is now the calm, read-only *shared household* sheet — it no
-    longer carries the per-user panic overlay; that lives on the dashboard.)
+    (The shared household surfaces are the calm sheet views — they no longer
+    carry the per-user panic overlay; that lives on the dashboard.)
     """
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
     with TestClient(app) as c:
         dash = c.get("/dashboard").text
-        fam = c.get("/family").text
+        household = c.get("/household").text
     assert 'id="panic-btn"' in dash
     assert 'id="panic"' in dash  # the overlay
     assert '"/panic"' in dash    # the fetch call
-    # Family is the shared household view now — no panic button, reads the sheet.
-    assert 'id="panic-btn"' not in fam
-    assert "/household/sheet" in fam
+    # The Household hub is the shared sheet — no panic button, reads the sheet.
+    assert 'id="panic-btn"' not in household
+    assert "/household/sheet" in household

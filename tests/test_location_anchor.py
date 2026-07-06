@@ -598,14 +598,28 @@ def test_dashboard_page_served_without_auth(client):
     assert "X-Prefrontal-Token" in resp.text  # it asks for the token client-side
 
 
-def test_family_page_served_without_auth(client):
-    """The family view shell is plain HTML, needs no token, and carries no data."""
-    resp = client.get("/family")
+def test_kids_lens_served_without_auth(client):
+    """The read-only Kids lens is plain HTML, needs no token, and carries no data."""
+    resp = client.get("/kids")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "Recently changed" in resp.text  # the shared household view, not the monitor
-    assert "/household/sheet" in resp.text  # it reads the shared sheet client-side
-    assert "X-Prefrontal-Token" in resp.text  # asks for the access code client-side
+    assert 'const LENS = "kids"' in resp.text          # bound to the kids focus
+    assert "/household/sheet" in resp.text              # reads the shared sheet
+    assert "X-Prefrontal-Token" in resp.text            # asks for the token client-side
+
+
+def test_pets_lens_served_and_bound_to_pets(client):
+    """The Pets lens is its own read-only projection, bound to the pets focus."""
+    resp = client.get("/pets")
+    assert resp.status_code == 200
+    assert 'const LENS = "pets"' in resp.text
+
+
+def test_family_redirects_to_household(client):
+    """The retired /family route redirects to the writable Household hub."""
+    resp = client.get("/family", follow_redirects=False)
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/household"
 
 
 # -- shared per-outing decision (evaluate_outing / apply_outing_evaluation) ---

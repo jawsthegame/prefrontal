@@ -760,14 +760,17 @@ def test_write_endpoints_are_member_guarded(client):
         assert client.post(path, json=body, headers=_h("lee-tok")).status_code == 404
 
 
-def test_kids_page_and_family_link_serve(client):
+def test_household_and_lens_pages_serve(client):
+    assert client.get("/household").status_code == 200
     assert client.get("/kids").status_code == 200
-    assert "/kids" in client.get("/family").text
+    assert client.get("/pets").status_code == 200
+    # /family is retired → redirects to the writable hub (client follows it).
+    assert "/household" in client.get("/family").text
 
 
-def test_kids_shell_has_chores_routines_and_carrying(client):
-    """The /kids shell renders the chores + routines cards and the carrying facet."""
-    html = client.get("/kids").text
+def test_household_shell_has_chores_routines_and_carrying(client):
+    """The editable Household hub renders the chores + routines cards + carrying facet."""
+    html = client.get("/household").text
     assert 'id="c-chores"' in html and 'id="c-routines"' in html
     assert "Carrying" in html and "/household/routines" in html
 

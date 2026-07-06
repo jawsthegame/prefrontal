@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
-<title>Prefrontal — Family</title>
+<title>Prefrontal</title>
 <!-- Set the theme before first paint so there's no flash. -->
 <script>
 (function () {
@@ -17,7 +17,7 @@
 })();
 </script>
 <style>
-  /* ── Shared theme (identical across /family, /kids, /dashboard) ─────────── */
+  /* ── Shared theme (identical across /household, /kids, /pets, /dashboard) ── */
   :root {
     --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
     --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
@@ -56,6 +56,8 @@
   header { max-width: 620px; margin: 0 auto; padding: 22px 18px 4px; }
   header h1 { font-size: 24px; margin: 0; font-weight: 680; letter-spacing: .2px; }
   header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .readonly-note { color: var(--muted); font-size: 13px; margin: 10px auto 0; max-width: 620px; padding: 0 18px; }
+  .readonly-note a { color: var(--accent); }
 
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 16px;
@@ -83,31 +85,6 @@
   .stars { margin-top: 5px; font-size: 14px; }
   .stars .prog { color: var(--accent); font-weight: 650; }
   .thresholds { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .shop-line { display: flex; gap: 9px; padding: 5px 0; align-items: baseline; }
-  .shop-line .box { color: var(--muted); cursor: pointer; background: none; border: none;
-    font: inherit; padding: 0; line-height: 1; }
-  .shop-line .box:hover { color: var(--accent); }
-  .shop-line.done .txt { text-decoration: line-through; color: var(--muted); }
-  .shop-line .txt { flex: 1; min-width: 0; }
-  .shop-line .dismiss { margin-left: auto; color: var(--muted); cursor: pointer; background: none;
-    border: none; font: inherit; font-size: 18px; line-height: 1; padding: 0 2px; }
-  .shop-line .dismiss:hover { color: var(--accent); }
-  .shop-sub { color: var(--muted); font-size: 12px; }
-  .shop-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
-  .shop-add { display: flex; gap: 8px; margin-top: 12px; }
-  .shop-add input { flex: 1; min-width: 0; padding: 9px 11px; border-radius: 9px;
-    border: 1px solid var(--line); background: var(--card); color: var(--fg); font-size: 15px; }
-  .shop-add input:focus { outline: none; border-color: var(--accent); }
-  .shop-add button { padding: 9px 15px; border: none; border-radius: 9px; background: var(--accent);
-    color: var(--accent-fg); font-weight: 650; font-size: 15px; cursor: pointer; }
-  .shop-add button:disabled { opacity: .5; cursor: default; }
-  /* balance */
-  .bal-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
-  .bal-row .bal-name { min-width: 90px; font-weight: 500; }
-  .bal-bar { flex: 1; height: 10px; background: var(--line); border-radius: 6px; overflow: hidden; }
-  .bal-fill { height: 100%; background: var(--accent); }
-  .bal-n { color: var(--muted); min-width: 66px; text-align: right; }
-  .bal-cap { color: var(--muted); font-size: 13px; margin-top: 12px; }
 
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
   footer a { color: var(--muted); }
@@ -133,11 +110,12 @@
 </head>
 <body>
 <nav class="topnav">
-  <a class="brand" href="/family">🧠 Prefrontal</a>
+  <a class="brand" href="/household">🧠 Prefrontal</a>
   <div class="links">
     <a href="/dashboard">Dashboard</a>
-    <a href="/family" aria-current="page">Family</a>
-    <a href="/kids">Kids</a>
+    <a href="/household">Household</a>
+    <a href="/kids" data-lens="kids">Kids</a>
+    <a href="/pets" data-lens="pets">Pets</a>
     <a href="/stats">Insights</a>
     <a href="/review">Review</a>
   </div>
@@ -145,16 +123,12 @@
 </nav>
 
 <header>
-  <h1 id="title">🏡 Household</h1>
+  <h1 id="title">loading…</h1>
   <div class="meta" id="status">loading…</div>
 </header>
+<p class="readonly-note">A read-only view — edits are made on the <a href="/household">Household</a> page.</p>
 
 <div class="wrap" id="wrap" style="display:none">
-  <section class="card" id="c-recent">
-    <p class="label">Recently changed</p>
-    <div id="recent"></div>
-  </section>
-
   <section class="card" id="c-facts">
     <p class="label">The kids</p>
     <div id="facts"></div>
@@ -170,31 +144,17 @@
     <div id="agreements"></div>
   </section>
 
-  <section class="card" id="c-shopping">
-    <p class="label">Shopping</p>
-    <div id="shopping"></div>
-    <form class="shop-add" id="shop-add" autocomplete="off">
-      <input id="shop-item" type="text" placeholder="Add an item…" aria-label="Add a shopping item" />
-      <button type="submit" id="shop-add-btn">Add</button>
-    </form>
-  </section>
-
   <section class="card" id="c-appts">
     <p class="label">Upcoming appointments</p>
     <div id="appts"></div>
   </section>
 
-  <section class="card" id="c-balance" style="display:none">
-    <p class="label">Sharing the load</p>
-    <div id="balance"></div>
-  </section>
-
   <div id="no-household" class="card" style="display:none">
     <p class="empty">This account isn't in a household yet. Set one up on the
-      <a href="/kids">Kids</a> page.</p>
+      <a href="/household">Household</a> page.</p>
   </div>
 
-  <footer>Updates on its own · a calm, shared view — edit on the <a href="/kids">Kids</a> page</footer>
+  <footer>Updates on its own · a calm, read-only view — edit on the <a href="/household">Household</a> page</footer>
 </div>
 
 <div id="gate">
@@ -211,6 +171,17 @@
 </div>
 
 <script>
+// Which focused lens this page is — the server injects "kids" or "pets" here.
+const LENS = "__LENS__";
+const LENSES = {
+  // `cards` is the ordered set of sheet sections this lens shows; everything
+  // else is hidden. Kids and pets share the sheet but surface different slices:
+  // pets deliberately have no agreements/star charts (that's child scaffolding).
+  kids: { emoji: "👧", label: "Kids", cards: ["c-facts", "c-agreements", "c-appts"] },
+  pets: { emoji: "🐾", label: "Pets", cards: ["c-pets"] },
+};
+const conf = LENSES[LENS] || LENSES.kids;
+
 const KEY = "prefrontal_token";
 const REFRESH_MS = 45000;
 let token = localStorage.getItem(KEY);
@@ -218,6 +189,12 @@ let timer = null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ── Lens chrome: title, tab, and the browser tab name ─────────────────────
+document.title = "Prefrontal — " + conf.label;
+$("#title").textContent = conf.emoji + " " + conf.label;
+const navLink = document.querySelector(`.topnav .links a[data-lens="${LENS}"]`);
+if (navLink) navLink.setAttribute("aria-current", "page");
 
 // ── Theme toggle (shared) ────────────────────────────────────────────────
 (function () {
@@ -248,31 +225,8 @@ async function api(path) {
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
 }
-async function post(path, body) {
-  const r = await fetch(path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { "X-Prefrontal-Token": token } : {}),
-    },
-    body: JSON.stringify(body || {}),
-  });
-  if (r.status === 401) { gate("Please sign in again."); throw new Error("unauthorized"); }
-  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
-  return r.json().catch(() => ({}));
-}
 
-// ── Read-only renderers (mirror the /kids layout, without the forms) ──────
-function renderRecent(changes) {
-  $("#recent").innerHTML = (changes || []).length
-    ? changes.map((c) => {
-        const meta = [c.who, c.when].filter(Boolean).map(esc).join(" · ");
-        return `<div class="item"><div class="what">${esc(c.what)}` +
-          (meta ? ` <span class="who">${meta}</span>` : "") + `</div></div>`;
-      }).join("")
-    : `<div class="empty">No changes yet.</div>`;
-}
-
+// ── Read-only renderers (mirror the /household layout, without the forms) ──
 // The category/items grid for one fact block — shared by the kids and pets.
 function catsHtml(block) {
   return (block.categories || []).map((cat) =>
@@ -290,8 +244,7 @@ function renderFacts(perChild) {
 // Pets: one block per pet (name · species), then its facts (meds, vet, food).
 function renderPets(pets, perPet) {
   pets = pets || [];
-  if (!pets.length) { $("#c-pets").style.display = "none"; return; }
-  $("#c-pets").style.display = "";
+  if (!pets.length) { $("#pets").innerHTML = `<div class="empty">No pets yet.</div>`; return; }
   const blocks = {};
   (perPet || []).forEach((b) => { blocks[b.child_id] = b; });
   $("#pets").innerHTML = pets.map((p) => {
@@ -324,41 +277,11 @@ function renderAgreements(agreements) {
     : `<div class="empty">No standing plans yet.</div>`;
 }
 
-function renderShopping(items) {
-  items = items || [];
-  const needed = items.filter((s) => !s.got);
-  $("#shopping").innerHTML = items.length
-    ? items.map((s) => {
-        const detail = [s.spec, s.where_to_buy].filter(Boolean).map(esc).join(" · ");
-        const who = s.child_name ? ` — ${esc(s.child_name)}` : "";
-        const dismiss = s.got
-          ? `<button type="button" class="dismiss" data-id="${s.id}" aria-label="Dismiss ${esc(s.item)}" title="Dismiss">×</button>`
-          : "";
-        return `<div class="shop-line${s.got ? " done" : ""}"><button type="button" class="box" data-id="${s.id}" data-got="${s.got ? 1 : 0}" aria-label="${s.got ? "Un-check" : "Check off"} ${esc(s.item)}">${s.got ? "☑" : "☐"}</button>
-          <span class="txt">${esc(s.item)}${who}${detail ? ` <span class="shop-sub">${detail}</span>` : ""}</span>${dismiss}</div>`;
-      }).join("")
-        + (needed.length ? "" : `<div class="empty" style="margin-top:6px">All bought. 🎉</div>`)
-        + (items.some((s) => s.got) ? `<div class="shop-note">Bought items clear on their own after a day — or tap × to dismiss.</div>` : "")
-    : `<div class="empty">Nothing on the list.</div>`;
-}
-
 function renderAppts(upcoming) {
   $("#appts").innerHTML = (upcoming || []).length
     ? upcoming.map((ap) => `<div class="item"><div class="time">${esc(ap.when)}</div>
         <div class="what">${esc(ap.title)}${ap.location ? `<div class="sub">${esc(ap.location)}</div>` : ""}</div></div>`).join("")
     : `<div class="empty">No upcoming kid appointments.</div>`;
-}
-
-function renderBalance(balance) {
-  const card = $("#c-balance");
-  const v = balance && balance.enabled ? balance.view : null;
-  if (!v) { card.style.display = "none"; return; }
-  card.style.display = "";
-  $("#balance").innerHTML = v.members.map((m) =>
-    `<div class="bal-row"><span class="bal-name">${esc(m.name)}</span>
-      <span class="bal-bar"><span class="bal-fill" style="width:${m.share}%"></span></span>
-      <span class="bal-n">${m.count} · ${m.share}%</span></div>`).join("") +
-    `<div class="bal-cap">${esc(v.caption)}</div>`;
 }
 
 async function load() {
@@ -373,7 +296,6 @@ async function load() {
       $("#wrap").style.display = "block";
       document.querySelectorAll(".card").forEach((c) => { if (c.id !== "no-household") c.style.display = "none"; });
       $("#no-household").style.display = "block";
-      $("#title").textContent = "🏡 Household";
       $("#status").textContent = "not in a household";
       return;
     }
@@ -382,17 +304,16 @@ async function load() {
   }
   $("#gate").style.display = "none";
   $("#wrap").style.display = "block";
-  document.querySelectorAll(".card").forEach((c) => { if (c.id !== "no-household") c.style.display = ""; });
   $("#no-household").style.display = "none";
+  // Show only this lens's cards; hide the rest of the shared sheet.
+  document.querySelectorAll("#wrap > .card").forEach((c) => {
+    c.style.display = conf.cards.includes(c.id) ? "" : "none";
+  });
   const sheet = data.sheet || {};
-  $("#title").textContent = "🏡 " + (sheet.household_name || "Household");
-  renderRecent(sheet.recently_changed);
-  renderFacts(sheet.per_child);
-  renderPets(sheet.pets, sheet.per_pet);
-  renderAgreements(sheet.agreements);
-  renderShopping(sheet.shopping);
-  renderAppts(sheet.upcoming);
-  renderBalance(data.balance);
+  if (conf.cards.includes("c-facts")) renderFacts(sheet.per_child);
+  if (conf.cards.includes("c-pets")) renderPets(sheet.pets, sheet.per_pet);
+  if (conf.cards.includes("c-agreements")) renderAgreements(sheet.agreements);
+  if (conf.cards.includes("c-appts")) renderAppts(sheet.upcoming);
   $("#status").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
@@ -407,54 +328,6 @@ $("#token-save").onclick = () => {
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
-
-// ── Shopping: the one editable spot on the shared view ────────────────────
-$("#shop-add").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const input = $("#shop-item");
-  const item = input.value.trim();
-  if (!item) return;
-  const btn = $("#shop-add-btn");
-  btn.disabled = true;
-  try {
-    await post("/household/shopping", { item });
-    input.value = "";
-    await load();
-  } catch (err) {
-    $("#status").textContent = "couldn't add — try again";
-  } finally {
-    btn.disabled = false;
-    input.focus();
-  }
-});
-// Tap a checkbox to mark bought / un-bought, or × to dismiss a bought item
-// (event delegation survives re-renders).
-$("#shopping").addEventListener("click", async (e) => {
-  const dismiss = e.target.closest(".dismiss");
-  if (dismiss) {
-    dismiss.disabled = true;
-    try {
-      await post(`/household/shopping/${dismiss.dataset.id}/remove`, {});
-      await load();
-    } catch (err) {
-      $("#status").textContent = "couldn't dismiss — try again";
-      dismiss.disabled = false;
-    }
-    return;
-  }
-  const box = e.target.closest(".box");
-  if (!box) return;
-  const id = box.dataset.id;
-  const got = box.dataset.got === "1";
-  box.disabled = true;
-  try {
-    await post(`/household/shopping/${id}/got`, { got: !got });
-    await load();
-  } catch (err) {
-    $("#status").textContent = "couldn't update — try again";
-    box.disabled = false;
-  }
-});
 
 start();  // try the session cookie / saved code; the gate appears only on 401
 </script>

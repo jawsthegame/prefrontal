@@ -15,6 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import (
     HTMLResponse,
+    RedirectResponse,
     Response,
 )
 
@@ -23,10 +24,10 @@ from prefrontal.webhooks._common import (
     APP_ICON_PNG,
     APP_VERSION,
     DASHBOARD_HTML,
-    FAMILY_HTML,
-    KIDS_HTML,
+    HOUSEHOLD_HTML,
     REVIEW_HTML,
     STATS_HTML,
+    lens_html,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -73,31 +74,48 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         return DASHBOARD_HTML
 
-    @router.get("/family", response_class=HTMLResponse, tags=["system"])
-    def family() -> str:
-        """Serve the family view — a calm, read-only *shared household* glance.
+    @router.get("/household", response_class=HTMLResponse, tags=["system"])
+    def household() -> str:
+        """Serve the editable Household hub — the one writable surface.
 
-        With households, the shared thing everyone can look at is the household
-        sheet, so this is its read-only face: kids & facts, standing plans + star
-        progress, the shopping list, upcoming appointments, recent changes, and
-        (if enabled) the load-balance view — no edit forms (those live on
-        ``/kids``). Like the other web surfaces the shell is unauthenticated and
-        carries no data; it signs in via Google session or a one-time access code,
-        then reads ``GET /household/sheet``. Shares the unified theme + nav.
+        Every edit to the shared sheet happens here: kids, pets, facts,
+        agreements + star charts, shopping, routines, and the NL ``/assistant``
+        box. Like the other web surfaces the shell is unauthenticated and carries
+        no data; it prompts once for the access code (or rides a Google sign-in
+        session), then reads ``GET /household/sheet`` and writes through the
+        household endpoints. Reachable over Tailscale from any device.
         """
-        return FAMILY_HTML
+        return HOUSEHOLD_HTML
 
     @router.get("/kids", response_class=HTMLResponse, tags=["system"])
     def kids() -> str:
-        """Serve the editable kids dashboard for the shared household sheet.
+        """Serve the read-only **Kids** lens over the shared household sheet.
 
-        Like the other web surfaces the shell is unauthenticated and carries no
-        data; it prompts once for the access code (or rides a Google sign-in
-        session) and then reads ``GET /household/sheet`` and writes through the
-        household endpoints (facts / agreements / children / appointments) and the
-        NL ``/assistant`` box. Reachable over Tailscale from any device.
+        A focused, calm view — roster & facts, standing plans + star progress,
+        and upcoming appointments — with no edit forms (those live on
+        ``/household``). Same self-contained, data-less shell as the other web
+        surfaces; reads ``GET /household/sheet``.
         """
-        return KIDS_HTML
+        return lens_html("kids")
+
+    @router.get("/pets", response_class=HTMLResponse, tags=["system"])
+    def pets() -> str:
+        """Serve the read-only **Pets** lens over the shared household sheet.
+
+        A focused view of the pet roster and their facts (meds, vet/groomer,
+        food). Pets deliberately have no agreements/star charts (that's child
+        scaffolding), so this lens is its own projection, not a relabeled Kids
+        page. Read-only; edits live on ``/household``.
+        """
+        return lens_html("pets")
+
+    @router.get("/family", tags=["system"])
+    def family() -> RedirectResponse:
+        """Retired: the whole-household overview now lives on ``/household``.
+
+        Kept as a redirect so old bookmarks and links still land somewhere sane.
+        """
+        return RedirectResponse(url="/household", status_code=308)
 
     @router.get("/stats", response_class=HTMLResponse, tags=["system"])
     def stats_page() -> str:
