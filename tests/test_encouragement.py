@@ -124,6 +124,32 @@ def test_three_misses_trip_the_threshold(store):
     assert all(s["kind"] == "miss_episode" for s in a.signals)
 
 
+def test_overwhelmed_plate_trips_via_panic_signal(store):
+    # No misses logged, but two hard commitments are already underway → panic
+    # mode reads the plate as "overwhelmed" (>=2 already late), which is itself a
+    # rough-day trigger (reusing overwhelm_level, weighted like a missed-hard).
+    now = utcnow()
+    for hour, title in ((9, "Standup"), (11, "Review")):
+        store.upsert_commitment(
+            title=title,
+            start_at=_at(now, hour=hour, minute=0, second=0, microsecond=0),
+            lead_minutes=10.0, hardness="hard", source="manual",
+        )
+    a = assess_day(store, now=now)
+    assert a.rough is True and a.rough_score == 3.0
+    assert [s["kind"] for s in a.signals] == ["overwhelmed"]
+
+
+def test_single_late_commitment_is_not_overwhelmed(store):
+    # One hard commitment underway is normal life, not overwhelm — no signal, and
+    # the day stays calm (guards the overwhelm trigger's bar against firing early).
+    now = utcnow()
+    _hard_commitment(store, now)  # 9am hard, started by the frozen noon
+    a = assess_day(store, now=now)
+    assert a.rough is False
+    assert not any(s["kind"] == "overwhelmed" for s in a.signals)
+
+
 def test_drift_modifier_tips_a_borderline_day(store):
     # Two misses (2.0) is under threshold; a rising-drift modifier (+0.5) still
     # isn't enough on its own — but lowering the threshold shows it's applied.

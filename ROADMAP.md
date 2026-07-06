@@ -150,7 +150,8 @@ the first test. Code follow-ups below are optional polish.
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
-  signals (a missed *hard* commitment is the heaviest at 3.0; each `miss`
+  signals (a missed *hard* commitment is the heaviest at 3.0; an *overwhelmed*
+  plate right now — reusing panic's `overwhelm_level()` — also 3.0; each `miss`
   episode 1.0; double-bookings 0.5; a small rising-drift modifier) and flags
   `rough` past a threshold; `build_recovery()` composes existing logic into a
   plan — re-fit the rest of the day (`suggest_for_windows`), suggest deferring
@@ -242,13 +243,21 @@ the first test. Code follow-ups below are optional polish.
   Endpoints live in `prefrontal/webhooks/routers/schedule.py`; covered by
   `tests/test_panic.py`. Delivers the get-back-on-track slice of the
   "encouragement & recovery layer" below, leaving the softer, tone-calibrated
-  daily-recovery variant as the remaining piece. *(Next: gate the proactive
-  `panic/check` nudge on quiet / responsive hours — it currently fires whenever
-  polled, so an overwhelm push could land at 3am; capture whether the surfaced
-  first step actually got done so overwhelm episodes feed learning — see
-  "measure whether adaptations help" below; and reuse `overwhelm_level()` as one
-  of the triggers for the encouragement layer's detector instead of a separate
-  threshold.)*
+  daily-recovery variant as the remaining piece. The three follow-ups have all
+  shipped: **quiet-hours gating** ✅ — `evaluate_panic_check(quiet_hours=…)` now
+  **defers** (never drops) an overwhelm edge that lands outside responsive hours,
+  leaving `last_panic_level` untouched so the first poll back in responsive hours
+  still fires; both `/webhooks/panic/check` and the native `coach --deliver` tick
+  pass `in_quiet_hours(...)`, so an overwhelm push can no longer land at 3am.
+  **First-step outcome capture** ✅ — a fired nudge logs a *pending* `panic`
+  episode (`record_panic_step_sent`) that a one-tap "✓ Did it" resolves to
+  success (`resolve_panic_step`) and an unanswered one is swept to a miss
+  (`sweep_pending_panic_steps`), so the drift pass learns whether the surfaced
+  step actually got done. **Encouragement reuse** ✅ — `overwhelm_level()` is now
+  one of the triggers for the encouragement layer's `assess_day` detector
+  (weighted like a missed-hard commitment) instead of a separate threshold, so a
+  plate that's buried *right now* reads rough even before anything is missed.
+  Covered by `tests/test_panic.py` + `tests/test_encouragement.py`.
 - **"What fits right now" (widget)** ✅ — `GET /todos/now` computes the free gap
   until your next commitment (bounded by working hours + a cap) and returns the
   single best-fitting open todo — **biased toward the most-avoided** task and

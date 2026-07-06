@@ -16,9 +16,11 @@ Two layers, like the briefing and the panic triage:
   Ollama, falling back to the deterministic text.
 
 Everything it reads is already computed (miss episodes, conflicts, avoided
-todos, free windows, drift). It's **off by default** (the ``encouragement``
-coaching key) and never invents data — the ``signals`` list is auditable, so a
-user can see exactly *why* a day was flagged.
+todos, free windows, drift, and — reusing panic mode's
+:func:`~prefrontal.panic.overwhelm_level` — whether the plate is *overwhelmed
+right now*). It's **off by default** (the ``encouragement`` coaching key) and
+never invents data — the ``signals`` list is auditable, so a user can see
+exactly *why* a day was flagged.
 """
 
 from __future__ import annotations
@@ -56,7 +58,16 @@ DEFAULT_ROUGH_THRESHOLD = 3.0
 
 #: Signal weights (spec §3.1). Abandoned/overrun outings already log a ``miss``
 #: episode, so they score once as ``miss_episode`` rather than double-counting.
-SIGNAL_WEIGHTS = {"missed_hard": 3.0, "miss_episode": 1.0, "conflict": 0.5}
+#: ``overwhelmed`` is the acute "buried right now" signal lifted from panic mode
+#: (:func:`~prefrontal.panic.overwhelm_level`); weighted like a missed hard
+#: commitment so a genuinely overwhelmed plate trips a rough day on its own —
+#: reusing panic's tuned pressing thresholds instead of a second one of our own.
+SIGNAL_WEIGHTS = {
+    "missed_hard": 3.0,
+    "miss_episode": 1.0,
+    "conflict": 0.5,
+    "overwhelmed": 3.0,
+}
 
 #: A drift pattern at/above this observed value (with real confidence) adds a
 #: small modifier that can tip a borderline day over — but never trips it alone.
@@ -153,9 +164,13 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
 
     Reads today-scoped signals: ``miss`` episodes over ``[midnight, now]``, and
     today's commitments over the full day (for hard-miss classification and
-    unresolved double-bookings), plus a small rising-drift modifier. A missed
-    *hard* commitment is heaviest. Inert (``rough=False``) unless the
-    ``encouragement`` coaching key is ``on``.
+    unresolved double-bookings), plus a small rising-drift modifier. It also folds
+    in whether the plate is *overwhelmed right now* — reusing panic mode's
+    :func:`~prefrontal.panic.overwhelm_level` over the current pressure buckets, so
+    a day that's buried (several things bearing down) reads rough even before
+    anything has been *missed*. A missed *hard* commitment — or an overwhelmed
+    plate — is heaviest. Inert (``rough=False``) unless the ``encouragement``
+    coaching key is ``on``.
     """
     now = now or utcnow()
     # Today's signals are scoped to the user's *local* day (so an evening check
@@ -205,6 +220,34 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
                 "kind": "conflict",
                 "detail": f"{c.a['title']} ↔ {c.b['title']}",
                 "weight": 0.5,
+            }
+        )
+
+    # Acute overwhelm: reuse panic mode's overwhelm classifier (its own tuned
+    # pressing thresholds) rather than inventing a second one. A plate that's
+    # buried *right now* — several things bearing down, something already late —
+    # is a rough day even if nothing has been missed yet.
+    from prefrontal.panic import (
+        DEFAULT_ALERT_MIN_PRESSING,
+        build_panic,
+        overwhelm_level,
+    )
+
+    try:
+        min_pressing = int(
+            store.get_state("panic_alert_min_pressing") or DEFAULT_ALERT_MIN_PRESSING
+        )
+    except (TypeError, ValueError):
+        min_pressing = DEFAULT_ALERT_MIN_PRESSING
+    plan = build_panic(store, now=now)
+    if overwhelm_level(plan, min_pressing=min_pressing) == "overwhelmed":
+        late = plan.counts.get("late", 0)
+        pressing = plan.counts.get("pressing", 0)
+        signals.append(
+            {
+                "kind": "overwhelmed",
+                "detail": f"{late} already late, {pressing} bearing down right now",
+                "weight": SIGNAL_WEIGHTS["overwhelmed"],
             }
         )
 
