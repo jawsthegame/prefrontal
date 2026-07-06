@@ -54,7 +54,7 @@
         <string>/Users/tom/src/prefrontal</string>
         <!-- Any household member; the sweep resolves the household from them. -->
         <key>PREFRONTAL_USER</key>
-        <string>tom</string>
+        <string>Tom</string>
     </dict>
 </dict>
 </plist>
