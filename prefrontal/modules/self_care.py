@@ -294,6 +294,48 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
     }
 
 
+def apply_self_care_config(
+    store: MemoryStore,
+    *,
+    enabled: bool | None = None,
+    checks: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Persist self-care settings from the dashboard (explicit user writes).
+
+    The write twin of :func:`self_care_status`: a partial update that touches
+    only the fields present, mapping each check's knobs onto the coaching-state
+    keys its own :class:`BasicCheck` declares (so there's no second copy of the
+    key names). Every write is ``source="explicit"`` — a value the user set by
+    hand, which the nightly cadence learner then leaves alone.
+
+    Args:
+        store: A user-scoped store.
+        enabled: Master switch, when provided.
+        checks: ``{check_key: {enabled?, target?, start_hour?, interval_minutes?}}``.
+            Unknown check keys are ignored; absent fields are left untouched.
+    """
+    if enabled is not None:
+        store.set_state("self_care", "on" if enabled else "off", source="explicit")
+    by_key = {c.key: c for c in CHECKS}
+    for key, cfg in (checks or {}).items():
+        check = by_key.get(key)
+        if check is None:
+            continue  # unknown check key — ignore rather than error
+        if cfg.get("enabled") is not None:
+            store.set_state(
+                check.enabled_key, "on" if cfg["enabled"] else "off", source="explicit"
+            )
+        if cfg.get("target") is not None:
+            store.set_state(check.target_key, str(max(1, int(cfg["target"]))), source="explicit")
+        if cfg.get("start_hour") is not None:
+            hour = str(min(23, max(0, int(cfg["start_hour"]))))
+            store.set_state(check.start_hour_key, hour, source="explicit")
+        if cfg.get("interval_minutes") is not None:
+            store.set_state(
+                check.interval_key, str(max(1, int(cfg["interval_minutes"]))), source="explicit"
+            )
+
+
 def apply_self_care_action(
     store: MemoryStore, action: str, *, now: datetime, today: str
 ) -> str | None:

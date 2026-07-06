@@ -86,14 +86,21 @@
     color: var(--muted); margin: 0 0 12px;
   }
   .empty { color: var(--muted); font-style: italic; }
-  /* Self-care card: a compact row of per-check status chips. */
-  .sc-row { display: flex; flex-wrap: wrap; gap: 10px; }
-  .sc-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 8px 12px;
-    border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 15px; }
-  .sc-chip b { font-variant-numeric: tabular-nums; }
-  .sc-chip .sc-sub { color: var(--muted); font-size: 12px; }
-  .sc-chip.sc-done { border-color: var(--good); }
-  .sc-chip.sc-off { color: var(--muted); }
+  /* Self-care card: an editable master toggle + one control row per check. */
+  .sc-controls { display: flex; flex-direction: column; gap: 8px; }
+  .sc-master { display: flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
+  .sc-hint { color: var(--muted); font-size: 13px; }
+  .sc-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .sc-en { display: inline-flex; align-items: center; gap: 6px; min-width: 120px; cursor: pointer; }
+  .sc-field { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .sc-num { width: 52px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
+  .sc-num:disabled { opacity: .5; }
+  .sc-prog { margin-left: auto; }
+  .sc-prog b { font-variant-numeric: tabular-nums; }
+  .sc-sub { color: var(--muted); font-size: 12px; }
+  .sc-check-off { opacity: .6; }
 
   /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
   .masonry .card > h2 { padding-right: 96px; }
@@ -823,33 +830,50 @@ async function openDomainMenu(anchor, id, current) {
   placePillMenu(menu, anchor);
 }
 
+const SC_META = {
+  meal: { icon: "🍽️", label: "Meals" },
+  water: { icon: "💧", label: "Water" },
+  meds: { icon: "💊", label: "Meds" },
+};
+
+// Progress readout for a check: a once-a-day check (target 1) reads as done ✓ /
+// not-yet — the "N/1" fraction adds nothing and looks broken once extra taps
+// push the count past 1 (e.g. "3/1"). A recurring check (target > 1) shows real
+// count/target progress.
+function scProgress(c) {
+  if (c.target > 1) return `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`;
+  return c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`;
+}
+
+function scRow(c) {
+  const m = SC_META[c.key] || { icon: "", label: c.key };
+  const num = (field, val, attrs) =>
+    `<input class="sc-num" type="number" ${attrs} data-sc-check="${c.key}" `
+    + `data-sc-field="${field}" value="${val}"${c.enabled ? "" : " disabled"} />`;
+  // Cadence only matters for a recurring check (target > 1).
+  const cadence = c.target > 1
+    ? `<span class="sc-field">every ${num("interval_minutes", c.interval_minutes, 'min="1"')}m</span>`
+    : "";
+  return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
+    + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
+    <span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>
+    <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
+    ${cadence}
+    <span class="sc-prog">${scProgress(c)}</span>
+  </div>`;
+}
+
 function renderSelfCare(d) {
-  if (!d || !d.enabled) {
-    return `<div class="empty">Checks are off — meal &amp; water nudges won't fire. `
-      + `Set the <code>self_care</code> coaching key to <code>on</code> to enable them.</div>`;
+  const on = !!(d && d.enabled);
+  const master = `<label class="sc-master"><input type="checkbox" data-sc-master`
+    + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;
+  if (!on) {
+    return `<div class="sc-controls">${master}`
+      + `<span class="sc-hint">Turn on to get meal &amp; water nudges.</span></div>`;
   }
-  const META = {
-    meal: { icon: "🍽️", label: "Meals" },
-    water: { icon: "💧", label: "Water" },
-    meds: { icon: "💊", label: "Meds" },
-  };
-  const chips = (d.checks || []).map((c) => {
-    const m = META[c.key] || { icon: "", label: c.key };
-    if (!c.enabled) {
-      return `<span class="sc-chip sc-off">${m.icon} ${esc(m.label)} <span class="sc-sub">off</span></span>`;
-    }
-    const cls = c.done ? "sc-chip sc-done" : "sc-chip";
-    // A once-a-day check (target 1) reads as done ✓ / not-yet — the "N/1"
-    // fraction adds nothing and looks broken when extra taps push the count
-    // past 1 (e.g. "3/1"). A recurring check (target > 1) shows real progress.
-    const progress = c.target > 1
-      ? `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`
-      : (c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`);
-    const cadence = c.target > 1 ? ` · every ${mins(c.interval_minutes)}` : "";
-    return `<span class="${cls}">${m.icon} ${esc(m.label)} ${progress}`
-      + `<span class="sc-sub">from ${c.start_hour}:00${cadence}</span></span>`;
-  });
-  return `<div class="sc-row">${chips.join("")}</div>`;
+  const rows = (d.checks || []).map(scRow).join("");
+  return `<div class="sc-controls">${master}${rows}</div>`;
 }
 
 function renderOutings(d) {
@@ -1412,7 +1436,13 @@ async function load() {
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
   if (selfcare.status === "fulfilled") {
     $("#c-selfcare-banner").style.display = "";
-    $("#c-selfcare .body").innerHTML = renderSelfCare(selfcare.value);
+    // Don't clobber a control the user is mid-edit on: a poll fires every few
+    // seconds, so skip the re-render while focus is inside the card (a change
+    // commits on blur and re-renders from the response anyway).
+    const card = $("#c-selfcare");
+    if (!card.contains(document.activeElement)) {
+      card.querySelector(".body").innerHTML = renderSelfCare(selfcare.value);
+    }
   } else {
     $("#c-selfcare-banner").style.display = "none";
   }
@@ -1775,6 +1805,27 @@ document.addEventListener("change", (e) => {
   saveLayout();
   expanded.delete(card.id);
   applyCap(card.id);
+});
+
+// Self-care card controls: a change to the master toggle or any per-check field
+// writes a partial config to POST /self-care and re-renders from the response.
+document.addEventListener("change", async (e) => {
+  const inp = e.target.closest("#c-selfcare input");
+  if (!inp) return;
+  let body;
+  if (inp.hasAttribute("data-sc-master")) {
+    body = { enabled: inp.checked };
+  } else {
+    const key = inp.dataset.scCheck, field = inp.dataset.scField;
+    if (!key || !field) return;
+    const val = field === "enabled" ? inp.checked : Number(inp.value);
+    if (field !== "enabled" && !Number.isFinite(val)) return;  // ignore a cleared box
+    body = { checks: { [key]: { [field]: val } } };
+  }
+  try {
+    const status = await post("/self-care", body);
+    $("#c-selfcare .body").innerHTML = renderSelfCare(status);
+  } catch (_) { /* post() surfaced the error; leave the card as-is */ }
 });
 
 // Show the operator-only Update / Restart controls only when the signed-in user

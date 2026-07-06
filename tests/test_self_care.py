@@ -25,6 +25,7 @@ from prefrontal.modules.self_care import (
     adapt_self_care,
     adapt_self_care_interval,
     apply_self_care_action,
+    apply_self_care_config,
     mark_self_care_prompted,
     meal_message,
     self_care_status,
@@ -458,3 +459,62 @@ def test_self_care_endpoint_returns_status(client, store):
     assert body["enabled"] is True
     water = next(c for c in body["checks"] if c["key"] == "water")
     assert water["count"] == 2 and water["target"] == 6
+
+
+# -- apply_self_care_config + POST /self-care --------------------------------
+
+
+def test_apply_config_master_and_per_check_fields(store):
+    apply_self_care_config(
+        store,
+        enabled=True,
+        checks={
+            "meal": {"enabled": False},
+            "water": {"target": 8, "start_hour": 7, "interval_minutes": 60},
+            "meds": {"enabled": True},
+        },
+    )
+    assert store.get_state("self_care") == "on"
+    assert store.get_state("meal_enabled") == "off"
+    assert store.get_state("water_daily_target") == "8"
+    assert store.get_state("water_start_hour") == "7"
+    assert store.get_state("water_interval_minutes") == "60"
+    assert store.get_state("meds_enabled") == "on"
+    # Writes are explicit, so the nightly learner leaves them alone.
+    assert store.all_state()["water_interval_minutes"]["source"] == "explicit"
+
+
+def test_apply_config_is_partial_and_clamps(store):
+    store.set_state("self_care", "on")
+    apply_self_care_config(store, checks={"water": {"target": 0, "start_hour": 30}})
+    assert store.get_state("self_care") == "on"        # untouched (not in payload)
+    assert store.get_state("water_daily_target") == "1"  # clamped up to >= 1
+    assert store.get_state("water_start_hour") == "23"   # clamped into 0..23
+
+
+def test_apply_config_ignores_unknown_check(store):
+    apply_self_care_config(store, checks={"nope": {"enabled": True}})
+    assert store.get_state("nope_enabled") is None
+
+
+def test_self_care_post_requires_auth(client):
+    assert client.post("/self-care", json={"enabled": True}).status_code == 401
+
+
+def test_self_care_post_updates_and_returns_status(client, store):
+    body = {"enabled": True, "checks": {"water": {"target": 5}, "meds": {"enabled": True}}}
+    resp = client.post("/self-care", json=body, headers=_auth())
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["enabled"] is True
+    by_key = {c["key"]: c for c in data["checks"]}
+    assert by_key["water"]["target"] == 5
+    assert by_key["meds"]["enabled"] is True
+    # And it persisted.
+    assert store.get_state("water_daily_target") == "5"
+
+
+def test_self_care_post_rejects_out_of_range(client):
+    # Pydantic bounds (start_hour 0..23, target/interval >= 1) → 422, no write.
+    r = client.post("/self-care", json={"checks": {"water": {"start_hour": 99}}}, headers=_auth())
+    assert r.status_code == 422

@@ -21,7 +21,7 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import utcnow
-from prefrontal.modules.self_care import self_care_status
+from prefrontal.modules.self_care import apply_self_care_config, self_care_status
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
@@ -36,6 +36,7 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
+from prefrontal.webhooks.schemas import SelfCareConfig
 from prefrontal.webhooks.services import RouterServices
 
 
@@ -163,6 +164,25 @@ def build_router(services: RouterServices) -> APIRouter:
         dashboard can show at a glance whether the checks are even on (the
         common "why am I not getting nudges?" cause) and where today stands.
         """
+        return self_care_status(ctx.store, utcnow(), services.settings.timezone)
+
+    @router.post("/self-care", tags=["system"])
+    def set_self_care(
+        payload: SelfCareConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Adjust the signed-in user's self-care settings from the dashboard.
+
+        A partial update — the master switch and/or any check's on/off, daily
+        target, start hour, and cadence — so the card's controls can write the
+        same coaching state that was previously sqlite-only. Returns the fresh
+        status so the caller re-renders from the response.
+        """
+        apply_self_care_config(
+            ctx.store,
+            enabled=payload.enabled,
+            checks={k: v.model_dump(exclude_none=True) for k, v in payload.checks.items()},
+        )
         return self_care_status(ctx.store, utcnow(), services.settings.timezone)
 
     return router
