@@ -318,6 +318,14 @@ class CommitmentCreate(BaseModel):
     start_at: str = Field(description="ISO-8601 start (offset-aware or UTC).")
     end_at: str | None = None
     location: str | None = None
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "Optional free-text detail (e.g. 'bring the insurance card'). "
+            "Consulted when a nudge is built for this commitment, like the "
+            "departure reminder."
+        ),
+    )
     dest_lat: float | None = Field(
         default=None, description="Destination latitude (enables travel estimation)."
     )
@@ -414,6 +422,19 @@ class CommitmentOutcome(BaseModel):
 
     outcome: str | None = Field(
         description="`made` or `missed` (self-report on an elapsed commitment); `null` clears it.",
+    )
+
+
+class CommitmentNotes(BaseModel):
+    """Body of ``POST /commitments/{id}/notes`` — set or clear a commitment's notes."""
+
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "Free-text detail consulted when a nudge is built for this commitment "
+            "(e.g. the departure reminder); `null`/empty clears it. Survives "
+            "calendar re-syncs."
+        ),
     )
 
 
@@ -777,6 +798,19 @@ class TodoDeadlineUpdate(BaseModel):
     deadline: str | None = Field(
         default=None,
         description="New ISO-8601 deadline, or null to clear it entirely.",
+    )
+
+
+class TodoNotesUpdate(BaseModel):
+    """Body of ``POST /todos/{id}/notes`` — set or clear a todo's notes."""
+
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "Free-text detail consulted when a nudge is built for this todo "
+            "(e.g. the 'you keep putting this off' initiation nudge); null/empty "
+            "clears it."
+        ),
     )
 
 

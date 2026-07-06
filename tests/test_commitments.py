@@ -327,6 +327,32 @@ def test_source_url_round_trips_and_surfaces_as_url(store):
     assert got["url"] == "https://example.com/event/1"  # explicit wins over derived
 
 
+def test_commitment_notes_set_on_insert_and_survive_resync(store):
+    """A note set on insert persists and is not clobbered by a calendar re-sync."""
+    cid, _ = store.upsert_commitment(
+        title="Dentist",
+        start_at=to_utc(_iso(60)),
+        external_id="personal:d1",
+        notes="bring the insurance card",
+    )
+    assert store.get_commitment(cid)["notes"] == "bring the insurance card"
+    # A re-sync (the update branch) leaves the user's note untouched.
+    store.upsert_commitment(
+        title="Dentist (moved)", start_at=to_utc(_iso(90)), external_id="personal:d1"
+    )
+    assert store.get_commitment(cid)["notes"] == "bring the insurance card"
+
+
+def test_set_commitment_notes_updates_and_clears(store):
+    """set_commitment_notes edits the note; blank/None clears it; unknown id → None."""
+    cid, _ = store.upsert_commitment(title="Dentist", start_at=to_utc(_iso(60)))
+    assert store.set_commitment_notes(cid, "  bring the card  ")["notes"] == "bring the card"
+    assert store.set_commitment_notes(cid, "   ")["notes"] is None  # whitespace clears
+    assert store.set_commitment_notes(cid, "later")["notes"] == "later"
+    assert store.set_commitment_notes(cid, None)["notes"] is None
+    assert store.set_commitment_notes(999999, "x") is None
+
+
 def test_upcoming_commitment_url_falls_back_to_derived(store):
     """Without a source_url, a Google commitment exposes a derived search link."""
     store.upsert_commitment(
@@ -624,6 +650,40 @@ def test_commitment_outcome_endpoint(client):
                        json={"outcome": "nope"}).status_code == 422
     assert client.post("/commitments/99999/outcome", headers=_auth(),
                        json={"outcome": "made"}).status_code == 404
+
+
+def test_commitment_notes_endpoint(client):
+    """POST /commitments/{id}/notes sets/clears a note; unknown id → 404; and the
+    note flows into the departure nudge for that commitment."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "Dentist", "start_at": _iso(8), "external_id": "personal:d",
+             "lead_minutes": 5},
+        ]},
+    )
+    cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
+
+    r = client.post(
+        f"/commitments/{cid}/notes", headers=_auth(),
+        json={"notes": "  bring the insurance card  "},
+    )
+    assert r.status_code == 200
+    assert r.json()["commitment"]["notes"] == "bring the insurance card"
+    # Surfaces on the commitment list.
+    listed = client.get("/commitments", headers=_auth()).json()["commitments"][0]
+    assert listed["notes"] == "bring the insurance card"
+
+    # The departure reminder for this commitment consults the note.
+    dep = client.post("/webhooks/departure/check", headers=_auth(), json={}).json()
+    assert dep["fire"] and "Note: bring the insurance card" in dep["message"]
+
+    # Clearing works; unknown id → 404.
+    assert client.post(f"/commitments/{cid}/notes", headers=_auth(),
+                       json={"notes": None}).json()["commitment"]["notes"] is None
+    assert client.post("/commitments/99999/notes", headers=_auth(),
+                       json={"notes": "x"}).status_code == 404
 
 
 def test_kind_feedback_latest_wins(store):

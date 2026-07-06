@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from prefrontal.coaching import CoachContext, Cue
+from prefrontal.coaching import CoachContext, Cue, note_hint
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -173,7 +173,10 @@ class TaskParalysisModule(Module):
         worst-avoided open todo (``avoided_todos`` — age × priority, honest
         prioritization over the shiny thing) and reframe it as one <5-minute first
         action, preferring the stored decomposition's first step when it exists.
-        One ``nudge`` cue, deduped per todo so it won't nag every tick.
+        Any note the user attached to the todo is consulted and folded onto the
+        end (:func:`~prefrontal.coaching.note_hint`), so the context they left
+        ("Note: needs the account number") rides along with the nudge. One
+        ``nudge`` cue, deduped per todo so it won't nag every tick.
         """
         avoided = avoided_todos(store.open_todos(), ctx.now)
         if not avoided:
@@ -189,7 +192,7 @@ class TaskParalysisModule(Module):
         )
         text = (
             f"You keep putting off “{todo['title']}” ({round(top['days_open'])}d and "
-            f"counting). {opener}"
+            f"counting). {opener}{note_hint(todo.get('notes'))}"
         )
         return [
             Cue(

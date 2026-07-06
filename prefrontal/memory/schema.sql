@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS commitments (
     start_at     DATETIME NOT NULL,                 -- stored normalized to UTC
     end_at       DATETIME,
     location     TEXT,                              -- free-text location (e.g. "123 Main St")
+    notes        TEXT,                              -- user free-text detail (e.g. "bring the insurance card"); consulted when a nudge is built for this commitment (e.g. the departure reminder). Like `hidden`/`outcome`, a user field never clobbered by a calendar re-sync.
     source_url   TEXT,                              -- deeplink to the source event/email (verbatim), if the sync supplies one
     dest_lat     REAL,                              -- optional destination coordinates, used to
     dest_lon     REAL,                              --   estimate travel time for departure reminders

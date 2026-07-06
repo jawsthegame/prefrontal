@@ -25,6 +25,7 @@ class ScheduleRepo(Repo):
         external_id: str | None = None,
         end_at: str | None = None,
         location: str | None = None,
+        notes: str | None = None,
         source_url: str | None = None,
         dest_lat: float | None = None,
         dest_lon: float | None = None,
@@ -47,6 +48,11 @@ class ScheduleRepo(Repo):
             external_id: Calendar event id, or ``None`` for a manual entry.
             end_at: Optional UTC end timestamp.
             location: Optional free-text location.
+            notes: Optional user free-text detail, consulted when a nudge is built
+                for this commitment. Set only on insert — a calendar re-sync
+                (the update branch) never clobbers it, so a user note survives the
+                same way ``hidden``/``outcome`` do (edit it via
+                :meth:`set_commitment_notes`).
             source_url: Optional deeplink to the source event/email (stored
                 verbatim and surfaced in the dashboard).
             dest_lat: Optional destination latitude (enables travel-time
@@ -81,11 +87,12 @@ class ScheduleRepo(Repo):
 
         cur = self.conn.execute(
             "INSERT INTO commitments (user_id, external_id, title, start_at, end_at, "
-            "location, source_url, dest_lat, dest_lon, lead_minutes, hardness, "
+            "location, notes, source_url, dest_lat, dest_lon, lead_minutes, hardness, "
             "source, kind, kind_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self._uid(), external_id, title, start_at, end_at, location, source_url,
-             dest_lat, dest_lon, lead_minutes, hardness, source, kind, kind_source),
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self._uid(), external_id, title, start_at, end_at, location, notes,
+             source_url, dest_lat, dest_lon, lead_minutes, hardness, source, kind,
+             kind_source),
         )
         self.conn.commit()
         return int(cur.lastrowid), True
@@ -202,6 +209,27 @@ class ScheduleRepo(Repo):
             "outcome_at = CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, "
             "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
             (outcome, outcome, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
+    def set_commitment_notes(
+        self, commitment_id: int, notes: str | None
+    ) -> dict[str, Any] | None:
+        """Set (or clear) a commitment's free-text notes; return the updated row.
+
+        The note is a user field — like :meth:`set_commitment_hidden`'s ``hidden``
+        and :meth:`set_commitment_outcome`'s ``outcome``, it is deliberately *not*
+        touched by :meth:`upsert_commitment`'s re-sync path, so a calendar poll
+        never clobbers "bring the insurance card". Passing ``None``/empty clears
+        it. The note is consulted when a nudge is built for this commitment (e.g.
+        the departure reminder). Returns ``None`` if no such commitment exists.
+        """
+        clean = notes.strip() if isinstance(notes, str) and notes.strip() else None
+        self.conn.execute(
+            "UPDATE commitments SET notes = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ?",
+            (clean, commitment_id, self._uid()),
         )
         self.conn.commit()
         return self.get_commitment(commitment_id)

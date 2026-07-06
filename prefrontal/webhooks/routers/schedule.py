@@ -99,6 +99,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentCreate,
     CommitmentHidden,
     CommitmentKind,
+    CommitmentNotes,
     CommitmentOutcome,
     ConflictDismiss,
     PlaceCreate,
@@ -772,6 +773,28 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
             )
         updated = memory.set_commitment_outcome(commitment_id, outcome)
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/notes", tags=["schedule"])
+    def set_commitment_notes(
+        commitment_id: int,
+        payload: CommitmentNotes,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) a commitment's free-text notes.
+
+        The note is consulted when a nudge is built for this commitment — the
+        departure reminder folds it on as a ``Note: …`` hint ("leave now for the
+        dentist — Note: bring the insurance card"). ``null``/empty clears it. Like
+        the ``hidden``/``outcome`` flags it's a user field kept across calendar
+        re-syncs. Returns the updated row (404 if no such commitment).
+        """
+        memory = ctx.store
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_notes(commitment_id, payload.notes)
         return {"commitment": updated}
 
     @router.get("/briefing", tags=["schedule"])

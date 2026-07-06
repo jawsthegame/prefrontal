@@ -129,10 +129,17 @@ ASSISTANT_SYSTEM = (
     '- {"op":"set_estimate","todo_id":int,"estimate_minutes":int}\n'
     '- {"op":"rename_todo","todo_id":int,"title":str}\n'
     '- {"op":"set_deadline","todo_id":int,"deadline":"YYYY-MM-DD" or null}\n'
+    '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
-    '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?}\n'
+    '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
+    '- {"op":"set_commitment_notes","commitment_id":int,"notes":str or null}\n'
     '- {"op":"dismiss_conflict","key":str}\n'
+    "A note is free-text detail attached to a todo or commitment (\"bring the "
+    "insurance card\", \"needs the account number\"). It rides along with any "
+    "nudge or reminder about that item, so use set_todo_notes / "
+    "set_commitment_notes when the user wants to remember something *about* a "
+    'task or event (notes:null clears it).\n'
     "An outing is a trip out with a stated 'back in N minutes' window "
     "(time_window_minutes) that started at start_at. You can fix what it was for, "
     "adjust the window (e.g. 'give me 15 more minutes' — add to the outing's "
@@ -180,10 +187,11 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
     """Build the compact current-state view handed to the model.
 
     Only the fields needed for reference-resolution are included, to keep the
-    prompt small: open todos (id/title/priority/estimate/deadline), upcoming
-    commitments (id/title/start/location), and dismissable possible-conflict
-    keys. Ids come straight from the store, so the model can only target things
-    that actually exist.
+    prompt small: open todos (id/title/priority/estimate/deadline/notes), upcoming
+    commitments (id/title/start/location/notes), and dismissable possible-conflict
+    keys. ``notes`` is carried so the model can reference or clear an existing note
+    ("drop the note on the dentist"). Ids come straight from the store, so the
+    model can only target things that actually exist.
 
     Args:
         memory: A **scoped** store (one user).
@@ -199,6 +207,7 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
             "priority": t.get("priority"),
             "estimate_minutes": t.get("estimate_minutes"),
             "deadline": t.get("deadline"),
+            "notes": t.get("notes"),
         }
         for t in memory.open_todos()
     ]
@@ -208,6 +217,7 @@ def build_snapshot(memory: Any, *, now: datetime | None = None) -> dict[str, Any
             "title": c.get("title"),
             "start_at": c.get("start_at"),
             "location": c.get("location"),
+            "notes": c.get("notes"),
         }
         for c in memory.upcoming_commitments(limit=25)
     ]
@@ -641,6 +651,46 @@ def _v_set_deadline(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -
     )
 
 
+def _note_or_none(value: Any) -> str | None:
+    """Coerce a model-supplied note to trimmed text, or ``None`` to clear it.
+
+    A blank/whitespace-only value clears the note (same as an explicit ``null``),
+    so "remove the note on the dentist" and an empty string both land as ``None``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, (str, int, float)):
+        raise _ActionError("notes must be text")
+    text = str(value).strip()
+    return text or None
+
+
+def _v_set_todo_notes(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    notes = _note_or_none(action.get("notes"))
+    if notes is None:
+        return ValidatedAction(
+            op, {"todo_id": tid, "notes": None}, f"Clear note on “{title}”"
+        )
+    return ValidatedAction(
+        op, {"todo_id": tid, "notes": notes}, f"Note on “{title}”: {notes}"
+    )
+
+
+def _v_set_commitment_notes(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    cid, title = _require_commitment(action, snapshot)
+    notes = _note_or_none(action.get("notes"))
+    if notes is None:
+        return ValidatedAction(
+            op, {"commitment_id": cid, "notes": None}, f"Clear note on “{title}”"
+        )
+    return ValidatedAction(
+        op, {"commitment_id": cid, "notes": notes}, f"Note on “{title}”: {notes}"
+    )
+
+
 def _v_add_commitment(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     title = _as_title(action.get("title"))
     start_at = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
@@ -649,6 +699,9 @@ def _v_add_commitment(op: str, action: dict[str, Any], snapshot: dict[str, Any])
         params["end_at"] = _nonblank(action.get("end_at"), "end_at")
     if action.get("location") is not None and str(action.get("location")).strip():
         params["location"] = str(action["location"]).strip()
+    notes = _note_or_none(action.get("notes"))
+    if notes is not None:
+        params["notes"] = notes
     return ValidatedAction(op, params, f"Add commitment: “{title}” at {start_at}")
 
 
@@ -845,8 +898,10 @@ _VALIDATORS: dict[
     "set_estimate": _v_set_estimate,
     "rename_todo": _v_rename_todo,
     "set_deadline": _v_set_deadline,
+    "set_todo_notes": _v_set_todo_notes,
     "add_commitment": _v_add_commitment,
     "cancel_commitment": _v_cancel_commitment,
+    "set_commitment_notes": _v_set_commitment_notes,
     "dismiss_conflict": _v_dismiss_conflict,
     "rename_outing": _v_rename_outing,
     "set_outing_window": _v_set_outing_window,
@@ -998,6 +1053,8 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "set_deadline":
             deadline = _to_utc_or_none(p.get("deadline"), tz)
             result["ok"] = memory.update_todo_deadline(p["todo_id"], deadline)
+        elif op == "set_todo_notes":
+            result["ok"] = memory.set_todo_notes(p["todo_id"], p.get("notes"))
         elif op == "add_commitment":
             start_at = to_utc(p["start_at"], default_tz=tz)
             end_at = _to_utc_or_none(p.get("end_at"), tz)
@@ -1006,11 +1063,16 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
                 start_at=start_at,
                 end_at=end_at,
                 location=p.get("location"),
+                notes=p.get("notes"),
                 source="manual",
             )
             result.update(ok=True, detail="added" if created else "updated")
         elif op == "cancel_commitment":
             result["ok"] = memory.cancel_commitment(p["commitment_id"])
+        elif op == "set_commitment_notes":
+            result["ok"] = memory.set_commitment_notes(
+                p["commitment_id"], p.get("notes")
+            ) is not None
         elif op == "dismiss_conflict":
             memory.dismiss_conflict(p["key"])
             result["ok"] = True

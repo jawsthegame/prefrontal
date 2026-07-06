@@ -376,7 +376,16 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
 
     Returns:
         The message string. Empty for the ``none`` level.
+
+    The commitment's ``notes`` (if any) are consulted and folded onto the end as
+    a ``Note: …`` hint (:func:`prefrontal.coaching.note_hint`), so a reminder that
+    gets you out the door also carries the thing you'd otherwise forget to bring
+    ("leave now for the dentist — Note: bring the insurance card").
     """
+    # Local import keeps departure.py free of a module-load dependency on coaching
+    # (which pulls in scheduling), matching the lazy imports elsewhere in this file.
+    from prefrontal.coaching import note_hint
+
     title = plan.commitment.get("title") or "your next commitment"
     location = plan.commitment.get("location")
     where = f" ({location})" if location else ""
@@ -385,6 +394,7 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
         if plan.travel_minutes is not None
         else ""
     )
+    note = note_hint(plan.commitment.get("notes"))
     greeting = f"Hey {name}, " if name else ""
     minutes = plan.minutes_until_leave
 
@@ -397,29 +407,29 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
         lead = (start - leave_by).total_seconds() / 60.0
         mins_to_start = max(0, round(lead + minutes))
         if mins_to_start <= 0:
-            return f"{greeting}{title}{where} is starting now."
+            return f"{greeting}{title}{where} is starting now.{note}"
         return (
             f"{greeting}{title}{where} starts in about {mins_to_start} min — "
-            "you're already where you need to be."
+            f"you're already where you need to be.{note}"
         )
 
     if plan.level == "heads_up":
         return (
             f"{greeting}heads up: {title}{where} is coming up — plan to leave in "
-            f"about {round(minutes)} min{travel}."
+            f"about {round(minutes)} min{travel}.{note}"
         )
     if plan.level == "soon":
         return (
             f"{greeting}time to get ready — leave for {title}{where} in about "
-            f"{round(minutes)} min{travel}."
+            f"{round(minutes)} min{travel}.{note}"
         )
     if plan.level == "go":
         if minutes < 0:
             return (
                 f"{greeting}head out now for {title}{where} — you're about "
-                f"{round(-minutes)} min past your leave time."
+                f"{round(-minutes)} min past your leave time.{note}"
             )
-        return f"{greeting}leave now for {title}{where}{travel}."
+        return f"{greeting}leave now for {title}{where}{travel}.{note}"
     return ""
 
 
