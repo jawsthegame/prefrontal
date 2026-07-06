@@ -1,41 +1,75 @@
-// Prefrontal Desktop — a minimal macOS Electron wrapper.
+// Prefrontal Desktop — a minimal Electron wrapper.
 //
-// It does three things:
-//   1. Starts the Prefrontal backend (`prefrontal serve`) as a child process,
-//      unless one is already running (e.g. the launchd agent from deploy/).
-//   2. Waits for the server's /health probe, then loads /dashboard in a window.
-//   3. Lives in the menu bar (tray) with Open / Restart / Logs / Quit, and
-//      shuts the backend down cleanly on quit.
+// Two ways to use it:
 //
-// Everything the dashboard needs (token prompt, polling, panic overlay) already
-// lives in the served HTML — this wrapper only manages the process + window.
+//   • Remote (laptop → mini): point it at your always-on server's URL, e.g.
+//     http://mac-mini.tailnet.ts.net:8000. It just shows that dashboard; it
+//     never starts a backend. This is the common case for a laptop.
+//
+//   • Local (on the mini itself): leave the URL at http://127.0.0.1:8000 and it
+//     will start `prefrontal serve` for you (or attach to a copy that's already
+//     running, e.g. the launchd agent in deploy/).
+//
+// The server URL is remembered between launches and editable from the menu-bar
+// icon ("Set Server URL…"). All the actual UI is the self-contained page the
+// backend serves at /dashboard — this wrapper only manages the window and, when
+// local, the server process.
 
-const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, dialog, nativeImage, ipcMain } =
+  require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
 // ---------------------------------------------------------------------------
-// Configuration (all overridable via env so you don't have to touch the code).
+// Config (persisted to userData/config.json, overridable via env)
 // ---------------------------------------------------------------------------
 
-// The repo root is the parent of this desktop/ folder by default, so the
-// backend's WorkingDirectory is the repo and its `.env` gets loaded. Override
-// with PREFRONTAL_DIR if your checkout lives elsewhere.
-const REPO_DIR = process.env.PREFRONTAL_DIR || path.resolve(__dirname, '..');
+const DEFAULT_URL = 'http://127.0.0.1:8000';
+const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
 
-// Prefer the repo's virtualenv binary (matches deploy/*.plist and the
-// deployment runbook), fall back to whatever `prefrontal` is on PATH.
+function loadConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveConfig(patch) {
+  const next = { ...loadConfig(), ...patch };
+  fs.mkdirSync(path.dirname(CONFIG_PATH()), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH(), JSON.stringify(next, null, 2));
+  return next;
+}
+
+// Env wins over the saved value wins over the default, so you can pin a URL for
+// a one-off launch without changing the stored setting.
+function serverUrl() {
+  const raw = (process.env.PREFRONTAL_URL || loadConfig().serverUrl || DEFAULT_URL).trim();
+  return raw.replace(/\/+$/, ''); // strip trailing slash
+}
+
+const DASHBOARD_URL = () => `${serverUrl()}/dashboard`;
+
+// We only manage a backend process when the target is this machine's loopback.
+function isLocal() {
+  try {
+    const h = new URL(serverUrl()).hostname;
+    return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+  } catch {
+    return false;
+  }
+}
+
+// Where the local backend (loopback mode only) lives.
+const REPO_DIR = process.env.PREFRONTAL_DIR || path.resolve(__dirname, '..');
 const VENV_BIN = path.join(REPO_DIR, '.venv', 'bin', 'prefrontal');
 const PREFRONTAL_BIN =
   process.env.PREFRONTAL_BIN || (fs.existsSync(VENV_BIN) ? VENV_BIN : 'prefrontal');
 
-const PORT = parseInt(process.env.PREFRONTAL_PORT || '8000', 10);
-// The window always talks to the loopback address even though the server may
-// bind 0.0.0.0 (so your phone can still reach it over Tailscale).
-const BASE_URL = `http://127.0.0.1:${PORT}`;
-const DASHBOARD_URL = `${BASE_URL}/dashboard`;
 const ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 
 // ---------------------------------------------------------------------------
@@ -43,9 +77,10 @@ const ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
 // ---------------------------------------------------------------------------
 
 let mainWindow = null;
+let settingsWindow = null;
 let tray = null;
-let serverProc = null; // the child we spawned (null if one was already running)
-const logBuffer = []; // recent stdout/stderr lines, shown via "View logs…"
+let serverProc = null; // the child we spawned (null if remote or already running)
+const logBuffer = [];
 
 function log(line) {
   const stamped = `${new Date().toISOString()} ${line}`;
@@ -56,14 +91,20 @@ function log(line) {
 }
 
 // ---------------------------------------------------------------------------
-// Backend lifecycle
+// Health probe (works for http and https, remote or local)
 // ---------------------------------------------------------------------------
 
-// Resolves true if /health answers within `timeoutMs`.
-function probeHealth(timeoutMs = 1500) {
+function probeHealth(timeoutMs = 2500) {
   return new Promise((resolve) => {
-    const req = http.get(`${BASE_URL}/health`, { timeout: timeoutMs }, (res) => {
-      res.resume(); // drain
+    let url;
+    try {
+      url = new URL(`${serverUrl()}/health`);
+    } catch {
+      return resolve(false);
+    }
+    const lib = url.protocol === 'https:' ? https : http;
+    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
+      res.resume();
       resolve(res.statusCode === 200);
     });
     req.on('timeout', () => req.destroy());
@@ -71,41 +112,41 @@ function probeHealth(timeoutMs = 1500) {
   });
 }
 
-// Polls /health until it comes up or we give up.
-async function waitForHealth(totalMs = 30000, everyMs = 500) {
+async function waitForHealth(totalMs, everyMs = 500) {
   const deadline = Date.now() + totalMs;
-  while (Date.now() < deadline) {
+  for (;;) {
     if (await probeHealth()) return true;
+    if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, everyMs));
   }
-  return false;
 }
 
+// ---------------------------------------------------------------------------
+// Local backend lifecycle (loopback mode only)
+// ---------------------------------------------------------------------------
+
 function startBackend() {
-  log(`Starting backend: ${PREFRONTAL_BIN} serve --port ${PORT} (cwd: ${REPO_DIR})`);
-  const child = spawn(PREFRONTAL_BIN, ['serve', '--port', String(PORT)], {
+  const port = new URL(serverUrl()).port || '8000';
+  log(`Starting backend: ${PREFRONTAL_BIN} serve --port ${port} (cwd: ${REPO_DIR})`);
+  const child = spawn(PREFRONTAL_BIN, ['serve', '--port', String(port)], {
     cwd: REPO_DIR,
     env: process.env,
   });
-
   child.stdout.on('data', (d) => log(`[serve] ${d.toString().trimEnd()}`));
   child.stderr.on('data', (d) => log(`[serve] ${d.toString().trimEnd()}`));
-
   child.on('error', (err) => {
     log(`Failed to spawn backend: ${err.message}`);
     dialog.showErrorBox(
       'Could not start Prefrontal',
       `Tried to run:\n  ${PREFRONTAL_BIN} serve\n\n${err.message}\n\n` +
-        `Set PREFRONTAL_BIN to your prefrontal executable, or PREFRONTAL_DIR ` +
-        `to your checkout, then relaunch.`
+        `If Prefrontal runs on another machine, use "Set Server URL…" in the ` +
+        `menu-bar icon to point at it instead.`
     );
   });
-
   child.on('exit', (code, signal) => {
     log(`Backend exited (code=${code}, signal=${signal})`);
     serverProc = null;
   });
-
   serverProc = child;
 }
 
@@ -117,14 +158,19 @@ function stopBackend() {
   }
 }
 
-// Ensure a backend is reachable: reuse an existing one, otherwise spawn ours.
+// Make sure the target is reachable. Remote: just wait. Local: attach if a
+// server is already up, otherwise spawn one and wait.
 async function ensureBackend() {
   if (await probeHealth()) {
-    log('A Prefrontal server is already running — attaching to it.');
+    log(`Server reachable at ${serverUrl()} — attaching.`);
     return true;
   }
+  if (!isLocal()) {
+    log(`Remote server ${serverUrl()} not reachable yet; will keep polling.`);
+    return waitForHealth(10000);
+  }
   startBackend();
-  return waitForHealth();
+  return waitForHealth(30000);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,17 +195,15 @@ function createWindow() {
   mainWindow.loadFile('loading.html');
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
-  // Open external links (docs, etc.) in the system browser, not the app window.
+  const origin = serverUrl();
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(BASE_URL)) {
+    if (!url.startsWith(origin)) {
       shell.openExternal(url);
       return { action: 'deny' };
     }
     return { action: 'allow' };
   });
 
-  // Closing the window hides it to the tray instead of quitting (macOS-style),
-  // so the backend keeps running. Quit from the tray or Cmd+Q.
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
       e.preventDefault();
@@ -168,36 +212,61 @@ function createWindow() {
   });
 }
 
-function showDashboard() {
+async function connectAndShow() {
   if (!mainWindow) createWindow();
-  mainWindow.loadURL(DASHBOARD_URL);
+  mainWindow.loadFile('loading.html');
+  const ok = await ensureBackend();
+  if (ok) {
+    mainWindow.loadURL(DASHBOARD_URL());
+  } else {
+    mainWindow.loadFile('loading.html', { hash: 'error' });
+  }
   mainWindow.show();
   mainWindow.focus();
+}
+
+function createSettingsWindow() {
+  if (settingsWindow) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 460,
+    height: 300,
+    resizable: false,
+    title: 'Prefrontal — Server',
+    icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  });
+  settingsWindow.loadFile('settings.html');
+  settingsWindow.on('closed', () => (settingsWindow = null));
 }
 
 function createTray() {
   let image = nativeImage.createFromPath(ICON_PATH);
   if (!image.isEmpty()) {
     image = image.resize({ width: 18, height: 18 });
-    image.setTemplateImage(true); // render as a monochrome menu-bar glyph
+    image.setTemplateImage(true);
   }
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
   tray.setToolTip('Prefrontal');
 
   const menu = Menu.buildFromTemplate([
-    { label: 'Open Dashboard', click: showDashboard },
-    {
-      label: 'Open in Browser',
-      click: () => shell.openExternal(DASHBOARD_URL),
-    },
+    { label: 'Open Dashboard', click: () => connectAndShow() },
+    { label: 'Open in Browser', click: () => shell.openExternal(DASHBOARD_URL()) },
     { type: 'separator' },
+    { label: 'Set Server URL…', click: createSettingsWindow },
     {
-      label: 'Restart Server',
+      label: 'Restart Local Server',
+      // Only meaningful when we manage the process ourselves.
+      enabled: isLocal(),
       click: async () => {
         stopBackend();
         await new Promise((r) => setTimeout(r, 500));
-        const ok = await ensureBackend();
-        if (ok && mainWindow) mainWindow.loadURL(DASHBOARD_URL);
+        await connectAndShow();
       },
     },
     { label: 'View Logs…', click: showLogs },
@@ -211,29 +280,46 @@ function createTray() {
     },
   ]);
   tray.setContextMenu(menu);
-  tray.on('click', showDashboard);
+  tray.on('click', () => mainWindow && mainWindow.show());
 }
 
 function showLogs() {
   dialog.showMessageBox({
     type: 'info',
-    title: 'Prefrontal — recent logs',
-    message: `Backend: ${PREFRONTAL_BIN}`,
+    title: 'Prefrontal — status',
+    message: `Server: ${serverUrl()}${isLocal() ? ' (local)' : ' (remote)'}`,
     detail: logBuffer.slice(-40).join('\n') || '(no output yet)',
     buttons: ['Close'],
   });
 }
 
 // ---------------------------------------------------------------------------
+// IPC — the settings window reads/writes the server URL through preload
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('get-server-url', () => serverUrl());
+ipcMain.handle('set-server-url', async (_evt, url) => {
+  const clean = String(url || '').trim();
+  if (!/^https?:\/\//i.test(clean)) {
+    return { ok: false, error: 'URL must start with http:// or https://' };
+  }
+  saveConfig({ serverUrl: clean.replace(/\/+$/, '') });
+  log(`Server URL set to ${serverUrl()}`);
+  if (settingsWindow) settingsWindow.close();
+  // Rebuild the tray so "Restart Local Server" enable-state tracks the new URL.
+  if (tray) createTray();
+  await connectAndShow();
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-// Single-instance: focus the existing window instead of launching a second app
-// (which would collide on the port).
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', showDashboard);
+  app.on('second-instance', () => mainWindow && mainWindow.show());
 
   app.whenReady().then(async () => {
     if (process.platform === 'darwin' && fs.existsSync(ICON_PATH)) {
@@ -241,14 +327,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     createTray();
-
-    const ok = await ensureBackend();
-    if (ok) {
-      mainWindow.loadURL(DASHBOARD_URL);
-    } else {
-      log('Backend did not become healthy in time.');
-      mainWindow.loadFile('loading.html', { hash: 'error' });
-    }
+    await connectAndShow();
   });
 
   app.on('activate', () => {
@@ -256,8 +335,7 @@ if (!app.requestSingleInstanceLock()) {
     else createWindow();
   });
 
-  // Keep running in the tray when all windows close.
-  app.on('window-all-closed', () => {});
+  app.on('window-all-closed', () => {}); // stay alive in the tray
 
   app.on('before-quit', () => {
     app.isQuitting = true;

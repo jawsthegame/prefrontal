@@ -21,6 +21,7 @@
       "main.js",
       "preload.js",
       "loading.html",
+      "settings.html",
       "assets/**"
     ],
     "mac": {

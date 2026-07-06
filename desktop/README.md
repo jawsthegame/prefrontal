@@ -1,80 +1,91 @@
-# Prefrontal Desktop (macOS)
+# Prefrontal Desktop
 
-A minimal [Electron](https://www.electronjs.org/) wrapper that runs Prefrontal
-as a native-feeling Mac app: it starts the `prefrontal serve` backend, waits for
-it to come up, and shows the dashboard in a window with a menu-bar icon.
+A minimal [Electron](https://www.electronjs.org/) wrapper that shows the
+Prefrontal dashboard as a native-feeling desktop app with a menu-bar icon.
+
+It works two ways:
+
+- **Remote (the common case): laptop → Mac mini.** Point it at your always-on
+  server's URL and it just shows that dashboard. It does **not** run a backend —
+  Prefrontal keeps running on the mini.
+- **Local: on the mini itself.** Leave the URL at `http://127.0.0.1:8000` and it
+  starts `prefrontal serve` for you (or attaches to a copy already running, e.g.
+  the launchd agent in [`../deploy/`](../deploy/)).
 
 It's deliberately thin. All the UI (token prompt, polling, panic overlay) is the
-self-contained page the backend already serves at `/dashboard` — this wrapper
-only manages the server process and the window.
+self-contained page the backend serves at `/dashboard` — the dashboard makes
+same-origin requests, so pointing the window at the mini makes everything talk
+to the mini, with your token stored per-server.
 
 ```
 desktop/
-├── main.js        # process lifecycle, window, tray, health probe
-├── preload.js     # (empty) keeps contextIsolation on
-├── loading.html   # boot / error splash shown until /health is green
+├── main.js        # window, tray, health probe, (local) process lifecycle
+├── preload.js     # tiny bridge for the settings window
+├── loading.html   # boot / error splash
+├── settings.html  # "Set Server URL…" panel
 ├── assets/icon.png
 └── package.json
 ```
 
-## Prerequisites
+## Run it on your laptop (remote → mini)
 
-1. **Prefrontal installed** in the repo (one directory up):
-
-   ```bash
-   cd ..                       # repo root
-   python3.12 -m venv .venv
-   source .venv/bin/activate
-   pip install -e .
-   prefrontal init-db
-   prefrontal user add me --operator   # prints your dashboard token
-   ```
-
-   The wrapper looks for `../.venv/bin/prefrontal` first, then falls back to
-   `prefrontal` on your `PATH`.
-
-2. **Node.js** (for Electron itself):
-
-   ```bash
-   cd desktop
-   npm install
-   ```
-
-## Run
+You don't need Python or the Prefrontal CLI on the laptop — just Node.js:
 
 ```bash
+cd desktop
+npm install
 npm start
 ```
 
-On launch it will:
+Then set where your server lives:
 
-1. Probe `http://127.0.0.1:8000/health`. If something is already serving (e.g.
-   the launchd agent in [`../deploy/`](../deploy/)), it attaches to that instead
-   of starting a second copy.
-2. Otherwise spawn `prefrontal serve` with the repo as its working directory (so
-   the repo's `.env` is loaded).
-3. Load `/dashboard` once healthy. The dashboard prompts once for your
-   `X-Prefrontal-Token` and remembers it.
+1. Click the menu-bar icon → **Set Server URL…**
+2. Enter your mini's address, e.g. `http://mac-mini.tailnet.ts.net:8000`
+   (Tailscale hostname) or `http://192.168.1.50:8000` (LAN IP).
+3. **Save & Connect.** The dashboard loads and prompts once for your
+   `X-Prefrontal-Token`.
 
-Closing the window hides it to the menu bar (the server keeps running). Use the
-menu-bar icon to **Open Dashboard**, **Restart Server**, **View Logs…**, or
-**Quit**.
+The URL is remembered between launches. You can also pin it for a launch with an
+env var: `PREFRONTAL_URL=http://mac-mini.tailnet.ts.net:8000 npm start`.
+
+> The mini must be reachable from the laptop. Over Tailscale that's automatic;
+> on a LAN make sure `prefrontal serve` binds `0.0.0.0` (it does by default) and
+> the firewall allows the port.
+
+## Run it on the mini (local)
+
+Leave the URL at the default `http://127.0.0.1:8000`. The app will start the
+backend itself, looking for `../.venv/bin/prefrontal` first, then `prefrontal`
+on `PATH`. This assumes the CLI is installed in the repo:
+
+```bash
+cd ..                        # repo root
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e . && prefrontal init-db && prefrontal user add me --operator
+```
+
+For a truly always-on host that survives reboots, the launchd agent in
+[`../deploy/`](../deploy/com.morningstatic.prefrontal.plist) is still the
+recommended way to run the server — this app happily **attaches** to it rather
+than starting a second copy.
+
+## Menu-bar actions
+
+Closing the window hides it to the tray (nothing is stopped). From the icon:
+**Open Dashboard**, **Open in Browser**, **Set Server URL…**, **Restart Local
+Server** (local mode only), **View Logs…**, **Quit**.
 
 ## Configuration
 
-All optional — sensible defaults are derived from the checkout layout.
+All optional. Env wins over the saved setting wins over the default.
 
-| Env var           | Default                       | Purpose                                  |
-| ----------------- | ----------------------------- | ---------------------------------------- |
-| `PREFRONTAL_DIR`  | parent of `desktop/`          | Backend working dir (must hold `.env`)   |
-| `PREFRONTAL_BIN`  | `$DIR/.venv/bin/prefrontal`   | Path to the `prefrontal` executable      |
-| `PREFRONTAL_PORT` | `8000`                        | Port the server binds / the window loads |
+| Env var           | Default                     | Purpose                                       |
+| ----------------- | --------------------------- | --------------------------------------------- |
+| `PREFRONTAL_URL`  | saved value / `127.0.0.1:8000` | Server the window connects to              |
+| `PREFRONTAL_DIR`  | parent of `desktop/`        | Local backend working dir (must hold `.env`)  |
+| `PREFRONTAL_BIN`  | `$DIR/.venv/bin/prefrontal` | Path to the `prefrontal` executable (local)   |
 
-Example:
-
-```bash
-PREFRONTAL_DIR=~/prefrontal PREFRONTAL_PORT=8123 npm start
-```
+`PREFRONTAL_DIR` / `PREFRONTAL_BIN` only matter in local mode.
 
 ## Packaging a `.app` / `.dmg`
 
@@ -82,12 +93,10 @@ PREFRONTAL_DIR=~/prefrontal PREFRONTAL_PORT=8123 npm start
 npm run dist
 ```
 
-This builds with `electron-builder` into `dist/`. Note: it bundles the Electron
-shell, **not** the Python backend — the packaged app still expects `prefrontal`
-to be installed on the machine (via the venv or `PATH`). For a fully always-on
-setup that survives reboots, the launchd agent in
-[`../deploy/`](../deploy/com.morningstatic.prefrontal.plist) is still the
-recommended way to run the server; this app can then just attach to it.
+Builds with `electron-builder` into `dist/`. This bundles the Electron shell
+only — in local mode the packaged app still expects `prefrontal` installed on
+the machine. For a laptop pointed at a remote mini, the packaged app is fully
+self-sufficient.
 
 > The icon is a 256×256 PNG. For a crisper packaged app, drop a 512×512 (or
-> `.icns`) at `assets/icon.png` before running `npm run dist`.
+> `.icns`) at `assets/icon.png` before `npm run dist`.
