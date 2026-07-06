@@ -45,7 +45,7 @@ from typing import Any
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import local_hour_of
+from prefrontal.scheduling import local_datetime, local_hour_of
 
 #: Smoothing constant for the confidence estimator ``n / (n + k)``. With k=5,
 #: 5 samples ⇒ 0.5, 15 ⇒ 0.75, 45 ⇒ 0.9 — "low until the sample is meaningful".
@@ -72,6 +72,16 @@ DEFAULT_BIAS_DECAY_ON_MISS = 0.5
 
 #: How much each outcome contributes to a drift score (higher = more off-track).
 DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
+
+#: Learning the Time Blindness ``morning_prep`` cutoff (``early_start_threshold``)
+#: from late morning departures. ``MIN`` late samples are needed before we tune it
+#: off the seeded default; ``BAND`` is the local-hour window counted as "morning";
+#: ``MARGIN`` minutes are added above the typical late-departure time so the cutoff
+#: sits just past the struggle zone; and ``CLAMP`` keeps a learned cutoff sane.
+MIN_EARLY_START_SAMPLES = 4
+EARLY_START_MORNING_BAND = (4, 11)  # local hours [4, 11)
+EARLY_START_MARGIN_MINUTES = 30
+EARLY_START_CLAMP = (6 * 60, 10 * 60)  # 06:00 .. 10:00, as minutes-of-day
 
 #: Recency half-life (days) for the learning pass: an episode this old counts
 #: half as much as a fresh one, and the weight halves again every half-life after
@@ -306,6 +316,10 @@ class PatternRunSummary:
     #: suffix (``morning``, ``type:focus``, ``energy:high``, ``category:admin``),
     #: when ``auto_context_half_life`` is on; empty otherwise.
     auto_half_lives: dict[str, float] = field(default_factory=dict)
+    #: The Time Blindness ``morning_prep`` cutoff learned from late morning
+    #: departures this pass (``HH:MM``), or ``None`` when there wasn't enough signal
+    #: to move off the current/seeded default.
+    early_start_threshold: str | None = None
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -795,6 +809,61 @@ def channel_calibration(
     )
 
 
+def compute_early_start_threshold(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+    timezone: str = "UTC",
+) -> str | None:
+    """Learn the Time Blindness ``morning_prep`` cutoff from late morning departures.
+
+    The ``morning_prep`` nudge fires the evening before a commitment whose leave-by
+    beats ``early_start_threshold``. Rather than a fixed default, tune that cutoff to
+    *cover the mornings the user actually struggles with*: take the ``departure``
+    episodes that came in **late** (``outcome == "miss"``) in the morning band,
+    recency-weight them, and set the cutoff to their mean clock time plus a small
+    margin — so the times you tend to run late all fall under it (and earn the alarm
+    heads-up), while reliably-fine later mornings don't.
+
+    Only late departures inform it, so the cutoff moves *later* the later you run
+    late (nudging more mornings) and stays put when you're on time. Returns ``None``
+    (keep the current/seeded default) until there are at least
+    :data:`MIN_EARLY_START_SAMPLES` late morning departures — we never invent a
+    cutoff for someone with no morning trouble. Uses the actual departure time as a
+    coarse proxy for how early the morning was (the exact leave-by isn't on the
+    episode); the margin absorbs its slight lateness bias. Clamped to
+    :data:`EARLY_START_CLAMP`.
+
+    Returns:
+        The learned cutoff as ``HH:MM``, or ``None`` when there isn't enough signal.
+    """
+    now = now or utcnow()
+    lo, hi = EARLY_START_MORNING_BAND
+    weighted: list[tuple[float, float]] = []
+    for e in episodes:
+        if e.get("episode_type") != "departure" or e.get("outcome") != "miss":
+            continue
+        dt = _parse_ts(e.get("timestamp"))
+        if dt is None:
+            continue
+        local = local_datetime(dt, timezone or "UTC")
+        if not (lo <= local.hour < hi):
+            continue
+        w = decay_weight(e.get("timestamp"), now, half_life_days)
+        weighted.append((local.hour * 60 + local.minute, w))
+    if len(weighted) < MIN_EARLY_START_SAMPLES:
+        return None
+    total_w = sum(w for _, w in weighted)
+    if total_w <= 0:
+        return None
+    mean_min = sum(m * w for m, w in weighted) / total_w
+    clamp_lo, clamp_hi = EARLY_START_CLAMP
+    cutoff = max(clamp_lo, min(clamp_hi, mean_min + EARLY_START_MARGIN_MINUTES))
+    h, m = divmod(int(round(cutoff)), 60)
+    return f"{h:02d}:{m:02d}"
+
+
 def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None]:
     """Build the per-context half-life lookup used by the bias-by-context passes.
 
@@ -1102,6 +1171,18 @@ def recompute_patterns(
             "channel_calibration_samples", str(channel_cal.samples), source="inferred"
         )
 
+    # Learn the Time Blindness morning_prep cutoff (``early_start_threshold``) from
+    # late morning departures, so the evening "set an alarm" heads-up covers the
+    # mornings this user actually runs late for. Respects a hand-set override (like
+    # the auto half-life pass) and only moves off the default once there's signal.
+    early_start_threshold = compute_early_start_threshold(
+        episodes, now=now, half_life_days=half_life_days, timezone=timezone
+    )
+    if early_start_threshold is not None:
+        source = (store.all_state().get("early_start_threshold", {}) or {}).get("source")
+        if source != "explicit":
+            store.set_state("early_start_threshold", early_start_threshold, source="inferred")
+
     return PatternRunSummary(
         episodes=len(episodes),
         patterns=len(results),
@@ -1117,6 +1198,7 @@ def recompute_patterns(
         window_days=window_days,
         windowed_out=windowed_out,
         auto_half_lives=auto_half_lives,
+        early_start_threshold=early_start_threshold,
     )
 
 

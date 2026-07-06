@@ -271,6 +271,27 @@ def test_morning_prep_gate_only_fires_in_the_evening(store):
     assert mod._morning_prep_cues(store, plans, morning) == []
 
 
+def test_morning_prep_cue_carries_alarm_button_payload(store):
+    """The cue's ref carries a suggested wake time (leave-by minus the morning
+    routine) and the Shortcut name, so delivery can attach a one-tap Set-alarm button."""
+    plans = [_plan(1, "2026-07-07 08:00:00", "2026-07-07 07:15:00", title="Flight")]
+    ctx = CoachContext(now=datetime(2026, 7, 6, 21, 30), timezone="UTC", display_name="Tom")
+    cues = TimeBlindnessModule()._morning_prep_cues(store, plans, ctx)
+    assert len(cues) == 1
+    ref = cues[0].ref
+    assert ref["alarm_at"] == "06:15"  # 07:15 leave-by − 60 min default routine
+    assert ref["alarm_shortcut"] == "Set Alarm"
+
+
+def test_morning_prep_alarm_backs_off_start_for_attend_mode(store):
+    """Attend-from-here has no travel, so the wake time backs off the start itself."""
+    plans = [_plan(1, "2026-07-07 08:15:00", "2026-07-07 08:10:00", mode="attend")]
+    store.set_state("morning_routine_minutes", "45")
+    ctx = CoachContext(now=datetime(2026, 7, 6, 21, 30), timezone="UTC")
+    cues = TimeBlindnessModule()._morning_prep_cues(store, plans, ctx)
+    assert cues[0].ref["alarm_at"] == "07:30"  # 08:15 start − 45 min
+
+
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
     """Two+ misses on a task flag it; a task later completed drops off."""
     episodes = [

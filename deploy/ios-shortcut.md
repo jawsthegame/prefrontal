@@ -285,6 +285,32 @@ The escalating *proactive* nudge — a push when you tip into overwhelm without
 tapping anything — is sent by the `panic-check` n8n workflow polling
 `POST /webhooks/panic/check`; you don't need a shortcut for that.
 
+## Shortcut: "Set Alarm" (morning-prep alarm button)
+
+The evening "early start tomorrow" push (the Time Blindness `morning_prep` nudge)
+carries a one-tap **⏰ Set alarm** button. Unlike the outcome shortcuts above it
+doesn't POST anything — it's a client-side `view` action that opens this Shortcut
+via `shortcuts://run-shortcut?name=Set%20Alarm&input=text&text=<HH:MM>`, passing a
+suggested wake time (your leave-by minus `morning_routine_minutes`) as the
+Shortcut's input. So this Shortcut just needs to turn that text into an alarm:
+
+1. New shortcut named **Set Alarm** (⏰). The name must match `alarm_shortcut_name`
+   (default `Set Alarm`); rename both together if you change it.
+2. It receives the time as **Shortcut Input** (text, e.g. `06:15`).
+3. Add **Create Alarm** (Clock actions):
+   - **Time:** set from the Shortcut Input. If Create Alarm won't take text
+     directly, first **Get Numbers from Input** / split on `:` into hour and
+     minute, then feed those in.
+   - **Enabled:** on. (Some iOS versions expose **Toggle Alarm** instead — create
+     it once and toggle, or use **Open Clock** as a fallback so you set it
+     manually in one tap.)
+4. (Optional) **Show Notification** → "Alarm set for <input> ⏰" for feedback.
+
+> **No Shortcut yet?** The button still opens the Shortcuts app — it just won't
+> find one to run, so the push is otherwise a normal reminder. The feature
+> degrades to a plain heads-up until you add the Shortcut. To turn the button off
+> entirely, clear `alarm_shortcut_name`.
+
 ## Shortcut: "Update location" (the simplest location source)
 
 A single automation that tells Prefrontal where you are. It's the one source of

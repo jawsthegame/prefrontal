@@ -22,6 +22,7 @@ publish itself is done by whatever delivery path is configured (today an n8n
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from prefrontal.webhooks.oauth import sign_action
 
@@ -124,6 +125,45 @@ def panic_actions(base_url: str, *, label: str = "Open triage") -> list[dict[str
     if not base_url:
         return []
     return [_view_button(label, f"{base_url}/dashboard?panic=1")]
+
+
+#: Default name of the iOS Shortcut the evening morning-prep nudge deep-links to.
+#: The user creates a Shortcut with this name that takes the wake time as text
+#: input and sets an alarm; renaming it means setting ``alarm_shortcut_name``.
+DEFAULT_ALARM_SHORTCUT = "Set Alarm"
+
+
+def alarm_actions(shortcut_name: str, wake_hhmm: str) -> list[dict[str, Any]]:
+    """The ntfy "⏰ Set alarm" button for the evening morning-prep nudge, or ``[]``.
+
+    A client-side ``view`` action (no server round-trip, so no signing) that opens
+    the iOS **Shortcuts** URL scheme: ``shortcuts://run-shortcut?name=<name>&input=
+    text&text=<HH:MM>``. The user makes a Shortcut of that name which reads the
+    passed time and creates an alarm, so the evening heads-up is one tap from an
+    alarm actually being set — closing the gap between "worth setting an alarm" and
+    doing it. Empty when the shortcut name or wake time is missing (a plain push).
+
+    Args:
+        shortcut_name: The iOS Shortcut to run (``alarm_shortcut_name``, default
+            :data:`DEFAULT_ALARM_SHORTCUT`).
+        wake_hhmm: Suggested wake time as ``HH:MM``, passed as the shortcut's input.
+    """
+    if not shortcut_name or not wake_hhmm:
+        return []
+    url = f"shortcuts://run-shortcut?name={quote(shortcut_name)}&input=text&text={quote(wake_hhmm)}"
+    return [_view_button("⏰ Set alarm", url)]
+
+
+def alarm_actions_for_cue(cue: Any) -> list[dict[str, Any]]:
+    """Build the morning-prep alarm button from a cue's ``ref``, or ``[]``.
+
+    The Time Blindness module stamps ``ref['alarm_at']`` (suggested wake HH:MM) and
+    ``ref['alarm_shortcut']`` (the Shortcut name) when it emits a ``morning_prep``
+    cue, so both delivery paths (the native client and the n8n ``/coach/check``
+    fan-out) can attach the same button off the cue without re-reading state.
+    """
+    ref = cue.ref or {}
+    return alarm_actions(ref.get("alarm_shortcut", ""), ref.get("alarm_at", ""))
 
 
 def nudge_actions(

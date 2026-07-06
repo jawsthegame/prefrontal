@@ -49,7 +49,7 @@ import httpx
 
 from prefrontal.config import Settings, get_settings
 from prefrontal.log import get_logger
-from prefrontal.webhooks.notify import nudge_actions
+from prefrontal.webhooks.notify import alarm_actions_for_cue, nudge_actions
 
 if TYPE_CHECKING:  # only a type annotation — importing it at runtime cycles via
     # coaching → scheduling → todos → integrations (this package).
@@ -350,6 +350,11 @@ def _actions_for_cue(
     or missing target yields no buttons (``nudge_actions`` returns ``[]``), so any
     cue can be delivered as a plain push.
     """
+    # The morning-prep nudge carries a client-side "Set alarm" view action built
+    # from its own ref (no signing / server round-trip), not a signed /nudge/act
+    # button, so it takes a separate path from the _CONTEXT_KIND kinds.
+    if cue.context_key == "morning_prep":
+        return alarm_actions_for_cue(cue)
     kind = _CONTEXT_KIND.get(cue.context_key)
     if not kind:
         return []
