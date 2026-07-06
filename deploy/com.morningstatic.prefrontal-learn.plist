@@ -26,11 +26,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/prefrontal/deploy/learn.sh</string>
+        <string>/Users/tom/src/prefrontal/deploy/learn.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/prefrontal</string>
+    <string>/Users/tom/src/prefrontal</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -56,7 +56,7 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <!-- Install location; learn.sh cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
-        <string>/Users/tom/prefrontal</string>
+        <string>/Users/tom/src/prefrontal</string>
     </dict>
 </dict>
 </plist>

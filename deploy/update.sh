@@ -12,7 +12,7 @@
 # adjacent .env is picked up). The venv's tools are used directly.
 set -euo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/prefrontal}"
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 PREFRONTAL_PIP="${PREFRONTAL_PIP:-$PREFRONTAL_HOME/.venv/bin/pip}"
 

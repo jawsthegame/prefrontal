@@ -17,12 +17,12 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/tom/prefrontal/.venv/bin/prefrontal</string>
+        <string>/Users/tom/src/prefrontal/.venv/bin/prefrontal</string>
         <string>serve</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/tom/prefrontal</string>
+    <string>/Users/tom/src/prefrontal</string>
 
     <key>RunAtLoad</key>
     <true/>
