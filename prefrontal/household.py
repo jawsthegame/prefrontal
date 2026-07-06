@@ -651,7 +651,7 @@ def normalize_prompt(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     return {
         "enabled": enabled,
         "days": days,
-        "time": parsed_time.strftime("%H:%M"),
+        "time": parsed_time.strftime("%H:%M"),  # tz-ok: local wall-clock schedule from user input
         "question": question,
     }, None
 
@@ -742,7 +742,7 @@ def normalize_checkin_config(raw: Any) -> tuple[dict[str, Any] | None, str | Non
     return {
         "enabled": enabled,
         "day": day,
-        "time": parsed_time.strftime("%H:%M") if parsed_time else None,
+        "time": parsed_time.strftime("%H:%M") if parsed_time else None,  # tz-ok: local wall-clock schedule from user input
     }, None
 
 
@@ -1019,7 +1019,7 @@ def fmt_time_12h(hhmm: Any) -> str:
     t = _parse_hhmm(hhmm)
     if t is None:
         return str(hhmm or "")
-    return datetime(2000, 1, 1, t.hour, t.minute).strftime("%-I:%M%p").lower()
+    return datetime(2000, 1, 1, t.hour, t.minute).strftime("%-I:%M%p").lower()  # tz-ok: renders a stored local "HH:MM" schedule
 
 
 def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -1046,7 +1046,7 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         due = _parse_hhmm(due_raw)
         if due is None:
             return None, "due_time must be 'HH:MM' (24-hour), e.g. '22:00', or blank"
-        due_time = due.strftime("%H:%M")
+        due_time = due.strftime("%H:%M")  # tz-ok: normalizes a local schedule "HH:MM"
     days = format_chore_days(raw.get("days", []))
     remind_before = raw.get("remind_before", DEFAULT_CHORE_REMIND_BEFORE_MINUTES)
     try:
@@ -1098,7 +1098,7 @@ def normalize_routine(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         due = _parse_hhmm(due_raw)
         if due is None:
             return None, "due_time must be 'HH:MM' (24-hour), e.g. '07:30', or blank"
-        due_time = due.strftime("%H:%M")
+        due_time = due.strftime("%H:%M")  # tz-ok: normalizes a local schedule "HH:MM"
     accountable_id = raw.get("accountable_id")
     if accountable_id is not None:
         try:
@@ -1131,7 +1131,7 @@ def effective_chore_schedule(
     """
     own_due = _parse_hhmm(chore.get("due_time"))
     if own_due is not None:
-        return format_chore_days(chore.get("days")), own_due.strftime("%H:%M")
+        return format_chore_days(chore.get("days")), own_due.strftime("%H:%M")  # tz-ok: local schedule "HH:MM"
     if routine is not None:
         return format_chore_days(routine.get("days")), str(routine.get("due_time") or "")
     return format_chore_days(chore.get("days")), ""
