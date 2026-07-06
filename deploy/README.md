@@ -9,8 +9,8 @@ it tells you to copy/import.
 | `com.prefrontal.plist` | launchd agent that runs `prefrontal serve` always-on (edit the paths). | deployment §3 |
 | `learn.sh` | Chains the nightly learning pass: `prefrontal learn` then `prefrontal summarize`, with timestamped logging. | deployment §12 |
 | `com.prefrontal-learn.plist` | launchd agent that runs `learn.sh` nightly at 03:30 (periodic, no `KeepAlive`). | deployment §12 |
-| `com.prefrontal-mail.plist` | launchd agent that runs `mail-fetch.sh` every 15 min to fetch + triage mail (the no-n8n path; edit paths + account list). | deployment §13 |
-| `mail-fetch.sh` | Wrapper the mail agent calls: runs `prefrontal mail fetch` once per account, from the repo root so `.env` loads. | deployment §13 |
+| `com.prefrontal-mail.plist` | launchd agent that runs `mail-fetch.sh` every 15 min to fetch + triage mail for all users (the no-n8n path). Each user connects mailboxes via `prefrontal mail add-source`. | deployment §13 |
+| `mail-fetch.sh` | Wrapper the mail agent calls: runs `prefrontal mail fetch --all-users`, from the repo root so `.env` loads. | deployment §13 |
 | `coach.sh` | Wrapper the coach agent calls: runs `prefrontal coach --deliver` (fans over every enabled module + the overwhelm check), from the repo root so `.env` loads. | deployment §19 |
 | `com.prefrontal-coach.plist` | launchd agent that runs `coach.sh` every 60s — the **native replacement** for the `coach-check`, `hyperfocus-check`, `departure-reminder`, and `panic-check` n8n workflows (deactivate those before enabling). | deployment §19 |
 | `household-sweeps.sh` | Wrapper: runs the shared-household checks (`household chores-check` / `checkin-check` / `digest-check` / `prompt-check`), each self-gating on due-ness. | deployment §19 |

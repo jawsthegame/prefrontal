@@ -5,30 +5,32 @@
 
   Unlike the always-on `prefrontal serve` agent, this is a *periodic* job: it
   runs `deploy/mail-fetch.sh` every StartInterval seconds, which calls
-  `prefrontal mail fetch` once per account. KeepAlive is intentionally absent —
-  the job should exit after each run, not be restarted. launchd will not start a
-  second copy while one is still running, so a slow IMAP pull never overlaps
-  itself.
+  `prefrontal mail fetch --all-users` — one job fans over every active user,
+  fetching each user's own accounts from the per-user `sources` registry
+  (`prefrontal mail add-source`). KeepAlive is intentionally absent — the job
+  should exit after each run, not be restarted. launchd will not start a second
+  copy while one is still running, so a slow IMAP pull never overlaps itself.
 
   Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
   __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
   home directory, then loads the agent. The committed file is a template with no
   machine-specific paths.
 
-  Manual alternative: substitute those placeholders yourself (and edit the
-  account list below to match your install), then
+  Manual alternative: substitute those placeholders yourself, then
     cp deploy/com.prefrontal-mail.plist ~/Library/LaunchAgents/
     launchctl load -w ~/Library/LaunchAgents/com.prefrontal-mail.plist
 
   WorkingDirectory must be the repo root so the `.env` next to it is loaded
-  (that is where MAIL_IMAP_*_<ACCOUNT> and PREFRONTAL_MAIL_ACCOUNTS live).
+  (PREFRONTAL_SECRET_KEY opens the sealed per-user IMAP passwords).
 
-  Before loading this, do a ONE-TIME backlog clear with the heuristic so the
-  first run doesn't triage a full inbox of unread through the model:
+  PREREQUISITE: each user must have connected a mailbox first
+  (`prefrontal mail --user <handle> add-source …`, or `import-env-sources` to
+  migrate the legacy global MAIL_IMAP_* env). A user with no source is skipped —
+  the global env mailbox is never fetched into another user's scope. Do a
+  ONE-TIME heuristic backlog clear per account so the first run doesn't push a
+  full inbox through the model:
     cd __PREFRONTAL_HOME__
-    .venv/bin/prefrontal mail fetch --account personal --heuristic
-    .venv/bin/prefrontal mail fetch --account work --heuristic
-  Steady-state runs (below) then triage only the new trickle with the model.
+    .venv/bin/prefrontal mail --user <handle> fetch --account personal --heuristic
 -->
 <plist version="1.0">
 <dict>
@@ -39,9 +41,6 @@
     <array>
         <string>/bin/bash</string>
         <string>__PREFRONTAL_HOME__/deploy/mail-fetch.sh</string>
-        <!-- One argument per account; must match PREFRONTAL_MAIL_ACCOUNTS names. -->
-        <string>personal</string>
-        <string>work</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -66,11 +65,6 @@
         <!-- Homebrew (Apple Silicon) on PATH so child processes resolve as expected. -->
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <!-- Handle whose mailboxes to fetch; mail-fetch.sh passes it as
-             `mail --user <handle>`. Leave the placeholder empty to auto-pick
-             when there's a single user (required once more than one exists). -->
-        <key>PREFRONTAL_USER</key>
-        <string>__PREFRONTAL_USER__</string>
     </dict>
 </dict>
 </plist>
