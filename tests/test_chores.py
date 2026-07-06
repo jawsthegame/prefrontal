@@ -508,3 +508,47 @@ def test_routine_endpoints_crud_and_chore_linkage(client, store):
                        headers=_h("dana-tok")).json()["removed"]
     assert client.post(f"/household/routines/{rid}/enabled", json={"enabled": True},
                        headers=_h("dana-tok")).status_code == 404
+
+
+def test_routine_update_endpoint_edits_and_renames(client, store):
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    rid = client.post(
+        "/household/routines",
+        json={"title": "Morning prep", "accountable_id": dana_id, "due_time": "07:30",
+              "days": [0, 1, 2]},
+        headers=_h("dana-tok"),
+    ).json()["id"]
+    # A chore linked under it should survive the edit (and any rename).
+    client.post(
+        "/household/chores", json={"title": "pack bags", "routine_id": rid},
+        headers=_h("dana-tok"),
+    )
+
+    # Edit in place: rename + reassign + retime + pause, all at once.
+    r = client.post(
+        f"/household/routines/{rid}/update",
+        json={"title": "AM launch", "accountable_id": alex_id, "due_time": "08:00",
+              "days": [0, 1, 2, 3, 4], "impact": "kids miss the bus", "enabled": False},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200 and r.json()["id"] == rid
+    got = next(x for x in store.scoped(dana_id).routines() if x["id"] == rid)
+    assert got["title"] == "AM launch"
+    assert got["accountable_id"] == alex_id
+    assert got["due_time"] == "08:00"
+    assert got["enabled"] == 0
+    assert got["chore_count"] == 1  # the linked chore stayed with the routine
+
+    # Editing a missing routine → 404; a non-member accountable → 422.
+    assert client.post("/household/routines/9999/update", json={"title": "x"},
+                       headers=_h("dana-tok")).status_code == 404
+    assert client.post(f"/household/routines/{rid}/update",
+                       json={"title": "AM launch", "accountable_id": 9999},
+                       headers=_h("dana-tok")).status_code == 422
+
+    # Renaming onto another routine's name collides → 409.
+    other = client.post("/household/routines", json={"title": "Bedtime"},
+                        headers=_h("dana-tok")).json()["id"]
+    assert client.post(f"/household/routines/{other}/update", json={"title": "AM launch"},
+                       headers=_h("dana-tok")).status_code == 409

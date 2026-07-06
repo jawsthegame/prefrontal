@@ -511,6 +511,70 @@ def test_execute_isolates_non_value_error(memory):
     assert results[1]["ok"] is True  # the batch continued past the failing action
 
 
+@pytest.fixture()
+def hh_memory():
+    """A store scoped to a co-parent who belongs to a household (routine ops need one)."""
+    conn = init_db(":memory:")
+    store = MemoryStore(conn)
+    user, _ = provision_user(store, "dana", display_name="Dana", is_operator=True)
+    hid = store.create_household("The Kims")
+    store.set_user_household("dana", hid)
+    try:
+        yield store.scoped(user["id"])
+    finally:
+        conn.close()
+
+
+def test_execute_routine_create_edit_rename_remove(hh_memory):
+    # Create.
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "set_routine", "title": "Morning prep", "due_time": "07:30", "days": [0, 1, 2]}],
+    )
+    assert res[0]["ok"] is True
+    rid = hh_memory.routines()[0]["id"]
+
+    # Edit by id: rename + pause, leaving the time untouched (merge preserves it).
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "edit_routine", "routine_id": rid, "title": "AM launch", "enabled": False}],
+    )
+    assert res[0]["ok"] is True
+    row = next(r for r in hh_memory.routines() if r["id"] == rid)
+    assert row["title"] == "AM launch"
+    assert row["enabled"] == 0
+    assert row["due_time"] == "07:30"  # unspecified field preserved across the edit
+
+    # Remove.
+    res = _plan_and_execute(hh_memory, [{"op": "remove_routine", "routine_id": rid}])
+    assert res[0]["ok"] is True
+    assert hh_memory.routines() == []
+
+
+def test_routine_ops_validation_guards(hh_memory, memory):
+    snap = assistant.build_snapshot(hh_memory)
+    hh_memory.set_routine(title="Bedtime", updated_by=hh_memory.user_id)
+    snap = assistant.build_snapshot(hh_memory)
+    rid = hh_memory.routines()[0]["id"]
+
+    # set_routine onto an existing name is refused (steered to edit_routine).
+    _a, errors = assistant.validate_actions([{"op": "set_routine", "title": "Bedtime"}], snap)
+    assert errors and "already exists" in errors[0]
+    # edit/remove with an unknown id are refused.
+    _a, errors = assistant.validate_actions(
+        [{"op": "edit_routine", "routine_id": 9999, "title": "x"}], snap
+    )
+    assert errors and "no routine" in errors[0]
+    # An edit that changes nothing is refused.
+    _a, errors = assistant.validate_actions([{"op": "edit_routine", "routine_id": rid}], snap)
+    assert errors and "at least one field" in errors[0]
+    # Routine ops are unavailable to a user with no household.
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_routine", "title": "Solo"}], assistant.build_snapshot(memory)
+    )
+    assert errors and "household" in errors[0]
+
+
 # --- endpoints ------------------------------------------------------------
 
 
