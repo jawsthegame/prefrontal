@@ -40,7 +40,7 @@ capability with real examples, plus an API/CLI reference.
 |---|---|---|
 | Outing nudges (coffee-shop) | iOS Shortcut + n8n | [↗](guide.md#outings-the-coffee-shop-nudge) |
 | Departure reminders | n8n + location | [↗](guide.md#departure-reminders) |
-| Calendar sync & conflicts | n8n ICS feeds | [↗](guide.md#calendar-sync) |
+| Calendar sync & conflicts | per-user private ICS feeds (native) | [↗](guide.md#calendar-sync) |
 | Todos: augment / decompose / fit / avoid | dashboard, CLI, API | [↗](guide.md#todos) |
 | Focus sessions | iOS Shortcut + n8n | [↗](guide.md#focus-sessions) |
 | Morning briefing | n8n (7am) | [↗](guide.md#morning-briefing) |

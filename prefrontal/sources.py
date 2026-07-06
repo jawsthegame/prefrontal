@@ -6,12 +6,15 @@ plaintext *out* here, while the sealed bytes never leave this module and the
 as JSON in the ``sources.config`` column; the helpers here shape it per kind and
 return typed views.
 
-The first connector is ``imap`` — a mailbox, one row per logical account
-(``personal``, ``work``). A calendar connector (per-user ICS feeds) lands in a
-later phase (see docs/design/per-user-sources.md).
+Two connectors exist:
 
-Phase 0 provides storage + resolution; the mail-fetch path that consumes these
-lands in Phase 1.
+- ``imap`` — a mailbox, one row per logical account (``personal``, ``work``);
+  the sealed secret is the IMAP password.
+- ``ics`` — a private calendar feed, one row per feed (slug = account); the
+  sealed secret is the feed URL (a bearer secret — anyone with it can read the
+  calendar), and config carries the user's own addresses for declined-filtering.
+
+See docs/design/per-user-sources.md.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from prefrontal.memory.store import MemoryStore
 
 #: Connector kinds stored in the ``sources`` table.
 IMAP = "imap"
+ICS = "ics"
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,75 @@ def imap_accounts(store: MemoryStore, *, include_disabled: bool = False) -> list
     """Return the logical account names of the user's IMAP sources."""
     rows = store.list_sources(kind=IMAP, include_disabled=include_disabled)
     return [r["account"] for r in rows]
+
+
+# -- calendar (private ICS feeds) --------------------------------------------
+
+
+@dataclass(frozen=True)
+class IcsSource:
+    """A resolved ICS calendar feed, with its URL decrypted."""
+
+    account: str  # feed slug, also the external_id namespace
+    url: str
+    namespace: str
+    me_emails: tuple[str, ...] = ()
+    label: str | None = None
+    enabled: bool = True
+
+
+def put_ics_source(
+    store: MemoryStore,
+    *,
+    account: str,
+    url: str | None,
+    namespace: str | None = None,
+    me_emails: tuple[str, ...] = (),
+    label: str | None = None,
+    enabled: bool = True,
+) -> int:
+    """Create or update a user's ICS calendar source; return its row id.
+
+    The feed ``url`` is a bearer secret and is sealed at rest. ``url=None`` on an
+    update leaves the existing sealed URL untouched (config-only edit).
+    ``namespace`` defaults to ``account`` (the ``external_id`` feed slug).
+    """
+    config = json.dumps(
+        {
+            "namespace": (namespace or account),
+            "me_emails": list(me_emails),
+            "label": label,
+        }
+    )
+    secret_enc = seal(url) if url is not None else None
+    return store.upsert_source(
+        kind=ICS,
+        account=account,
+        config=config,
+        secret_enc=secret_enc,
+        enabled=enabled,
+    )
+
+
+def ics_sources(
+    store: MemoryStore, *, include_disabled: bool = False
+) -> list[IcsSource]:
+    """Return the user's ICS calendar sources, with feed URLs decrypted."""
+    out: list[IcsSource] = []
+    for row in store.list_sources(kind=ICS, include_disabled=include_disabled):
+        cfg = json.loads(row["config"] or "{}")
+        url = unseal(row["secret_enc"]) if row["secret_enc"] is not None else ""
+        out.append(
+            IcsSource(
+                account=row["account"],
+                url=url,
+                namespace=cfg.get("namespace") or row["account"],
+                me_emails=tuple(cfg.get("me_emails", [])),
+                label=cfg.get("label"),
+                enabled=bool(row["enabled"]),
+            )
+        )
+    return out
 
 
 # -- mail fetch bridge: registry source -> ImapAccount + retention policy ------

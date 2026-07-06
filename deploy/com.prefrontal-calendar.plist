@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that syncs every user's private ICS calendar feeds into
+  commitments (deploy/calendar-sync.sh): `prefrontal calendar sync --all-users`.
+
+  This is the native, no-n8n replacement for the n8n `calendar-sync` workflow.
+  Each user's feed URLs live in the `sources` registry (`prefrontal calendar
+  add-source`), so one job with --all-users covers everyone; a user's events land
+  only in their own scope. Before enabling it, DEACTIVATE the n8n `calendar-sync`
+  workflow so events aren't ingested twice.
+
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
+  home directory, then loads the agent. The committed file is a template with no
+  machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal-calendar.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal-calendar.plist
+    # run the wrapper once by hand first to confirm it syncs:
+    deploy/calendar-sync.sh
+
+  WorkingDirectory must be the repo root so the `.env` next to it is loaded
+  (PREFRONTAL_SECRET_KEY seals/opens the feed URLs; PREFRONTAL_TIMEZONE resolves
+  naive event times).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.prefrontal-calendar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PREFRONTAL_HOME__/deploy/calendar-sync.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PREFRONTAL_HOME__</string>
+
+    <!-- Every 15 minutes. launchd skips runs while the Mac is asleep and fires
+         once on wake if a scheduled interval elapsed. -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/prefrontal-calendar.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/prefrontal-calendar.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so child processes resolve. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Install location; calendar-sync.sh cd's here so the adjacent .env loads. -->
+        <key>PREFRONTAL_HOME</key>
+        <string>__PREFRONTAL_HOME__</string>
+    </dict>
+</dict>
+</plist>

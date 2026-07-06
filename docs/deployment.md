@@ -456,21 +456,36 @@ OAuth node — every calendar is pulled via its secret iCal URL, so there are no
 credentials to manage.)
 
 ```
-n8n (every 15 min) ─┬─ GET personal ICS ─┐
-                    ├─ GET work ICS      ├─► merge ─► POST /webhooks/calendar/sync
-                    ├─ GET Outlook ICS   │             ├─ double-booked ─► ntfy alert
-                    └─ GET family ICS  ──┘             └─ possible conflict ─► ntfy alert
+launchd (every 15 min) ── prefrontal calendar sync --all-users ──► commitments
+  for each user's private ICS feeds (the sources registry)      ├─ recurrence-expanded, TZID→UTC
+                                                                 └─ conflicts flagged
 ```
 
-1. Import [`../deploy/n8n/calendar-sync.workflow.json`](../deploy/n8n/calendar-sync.workflow.json).
-2. **Get {Personal,Work,Outlook,Family} ICS nodes** → paste each calendar's
-   shared/secret **iCal feed URL** (read-only). Google/Outlook/most providers
-   expose one per calendar (in Google: *Settings → Secret address in iCal format*).
-   Leave a node's URL blank to skip that feed.
-3. **POST sync node** and the **Double-booking / possible-conflict alert** nodes
-   are already wired to the `Prefrontal Token` credential + `$env.NTFY_*` (see
-   *Configure once*); only the ICS feed URLs above are yours to fill in.
-4. **Execute Workflow** once, then toggle **Active**.
+Prefrontal fetches each user's own **private ICS feeds** and syncs them natively
+— no n8n, no OAuth. Feed URLs live per-user in the `sources` registry (sealed at
+rest with `PREFRONTAL_SECRET_KEY`), and one launchd job covers every user.
+
+1. Mint the at-rest key once (it seals the feed URLs): `prefrontal secrets init`,
+   then add the printed `PREFRONTAL_SECRET_KEY=…` line to `.env`.
+2. Add each calendar's shared/secret **iCal feed URL** (read-only) per user.
+   Google/Outlook/most providers expose one per calendar (in Google: *Settings →
+   Secret address in iCal format*):
+   ```bash
+   prefrontal calendar --user tom add-source --account personal \
+       --url 'https://calendar.google.com/…/basic.ics' --me you@gmail.com
+   prefrontal calendar --user tom add-source --account work \
+       --url 'https://…/work.ics' --me you@work.example
+   ```
+   `--account` is the feed slug (also the `external_id` namespace); `--me`
+   (comma-separated) lists your own addresses so events you've **declined** are
+   dropped. `prefrontal calendar --user tom list-sources` shows them (never the
+   URLs — they're bearer secrets).
+3. Install the launchd job: `bash deploy/install-launchd.sh com.prefrontal-calendar`
+   (or run it with no args to install every agent). It runs `prefrontal calendar
+   sync --all-users` every 15 min; run `deploy/calendar-sync.sh` once by hand
+   first to confirm it syncs.
+4. If you were on the old n8n `calendar-sync` workflow, **deactivate it** in the
+   n8n UI so events aren't ingested twice.
 
 Notes:
 - Events are namespaced per feed (`personal:…` / `work:…` / `outlook:…` /
@@ -828,8 +843,8 @@ launchd replacement both deliver, so once a launchd agent is confirmed working,
 `~/Library/Logs/prefrontal.coach.log` / `prefrontal.household.log` for a tick or
 two first. Debounce catches most accidental doubles, but don't lean on it.
 
-**Deliberately still on n8n:** `calendar-sync` and `triage-ingest` pull external
-data *in* (Google/ICS, mail/Signal) using n8n's connectors + OAuth; `coffee-shop-nudge`
+**Deliberately still on n8n:** `triage-ingest` pulls external data *in*
+(mail/Signal) using n8n's connectors; `coffee-shop-nudge`
 adds a Twilio **voice call** at 150% that native delivery doesn't place;
 `morning-briefing`, `encouragement`, and `focus-arm-check` don't have a native
 `--deliver` path yet. These stay until there's a first-class replacement — see
