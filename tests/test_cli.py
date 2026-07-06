@@ -334,3 +334,28 @@ def test_clarify_dismiss_and_bad_ids(tmp_path, capsys):
     assert main(["clarify", "--db-path", str(db), "dismiss", str(listed_id)]) == 1
     assert main(["clarify", "--db-path", str(db), "resolve", "999999", "--option", "0"]) == 1
     capsys.readouterr()
+
+
+def test_clarify_localize_toggle_and_guide(tmp_path, capsys):
+    """`clarify localize on --zip` opts in and localizes a guide; `off` reverts."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+
+    # Seeded off → guide uses the generic phrasing.
+    assert main(["clarify", "--db-path", str(db), "guide", "license_renewal"]) == 0
+    assert "your area" in capsys.readouterr().out
+
+    # Opt in with an explicit ZIP → guide weaves it in.
+    assert main(["clarify", "--db-path", str(db), "localize", "on", "--zip", "19027"]) == 0
+    assert "19027" in capsys.readouterr().out
+    assert main(["clarify", "--db-path", str(db), "guide", "license_renewal"]) == 0
+    guide = capsys.readouterr().out
+    assert "19027" in guide and "your area" not in guide
+
+    # Opt back out → generic again.
+    assert main(["clarify", "--db-path", str(db), "localize", "off"]) == 0
+    capsys.readouterr()
+    assert main(["clarify", "--db-path", str(db), "guide", "license_renewal"]) == 0
+    assert "your area" in capsys.readouterr().out

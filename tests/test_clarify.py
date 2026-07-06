@@ -13,6 +13,8 @@ import pytest
 
 from prefrontal.clarify import (
     AMBIGUITY_THRESHOLD,
+    HOME_ZIP_KEY,
+    LOCALIZATION_KEY,
     MAX_OPTIONS,
     ambiguity_score,
     ambiguous_token,
@@ -20,6 +22,7 @@ from prefrontal.clarify import (
     detect_clarification,
     is_ambiguous,
     known_task_types,
+    localized_zip,
     playbook_view,
     resolve_playbook,
     sweep_ambiguous_items,
@@ -145,6 +148,49 @@ def test_infer_task_type_from_free_text():
     assert infer_task_type("renew my passport") == "passport_renewal"
     assert infer_task_type("dentist appointment") == "medical_appointment"
     assert infer_task_type("something totally unrelated") is None
+
+
+def test_infer_task_type_prefers_most_specific_match():
+    """A longer keyword wins, so a generic word can't hijack a specific reading."""
+    # "file" alone must not pull an insurance claim into tax_filing.
+    assert infer_task_type("file an insurance claim") == "insurance_claim"
+    # "new doctor" (find_provider) beats a bare "doctor" (medical_appointment).
+    assert infer_task_type("find a new doctor accepting patients") == "find_provider"
+    assert infer_task_type("renew my driver license at the DMV") == "license_renewal"
+    assert infer_task_type("car registration and inspection") == "vehicle_registration"
+    assert infer_task_type("call a plumber to fix the leak") == "home_repair"
+
+
+def test_no_unresolved_area_tokens_in_any_playbook():
+    """Every playbook renders cleanly both localized and not (no stray {area})."""
+    for tt in known_task_types():
+        pb = resolve_playbook(tt)
+        generic = playbook_view(pb)
+        local = playbook_view(pb, zip_code="19027")
+        for view in (generic, local):
+            blob = view["intro"] + " ".join(s["title"] + s["detail"] for s in view["steps"])
+            assert "{area}" not in blob
+
+
+def test_playbook_view_localizes_only_with_zip():
+    """`{area}` becomes the ZIP when given, else the generic fallback."""
+    pb = resolve_playbook("license_renewal")
+    generic = " ".join(s["detail"] for s in playbook_view(pb)["steps"])
+    local = " ".join(s["detail"] for s in playbook_view(pb, zip_code="19027")["steps"])
+    assert "your area" in generic and "19027" not in generic
+    assert "19027" in local and "your area" not in local
+
+
+def test_localized_zip_is_opt_in(store):
+    """localized_zip returns the ZIP only when the opt-in toggle is on."""
+    store.set_state(HOME_ZIP_KEY, "19027", source="explicit")
+    # Off by default → no localization even with a ZIP set.
+    assert localized_zip(store) is None
+    store.set_state(LOCALIZATION_KEY, "1", source="explicit")
+    assert localized_zip(store) == "19027"
+    # A blank ZIP falls back to None even when opted in.
+    store.set_state(HOME_ZIP_KEY, "  ", source="explicit")
+    assert localized_zip(store) is None
 
 
 def test_views_are_json_ready():

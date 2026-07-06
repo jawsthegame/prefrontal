@@ -135,6 +135,22 @@ def test_playbook_fetch():
         assert get("nope").status_code == 404
 
 
+def test_playbook_localization_is_opt_in():
+    """A guide localizes to the home ZIP only when the user opted in."""
+    client, store = _app()
+    with client:
+        def steps_blob():
+            pb = client.get("/clarifications/playbooks/license_renewal", headers=_auth()).json()
+            return " ".join(s["detail"] for s in pb["steps"])
+
+        # Seeded off by default → generic phrasing, even though home_zip is seeded.
+        assert store.get_state("home_zip") == "19027"
+        assert "your area" in steps_blob() and "19027" not in steps_blob()
+        # Opt in → the guide weaves in the ZIP.
+        store.set_state("playbook_localization", "1", source="explicit")
+        assert "19027" in steps_blob()
+
+
 def test_coaching_tick_fills_the_queue_passively():
     """POST /webhooks/coach/check runs the same detection sweep, so the queue
     fills without pressing the dashboard's manual check."""

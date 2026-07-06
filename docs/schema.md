@@ -111,6 +111,8 @@ Persistent preferences and working memory for the coaching layer.
 | `departure_heads_up_minutes` | `30` | inferred (gentle "leave soon" horizon) |
 | `departure_soon_minutes` | `10` | inferred ("get ready" horizon) |
 | `geocoding_enabled` | `0` | explicit (opt-in network geocoding; off by default) |
+| `home_zip` | `19027` | explicit (home ZIP that localizes guided playbooks; editable per user) |
+| `playbook_localization` | `0` | explicit (opt-in toggle for ZIP-localized playbook guides; off by default) |
 
 > **Seeded per user, not in `schema.sql`.** These defaults are written when a
 > user is provisioned (`provision_user` in `store.py`), so each person gets their

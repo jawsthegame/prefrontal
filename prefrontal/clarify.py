@@ -260,14 +260,20 @@ def _known_task_type(label: str) -> str | None:
     """Best-effort map of a free-text reading to a recognized playbook key.
 
     Keyword-matched against the label so an LLM-phrased reading like "file my tax
-    return" still lands on ``tax_filing``. Conservative — an unmatched reading is
-    simply a plain disambiguation (no guide), never a wrong one.
+    return" still lands on ``tax_filing``. The **most specific** match wins — the
+    task type whose matched keyword is longest — so "file an insurance claim"
+    resolves to ``insurance_claim`` (matched "insurance claim") rather than
+    ``tax_filing`` (matched a generic "file taxes"), and "find a new doctor" beats
+    a bare "doctor". Conservative — an unmatched reading is simply a plain
+    disambiguation (no guide), never a wrong one.
     """
     text = _norm(label)
+    best: tuple[int, str] | None = None  # (matched keyword length, task_type)
     for task_type, keywords in _TASK_TYPE_KEYWORDS.items():
-        if any(re.search(rf"\b{re.escape(k)}\b", text) for k in keywords):
-            return task_type
-    return None
+        for k in keywords:
+            if re.search(rf"\b{re.escape(k)}\b", text) and (best is None or len(k) > best[0]):
+                best = (len(k), task_type)
+    return best[1] if best is not None else None
 
 
 def _heuristic_candidate(title: str) -> ClarificationCandidate:
@@ -395,6 +401,27 @@ class Playbook:
     intro: str = ""
 
 
+#: coaching_state keys that drive localization. ``home_zip`` is the user's home
+#: ZIP (seeded to a deployment default and editable); ``playbook_localization`` is
+#: the opt-in toggle — localization is OFF unless this is truthy, so a step's
+#: ``{area}`` renders as :data:`AREA_FALLBACK` until the user opts in.
+HOME_ZIP_KEY = "home_zip"
+LOCALIZATION_KEY = "playbook_localization"
+
+#: The ``{area}`` token in a playbook step, substituted with the home ZIP when
+#: localization is on, else :data:`AREA_FALLBACK` — so every step reads well both
+#: ways ("...serving 19027" vs "...serving your area").
+AREA_TOKEN = "{area}"
+AREA_FALLBACK = "your area"
+
+
+def _localize(text: str, zip_code: str | None) -> str:
+    """Substitute the ``{area}`` token with ``zip_code`` (or the generic fallback)."""
+    if AREA_TOKEN not in text:
+        return text
+    return text.replace(AREA_TOKEN, zip_code or AREA_FALLBACK)
+
+
 PLAYBOOKS: dict[str, Playbook] = {
     "tax_filing": Playbook(
         task_type="tax_filing",
@@ -493,6 +520,140 @@ PLAYBOOKS: dict[str, Playbook] = {
             ),
         ],
     ),
+    "license_renewal": Playbook(
+        task_type="license_renewal",
+        title="Renewing your driver's license or state ID",
+        intro="Mostly paperwork and one office visit — take it a step at a time.",
+        steps=[
+            PlaybookStep(
+                "Check the expiration date",
+                "It's on the front of the card. That tells you how much runway you have.",
+            ),
+            PlaybookStep(
+                "Find your local licensing office and its rules",
+                "Search “DMV driver license renewal {area}” for the office serving "
+                "{area}, whether you can renew online, and what to bring.",
+            ),
+            PlaybookStep(
+                "Gather what you need",
+                "Current license, proof of address, and any ID documents the site "
+                "lists. Check whether a new photo or vision test is required.",
+            ),
+            PlaybookStep(
+                "Renew online, or book the in-person slot",
+                "If online is allowed, do it now. Otherwise reserve an appointment "
+                "and add it to your calendar with travel time.",
+            ),
+            PlaybookStep(
+                "Pay and save the confirmation",
+                "Keep the receipt/temporary license until the new card arrives.",
+            ),
+        ],
+    ),
+    "vehicle_registration": Playbook(
+        task_type="vehicle_registration",
+        title="Renewing your vehicle registration",
+        intro="A short errand once you know what your state wants.",
+        steps=[
+            PlaybookStep(
+                "Find the renewal notice or current expiry",
+                "Check the sticker/registration card so you know the deadline.",
+            ),
+            PlaybookStep(
+                "Check whether an inspection or emissions test is due first",
+                "Search “vehicle registration renewal {area}” — some areas near "
+                "{area} require a current inspection before you can renew.",
+            ),
+            PlaybookStep(
+                "Get the inspection done if needed",
+                "Book a nearby shop; keep the pass certificate.",
+            ),
+            PlaybookStep(
+                "Renew (online, mail, or in person) and pay",
+                "Online is usually fastest. Have the plate number and insurance handy.",
+            ),
+            PlaybookStep(
+                "Put the new sticker/card where it belongs",
+                "On the plate/windshield and in the glovebox, so it's done for real.",
+            ),
+        ],
+    ),
+    "insurance_claim": Playbook(
+        task_type="insurance_claim",
+        title="Filing an insurance claim",
+        intro="Do it while it's fresh — the first small step is just documenting.",
+        steps=[
+            PlaybookStep(
+                "Document what happened",
+                "Photos, dates, and a few sentences on the incident, before anything changes.",
+            ),
+            PlaybookStep(
+                "Find your policy number and insurer's claim line",
+                "On the card, app, or a statement. Put the claim phone/website on screen.",
+            ),
+            PlaybookStep(
+                "Open the claim",
+                "File online or by phone; write down the claim number and the adjuster's name.",
+            ),
+            PlaybookStep(
+                "Get any required local estimate or quote",
+                "If they need a repair estimate, search “{area}” for a nearby shop/"
+                "contractor and book it.",
+            ),
+            PlaybookStep(
+                "Submit everything and note the follow-up date",
+                "Send the docs, then calendar a check-in so it doesn't stall in limbo.",
+            ),
+        ],
+    ),
+    "home_repair": Playbook(
+        task_type="home_repair",
+        title="Lining up a home repair",
+        intro="The hard part is picking up the phone — start with naming the job.",
+        steps=[
+            PlaybookStep(
+                "Name the problem in one line",
+                "What's broken and what “fixed” looks like. A photo helps a pro quote it.",
+            ),
+            PlaybookStep(
+                "Find a few local pros",
+                "Search for the trade you need (plumber, electrician, handyman…) near "
+                "{area}, and pick two or three with decent reviews.",
+            ),
+            PlaybookStep(
+                "Ask for quotes",
+                "Message or call with your one-liner and photo; ask for a ballpark and timing.",
+            ),
+            PlaybookStep(
+                "Book the visit",
+                "Pick one, schedule it, and add it to the calendar with a reminder.",
+            ),
+        ],
+    ),
+    "find_provider": Playbook(
+        task_type="find_provider",
+        title="Finding a new doctor or dentist",
+        intro="One narrowing step at a time until you can just book.",
+        steps=[
+            PlaybookStep(
+                "Decide what kind of provider you need",
+                "Primary care, dentist, a specialty — and any must-haves (evening hours, etc.).",
+            ),
+            PlaybookStep(
+                "Check who's in-network near you",
+                "Use your insurer's “find a provider” tool, or search for the kind of "
+                "provider you need accepting new patients near {area}.",
+            ),
+            PlaybookStep(
+                "Confirm they're taking new patients",
+                "A quick call or the online form — before you get attached to one.",
+            ),
+            PlaybookStep(
+                "Book the first visit",
+                "Pick a time, note the address, and calendar it with travel time.",
+            ),
+        ],
+    ),
 }
 
 
@@ -511,20 +672,53 @@ def known_task_types() -> frozenset[str]:
 #: Keyword cues that map a free-text reading (or an LLM-phrased option) onto a
 #: recognized playbook key. Kept beside the playbooks so adding one is one edit.
 _TASK_TYPE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "tax_filing": ("tax return", "file", "filing", "irs", "return"),
+    "tax_filing": ("tax return", "tax filing", "file taxes", "filing taxes", "irs", "1040"),
     "passport_renewal": ("passport", "renew passport", "visa"),
     "medical_appointment": ("doctor", "dentist", "appointment", "clinic", "checkup", "physical"),
+    "license_renewal": ("license", "licence", "driver", "dmv", "state id", "real id"),
+    "vehicle_registration": (
+        "registration", "register", "tags", "plate", "inspection", "emissions",
+    ),
+    "insurance_claim": ("insurance claim", "claim", "adjuster", "policy"),
+    "home_repair": (
+        "repair", "fix", "plumber", "electrician", "handyman", "contractor", "leak",
+    ),
+    "find_provider": ("find a doctor", "new doctor", "new dentist", "primary care", "provider"),
 }
 
 
-def playbook_view(playbook: Playbook) -> dict[str, Any]:
-    """A JSON-ready view of a playbook, for the guide overlay / API responses."""
+def playbook_view(playbook: Playbook, *, zip_code: str | None = None) -> dict[str, Any]:
+    """A JSON-ready view of a playbook, for the guide overlay / API responses.
+
+    When ``zip_code`` is given (the caller resolved it via :func:`localized_zip`,
+    i.e. localization is on and a home ZIP is set), each step's ``{area}`` token is
+    replaced with the ZIP so "find the office serving {area}" becomes a genuinely
+    local instruction; otherwise it degrades to a generic phrase. A playbook with
+    no ``{area}`` tokens renders identically either way.
+    """
     return {
         "task_type": playbook.task_type,
         "title": playbook.title,
-        "intro": playbook.intro,
-        "steps": [{"title": s.title, "detail": s.detail} for s in playbook.steps],
+        "intro": _localize(playbook.intro, zip_code),
+        "steps": [
+            {"title": _localize(s.title, zip_code), "detail": _localize(s.detail, zip_code)}
+            for s in playbook.steps
+        ],
     }
+
+
+def localized_zip(store: MemoryStore) -> str | None:
+    """The home ZIP to localize playbooks with, or ``None`` when opted out.
+
+    Localization is **opt-in**: this returns the stored ``home_zip`` only when
+    ``playbook_localization`` is truthy (``1``/``true``/``on``/``yes``) *and* a
+    non-blank ZIP is set. Otherwise ``None``, so :func:`playbook_view` falls back
+    to the generic phrasing. Reading both keys here keeps the gate in one place.
+    """
+    if (store.get_state(LOCALIZATION_KEY) or "").strip().lower() not in ("1", "true", "on", "yes"):
+        return None
+    zip_code = (store.get_state(HOME_ZIP_KEY) or "").strip()
+    return zip_code or None
 
 
 def apply_clarification_answer(
