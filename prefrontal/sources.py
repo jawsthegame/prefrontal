@@ -21,7 +21,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import seal, unseal
+from prefrontal.mail.imap import ImapAccount
 from prefrontal.memory.store import MemoryStore
 
 #: Connector kinds stored in the ``sources`` table.
@@ -154,3 +156,61 @@ def resolve_gcal(store: MemoryStore) -> GcalSource | None:
         namespace=cfg.get("namespace", "gcal"),
         enabled=bool(row["enabled"]),
     )
+
+
+# -- mail fetch bridge: registry source -> ImapAccount + retention policy ------
+
+
+@dataclass(frozen=True)
+class MailFetchSource:
+    """What the mail-fetch path needs for one account: connection + retention."""
+
+    imap: ImapAccount
+    policy: str
+
+
+def resolve_mail_fetch(
+    store: MemoryStore, account: str, *, settings: Settings | None = None
+) -> MailFetchSource | None:
+    """Resolve how to fetch ``account`` for the (scoped) user: DB source, else env.
+
+    Prefers the user's registry ``imap`` source (credentials decrypted, retention
+    from its config). Falls back to the global ``MAIL_IMAP_*_<ACCOUNT>`` env +
+    :meth:`Settings.policy_for` so a not-yet-migrated deploy keeps working. A
+    disabled or credential-incomplete DB source falls through to env rather than
+    silently fetching nothing.
+
+    Returns ``None`` when neither a usable DB source nor env credentials exist.
+    """
+    settings = settings or get_settings()
+    src = resolve_imap(store, account)
+    if src is not None and src.enabled and src.host and src.username and src.password:
+        imap = ImapAccount(
+            name=account,
+            host=src.host,
+            user=src.username,
+            password=src.password,
+            mailbox=src.mailbox,
+            important_only=src.important_only,
+        )
+        return MailFetchSource(imap=imap, policy=src.retention or "signals")
+    imap = ImapAccount.from_env(account)
+    if imap is None:
+        return None
+    return MailFetchSource(imap=imap, policy=settings.policy_for(account))
+
+
+def mail_fetch_accounts(
+    store: MemoryStore, *, settings: Settings | None = None
+) -> list[str]:
+    """Return the account names to fetch for the (scoped) user.
+
+    The user's enabled ``imap`` registry sources when they have any; otherwise the
+    globally-configured ``PREFRONTAL_MAIL_ACCOUNTS`` names — so a user with no
+    connected sources still fetches the legacy env-configured accounts.
+    """
+    settings = settings or get_settings()
+    db = imap_accounts(store, include_disabled=False)
+    if db:
+        return db
+    return [name for name, _ in settings.mail_accounts]
