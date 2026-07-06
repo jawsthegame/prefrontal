@@ -258,8 +258,9 @@ const open = (todos.todos || []).length;
 // or already too late to leave for something), which upcoming commitments topple.
 // Surfaced only for a genuine domino (>=2 at risk) — a single at-risk item is
 // already covered by the departure/next facets, so this earns its slot when it
-// reveals a chain those don't. `/impact/cascade` self-gates: it returns nothing
-// unless you're actually behind (see the endpoint's source resolution).
+// reveals a chain those don't. `/impact/cascade` is scoped to today's own
+// commitments (never FYI, never tomorrow), so this reflects a real same-day
+// domino — not a tight back-to-back on a future day (see the endpoint).
 const cascadeRisky = (cascade.at_risk || []);
 const cascadeChain = cascadeRisky.length >= 2 ? cascadeRisky : [];
 const cascadeColor = cascade.hard_conflict ? C.call : C.firm;

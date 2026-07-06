@@ -249,6 +249,37 @@ def test_cascade_endpoint_falls_back_to_now_when_schedule_clear(client, store):
     assert body["phrase"] == ""
 
 
+def test_cascade_endpoint_excludes_fyi_commitments(client, store):
+    """An FYI event (where someone else will be) never topples your schedule."""
+    # If counted, this FYI's assumed length would run right into the real
+    # commitment after it and flag it late — but an FYI is never yours to attend,
+    # so it must not consume your time (the same rule every other surface makes).
+    store.upsert_commitment(
+        title="Kids at grandma's", start_at=_utc(5), kind="fyi", external_id="cal:fyi",
+    )
+    store.upsert_commitment(
+        title="Tax", start_at=_utc(20), lead_minutes=10, external_id="work:tax",
+    )
+    body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
+    titles = [c["title"] for c in body["cascade"]]
+    assert "Kids at grandma's" not in titles  # FYI excluded from the walk
+    assert body["at_risk"] == []              # Tax alone has slack, nothing topples
+
+
+def test_cascade_endpoint_does_not_reach_across_days(client, store):
+    """A tight back-to-back tomorrow isn't something you're 'behind' on today."""
+    # Two back-to-back commitments a full day out. Seeded at now, an unbounded
+    # walk would flag the second as toppled — but being behind doesn't carry
+    # across a night's sleep, so the seed day (today) is empty and calm.
+    store.upsert_commitment(title="Cindy", start_at=_utc(1440), external_id="cal:cindy")
+    store.upsert_commitment(
+        title="Tax", start_at=_utc(1470), lead_minutes=10, external_id="work:tax2",
+    )
+    body = client.get("/impact/cascade", headers=_auth()).json()
+    assert body["cascade"] == []
+    assert body["at_risk"] == []
+
+
 def test_cascade_endpoint_rejects_bad_free_at(client, store):
     """A malformed free_at is a 422, never a silent now-fallback."""
     r = client.get("/impact/cascade?free_at=not-a-time", headers=_auth())
