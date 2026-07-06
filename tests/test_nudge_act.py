@@ -194,13 +194,37 @@ def test_act_made_it_and_missed_it_log_departure_outcome(client, store):
     assert cid in store.dismissed_departures()
 
 
-def test_briefing_includes_feedback_footer_and_links(client, store):
-    """GET /briefing appends a 👍/👎 footer and returns the signed links."""
+def test_briefing_returns_signed_feedback_links_but_clean_text(client, store):
+    """GET /briefing returns the signed 👍/👎 links but keeps `text` footer-free.
+
+    The footer used to be baked into `text`, where the dashboard's link-less
+    markdown renderer printed the raw `[👍 yes](url)` syntax. Now the prose stays
+    clean: a rich client renders buttons (POST /briefing/feedback) and text
+    channels use these signed links.
+    """
     body = client.get("/briefing", headers=_auth()).json()
     assert body["feedback"]["helped_url"].startswith(f"{BASE}/nudge/act?t=")
     assert body["feedback"]["not_helped_url"].startswith(f"{BASE}/nudge/act?t=")
-    assert "Did this help?" in body["text"]
-    assert "👍 yes" in body["text"] and "👎 no" in body["text"]
+    assert "Did this help?" not in body["text"]
+    assert "nudge/act" not in body["text"]  # no raw link syntax leaks into the prose
+
+
+def test_briefing_feedback_endpoint_records_vote(client, store):
+    """POST /briefing/feedback records a vote (the dashboard button path)."""
+    from prefrontal.briefing import BRIEFING_HELPFUL_KEY, BRIEFING_NOT_HELPFUL_KEY
+
+    up = client.post("/briefing/feedback", headers=_auth(), json={"helpful": True})
+    assert up.status_code == 200 and up.json()["helpful"] == 1
+    down = client.post("/briefing/feedback", headers=_auth(), json={"helpful": False})
+    assert down.json()["not_helpful"] == 1
+    assert store.get_float(BRIEFING_HELPFUL_KEY, 0.0) == 1.0
+    assert store.get_float(BRIEFING_NOT_HELPFUL_KEY, 0.0) == 1.0
+    # A missing / non-bool `helpful` is a 422, never a silently-miscounted 👎.
+    assert client.post("/briefing/feedback", headers=_auth(), json={}).status_code == 422
+    assert (
+        client.post("/briefing/feedback", headers=_auth(), json={"helpful": "yes"}).status_code
+        == 422
+    )
 
 
 def test_act_briefing_feedback_records_and_steers_prompt(client, store):

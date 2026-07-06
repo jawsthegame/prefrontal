@@ -22,6 +22,7 @@ from fastapi import (
 
 from prefrontal.briefing import (
     build_briefing,
+    record_briefing_feedback,
     render_briefing,
 )
 from prefrontal.classify import (
@@ -784,13 +785,14 @@ def build_router(services: RouterServices) -> APIRouter:
         n8n can deliver the ``text`` directly, or feed it to Ollama for prose
         (or call ``prefrontal summarize``-style). Always fast and model-free here.
 
-        The ``text`` ends with a small 👍/👎 "Did this help?" footer when a public
-        origin and signing key are configured — the taps feed
-        :func:`prefrontal.briefing.learned_briefing_guidance` back into the LLM
-        briefing voice. The same signed links are returned under ``feedback`` so a
-        client can render its own buttons instead. Briefing feedback has no entity
-        id (it's about "the digest you just read"), so it rides a synthetic ``0``
-        target like the self-care / check-in one-tap actions.
+        Feedback (👍/👎, which steers the LLM briefing voice via
+        :func:`prefrontal.briefing.learned_briefing_guidance`) is offered two ways
+        so ``text`` itself stays clean prose: signed one-tap links under
+        ``feedback`` for plain-text channels that can only render a URL (n8n / SMS),
+        and ``POST /briefing/feedback`` for a token-authed rich client (the
+        dashboard renders real buttons against it). Briefing feedback has no entity
+        id (it's about "the digest you just read"), so the signed links ride a
+        synthetic ``0`` target like the self-care / check-in one-tap actions.
         """
         memory = ctx.store
         settings: Settings = request.app.state.settings
@@ -803,7 +805,6 @@ def build_router(services: RouterServices) -> APIRouter:
             settings.oauth_base_url, handle, "briefing_not_helped", 0,
             settings.session_secret,
         )
-        feedback_urls = (helped, not_helped) if helped and not_helped else None
         b = build_briefing(memory)
         return {
             "date": b.date,
@@ -816,8 +817,36 @@ def build_router(services: RouterServices) -> APIRouter:
             "encouragement": b.encouragement,
             "open_day_choice": memory.get_state(OPEN_DAY_KEY) or None,
             "feedback": {"helped_url": helped, "not_helped_url": not_helped},
-            "text": render_briefing(b, feedback_urls=feedback_urls),
+            # Clean prose — no footer baked in. A rich client (the dashboard) renders
+            # its own buttons via POST /briefing/feedback; plain-text channels use the
+            # signed links under "feedback" above.
+            "text": render_briefing(b),
         }
+
+    @router.post("/briefing/feedback", tags=["schedule"])
+    async def briefing_feedback(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, int]:
+        """Record a 👍/👎 vote on today's briefing; returns the running tally.
+
+        Body: ``{"helpful": true | false}``. The dashboard's briefing card posts
+        here; the signed ``/nudge/act`` links deliver the same vote from text
+        channels. Both land in :func:`prefrontal.briefing.record_briefing_feedback`,
+        which steers the LLM briefing voice. ``helpful`` must be a bool — a missing
+        or non-bool value is a 422 rather than a silently-miscounted 👎.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        helpful = body.get("helpful") if isinstance(body, dict) else None
+        if not isinstance(helpful, bool):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='body must be {"helpful": true|false}',
+            )
+        return record_briefing_feedback(ctx.store, helpful=helpful)
 
     @router.post("/briefing/open-day", tags=["schedule"])
     async def briefing_open_day(

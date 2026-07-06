@@ -314,6 +314,11 @@
     background: var(--accent); color: var(--accent-fg); vertical-align: middle;
   }
   .err { color: var(--call); font-size: 13px; }
+  /* Briefing 👍/👎 row — a light divider below the digest, then the prompt + two
+     small buttons (or a muted "thanks" once voted). */
+  .brief-fb { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    color: var(--muted); font-size: 13px; }
 
   /* dashboard assistant — natural-language edits with a review-then-apply step */
   #c-assistant .addrow { margin-bottom: 0; }
@@ -659,6 +664,19 @@ function md(src) {
   }
   closeList();
   return '<div class="md">' + out.join("") + "</div>";
+}
+
+// Briefing 👍/👎 — steers the LLM briefing voice (POST /briefing/feedback). The
+// vote is remembered for the session so the row shows "thanks" instead of the
+// buttons across the 15s refreshes (a re-tap would just be another honest vote).
+let briefingVoted = false;
+function briefingFeedbackHTML() {
+  if (briefingVoted) {
+    return `<div class="brief-fb"><span>Thanks — noted. It'll steer future briefings.</span></div>`;
+  }
+  return `<div class="brief-fb"><span>Did this help?</span>
+    <button class="btn-sm" data-action="brief-fb-yes" title="This briefing helped — keep this shape">👍 Yes</button>
+    <button class="btn-sm" data-action="brief-fb-no" title="This briefing missed — tighten it up">👎 No</button></div>`;
 }
 
 function gate(msg) {
@@ -1470,7 +1488,9 @@ async function load() {
         lastCascade,
       )
     : `<div class="err">unavailable</div>`;
-  $("#c-briefing .body").innerHTML = briefing.status === "fulfilled" ? md(briefing.value.text || "") : `<div class="err">unavailable</div>`;
+  $("#c-briefing .body").innerHTML = briefing.status === "fulfilled"
+    ? md(briefing.value.text || "") + briefingFeedbackHTML()
+    : `<div class="err">unavailable</div>`;
   if (profile.status === "fulfilled") {
     $("#c-profile .body").innerHTML = md(profile.value.text);
     $("#profile-updated").textContent = profile.value.generatedAt
@@ -1952,6 +1972,13 @@ document.addEventListener("click", async (e) => {
         $("#guide .body").innerHTML = renderGuide(guidePlaybook);
       }
       return;
+    }
+    else if (act === "brief-fb-yes" || act === "brief-fb-no") {
+      await post("/briefing/feedback", { helpful: act === "brief-fb-yes" });
+      briefingVoted = true;
+      const row = $("#c-briefing .body .brief-fb");
+      if (row) row.outerHTML = briefingFeedbackHTML();  // swap buttons → "thanks" in place
+      return;  // no full reload — keep the acknowledgement visible
     }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
     else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
