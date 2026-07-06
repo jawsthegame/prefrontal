@@ -288,6 +288,15 @@
   .card > h2 .updated {
     font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: 6px;
   }
+  /* Count of items that have arrived since the card was last open, shown in the
+     heading only while collapsed — so a folded-away card still tells you it holds
+     something you haven't looked at. Filled by refreshUnseen; hidden when empty. */
+  .card > h2 .card-unseen { display: none; }
+  .card.collapsed > h2 > .card-unseen:not(:empty) {
+    display: inline-block; font-size: 11px; font-weight: 700; text-transform: none;
+    letter-spacing: 0; margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+    background: var(--accent); color: var(--accent-fg); vertical-align: middle;
+  }
   .err { color: var(--call); font-size: 13px; }
 
   /* dashboard assistant — natural-language edits with a review-then-apply step */
@@ -1414,6 +1423,7 @@ let layout = (() => {
 layout.order = layout.order || [];
 layout.caps = layout.caps || {};
 layout.collapsed = layout.collapsed || {};  // { cardId: true } for collapsed cards
+layout.seen = layout.seen || {};  // { cardId: { itemKey: true } } — items already shown to the user
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
 
 const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
@@ -1429,12 +1439,19 @@ function applyCollapsed() {
 // is collapsed (see .card-summary CSS). Injected once, filled by updateSummaries.
 function injectSummaries() {
   document.querySelectorAll(".card").forEach((card) => {
-    if (card.querySelector(":scope > .card-summary")) return;  // inject once
     const h2 = card.querySelector(":scope > h2");
     if (!h2) return;
-    const s = document.createElement("div");
-    s.className = "card-summary";
-    h2.insertAdjacentElement("afterend", s);
+    if (!card.querySelector(":scope > .card-summary")) {  // inject once
+      const s = document.createElement("div");
+      s.className = "card-summary";
+      h2.insertAdjacentElement("afterend", s);
+    }
+    // A count badge inside the heading, shown while collapsed (see refreshUnseen).
+    if (!h2.querySelector(":scope > .card-unseen")) {
+      const b = document.createElement("span");
+      b.className = "card-unseen";
+      h2.appendChild(b);
+    }
   });
 }
 
@@ -1513,6 +1530,57 @@ function updateSummaries() {
     const rich = RICH_SUMMARIES[card.id] ? RICH_SUMMARIES[card.id]() : null;
     s.textContent = rich != null ? rich : summarize(card);
   });
+  refreshUnseen();
+}
+
+// The stable identity of each item a card is currently showing, read straight
+// from the rendered body: item rows carry their id on their action buttons
+// (data-id) or, for conflicts, a data-key. Deduped, so the several buttons that
+// share one item's id count once. Cards with no such rows (prose, controls-only)
+// yield nothing and never get an "unseen" badge — which is what we want.
+function itemKeys(card) {
+  const body = card.querySelector(":scope > .body");
+  if (!body) return [];
+  const keys = new Set();
+  body.querySelectorAll("[data-id]").forEach((el) => keys.add("id:" + el.dataset.id));
+  body.querySelectorAll("[data-key]").forEach((el) => keys.add("key:" + el.dataset.key));
+  return [...keys];
+}
+
+// Update each collapsed card's "N new" badge. An item is "seen" once the user
+// has had the card open with it present; while a card is collapsed, anything
+// that arrives afterwards is unseen and bumps the count. An open card (or one
+// we're tracking for the first time) has all its current items marked seen, so
+// the badge only ever flags things you genuinely haven't looked at yet. Seen
+// keys are pruned to what's still present so the store stays bounded.
+function refreshUnseen() {
+  let changed = false;
+  document.querySelectorAll(".card").forEach((card) => {
+    if (!card.id) return;
+    const badge = card.querySelector(":scope > h2 > .card-unseen");
+    if (!badge) return;
+    const keys = itemKeys(card);
+    const known = layout.seen[card.id];
+    if (known === undefined || !card.classList.contains("collapsed")) {
+      // First sighting of this card, or it's open: everything on it is now seen.
+      const next = {};
+      keys.forEach((k) => { next[k] = true; });
+      if (!sameKeys(known, next)) { layout.seen[card.id] = next; changed = true; }
+      badge.textContent = "";
+    } else {
+      const unseen = keys.filter((k) => !known[k]).length;
+      badge.textContent = unseen ? unseen + " new" : "";
+      for (const k of Object.keys(known)) {  // drop keys no longer present
+        if (!keys.includes(k)) { delete known[k]; changed = true; }
+      }
+    }
+  });
+  if (changed) saveLayout();
+}
+function sameKeys(a, b) {
+  if (!a) return false;
+  const ak = Object.keys(a), bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((k) => b[k]);
 }
 function toggleCollapsed(card) {
   const on = card.classList.toggle("collapsed");
@@ -1520,6 +1588,7 @@ function toggleCollapsed(card) {
     if (on) layout.collapsed[card.id] = true; else delete layout.collapsed[card.id];
     saveLayout();
   }
+  refreshUnseen();  // expanding clears the badge (all now seen); collapsing shows a fresh 0
 }
 
 function applyOrder() {
