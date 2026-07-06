@@ -27,7 +27,28 @@ desktop/
 └── package.json
 ```
 
-## Run it on your laptop (remote → mini)
+## Get a pre-built `.dmg` (no dev setup)
+
+A GitHub Actions workflow builds the app on a macOS runner and produces `.dmg`
+installers for Apple Silicon (`arm64`) and Intel (`x64`).
+
+1. On GitHub: **Actions** → **Build Prefrontal Desktop (.dmg)** → **Run
+   workflow**. (Or push a tag like `desktop-v0.1.0` to also attach the DMGs to a
+   Release.)
+2. When it finishes, download the DMG for your Mac from the run's **Artifacts**
+   (Apple Silicon = `arm64`, older Intel Macs = `x64`).
+3. Open the DMG and drag **Prefrontal** to Applications.
+
+The build is **unsigned** (no Apple Developer cert), so on first launch macOS
+Gatekeeper will block it. Right-click the app → **Open** (once), or run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Prefrontal.app
+```
+
+Then launch it and set your server URL (see below).
+
+## Run from source
 
 You don't need Python or the Prefrontal CLI on the laptop — just Node.js:
 
@@ -93,10 +114,11 @@ All optional. Env wins over the saved setting wins over the default.
 npm run dist
 ```
 
-Builds with `electron-builder` into `dist/`. This bundles the Electron shell
-only — in local mode the packaged app still expects `prefrontal` installed on
-the machine. For a laptop pointed at a remote mini, the packaged app is fully
-self-sufficient.
+Builds with `electron-builder` into `dist/` (must run on macOS). This bundles
+the Electron shell only — in local mode the packaged app still expects
+`prefrontal` installed on the machine. For a laptop pointed at a remote mini,
+the packaged app is fully self-sufficient.
 
-> The icon is a 256×256 PNG. For a crisper packaged app, drop a 512×512 (or
-> `.icns`) at `assets/icon.png` before `npm run dist`.
+The same build runs in CI — see
+[`.github/workflows/desktop-dmg.yml`](../.github/workflows/desktop-dmg.yml) and
+"Get a pre-built `.dmg`" above.

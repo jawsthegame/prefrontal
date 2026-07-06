@@ -27,9 +27,19 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ]
+    },
+    "dmg": {
+      "title": "${productName} ${version}"
     }
   }
 }
