@@ -135,23 +135,32 @@ Document all three in `.env.example`.
   pre-existing on `main` and unrelated (live-Ollama clarify test, real-`.env`
   notify test, a tz-guard offender in `time_blindness.py:342`).
 
-## Phase 1 — Per-user mail
+## Phase 1 — Per-user mail ✅ CODE DONE (deploy + onboarding deferred)
 
-- `ImapAccount` resolution: new `sources.resolve_imap(store, account)` checks
-  the DB first, **falls back to `from_env` during transition** so nothing breaks
-  mid-migration.
-- `cli.py` mail fetch: resolve per-user; account list from the user's `imap`
-  sources when present (else global env). Add `--all-users`.
-- CLI: `prefrontal mail add-source | list-sources | remove-source`, and a
-  one-time `prefrontal mail import-env-sources --user <handle>` that reads the
-  current `MAIL_IMAP_*` env + `PREFRONTAL_MAIL_ACCOUNTS` and writes encrypted
-  rows (migrates Tom off env in one shot).
-- Deploy: switch `deploy/mail-fetch.sh` + `com.prefrontal-mail.plist` to a single
-  `mail fetch --all-users` job (accounts come from each user's sources); retire
-  the hard-coded `personal work` arg list and the `PREFRONTAL_USER` pin added in
-  the band-aid fix.
-- Onboarding: add a "connect a mailbox" step to the `onboard-user` skill.
-- **Tests:** per-user resolution, env fallback, `--all-users` independence.
+- ✅ Resolution bridge in `prefrontal/sources.py`: `resolve_mail_fetch(store,
+  account)` returns `MailFetchSource(imap, policy)` from the DB source
+  (credentials decrypted, retention from config), **falling back to
+  `ImapAccount.from_env` + `Settings.policy_for`** so a not-yet-migrated deploy
+  keeps working; `mail_fetch_accounts(store)` = the user's enabled sources else
+  the global env accounts.
+- ✅ `cli.py` mail fetch: `--account` now optional (omit = all the user's
+  accounts), `--all-users` fan-out via a shared `_user_targets` helper, per-user/
+  per-account resolve → fetch → ingest (`_ingest_mail`/`_print_mail_summary`).
+- ✅ CLI: `mail add-source | list-sources | remove-source` (passwords sealed;
+  list never reveals them) and `mail import-env-sources` (seals the current
+  `MAIL_IMAP_*` accounts into the user's registry).
+- ✅ **Tests** (`test_mail_sources.py`): DB-preferred vs env-fallback resolution,
+  disabled-source fall-through, account listing, add/list/remove round-trip
+  (password sealed, not in output/DB), import-env, `--all-users` fan-out
+  isolation, missing-credential exit code.
+- ⏳ **Deferred to a follow-up (after #319/#320 merge):** switch
+  `deploy/mail-fetch.sh` + `com.prefrontal-mail.plist` to a single
+  `mail fetch --all-users` job and retire the `PREFRONTAL_USER=Tom` band-aid.
+  Held back to avoid churn/conflicts with the band-aid PR #319.
+- ⏳ **Deferred:** "connect a mailbox" step in the `onboard-user` skill.
+- **Known limitation:** Gmail deep-linking (`Settings.gmail_accounts`) is still
+  derived from env account names, so a DB-only Gmail account may not get Gmail
+  deep-links on its todos. Cosmetic; fold into a later polish pass.
 
 ## Phase 2 — Per-user calendar (Google OAuth)
 

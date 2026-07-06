@@ -134,6 +134,25 @@ def _resolve_user_store(store: MemoryStore, handle: str | None) -> MemoryStore:
     return store.scoped(users[0]["id"])
 
 
+def _user_targets(
+    store: MemoryStore, args: argparse.Namespace
+) -> list[tuple[str, MemoryStore]]:
+    """Resolve the ``(handle, scoped_store)`` pairs a data command should act on.
+
+    With ``--all-users`` (for commands that define it) this is every active user;
+    otherwise the single user named by ``--user`` (or the sole user). The handle
+    is only a label for output. ``store`` must be unscoped.
+    """
+    if getattr(args, "all_users", False):
+        return [(u["handle"], store.scoped(u["id"])) for u in store.each_user()]
+    scoped = _resolve_user_store(store, args.user)
+    handle = next(
+        (u["handle"] for u in store.list_users() if u["id"] == scoped.user_id),
+        str(scoped.user_id),
+    )
+    return [(handle, scoped)]
+
+
 def _cmd_secrets(args: argparse.Namespace) -> int:
     """Manage the Fernet key that seals per-user source credentials at rest.
 
@@ -2067,6 +2086,164 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ingest_mail(store, messages, *, account, policy, client, use_model, settings):
+    """Ingest a batch of messages for one account into a (scoped) store.
+
+    Centralizes the ingest call — learned corrections/denylist, per-account
+    domain — so the ``sync`` and (per-user, per-account) ``fetch`` paths share it.
+    """
+    from prefrontal.mail import ingest_messages
+    from prefrontal.mail.feedback import learned_corrections, learned_denylist
+
+    return ingest_messages(
+        store,
+        messages,
+        account=account,
+        policy=policy,
+        client=client,
+        use_model=use_model,
+        corrections=learned_corrections(
+            store,
+            quick_drop_days=settings.triage_quick_drop_days,
+            repeat_threshold=settings.triage_repeat_threshold,
+        ),
+        denylisted_senders=learned_denylist(
+            store, repeat_threshold=settings.triage_repeat_threshold
+        ),
+        domain=settings.account_domain_map.get(account),
+    )
+
+
+def _print_mail_summary(summary, *, handle: str | None = None) -> None:
+    """Print one ingest-summary line, optionally prefixed with the user handle."""
+    prefix = f"[{handle}] " if handle else ""
+    print(
+        f"{prefix}[{summary.account}/{summary.policy}] received {summary.received}, "
+        f"ingested {summary.ingested}, skipped {summary.skipped}, "
+        f"needs-action {summary.needs_action} "
+        f"({summary.todos_created} todos, {summary.todos_suppressed} suppressed), "
+        f"{summary.triaged_by_llm} via model."
+    )
+
+
+def _cmd_mail_sources(
+    args: argparse.Namespace, settings, db_path: str
+) -> int:
+    """Manage a user's per-user IMAP sources: add / list / remove / import-env.
+
+    ``add-source`` and ``import-env-sources`` seal the password with the at-rest
+    key (so they require `prefrontal secrets init` first); ``list-sources`` never
+    reveals secrets; ``import-env-sources`` migrates the legacy global
+    ``MAIL_IMAP_*`` env accounts into the resolved user's registry.
+    """
+    import json
+
+    from prefrontal.crypto import SecretKeyError, secret_key_configured
+    from prefrontal.mail.imap import DEFAULT_IMAP_HOST, ImapAccount
+    from prefrontal.sources import IMAP, put_imap_source
+
+    action = args.mail_action
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+
+        if action == "list-sources":
+            rows = store.list_sources(kind=IMAP)
+            if not rows:
+                print("No IMAP sources configured for this user.")
+                return 0
+            for r in rows:
+                cfg = json.loads(r["config"] or "{}")
+                state = "enabled" if r["enabled"] else "disabled"
+                imp = " important-only" if cfg.get("important_only") else ""
+                print(
+                    f"{r['account']}: {cfg.get('username', '?')}@{cfg.get('host', '?')} "
+                    f"[{cfg.get('mailbox', 'INBOX')}] {cfg.get('retention', 'signals')} "
+                    f"{state}{imp}"
+                )
+            return 0
+
+        if action == "remove-source":
+            if store.delete_source(IMAP, args.account):
+                print(f"Removed IMAP source '{args.account}'.")
+                return 0
+            print(f"No IMAP source '{args.account}' for this user.", file=sys.stderr)
+            return 1
+
+        # add-source / import-env-sources both seal secrets — require a key.
+        if not secret_key_configured(settings):
+            print(
+                "No secret key configured — run `prefrontal secrets init` first "
+                "(source secrets are encrypted at rest).",
+                file=sys.stderr,
+            )
+            return 1
+
+        if action == "add-source":
+            host = args.host or DEFAULT_IMAP_HOST
+            password = args.password
+            if password is None:
+                import getpass
+
+                try:
+                    password = getpass.getpass(f"IMAP password for {args.username}: ")
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAborted.", file=sys.stderr)
+                    return 1
+            if not password:
+                print("A password is required.", file=sys.stderr)
+                return 1
+            important = args.important_only
+            if important is None:  # default: Important-only for Gmail hosts
+                important = "gmail" in host.lower()
+            try:
+                put_imap_source(
+                    store,
+                    account=args.account,
+                    host=host,
+                    username=args.username,
+                    password=password,
+                    mailbox=args.mailbox,
+                    important_only=important,
+                    retention=args.retention,
+                    enabled=not args.disabled,
+                )
+            except SecretKeyError as exc:
+                print(f"Could not seal the password: {exc}", file=sys.stderr)
+                return 1
+            state = "disabled" if args.disabled else "enabled"
+            print(f"Saved IMAP source '{args.account}' ({state}).")
+            return 0
+
+        # import-env-sources
+        names = [name for name, _ in settings.mail_accounts]
+        if not names:
+            print("No accounts in PREFRONTAL_MAIL_ACCOUNTS to import.", file=sys.stderr)
+            return 1
+        imported: list[str] = []
+        skipped: list[str] = []
+        for account in names:
+            imap = ImapAccount.from_env(account)
+            if imap is None:
+                skipped.append(account)
+                continue
+            put_imap_source(
+                store,
+                account=account,
+                host=imap.host,
+                username=imap.user,
+                password=imap.password,
+                mailbox=imap.mailbox,
+                important_only=imap.important_only,
+                retention=settings.policy_for(account),
+            )
+            imported.append(account)
+        if imported:
+            print(f"Imported {len(imported)} source(s): {', '.join(imported)}")
+        if skipped:
+            print(f"Skipped (no MAIL_IMAP_* creds): {', '.join(skipped)}")
+        return 0 if imported else 1
+
+
 def _cmd_mail(args: argparse.Namespace) -> int:
     """Ingest, fetch, or list triaged mail.
 
@@ -2075,8 +2252,15 @@ def _cmd_mail(args: argparse.Namespace) -> int:
     - ``list`` — show recently ingested mail and the open action items.
     - ``sync FILE`` — ingest messages from a JSON file (a list, or an object
       with a ``messages`` key) for the given ``--account``.
-    - ``fetch`` — pull unread mail for ``--account`` over IMAP using the
-      ``MAIL_IMAP_*_<ACCOUNT>`` env credentials, then ingest it.
+    - ``fetch`` — pull unread mail over IMAP, then ingest. Credentials +
+      retention resolve per user from the registry (``add-source``), falling back
+      to the global ``MAIL_IMAP_*_<ACCOUNT>`` env. ``--account`` fetches one
+      account; omit it to fetch all of the user's accounts. ``--all-users`` fans
+      out over every active user.
+    - ``add-source`` / ``list-sources`` / ``remove-source`` — manage a user's
+      connected IMAP mailboxes (passwords sealed at rest).
+    - ``import-env-sources`` — migrate the legacy global ``MAIL_IMAP_*`` accounts
+      into the user's registry.
 
     Args:
         args: Parsed arguments; ``mail_action`` plus action-specific fields.
@@ -2087,7 +2271,6 @@ def _cmd_mail(args: argparse.Namespace) -> int:
     import json
 
     from prefrontal.integrations.ollama import OllamaClient
-    from prefrontal.mail import ingest_messages
     from prefrontal.mail.feedback import learned_corrections, learned_denylist
 
     settings = get_settings()
@@ -2183,12 +2366,14 @@ def _cmd_mail(args: argparse.Namespace) -> int:
             print(f" {flag} {m.get('category', '?'):12} {m.get('subject') or '(no subject)'}")
         return 0
 
-    # `sync` and `fetch` both ingest. Resolve the policy and an Ollama client.
-    account = args.account
-    policy = settings.policy_for(account)
+    if args.mail_action in ("add-source", "list-sources", "remove-source",
+                            "import-env-sources"):
+        return _cmd_mail_sources(args, settings, db_path)
+
     client = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
 
     if args.mail_action == "sync":
+        account = args.account
         try:
             data = json.loads(Path(args.file).read_text())
         except (OSError, ValueError) as exc:
@@ -2201,52 +2386,70 @@ def _cmd_mail(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-    else:  # fetch
-        from prefrontal.mail.imap import ImapAccount, fetch_unread
-
-        imap = ImapAccount.from_env(account)
-        if imap is None:
-            print(
-                f"No IMAP credentials for account '{account}'. Set "
-                f"MAIL_IMAP_USER_{account.upper()} and MAIL_IMAP_PASSWORD_{account.upper()}.",
-                file=sys.stderr,
-            )
-            return 1
-        try:
-            messages = fetch_unread(
-                imap, limit=args.limit, since_days=args.since_days
-            )
-        except Exception as exc:  # imaplib raises a variety of errors
-            print(f"IMAP fetch failed: {exc}", file=sys.stderr)
-            return 1
-
-    with MemoryStore.open(db_path) as unscoped:
-        store = _resolve_user_store(unscoped, args.user)
-        summary = ingest_messages(
-            store,
-            messages,
-            account=account,
-            policy=policy,
-            client=client,
-            use_model=not args.heuristic,
-            corrections=learned_corrections(
+        with MemoryStore.open(db_path) as unscoped:
+            store = _resolve_user_store(unscoped, args.user)
+            summary = _ingest_mail(
                 store,
-                quick_drop_days=settings.triage_quick_drop_days,
-                repeat_threshold=settings.triage_repeat_threshold,
-            ),
-            denylisted_senders=learned_denylist(
-                store, repeat_threshold=settings.triage_repeat_threshold
-            ),
-            domain=settings.account_domain_map.get(account),
-        )
-    print(
-        f"[{summary.account}/{summary.policy}] received {summary.received}, "
-        f"ingested {summary.ingested}, skipped {summary.skipped}, "
-        f"needs-action {summary.needs_action} "
-        f"({summary.todos_created} todos, {summary.todos_suppressed} suppressed), "
-        f"{summary.triaged_by_llm} via model."
-    )
-    return 0
+                messages,
+                account=account,
+                policy=settings.policy_for(account),
+                client=client,
+                use_model=not args.heuristic,
+                settings=settings,
+            )
+        _print_mail_summary(summary)
+        return 0
+
+    # fetch: pull unread over IMAP for each target user's accounts, then ingest.
+    # Credentials + retention come from each user's registry sources, falling
+    # back to the global MAIL_IMAP_* env so a not-yet-migrated deploy still works.
+    from prefrontal.mail.imap import fetch_unread
+    from prefrontal.sources import mail_fetch_accounts, resolve_mail_fetch
+
+    status = 0
+    with MemoryStore.open(db_path) as unscoped:
+        for handle, store in _user_targets(unscoped, args):
+            accounts = (
+                [args.account]
+                if args.account
+                else mail_fetch_accounts(store, settings=settings)
+            )
+            if not accounts:
+                print(f"[{handle}] no mail accounts configured.", file=sys.stderr)
+                continue
+            for account in accounts:
+                src = resolve_mail_fetch(store, account, settings=settings)
+                if src is None:
+                    print(
+                        f"[{handle}/{account}] no IMAP credentials — add a source "
+                        f"(`prefrontal mail --user {handle} add-source --account "
+                        f"{account} ...`) or set MAIL_IMAP_*_{account.upper()}.",
+                        file=sys.stderr,
+                    )
+                    status = 1
+                    continue
+                try:
+                    messages = fetch_unread(
+                        src.imap, limit=args.limit, since_days=args.since_days
+                    )
+                except Exception as exc:  # imaplib raises a variety of errors
+                    print(
+                        f"[{handle}/{account}] IMAP fetch failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    status = 1
+                    continue
+                summary = _ingest_mail(
+                    store,
+                    messages,
+                    account=account,
+                    policy=src.policy,
+                    client=client,
+                    use_model=not args.heuristic,
+                    settings=settings,
+                )
+                _print_mail_summary(summary, handle=handle)
+    return status
 
 
 def _cmd_modules(args: argparse.Namespace) -> int:
@@ -2863,7 +3066,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the model; triage with the keyword heuristic (fast backlog clear).",
     )
     m_fetch = mail_sub.add_parser("fetch", help="Fetch unread over IMAP, then ingest.")
-    m_fetch.add_argument("--account", required=True, help="Logical account name.")
+    m_fetch.add_argument(
+        "--account",
+        default=None,
+        help="Logical account name; omit to fetch all of the user's accounts.",
+    )
+    m_fetch.add_argument(
+        "--all-users",
+        action="store_true",
+        help="Fan out over every active user (each user's own accounts).",
+    )
     m_fetch.add_argument("--limit", type=int, default=50, help="Max unread to fetch.")
     m_fetch.add_argument(
         "--since-days",
@@ -2875,6 +3087,48 @@ def build_parser() -> argparse.ArgumentParser:
         "--heuristic",
         action="store_true",
         help="Skip the model; triage with the keyword heuristic (fast backlog clear).",
+    )
+
+    m_add_src = mail_sub.add_parser(
+        "add-source", help="Add/update a per-user IMAP source (credentials sealed)."
+    )
+    m_add_src.add_argument("--account", required=True, help="Logical account name.")
+    m_add_src.add_argument("--host", default=None, help="IMAP host (default imap.gmail.com).")
+    m_add_src.add_argument("--username", required=True, help="IMAP login (usually the email).")
+    m_add_src.add_argument(
+        "--password",
+        default=None,
+        help="IMAP password/app-password. Omit to be prompted (not echoed).",
+    )
+    m_add_src.add_argument("--mailbox", default="INBOX", help="Mailbox to read (default INBOX).")
+    m_add_src.add_argument(
+        "--important-only",
+        dest="important_only",
+        action="store_true",
+        default=None,
+        help="Gmail: fetch only Important mail (default: on for Gmail hosts).",
+    )
+    m_add_src.add_argument(
+        "--no-important-only",
+        dest="important_only",
+        action="store_false",
+        help="Fetch all unread, not just Gmail-Important.",
+    )
+    m_add_src.add_argument(
+        "--retention",
+        choices=("signals", "full"),
+        default="signals",
+        help="Retention policy for this account (default signals).",
+    )
+    m_add_src.add_argument(
+        "--disabled", action="store_true", help="Add the source paused (enabled=0)."
+    )
+    mail_sub.add_parser("list-sources", help="List the user's IMAP sources (no secrets).")
+    m_rm_src = mail_sub.add_parser("remove-source", help="Delete a per-user IMAP source.")
+    m_rm_src.add_argument("--account", required=True, help="Logical account name.")
+    mail_sub.add_parser(
+        "import-env-sources",
+        help="Seal the current MAIL_IMAP_* env accounts into the user's registry.",
     )
     p_mail.set_defaults(func=_cmd_mail)
 

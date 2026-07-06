@@ -13,12 +13,9 @@ from prefrontal.config import get_settings
 from prefrontal.crypto import generate_key
 from prefrontal.memory.store import MemoryStore
 from prefrontal.sources import (
-    GCAL,
     IMAP,
     imap_accounts,
-    put_gcal_source,
     put_imap_source,
-    resolve_gcal,
     resolve_imap,
 )
 from tests.conftest import scoped_default
@@ -70,7 +67,7 @@ def test_repo_list_filters_by_kind_and_enabled(store):
     """list_sources filters by kind and (optionally) excludes disabled rows."""
     store.upsert_source(kind=IMAP, account="personal", config="{}")
     store.upsert_source(kind=IMAP, account="work", config="{}", enabled=False)
-    store.upsert_source(kind=GCAL, account="google", config="{}")
+    store.upsert_source(kind="ics", account="family", config="{}")
     assert len(store.list_sources()) == 3
     assert len(store.list_sources(kind=IMAP)) == 2
     assert len(store.list_sources(kind=IMAP, include_disabled=False)) == 1
@@ -147,22 +144,6 @@ def test_imap_config_only_edit_preserves_password(store, secret_env):
     assert src.password == "keep-me"
 
 
-def test_gcal_source_round_trips(store, secret_env):
-    """put/resolve preserves calendar selection and decrypts the refresh token."""
-    put_gcal_source(
-        store,
-        refresh_token="1//refresh-token",
-        calendar_ids=("primary", "work@group.calendar.google.com"),
-        namespace="gcal",
-    )
-    src = resolve_gcal(store)
-    assert src is not None
-    assert src.refresh_token == "1//refresh-token"
-    assert src.calendar_ids == ("primary", "work@group.calendar.google.com")
-    assert src.namespace == "gcal"
-
-
 def test_resolve_missing_source_returns_none(store, secret_env):
     """Resolving an unconfigured source is None, not an error."""
     assert resolve_imap(store, "nope") is None
-    assert resolve_gcal(store) is None
