@@ -75,7 +75,7 @@ cp .env.example .env
 Edit `.env`. At minimum set a strong webhook secret:
 
 ```ini
-PREFRONTAL_DB_PATH=/Users/tom/prefrontal/prefrontal.db
+PREFRONTAL_DB_PATH=/Users/tom/src/prefrontal/prefrontal.db
 PREFRONTAL_HOST=0.0.0.0
 PREFRONTAL_PORT=8000
 

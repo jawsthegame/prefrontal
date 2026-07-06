@@ -12,7 +12,7 @@
 # needed.
 set -euo pipefail
 
-PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/prefrontal}"
+PREFRONTAL_HOME="${PREFRONTAL_HOME:-/Users/tom/src/prefrontal}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 
 cd "$PREFRONTAL_HOME"
