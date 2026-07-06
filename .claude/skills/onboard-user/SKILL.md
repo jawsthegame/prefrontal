@@ -111,11 +111,22 @@ subscribes their phone to a topic; the deployment publishes to it.
 - **Solo / single-user deploy:** the topic is the `NTFY_TOPIC` env var (with
   `NTFY_SERVER`, default `https://ntfy.sh`) — see `docs/deployment.md`.
 - **Multi-user deploy:** give this person their **own** topic so their nudges
-  don't land on someone else's phone. Their per-user route lives in
-  `coaching_state` keys `ntfy_topic` / `ntfy_server` / `ntfy_token`
-  (Pushover: `pushover_user_key` / `pushover_token`), which override the env
-  defaults for that user. Pick a unique topic like `prefrontal-<handle>-<random>`
-  (topics are unguessable-by-obscurity on public ntfy.sh — keep it non-obvious).
+  don't land on someone else's phone. Pick a unique topic like
+  `prefrontal-<handle>-<random>` (topics are unguessable-by-obscurity on public
+  ntfy.sh — keep it non-obvious), then set their per-user route:
+
+  ```sh
+  prefrontal user route <handle> --ntfy-topic prefrontal-<handle>-<random>
+  #   --ntfy-server / --ntfy-token / --pushover-user-key / --pushover-token also available
+  #   run it with no flags to just show the current route; pass '' to clear a field
+  ```
+
+  This writes the per-user `coaching_state` route keys (`ntfy_topic` /
+  `ntfy_server` / `ntfy_token`, Pushover: `pushover_user_key` / `pushover_token`)
+  that override the env defaults for that user. On a **multi-user** box an unset
+  target does **not** inherit the operator default (that's someone else's phone),
+  so setting this is required, not optional — until you do, their nudges go
+  nowhere rather than to the wrong device.
 
 Then **verify delivery end-to-end before touching the phone shortcuts** — this
 is the fastest way to catch a bad topic/token:
