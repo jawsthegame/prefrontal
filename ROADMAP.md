@@ -196,13 +196,13 @@ the first test. Code follow-ups below are optional polish.
   it** (departure outcome), and **Stay on task** / **Park it** / **Switch
   anyway** on the impulsivity reflective pause — collapsing its old two-call
   `switch` → `resolve` menu into a single background tap.
-  `prefrontal/webhooks/notify.py` builds the ntfy `http` action-button specs, and
-  the outing/focus/departure/pause endpoints return them as an `actions` list
-  (empty unless a public origin + signing key are set) for a "publish to ntfy"
-  delivery node (`deploy/n8n/interactive-nudge-ntfy.workflow.json`). Idempotent
-  per button; covered by `tests/test_notify.py` + `tests/test_nudge_act.py`. This
-  is the action-button core of the "Delivery layer + interactive nudges" item
-  below; first-class Python publishing remains.
+  `prefrontal/webhooks/notify.py` builds the ntfy `http` action-button specs
+  (empty unless a public origin + signing key are set), and the native delivery
+  client attaches them to each cue on the `prefrontal coach --deliver` tick — so a
+  tap fires `GET /nudge/act` in the background with no app switch. Idempotent per
+  button; covered by `tests/test_notify.py` + `tests/test_nudge_act.py`. The old
+  "publish to ntfy" n8n node (`deploy/n8n/interactive-nudge-ntfy.workflow.json`)
+  was retired once first-class Python publishing landed.
 - **Multi-tenant (multiple users)** ✅ — one deployment now serves several people.
   A `users` table with per-user tokens (`sha256(token)`, shown once like an API
   key) and a `user_id` foreign key on every user-owned table; a `MemoryStore`

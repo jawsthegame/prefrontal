@@ -703,10 +703,11 @@ Two more delivery workflows round out the module coverage:
   running — so a session you scheduled needs zero taps to begin. (Pairs with the
   one-tap `focus/start` — leave its body empty and it infers the task from your
   top open todo.)
-- **Interactive one-tap actions over ntfy** — import
-  [`../deploy/n8n/interactive-nudge-ntfy.workflow.json`](../deploy/n8n/interactive-nudge-ntfy.workflow.json),
-  the reference for wiring ntfy's action buttons back to the signed `/nudge/act`
-  links so a tap (Made it, ⭐ Yes, Ate, …) records straight into Prefrontal.
+- **Interactive one-tap actions over ntfy** — no setup needed: the native
+  delivery client on the `prefrontal coach --deliver` tick attaches ntfy's action
+  buttons (wired to the signed `/nudge/act` links) to each cue, so a tap (Made it,
+  ⭐ Yes, Ate, …) records straight into Prefrontal. (This replaced a standalone n8n
+  "publish to ntfy" workflow.)
 
 ---
 
