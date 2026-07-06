@@ -86,6 +86,11 @@ from prefrontal.todos import (
 def _resolve_user_store(store: MemoryStore, handle: str | None) -> MemoryStore:
     """Return ``store`` scoped to a user chosen by ``handle`` (or the only one).
 
+    Handle matching is case-insensitive (an exact-case match still wins), so a
+    launchd/cron ``--user tom`` resolves the ``Tom`` account instead of silently
+    dropping the tick — the casing slip that once left the coach agent delivering
+    to no one.
+
     Args:
         store: An unscoped store.
         handle: The user's handle, or ``None`` to auto-pick when exactly one
@@ -95,12 +100,24 @@ def _resolve_user_store(store: MemoryStore, handle: str | None) -> MemoryStore:
         A store scoped to the resolved user.
 
     Raises:
-        SystemExit: With a clear message if the handle is unknown, or if no
-            handle was given and zero/many users exist.
+        SystemExit: With a clear message if the handle is unknown (or matches
+            more than one account only by case), or if no handle was given and
+            zero/many users exist.
     """
     users = store.list_users()
     if handle is not None:
         match = next((u for u in users if u["handle"] == handle), None)
+        if match is None:
+            # Fall back to a case-insensitive match (handles are UNIQUE but
+            # case-sensitively, so guard against two case-variant accounts).
+            ci = [u for u in users if u["handle"].lower() == handle.lower()]
+            if len(ci) > 1:
+                names = ", ".join(u["handle"] for u in ci)
+                raise SystemExit(
+                    f"Ambiguous user '{handle}' — matches {names} by case; "
+                    "pass the exact handle."
+                )
+            match = ci[0] if ci else None
         if match is None:
             raise SystemExit(f"No such user '{handle}'. Run `prefrontal user list`.")
         return store.scoped(match["id"])
