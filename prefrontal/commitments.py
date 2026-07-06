@@ -140,6 +140,14 @@ KIND_FYI = "fyi"
 KIND_CHILD = "child"
 KINDS = (KIND_SELF, KIND_FYI, KIND_CHILD)
 
+#: Commitment ``outcome`` — the user's honest self-report on a *past* commitment,
+#: set from the "I made it / missed it" affordance the dashboard shows on recently
+#: elapsed commitments. ``None`` means undecided (still awaiting an answer). Like
+#: ``hidden``, it's a user judgement that survives calendar re-sync.
+OUTCOME_MADE = "made"
+OUTCOME_MISSED = "missed"
+OUTCOMES = (OUTCOME_MADE, OUTCOME_MISSED)
+
 #: Placeholder/hold titles that aren't real events. When one of these overlaps a
 #: specifically-titled event (e.g. a work "Block" mirroring a real personal
 #: meeting), it's a *possible* conflict — surfaced softly and dismissable —

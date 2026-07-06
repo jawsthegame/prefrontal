@@ -36,6 +36,7 @@ from prefrontal.coaching import (
 )
 from prefrontal.commitments import (
     KINDS,
+    OUTCOMES,
     conflict_dismissal_key,
     find_conflicts,
     is_attendable,
@@ -97,6 +98,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentCreate,
     CommitmentHidden,
     CommitmentKind,
+    CommitmentOutcome,
     ConflictDismiss,
     PlaceCreate,
 )
@@ -460,11 +462,14 @@ def build_router(services: RouterServices) -> APIRouter:
 
         ``commitments`` excludes hidden ones (so the widget and every other reader
         drops them); the separate ``hidden`` list carries them for the dashboard's
-        un-hide affordance.
+        un-hide affordance. ``previous`` carries recently-elapsed commitments still
+        awaiting a made/missed answer (surfaced for about a day) so the dashboard
+        can offer the "I made it / missed it" affordance.
         """
         memory = ctx.store
         return {
             "commitments": memory.upcoming_commitments(),
+            "previous": memory.previous_commitments(),
             "hidden": memory.hidden_commitments(),
             "calendars": resolved_settings.calendar_label_map,
         }
@@ -736,6 +741,36 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
             )
         updated = memory.set_commitment_hidden(commitment_id, payload.hidden)
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/outcome", tags=["schedule"])
+    def set_commitment_outcome(
+        commitment_id: int,
+        payload: CommitmentOutcome,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Record whether a past commitment was *made* or *missed* (honest self-report).
+
+        Answering resolves the commitment: it drops out of the dashboard's
+        recently-elapsed list (which otherwise lingers for about a day). Passing
+        ``outcome: null`` clears the answer, surfacing it again if still in-window.
+        The outcome is a user judgement kept across calendar re-syncs. Returns the
+        updated row.
+        """
+        outcome = payload.outcome
+        if outcome is not None:
+            outcome = outcome.strip().lower()
+            if outcome not in OUTCOMES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"outcome must be one of {OUTCOMES} or null",
+                )
+        memory = ctx.store
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_outcome(commitment_id, outcome)
         return {"commitment": updated}
 
     @router.get("/briefing", tags=["schedule"])

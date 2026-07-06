@@ -409,6 +409,14 @@ class CommitmentHidden(BaseModel):
     )
 
 
+class CommitmentOutcome(BaseModel):
+    """Body of ``POST /commitments/{id}/outcome`` — record made/missed on a past commitment."""
+
+    outcome: str | None = Field(
+        description="`made` or `missed` (self-report on an elapsed commitment); `null` clears it.",
+    )
+
+
 class MailSync(BaseModel):
     """Body of ``POST /webhooks/mail/sync`` — a batch of messages for one account.
 
