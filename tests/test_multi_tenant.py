@@ -252,6 +252,20 @@ def test_learn_fanout_updates_each_user_independently(two_users):
     assert b.get_patterns("time_estimation")[0]["observed_value"] == 10.0
 
 
+def test_coach_all_users_fans_out(tmp_path, capsys):
+    """`coach --all-users --dry-run` runs a tick for every active user."""
+    from prefrontal.cli import main
+
+    db = str(tmp_path / "p.db")
+    assert main(["init-db", "--db-path", db]) == 0
+    assert main(["user", "--db-path", db, "add", "alice", "--operator"]) == 0
+    assert main(["user", "--db-path", db, "add", "bob"]) == 0
+    capsys.readouterr()
+    assert main(["coach", "--db-path", db, "--all-users", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "== alice ==" in out and "== bob ==" in out
+
+
 # -- migration of an existing single-tenant database -------------------------
 
 

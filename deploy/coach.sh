@@ -12,22 +12,19 @@
 # deploy/com.prefrontal-coach.plist (every 60s).
 #
 # `--deliver` publishes; without it the tick only prints (safe to run by hand to
-# see what would fire). Edit PREFRONTAL_HOME / PREFRONTAL_USER to taste; the
-# venv's `prefrontal` is used directly (no activation needed).
+# see what would fire). Edit PREFRONTAL_HOME to taste; the venv's `prefrontal` is
+# used directly (no activation needed).
 set -euo pipefail
 
 # Default to the repo root (this script lives in <repo>/deploy/), so no path is
 # hard-coded; override PREFRONTAL_HOME to run against a different checkout.
 PREFRONTAL_HOME="${PREFRONTAL_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
 PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
-# Handle to coach. Leave empty to let the CLI auto-pick when there's one user.
-PREFRONTAL_USER="${PREFRONTAL_USER:-}"
 
 cd "$PREFRONTAL_HOME"
 
-args=(coach --deliver)
-if [ -n "$PREFRONTAL_USER" ]; then
-    args+=(--user "$PREFRONTAL_USER")
-fi
-
-exec "$PREFRONTAL_BIN" "${args[@]}"
+# --all-users: one job coaches every active user (on a single-user box that's
+# just the one user). Delivery is per-user: resolve_route only sends to a user's
+# OWN ntfy/Pushover target, so a user without one is computed but never delivered
+# to the operator's device (no cross-account leak on a multi-user box).
+exec "$PREFRONTAL_BIN" coach --deliver --all-users

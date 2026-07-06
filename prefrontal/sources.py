@@ -188,17 +188,27 @@ class MailFetchSource:
 
 
 def resolve_mail_fetch(
-    store: MemoryStore, account: str, *, settings: Settings | None = None
+    store: MemoryStore,
+    account: str,
+    *,
+    settings: Settings | None = None,
+    allow_env_fallback: bool = True,
 ) -> MailFetchSource | None:
     """Resolve how to fetch ``account`` for the (scoped) user: DB source, else env.
 
     Prefers the user's registry ``imap`` source (credentials decrypted, retention
     from its config). Falls back to the global ``MAIL_IMAP_*_<ACCOUNT>`` env +
-    :meth:`Settings.policy_for` so a not-yet-migrated deploy keeps working. A
-    disabled or credential-incomplete DB source falls through to env rather than
-    silently fetching nothing.
+    :meth:`Settings.policy_for` so a not-yet-migrated single-user deploy keeps
+    working. A disabled or credential-incomplete DB source falls through to env
+    rather than silently fetching nothing.
 
-    Returns ``None`` when neither a usable DB source nor env credentials exist.
+    ``allow_env_fallback=False`` disables the env path — required for a
+    ``--all-users`` fan-out, where the global env config belongs to *one* mailbox:
+    letting every source-less user inherit it would fetch that one inbox into
+    everyone's scope (the multi-tenant leak). There, a user with no DB source
+    resolves to ``None`` and is skipped.
+
+    Returns ``None`` when no usable source applies.
     """
     settings = settings or get_settings()
     src = resolve_imap(store, account)
@@ -212,6 +222,8 @@ def resolve_mail_fetch(
             important_only=src.important_only,
         )
         return MailFetchSource(imap=imap, policy=src.retention or "signals")
+    if not allow_env_fallback:
+        return None
     imap = ImapAccount.from_env(account)
     if imap is None:
         return None
@@ -219,16 +231,24 @@ def resolve_mail_fetch(
 
 
 def mail_fetch_accounts(
-    store: MemoryStore, *, settings: Settings | None = None
+    store: MemoryStore,
+    *,
+    settings: Settings | None = None,
+    allow_env_fallback: bool = True,
 ) -> list[str]:
     """Return the account names to fetch for the (scoped) user.
 
-    The user's enabled ``imap`` registry sources when they have any; otherwise the
-    globally-configured ``PREFRONTAL_MAIL_ACCOUNTS`` names — so a user with no
-    connected sources still fetches the legacy env-configured accounts.
+    The user's enabled ``imap`` registry sources when they have any; otherwise,
+    when ``allow_env_fallback`` is set, the globally-configured
+    ``PREFRONTAL_MAIL_ACCOUNTS`` names (so a not-yet-migrated single-user deploy
+    still fetches). With ``allow_env_fallback=False`` (a ``--all-users`` fan-out)
+    a source-less user returns ``[]`` — the global env mailbox is one person's and
+    must not be fetched into everyone's scope.
     """
     settings = settings or get_settings()
     db = imap_accounts(store, include_disabled=False)
     if db:
         return db
+    if not allow_env_fallback:
+        return []
     return [name for name, _ in settings.mail_accounts]

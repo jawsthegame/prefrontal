@@ -823,9 +823,12 @@ quiet-hours + debounce, and publishes what fires — plus the proactive overwhel
 
 ```sh
 cp deploy/coach.sh deploy/com.prefrontal-coach.plist ~/… # (repo already has them)
+# One job covers everyone: coach.sh runs `coach --deliver --all-users` (no handle
+# to set). Delivery is per-user — a user with no ntfy/Pushover target of their own
+# is computed but not delivered to, so nudges never land on someone else's device.
 # Edit paths inside both to match your install:
-#   - coach.sh:  PREFRONTAL_HOME (repo root), PREFRONTAL_USER (handle, or blank to auto-pick)
-#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, PREFRONTAL_USER, Std{Out,Err}Path
+#   - coach.sh:  PREFRONTAL_HOME (repo root)
+#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, Std{Out,Err}Path
 cp deploy/com.prefrontal-coach.plist ~/Library/LaunchAgents/
 PREFRONTAL_HOME=$HOME/src/prefrontal deploy/coach.sh   # run once by hand — should print what fires
 launchctl load -w ~/Library/LaunchAgents/com.prefrontal-coach.plist

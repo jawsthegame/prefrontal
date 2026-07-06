@@ -102,6 +102,29 @@ def test_fetch_accounts_prefers_db_then_env(store, secret_env):
     assert mail_fetch_accounts(store, settings=settings) == ["personal"]
 
 
+def test_all_users_disables_env_fallback(store, monkeypatch):
+    """Under a fan-out, a source-less user must NOT inherit the global env mailbox."""
+    monkeypatch.setenv("MAIL_IMAP_USER_PERSONAL", "env@x.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD_PERSONAL", "env-pw")
+    settings = Settings(mail_accounts=(("personal", "signals"),))
+    # Single-user semantics: env fallback fills in the global account.
+    assert mail_fetch_accounts(store, settings=settings, allow_env_fallback=True) == [
+        "personal"
+    ]
+    assert (
+        resolve_mail_fetch(store, "personal", settings=settings, allow_env_fallback=True)
+        is not None
+    )
+    # Fan-out semantics: no DB source → skipped, never the shared env mailbox.
+    assert mail_fetch_accounts(store, settings=settings, allow_env_fallback=False) == []
+    assert (
+        resolve_mail_fetch(
+            store, "personal", settings=settings, allow_env_fallback=False
+        )
+        is None
+    )
+
+
 # -- management CLI ----------------------------------------------------------
 
 
@@ -219,6 +242,30 @@ def test_fetch_all_users_uses_each_users_sources(tmp_path, monkeypatch, capsys):
         assert any(m["subject"] == "hi bob@example.com" for m in bob.recent_mail())
         # Isolation: alice never sees bob's mail.
         assert not any(m["subject"] == "hi bob@example.com" for m in alice.recent_mail())
+    get_settings.cache_clear()
+
+
+def test_fetch_all_users_does_not_fetch_env_mailbox(tmp_path, monkeypatch, capsys):
+    """`fetch --all-users` skips source-less users — never pulls the global env inbox."""
+    monkeypatch.setenv("PREFRONTAL_MAIL_ACCOUNTS", "personal")
+    monkeypatch.setenv("MAIL_IMAP_USER_PERSONAL", "tom@x.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD_PERSONAL", "pw")
+    get_settings.cache_clear()
+    db = str(tmp_path / "p.db")
+    main(["init-db", "--db-path", db])
+    main(["user", "--db-path", db, "add", "alice", "--operator"])
+    main(["user", "--db-path", db, "add", "bob"])
+
+    calls: list = []
+    monkeypatch.setattr(
+        "prefrontal.mail.imap.fetch_unread",
+        lambda *a, **k: calls.append(1) or [],
+    )
+    capsys.readouterr()
+    assert main(["mail", "--db-path", db, "fetch", "--all-users", "--heuristic"]) == 0
+    # Neither user has a DB source, so the shared env mailbox is never fetched.
+    assert calls == []
+    assert "no mail accounts configured" in capsys.readouterr().err
     get_settings.cache_clear()
 
 
