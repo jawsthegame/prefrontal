@@ -114,19 +114,22 @@ def test_task_paralysis_interventions_all_active():
 
 
 def test_time_blindness_intervention_statuses_are_honest():
-    """All three time-awareness interventions are now wired.
+    """All the time-awareness interventions are wired.
 
     The status flags must reflect reality (they drive ``prefrontal modules -v``):
     ``departure_buffer`` is delivered by the live departure planner
     (bias-adjusted leave-by + heads_up/soon/go escalation, ``/webhooks/departure``),
-    and ``elapsed_time_callouts`` now fires from :meth:`TimeBlindnessModule.evaluate`
-    on the coaching tick (opt-in via ``elapsed_callout_minutes``).
+    ``elapsed_time_callouts`` fires from :meth:`TimeBlindnessModule.evaluate`
+    on the coaching tick (opt-in via ``elapsed_callout_minutes``), and
+    ``morning_prep`` sends the evening "early start tomorrow — set an alarm"
+    heads-up off the same tick.
     """
     ivs = {i.name: i.status for i in get("time_blindness").interventions()}
     assert ivs == {
         "estimate_correction": "active",
         "departure_buffer": "active",
         "elapsed_time_callouts": "active",
+        "morning_prep": "active",
     }
 
 
@@ -191,6 +194,83 @@ def test_no_departure_cue_without_an_upcoming_commitment(store):
     assert not [c for c in cues if c.context_key == "departure"]
 
 
+def _plan(cid, start_at, leave_by, *, mode="travel", title="Thing", location=None):
+    """A minimal DeparturePlan for morning-prep tests (only the read fields matter)."""
+    from prefrontal.departure import DeparturePlan
+
+    return DeparturePlan(
+        commitment={"id": cid, "title": title, "start_at": start_at, "location": location},
+        leave_by=leave_by,
+        minutes_until_leave=0.0,
+        travel_minutes=None,
+        basis="lead",
+        level="none",
+        mode=mode,
+    )
+
+
+def test_early_morning_plans_keys_off_leave_by_and_tomorrow():
+    """A 9am appointment 45 min away (leave-by ~8:00) counts as an early start
+    even though it *starts* after the 08:30 cutoff; a late-morning one doesn't;
+    and only tomorrow's commitments are in scope. Sorted by leave-by."""
+    from prefrontal.modules.time_blindness import early_morning_plans
+
+    now = datetime(2026, 7, 6, 21, 30)  # the evening before, 21:30 UTC
+    plans = [
+        _plan(1, "2026-07-07 09:00:00", "2026-07-07 08:00:00"),  # leave-by early → in
+        _plan(2, "2026-07-07 10:00:00", "2026-07-07 09:45:00"),  # leave-by late  → out
+        _plan(3, "2026-07-06 22:30:00", "2026-07-06 22:00:00"),  # today, not tomorrow → out
+        _plan(4, "2026-07-07 08:15:00", "2026-07-07 08:10:00", mode="attend"),  # early → in
+    ]
+    early = early_morning_plans(plans, now, "UTC", 8, 30)
+    assert [p.commitment["id"] for p in early] == [1, 4]  # by leave-by ascending
+
+
+def test_morning_prep_message_shape():
+    """The heads-up names the commitment, its start, the be-out-by time, and the
+    alarm hint — and drops the leave line for an attend-from-here (no travel) item."""
+    from prefrontal.modules.time_blindness import morning_prep_message
+
+    msg = morning_prep_message(
+        "Dentist", "08:30", where=" (Downtown)", leave_hhmm="07:45", name="Tom"
+    )
+    assert "Dentist" in msg and "Downtown" in msg
+    assert "08:30" in msg and "07:45" in msg and "alarm" in msg.lower()
+    solo = morning_prep_message("Standup", "08:00")  # no leave-by
+    assert "out the door" not in solo and "08:00" in solo
+
+
+def test_morning_prep_cue_fires_in_the_evening_for_an_early_start(store):
+    """With the evening gate open, a commitment tomorrow whose leave-by beats the
+    threshold emits one morning_prep cue reminding the user to set an alarm."""
+    from datetime import timedelta
+
+    tomorrow = utcnow() + timedelta(days=1)
+    start = tomorrow.replace(hour=8, minute=0, second=0, microsecond=0).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    store.upsert_commitment(title="Flight", start_at=start, lead_minutes=45.0, source="manual")
+    store.set_state("morning_prep_hour", "0")  # open the evening window for the test
+    cues = TimeBlindnessModule().evaluate(store, CoachContext(now=utcnow(), display_name="Tom"))
+    prep = [c for c in cues if c.context_key == "morning_prep"]
+    assert len(prep) == 1
+    c = prep[0]
+    assert c.intervention == "morning_prep" and c.urgency == "nudge"
+    assert c.dedup_key.startswith("morning_prep:")
+    assert c.ref.get("commitment_id")
+    assert "Flight" in c.text and "alarm" in c.text.lower()
+
+
+def test_morning_prep_gate_only_fires_in_the_evening(store):
+    """The heads-up waits for the evening send window — silent in the morning."""
+    plans = [_plan(1, "2026-07-07 08:00:00", "2026-07-07 07:15:00", title="Flight")]
+    mod = TimeBlindnessModule()
+    evening = CoachContext(now=datetime(2026, 7, 6, 21, 30), timezone="UTC", display_name="Tom")
+    morning = CoachContext(now=datetime(2026, 7, 6, 9, 0), timezone="UTC")
+    assert len(mod._morning_prep_cues(store, plans, evening)) == 1
+    assert mod._morning_prep_cues(store, plans, morning) == []
+
+
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
     """Two+ misses on a task flag it; a task later completed drops off."""
     episodes = [
@@ -217,9 +297,7 @@ def test_repeat_stalled_tasks_respects_min_misses():
 def test_task_paralysis_profile_names_stuck_tasks(store):
     """The profile section names a task the user keeps bailing on."""
     for _ in range(2):
-        store.log_episode(
-            "task", outcome="miss", context="todo dropped: Renew passport"
-        )
+        store.log_episode("task", outcome="miss", context="todo dropped: Renew passport")
     get("task_paralysis").seed(store)
     section = get("task_paralysis").profile_section(store)
     assert section is not None
