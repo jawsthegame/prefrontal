@@ -134,6 +134,52 @@ def _resolve_user_store(store: MemoryStore, handle: str | None) -> MemoryStore:
     return store.scoped(users[0]["id"])
 
 
+def _cmd_secrets(args: argparse.Namespace) -> int:
+    """Manage the Fernet key that seals per-user source credentials at rest.
+
+    ``status`` reports whether a usable key is configured (never prints it);
+    ``init`` mints one when none exists and prints setup + backup guidance.
+
+    Args:
+        args: Parsed arguments; uses ``secrets_action``.
+
+    Returns:
+        Process exit code (0 on success, 1 when no key is configured for
+        ``status``).
+    """
+    from prefrontal.crypto import generate_key, secret_key_configured
+
+    settings = get_settings()
+    if args.secrets_action == "status":
+        if secret_key_configured(settings):
+            print("Secret key: configured — source secrets can be sealed/opened.")
+            return 0
+        print(
+            "Secret key: NOT configured. Run `prefrontal secrets init`.",
+            file=sys.stderr,
+        )
+        return 1
+    if args.secrets_action == "init":
+        if secret_key_configured(settings):
+            print("A secret key is already configured; nothing to do.")
+            print(
+                "(Rotating it would orphan every sealed secret — re-enter mail "
+                "creds / re-authorize Google instead.)"
+            )
+            return 0
+        key = generate_key()
+        print("Generated a new Fernet secret key. Add it to your environment:")
+        print()
+        print(f"  PREFRONTAL_SECRET_KEY={key}")
+        print()
+        print(
+            "Store it somewhere durable and BACK IT UP — losing it makes every "
+            "sealed secret\n(IMAP passwords, Google refresh tokens) unrecoverable."
+        )
+        return 0
+    return 1
+
+
 def _cmd_init_db(args: argparse.Namespace) -> int:
     """Create and seed the memory database.
 
@@ -2275,6 +2321,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_init = sub.add_parser("init-db", help="Create the SQLite memory database.")
     p_init.add_argument("--db-path", default=None, help="Override the database path.")
     p_init.set_defaults(func=_cmd_init_db)
+
+    p_secrets = sub.add_parser(
+        "secrets", help="Manage the at-rest secret key for source credentials."
+    )
+    secrets_sub = p_secrets.add_subparsers(dest="secrets_action", required=True)
+    secrets_sub.add_parser(
+        "init", help="Generate a Fernet secret key if none is configured."
+    )
+    secrets_sub.add_parser(
+        "status", help="Report whether a usable secret key is configured."
+    )
+    p_secrets.set_defaults(func=_cmd_secrets)
 
     p_user = sub.add_parser("user", help="Provision users (add/list/rotate/disable).")
     p_user.add_argument("--db-path", default=None, help="Override the database path.")

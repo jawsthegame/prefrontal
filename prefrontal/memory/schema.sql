@@ -791,6 +791,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_external
     ON triage_log (user_id, source, external_id) WHERE external_id <> '';
 CREATE INDEX IF NOT EXISTS idx_triage_user ON triage_log (user_id, received_at);
 
+-- Per-user external source registry: the credentials + config for the mailboxes
+-- and calendars a user connects, so ingestion reads *that user's* accounts rather
+-- than one global set from the environment (see docs/design/per-user-sources.md).
+-- `kind` selects the connector ('imap' for a mailbox, 'gcal' for Google
+-- Calendar); `account` is the logical name within a kind ('personal'/'work' for
+-- imap, 'google' for gcal). `config` is connector-shaped JSON (imap:
+-- host/username/mailbox/important_only/retention; gcal: calendar_ids/namespace).
+-- `secret_enc` is the Fernet-sealed secret (IMAP password or Google refresh
+-- token) — never plaintext (see prefrontal/crypto.py). `enabled` pauses a source
+-- without deleting it. UNIQUE(user_id, kind, account) makes re-connecting an
+-- account an idempotent upsert.
+CREATE TABLE IF NOT EXISTS sources (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    kind        TEXT     NOT NULL,                 -- 'imap' | 'gcal'
+    account     TEXT     NOT NULL,                 -- logical name within the kind
+    config      TEXT     NOT NULL DEFAULT '{}',    -- connector-shaped JSON
+    secret_enc  BLOB,                              -- Fernet-sealed secret (never plaintext)
+    enabled     INTEGER  NOT NULL DEFAULT 1,       -- 0 pauses the source without deleting it
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, kind, account)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sources_user_kind ON sources (user_id, kind);
+
 -- NOTE: the coaching_state defaults that used to be seeded here are now seeded
 -- per user at provision time (DEFAULT_COACHING_STATE in store.py) plus each
 -- enabled module's default_state — so "a fresh user looks like a fresh install"

@@ -86,6 +86,10 @@ def _write_full_object_set(store: MemoryStore, tag: str) -> None:
     store.upsert_pattern("time_estimation", "task", observed_value=20, sample_size=3)
     store.record_kind_feedback(f"{tag} meeting", "fyi")
     store.record_mail(account="personal", message_id="shared-msg", subject=f"{tag} hi")
+    store.upsert_source(
+        kind="imap", account="shared", config=f'{{"host": "{tag}"}}',
+        secret_enc=f"{tag}-sealed".encode(),
+    )
 
 
 def test_isolation_reads_only_own_rows(two_users):
@@ -111,6 +115,11 @@ def test_isolation_reads_only_own_rows(two_users):
     assert b.get_state("time_estimation_bias") == "1.1"
     assert a.get_state("pushover_user_key") == "A-key"
     assert b.get_state("pushover_user_key") == "B-key"
+
+    # Connected sources are per user too: same (kind, account), own row only.
+    assert a.get_source("imap", "shared")["config"] == '{"host": "A"}'
+    assert b.get_source("imap", "shared")["config"] == '{"host": "B"}'
+    assert a.get_source("imap", "shared")["secret_enc"] == b"A-sealed"
 
 
 def test_isolation_on_conflict_targets_do_not_clobber(two_users):
@@ -166,6 +175,18 @@ def test_isolation_no_cross_user_mutation(two_users):
     assert a.get_outing(oid_a)["status"] == "active"
     # B cannot even see A's outing by id.
     assert b.get_outing(oid_a) is None
+
+
+def test_isolation_sources_are_per_user(two_users):
+    """One user's connected sources are invisible and immutable to another."""
+    a, b, _, _ = two_users
+    a.upsert_source(kind="imap", account="personal", config='{"host": "a"}')
+    # B sees none of A's sources and can't read A's row by (kind, account).
+    assert b.list_sources() == []
+    assert b.get_source("imap", "personal") is None
+    # B deleting the same (kind, account) is a no-op; A's row survives.
+    assert b.delete_source("imap", "personal") is False
+    assert a.get_source("imap", "personal") is not None
 
 
 def test_isolation_decomposition_scoped_through_todo(two_users):

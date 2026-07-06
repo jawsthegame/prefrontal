@@ -222,6 +222,16 @@ class Settings:
     oauth_base_url: str = ""        # public https origin, e.g. https://mac-mini.tailnet.ts.net
     session_secret: str = ""        # HMAC key signing the browser session cookie
     google_oauth_allowed: str = ""  # "email=handle,email2=handle2" allowlist
+    # Extend Google sign-in to also request calendar.readonly + an offline refresh
+    # token, so per-user calendar sync can pull each user's own events. OFF by
+    # default (plain login-only OAuth); see docs/design/per-user-sources.md.
+    google_calendar_enabled: bool = False
+    # Fernet key sealing per-user source secrets (IMAP passwords, Google refresh
+    # tokens) in the `sources` table. Supply inline (secret_key) or via a keyfile
+    # path (secret_key_file); losing it makes sealed secrets unrecoverable. Mint
+    # one with `prefrontal secrets init`. See prefrontal/crypto.py.
+    secret_key: str = ""
+    secret_key_file: str = ""
     # Remote self-update: pull the latest code + restart the service from an
     # operator HTTP call (POST /admin/update) or the CLI (`prefrontal update`).
     # Powerful (it runs whatever is on the branch), so the HTTP surface is OFF
@@ -421,6 +431,12 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),
         session_secret=os.environ.get("SESSION_SECRET", ""),
         google_oauth_allowed=os.environ.get("GOOGLE_OAUTH_ALLOWED", ""),
+        google_calendar_enabled=os.environ.get("PREFRONTAL_GOOGLE_CALENDAR", "")
+        .strip()
+        .lower()
+        in ("1", "true", "yes", "on"),
+        secret_key=os.environ.get("PREFRONTAL_SECRET_KEY", "").strip(),
+        secret_key_file=os.environ.get("PREFRONTAL_SECRET_KEY_FILE", "").strip(),
         self_update_enabled=os.environ.get("PREFRONTAL_SELF_UPDATE", "").strip().lower()
         in ("1", "true", "yes", "on"),
         self_update_repo_dir=os.environ.get("PREFRONTAL_REPO_DIR", "").strip(),
