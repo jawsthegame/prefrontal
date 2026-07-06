@@ -12,10 +12,14 @@
   in the n8n UI so a cue isn't sent twice (dedup/debounce catches most doubles,
   but don't rely on it).
 
+  One job covers everyone: coach.sh runs `prefrontal coach --deliver --all-users`,
+  so there's no per-user handle to set. Delivery is per-user (a user without their
+  own ntfy/Pushover target is never delivered to the operator's device).
+
   Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
-  __PREFRONTAL_HOME__ / __HOME__ / __PREFRONTAL_USER__ placeholders below with
-  your real repo root, home directory, and coaching handle, then loads the
-  agent. The committed file is a template with no machine-specific paths.
+  __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
+  home directory, then loads the agent. The committed file is a template with no
+  machine-specific paths.
 
   Manual alternative: substitute those placeholders yourself, then
     cp deploy/com.prefrontal-coach.plist ~/Library/LaunchAgents/
@@ -60,10 +64,6 @@
         <!-- Install location; coach.sh cd's here so the adjacent .env loads. -->
         <key>PREFRONTAL_HOME</key>
         <string>__PREFRONTAL_HOME__</string>
-        <!-- Handle to coach; leave the placeholder empty to auto-pick when
-             there's a single user. -->
-        <key>PREFRONTAL_USER</key>
-        <string>__PREFRONTAL_USER__</string>
     </dict>
 </dict>
 </plist>

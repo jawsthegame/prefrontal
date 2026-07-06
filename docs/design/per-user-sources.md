@@ -190,13 +190,28 @@ Document all three in `.env.example`.
 - ⏳ **Deferred:** onboarding "add a calendar feed" step in the `onboard-user`
   skill.
 
-## Phase 3 — Scheduling unification & cleanup
+## Phase 3 — Scheduling unification & cleanup ✅ CODE DONE
 
-- Extract the copy-pasted fan-out block (`cli.py:921-930` / `:1100-1108`) into a
-  shared `_user_targets(store, args)` helper; apply to `coach`, `mail`,
-  `calendar`, `learn`, `summarize`.
-- `coach --all-users`; collapse per-user launchd duplication into one job each.
-- Docs, `.env.example`, update the `deployment-state` memory.
+- ✅ `learn` + `summarize` now route through the shared `_user_targets(store, args)`
+  helper (the copy-pasted fan-out blocks are gone); `mail`/`calendar` already did.
+- ✅ `coach --all-users` (+ `_coach_tick` extracted so the tick is per-user); the
+  `com.prefrontal-coach` job runs `coach --deliver --all-users`, so one job covers
+  the household. **Delivery is safe multi-user:** `resolve_route` gives a user
+  with no own ntfy/Pushover target an empty target on a multi-user box (no leak to
+  the operator's device), so source-less/demo users are computed but not delivered
+  to.
+- ✅ **Mail `--all-users` env-fallback gate** — under a fan-out the global
+  `MAIL_IMAP_*` env is NOT used as a fallback (it's one mailbox; inheriting it for
+  every source-less user would fetch that inbox into everyone's scope). A user
+  with no DB `imap` source is skipped. Single-user/explicit `--user` keeps the env
+  fallback (legacy).
+- ⏳ **Deferred (needs the operator's migration first):** flipping the *mail*
+  launchd job to `mail fetch --all-users`. It requires each real user to have run
+  `mail import-env-sources` (or `add-source`) first — otherwise the env-fallback
+  gate skips them and their mail pauses. One-line change to `mail-fetch.sh` +
+  plist once sources are imported; left pinned for now to avoid a silent
+  mail-fetch regression on deploy.
+- ⏳ Onboarding "connect a mailbox / add a calendar feed" steps.
 
 ---
 

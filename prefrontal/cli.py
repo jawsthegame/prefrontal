@@ -984,16 +984,7 @@ def _cmd_learn(args: argparse.Namespace) -> int:
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as store:
-        if args.all_users:
-            targets = [(u["handle"], store.scoped(u["id"])) for u in store.each_user()]
-        else:
-            scoped = _resolve_user_store(store, args.user)
-            handle = next(
-                (u["handle"] for u in store.list_users() if u["id"] == scoped.user_id),
-                str(scoped.user_id),
-            )
-            targets = [(handle, scoped)]
-        for label, s in targets:
+        for label, s in _user_targets(store, args):
             summary = recompute_patterns(s, timezone=settings.timezone)
             by_type = (
                 ", ".join(f"{n} {t}" for t, n in sorted(summary.by_type.items()))
@@ -1163,15 +1154,7 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
         "summarizer", fallback=local
     )
     with MemoryStore.open(db_path) as store:
-        if args.all_users:
-            targets = [(u["handle"], store.scoped(u["id"])) for u in store.each_user()]
-        else:
-            scoped = _resolve_user_store(store, args.user)
-            handle = next(
-                u["handle"] for u in store.list_users() if u["id"] == scoped.user_id
-            )
-            targets = [(handle, scoped)]
-        for handle, s in targets:
+        for handle, s in _user_targets(store, args):
             try:
                 result = summarize_profile(
                     s, client=client, fallback=not args.no_fallback
@@ -1330,72 +1313,89 @@ def _cmd_coach(args: argparse.Namespace) -> int:
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as unscoped:
-        store = _resolve_user_store(unscoped, args.user)
-        now = utcnow()
-        ctx = build_context(store, now=now, timezone=settings.timezone)
-        modules = enabled_modules(settings)
-        cues = collect_cues(store, modules, ctx)
-        if args.dry_run:
-            if not cues:
-                print("No cues due.")
-            for c in cues:
-                print(f"[{c.urgency}] {c.module}/{c.intervention}: {c.text}")
-            return 0
-        # Close out prior nudges whose ack window lapsed unanswered → channel
-        # "misses" that shift future channel choice (spec §8). Off the dry-run
-        # path so a debug run never mutates outcome state.
-        swept = sweep_stale_nudges(
-            store,
-            now,
-            ack_window_minutes=store.get_float(
-                "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
-            ),
-        )
-        if swept:
-            print(f"({swept} unanswered nudge(s) logged as channel misses)")
-        # Self-care nudges track latency separately; sweep their unanswered ones
-        # into "ignored" episodes so the cadence learner sees "too frequent".
-        ignored = sweep_unanswered_self_care(store, now)
-        if ignored:
-            print(f"({ignored} unanswered self-care nudge(s) logged as ignored)")
-        # Break down the tasks being avoided (the model decides whether each is
-        # worth it) — the sibling of the /webhooks/coach/check sweep.
-        from prefrontal.integrations.ollama import OllamaClient
-        from prefrontal.todos import sweep_avoided_decompositions
-
-        tick_ollama = OllamaClient(
-            base_url=settings.ollama_url, model=settings.ollama_model
-        )
-        broken = sweep_avoided_decompositions(store, tick_ollama, now=now)
-        if broken:
-            print(f"({broken} avoided task(s) broken down)")
-        # Notice newly-ambiguous items and file an inline clarifying question — the
-        # sibling of the /webhooks/coach/check sweep (never re-asks a known item).
-        from prefrontal.clarify import sweep_ambiguous_items
-
-        asked = sweep_ambiguous_items(store, tick_ollama)
-        if asked:
-            print(f"({len(asked)} ambiguous item(s) flagged for clarification)")
-        decisions = decide(store, cues, ctx)
-        for d in decisions:
-            print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
-        if not decisions:
-            print(f"Nothing to say right now ({len(cues)} cue(s) held).")
-        if decisions:
-            if args.deliver:
-                _deliver_decisions(unscoped, store, decisions, settings)
-            record_fired(store, decisions, now)
-            # Track interactive nudges so a tap (or the next sweep) records the channel.
-            note_delivered(store, decisions, now)
-            # Stamp self-care delivery time for the adaptive-cadence latency signal.
-            mark_self_care_prompted(store, decisions, now)
-        # Proactive overwhelm nudge — its own edge/cooldown/quiet-hours-defer
-        # decision, delivered on this same native tick so panic no longer needs an
-        # n8n poll of /webhooks/panic/check. Only on a delivering tick, so a
-        # print-only run doesn't consume the overwhelm edge.
-        if args.deliver:
-            _deliver_panic(unscoped, store, settings, now)
+        # --all-users fans the tick over every active user (one launchd job for
+        # the whole household); otherwise the single --user (or sole user).
+        for handle, store in _user_targets(unscoped, args):
+            if args.all_users:
+                print(f"== {handle} ==")
+            _coach_tick(unscoped, store, args, settings)
     return 0
+
+
+def _coach_tick(
+    unscoped: MemoryStore,
+    store: MemoryStore,
+    args: argparse.Namespace,
+    settings,
+) -> None:
+    """Run one coaching tick for a single (scoped) user.
+
+    Collects due cues, applies channel choice + suppression, records fires, and
+    (with ``--deliver``) publishes them plus the proactive overwhelm nudge.
+    ``--dry-run`` prints the raw cues and returns without mutating state.
+    """
+    now = utcnow()
+    ctx = build_context(store, now=now, timezone=settings.timezone)
+    modules = enabled_modules(settings)
+    cues = collect_cues(store, modules, ctx)
+    if args.dry_run:
+        if not cues:
+            print("No cues due.")
+        for c in cues:
+            print(f"[{c.urgency}] {c.module}/{c.intervention}: {c.text}")
+        return
+    # Close out prior nudges whose ack window lapsed unanswered → channel
+    # "misses" that shift future channel choice (spec §8). Off the dry-run
+    # path so a debug run never mutates outcome state.
+    swept = sweep_stale_nudges(
+        store,
+        now,
+        ack_window_minutes=store.get_float(
+            "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
+        ),
+    )
+    if swept:
+        print(f"({swept} unanswered nudge(s) logged as channel misses)")
+    # Self-care nudges track latency separately; sweep their unanswered ones
+    # into "ignored" episodes so the cadence learner sees "too frequent".
+    ignored = sweep_unanswered_self_care(store, now)
+    if ignored:
+        print(f"({ignored} unanswered self-care nudge(s) logged as ignored)")
+    # Break down the tasks being avoided (the model decides whether each is
+    # worth it) — the sibling of the /webhooks/coach/check sweep.
+    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    tick_ollama = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+    broken = sweep_avoided_decompositions(store, tick_ollama, now=now)
+    if broken:
+        print(f"({broken} avoided task(s) broken down)")
+    # Notice newly-ambiguous items and file an inline clarifying question — the
+    # sibling of the /webhooks/coach/check sweep (never re-asks a known item).
+    from prefrontal.clarify import sweep_ambiguous_items
+
+    asked = sweep_ambiguous_items(store, tick_ollama)
+    if asked:
+        print(f"({len(asked)} ambiguous item(s) flagged for clarification)")
+    decisions = decide(store, cues, ctx)
+    for d in decisions:
+        print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
+    if not decisions:
+        print(f"Nothing to say right now ({len(cues)} cue(s) held).")
+    if decisions:
+        if args.deliver:
+            _deliver_decisions(unscoped, store, decisions, settings)
+        record_fired(store, decisions, now)
+        # Track interactive nudges so a tap (or the next sweep) records the channel.
+        note_delivered(store, decisions, now)
+        # Stamp self-care delivery time for the adaptive-cadence latency signal.
+        mark_self_care_prompted(store, decisions, now)
+    # Proactive overwhelm nudge — its own edge/cooldown/quiet-hours-defer
+    # decision, delivered on this same native tick so panic no longer needs an
+    # n8n poll of /webhooks/panic/check. Only on a delivering tick, so a
+    # print-only run doesn't consume the overwhelm edge.
+    if args.deliver:
+        _deliver_panic(unscoped, store, settings, now)
 
 
 def _deliver_decisions(unscoped, store, decisions, settings) -> None:
@@ -2553,24 +2553,32 @@ def _cmd_mail(args: argparse.Namespace) -> int:
         return 0
 
     # fetch: pull unread over IMAP for each target user's accounts, then ingest.
-    # Credentials + retention come from each user's registry sources, falling
-    # back to the global MAIL_IMAP_* env so a not-yet-migrated deploy still works.
+    # Credentials + retention come from each user's registry sources, falling back
+    # to the global MAIL_IMAP_* env so a not-yet-migrated single-user deploy still
+    # works. Under --all-users the env fallback is OFF: that global config is one
+    # mailbox, so a source-less user is skipped rather than fetching it into their
+    # scope (the multi-tenant leak).
     from prefrontal.mail.imap import fetch_unread
     from prefrontal.sources import mail_fetch_accounts, resolve_mail_fetch
 
+    allow_env = not args.all_users
     status = 0
     with MemoryStore.open(db_path) as unscoped:
         for handle, store in _user_targets(unscoped, args):
             accounts = (
                 [args.account]
                 if args.account
-                else mail_fetch_accounts(store, settings=settings)
+                else mail_fetch_accounts(
+                    store, settings=settings, allow_env_fallback=allow_env
+                )
             )
             if not accounts:
                 print(f"[{handle}] no mail accounts configured.", file=sys.stderr)
                 continue
             for account in accounts:
-                src = resolve_mail_fetch(store, account, settings=settings)
+                src = resolve_mail_fetch(
+                    store, account, settings=settings, allow_env_fallback=allow_env
+                )
                 if src is None:
                     print(
                         f"[{handle}/{account}] no IMAP credentials — add a source "
@@ -2960,6 +2968,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_coach.add_argument("--db-path", default=None, help="Override the database path.")
     p_coach.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_coach.add_argument(
+        "--all-users",
+        action="store_true",
+        help="Fan the tick over every active user (one job for the whole household).",
+    )
     p_coach.add_argument(
         "--dry-run",
         action="store_true",
