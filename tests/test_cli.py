@@ -12,6 +12,8 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import pytest
+
 from prefrontal.cli import build_parser, main
 from prefrontal.memory.store import MemoryStore
 
@@ -67,6 +69,24 @@ def test_build_parser_registers_expected_commands():
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"
+
+
+def test_user_resolution_is_case_insensitive(tmp_path, capsys):
+    """`--user tom` resolves the `Tom` account — the launchd casing slip that once
+    left the coach tick delivering to no one."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "Tom", "--operator"]) == 0
+    capsys.readouterr()
+
+    # Wrong case still resolves (learn acts on the resolved user and exits 0).
+    assert main(["learn", "--db-path", str(db), "--user", "tom"]) == 0
+    out = capsys.readouterr().out
+    assert "[Tom]" in out  # acted on the real handle, not a phantom
+
+    # A genuinely unknown handle still fails clearly.
+    with pytest.raises(SystemExit, match="No such user"):
+        main(["learn", "--db-path", str(db), "--user", "nobody"])
 
 
 def test_place_add_then_list_roundtrip(tmp_path, capsys):
