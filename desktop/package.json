@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.morningstatic.prefrontal.desktop",
     "productName": "Prefrontal",
+    "afterPack": "build/afterPack.js",
     "files": [
       "main.js",
       "preload.js",
