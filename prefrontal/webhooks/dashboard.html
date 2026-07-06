@@ -1496,7 +1496,6 @@ const LAYOUT_KEY = "prefrontal_dash_layout";
 // List cards whose flat rows can be capped (prose/pill cards are left alone).
 const CAPPABLE = new Set(["c-shopping", "c-todos", "c-commitments", "c-recent"]);
 const CAP_OPTIONS = [5, 10, 25, 0];  // 0 = All (no cap)
-const expanded = new Set();  // transient "show all" per card (not persisted)
 
 let layout = (() => {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (_) { return {}; }
@@ -1504,6 +1503,7 @@ let layout = (() => {
 layout.order = layout.order || [];
 layout.caps = layout.caps || {};
 layout.collapsed = layout.collapsed || {};  // { cardId: true } for collapsed cards
+layout.expanded = layout.expanded || {};  // { cardId: true } for cards showing all rows past the cap
 layout.seen = layout.seen || {};  // { cardId: { itemKey: true } } — items already shown to the user
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
 
@@ -1744,7 +1744,7 @@ function applyCap(cardId) {
   if (!cap || items.length <= cap) return;  // "All", or nothing to hide
   const more = document.createElement("div");
   more.className = "cap-more";
-  if (expanded.has(cardId)) {
+  if (layout.expanded[cardId]) {
     more.innerHTML = `<button data-cap="less" data-id="${cardId}">Show fewer</button>`;
   } else {
     items.slice(cap).forEach((el) => { el.style.display = "none"; });
@@ -1767,7 +1767,8 @@ document.addEventListener("click", (e) => {
   const capb = e.target.closest("[data-cap]");
   if (capb) {
     const id = capb.dataset.id;
-    if (capb.dataset.cap === "more") expanded.add(id); else expanded.delete(id);
+    if (capb.dataset.cap === "more") layout.expanded[id] = true; else delete layout.expanded[id];
+    saveLayout();
     applyCap(id);
   }
 });
@@ -1802,8 +1803,8 @@ document.addEventListener("change", (e) => {
   const card = sel.closest(".card");
   if (!card) return;
   layout.caps[card.id] = Number(sel.value);
+  delete layout.expanded[card.id];
   saveLayout();
-  expanded.delete(card.id);
   applyCap(card.id);
 });
 
