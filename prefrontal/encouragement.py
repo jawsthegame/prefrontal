@@ -24,7 +24,7 @@ user can see exactly *why* a day was flagged.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.briefing import DEFAULT_DAY_END_HOUR, DEFAULT_DAY_START_HOUR
@@ -35,7 +35,14 @@ from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import free_windows, suggest_for_windows, window_config_for
+from prefrontal.scheduling import (
+    free_windows,
+    local_datetime,
+    local_day_bounds,
+    local_time_utc,
+    suggest_for_windows,
+    window_config_for,
+)
 from prefrontal.todos import avoided_todos, decompose_task
 
 if TYPE_CHECKING:
@@ -151,8 +158,11 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
     ``encouragement`` coaching key is ``on``.
     """
     now = now or utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    date = day_start.strftime("%Y-%m-%d")
+    # Today's signals are scoped to the user's *local* day (so an evening check
+    # after the UTC rollover still assesses today, not tomorrow).
+    tz = get_settings().timezone
+    day_start, _day_end = local_day_bounds(now, tz)
+    date = local_datetime(now, tz).strftime("%Y-%m-%d")
     enabled = (store.get_state("encouragement", "off") or "off").lower() == "on"
     tone = (store.get_state("encouragement_tone", "warm") or "warm").lower()
     tone = tone if tone in ENCOURAGEMENT_SYSTEM_PROMPTS else "warm"
@@ -165,8 +175,7 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
     # regardless of whether its clock time is earlier or later than the moment
     # this assessment runs — otherwise a morning check misclassifies an all-day
     # hard miss as a generic miss. Miss *episodes* below stay [midnight, now].
-    day_end = day_start + timedelta(days=1)
-    today = store.commitments_between(_fmt(day_start), _fmt(day_end))
+    today = store.commitments_between(_fmt(day_start), _fmt(_day_end))
     hard_titles = {
         (c.get("title") or "").lower()
         for c in today
@@ -236,16 +245,18 @@ def build_recovery(
     if not assessment.rough:
         return _EMPTY_PLAN
     now = now or utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
     settings = get_settings()
+    tz = settings.timezone
+    # Local day + local available-hours band (see build_briefing): a UTC-anchored
+    # band would re-fit todos into the wrong hours for a non-UTC user.
+    day_start, day_end = local_day_bounds(now, tz)
     todos = store.open_todos()
 
     # 1. Re-fit the rest of the day (now → the day's available-hours end).
     refit: list[dict[str, Any]] = []
     today = store.commitments_between(_fmt(day_start), _fmt(day_end))
-    band_start = max(now, day_start.replace(hour=DEFAULT_DAY_START_HOUR))
-    band_end = day_start.replace(hour=DEFAULT_DAY_END_HOUR)
+    band_start = max(now, local_time_utc(now, tz, DEFAULT_DAY_START_HOUR))
+    band_end = local_time_utc(now, tz, DEFAULT_DAY_END_HOUR)
     if todos and band_end > band_start:
         bias = store.get_float("time_estimation_bias", 1.0)
         window_config = window_config_for(settings, store)

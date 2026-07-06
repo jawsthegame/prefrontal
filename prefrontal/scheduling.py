@@ -228,6 +228,21 @@ def local_day_bounds(now: datetime, tz: str) -> tuple[datetime, datetime]:
     return _to_naive_utc(start_local), _to_naive_utc(end_local)
 
 
+def local_time_utc(now: datetime, tz: str, hour: int, minute: int = 0) -> datetime:
+    """Naive-UTC instant of local ``hour:minute`` on the local day containing ``now``.
+
+    The building block for a *local* working-hours band (e.g. "8am–8pm your
+    time"): ``day_start.replace(hour=8)`` on a naive-UTC instant yields 8am **UTC**,
+    which for an Eastern user is 3am local — so the briefing's spare-time band and
+    the rough-day re-fit anchor their hours in the local zone and convert back.
+    DST-correct via :func:`local_datetime`.
+    """
+    local = local_datetime(now, tz).replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    return local.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
 def minutes_between(
     start: str | None, end: str | None, *, default: float | None = None
 ) -> float | None:

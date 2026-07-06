@@ -483,6 +483,14 @@ Notes:
   work). A time with no zone (floating, or a manual commitment) is interpreted in
   `PREFRONTAL_TIMEZONE` — set that to your home zone so unzoned events don't land
   hours off. Times with an explicit offset or `Z` keep their own zone regardless.
+  `PREFRONTAL_TIMEZONE` also governs everything else that reasons in local time:
+  the dashboard assistant interprets times you type ("lunch tomorrow at noon") in
+  this zone, and every "today" surface (briefing, panic, rough-day, the widget's
+  running-behind cascade) uses this zone's calendar day rather than the UTC day —
+  so a 9pm-Eastern glance doesn't treat tomorrow morning as "today". **If it's
+  left at the default `UTC` while you're not in UTC, manually-entered times land
+  hours off and "today" rolls over at the wrong hour.** It is deployment-wide
+  (one zone per install), not per-user.
 - Check the result: `GET /commitments` (upcoming) and `GET /commitments/conflicts`
   (overlaps). Add one-offs with `POST /commitments`.
 

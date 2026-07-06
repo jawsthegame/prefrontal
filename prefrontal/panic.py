@@ -39,8 +39,10 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_dt
+from prefrontal.config import get_settings
 from prefrontal.impact import cascade_at_risk, cascade_impact, utcnow
 from prefrontal.memory.store import MemoryStore
+from prefrontal.scheduling import local_day_bounds
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
 
 if TYPE_CHECKING:
@@ -437,8 +439,10 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
         A :class:`PanicPlan`.
     """
     now = now or utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    # "Today" is the user's *local* day: an evening panic check (after the UTC
+    # rollover for a western-hemisphere user) must still reason about tonight's
+    # commitments, not tomorrow-UTC's. day_end is the next local midnight.
+    day_start, day_end = local_day_bounds(now, get_settings().timezone)
 
     pressures: list[Pressure] = []
     pressures.extend(_commitment_pressures(store, day_start, now, day_end))
