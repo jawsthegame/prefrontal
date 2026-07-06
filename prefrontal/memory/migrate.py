@@ -27,7 +27,12 @@ import sqlite3
 from dataclasses import dataclass
 
 from prefrontal.memory.db import SCHEMA_PATH
-from prefrontal.memory.store import MemoryStore, generate_token, seed_user_state
+from prefrontal.memory.store import (
+    DEFAULT_COACHING_STATE,
+    MemoryStore,
+    generate_token,
+    seed_user_state,
+)
 
 #: Schema version stamped once this migration has run. Bumping the on-disk
 #: ``user_version`` pragma to this value marks the database multi-tenant.
@@ -425,6 +430,31 @@ def _rebuild_table(
     conn.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
 
 
+def backfill_coaching_state_defaults(conn: sqlite3.Connection) -> None:
+    """Seed any missing :data:`DEFAULT_COACHING_STATE` keys for every existing user.
+
+    ``seed_user_state`` only runs at *provision* time, so a default key introduced
+    **after** a user was created (e.g. ``home_zip``) never reaches them. This
+    closes that gap idempotently: for each user, it inserts any absent default key
+    without clobbering a value the user or a learner already set — the same
+    absent-only contract ``seed_user_state`` uses. A fresh/empty database has no
+    users yet (schema.sql + ``provision_user`` seed those), so it's a no-op there;
+    a legacy pre-multi-tenant ``coaching_state`` is skipped until
+    :func:`migrate_to_multi_tenant` has given it a ``user_id``.
+    """
+    if "user_id" not in _table_columns(conn, "coaching_state"):
+        return  # legacy shape — the multi-tenant step runs first and adds user_id
+    if not _table_columns(conn, "users"):
+        return  # brand-new DB: no users to backfill yet
+    store = MemoryStore(conn)
+    for user in store.each_user():
+        scoped = store.scoped(int(user["id"]))
+        existing = scoped.all_state()
+        for key, value, source in DEFAULT_COACHING_STATE:
+            if key not in existing:
+                scoped.set_state(key, value, source=source)
+
+
 def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     """Apply every pending schema migration, in order, before ``schema.sql`` runs.
 
@@ -440,12 +470,15 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     1. **Multi-tenant scoping** — :func:`migrate_to_multi_tenant`, a no-op unless
        the database is a legacy single-tenant one.
     2. **Added-column back-fill** — :func:`backfill_added_columns`.
+    3. **Coaching-state default back-fill** — :func:`backfill_coaching_state_defaults`,
+       so a default key added after a user was provisioned (e.g. ``home_zip``)
+       reaches existing users too. Absent-only; a no-op on a fresh/empty DB.
 
-    Both steps run *before* ``schema.sql`` is (re)applied: step 1 must, because
-    the new schema's indexes reference ``user_id``; step 2 safely can, because it
-    only alters tables that already exist (fresh tables are created by
-    ``schema.sql`` at their final shape). ``schema.sql`` then fills in any missing
-    tables, indexes, and seed rows.
+    All steps run *before* ``schema.sql`` is (re)applied: step 1 must, because the
+    new schema's indexes reference ``user_id``; steps 2–3 safely can, because they
+    only touch tables that already exist (fresh tables are created by ``schema.sql``
+    at their final shape, and step 3 no-ops when there are no users yet).
+    ``schema.sql`` then fills in any missing tables, indexes, and seed rows.
 
     Args:
         conn: An open connection to the database to upgrade.
@@ -461,4 +494,5 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     if needs_migration(conn):
         result = migrate_to_multi_tenant(conn)
     backfill_added_columns(conn)
+    backfill_coaching_state_defaults(conn)
     return result

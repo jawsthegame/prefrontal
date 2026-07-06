@@ -70,3 +70,52 @@ def test_backfill_is_a_noop_on_a_fresh_database():
         backfill_added_columns(conn)
         after = {t: _columns(conn, t) for t in _all_tables(conn)}
         assert before == after
+
+
+def test_coaching_state_default_backfill_reaches_existing_users(tmp_path):
+    """A default key added after provisioning is back-filled to existing users.
+
+    Simulates the real deployment: a user was provisioned before `home_zip`
+    existed (so the key is missing), then a later `init_db` runs the migration
+    ladder and seeds the absent default — without clobbering values already set.
+    """
+    from prefrontal.clarify import HOME_ZIP_KEY, LOCALIZATION_KEY
+    from prefrontal.memory.db import init_db
+    from prefrontal.memory.migrate import backfill_coaching_state_defaults
+    from prefrontal.memory.store import MemoryStore, provision_user
+
+    db = tmp_path / "prefrontal.db"
+    conn = init_db(str(db))
+    store = MemoryStore(conn)
+    user, _ = provision_user(store, "tom", display_name="Tom", is_operator=True)
+    scoped = store.scoped(user["id"])
+    # Simulate the pre-existing user: drop the newer keys and set a value that
+    # must survive the back-fill (never clobbered).
+    conn.execute(
+        "DELETE FROM coaching_state WHERE user_id = ? AND key IN (?, ?)",
+        (user["id"], HOME_ZIP_KEY, LOCALIZATION_KEY),
+    )
+    scoped.set_state("preferred_briefing_format", "long", source="explicit")
+    conn.commit()
+    assert scoped.get_state(HOME_ZIP_KEY) is None
+
+    backfill_coaching_state_defaults(conn)
+
+    assert scoped.get_state(HOME_ZIP_KEY) == "19027"
+    assert scoped.get_state(LOCALIZATION_KEY) == "0"  # opt-in: seeded off
+    # A value the user set is left untouched.
+    assert scoped.get_state("preferred_briefing_format") == "long"
+    conn.close()
+
+
+def test_coaching_state_backfill_noop_on_empty_db(tmp_path):
+    """With no users yet, the coaching-state back-fill does nothing (and doesn't raise)."""
+    from prefrontal.memory.db import init_db
+    from prefrontal.memory.migrate import backfill_coaching_state_defaults
+
+    db = tmp_path / "empty.db"
+    conn = init_db(str(db))
+    backfill_coaching_state_defaults(conn)  # no users → no-op
+    n = conn.execute("SELECT COUNT(*) FROM coaching_state").fetchone()[0]
+    assert n == 0
+    conn.close()

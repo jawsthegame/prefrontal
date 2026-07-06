@@ -69,7 +69,15 @@ the first test. Code follow-ups below are optional polish.
   HTTP and CLI can't drift). Declared as the Task Paralysis `clarify_ambiguous`
   intervention and surfaced in its profile section. Covered by
   `tests/test_clarify.py` + `tests/test_clarify_endpoints.py` + `tests/test_cli.py`.
-  *(Next: grow the playbook registry.)*
+  The registry has since grown to eight task types (tax filing, passport, DMV
+  license, vehicle registration, insurance claim, home repair, finding a
+  provider, appointments), and guides **localize to the user's home ZIP** when
+  opted in: a step's `{area}` token renders as the `home_zip` (seeded to the
+  deployment default, back-filled to existing users by the migration ladder)
+  once `playbook_localization` is on — off by default, toggled via
+  `prefrontal clarify localize on`, degrading to a generic phrase otherwise.
+  Free-text answers map to a task type by the **most specific** keyword match, so
+  a generic word can't hijack a specific reading.
 - **Departure reminders on the coaching tick (toward retiring n8n)** ✅ — the
   `departure_buffer` intervention is now a coach cue: `TimeBlindnessModule.evaluate`
   emits the most-urgent due departure (reusing the same `plan_upcoming_departures`

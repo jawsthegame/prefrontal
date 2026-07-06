@@ -42,6 +42,13 @@ DEFAULT_COACHING_STATE: tuple[tuple[str, str, str], ...] = (
     # `lead_minutes` fallback work without it. Set to '1' to allow the calendar
     # sync to resolve free-text locations to coordinates.
     ("geocoding_enabled", "0", "explicit"),
+    # Playbook localization (see prefrontal.clarify). `home_zip` anchors a guided
+    # walkthrough's local steps ("find the office serving <zip>"); it's seeded to
+    # the deployment's default area and editable per user. `playbook_localization`
+    # is the opt-in toggle — OFF by default, so a step's {area} stays a generic
+    # phrase until the user turns it on (`prefrontal clarify localize on`).
+    ("home_zip", "19027", "explicit"),
+    ("playbook_localization", "0", "explicit"),
 )
 
 

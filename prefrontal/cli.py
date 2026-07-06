@@ -1740,21 +1740,28 @@ def _cmd_clarify(args: argparse.Namespace) -> int:
         Process exit code (0 on success, 1 on a bad id / unknown task type / input).
     """
     from prefrontal.clarify import (
+        HOME_ZIP_KEY,
+        LOCALIZATION_KEY,
         apply_clarification_answer,
         known_task_types,
+        localized_zip,
+        playbook_view,
         resolve_playbook,
         sweep_ambiguous_items,
     )
     from prefrontal.integrations.ollama import OllamaClient
 
-    def _show_playbook(pb) -> None:
-        print(f"Guide: {pb.title}")
-        if pb.intro:
-            print(f"  {pb.intro}")
-        for i, step in enumerate(pb.steps, 1):
-            print(f"  {i}. {step.title}")
-            if step.detail:
-                print(f"     {step.detail}")
+    def _show_playbook(pb, zip_code) -> None:
+        # Render through playbook_view so the same {area} localization the HTTP/
+        # dashboard surfaces use applies here (zip_code is None when opted out).
+        view = playbook_view(pb, zip_code=zip_code)
+        print(f"Guide: {view['title']}")
+        if view["intro"]:
+            print(f"  {view['intro']}")
+        for i, step in enumerate(view["steps"], 1):
+            print(f"  {i}. {step['title']}")
+            if step["detail"]:
+                print(f"     {step['detail']}")
 
     def _show(row) -> None:
         mark = {"pending": "?", "resolved": "✓", "dismissed": "—"}.get(row["status"], "?")
@@ -1771,21 +1778,33 @@ def _cmd_clarify(args: argparse.Namespace) -> int:
     settings = get_settings()
     action = args.clarify_action
 
-    # `guide` is static playbook content — no store needed.
-    if action == "guide":
-        playbook = resolve_playbook(args.task_type)
-        if playbook is None:
-            known = ", ".join(sorted(known_task_types()))
-            print(
-                f"No playbook for task type {args.task_type!r}. Known: {known}",
-                file=sys.stderr,
-            )
-            return 1
-        _show_playbook(playbook)
-        return 0
-
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
+        zip_code = localized_zip(store)  # None unless the user opted into localization
+        if action == "localize":
+            # Opt in/out of ZIP-localized guides, optionally setting the home ZIP.
+            if args.zip is not None:
+                store.set_state(HOME_ZIP_KEY, args.zip.strip(), source="explicit")
+            store.set_state(
+                LOCALIZATION_KEY, "1" if args.state == "on" else "0", source="explicit"
+            )
+            zip_now = (store.get_state(HOME_ZIP_KEY) or "").strip() or "(unset)"
+            if args.state == "on":
+                print(f"Playbook localization ON — guides will use ZIP {zip_now}.")
+            else:
+                print("Playbook localization OFF — guides use generic phrasing.")
+            return 0
+        if action == "guide":
+            playbook = resolve_playbook(args.task_type)
+            if playbook is None:
+                known = ", ".join(sorted(known_task_types()))
+                print(
+                    f"No playbook for task type {args.task_type!r}. Known: {known}",
+                    file=sys.stderr,
+                )
+                return 1
+            _show_playbook(playbook, zip_code)
+            return 0
         if action == "check":
             client = OllamaClient(
                 base_url=settings.ollama_url, model=settings.ollama_model
@@ -1829,7 +1848,7 @@ def _cmd_clarify(args: argparse.Namespace) -> int:
         print(f"Resolved #{args.id}: {result['answer']}")
         if result["playbook"] is not None:
             print()
-            _show_playbook(result["playbook"])
+            _show_playbook(result["playbook"], zip_code)
     return 0
 
 
@@ -2666,6 +2685,13 @@ def build_parser() -> argparse.ArgumentParser:
     cl_dismiss.add_argument("id", type=int, help="Clarification id.")
     cl_guide = cl_sub.add_parser("guide", help="Print a task type's guided playbook.")
     cl_guide.add_argument("task_type", help="e.g. tax_filing.")
+    cl_localize = cl_sub.add_parser(
+        "localize", help="Opt in/out of ZIP-localized guides (opt-in; off by default)."
+    )
+    cl_localize.add_argument("state", choices=["on", "off"], help="Turn localization on or off.")
+    cl_localize.add_argument(
+        "--zip", default=None, help="Set the home ZIP used to localize guides."
+    )
     p_clarify.set_defaults(func=_cmd_clarify)
 
     p_crunch = sub.add_parser(

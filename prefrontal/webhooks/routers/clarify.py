@@ -26,6 +26,7 @@ from prefrontal.clarify import (
     MAX_SWEEP_ITEMS,
     apply_clarification_answer,
     known_task_types,
+    localized_zip,
     playbook_view,
     resolve_playbook,
     sweep_ambiguous_items,
@@ -163,7 +164,11 @@ def build_router(services: RouterServices) -> APIRouter:
             "status": "resolved",
             "answer": result["answer"],
             "task_type": result["task_type"],
-            "playbook": playbook_view(playbook) if playbook is not None else None,
+            "playbook": (
+                playbook_view(playbook, zip_code=localized_zip(memory))
+                if playbook is not None
+                else None
+            ),
         }
 
     @router.post("/clarifications/{clarification_id}/dismiss", tags=["clarify"])
@@ -192,8 +197,8 @@ def build_router(services: RouterServices) -> APIRouter:
         """Return the guided walkthrough for a recognized task type (404 otherwise).
 
         Lets the dashboard re-open a guide for an already-resolved item without
-        re-answering. Auth-gated like every surface, though the steps themselves
-        are the same static playbook for everyone.
+        re-answering. Auth-gated like every surface; the steps are localized to the
+        user's home ZIP when they've opted into localization (else generic).
         """
         playbook = resolve_playbook(task_type)
         if playbook is None:
@@ -201,6 +206,6 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No playbook for task type {task_type!r}.",
             )
-        return playbook_view(playbook)
+        return playbook_view(playbook, zip_code=localized_zip(ctx.store))
 
     return router

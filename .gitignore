@@ -29,6 +29,9 @@ coverage.xml
 *.db-shm
 profile.md
 
+# Node / Electron desktop build
+node_modules/
+
 # OS / editor
 .DS_Store
 .idea/
