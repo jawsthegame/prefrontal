@@ -371,6 +371,13 @@
   .clarify-dismiss { margin-top: 8px; }
   .clarify-guided { margin-top: 4px; }
   .clarify-guided .row .sub { color: var(--muted); }
+  /* Localization opt-in — a small control so guides can be tuned to the home ZIP
+     without the CLI. Set apart under a divider so it reads as a setting. */
+  .clarify-loc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line);
+    font-size: 13px; color: var(--muted); }
+  .clarify-loc label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .clarify-loc input[type="text"] { width: 6em; padding: 4px 6px; }
 
   /* Guide overlay — the "walk me through it" popup a resolved item unlocks. Same
      dim-everything overlay shell as panic mode, so it reads as one focused screen
@@ -1269,10 +1276,18 @@ function renderTriageLog(data) {
 function renderClarify(d) {
   const pending = (d && d.clarifications) || [];
   const guided = (d && d.guided) || [];
+  const loc = (d && d.localization) || { enabled: false, zip: "" };
+  // Opt-in control (always shown): turn ZIP-localized guides on/off + set the ZIP.
+  // A single Save reads both fields, so no per-input change wiring is needed.
+  const locControl = `<div class="clarify-loc">
+      <label><input type="checkbox" id="clarify-loc-on"${loc.enabled ? " checked" : ""}> Localize guides to my ZIP</label>
+      <input type="text" id="clarify-loc-zip" value="${esc(loc.zip || "")}" placeholder="ZIP" inputmode="numeric" aria-label="Home ZIP" />
+      <button class="btn-sm" data-action="clarify-localize">Save</button>
+    </div>`;
   if (!pending.length && !guided.length) {
-    return `<div class="empty">Nothing ambiguous right now — vague items get an inline question here.</div>`;
+    return locControl + `<div class="empty">Nothing ambiguous right now — vague items get an inline question here.</div>`;
   }
-  let html = "";
+  let html = locControl;
   html += pending.map((c) => {
     const opts = (c.options || []).map((o, i) =>
       `<button class="btn-sm${o.has_playbook ? " has-guide" : ""}" data-action="clarify-answer" data-id="${c.id}" data-index="${i}"${o.has_playbook ? ` title="Has a step-by-step guide"` : ""}>${esc(o.label)}</button>`
@@ -1746,6 +1761,12 @@ document.addEventListener("click", async (e) => {
     }
     else if (act === "clarify-dismiss") { await post(`/clarifications/${id}/dismiss`, {}); }
     else if (act === "clarify-guide") { await openGuideByType(el.dataset.type); return; }
+    else if (act === "clarify-localize") {
+      // Read the toggle + ZIP together and save in one call.
+      const enabled = $("#clarify-loc-on").checked;
+      const zip = $("#clarify-loc-zip").value.trim();
+      await post("/clarifications/localization", { enabled, zip });
+    }
     else if (act === "guide-step") {
       // Local-only: toggle this step's done bit for the open playbook and re-render
       // the overlay in place. No server call and no dashboard reload.

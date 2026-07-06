@@ -164,8 +164,36 @@ def test_coaching_tick_fills_the_queue_passively():
         assert [c["title"] for c in pending] == ["Tax"]
 
 
+def test_localization_toggle_endpoint():
+    """POST /clarifications/localization opts in/out and sets the ZIP; GET reflects it."""
+    client, _ = _app()
+    with client:
+        # Seeded default: off, ZIP 19027 (surfaced for the dashboard control).
+        loc = client.get("/clarifications", headers=_auth()).json()["localization"]
+        assert loc == {"enabled": False, "zip": "19027"}
+
+        def guide_blob():
+            pb = client.get("/clarifications/playbooks/license_renewal", headers=_auth()).json()
+            return " ".join(s["detail"] for s in pb["steps"])
+
+        assert "your area" in guide_blob()  # off → generic
+        # Opt in with a new ZIP.
+        r = client.post(
+            "/clarifications/localization", json={"enabled": True, "zip": "19104"}, headers=_auth()
+        )
+        assert r.status_code == 200 and r.json() == {"enabled": True, "zip": "19104"}
+        assert "19104" in guide_blob()
+        # Toggling off leaves the ZIP set (omitted field is unchanged).
+        off = client.post(
+            "/clarifications/localization", json={"enabled": False}, headers=_auth()
+        ).json()
+        assert off == {"enabled": False, "zip": "19104"}
+        assert "your area" in guide_blob()
+
+
 def test_clarifications_require_auth():
     client, _ = _app()
     with client:
         assert client.get("/clarifications").status_code == 401
         assert client.post("/clarifications/check").status_code == 401
+        assert client.post("/clarifications/localization").status_code == 401

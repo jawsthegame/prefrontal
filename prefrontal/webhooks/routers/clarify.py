@@ -23,6 +23,8 @@ from fastapi import (
 )
 
 from prefrontal.clarify import (
+    HOME_ZIP_KEY,
+    LOCALIZATION_KEY,
     MAX_SWEEP_ITEMS,
     apply_clarification_answer,
     known_task_types,
@@ -35,7 +37,7 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.schemas import ClarificationResolve
+from prefrontal.webhooks.schemas import ClarificationLocalization, ClarificationResolve
 from prefrontal.webhooks.services import RouterServices
 
 
@@ -65,6 +67,13 @@ def build_router(services: RouterServices) -> APIRouter:
                 for o in (row.get("options") or [])
             ],
         }
+
+    def _localization_state(store: Any) -> dict[str, Any]:
+        """Current localization opt-in + home ZIP, for the dashboard control."""
+        enabled = (store.get_state(LOCALIZATION_KEY) or "").strip().lower() in (
+            "1", "true", "on", "yes"
+        )
+        return {"enabled": enabled, "zip": (store.get_state(HOME_ZIP_KEY) or "").strip()}
 
     def _guided_view(row: dict[str, Any]) -> dict[str, Any] | None:
         """A resolved clarification that unlocked a playbook, or ``None``."""
@@ -96,7 +105,32 @@ def build_router(services: RouterServices) -> APIRouter:
             g for r in memory.list_clarifications("resolved", limit=20)
             if (g := _guided_view(r)) is not None
         ]
-        return {"clarifications": pending, "guided": guided[:10]}
+        return {
+            "clarifications": pending,
+            "guided": guided[:10],
+            "localization": _localization_state(memory),
+        }
+
+    @router.post("/clarifications/localization", tags=["clarify"])
+    def set_localization(
+        payload: ClarificationLocalization,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Opt in/out of ZIP-localized guides, and optionally set the home ZIP.
+
+        The dashboard twin of ``prefrontal clarify localize``. ``enabled`` toggles
+        the opt-in (guides weave in the ZIP only when on); ``zip`` sets the home
+        ZIP. Either field may be omitted to leave it unchanged. Returns the new
+        ``{enabled, zip}`` state.
+        """
+        memory = ctx.store
+        if payload.zip is not None:
+            memory.set_state(HOME_ZIP_KEY, payload.zip.strip(), source="explicit")
+        if payload.enabled is not None:
+            memory.set_state(
+                LOCALIZATION_KEY, "1" if payload.enabled else "0", source="explicit"
+            )
+        return _localization_state(memory)
 
     @router.post("/clarifications/check", tags=["clarify"])
     def clarifications_check(
