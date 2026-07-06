@@ -1799,6 +1799,27 @@ def test_self_serve_endpoints_create_invite_redeem(client, store):
     ).status_code == 400
 
 
+def test_invite_sms_to_bad_number_rejected(client):
+    # An obviously-invalid number is a 422 before anything is minted or sent.
+    r = client.post(
+        "/household/invites", json={"sms_to": "not a phone"}, headers=_h("dana-tok")
+    )
+    assert r.status_code == 422
+
+
+def test_invite_sms_to_reports_noop_when_twilio_unconfigured(client):
+    # The test app has no Twilio config, so the code is still minted and the send
+    # is a reported no-op — a failed/absent text never blocks invite creation.
+    r = client.post(
+        "/household/invites", json={"sms_to": "+14155551234"}, headers=_h("dana-tok")
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert "-" in body["code"]
+    assert body["sms"]["delivered"] is False
+    assert "not configured" in body["sms"]["detail"]
+
+
 def test_invite_revoke_endpoint(client):
     client.post("/household/invites", json={}, headers=_h("dana-tok"))
     iid = client.get("/household/sheet", headers=_h("dana-tok")).json()["invites"][0]["id"]

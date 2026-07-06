@@ -54,6 +54,7 @@ from prefrontal.household import (
 from prefrontal.impact import (
     utcnow,
 )
+from prefrontal.integrations.sms import normalize_phone, send_invite_sms
 from prefrontal.memory.repos.household import (
     AGREEMENT_KINDS,
     FACT_CATEGORIES,
@@ -81,6 +82,7 @@ from prefrontal.webhooks.schemas import (
     FactClear,
     FactSet,
     HouseholdCreate,
+    InviteCreate,
     InviteRedeem,
     PetCreate,
     PetRename,
@@ -221,12 +223,37 @@ def build_router(services: RouterServices) -> APIRouter:
     @router.post("/household/invites", status_code=status.HTTP_201_CREATED, tags=["household"])
     def create_invite(
         ctx: Annotated[ScopedRequest, Depends(require_member)],
+        payload: InviteCreate | None = None,
     ) -> dict[str, Any]:
-        """Mint a shareable invite code (+ a join link) for the caller's household."""
+        """Mint a shareable invite code (+ a join link) for the caller's household.
+
+        With ``sms_to`` in the body, also texts the join link straight to that
+        number via Twilio, so a co-parent can be onboarded without copy-pasting a
+        code out of band. The code is minted regardless of whether the text sends;
+        the ``sms`` field reports the delivery outcome (a no-op when Twilio isn't
+        configured), so a failed text never blocks the invite.
+        """
+        sms_to = payload.sms_to if payload else None
+        if sms_to is not None and normalize_phone(sms_to) is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="sms_to must be a phone number (E.164, e.g. '+14155551234').",
+            )
         invite = ctx.store.create_invite()
         base = resolved_settings.oauth_base_url
         join_url = f"{base}/kids?invite={invite['code']}" if base else ""
-        return {**invite, "join_url": join_url}
+        result: dict[str, Any] = {**invite, "join_url": join_url}
+        if sms_to is not None:
+            household = ctx.store.household()
+            sms = send_invite_sms(
+                resolved_settings,
+                code=invite["code"],
+                join_url=join_url,
+                to=sms_to,
+                household_name=(household or {}).get("name"),
+            )
+            result["sms"] = {"delivered": sms.delivered, "detail": sms.detail}
+        return result
 
     @router.post("/household/invites/{invite_id}/revoke", tags=["household"])
     def revoke_invite(

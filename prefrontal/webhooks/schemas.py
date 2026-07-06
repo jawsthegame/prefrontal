@@ -582,6 +582,19 @@ class BalanceConfig(BaseModel):
     )
 
 
+class InviteCreate(BaseModel):
+    """Body of ``POST /household/invites`` — optionally text the link to a co-parent.
+
+    All fields optional so an empty POST still just mints a code (the original
+    behaviour); supplying ``sms_to`` also texts the join link via Twilio.
+    """
+
+    sms_to: str | None = Field(
+        default=None,
+        description="Recipient phone number (E.164, e.g. '+14155551234') to text the invite to.",
+    )
+
+
 class InviteRedeem(BaseModel):
     """Body of ``POST /household/invites/redeem`` — join a household with a code."""
 

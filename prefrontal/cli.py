@@ -253,13 +253,34 @@ def _cmd_household(args: argparse.Namespace) -> int:
         elif args.household_action == "chores-check":
             return _chores_check_cli(store, args, settings)
         elif args.household_action == "invite":
+            from prefrontal.integrations.sms import normalize_phone, send_invite_sms
+
             scoped = _resolve_user_store(store, args.user)
             if scoped.household_id_or_none() is None:
                 print("That user isn't in a household.", file=sys.stderr)
                 return 1
+            if args.sms and normalize_phone(args.sms) is None:
+                print(
+                    "--sms must be a phone number (E.164, e.g. '+14155551234').",
+                    file=sys.stderr,
+                )
+                return 1
             inv = scoped.create_invite()
+            base = settings.oauth_base_url
+            join_url = f"{base}/kids?invite={inv['code']}" if base else ""
             print(f"Invite code: {inv['code']}  (expires {inv['expires_at']} UTC)")
-            print("Share it, or send: <base-url>/kids?invite=" + inv["code"])
+            print("Share it, or send: " + (join_url or "<base-url>/kids?invite=" + inv["code"]))
+            if args.sms:
+                household = scoped.household()
+                sms = send_invite_sms(
+                    settings,
+                    code=inv["code"],
+                    join_url=join_url,
+                    to=args.sms,
+                    household_name=(household or {}).get("name"),
+                )
+                outcome = "sent" if sms.delivered else "not sent"
+                print(f"SMS to {args.sms}: {outcome} ({sms.detail})")
         elif args.household_action == "redeem":
             scoped = _resolve_user_store(store, args.user)
             result = scoped.redeem_invite(args.code)
@@ -2218,6 +2239,11 @@ def build_parser() -> argparse.ArgumentParser:
         "invite", help="Generate a shareable invite code for your household."
     )
     h_inv.add_argument("--user", default=None, help="Handle of a household member.")
+    h_inv.add_argument(
+        "--sms",
+        default=None,
+        help="Text the invite link to this phone number via Twilio (E.164, e.g. '+14155551234').",
+    )
     h_red = house_sub.add_parser("redeem", help="Join a household with an invite code.")
     h_red.add_argument("code", help="The invite code shared by a co-parent.")
     h_red.add_argument("--user", default=None, help="Handle of the joining user.")

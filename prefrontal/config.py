@@ -171,6 +171,15 @@ class Settings:
     # default (it only helps when you're at the machine); a per-user
     # ``tts_enabled`` coaching key overrides this.
     tts_enabled: bool = False
+    # Twilio (SMS) — used to text a household invite link to a co-parent
+    # (:mod:`prefrontal.integrations.sms`). All empty is the local-first default:
+    # the SMS client no-ops and nothing is sent until credentials + a from-number
+    # are configured. These are operator/account credentials (the same Twilio
+    # account the n8n voice-call escalation uses); the recipient number is
+    # supplied per invite, not stored here.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     #: Logical account names that are Gmail inboxes (resolved from IMAP host
@@ -386,6 +395,9 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         pushover_user_key=os.environ.get("PUSHOVER_USER_KEY", ""),
         tts_enabled=os.environ.get("PREFRONTAL_TTS_ENABLED", "").strip().lower()
         in ("1", "true", "yes", "on"),
+        twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),
+        twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN", "").strip(),
+        twilio_from=os.environ.get("TWILIO_FROM", "").strip(),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         gmail_accounts=gmail_accounts,
