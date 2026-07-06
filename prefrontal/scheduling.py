@@ -243,6 +243,25 @@ def local_time_utc(now: datetime, tz: str, hour: int, minute: int = 0) -> dateti
     return local.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
+def end_of_local_day_utc(day: datetime, tz: str) -> datetime:
+    """Naive-UTC instant of 23:59:59 *local* on the calendar date of ``day``.
+
+    A date-only deadline ("due 2026-07-07") means "by the end of that day in
+    *your* zone". Anchoring it to 23:59:59 UTC flags a western-hemisphere user's
+    "due today" todo as overdue hours early — at 8pm Eastern the clock is already
+    past a 23:59 UTC cutoff. Only ``day``'s Y-M-D (the local date) is read; its
+    time component is ignored. Falls back to UTC when ``tz`` is unknown.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    local = day.replace(
+        hour=23, minute=59, second=59, microsecond=0, tzinfo=zone
+    )
+    return local.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
 def minutes_between(
     start: str | None, end: str | None, *, default: float | None = None
 ) -> float | None:

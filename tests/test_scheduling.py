@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from prefrontal.scheduling import local_day_bounds, local_time_utc
+from prefrontal.scheduling import (
+    end_of_local_day_utc,
+    local_day_bounds,
+    local_time_utc,
+)
 
 # July → EDT (UTC-4) for America/New_York, so the arithmetic below is offset −4.
 
@@ -42,3 +46,31 @@ def test_local_time_utc_anchors_local_hour():
     now = datetime(2026, 7, 6, 15, 0, 0)  # 11:00 EDT on the 6th
     assert local_time_utc(now, "America/New_York", 8) == datetime(2026, 7, 6, 12, 0, 0)
     assert local_time_utc(now, "UTC", 8) == datetime(2026, 7, 6, 8, 0, 0)
+
+
+def test_end_of_local_day_utc():
+    # End of 2026-07-07 EDT (UTC-4) is 2026-07-08 03:59:59 UTC — so a "due today"
+    # todo isn't overdue until then, not at 23:59 UTC (7:59pm Eastern).
+    assert end_of_local_day_utc(datetime(2026, 7, 7), "America/New_York") == datetime(
+        2026, 7, 8, 3, 59, 59
+    )
+    assert end_of_local_day_utc(datetime(2026, 7, 7), "UTC") == datetime(
+        2026, 7, 7, 23, 59, 59
+    )
+
+
+def test_parse_deadline_anchors_to_local_end_of_day(monkeypatch):
+    """A date-only deadline resolves to the end of that *local* day (not UTC)."""
+    from prefrontal import panic, todos
+    from prefrontal.config import Settings
+
+    est = Settings(webhook_secret="x", timezone="America/New_York")
+    # todos._parse_deadline lazily imports get_settings from prefrontal.config;
+    # panic._parse_deadline binds it at its own module scope.
+    monkeypatch.setattr("prefrontal.config.get_settings", lambda: est)
+    monkeypatch.setattr(panic, "get_settings", lambda: est)
+
+    expected = datetime(2026, 7, 8, 3, 59, 59)  # end of 7/7 EDT, in UTC
+    assert todos._parse_deadline("2026-07-07") == expected
+    assert todos._parse_deadline("2026-07-07 00:00:00") == expected
+    assert panic._parse_deadline("2026-07-07") == expected
