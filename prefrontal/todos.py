@@ -893,6 +893,41 @@ def category_stats(
     return out
 
 
+def follow_through_stats(todos: list[dict[str, Any]]) -> dict[str, Any]:
+    """Follow-through rollup over the todos the user explicitly *started*.
+
+    Of the tasks you begin, how many do you finish? Counts only todos with a
+    ``started_at`` set, split by what happened next: ``completed`` (done),
+    ``abandoned`` (dropped), and ``in_progress`` (started but still open).
+    ``rate`` is ``completed ÷ (completed + abandoned)`` — the follow-through rate
+    among *resolved* started tasks (in-progress ones aren't counted for or against
+    it yet) — or ``None`` until at least one started task has closed.
+
+    Pure: fed the store's todos, no clock needed (status already reflects the
+    outcome). The dashboard's insights panel renders this as a headline.
+    """
+    started = completed = abandoned = in_progress = 0
+    for todo in todos:
+        if not todo.get("started_at"):
+            continue
+        started += 1
+        status = (todo.get("status") or "open").lower()
+        if status == "done":
+            completed += 1
+        elif status == "dropped":
+            abandoned += 1
+        else:
+            in_progress += 1
+    resolved = completed + abandoned
+    return {
+        "started": started,
+        "completed": completed,
+        "abandoned": abandoned,
+        "in_progress": in_progress,
+        "rate": round(completed / resolved, 2) if resolved else None,
+    }
+
+
 # --- Outcome capture (feed the learning loop) --------------------------------
 #
 # Closing a todo is a real behavioral outcome, but until now it was thrown away:

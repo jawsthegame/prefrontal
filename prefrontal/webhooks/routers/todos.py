@@ -62,6 +62,7 @@ from prefrontal.todos import (
     avoided_todos,
     category_stats,
     decompose_task,
+    follow_through_stats,
     normalize_category,
     record_todo_closed,
 )
@@ -293,12 +294,16 @@ def build_router(services: RouterServices) -> APIRouter:
         estimate = "common execution length", completion rate, and summed
         avoidance) busiest-first; ``categories`` is the plain vocabulary list
         (most-common-first) for edit menus; ``cap`` is the ceiling and ``at_cap``
-        says whether a new category can still be coined.
+        says whether a new category can still be coined. ``follow_through`` rolls up
+        the *started* todos (started→completed vs →abandoned) so the panel can show
+        the follow-through rate — of the tasks you begin, how many you finish.
         """
         memory = ctx.store
         categories = memory.todo_categories()
+        todos = memory.all_todos()
         return {
-            "stats": category_stats(memory.all_todos(), utcnow()),
+            "stats": category_stats(todos, utcnow()),
+            "follow_through": follow_through_stats(todos),
             "categories": categories,
             "cap": MAX_CATEGORIES,
             "at_cap": len(categories) >= MAX_CATEGORIES,

@@ -47,6 +47,7 @@ from prefrontal.todos import (
     avoided_todos,
     category_stats,
     decompose_task,
+    follow_through_stats,
     heuristic_category,
     heuristic_deadline,
     heuristic_energy,
@@ -1128,6 +1129,26 @@ def test_todo_episode_fields_started_then_completed_notes_follow_through():
     assert "completed after starting" in fields["notes"]
 
 
+def test_follow_through_stats():
+    """Counts only started todos, split by outcome; rate = completed / resolved."""
+    todos = [
+        {"started_at": "2026-06-01", "status": "done"},
+        {"started_at": "2026-06-01", "status": "done"},
+        {"started_at": "2026-06-01", "status": "dropped"},   # abandoned after starting
+        {"started_at": "2026-06-01", "status": "open"},        # in progress
+        {"started_at": None, "status": "done"},                # never started → ignored
+        {"status": "open"},                                    # never started → ignored
+    ]
+    ft = follow_through_stats(todos)
+    assert ft == {
+        "started": 4, "completed": 2, "abandoned": 1, "in_progress": 1,
+        "rate": round(2 / 3, 2),                               # 2 of 3 resolved
+    }
+    # No started-and-closed todos yet → rate is None (nothing to show).
+    assert follow_through_stats([{"started_at": "2026-06-01", "status": "open"}])["rate"] is None
+    assert follow_through_stats([])["rate"] is None
+
+
 def test_started_then_dropped_is_always_a_give_up():
     """Dropping a *started* todo is a give-up (miss), even when it'd otherwise read
     as a quick hygiene discard — starting-then-abandoning is the follow-through miss."""
@@ -1191,6 +1212,21 @@ def test_started_then_dropped_endpoint_logs_a_miss(client, store_open):
     assert len(eps) == 1
     assert eps[0]["outcome"] == "miss"                       # started-then-abandoned counts
     assert eps[0]["context"] == "todo dropped, started: Reorg garage"
+
+
+def test_categories_endpoint_reports_follow_through(client, store_open):
+    """/todos/categories surfaces the started→finished follow-through rollup."""
+    a = client.post("/todos", json={"title": "A"}, headers=_auth()).json()["todo_id"]
+    b = client.post("/todos", json={"title": "B"}, headers=_auth()).json()["todo_id"]
+    client.post("/todos", json={"title": "C"}, headers=_auth())      # never started
+    # Start both; finish one, abandon the other.
+    client.post(f"/todos/{a}/start", headers=_auth())
+    client.post(f"/todos/{b}/start", headers=_auth())
+    client.post(f"/todos/{a}/done", headers=_auth())
+    client.post(f"/todos/{b}/drop", headers=_auth())
+    ft = client.get("/todos/categories", headers=_auth()).json()["follow_through"]
+    assert ft["started"] == 2 and ft["completed"] == 1 and ft["abandoned"] == 1
+    assert ft["rate"] == 0.5
 
 
 def test_todo_drop_of_fresh_todo_is_discarded_not_a_miss(client, store_open):
