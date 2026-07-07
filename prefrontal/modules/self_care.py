@@ -256,6 +256,35 @@ def day_count(store: MemoryStore, check: BasicCheck, today: str) -> int:
         return 0
 
 
+def _is_overdue(
+    *,
+    enabled: bool,
+    done: bool,
+    target: int,
+    count: int,
+    start_hour: int,
+    interval: int,
+    local: datetime,
+) -> bool:
+    """Whether a check is "behind" right now — the flag a surface flashes on (pure).
+
+    Never overdue when disabled, already met, or before the start hour. A once-a-day
+    check (``target <= 1``) is overdue simply once past its start hour and not done.
+    A recurring check is *pace-aware*: since its start hour you'd expect about one
+    confirm per ``interval`` minutes, so it's overdue only when ``count`` has fallen
+    below that running expectation — so water flags when you've genuinely lagged the
+    pace, not merely because you're not yet at the daily total. Expectation is capped
+    at ``target`` (you're never "behind" once you've done enough).
+    """
+    if not enabled or done or local.hour < start_hour:
+        return False
+    if target <= 1:
+        return True
+    minutes_since = (local.hour - start_hour) * 60 + local.minute
+    expected = min(target, minutes_since // interval)
+    return count < expected
+
+
 def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, Any]:
     """Today's self-care state for the read-only surfaces (the dashboard card).
 
@@ -279,6 +308,7 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
         enabled = (store.get_state(check.enabled_key, "on") or "on") == "on"
         done = count >= target
         start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
+        interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
         checks.append(
             {
                 "key": check.key,
@@ -287,13 +317,19 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 "target": target,
                 "done": done,
                 "start_hour": start_hour,
-                # Past its start hour today and still not met — the "you were meant
-                # to have done this by now" flag a surface can flash on (e.g. meds
-                # not taken). False once done, before the start hour, or disabled.
-                "overdue": enabled and not done and local.hour >= start_hour,
-                "interval_minutes": max(
-                    1, int(store.get_float(check.interval_key, check.interval_default))
+                # "You're behind on this" — the flag a surface flashes on. Always
+                # false when done, disabled, or before the start hour. For a
+                # once-a-day check (target 1) that's simply "past the start hour and
+                # still not done". For a recurring check (water) it's *pace-aware*:
+                # you'd expect roughly one per interval since the start hour, so it
+                # flags only when the count has fallen short of that running
+                # expectation — it clears as you catch up, instead of nagging all
+                # day just because you're not yet at the daily total.
+                "overdue": _is_overdue(
+                    enabled=enabled, done=done, target=target, count=count,
+                    start_hour=start_hour, interval=interval, local=local,
                 ),
+                "interval_minutes": interval,
             }
         )
     return {

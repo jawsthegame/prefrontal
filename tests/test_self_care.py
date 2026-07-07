@@ -461,6 +461,23 @@ def test_status_overdue_flag(store):
     assert next(c for c in off["checks"] if c["key"] == "meds")["overdue"] is False
 
 
+def test_status_overdue_recurring_is_pace_aware(store):
+    """Water (recurring) is overdue only when behind the expected per-interval pace,
+    not merely because it hasn't hit the daily total yet."""
+    store.set_state("self_care", "on")
+    # Water: start 9:00, interval 90m, target 6. By 12:00 that's 3h = 2 intervals,
+    # so ~2 expected. With 0 logged → behind → overdue.
+    behind = self_care_status(store, datetime(2026, 7, 2, 12, 0, 0), "UTC")
+    assert next(c for c in behind["checks"] if c["key"] == "water")["overdue"] is True
+    # Right after the start hour, before a full interval has passed → not yet behind.
+    fresh = self_care_status(store, datetime(2026, 7, 2, 9, 30, 0), "UTC")
+    assert next(c for c in fresh["checks"] if c["key"] == "water")["overdue"] is False
+    # Caught up to pace (2 logged by 12:00) → not overdue.
+    store.set_state("water_count", "2026-07-02|2")
+    onpace = self_care_status(store, datetime(2026, 7, 2, 12, 0, 0), "UTC")
+    assert next(c for c in onpace["checks"] if c["key"] == "water")["overdue"] is False
+
+
 def test_status_start_hour_tolerates_hh_mm(store):
     """A start hour hand-edited to "HH:MM" still reports the right hour."""
     store.set_state("self_care", "on")
