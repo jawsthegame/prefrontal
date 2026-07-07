@@ -143,6 +143,10 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
     confirmed taps carry a ``latency=<n>s`` note. Safe/zeroed on empty history.
     """
     episodes = store.episodes_by_type(SELF_CARE_EPISODE, limit=10_000)
+    # A check is "on" only when both the master switch and its own toggle are on
+    # (mirrors self_care_status). The Insights card shows every on check, greying
+    # the ones that have no responses yet, so `enabled` travels with each row.
+    master_on = (store.get_state("self_care", "off") or "off") == "on"
     rows: list[dict[str, Any]] = []
     for check in CHECKS:
         prefix = f"{check.key}: "
@@ -162,6 +166,8 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
         rows.append(
             {
                 "key": check.key,
+                "enabled": master_on
+                and (store.get_state(check.enabled_key, "on") or "on") == "on",
                 "n": n,
                 "confirmed": counts["confirmed"],
                 "snoozed": counts["snoozed"],
