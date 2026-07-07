@@ -468,7 +468,14 @@ its chores (pack laundry, prep bags) live under it.
 
 - **Appointments** (dental/doctor) → **`commitments`**, tagged with the `child`
   `kind` and a `health` category. The sheet just *surfaces* the upcoming ones;
-  the calendar/commitment machinery is unchanged.
+  the calendar/commitment machinery is unchanged. Two paths tag a commitment
+  `child`: the explicit **Add appointment** form (`POST /household/appointments`,
+  `kind_source='user'`), and **calendar sync** — the classifier
+  (`prefrontal/classify.py`) tags a synced event `child` when its title names a
+  household kid (a deterministic, offline roster pass over `store.child_names()`)
+  or when the LLM classes it as a kid's appointment. A `child` commitment stays
+  *attendable* (it consumes time and can conflict, like `self`) — it simply also
+  shows on the shared sheet's Upcoming appointments.
 - **Rendering** is deterministic assembly (cheap), so — unlike `profile_cache` —
   there is **no cache table**; the sheet is built on request.
 

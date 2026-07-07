@@ -413,7 +413,12 @@ class ConflictDismiss(BaseModel):
 class CommitmentKind(BaseModel):
     """Body of ``POST /commitments/{id}/kind`` — correct a commitment's kind."""
 
-    kind: str = Field(description="`self` (your commitment) or `fyi` (where someone will be).")
+    kind: str = Field(
+        description=(
+            "`self` (your commitment), `child` (a kid's appointment — also shows on "
+            "the household sheet), or `fyi` (where someone else will be)."
+        )
+    )
 
 
 class CommitmentHardness(BaseModel):

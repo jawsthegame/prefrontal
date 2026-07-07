@@ -237,10 +237,10 @@ also defines:
   `generated_at`. Written by `prefrontal summarize` (or `GET /profile?refresh=1`)
   and served by `GET /profile`, so the slow model round-trip happens once rather
   than on every poll.
-- **`kind_feedback`** — labeled examples for the "is this my commitment or just
-  an FYI?" classifier: a normalized `title` → confirmed `kind` (`self`/`fyi`),
-  the model's `llm_kind` prediction (for accuracy tracking), keyed
-  `(user_id, title)` so a correction sticks for that title.
+- **`kind_feedback`** — labeled examples for the "is this my commitment, a kid's,
+  or just an FYI?" classifier: a normalized `title` → confirmed `kind`
+  (`self`/`child`/`fyi`), the model's `llm_kind` prediction (for accuracy
+  tracking), keyed `(user_id, title)` so a correction sticks for that title.
 - **`triage_feedback`** — negative corrections for mail triage: when the user
   drops a mail-derived todo, the sender/subject/summary/category/urgency and the
   `days_open` at drop time are recorded, so a repeat or quick-drop sender is
