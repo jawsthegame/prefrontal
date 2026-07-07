@@ -82,15 +82,24 @@
   @media (min-width: 760px) {
     .banners { grid-template-columns: 1fr 1fr; }
   }
+  /* Masonry region: explicit flexbox columns (not CSS multi-column) so a card
+     can be placed in — and dragged between — a specific column. renderColumns()
+     builds the .col containers; the column count is user-chosen (Columns picker)
+     and clamped to what fits the viewport. */
   .masonry {
-    columns: 360px; column-gap: 16px; padding: 16px 20px 28px;
-    max-width: 1400px; margin: 0 auto;
+    display: flex; align-items: flex-start; gap: 16px;
+    padding: 16px 20px 28px; max-width: 1400px; margin: 0 auto;
   }
+  .masonry > .col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 12px;
     padding: 16px 18px; margin: 0 0 16px; break-inside: avoid; position: relative;
   }
-  .banners .card { margin: 0; }
+  .banners .card, .masonry > .col > .card { margin: 0; }
+  /* Drag feedback: the card being dragged dims; the column under the pointer
+     gets a dashed outline. */
+  .masonry .card.dragging { opacity: .4; }
+  .masonry > .col.drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 12px; }
   .card h2 {
     font-size: 13px; text-transform: uppercase; letter-spacing: .6px;
     color: var(--muted); margin: 0 0 12px;
@@ -113,17 +122,40 @@
   .sc-mark:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   .sc-mark:disabled { opacity: .55; cursor: default; }
 
-  /* Per-card layout controls (reorder + item cap), top-right of each masonry card. */
-  .masonry .card > h2 { padding-right: 96px; }
+  /* Per-card layout controls (drag handle · move ◀▲▼▶ · item cap), top-right of
+     each masonry card. The reserved h2 space depends on whether the card also
+     shows a cap selector (.has-cap). In compact mode (see below) the move
+     controls are hidden, so much less space is reserved. */
+  .masonry .card > h2 { padding-right: 152px; }
+  .masonry .card.has-cap > h2 { padding-right: 198px; }
   .card-ctl { position: absolute; top: 12px; right: 12px; z-index: 2;
-    display: flex; gap: 4px; align-items: center; }
+    display: flex; gap: 3px; align-items: center; }
+  .card-ctl .drag-handle { color: var(--muted); cursor: grab; user-select: none; touch-action: none;
+    width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 13px; line-height: 1; }
+  .card-ctl .drag-handle:hover { color: var(--fg); }
+  .card-ctl .drag-handle:active { cursor: grabbing; }
+  /* The heading is also a drag grip (mouse), so hint it with a grab cursor. */
+  .masonry:not(.compact) .card > h2 { cursor: grab; }
+  /* While a drag is in progress, suppress text selection and show the grab cursor. */
+  .masonry.dragging-active { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+  .masonry.dragging-active .card > h2 { cursor: grabbing; }
   .card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
-    border-radius: 6px; width: 24px; height: 24px; cursor: pointer; font-size: 10px; line-height: 1; padding: 0; }
+    border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 9px; line-height: 1; padding: 0; }
   .card-ctl .cardbtn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
   .card-ctl .cardbtn:disabled { opacity: .3; cursor: default; }
   .card-ctl .capsel { background: var(--card); border: 1px solid var(--line); color: var(--muted);
-    border-radius: 6px; height: 24px; font-size: 11px; padding: 0 2px; cursor: pointer; }
+    border-radius: 6px; height: 22px; font-size: 11px; padding: 0 2px; cursor: pointer; }
   .card-ctl .capsel:hover { border-color: var(--accent); }
+  /* Compact mode: the viewport fits fewer columns than the chosen count, so the
+     stored multi-column arrangement is shown merged and read-only — hide the
+     move controls (dragging/reordering would corrupt the wider layout) but keep
+     the cap selector, and reclaim the reserved heading space. */
+  .masonry.compact .card-ctl .drag-handle,
+  .masonry.compact .card-ctl [data-arr],
+  .masonry.compact .card-ctl [data-col] { display: none; }
+  .masonry.compact .card > h2 { padding-right: 0; }
+  .masonry.compact .card.has-cap > h2 { padding-right: 52px; }
   .cap-more { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
   .cap-more button { background: none; border: none; color: var(--accent); cursor: pointer;
     font: inherit; font-size: 13px; font-weight: 600; padding: 2px 0; }
@@ -372,7 +404,12 @@
   /* The header's utility buttons (Refresh/Update/Restart/Sign out) are grouped
      so they wrap together as one right-aligned block instead of scattering
      (a lone Refresh top-right with the rest dropping to a left-aligned row). */
-  header .hdr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  header .hdr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; align-items: center; }
+  .col-picker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted);
+    font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .col-picker select { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; height: 32px; padding: 0 6px; font: inherit; font-size: 13px; cursor: pointer; }
+  .col-picker select:hover { border-color: var(--accent); }
   /* Panic sits apart on the left, by the title, not among the utility buttons. */
   header .alarm { margin-right: 4px; }
   #panic { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
@@ -444,7 +481,8 @@
 
   @media (max-width: 520px) {
     .banners { padding: 12px 12px 0; }
-    .masonry { columns: 1; padding: 12px 12px 24px; }
+    .masonry { padding: 12px 12px 24px; }  /* single column enforced by renderColumns */
+    .col-picker { display: none; }  /* one column only at this width — nothing to pick */
     header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); }
     .addrow { flex-wrap: wrap; }
     .addrow input { flex-basis: 100%; }
@@ -488,6 +526,13 @@
   <button class="ghost alarm" id="panic-btn" title="Overwhelmed? See what's on fire + one first step">😮‍💨 Panic</button>
   <span class="meta" id="status">loading…</span>
   <div class="hdr-actions">
+    <label class="col-picker" title="How many columns to arrange cards into">Columns
+      <select id="col-count" aria-label="Number of card columns">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </label>
     <button class="ghost" id="refresh">Refresh</button>
     <button class="ghost" id="update-btn" style="display:none" title="Pull the latest code, migrate, and restart">⬆︎ Update</button>
     <button class="ghost" id="restart-btn" style="display:none" title="Restart the service">⟳ Restart</button>
@@ -1541,14 +1586,19 @@ const CAP_OPTIONS = [5, 10, 25, 0];  // 0 = All (no cap)
 let layout = (() => {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (_) { return {}; }
 })();
-layout.order = layout.order || [];
+layout.order = layout.order || [];       // flat card order; also the read order when columns merge
 layout.caps = layout.caps || {};
 layout.collapsed = layout.collapsed || {};  // { cardId: true } for collapsed cards
 layout.expanded = layout.expanded || {};  // { cardId: true } for cards showing all rows past the cap
 layout.seen = layout.seen || {};  // { cardId: { itemKey: true } } — items already shown to the user
+layout.colIndex = layout.colIndex || {};  // { cardId: columnNumber } — which column a card lives in
+// layout.colCount: preferred number of columns (1..MAX_COLS). Left undefined until
+// the user picks a value, so the default adapts to whatever fits the viewport.
 function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) {} }
 
-const masonryCards = () => [...document.querySelectorAll(".masonry > .card")];
+// Masonry cards may sit directly under .masonry (before the first render) or
+// nested inside a .col wrapper (after) — match both with a descendant selector.
+const masonryCards = () => [...document.querySelectorAll(".masonry .card")];
 
 // Every card (banner + masonry) collapses to just its heading; state persists.
 function applyCollapsed() {
@@ -1723,33 +1773,123 @@ function toggleCollapsed(card) {
   refreshUnseen();  // expanding clears the badge (all now seen); collapsing shows a fresh 0
 }
 
-function applyOrder() {
+// ── Column layout ─────────────────────────────────────────────────────────
+// Cards are arranged into explicit columns the user can rearrange. Placement
+// (which column, in what order) persists per device in layout.colIndex/order.
+// The number of columns actually drawn is the user's preference clamped to what
+// the viewport can fit; when it's clamped down we show a merged, read-only view
+// (rearranging then would scramble the wider arrangement).
+const MAX_COLS = 3;
+const MIN_CARD_W = 340;  // narrowest a card should get before dropping a column
+
+// How many columns fit the current masonry width.
+function fitCols() {
   const main = document.querySelector(".masonry");
-  if (!main) return;
-  const byId = {}; masonryCards().forEach((c) => { byId[c.id] = c; });
-  const seen = new Set(), ordered = [];
-  (layout.order || []).forEach((id) => { if (byId[id] && !seen.has(id)) { ordered.push(byId[id]); seen.add(id); } });
-  masonryCards().forEach((c) => { if (!seen.has(c.id)) ordered.push(c); });  // new cards keep their place, at the end
-  ordered.forEach((c) => main.appendChild(c));  // re-append existing nodes in order
-  refreshMoveButtons();
+  const w = (main ? main.clientWidth : window.innerWidth) - 40;  // minus L/R padding
+  return Math.max(1, Math.min(MAX_COLS, Math.floor((w + 16) / (MIN_CARD_W + 16))));
+}
+// Preferred column count: the saved choice, or (until one is made) whatever fits.
+function prefCols() {
+  return layout.colCount != null ? Math.max(1, Math.min(MAX_COLS, layout.colCount)) : fitCols();
+}
+// Columns actually drawn — preference clamped to what fits.
+function effectiveCols() { return Math.max(1, Math.min(prefCols(), fitCols())); }
+
+// Card ids in flat order: saved order first (existing cards), then any new cards
+// appended in DOM order so they keep a stable place.
+function orderedCardIds() {
+  const present = new Set(masonryCards().map((c) => c.id));
+  const seen = new Set(), out = [];
+  (layout.order || []).forEach((id) => { if (present.has(id) && !seen.has(id)) { out.push(id); seen.add(id); } });
+  masonryCards().forEach((c) => { if (!seen.has(c.id)) { out.push(c.id); seen.add(c.id); } });
+  return out;
 }
 
-function moveCard(id, dir) {
-  const ids = masonryCards().map((c) => c.id);
-  const i = ids.indexOf(id), j = i + dir;
-  if (i < 0 || j < 0 || j >= ids.length) return;
-  [ids[i], ids[j]] = [ids[j], ids[i]];
-  layout.order = ids; saveLayout(); applyOrder();
+// Rebuild the .col containers and distribute cards into them. Called on load,
+// on resize (when the fit changes), and when the column count changes.
+function renderColumns() {
+  const main = document.querySelector(".masonry");
+  if (!main) return;
+  const E = effectiveCols();
+  const full = E === prefCols();  // not clamped → rearranging is safe & enabled
+  main.classList.toggle("compact", !full);
+  const cc = document.getElementById("col-count");
+  if (cc) cc.value = String(prefCols());
+
+  const nodes = {}; masonryCards().forEach((c) => { nodes[c.id] = c; });
+  const cols = [];
+  for (let i = 0; i < E; i++) { const d = document.createElement("div"); d.className = "col"; cols.push(d); }
+  const load = new Array(E).fill(0);  // card count per column, to balance unassigned cards
+  orderedCardIds().forEach((id) => {
+    const node = nodes[id]; if (!node) return;
+    let ci = layout.colIndex[id];
+    if (ci == null || ci < 0) {                       // no saved column → shortest one
+      ci = load.indexOf(Math.min(...load));
+      if (full) layout.colIndex[id] = ci;             // remember it, but only at full width
+    }
+    const target = Math.min(ci, E - 1);               // clamp into a drawn column
+    cols[target].appendChild(node);
+    load[target]++;
+  });
+  main.innerHTML = "";                                // clear old wrappers (cards already re-parented)
+  cols.forEach((c) => main.appendChild(c));
+  refreshMoveButtons();
+  applyCaps();
+  applyCollapsed();
+}
+
+// Persist the current on-screen arrangement. No-op while merged, so a clamped
+// view can't overwrite the wider layout.
+function serializeColumns() {
+  const main = document.querySelector(".masonry");
+  if (!main || main.classList.contains("compact")) return;
+  const order = [];
+  [...main.querySelectorAll(":scope > .col")].forEach((col, ci) => {
+    [...col.querySelectorAll(":scope > .card")].forEach((card) => {
+      layout.colIndex[card.id] = ci;
+      order.push(card.id);
+    });
+  });
+  layout.order = order;
+  saveLayout();
 }
 
 function refreshMoveButtons() {
-  const cards = masonryCards();
-  cards.forEach((card, i) => {
-    const up = card.querySelector(":scope > .card-ctl [data-arr='up']");
-    const down = card.querySelector(":scope > .card-ctl [data-arr='down']");
-    if (up) up.disabled = i === 0;
-    if (down) down.disabled = i === cards.length - 1;
+  const main = document.querySelector(".masonry");
+  if (!main) return;
+  const cols = [...main.querySelectorAll(":scope > .col")];
+  cols.forEach((col, ci) => {
+    const cards = [...col.querySelectorAll(":scope > .card")];
+    cards.forEach((card, i) => {
+      const set = (arr, disabled) => { const b = card.querySelector(`:scope > .card-ctl [data-arr='${arr}'], :scope > .card-ctl [data-col='${arr}']`); if (b) b.disabled = disabled; };
+      set("up", i === 0);
+      set("down", i === cards.length - 1);
+      set("left", ci === 0);
+      set("right", ci === cols.length - 1);
+    });
   });
+}
+
+// ▲ / ▼ — reorder within the card's own column.
+function moveWithinColumn(card, dir) {
+  const col = card.parentElement; if (!col) return;
+  const sib = dir < 0 ? card.previousElementSibling : card.nextElementSibling;
+  if (!sib || !sib.classList.contains("card")) return;
+  if (dir < 0) col.insertBefore(card, sib); else col.insertBefore(sib, card);
+  serializeColumns(); refreshMoveButtons();
+}
+
+// ◀ / ▶ — move the card to the adjacent column, keeping a similar vertical slot.
+function moveToColumn(card, dir) {
+  const main = card.closest(".masonry"); if (!main) return;
+  const cols = [...main.querySelectorAll(":scope > .col")];
+  const col = card.parentElement;
+  const tj = cols.indexOf(col) + dir;
+  if (tj < 0 || tj >= cols.length) return;
+  const idx = [...col.querySelectorAll(":scope > .card")].indexOf(card);
+  const targetCards = [...cols[tj].querySelectorAll(":scope > .card")];
+  cols[tj].insertBefore(card, targetCards[idx] || null);
+  serializeColumns(); refreshMoveButtons();
 }
 
 function injectControls() {
@@ -1757,9 +1897,13 @@ function injectControls() {
     if (card.querySelector(":scope > .card-ctl")) return;  // inject once
     const ctl = document.createElement("div");
     ctl.className = "card-ctl";
-    let html = `<button class="cardbtn" data-arr="up" title="Move earlier" aria-label="Move card earlier">▲</button>`
-      + `<button class="cardbtn" data-arr="down" title="Move later" aria-label="Move card later">▼</button>`;
+    let html = `<span class="drag-handle" title="Drag to move this card (or its heading)" aria-hidden="true">⠿</span>`
+      + `<button class="cardbtn" data-col="left" title="Move to previous column" aria-label="Move card to previous column">◀</button>`
+      + `<button class="cardbtn" data-arr="up" title="Move up" aria-label="Move card up">▲</button>`
+      + `<button class="cardbtn" data-arr="down" title="Move down" aria-label="Move card down">▼</button>`
+      + `<button class="cardbtn" data-col="right" title="Move to next column" aria-label="Move card to next column">▶</button>`;
     if (CAPPABLE.has(card.id)) {
+      card.classList.add("has-cap");
       const cap = layout.caps[card.id] ?? 0;
       html += `<select class="capsel" title="Max items shown" aria-label="Max items shown">`
         + CAP_OPTIONS.map((n) => `<option value="${n}"${n === cap ? " selected" : ""}>${n === 0 ? "All" : n}</option>`).join("")
@@ -1770,6 +1914,112 @@ function injectControls() {
   });
   refreshMoveButtons();
 }
+
+// Drag-and-drop: grab a card's ⠿ handle and drop it anywhere across the columns.
+// The card node is moved live during dragover so the layout reflows under the
+// pointer; the arrangement is persisted on drop. (HTML5 drag is pointer-only —
+// the ◀▶▲▼ buttons are the touch/keyboard path.)
+// Drag-and-drop via Pointer Events (works with mouse and touch, unlike native
+// HTML5 drag). Grab a card by its ⠿ handle or its heading; once the pointer
+// moves past a small threshold the card follows the pointer, reflowing the
+// columns live, and the arrangement is persisted on release.
+let drag = null;  // { card, grip, origin, pointerId, startX, startY, active, fromHeading }
+function initDragAndDrop() {
+  const main = document.querySelector(".masonry");
+  if (!main || main.dataset.dndWired) return;
+  main.dataset.dndWired = "1";
+  const THRESH = 5;  // px of movement before a press becomes a drag (vs. a click)
+  const clearTargets = () => main.querySelectorAll(".col.drop-target").forEach((c) => c.classList.remove("drop-target"));
+  const colFromX = (x) => {
+    const cols = [...main.querySelectorAll(":scope > .col")];
+    let best = null, bd = Infinity;
+    for (const c of cols) {
+      const r = c.getBoundingClientRect();
+      if (x >= r.left && x <= r.right) return c;
+      const d = Math.min(Math.abs(x - r.left), Math.abs(x - r.right));
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  };
+  const cardAfterY = (col, y) => {
+    const cards = [...col.querySelectorAll(":scope > .card:not(.dragging)")];
+    for (const c of cards) { const r = c.getBoundingClientRect(); if (y < r.top + r.height / 2) return c; }
+    return null;
+  };
+
+  main.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;         // left / primary only
+    if (main.classList.contains("compact")) return;          // merged view is read-only
+    // Never hijack a press on an interactive control.
+    if (e.target.closest(".cardbtn, .capsel, .cap-more, input, textarea, select, button, a, [contenteditable]")) return;
+    let grip = e.target.closest(".drag-handle"), fromHeading = false;
+    if (!grip) { const h2 = e.target.closest("h2"); if (h2 && h2.closest(".masonry")) { grip = h2; fromHeading = true; } }
+    if (!grip) return;
+    const card = grip.closest(".card");
+    if (!card || !card.closest(".masonry")) return;
+    drag = { card, grip, origin: { parent: card.parentElement, next: card.nextElementSibling },
+             pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, active: false, fromHeading };
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    if (!fromHeading) e.preventDefault();  // handle: block text selection immediately
+  });
+  main.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (!drag.active) {
+      if (Math.abs(e.clientX - drag.startX) < THRESH && Math.abs(e.clientY - drag.startY) < THRESH) return;
+      drag.active = true;
+      drag.card.classList.add("dragging");
+      main.classList.add("dragging-active");
+    }
+    e.preventDefault();  // stop scroll/selection while dragging
+    const col = colFromX(e.clientX); if (!col) return;
+    clearTargets(); col.classList.add("drop-target");
+    const after = cardAfterY(col, e.clientY);
+    if (after) col.insertBefore(drag.card, after); else col.appendChild(drag.card);
+  });
+  const finish = (e) => {
+    if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+    try { drag.grip.releasePointerCapture(drag.pointerId); } catch (_) {}
+    if (drag.active) {
+      drag.card.classList.remove("dragging");
+      main.classList.remove("dragging-active");
+      clearTargets();
+      serializeColumns(); refreshMoveButtons();
+      // A heading drag would otherwise fire a click that toggles collapse — eat it.
+      if (drag.fromHeading) {
+        const kill = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+        document.addEventListener("click", kill, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener("click", kill, true), 350);
+      }
+    }
+    drag = null;
+  };
+  main.addEventListener("pointerup", finish);
+  main.addEventListener("pointercancel", finish);
+}
+
+// Columns picker: set the preferred column count and redraw.
+function initColPicker() {
+  const cc = document.getElementById("col-count");
+  if (!cc || cc.dataset.wired) return;
+  cc.dataset.wired = "1";
+  cc.value = String(prefCols());
+  cc.addEventListener("change", () => {
+    layout.colCount = Math.max(1, Math.min(MAX_COLS, Number(cc.value) || fitCols()));
+    saveLayout();
+    renderColumns();
+  });
+}
+
+// Redraw when the fittable column count changes (e.g. window resized across a
+// breakpoint), so a clamped layout re-expands when there's room again.
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const main = document.querySelector(".masonry");
+    if (main && main.querySelectorAll(":scope > .col").length !== effectiveCols()) renderColumns();
+  }, 150);
+});
 
 // Hide a capped card's item rows beyond N, with a "+ K more" / "Show fewer" toggle.
 function applyCap(cardId) {
@@ -1804,7 +2054,9 @@ document.addEventListener("click", (e) => {
     toggleCollapsed(h2.parentElement); return;
   }
   const arr = e.target.closest("[data-arr]");
-  if (arr) { const c = arr.closest(".card"); if (c) moveCard(c.id, arr.dataset.arr === "up" ? -1 : 1); return; }
+  if (arr) { const c = arr.closest(".card"); if (c) moveWithinColumn(c, arr.dataset.arr === "up" ? -1 : 1); return; }
+  const colb = e.target.closest("[data-col]");
+  if (colb) { const c = colb.closest(".card"); if (c) moveToColumn(c, colb.dataset.col === "left" ? -1 : 1); return; }
   const capb = e.target.closest("[data-cap]");
   if (capb) {
     const id = capb.dataset.id;
@@ -1906,8 +2158,9 @@ async function doRestart() {
 function start() {
   injectControls();
   injectSummaries();
-  applyOrder();
-  applyCollapsed();
+  initColPicker();
+  renderColumns();   // builds the .col containers + applies collapse state
+  initDragAndDrop();
   load();
   checkAdmin();
   clearInterval(timer); timer = setInterval(load, REFRESH_MS);
