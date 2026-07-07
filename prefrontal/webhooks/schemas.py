@@ -332,6 +332,14 @@ class CommitmentCreate(BaseModel):
     dest_lon: float | None = Field(default=None, description="Destination longitude.")
     lead_minutes: float | None = None
     hard: bool = False
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "Optional life-sphere (shop/work/home/kids/personal) — the same axis "
+            "todos and trips carry. Snapped onto the canonical vocab (e.g. "
+            "child/family → kids), so a kid's appointment is domain='kids'."
+        ),
+    )
 
 
 class LocationPing(BaseModel):
@@ -445,6 +453,19 @@ class CommitmentNotes(BaseModel):
             "Free-text detail consulted when a nudge is built for this commitment "
             "(e.g. the departure reminder); `null`/empty clears it. Survives "
             "calendar re-syncs."
+        ),
+    )
+
+
+class CommitmentDomain(BaseModel):
+    """Body of ``POST /commitments/{id}/domain`` — set or clear a commitment's life-sphere."""
+
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "Life-sphere (shop/work/home/kids/personal), snapped onto the canonical "
+            "vocab (e.g. child/family → kids); `null`/empty clears it. A user field "
+            "kept across calendar re-syncs."
         ),
     )
 
@@ -1003,6 +1024,7 @@ __all__ = [
     "ChoreEnabled",
     "ChoreSet",
     "CommitmentCreate",
+    "CommitmentDomain",
     "CommitmentKind",
     "ConflictDismiss",
     "ConversationTurn",

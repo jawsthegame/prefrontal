@@ -60,6 +60,7 @@ from prefrontal.departure import (
     travel_leads,
 )
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
+from prefrontal.focus_balance import normalize_focus_domain
 from prefrontal.geocode import (
     normalize_query,
 )
@@ -99,6 +100,7 @@ from prefrontal.webhooks.notify import (
 from prefrontal.webhooks.schemas import (
     CalendarSync,
     CommitmentCreate,
+    CommitmentDomain,
     CommitmentHardness,
     CommitmentHidden,
     CommitmentKind,
@@ -826,6 +828,31 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
             )
         updated = memory.set_commitment_notes(commitment_id, payload.notes)
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/domain", tags=["schedule"])
+    def set_commitment_domain(
+        commitment_id: int,
+        payload: CommitmentDomain,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) a commitment's life **domain** (its life-sphere).
+
+        The same axis todos and trips carry — ``work``/``home``/``kids``/… — so a
+        kid's appointment reads as ``domain='kids'`` rather than overloading
+        ``kind``. The value is snapped onto the canonical vocabulary
+        (``child``/``family`` → ``kids``, …) via
+        :func:`~prefrontal.focus_balance.normalize_focus_domain`; ``null``/empty
+        clears it. Like ``notes``/``hidden``/``outcome`` it's a user field kept
+        across calendar re-syncs. Returns the updated row (404 if no such commitment).
+        """
+        memory = ctx.store
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        domain = normalize_focus_domain(payload.domain)
+        updated = memory.set_commitment_domain(commitment_id, domain)
         return {"commitment": updated}
 
     @router.get("/briefing", tags=["schedule"])

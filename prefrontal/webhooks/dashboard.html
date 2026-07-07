@@ -806,20 +806,25 @@ async function openCategoryMenu(anchor, id, current) {
 // distinct domains already in use across the loaded todos, plus the canonical
 // work/home so the picker is useful before any domain exists. "New…" coins any
 // label; "Clear" removes the guardrail (falls back to category-based scheduling).
-async function openDomainMenu(anchor, id, current) {
+async function openDomainMenu(anchor, id, current, opts = {}) {
   closePillMenu();
+  // Same picker for todos and commitments — only the POST target, the canonical
+  // seed vocab, and the lead blurb differ (passed via opts). Todos hold to
+  // work/home hours; a commitment carries the sphere purely as a life-balance tag.
+  const postPath = opts.postPath || `/todos/${id}/domain`;
+  const canon = opts.canon || ["work", "home"];
   const inUse = (lastTodos && lastTodos.todos || [])
     .map((t) => (t.domain || "").trim().toLowerCase()).filter(Boolean);
-  const vocab = [...new Set(["work", "home", ...inUse])];
+  const vocab = [...new Set([...canon, ...inUse])];
   const menu = document.createElement("div");
   menu.className = "cat-menu";
   const lead = document.createElement("span");
   lead.className = "lead";
-  lead.textContent = "Life domain — holds the todo to work/home hours.";
+  lead.textContent = opts.lead || "Life domain — holds the todo to work/home hours.";
   menu.appendChild(lead);
   const pick = async (dom) => {
     closePillMenu();
-    await post(`/todos/${id}/domain`, { domain: dom });
+    await post(postPath, { domain: dom });
     load();
   };
   for (const d of vocab) {
@@ -1132,8 +1137,13 @@ function renderCommitments(list, conflicts, cascade) {
       ? "Mark soft — an elastic/optional block you'd yield in a pinch"
       : "Mark hard — a must-happen obligation (a slip is a real problem)";
     const src = x.url ? ` <a class="src" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="Open source event">↗</a>` : "";
+    // Life-sphere pill: the same outlined chip a todo carries (work/home/kids/…),
+    // a life-balance tag on the commitment. Clicking opens the shared domain picker.
+    const cdom = x.domain || "";
+    const cdomStyle = cdom ? ` style="color:${catColor(cdom)};border-color:${catColor(cdom)}"` : "";
+    const cdomPill = ` <button class="${cdom ? "pill dom" : "pill dom none"}"${cdomStyle} data-action="commitment-domain" data-id="${x.id}" data-domain="${esc(cdom)}" title="Set life sphere (work/home/kids/…)">${esc(cdom || "+ domain")}<span class="caret">▾</span></button>`;
     return `<div class="row"><div class="main">
-      <div><span class="title">${esc(x.title)}</span>${src}${cal}${fyiBadge}${dbl}</div>
+      <div><span class="title">${esc(x.title)}</span>${src}${cal}${fyiBadge}${dbl}${cdomPill}</div>
       <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
     </div>
     <div class="acts">
@@ -1940,6 +1950,15 @@ document.addEventListener("click", async (e) => {
     else if (act === "commitment-unhide") { await post(`/commitments/${id}/hidden`, { hidden: false }); }
     else if (act === "commitment-made") { await post(`/commitments/${id}/outcome`, { outcome: "made" }); }
     else if (act === "commitment-missed") { await post(`/commitments/${id}/outcome`, { outcome: "missed" }); }
+    else if (act === "commitment-domain") {
+      // Life-sphere picker for a commitment; the menu POSTs + reloads itself.
+      openDomainMenu(el, id, el.dataset.domain || "", {
+        postPath: `/commitments/${id}/domain`,
+        canon: ["work", "home", "kids", "personal", "shop"],
+        lead: "Life sphere — a balance tag on this commitment (kids/work/…).",
+      });
+      return;
+    }
     else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     else if (act === "decompose-dismiss") { await post(`/todos/${id}/decompose/dismiss`, { reason: el.dataset.reason }); }
     else if (act === "todo-deadline") {

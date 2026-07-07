@@ -35,6 +35,7 @@ class ScheduleRepo(Repo):
         source: str = "calendar",
         kind: str = "self",
         kind_source: str | None = None,
+        domain: str | None = None,
     ) -> tuple[int, bool]:
         """Insert or update a commitment, returning ``(id, created)``.
 
@@ -66,6 +67,10 @@ class ScheduleRepo(Repo):
                 calendar re-sync never clobbers the user's override (see
                 :meth:`hardness_by_external_id` and :meth:`set_commitment_hardness`).
             source: ``calendar`` or ``manual``.
+            domain: Optional life-sphere (``work``/``home``/``kids``/…). Set only
+                on insert — like ``notes``, the update branch never clobbers it, so
+                a user's domain survives a calendar re-sync (edit via
+                :meth:`set_commitment_domain`).
 
         Returns:
             ``(id, created)`` where ``created`` is ``True`` for a new row.
@@ -93,11 +98,11 @@ class ScheduleRepo(Repo):
         cur = self.conn.execute(
             "INSERT INTO commitments (user_id, external_id, title, start_at, end_at, "
             "location, notes, source_url, dest_lat, dest_lon, lead_minutes, hardness, "
-            "hardness_source, source, kind, kind_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "hardness_source, source, kind, kind_source, domain) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._uid(), external_id, title, start_at, end_at, location, notes,
              source_url, dest_lat, dest_lon, lead_minutes, hardness,
-             hardness_source, source, kind, kind_source),
+             hardness_source, source, kind, kind_source, domain),
         )
         self.conn.commit()
         return int(cur.lastrowid), True
@@ -233,6 +238,29 @@ class ScheduleRepo(Repo):
         clean = notes.strip() if isinstance(notes, str) and notes.strip() else None
         self.conn.execute(
             "UPDATE commitments SET notes = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ?",
+            (clean, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
+    def set_commitment_domain(
+        self, commitment_id: int, domain: str | None
+    ) -> dict[str, Any] | None:
+        """Set (or clear) a commitment's life-sphere ``domain``; return the updated row.
+
+        The domain is a user field — like :meth:`set_commitment_notes`'s ``notes``
+        and :meth:`set_commitment_hidden`'s ``hidden``, it is deliberately *not*
+        touched by :meth:`upsert_commitment`'s re-sync path, so a calendar poll
+        never clobbers it. The value is stored as given (callers snap it onto the
+        canonical vocabulary via
+        :func:`prefrontal.focus_balance.normalize_focus_domain` first, mirroring how
+        the API/CLI normalize a todo's domain); ``None``/empty clears it. Returns
+        ``None`` if no such commitment exists.
+        """
+        clean = domain.strip() if isinstance(domain, str) and domain.strip() else None
+        self.conn.execute(
+            "UPDATE commitments SET domain = ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND user_id = ?",
             (clean, commitment_id, self._uid()),
         )
