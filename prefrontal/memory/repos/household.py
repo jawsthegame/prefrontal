@@ -812,6 +812,7 @@ class HouseholdRepo(Repo):
         *,
         title: str,
         days: str = "",
+        month_days: str = "",
         due_time: str = "",
         accountable_id: int | None = None,
         impact: str | None = None,
@@ -821,26 +822,29 @@ class HouseholdRepo(Repo):
         """Upsert a routine (keyed on title within the household), returning its id.
 
         ``accountable_id`` is the mental-load holder (``None`` = unassigned).
-        ``due_time`` may be blank (a routine that just groups chores, no clock).
-        Editing never touches the chores linked under it — only the definition.
+        ``days``/``month_days`` carry the schedule its chores inherit (weekdays, or
+        days of the month when set). ``due_time`` may be blank (a routine that just
+        groups chores, no clock). Editing never touches the chores linked under it
+        — only the definition.
         """
         hid = self._household_id()
         self.conn.execute(
             """
             INSERT INTO household_routines
-                (household_id, title, accountable_id, days, due_time, impact,
+                (household_id, title, accountable_id, days, month_days, due_time, impact,
                  enabled, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 accountable_id = excluded.accountable_id,
                 days           = excluded.days,
+                month_days     = excluded.month_days,
                 due_time       = excluded.due_time,
                 impact         = excluded.impact,
                 enabled        = excluded.enabled,
                 updated_by     = excluded.updated_by,
                 updated_at     = CURRENT_TIMESTAMP
             """,
-            (hid, title.strip(), accountable_id, days, due_time, impact,
+            (hid, title.strip(), accountable_id, days, month_days, due_time, impact,
              1 if enabled else 0, updated_by),
         )
         self.conn.commit()
@@ -856,6 +860,7 @@ class HouseholdRepo(Repo):
         *,
         title: str,
         days: str = "",
+        month_days: str = "",
         due_time: str = "",
         accountable_id: int | None = None,
         impact: str | None = None,
@@ -887,11 +892,11 @@ class HouseholdRepo(Repo):
         self.conn.execute(
             """
             UPDATE household_routines SET
-                title = ?, accountable_id = ?, days = ?, due_time = ?,
+                title = ?, accountable_id = ?, days = ?, month_days = ?, due_time = ?,
                 impact = ?, enabled = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND household_id = ?
             """,
-            (title, accountable_id, days, due_time, impact,
+            (title, accountable_id, days, month_days, due_time, impact,
              1 if enabled else 0, updated_by, routine_id, hid),
         )
         self.conn.commit()
@@ -926,8 +931,8 @@ class HouseholdRepo(Repo):
         """All the household's routines, each with the accountable member's name and chore count."""
         rows = self.conn.execute(
             """
-            SELECT r.id, r.title, r.accountable_id, r.days, r.due_time, r.impact,
-                   r.enabled,
+            SELECT r.id, r.title, r.accountable_id, r.days, r.month_days, r.due_time,
+                   r.impact, r.enabled,
                    COALESCE(u.display_name, u.handle) AS accountable_name,
                    (SELECT COUNT(*) FROM household_chores c WHERE c.routine_id = r.id)
                        AS chore_count
@@ -943,7 +948,7 @@ class HouseholdRepo(Repo):
     def routine(self, routine_id: int) -> dict[str, Any] | None:
         """One routine row (scoped to the household), or ``None`` if not found."""
         row = self.conn.execute(
-            "SELECT id, title, accountable_id, days, due_time, impact, enabled "
+            "SELECT id, title, accountable_id, days, month_days, due_time, impact, enabled "
             "FROM household_routines WHERE id = ? AND household_id = ?",
             (routine_id, self._household_id()),
         ).fetchone()
@@ -992,6 +997,7 @@ class HouseholdRepo(Repo):
         title: str,
         due_time: str,
         days: str = "",
+        month_days: str = "",
         owner_id: int | None = None,
         routine_id: int | None = None,
         remind_before: int = 30,
@@ -1003,20 +1009,23 @@ class HouseholdRepo(Repo):
 
         Same last-write-wins upsert shape as :meth:`set_agreement`. ``owner_id`` is
         the member whose job it is (RACI "R"; ``None`` = either parent);
-        ``routine_id`` links it under a routine (``None`` = stands alone). Editing a
-        chore never clears its completion log or dedup cursors — only its definition.
+        ``routine_id`` links it under a routine (``None`` = stands alone). ``days``/
+        ``month_days`` set its own schedule (weekdays, or days of the month when set)
+        — otherwise it inherits its routine's. Editing a chore never clears its
+        completion log or dedup cursors — only its definition.
         """
         hid = self._household_id()
         self.conn.execute(
             """
             INSERT INTO household_chores
-                (household_id, title, owner_id, routine_id, days, due_time,
+                (household_id, title, owner_id, routine_id, days, month_days, due_time,
                  remind_before, impact, enabled, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 owner_id      = excluded.owner_id,
                 routine_id    = excluded.routine_id,
                 days          = excluded.days,
+                month_days    = excluded.month_days,
                 due_time      = excluded.due_time,
                 remind_before = excluded.remind_before,
                 impact        = excluded.impact,
@@ -1024,7 +1033,7 @@ class HouseholdRepo(Repo):
                 updated_by    = excluded.updated_by,
                 updated_at    = CURRENT_TIMESTAMP
             """,
-            (hid, title.strip(), owner_id, routine_id, days, due_time,
+            (hid, title.strip(), owner_id, routine_id, days, month_days, due_time,
              int(remind_before), impact, 1 if enabled else 0, updated_by),
         )
         self.conn.commit()
@@ -1066,8 +1075,8 @@ class HouseholdRepo(Repo):
         """
         rows = self.conn.execute(
             """
-            SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.due_time,
-                   c.remind_before, c.impact, c.enabled, c.last_reminded_on,
+            SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.month_days,
+                   c.due_time, c.remind_before, c.impact, c.enabled, c.last_reminded_on,
                    c.last_missed_on,
                    COALESCE(u.display_name, u.handle) AS owner_name,
                    r.title AS routine_title
@@ -1088,8 +1097,8 @@ class HouseholdRepo(Repo):
         can't touch another household's chore (reads back ``None`` → 404).
         """
         row = self.conn.execute(
-            "SELECT id, title, owner_id, routine_id, days, due_time, remind_before, "
-            "impact, enabled, last_reminded_on, last_missed_on "
+            "SELECT id, title, owner_id, routine_id, days, month_days, due_time, "
+            "remind_before, impact, enabled, last_reminded_on, last_missed_on "
             "FROM household_chores WHERE id = ? AND household_id = ?",
             (chore_id, self._household_id()),
         ).fetchone()

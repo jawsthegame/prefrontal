@@ -407,7 +407,9 @@ the star-award prompt and check-in):
 Details:
 
 - **`household_chores`**: `title` (unique per household), `owner_id` (NULL =
-  either parent), `days` (weekday-int CSV; empty = every day), `due_time`
+  either parent), `days` (weekday-int CSV; empty = every day), `month_days`
+  (day-of-month-int CSV `"1,15"` for a monthly cadence; when set it wins over
+  `days`, and a day past a short month fires on its last day), `due_time`
   (`HH:MM` local), `remind_before` (minutes), `impact` (the "why"), `enabled`,
   provenance, and two local-date cursors — `last_reminded_on` / `last_missed_on` —
   that dedup each stage to once per local day (mirrors
@@ -435,9 +437,11 @@ thing*. A **routine** groups chores under exactly one **accountable** owner (RAC
 ("R", the doer). "Monday pickup prep" is defined once with Dana accountable, and
 its chores (pack laundry, prep bags) live under it.
 
-- **Schedule inheritance**: a routine carries `days` + `due_time`; its chores
-  inherit that schedule unless a chore sets its **own** `due_time` (a full
-  override). A chore with no time and no routine is **untimed** — a checklist item
+- **Schedule inheritance**: a routine carries `days` / `month_days` + `due_time`;
+  its chores inherit that whole schedule unless a chore sets its **own** `due_time`
+  (a full override). A schedule can be weekly (`days`) or monthly (`month_days`,
+  which wins when set — "the 1st & 15th"). A chore with no time and no routine is
+  **untimed** — a checklist item
   with no reminder (`due_time=''`). Resolution is pure
   (`effective_chore_schedule` / `with_effective_schedule`); the sweep and every
   surface render the *effective* schedule.
@@ -451,7 +455,8 @@ its chores (pack laundry, prep bags) live under it.
     gentle caption (`balance_caption` / `carrying_caption`) — naming the carrier,
     never the low contributor.
 - **`household_routines`**: `title` (unique per household), `accountable_id` (NULL
-  = unassigned), `days`, `due_time` (`''` = not time-tied), `impact`, `enabled`,
+  = unassigned), `days`, `month_days` (day-of-month CSV; wins over `days` when set),
+  `due_time` (`''` = not time-tied), `impact`, `enabled`,
   provenance. Removing a routine **unlinks** its chores (they survive, standing
   alone) rather than deleting them.
 - **Surfaces**: `POST /household/routines` (+`/{id}/enabled`, `/{id}/remove`),

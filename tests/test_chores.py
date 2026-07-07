@@ -23,16 +23,21 @@ from prefrontal.household import (
     chore_missed_partner_message,
     chore_reminder_message,
     describe_chore_days,
+    describe_month_days,
+    describe_schedule,
     effective_chore_schedule,
     fmt_time_12h,
     format_chore_days,
+    format_month_days,
     miss_due,
     normalize_chore,
     normalize_routine,
     parse_chore_days,
+    parse_month_days,
     reminder_due,
     render_sheet,
     run_chores_check,
+    scheduled_on,
     with_effective_schedule,
 )
 from prefrontal.impact import utcnow
@@ -126,6 +131,45 @@ def test_describe_days_and_time():
     assert fmt_time_12h("09:05") == "9:05am"
 
 
+def test_parse_and_format_month_days():
+    assert parse_month_days("1,15") == [1, 15]
+    assert parse_month_days("") == []  # not month-scheduled
+    assert parse_month_days("0, 32, 15, x, 15") == [15]  # out-of-range + junk + dupes dropped
+    assert parse_month_days([31, 1]) == [1, 31]
+    assert format_month_days([15, 1, 1]) == "1,15"
+
+
+def test_describe_month_days_and_schedule():
+    assert describe_month_days("") == ""
+    assert describe_month_days("1") == "the 1st of the month"
+    assert describe_month_days("1,2,15,22") == "the 1st, 2nd, 15th & 22nd of the month"
+    # describe_schedule: month days win when set, else the weekday phrase.
+    assert describe_schedule("0,1,2,3,4", "") == "weekdays"
+    assert describe_schedule("0,2", "1,15") == "the 1st & 15th of the month"
+
+
+def test_scheduled_on_month_days_and_precedence():
+    wed = REMIND_NOW  # 2026-07-01 is a Wednesday, the 1st
+    # Month day matches the calendar day, ignoring the weekday.
+    assert scheduled_on("", "1", wed)
+    assert not scheduled_on("", "2", wed)
+    # Month days take precedence over weekdays: a Mon-only weekday set is ignored.
+    assert scheduled_on("0", "1", wed)
+    # Empty month days → fall back to weekdays (Wed = 2).
+    assert scheduled_on("2", "", wed)
+    assert not scheduled_on("0", "", wed)
+
+
+def test_scheduled_on_clamps_past_short_month():
+    # 2026-02-28 is the last day of February; a "31st" schedule fires on it.
+    feb_last = datetime.datetime(2026, 2, 28, 9, 0, 0)
+    assert scheduled_on("", "31", feb_last)
+    assert scheduled_on("", "15", feb_last) is False
+    # In a 31-day month the 31st is literal (no clamp collision with the 28th).
+    jan_28 = datetime.datetime(2026, 1, 28, 9, 0, 0)
+    assert scheduled_on("", "31", jan_28) is False
+
+
 # --- pure: normalize ---------------------------------------------------------
 
 
@@ -139,11 +183,20 @@ def test_normalize_chore_clean():
         "title": "run the dishwasher",
         "owner_id": None,
         "days": "0,2",
+        "month_days": "",
         "due_time": "22:00",
         "remind_before": 45,
         "impact": "it makes the morning harder",
         "enabled": True,
     }
+
+
+def test_normalize_chore_and_routine_carry_month_days():
+    clean, err = normalize_chore({"title": "pay allowance", "due_time": "18:00",
+                                  "month_days": [15, 1, 40]})
+    assert err is None and clean["month_days"] == "1,15"  # 40 dropped, sorted
+    clean_r, err_r = normalize_routine({"title": "Bills", "month_days": [1]})
+    assert err_r is None and clean_r["month_days"] == "1"
 
 
 @pytest.mark.parametrize(
@@ -197,6 +250,15 @@ def test_scheduling_gates_on_weekday():
     assert reminder_due(_chore(days="2"), now_local=REMIND_NOW, done_today=False)
 
 
+def test_scheduling_gates_on_month_day():
+    # REMIND_NOW is the 1st of the month; a chore due on the 1st fires, the 2nd doesn't.
+    assert reminder_due(_chore(month_days="1"), now_local=REMIND_NOW, done_today=False)
+    assert miss_due(_chore(month_days="1"), now_local=MISS_NOW, done_today=False)
+    assert not reminder_due(_chore(month_days="2"), now_local=REMIND_NOW, done_today=False)
+    # Month days win over weekdays: a Mon-only weekday set doesn't stop the 1st firing.
+    assert reminder_due(_chore(days="0", month_days="1"), now_local=REMIND_NOW, done_today=False)
+
+
 def test_disabled_chore_never_fires():
     c = _chore(enabled=False)
     assert not reminder_due(c, now_local=REMIND_NOW, done_today=False)
@@ -227,6 +289,17 @@ def test_set_chore_upsert_and_listing(store, dana):
     assert len(chores) == 1
     assert chores[0]["due_time"] == "21:30"  # last write wins
     assert chores[0]["owner_name"] == "Dana"
+
+
+def test_month_days_round_trip_through_store(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="pay allowance", due_time="18:00", month_days="1,15",
+                         updated_by=dana_id)
+    chore = next(c for c in dana.chores() if c["id"] == cid)
+    assert chore["month_days"] == "1,15"
+    assert dana.chore(cid)["month_days"] == "1,15"
+    rid = dana.set_routine(title="Bills", month_days="1", due_time="09:00", updated_by=dana_id)
+    assert next(r for r in dana.routines() if r["id"] == rid)["month_days"] == "1"
 
 
 def test_co_parents_share_chores(store, dana, alex):
@@ -362,6 +435,19 @@ def test_chore_endpoints_crud_and_validation(client):
     assert client.post(f"/household/chores/{cid}/done", headers=_h("dana-tok")).status_code == 404
 
 
+def test_chore_endpoint_accepts_month_days(client, store):
+    r = client.post(
+        "/household/chores",
+        json={"title": "pay allowance", "due_time": "18:00", "month_days": [1, 15]},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()
+    chore = next(c for c in sheet["sheet"]["chores"] if c["title"] == "pay allowance")
+    assert chore["month_days"] == "1,15"
+    assert chore["effective_month_days"] == "1,15"
+
+
 def test_one_tap_done_marks_chore_and_is_idempotent(client, store, dana):
     dana_id = store.get_user("dana")["id"]
     cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=dana_id, updated_by=dana_id)
@@ -398,7 +484,7 @@ def test_normalize_routine_clean_and_optional_time():
     )
     assert err is None
     assert clean == {"title": "Monday pickup", "accountable_id": 3, "days": "0",
-                     "due_time": "07:30", "impact": None, "enabled": True}
+                     "month_days": "", "due_time": "07:30", "impact": None, "enabled": True}
     # Blank time is allowed — a routine that just groups chores, no clock.
     untimed, err2 = normalize_routine({"title": "Tidy up", "due_time": ""})
     assert err2 is None and untimed["due_time"] == ""
@@ -409,15 +495,29 @@ def test_normalize_routine_clean_and_optional_time():
 
 def test_effective_schedule_inherit_override_untimed():
     routine = {"days": "0,1", "due_time": "08:00"}
-    # No own time → inherit the routine's schedule.
-    assert effective_chore_schedule({"due_time": "", "days": ""}, routine) == ("0,1", "08:00")
+    # No own time → inherit the routine's schedule (days, month_days, due_time).
+    assert effective_chore_schedule({"due_time": "", "days": ""}, routine) == ("0,1", "", "08:00")
     # Own time → full override (own days + time win).
-    assert effective_chore_schedule({"due_time": "09:15", "days": "2"}, routine) == ("2", "09:15")
+    assert effective_chore_schedule({"due_time": "09:15", "days": "2"}, routine) == ("2", "", "09:15")
     # Standalone with no time → untimed.
-    assert effective_chore_schedule({"due_time": "", "days": "3"}, None) == ("3", "")
+    assert effective_chore_schedule({"due_time": "", "days": "3"}, None) == ("3", "", "")
     # with_effective_schedule copies the row with the resolved fields.
     merged = with_effective_schedule({"id": 1, "title": "t", "due_time": "", "days": ""}, routine)
     assert merged["due_time"] == "08:00" and merged["title"] == "t"
+
+
+def test_effective_schedule_inherits_and_overrides_month_days():
+    routine = {"days": "", "month_days": "1,15", "due_time": "08:00"}
+    # No own time → inherit the routine's month schedule too.
+    assert effective_chore_schedule({"due_time": "", "days": "", "month_days": ""}, routine) == (
+        "", "1,15", "08:00",
+    )
+    # Own time → the chore's own month days win.
+    assert effective_chore_schedule(
+        {"due_time": "09:00", "days": "", "month_days": "5"}, routine
+    ) == ("", "5", "09:00")
+    merged = with_effective_schedule({"id": 1, "due_time": "", "days": "", "month_days": ""}, routine)
+    assert merged["month_days"] == "1,15"
 
 
 def test_set_routine_upsert_and_accountability_counts(store, dana, alex):
@@ -463,6 +563,23 @@ def test_sweep_uses_routine_inherited_schedule(store, dana, alex):
     # Inherited 22:00 due + default 30m lead → the 21:40 sweep reminds the owner.
     assert [s["topic"] for s in sent] == ["alex-topic"]
     assert result and result[0]["stage"] == "reminder"
+
+
+def test_sweep_fires_a_month_scheduled_chore_only_on_its_day(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    # Due on the 1st at 22:00; REMIND_NOW (the 1st, 21:40) is inside the lead window.
+    dana.set_chore(title="pay allowance", due_time="22:00", month_days="1", owner_id=dana_id,
+                   updated_by=dana_id)
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    assert [s["topic"] for s in sent] == ["dana-topic"]
+    assert result and result[0]["stage"] == "reminder"
+    # On a different calendar day (the 2nd) nothing fires.
+    client2, sent2 = _capture_client()
+    day2 = REMIND_NOW.replace(day=2)
+    assert run_chores_check(dana, settings=UTC, now=day2, client=client2) == []
+    assert sent2 == []
 
 
 def test_sweep_never_fires_an_untimed_chore(store, dana):

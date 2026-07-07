@@ -165,15 +165,16 @@ ASSISTANT_SYSTEM = (
     '"kind":"reward"|"consistency"|"routine"?,"child":int?,"structured":object?}\n'
     '- {"op":"remove_agreement","agreement_id":int}\n'
     "A routine groups chores under an accountable owner and carries a schedule "
-    "(days: 0=Mon…6=Sun, empty = every day; due_time \"HH:MM\", blank = not "
+    "(days: 0=Mon…6=Sun, empty = every day; month_days: 1–31 for a day-of-month "
+    "schedule that wins over days when set; due_time \"HH:MM\", blank = not "
     "time-tied). Create with set_routine (a new routine starts unassigned — who's "
     "accountable is set on the dashboard). To rename or change an existing one, use "
     "edit_routine with its id from \"household.routines\" — set_routine can't rename. "
     "Pass enabled:false to pause, true to resume:\n"
     '- {"op":"set_routine","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
-    '"impact":str?,"enabled":bool?}\n'
+    '"month_days":[1-31]?,"impact":str?,"enabled":bool?}\n'
     '- {"op":"edit_routine","routine_id":int,"title":str?,"due_time":"HH:MM"?,'
-    '"days":[0-6]?,"impact":str?,"enabled":bool?}\n'
+    '"days":[0-6]?,"month_days":[1-31]?,"impact":str?,"enabled":bool?}\n'
     '- {"op":"remove_routine","routine_id":int}\n'
     "Shared shopping list — add things to buy, check them off, or remove them. "
     "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
@@ -885,6 +886,9 @@ def _v_edit_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -
     if "days" in action:
         params["days"] = action.get("days")
         changes.append("change days")
+    if "month_days" in action:
+        params["month_days"] = action.get("month_days")
+        changes.append("change days of month")
     if action.get("impact") is not None:
         params["impact"] = action.get("impact")
         changes.append("update why-it-matters")
@@ -1157,6 +1161,7 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             rid = memory.set_routine(
                 title=p["title"],
                 days=p["days"],
+                month_days=p.get("month_days", ""),
                 due_time=p["due_time"],
                 accountable_id=p.get("accountable_id"),
                 impact=p.get("impact"),

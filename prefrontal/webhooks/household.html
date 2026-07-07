@@ -315,6 +315,8 @@
       <select id="chore-owner" title="Whose job"></select>
       <select id="chore-routine" title="Part of a routine"></select>
       <input id="chore-due" type="time" title="Due by (optional)" />
+      <input id="chore-monthdays" type="text" placeholder="days of month, e.g. 1, 15"
+             title="Days of the month it recurs (optional; wins over weekdays)" />
       <button class="primary" type="submit">Add chore</button>
       <span class="hint">Tick one off to log who did it — completing chores counts toward
         the balance below. Leave the time blank for an untimed to-do.</span>
@@ -328,6 +330,8 @@
       <input id="routine-title" type="text" placeholder="e.g. Monday pickup prep" required />
       <select id="routine-accountable" title="Who holds the mental load"></select>
       <input id="routine-due" type="time" title="Time its chores inherit (optional)" />
+      <input id="routine-monthdays" type="text" placeholder="days of month, e.g. 1, 15"
+             title="Days of the month it recurs (optional; wins over weekdays)" />
       <button class="primary" type="submit">Add routine</button>
       <span class="hint">A routine groups chores and names one person <em>accountable</em>
         for it — the mental load, tracked separately from who does each chore.</span>
@@ -691,11 +695,28 @@ function renderShopping(items) {
   $("#shopping").innerHTML = rows + clear;
 }
 
+// Human phrase for a day-of-month CSV ("1,15" → "the 1st & 15th"), or "" if none.
+function monthDaysLabel(csv) {
+  const ord = (n) => {
+    const s = ["th", "st", "nd", "rd"], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+  const days = (csv || "").split(",").filter((s) => s !== "").map(Number)
+    .filter((n) => n >= 1 && n <= 31).sort((a, b) => a - b);
+  if (!days.length) return "";
+  const parts = days.map(ord);
+  const joined = parts.length === 1 ? parts[0]
+    : parts.slice(0, -1).join(", ") + " & " + parts[parts.length - 1];
+  return "the " + joined;
+}
+
 function _choreWhen(c) {
   // Show the *effective* schedule (a chore inherits its routine's unless it
   // sets its own); the server resolves this into effective_days/due_time.
   const due = c.effective_due_time || c.due_time;
-  return due ? "by " + fmtTime(due) : "untimed";
+  const md = monthDaysLabel(c.effective_month_days || c.month_days);
+  const when = due ? "by " + fmtTime(due) : "untimed";
+  return md ? `${md} · ${when}` : when;
 }
 
 function renderChores(chores) {
@@ -723,7 +744,8 @@ function renderRoutines(routines) {
   }
   $("#routines").innerHTML = _routines.map((r) => {
     const holder = r.accountable_name || "unassigned";
-    const when = r.due_time ? " · by " + fmtTime(r.due_time) : "";
+    const md = monthDaysLabel(r.month_days);
+    const when = (md ? " · " + md : "") + (r.due_time ? " · by " + fmtTime(r.due_time) : "");
     const n = r.chore_count || 0;
     const paused = r.enabled ? "" : " · paused";
     return `<div class="task-row${r.enabled ? "" : " done"}" data-routinerow="${r.id}">
@@ -752,6 +774,9 @@ function routineEditForm(r) {
       <select class="re-accountable" title="Who holds the mental load">${options}</select>
       <input class="re-due" type="time" value="${esc(r.due_time || "")}" title="Time its chores inherit (optional)" />
       <div class="days" title="Days it recurs (none = every day)">${dayPicker}</div>
+      <input class="re-monthdays" type="text" value="${esc(r.month_days || "")}"
+             placeholder="days of month, e.g. 1, 15"
+             title="Days of the month it recurs (optional; wins over weekdays)" />
       <input class="re-impact" type="text" value="${esc(r.impact || "")}" placeholder="Why it matters if it slips (optional)" />
       <label class="re-enabled-l"><input class="re-enabled" type="checkbox" ${r.enabled ? "checked" : ""} /> active</label>
       <span class="rowbtns">
@@ -1140,6 +1165,11 @@ $("#shopping").addEventListener("change", async (e) => {
 
 const _sel = (v) => (Number(v) || null);  // "0" (either/unassigned/none) → null
 
+// Parse a free-text "days of month" field ("1, 15") into ints 1–31 (junk dropped).
+const parseMonthDays = (v) =>
+  (v || "").split(",").map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 31);
+
 $("#chore-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   await post("/household/chores", {
@@ -1147,8 +1177,9 @@ $("#chore-form").addEventListener("submit", async (e) => {
     owner_id: _sel($("#chore-owner").value),
     routine_id: _sel($("#chore-routine").value),
     due_time: $("#chore-due").value || "",
+    month_days: parseMonthDays($("#chore-monthdays").value),
   });
-  $("#chore-title").value = ""; $("#chore-due").value = "";
+  $("#chore-title").value = ""; $("#chore-due").value = ""; $("#chore-monthdays").value = "";
   await loadSheet();
 });
 $("#chores").addEventListener("click", async (e) => {
@@ -1173,8 +1204,9 @@ $("#routine-form").addEventListener("submit", async (e) => {
     title: $("#routine-title").value.trim(),
     accountable_id: _sel($("#routine-accountable").value),
     due_time: $("#routine-due").value || "",
+    month_days: parseMonthDays($("#routine-monthdays").value),
   });
-  $("#routine-title").value = ""; $("#routine-due").value = "";
+  $("#routine-title").value = ""; $("#routine-due").value = ""; $("#routine-monthdays").value = "";
   await loadSheet();
 });
 $("#routines").addEventListener("click", async (e) => {
@@ -1209,6 +1241,7 @@ $("#routines").addEventListener("click", async (e) => {
       accountable_id: _sel(ed.querySelector(".re-accountable").value),
       due_time: ed.querySelector(".re-due").value || "",
       days,
+      month_days: parseMonthDays(ed.querySelector(".re-monthdays").value),
       impact: ed.querySelector(".re-impact").value.trim() || null,
       enabled: ed.querySelector(".re-enabled").checked,
     });
