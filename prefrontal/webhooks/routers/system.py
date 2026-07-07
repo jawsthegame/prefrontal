@@ -46,6 +46,19 @@ from prefrontal.webhooks.deps import (
 from prefrontal.webhooks.schemas import SelfCareConfig, SelfCareMark
 from prefrontal.webhooks.services import RouterServices
 
+#: The web-surface HTML shells are read into memory at import and change only on
+#: deploy. Without this, a browser can keep serving a stale copy after an update
+#: (the shells carry no validators), so a deploy appears to "not take". ``no-cache``
+#: forces the browser to revalidate every load; since the shells have no ETag the
+#: revalidation always refetches, i.e. the newest shell always wins. They carry no
+#: user data, so there's nothing sensitive to keep out of cache.
+_PAGE_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+def _page(html: str) -> HTMLResponse:
+    """An HTML shell response that a browser must revalidate (never serve stale)."""
+    return HTMLResponse(html, headers=_PAGE_NO_CACHE)
+
 
 def build_router(services: RouterServices) -> APIRouter:
     """Build the "system" APIRouter (shared services injected by create_app)."""
@@ -73,7 +86,7 @@ def build_router(services: RouterServices) -> APIRouter:
         )
 
     @router.get("/dashboard", response_class=HTMLResponse, tags=["system"])
-    def dashboard() -> str:
+    def dashboard() -> HTMLResponse:
         """Serve the read-only monitoring page (a self-contained HTML shell).
 
         The page itself is unauthenticated — it carries no data. It prompts for
@@ -83,10 +96,10 @@ def build_router(services: RouterServices) -> APIRouter:
         which it polls and refreshes. A prominent "Panic" button opens a focused
         overlay backed by ``/panic``. Reachable over Tailscale from any device.
         """
-        return DASHBOARD_HTML
+        return _page(DASHBOARD_HTML)
 
     @router.get("/household", response_class=HTMLResponse, tags=["system"])
-    def household() -> str:
+    def household() -> HTMLResponse:
         """Serve the editable Household hub — the one writable surface.
 
         Every edit to the shared sheet happens here: kids, pets, facts,
@@ -96,10 +109,10 @@ def build_router(services: RouterServices) -> APIRouter:
         session), then reads ``GET /household/sheet`` and writes through the
         household endpoints. Reachable over Tailscale from any device.
         """
-        return HOUSEHOLD_HTML
+        return _page(HOUSEHOLD_HTML)
 
     @router.get("/kids", response_class=HTMLResponse, tags=["system"])
-    def kids() -> str:
+    def kids() -> HTMLResponse:
         """Serve the read-only **Kids** lens over the shared household sheet.
 
         A focused, calm view — roster & facts, standing plans + star progress,
@@ -107,10 +120,10 @@ def build_router(services: RouterServices) -> APIRouter:
         ``/household``). Same self-contained, data-less shell as the other web
         surfaces; reads ``GET /household/sheet``.
         """
-        return lens_html("kids")
+        return _page(lens_html("kids"))
 
     @router.get("/pets", response_class=HTMLResponse, tags=["system"])
-    def pets() -> str:
+    def pets() -> HTMLResponse:
         """Serve the read-only **Pets** lens over the shared household sheet.
 
         A focused view of the pet roster and their facts (meds, vet/groomer,
@@ -118,7 +131,7 @@ def build_router(services: RouterServices) -> APIRouter:
         scaffolding), so this lens is its own projection, not a relabeled Kids
         page. Read-only; edits live on ``/household``.
         """
-        return lens_html("pets")
+        return _page(lens_html("pets"))
 
     @router.get("/family", tags=["system"])
     def family() -> RedirectResponse:
@@ -129,7 +142,7 @@ def build_router(services: RouterServices) -> APIRouter:
         return RedirectResponse(url="/household", status_code=308)
 
     @router.get("/stats", response_class=HTMLResponse, tags=["system"])
-    def stats_page() -> str:
+    def stats_page() -> HTMLResponse:
         """Serve the behavioral Insights page — charts over the learning data.
 
         Self-contained shell (unauthenticated, carries no data); it signs in via
@@ -137,10 +150,10 @@ def build_router(services: RouterServices) -> APIRouter:
         the time-estimation, follow-through, and channel-response charts with
         inline SVG/CSS. Shares the unified theme + nav.
         """
-        return STATS_HTML
+        return _page(STATS_HTML)
 
     @router.get("/review", response_class=HTMLResponse, tags=["system"])
-    def review_page() -> str:
+    def review_page() -> HTMLResponse:
         """Serve the LLM-sensor review page — jot a note, confirm proposals.
 
         Self-contained shell (unauthenticated, carries no data); it signs in via
@@ -150,10 +163,10 @@ def build_router(services: RouterServices) -> APIRouter:
         The human-in-the-loop path is unchanged — nothing is written until accept.
         Shares the unified theme + nav.
         """
-        return REVIEW_HTML
+        return _page(REVIEW_HTML)
 
     @router.get("/settings", response_class=HTMLResponse, tags=["system"])
-    def settings_page() -> str:
+    def settings_page() -> HTMLResponse:
         """Serve the Settings page — the one place for config that adjusts behavior.
 
         Self-contained shell (unauthenticated, carries no data); it signs in via
@@ -163,7 +176,7 @@ def build_router(services: RouterServices) -> APIRouter:
         via ``GET`` / ``POST /self-care`` — moved off the dashboard card so the
         card is purely "mark what I did today." Shares the unified theme + nav.
         """
-        return SETTINGS_HTML
+        return _page(SETTINGS_HTML)
 
     @router.get("/stats/data", tags=["system"])
     def stats_data(
