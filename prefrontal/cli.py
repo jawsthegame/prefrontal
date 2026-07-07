@@ -2281,12 +2281,17 @@ def _cmd_calendar(args: argparse.Namespace) -> int:
                     parse_ics(text, namespace=feed.namespace, me_emails=feed.me_emails)
                 )
 
+            # The roster pass is deterministic/offline, so a kid's appointment
+            # still lands on the shared sheet as 'child' even when Ollama is down;
+            # build the classifier whenever either signal is available.
+            child_names = store.child_names()
+            examples = store.kind_feedback_examples() if ollama_up else None
             classify = None
-            if ollama_up:
-                examples = store.kind_feedback_examples()
+            if ollama_up or child_names:
 
-                def classify(title, _c=ollama, _ex=examples):
-                    return classify_kind(title, client=_c, examples=_ex)
+                def classify(title, _c=ollama if ollama_up else None,
+                             _ex=examples, _names=child_names):
+                    return classify_kind(title, client=_c, examples=_ex, child_names=_names)
 
             try:
                 summary = sync_calendar(

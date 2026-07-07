@@ -213,6 +213,19 @@ class HouseholdRepo(Repo):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def child_names(self) -> list[str]:
+        """The household kids' names, or ``[]`` when the user is in no household.
+
+        A sync-safe accessor for the calendar classifier's roster pass
+        (:func:`prefrontal.classify.roster_child_match`): unlike :meth:`children`
+        it never raises for a household-less user, so the sync path can ask for
+        roster names unconditionally. Kids only (not pets) — a pet's name should
+        not tag an event as a child appointment.
+        """
+        if self.household_id_or_none() is None:
+            return []
+        return [c["name"] for c in self.children()]
+
     def add_pet(
         self, *, name: str, species: str | None = None, birthday: str | None = None
     ) -> int:

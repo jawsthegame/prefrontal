@@ -36,6 +36,8 @@ from prefrontal.household import (
     unseen_changes,
     week_key,
 )
+from prefrontal.classify import classify_kind
+from prefrontal.commitments import sync_calendar
 from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import (
     DeliveryClient,
@@ -102,6 +104,40 @@ def alex(store):
 @pytest.fixture()
 def lee(store):
     return store.scoped(store.get_user("lee")["id"])
+
+
+def test_synced_kid_event_surfaces_on_the_household_sheet(dana):
+    """A calendar event naming a household kid is tagged 'child' and shows up in
+    the sheet's Upcoming appointments — the end-to-end payoff of the roster pass."""
+    dana.add_child(name="Sam")
+    start = (utcnow() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
+    # No Ollama in the test — the deterministic roster pass alone does the tagging.
+    def classify(title: str) -> tuple[str, str]:
+        return classify_kind(title, child_names=dana.child_names())
+
+    sync_calendar(
+        dana,
+        [{"title": "Sam dentist", "start_at": start, "external_id": "ev-1"}],
+        classify=classify,
+        default_tz="UTC",
+    )
+    commitment = next(c for c in dana.upcoming_commitments() if c["title"] == "Sam dentist")
+    assert commitment["kind"] == "child"
+    assert commitment["kind_source"] == "roster"
+    # It lands in the sheet's Upcoming appointments (the child-only section).
+    sheet = build_sheet(dana, timezone="UTC")
+    assert any(appt.title == "Sam dentist" for appt in sheet.upcoming)
+    # A non-kid event on the same calendar stays off the sheet (defaults to self).
+    sync_calendar(
+        dana,
+        [{"title": "Team standup", "start_at": start, "external_id": "ev-2"}],
+        classify=classify,
+        default_tz="UTC",
+    )
+    standup = next(c for c in dana.upcoming_commitments() if c["title"] == "Team standup")
+    assert standup["kind"] == "self"
+    sheet2 = build_sheet(dana, timezone="UTC")
+    assert not any(appt.title == "Team standup" for appt in sheet2.upcoming)
 
 
 # --- store scoping -----------------------------------------------------------

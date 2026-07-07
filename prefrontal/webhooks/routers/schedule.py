@@ -131,15 +131,22 @@ def build_router(services: RouterServices) -> APIRouter:
         timestamp rejects the whole batch with 422 (never partially applies).
         """
         memory = ctx.store
-        # Classify only when Ollama is reachable — one liveness check up front
-        # avoids a slow per-event timeout storm when it's down (new events then
-        # default to 'self', the conservative, conflict-preserving choice).
+        # Consult Ollama only when reachable — one liveness check up front avoids a
+        # slow per-event timeout storm when it's down (new events then default to
+        # 'self', the conservative, conflict-preserving choice). The roster pass is
+        # deterministic and offline, so a kid's appointment still reaches the shared
+        # sheet as 'child' even with Ollama down; we build the classifier whenever
+        # either signal is available.
+        child_names = memory.child_names()
+        llm = ollama_client if ollama_client.available() else None
+        examples = memory.kind_feedback_examples() if llm is not None else None
         classify = None
-        if ollama_client.available():
-            examples = memory.kind_feedback_examples()
+        if llm is not None or child_names:
 
             def classify(title: str) -> tuple[str, str]:
-                return classify_kind(title, client=ollama_client, examples=examples)
+                return classify_kind(
+                    title, client=llm, examples=examples, child_names=child_names
+                )
 
         try:
             summary = sync_calendar(
