@@ -185,6 +185,14 @@
   .row:first-of-type { border-top: none; }
   .row .main { flex: 1; min-width: 0; }
   .row .acts { display: flex; gap: 6px; flex-shrink: 0; }
+  /* A todo carries four actions (Break it down · Start · Done · Drop). In a narrow
+     masonry column that row would otherwise stay on one line (flex-shrink:0),
+     crushing the title to one word per line and pushing buttons past the card edge
+     — which is why "Start" looked missing. Let the row wrap so the actions drop to
+     their own full-width line under the title when they don't fit beside it. */
+  #c-todos .row { flex-wrap: wrap; }
+  #c-todos .row .main { flex: 1 1 150px; }
+  #c-todos .row .acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
   .row .title { font-weight: 600; }
   .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
 
