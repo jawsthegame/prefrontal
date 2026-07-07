@@ -20,8 +20,10 @@ from prefrontal.config import Settings
 from prefrontal.household import (
     away_covers,
     build_sheet,
+    chore_missed_cover_message,
     chore_missed_owner_message,
     chore_missed_partner_message,
+    chore_reminder_cover_message,
     chore_reminder_message,
     describe_chore_days,
     describe_month_days,
@@ -277,6 +279,32 @@ def test_resolve_chore_context_ignores_unscheduled_and_disabled():
     assert resolve_chore_context(paused, now_local=_WED, away_window=_AWAY).action == "proceed"
 
 
+def test_resolve_chore_context_all_members_away_suppresses_like_household():
+    trash = {"id": 1, "title": "trash", "enabled": True, "days": "", "month_days": "",
+             "away_behavior": "suppress"}
+    bill = {"id": 2, "title": "pay bill", "enabled": True, "days": "", "month_days": "",
+            "away_behavior": "keep"}
+    # No household window, but everyone's individually away → same effect: nobody home.
+    d = resolve_chore_context(trash, now_local=_WED, away_window=None, all_members_away=True)
+    assert d.action == "suppress" and "everyone is away" in d.reason
+    # A keep chore still proceeds (someone can pay a bill remotely).
+    assert resolve_chore_context(
+        bill, now_local=_WED, away_window=None, all_members_away=True
+    ).action == "proceed"
+    # Someone still home → no all-away suppression.
+    assert resolve_chore_context(
+        trash, now_local=_WED, away_window=None, all_members_away=False
+    ).action == "proceed"
+
+
+def test_cover_message_builders_name_the_away_owner():
+    chore = {"title": "take out trash", "due_time": "20:00", "impact": "bins overflow"}
+    assert "Dana's away" in chore_reminder_cover_message(chore, "Dana")
+    assert "take out trash" in chore_reminder_cover_message(chore, "Dana")
+    miss = chore_missed_cover_message(chore, "Dana")
+    assert "Dana" in miss and "take out trash" in miss
+
+
 # --- pure: timing predicates -------------------------------------------------
 
 
@@ -416,6 +444,19 @@ def test_away_window_set_get_clear(store, dana, alex):
     dana.clear_away_window()  # idempotent
 
 
+def test_member_away_window_is_per_user(store, dana, alex):
+    assert dana.member_away_window() is None
+    dana.set_member_away(starts_on="2026-07-10", ends_on="2026-07-17", note="work trip")
+    # Per-user, NOT household-scoped: Dana away doesn't mark Alex away.
+    assert dana.member_away_window() == {
+        "starts_on": "2026-07-10", "ends_on": "2026-07-17", "note": "work trip"
+    }
+    assert alex.member_away_window() is None
+    dana.clear_member_away()
+    assert dana.member_away_window() is None
+    dana.clear_member_away()  # idempotent
+
+
 def test_update_chore_edits_renames_and_guards(store, dana, alex):
     """update_chore edits any attribute by id (incl. rename); ok/missing/duplicate."""
     dana_id = store.get_user("dana")["id"]
@@ -539,6 +580,99 @@ def test_sweep_suppresses_location_bound_chore_while_away(store, dana):
     result2 = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client2)
     assert any(r["title"] == "take out trash" and r["stage"] == "reminder" for r in result2)
     assert "take out trash" in sent2[0]["message"]
+
+
+# --- member away: reassignment ----------------------------------------------
+
+
+def _away(scoped, start="2026-06-30", end="2026-07-05"):
+    scoped.set_member_away(starts_on=start, ends_on=end, note="work trip")
+
+
+def test_sweep_reassigns_away_owners_reminder_to_present_partner(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="take out trash", due_time="22:00", owner_id=dana_id,
+                   updated_by=dana_id)
+    _away(dana)  # Dana is away; Alex is home.
+
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+
+    assert result[0]["stage"] == "reminder"
+    # Only Alex is nudged, framed as covering for Dana. Dana (away) stays silent.
+    assert [s["topic"] for s in sent] == ["alex-topic"]
+    assert "Dana's away" in sent[0]["message"] and "take out trash" in sent[0]["message"]
+
+
+def test_sweep_reassigns_away_owners_miss_to_present_partner(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="take out trash", due_time="22:00", owner_id=dana_id,
+                   impact="bins overflow", updated_by=dana_id)
+    _away(dana)
+
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=MISS_NOW, client=client)
+
+    assert result[0]["stage"] == "missed"
+    # The present partner picks it up; the away owner isn't nagged on their trip.
+    assert [s["topic"] for s in sent] == ["alex-topic"]
+    assert "Dana" in sent[0]["message"] and "take out trash" in sent[0]["message"]
+
+
+def test_sweep_away_partner_gets_no_heads_up(store, dana, alex):
+    """Owner present, partner away: the away partner gets neither nudge nor heads-up."""
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="run the dishwasher", due_time="22:00", owner_id=dana_id,
+                   updated_by=dana_id)
+    _away(alex)  # the non-owner is away
+
+    client, sent = _capture_client()
+    run_chores_check(dana, settings=UTC, now=MISS_NOW, client=client)
+    # Owner (present) gets the miss nudge; the away partner is silent.
+    assert [s["topic"] for s in sent] == ["dana-topic"]
+    assert "still isn't done" in sent[0]["message"]
+
+
+def test_sweep_all_members_away_suppresses_location_bound(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="take out trash", due_time="22:00", owner_id=dana_id,
+                   away_behavior="suppress", updated_by=dana_id)
+    dana.set_chore(title="pay the water bill", due_time="22:00", owner_id=dana_id,
+                   away_behavior="keep", updated_by=dana_id)
+    _away(dana)
+    _away(alex)  # nobody home
+
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+
+    stages = {r["title"]: r["stage"] for r in result}
+    # Location-bound chore suppressed (nobody to do it); the keep bill still fires
+    # to its owner — even though Dana's away, someone should know a bill is due.
+    assert stages["take out trash"] == "suppressed"
+    assert stages["pay the water bill"] == "reminder"
+    assert [s["topic"] for s in sent] == ["dana-topic"]
+    assert "pay the water bill" in sent[0]["message"]
+
+
+def test_sweep_unassigned_chore_skips_away_members(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    dana.set_chore(title="empty the bins", due_time="22:00", updated_by=dana_id)  # no owner
+    _away(alex)
+
+    client, sent = _capture_client()
+    run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    # Unassigned → only the present member is reminded (Alex is away).
+    assert [s["topic"] for s in sent] == ["dana-topic"]
 
 
 # --- HTTP + one-tap ----------------------------------------------------------

@@ -1364,28 +1364,32 @@ def resolve_chore_context(
     *,
     now_local: datetime,
     away_window: dict[str, Any] | None = None,
+    all_members_away: bool = False,
 ) -> ChoreDecision:
     """Decide whether a chore should be suppressed by household context this tick.
 
     The single context gate that sits between "is this chore scheduled today?" and
-    the timing predicates in :func:`run_chores_check`. For this phase it knows one
-    thing: an active **away window** suppresses a chore marked
+    the timing predicates in :func:`run_chores_check`. It suppresses a chore marked
     ``away_behavior="suppress"`` (a location-bound chore — trash, mail, plants —
-    that can't be done from afar). Everything else proceeds normally, so bills and
-    meds still fire on vacation. Only reports a suppression for a chore that is
-    enabled and actually scheduled today, so the sweep result stays meaningful.
+    that can't be done from afar) when nobody's home: either the household-wide
+    **away window** is active, or **every** member has individually marked
+    themselves away (``all_members_away``) — same effect, nobody to do it.
+    Everything else proceeds normally, so bills and meds still fire on vacation.
+    Only reports a suppression for a chore that is enabled and actually scheduled
+    today, so the sweep result stays meaningful.
     """
     if not chore.get("enabled", True):
         return ChoreDecision("proceed")
     if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
         return ChoreDecision("proceed")
-    if chore.get("away_behavior") == "suppress" and away_covers(away_window, now_local):
-        note = (away_window or {}).get("note")
-        ends = (away_window or {}).get("ends_on")
-        why = f" ({note})" if note else ""
-        return ChoreDecision(
-            "suppress", f"household is away through {ends}{why}"
-        )
+    if chore.get("away_behavior") == "suppress":
+        if away_covers(away_window, now_local):
+            note = (away_window or {}).get("note")
+            ends = (away_window or {}).get("ends_on")
+            why = f" ({note})" if note else ""
+            return ChoreDecision("suppress", f"household is away through {ends}{why}")
+        if all_members_away:
+            return ChoreDecision("suppress", "everyone is away")
     return ChoreDecision("proceed")
 
 
@@ -1421,6 +1425,24 @@ def chore_missed_partner_message(chore: dict[str, Any]) -> str:
     )
 
 
+def chore_reminder_cover_message(chore: dict[str, Any], away_owner: str) -> str:
+    """The reminder to the present partner when the owner is away — "can you cover?"."""
+    return (
+        f"🧼 {away_owner}'s away — can you {chore['title']} by "
+        f"{fmt_time_12h(chore.get('due_time'))}?{_impact_clause(chore)} "
+        "Tap Done once it's sorted."
+    )
+
+
+def chore_missed_cover_message(chore: dict[str, Any], away_owner: str) -> str:
+    """The miss nudge to the present partner when the away owner's chore has slipped."""
+    return (
+        f"🧼 “{chore['title']}” still isn't done — it was {away_owner}'s, but they're "
+        f"away (due by {fmt_time_12h(chore.get('due_time'))}). No stress; pick it up "
+        "when you can and tap Done."
+    )
+
+
 def run_chores_check(
     store: MemoryStore,
     *,
@@ -1446,7 +1468,6 @@ def run_chores_check(
         client: Optional :class:`DeliveryClient` (tests inject a mock transport).
     """
     from prefrontal.integrations.delivery import (
-        deliver_to_household,
         deliver_to_member,
         household_chore_notice,
     )
@@ -1466,12 +1487,24 @@ def run_chores_check(
     # The household's away window (vacation / travel), if any — resolved once so
     # the per-chore context gate below can silently skip location-bound chores.
     away = store.away_window()
+    # Per-member away state: a single member who's marked themselves away isn't
+    # nudged; their chores fall to whoever's present. If *everyone* is away it's
+    # the same as household-away (nobody to do it) — the gate suppresses then too.
+    away_member_ids = {
+        m["id"] for m in members
+        if away_covers(store.scoped(m["id"]).member_away_window(), now_local)
+    }
+    present_members = [m for m in members if m["id"] not in away_member_ids]
+    all_members_away = bool(members) and not present_members
     deliver_kw = {
         "settings": settings,
         "client": client,
         "base_url": settings.oauth_base_url,
         "secret": settings.session_secret,
     }
+
+    def _member_name(member: dict[str, Any]) -> str:
+        return member.get("display_name") or member.get("handle") or "your co-parent"
 
     def _to_member(member: dict[str, Any], text: str, cid: int) -> dict[str, Any]:
         row = deliver_to_member(
@@ -1488,44 +1521,59 @@ def run_chores_check(
         # Context gate: an active away window skips location-bound chores. Skipping
         # (vs. stamping a cursor) means the chore resumes cleanly once we're back —
         # no stale "you missed it" waiting on the far side of the trip.
-        decision = resolve_chore_context(chore, now_local=now_local, away_window=away)
+        decision = resolve_chore_context(
+            chore, now_local=now_local, away_window=away,
+            all_members_away=all_members_away,
+        )
         if decision.action == "suppress":
             sent.append({"chore_id": chore["id"], "title": chore["title"],
                          "stage": "suppressed", "reason": decision.reason})
             continue
-        done = chore["id"] in done_ids
+        cid = chore["id"]
+        done = cid in done_ids
+        owner_id = chore.get("owner_id")
+        owner = next((m for m in members if m["id"] == owner_id), None)
+        # An away owner (with someone still home) hands off: the present partner is
+        # nudged to cover, and the away owner stays silent. If the owner is present —
+        # or everyone is away, so there's no one to hand off to — normal routing.
+        owner_away = owner is not None and owner["id"] in away_member_ids
+        cover = owner_away and bool(present_members)
         if reminder_due(
             chore, now_local=now_local, done_today=done,
             last_reminded_on=chore.get("last_reminded_on"),
         ):
-            text = chore_reminder_message(chore)
-            owner_id = chore.get("owner_id")
-            if owner_id and any(m["id"] == owner_id for m in members):
-                owner = next(m for m in members if m["id"] == owner_id)
-                notified = [_to_member(owner, text, chore["id"])]
-            else:  # unassigned — everyone owns it
-                notified = deliver_to_household(
-                    store, hid, household_chore_notice(text, chore["id"]), **deliver_kw
-                )
-            store.mark_chore_reminded(chore["id"], today)
-            sent.append({"chore_id": chore["id"], "title": chore["title"],
+            if cover:
+                text = chore_reminder_cover_message(chore, _member_name(owner))
+                notified = [_to_member(m, text, cid) for m in present_members]
+            elif owner is not None:  # owner present (or all away → they still get it)
+                notified = [_to_member(owner, chore_reminder_message(chore), cid)]
+            else:  # unassigned — everyone present owns it (all, if nobody's home)
+                text = chore_reminder_message(chore)
+                notified = [_to_member(m, text, cid) for m in (present_members or members)]
+            store.mark_chore_reminded(cid, today)
+            sent.append({"chore_id": cid, "title": chore["title"],
                          "stage": "reminder", "notified": notified})
         elif miss_due(
             chore, now_local=now_local, done_today=done,
             last_missed_on=chore.get("last_missed_on"),
         ):
-            owner_id = chore.get("owner_id")
             notified = []
-            for member in members:
-                # The owner (or everyone, if unassigned) gets the still-not-done
-                # nudge; the *other* parent gets the gentle heads-up.
-                if owner_id is None or member["id"] == owner_id:
-                    text = chore_missed_owner_message(chore)
-                else:
-                    text = chore_missed_partner_message(chore)
-                notified.append(_to_member(member, text, chore["id"]))
-            store.mark_chore_missed(chore["id"], today)
-            sent.append({"chore_id": chore["id"], "title": chore["title"],
+            if cover:
+                # The away owner's chore slipped: the present partner picks it up;
+                # the away owner isn't nagged on their trip.
+                text = chore_missed_cover_message(chore, _member_name(owner))
+                notified = [_to_member(m, text, cid) for m in present_members]
+            else:
+                # Normal miss handoff, but an away member gets neither the owner
+                # nudge nor the heads-up. All-away keep chore → notify everyone.
+                for member in (present_members or members):
+                    if owner_id is None or member["id"] == owner_id:
+                        text = chore_missed_owner_message(chore)
+                    else:
+                        text = chore_missed_partner_message(chore)
+                    notified.append(_to_member(member, text, cid))
+            store.mark_chore_missed(cid, today)
+            sent.append({"chore_id": cid, "title": chore["title"],
                          "stage": "missed", "notified": notified})
     return sent
 

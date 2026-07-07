@@ -665,11 +665,12 @@ def _chores_check_cli(store, args, settings) -> int:
 
 
 def _away_cli(store, args, settings) -> int:
-    """Show, set, or clear the household's 'we're away' window.
+    """Show, set, or clear an away window — the household's, or (``--member``) one member's.
 
-    ``--set START END`` marks the household away over an inclusive local date range
-    (chores with ``away_behavior=suppress`` are skipped while it's active);
-    ``--clear`` removes it; no flags prints the current window.
+    Household away (the default) suppresses location-bound (``away_behavior=suppress``)
+    chores for everyone; ``--member`` marks just this user away, so *their* chores
+    fall to the present co-parent instead. ``--set START END`` sets it, ``--clear``
+    removes it, no flags prints the current window.
     """
     from datetime import datetime
 
@@ -682,9 +683,15 @@ def _away_cli(store, args, settings) -> int:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
 
+    member = getattr(args, "member", False)
+    who = "You're" if member else "Household"
+    set_fn = scoped.set_member_away if member else scoped.set_away_window
+    get_fn = scoped.member_away_window if member else scoped.away_window
+    clear_fn = scoped.clear_member_away if member else scoped.clear_away_window
+
     if args.clear:
-        scoped.clear_away_window()
-        print("Cleared the away window — back to not-away.")
+        clear_fn()
+        print(f"Cleared the {'member' if member else 'household'} away window — back to present.")
         return 0
     if args.away_set:
         start, end = args.away_set
@@ -697,14 +704,15 @@ def _away_cli(store, args, settings) -> int:
         if end < start:
             print("END must be on or after START.", file=sys.stderr)
             return 1
-        scoped.set_away_window(starts_on=start, ends_on=end, note=args.note)
+        set_fn(starts_on=start, ends_on=end, note=args.note)
         tail = f" ({args.note})" if args.note else ""
-        print(f"Household marked away {start} → {end}{tail}.")
+        print(f"{who} away {start} → {end}{tail}.")
         return 0
 
-    window = scoped.away_window()
+    window = get_fn()
     if window is None:
-        print("Not away. Set a window: household away --set 2026-07-10 2026-07-17")
+        scope = "--member " if member else ""
+        print(f"Not away. Set a window: household away {scope}--set 2026-07-10 2026-07-17")
         return 0
     now_local = local_datetime(utcnow(), settings.timezone)
     active = "active now" if away_covers(window, now_local) else "not active today"
@@ -2962,6 +2970,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show/set/clear the 'we're away' window (skips away_behavior=suppress chores).",
     )
     h_away.add_argument("--user", default=None, help="Handle of a household member.")
+    h_away.add_argument(
+        "--member",
+        action="store_true",
+        help="Operate on just this user's away status (their chores fall to the "
+        "co-parent) instead of the whole household.",
+    )
     h_away.add_argument(
         "--set",
         dest="away_set",

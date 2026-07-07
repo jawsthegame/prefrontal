@@ -206,6 +206,13 @@ ASSISTANT_SYSTEM = (
     "note is a short optional reason (\"beach trip\"):\n"
     '- {"op":"set_away","starts_on":"YYYY-MM-DD","ends_on":"YYYY-MM-DD","note":str?}\n'
     '- {"op":"clear_away"}\n'
+    "Distinct from that: a single member can mark *themselves* away (a work trip, a "
+    "hospital stay) while the household keeps running — their chores then fall to "
+    "the present co-parent, and they aren't nudged. Use set_member_away when the "
+    "user says \"I'm away/travelling\" (just them, not the whole family); clear_member"
+    "_away when they're back. This always applies to the current user:\n"
+    '- {"op":"set_member_away","starts_on":"YYYY-MM-DD","ends_on":"YYYY-MM-DD","note":str?}\n'
+    '- {"op":"clear_member_away"}\n'
     "Shared shopping list — add things to buy, check them off, or remove them. "
     "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
     "resolve the item to an id from \"household.shopping\"; \"got\" defaults to "
@@ -345,6 +352,9 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
         # The current "we're away" window (vacation / travel), or null if not away —
         # so the assistant can report it, avoid re-setting, or clear it on return.
         "away_window": memory.away_window(),
+        # The *current user's* own away status (just them, not the household) — so
+        # the assistant can report/clear it and tell the two windows apart.
+        "my_away_window": memory.member_away_window(),
     }
 
 
@@ -1132,6 +1142,33 @@ def _v_clear_away(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> 
     return ValidatedAction(op, {}, "Clear the household away window")
 
 
+def _v_set_member_away(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    # Per-user state (like a preference) — usable without a household; it only
+    # affects chore routing, which is a no-op for a solo user with no chores.
+    starts_on = _as_iso_date(action.get("starts_on"), "starts_on")
+    ends_on = _as_iso_date(action.get("ends_on"), "ends_on")
+    if ends_on < starts_on:
+        raise _ActionError("ends_on must be on or after starts_on")
+    note = action.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise _ActionError("note must be text")
+        note = note.strip()[:120] or None
+    params = {"starts_on": starts_on, "ends_on": ends_on, "note": note}
+    detail = f"Mark yourself away {starts_on} → {ends_on}"
+    if note:
+        detail += f" ({note})"
+    return ValidatedAction(op, params, detail)
+
+
+def _v_clear_member_away(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    return ValidatedAction(op, {}, "Clear your away status")
+
+
 #: op → validator. This registry *is* the whitelist: :data:`ALLOWED_OPS` is
 #: derived from its keys, so adding a capability is one entry here and cannot
 #: drift from the security boundary. The household ops (set_fact … remove_shopping)
@@ -1171,6 +1208,8 @@ _VALIDATORS: dict[
     "remove_chore": _v_remove_chore,
     "set_away": _v_set_away,
     "clear_away": _v_clear_away,
+    "set_member_away": _v_set_member_away,
+    "clear_member_away": _v_clear_member_away,
 }
 
 #: The ops the assistant may emit — the security boundary, derived from the
@@ -1463,6 +1502,14 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "clear_away":
             memory.clear_away_window()
             result.update(ok=True, detail="away window cleared")
+        elif op == "set_member_away":
+            memory.set_member_away(
+                starts_on=p["starts_on"], ends_on=p["ends_on"], note=p.get("note")
+            )
+            result.update(ok=True, detail=f"you're away {p['starts_on']} → {p['ends_on']}")
+        elif op == "clear_member_away":
+            memory.clear_member_away()
+            result.update(ok=True, detail="your away status cleared")
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except Exception as exc:  # noqa: BLE001 — one bad action must never abort the batch

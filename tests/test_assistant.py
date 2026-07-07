@@ -713,6 +713,44 @@ def test_away_op_validation_guards(hh_memory, memory):
     assert errors and "household" in errors[0]
 
 
+def test_execute_set_and_clear_member_away(hh_memory):
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "set_member_away", "starts_on": "2026-07-10", "ends_on": "2026-07-17",
+          "note": "work trip"}],
+    )
+    assert res[0]["ok"] is True
+    assert hh_memory.member_away_window() == {
+        "starts_on": "2026-07-10", "ends_on": "2026-07-17", "note": "work trip"
+    }
+    # The user's own away status shows in the snapshot, distinct from the household one.
+    snap = assistant.build_snapshot(hh_memory)["household"]
+    assert snap["my_away_window"]["note"] == "work trip"
+    assert snap["away_window"] is None  # household not away, just this member
+    res = _plan_and_execute(hh_memory, [{"op": "clear_member_away"}])
+    assert res[0]["ok"] is True
+    assert hh_memory.member_away_window() is None
+
+
+def test_member_away_op_validation_and_no_household_ok(hh_memory, memory):
+    snap = assistant.build_snapshot(hh_memory)
+    # Backwards range / malformed date are refused (same guards as household away).
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_member_away", "starts_on": "2026-07-17", "ends_on": "2026-07-10"}], snap
+    )
+    assert errors and "on or after" in errors[0]
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_member_away", "starts_on": "nope", "ends_on": "2026-07-17"}], snap
+    )
+    assert errors and "YYYY-MM-DD" in errors[0]
+    # Unlike household away, marking *yourself* away needs no household — it's per-user.
+    actions, errors = assistant.validate_actions(
+        [{"op": "set_member_away", "starts_on": "2026-07-10", "ends_on": "2026-07-17"}],
+        assistant.build_snapshot(memory),
+    )
+    assert not errors and actions and actions[0].op == "set_member_away"
+
+
 def test_assistant_assigns_owner_and_accountable(hh_memory):
     """A chore's owner and a routine's accountable holder resolve to a member id."""
     hid = hh_memory.household_id_or_none()
