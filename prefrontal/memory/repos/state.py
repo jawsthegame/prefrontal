@@ -226,6 +226,42 @@ class StateRepo(Repo):
         except (TypeError, ValueError):
             return None
 
+    def set_member_away(
+        self, *, starts_on: str, ends_on: str, note: str | None = None
+    ) -> None:
+        """Mark *this member* away over an inclusive local date range.
+
+        Distinct from the household-wide away window (which suppresses
+        location-bound chores for everyone): a single member being away means the
+        household still functions, so their chores fall to whoever's present. Stored
+        in ``coaching_state`` as three keys (like :meth:`set_location`) so it rides
+        the same per-user machinery. Read by the chore sweep to reassign an away
+        owner's reminders to the present partner. Last write wins.
+        """
+        self.set_state("away_start", starts_on, source="explicit")
+        self.set_state("away_end", ends_on, source="explicit")
+        self.set_state("away_note", note or "", source="explicit")
+
+    def member_away_window(self) -> dict[str, Any] | None:
+        """This member's away window, or ``None`` if they aren't marked away.
+
+        Returns ``{"starts_on", "ends_on", "note"}`` when both dates are set (note
+        is ``None`` when blank), else ``None``. Whether *today* falls inside it is
+        the caller's call (:func:`prefrontal.household.away_covers`).
+        """
+        start = self.get_state("away_start")
+        end = self.get_state("away_end")
+        if not start or not end:
+            return None
+        note = self.get_state("away_note")
+        return {"starts_on": start, "ends_on": end, "note": note or None}
+
+    def clear_member_away(self) -> None:
+        """Clear this member's away window (back to present). Idempotent."""
+        self.delete_state("away_start")
+        self.delete_state("away_end")
+        self.delete_state("away_note")
+
     def get_profile_cache(self) -> dict[str, Any] | None:
         """Return the cached profile narrative row, or ``None`` if unset.
 
