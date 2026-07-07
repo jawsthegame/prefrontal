@@ -267,7 +267,13 @@ def _todo_pressures(
                     kind="todo",
                     title=t["title"],
                     when=f"{_ago_phrase(overdue_min)} overdue",
-                    score=800.0 + min(overdue_min / 60.0, 240.0) + priority * 30.0,
+                    # Overdue todos live in the [800, 1000) band — strictly below
+                    # the commitment tiers (a late-to-leave commitment is 1000+, a
+                    # hard one you've started is 1100), so the coarse-tier contract
+                    # "a commitment you're late for outranks an overdue todo" holds
+                    # even for a very stale, high-priority todo. The overdue-hours
+                    # and priority terms are scaled to stay under that ceiling.
+                    score=800.0 + min(overdue_min / 60.0, 240.0) * 0.5 + priority * 20.0,
                     source=src,
                     todo_id=tid,
                 )

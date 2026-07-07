@@ -4,6 +4,7 @@ Mixin for :class:`prefrontal.memory.store.MemoryStore`; not used standalone.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from prefrontal.memory._helpers import (
@@ -12,6 +13,24 @@ from prefrontal.memory._helpers import (
     sql_placeholders,
 )
 from prefrontal.memory.repos._base import Repo
+
+
+def _lower_bound(now: datetime | str | None) -> tuple[str, tuple[Any, ...]]:
+    """SQL expression + bind params for the "starting now or later" lower bound.
+
+    ``now=None`` (the production default) uses SQLite's real clock
+    (``datetime('now')``). A caller may pass an explicit naive-UTC ``now``
+    (``datetime`` or ``"YYYY-MM-DD HH:MM:SS"`` string) so the window is computed
+    as-of an injected clock — keeping the whole read deterministic instead of
+    filtering by the wall clock while its caller windows by an injected ``now``
+    (see :func:`prefrontal.household.build_sheet`).
+    """
+    if now is None:
+        return "datetime('now')", ()
+    # A UTC bind param for the UTC-stored start_at column (matches datetime('now')).
+    # tz-ok: a wire/UTC comparison value, never rendered to the user as a clock.
+    stamp = now if isinstance(now, str) else now.strftime("%Y-%m-%d %H:%M:%S")
+    return "?", (stamp,)
 
 
 class ScheduleRepo(Repo):
@@ -117,7 +136,11 @@ class ScheduleRepo(Repo):
         return _with_calendar(d) if d is not None else None
 
     def upcoming_commitments(
-        self, limit: int = 50, *, include_hidden: bool = False
+        self,
+        limit: int = 50,
+        *,
+        include_hidden: bool = False,
+        now: datetime | str | None = None,
     ) -> list[dict[str, Any]]:
         """Return active commitments starting now or later, soonest first.
 
@@ -130,29 +153,37 @@ class ScheduleRepo(Repo):
         Args:
             limit: Maximum number of rows to return.
             include_hidden: When ``True``, hidden commitments are included too.
+            now: Optional naive-UTC lower bound (``datetime`` or string). Defaults
+                to the wall clock; pass an injected clock to keep a caller that
+                windows by its own ``now`` (e.g. the household sheet) from
+                silently filtering by the real clock instead.
 
         Returns:
             A list of commitment dicts ordered by ``start_at`` ascending.
         """
         hidden_clause = "" if include_hidden else "AND hidden = 0 "
+        bound_sql, bound_params = _lower_bound(now)
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
-            f"AND start_at >= datetime('now') {hidden_clause}ORDER BY start_at ASC LIMIT ?",
-            (self._uid(), limit),
+            f"AND start_at >= {bound_sql} {hidden_clause}ORDER BY start_at ASC LIMIT ?",
+            (self._uid(), *bound_params, limit),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
-    def hidden_commitments(self, limit: int = 50) -> list[dict[str, Any]]:
+    def hidden_commitments(
+        self, limit: int = 50, *, now: datetime | str | None = None
+    ) -> list[dict[str, Any]]:
         """Return active, *hidden* upcoming commitments, soonest first.
 
         The complement of :meth:`upcoming_commitments` — what the un-hide UI needs
         so a hidden commitment can be brought back. Empty for a user who has
-        hidden nothing.
+        hidden nothing. ``now`` behaves as in :meth:`upcoming_commitments`.
         """
+        bound_sql, bound_params = _lower_bound(now)
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
-            "AND start_at >= datetime('now') AND hidden = 1 ORDER BY start_at ASC LIMIT ?",
-            (self._uid(), limit),
+            f"AND start_at >= {bound_sql} AND hidden = 1 ORDER BY start_at ASC LIMIT ?",
+            (self._uid(), *bound_params, limit),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 

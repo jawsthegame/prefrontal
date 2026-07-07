@@ -410,7 +410,9 @@ def _upcoming_child_appts(
     """The viewer's near-window child appointments (``kind='child'`` commitments)."""
     horizon = now + timedelta(days=UPCOMING_APPT_DAYS)
     out: list[Appointment] = []
-    for c in store.upcoming_commitments(limit=100):
+    # Pass ``now`` so the lower bound matches the horizon's clock — otherwise the
+    # query filters by the real wall clock while we window by the injected ``now``.
+    for c in store.upcoming_commitments(limit=100, now=now):
         if c.get("kind") != KIND_CHILD:
             continue
         start = _parse_dt(c.get("start_at"))

@@ -20,11 +20,10 @@ local. Message content never leaves the host.
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.llm_json import extract_json
 from prefrontal.mail.models import MailItem
 
 if TYPE_CHECKING:
@@ -271,16 +270,14 @@ def _build_prompt(item: MailItem) -> str:
 def _parse_verdict(raw: str) -> MailTriage | None:
     """Parse a model reply into a :class:`MailTriage`, or ``None`` if unusable.
 
-    Tolerant of the model wrapping JSON in prose or code fences: it extracts the
-    first ``{...}`` block. Coerces/validates each field to a safe enum value.
+    Tolerant of the model wrapping JSON in prose or code fences: it reuses the
+    shared :func:`~prefrontal.llm_json.extract_json` extractor (whole-string →
+    fenced block → brace-matched span) rather than a greedy ``{.*}`` regex, which
+    a prose-wrapped brace (``for {this}: {…json…}``) would over-capture into an
+    unparseable span, silently dropping a valid verdict. Coerces/validates each
+    field to a safe enum value.
     """
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except (ValueError, TypeError):
-        return None
+    data = extract_json(raw)
     if not isinstance(data, dict):
         return None
 
