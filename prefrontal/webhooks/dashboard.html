@@ -110,25 +110,25 @@
   /* Compact rows: label + count + button on one line, a slim progress bar
      wrapped tight beneath. Rows self-separate via the top border, so the column
      needs no extra gap — keeps the card low-profile and mobile-friendly. */
-  .sc-controls { display: flex; flex-direction: column; }
+  .sc-controls { display: flex; gap: 8px; }
   .sc-hint { color: var(--muted); font-size: 13px; }
   .sc-hint a { color: var(--accent); text-decoration: none; }
   .sc-hint a:hover { text-decoration: underline; }
-  .sc-check { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px;
-    padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
-  .sc-label { display: inline-flex; align-items: center; gap: 6px; }
-  /* today's progress: green = confirmed toward target, grey track = not done yet.
-     Scoped under .sc-check so the slim height/margin outrank the generic .bar
-     rule (defined later in this sheet, equal specificity) instead of losing to it. */
-  .sc-check .sc-bar { flex-basis: 100%; height: 4px; margin-top: 1px; }
-  .sc-prog { margin-left: auto; }
-  .sc-prog b { font-variant-numeric: tabular-nums; }
-  .sc-sub { color: var(--muted); font-size: 12px; }
-  .sc-mark { padding: 5px 12px; min-height: 32px; border-radius: 9px; border: 1px solid var(--line);
-    background: var(--card); color: var(--fg); font: inherit; font-size: 13px; font-weight: 600;
-    cursor: pointer; white-space: nowrap; }
-  .sc-mark:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .sc-mark:disabled { opacity: .55; cursor: default; }
+  /* One-line checks: each is a tappable chip whose left-to-right green fill is
+     the day's progress toward its target (count/target for recurring checks, ✓
+     for once-a-day). Tapping logs one — no separate label or progress bar. */
+  .sc-chip { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center;
+    justify-content: center; gap: 6px; padding: 9px 8px; min-height: 42px;
+    border: 1px solid var(--line); border-radius: 10px; color: var(--fg);
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--good) 34%, var(--chip)) var(--p, 0%),
+      var(--chip) var(--p, 0%)); }
+  .sc-chip .ic { font-size: 16px; line-height: 1; }
+  .sc-chip b { font-variant-numeric: tabular-nums; }
+  .sc-chip.done { border-color: var(--good); }
+  .sc-chip:hover:not(:disabled) { border-color: var(--accent); }
+  .sc-chip:disabled { cursor: default; }
 
   /* Per-card layout controls (drag handle · move ◀▲▼▶ · item cap), top-right of
      each masonry card. The reserved h2 space depends on whether the card also
@@ -918,30 +918,29 @@ const SC_META = {
   meds: { icon: "💊", label: "Meds" },
 };
 
-// Progress readout for a check: a once-a-day check (target 1) reads as done ✓ /
-// not-yet — the "N/1" fraction adds nothing and looks broken once extra taps
-// push the count past 1 (e.g. "3/1"). A recurring check (target > 1) shows real
-// count/target progress.
-function scProgress(c) {
-  if (c.target > 1) return `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`;
-  return c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`;
+// Compact readout for a check: a recurring check (target > 1) shows real
+// count/target; a once-a-day check (target 1) reads as ✓ once done and shows
+// nothing otherwise — the "N/1" fraction adds nothing and looks broken once
+// extra taps push the count past 1 (e.g. "3/1").
+function scReadout(c) {
+  if (c.target > 1) return `<b>${c.count}/${c.target}</b>`;
+  return c.done ? "<b>✓</b>" : "";
 }
 
 function scRow(c) {
   const m = SC_META[c.key] || { icon: "", label: c.key };
   const recurring = c.target > 1;
-  // A once-a-day check has nothing left to log once it's done — lock the button.
+  // A once-a-day check has nothing left to log once it's done — lock the chip.
   const locked = !recurring && c.done;
-  const label = recurring ? "＋ Log one" : (c.done ? "Done ✓" : "Mark done");
-  // Fill green up to the daily target; the remaining track stays grey ("not done
-  // yet"). Extra taps past the target still read as a full bar, not overflow.
+  // Fill green up to the daily target; extra taps read as full, not overflow.
   const fill = c.target > 0 ? Math.min(100, (c.count / c.target) * 100) : 0;
-  return `<div class="sc-check">
-    <span class="sc-label">${m.icon} ${esc(m.label)}</span>
-    <span class="sc-prog">${scProgress(c)}</span>
-    <button class="sc-mark" data-sc-mark="${c.key}"${locked ? " disabled" : ""}>${label}</button>
-    <div class="bar sc-bar" title="${c.count}/${c.target} done today"><span style="width:${fill.toFixed(0)}%;background:var(--good)"></span></div>
-  </div>`;
+  // The icon carries the identity; the full name rides in the tooltip / a11y label.
+  const label = recurring
+    ? `${m.label}: ${c.count} of ${c.target} today — tap to log one`
+    : (c.done ? `${m.label}: done today` : `${m.label} — tap to mark done`);
+  return `<button class="sc-chip${c.done ? " done" : ""}" data-sc-mark="${c.key}"${locked ? " disabled" : ""}`
+    + ` style="--p:${fill.toFixed(0)}%" aria-label="${esc(label)}" title="${esc(label)}">`
+    + `<span class="ic">${m.icon}</span>${scReadout(c)}</button>`;
 }
 
 function renderSelfCare(d) {
