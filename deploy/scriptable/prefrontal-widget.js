@@ -134,6 +134,21 @@ function fmtWhen(ts) {
   return day ? `${day} ${fmtTime(ts)}` : fmtTime(ts);
 }
 const mins = (n) => (n == null ? "" : Math.round(n) + "m");
+// Elapsed as a compact "45m" under an hour, "1h" / "1h 5m" once past it. Used as
+// the *static* (non-ticking) elapsed once an outing crosses an hour: the live
+// timer style ticks seconds every second (and shows H:MM:SS past an hour), which
+// is just noise on a glance, so we stop ticking and show whole minutes instead.
+const hm = (n) => {
+  if (n == null) return "";
+  const t = Math.round(n);
+  if (t < 60) return t + "m";
+  const h = Math.floor(t / 60), m = t % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+};
+// An outing that's been out at least an hour: past this the elapsed is rendered
+// static (see `hm`) rather than as a live, seconds-ticking timer.
+const OVER_AN_HOUR_MIN = 60;
+const isLongOuting = (o) => o != null && o.elapsed_minutes != null && o.elapsed_minutes >= OVER_AN_HOUR_MIN;
 
 // --- fetch (degrade gracefully, per-call) ---------------------------------
 // Each endpoint falls back to its empty shape independently, so one slow or
@@ -363,6 +378,10 @@ function facetInProgress() {
     sub: `out ${mins(active.elapsed_minutes)}/${mins(active.time_window_minutes)} · ${ph.phrase}`,
     color: LEVEL_COLOR[active.level] || C.fg,
     timerDate: outingStart(active),
+    // Once the outing passes an hour, renderers show `elapsedStatic` (whole
+    // minutes, refreshed on reload) instead of ticking `timerDate`'s seconds.
+    elapsedIsLong: isLongOuting(active),
+    elapsedStatic: hm(active.elapsed_minutes),
     intention: active.intention,
     word: ph.word,
     windowLabel: mins(active.time_window_minutes),
@@ -456,10 +475,12 @@ function renderInline() {
   const f = pickFacet(true);
   symbol(w, f.glyph, 12);
   // Outing: name + a live elapsed timer ("Coffee 12:34" ticking); the glyph
-  // carries the phase. Everything else is a static label.
+  // carries the phase. Past an hour the seconds are noise, so show static
+  // minutes ("Coffee 1h 5m") instead. Everything else is a static label.
   if (f.timerDate) {
     text(w, " " + f.intention + " ", { size: 13 });
-    timer(w, f.timerDate, { size: 13 });
+    if (f.elapsedIsLong) text(w, f.elapsedStatic, { size: 13 });
+    else timer(w, f.timerDate, { size: 13 });
   } else {
     text(w, f.label, { size: 13 });
   }
@@ -482,10 +503,11 @@ function renderCircular() {
   const f = pickFacet();
   symbol(top, f.glyph, 15); top.addSpacer();
   // Outing: a live elapsed timer under the phase glyph, so the clock keeps
-  // ticking between reloads. Other facets: the static value, auto-shrunk so a
-  // wider value (a time like "12:30") fits the circle instead of clipping.
-  if (f.timerDate) timer(bot, f.timerDate, { size: 16, bold: true, minScale: 0.5 });
-  else text(bot, f.value, { size: 16, bold: true, minScale: 0.5 });
+  // ticking between reloads — until it passes an hour, when the ticking seconds
+  // are dropped for static minutes. Other facets: the static value, auto-shrunk
+  // so a wider value (a time like "12:30") fits the circle instead of clipping.
+  if (f.timerDate && !f.elapsedIsLong) timer(bot, f.timerDate, { size: 16, bold: true, minScale: 0.5 });
+  else text(bot, f.timerDate ? f.elapsedStatic : f.value, { size: 16, bold: true, minScale: 0.5 });
   bot.addSpacer();
 }
 
@@ -518,10 +540,12 @@ function renderRectangular() {
   const f = pickFacet();
   rowLine(f.glyph, f.label, { size: 14, bold: true, color: f.color });
   if (f.timerDate) {
-    // Outing: a live "out <timer> / 15m" second line — the elapsed ticks.
+    // Outing: a live "out <timer> / 15m" second line — the elapsed ticks, until
+    // it passes an hour, when the seconds give way to static "out 1h 5m / 15m".
     const sub = col.addStack(); sub.centerAlignContent();
     text(sub, "out ", { size: 12, color: C.muted });
-    timer(sub, f.timerDate, { size: 12, color: C.muted });
+    if (f.elapsedIsLong) text(sub, f.elapsedStatic, { size: 12, color: C.muted });
+    else timer(sub, f.timerDate, { size: 12, color: C.muted });
     text(sub, " / " + f.windowLabel, { size: 12, color: C.muted });
     sub.addSpacer();
   } else if (f.sub) {
@@ -571,13 +595,14 @@ function renderHomeScreen() {
     text(row, "● ", { color: lvlColor, size: 13 });
     text(row, active.intention, { bold: true, size: small ? 13 : 14 });
     text(row, `  ${ph.word}`, { color: lvlColor, size: 11, bold: true });
-    // Second line ticks live: "out <timer> of 15m · phrase". Falls back to the
-    // static elapsed when there's no parseable departure time.
+    // Second line ticks live: "out <timer> of 15m · phrase". Once past an hour
+    // the ticking seconds are dropped for static minutes ("out 1h 5m of …"); also
+    // falls back to static when there's no parseable departure time.
     const line = w.addStack();
     line.centerAlignContent();
     text(line, "out ", { color: C.muted, size: 12 });
-    if (start) timer(line, start, { color: C.muted, size: 12 });
-    else text(line, mins(active.elapsed_minutes), { color: C.muted, size: 12 });
+    if (start && !isLongOuting(active)) timer(line, start, { color: C.muted, size: 12 });
+    else text(line, hm(active.elapsed_minutes), { color: C.muted, size: 12 });
     text(line, ` of ${mins(active.time_window_minutes)} · ${ph.phrase}`, { color: C.muted, size: 12 });
     w.addSpacer(6);
   }
