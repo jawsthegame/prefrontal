@@ -160,6 +160,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 [e.model_dump() for e in payload.events],
                 classify=classify,
                 default_tz=resolved_settings.timezone,
+                recur_horizon_hours=resolved_settings.calendar_horizon_days * 24.0,
             )
         except ValueError as exc:
             raise HTTPException(

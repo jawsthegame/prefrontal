@@ -148,7 +148,9 @@ def _wed_noon(month: int) -> datetime:
 def test_expand_weekly_master_yields_todays_occurrence():
     """A long-past weekly master produces the current week's occurrence, with a
     stable per-occurrence external_id and the master's duration preserved."""
-    out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York")
+    out = expand_recurrences(
+        [_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York", horizon_hours=36
+    )
     assert len(out) == 1  # only this Wednesday falls in [now-1h, now+36h]
     occ = normalize_event(out[0], default_tz="America/New_York")
     assert occ["start_at"] == "2026-07-01 11:30:00"  # 07:30 EDT → 11:30 UTC
@@ -166,7 +168,9 @@ def test_expand_accepts_naive_now():
     recurring event in production even though the aware-`now` tests passed.
     """
     naive_now = _wed_noon(7).replace(tzinfo=None)
-    out = expand_recurrences([_WEEKLY_WED], now=naive_now, default_tz="America/New_York")
+    out = expand_recurrences(
+        [_WEEKLY_WED], now=naive_now, default_tz="America/New_York", horizon_hours=36
+    )
     assert len(out) == 1
     occ = normalize_event(out[0], default_tz="America/New_York")
     assert occ["start_at"] == "2026-07-01 11:30:00"
@@ -174,7 +178,9 @@ def test_expand_accepts_naive_now():
 
 def test_expand_keeps_wall_clock_across_dst():
     """The same 07:30 local event lands at a different UTC in winter (EST)."""
-    out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(1), default_tz="America/New_York")
+    out = expand_recurrences(
+        [_WEEKLY_WED], now=_wed_noon(1), default_tz="America/New_York", horizon_hours=36
+    )
     occ = normalize_event(out[0], default_tz="America/New_York")
     assert occ["start_at"] == "2026-01-07 12:30:00"  # 07:30 EST → 12:30 UTC
 
@@ -188,7 +194,10 @@ def test_expand_stable_id_upserts_across_polls(store):
     """Re-syncing regenerates the identical occurrence id, so it updates in place
     rather than piling up duplicate rows."""
     for _ in range(2):
-        sync_calendar(store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED)
+        sync_calendar(
+            store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED,
+            recur_horizon_hours=36,
+        )
     rows = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
     assert len(rows) == 1
 
@@ -196,7 +205,9 @@ def test_expand_stable_id_upserts_across_polls(store):
 def test_expand_honors_exdate():
     """An EXDATE for the current occurrence cancels it (skipped weeks stay skipped)."""
     master = dict(_WEEKLY_WED, exdate=["20260701T073000"])
-    out = expand_recurrences([master], now=_wed_noon(7), default_tz="America/New_York")
+    out = expand_recurrences(
+        [master], now=_wed_noon(7), default_tz="America/New_York", horizon_hours=36
+    )
     assert out == []
 
 
@@ -210,7 +221,9 @@ def test_expand_suppresses_modified_occurrence():
         "external_id": "personal:wk@google.com",  # same series UID
         "recurrence_id": "2026-07-01T07:30:00",  # original slot it overrides
     }
-    out = expand_recurrences([_WEEKLY_WED, moved], now=_wed_noon(7), default_tz="America/New_York")
+    out = expand_recurrences(
+        [_WEEKLY_WED, moved], now=_wed_noon(7), default_tz="America/New_York", horizon_hours=36
+    )
     starts = sorted(normalize_event(e, default_tz="America/New_York")["start_at"] for e in out)
     assert starts == ["2026-07-01 13:00:00"]  # only the moved 09:00 EDT instance
 
@@ -227,10 +240,53 @@ def test_expand_skips_malformed_rrule_without_failing_batch():
     assert expand_recurrences([bad], now=_wed_noon(7), default_tz="America/New_York") == []
 
 
+def test_expand_default_horizon_is_two_weeks():
+    """By default a weekly series materializes ~2 weeks out (not just the next day),
+    so the week view and slot finder see standing events — with distinct stable ids."""
+    out = expand_recurrences([_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York")
+    starts = sorted(normalize_event(e, default_tz="America/New_York")["start_at"] for e in out)
+    # Wednesdays in [2026-07-01 11:00, +14d]: Jul 1, 8, 15 (07:30 EDT → 11:30 UTC).
+    assert starts == ["2026-07-01 11:30:00", "2026-07-08 11:30:00", "2026-07-15 11:30:00"]
+    assert len({e["external_id"] for e in out}) == 3  # per-occurrence ids, no collision
+
+
+def test_sync_default_expands_two_weeks_end_to_end(store):
+    """The full sync path lands the whole two-week run of a weekly event as commitments."""
+    summary = sync_calendar(
+        store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED
+    )
+    rows = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    assert summary.added == 3  # Aug 5, 12, 19
+    assert [r["start_at"] for r in rows] == [
+        "2026-08-05 11:30:00", "2026-08-12 11:30:00", "2026-08-19 11:30:00"
+    ]
+
+
+def test_sync_horizon_is_configurable(store):
+    """A wider recur_horizon_hours materializes more of the series (the config knob)."""
+    # One week out: only Aug 5 + 12 fall in [now-1h, now+7d].
+    summary = sync_calendar(
+        store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED,
+        recur_horizon_hours=24 * 7,
+    )
+    assert summary.added == 2
+
+
+def test_calendar_horizon_setting_default_and_env(monkeypatch, tmp_path):
+    """The horizon is a config knob: defaults to 14 days, overridable via env."""
+    from prefrontal.config import load_settings
+
+    assert Settings().calendar_horizon_days == 14.0  # dataclass default
+    monkeypatch.setenv("PREFRONTAL_CALENDAR_HORIZON_DAYS", "21")
+    # A bogus dotenv path so only the real environment is read.
+    assert load_settings(str(tmp_path / "nope.env")).calendar_horizon_days == 21.0
+
+
 def test_sync_expands_recurring_end_to_end(store):
     """A recurring master synced through the full path lands as a commitment."""
     summary = sync_calendar(
-        store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED
+        store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED,
+        recur_horizon_hours=36,
     )
     assert summary.added == 1
     (got,) = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
