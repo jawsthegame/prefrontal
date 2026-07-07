@@ -472,6 +472,13 @@ Prefrontal fetches each user's own **private ICS feeds** and syncs them natively
 — no n8n, no OAuth. Feed URLs live per-user in the `sources` registry (sealed at
 rest with `PREFRONTAL_SECRET_KEY`), and one launchd job covers every user.
 
+Each sync expands **recurring** events two weeks ahead (`PREFRONTAL_CALENDAR_HORIZON_DAYS`,
+default 14) so standing/weekly events populate the household week view and the slot
+finder, not just the next day — one-off events ingest at any distance regardless.
+Because occurrences carry a stable per-occurrence `external_id`, the every-15-min
+job just upserts the same two-week window forward each run (no duplicates), so the
+cache stays fresh far more often than the horizon is wide.
+
 1. Mint the at-rest key once (it seals the feed URLs): `prefrontal secrets init`,
    then add the printed `PREFRONTAL_SECRET_KEY=…` line to `.env`.
 2. Add each calendar's shared/secret **iCal feed URL** (read-only) per user.

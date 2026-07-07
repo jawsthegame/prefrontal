@@ -33,9 +33,16 @@ from prefrontal.memory.store import MemoryStore
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
 
-#: How far ahead recurring events are expanded into concrete occurrences. Mirrors
-#: the n8n bundler's forward window — the schedule only ever holds the near term.
-RECUR_HORIZON_HOURS = 36.0
+#: How far ahead recurring events are expanded into concrete occurrences, by
+#: default — two weeks, so the calendar surfaces (household week view, slot finder)
+#: see standing/weekly events out that far, not just the next day. One-off events
+#: have no horizon (they ingest whenever they land); this only bounds how far a
+#: recurring *series* is materialized. Deployments tune it via
+#: ``PREFRONTAL_CALENDAR_HORIZON_DAYS`` → :attr:`Settings.calendar_horizon_days`,
+#: which the CLI/webhook sync pass through as ``recur_horizon_hours``. The stable
+#: per-occurrence ``external_id`` means a wider window just upserts more rows, never
+#: duplicates, and each poll rolls the window forward.
+RECUR_HORIZON_HOURS = 24.0 * 14
 
 #: Joins a recurring series' id to a generated occurrence's start stamp, forming a
 #: stable per-occurrence ``external_id`` so repeated polls upsert (never duplicate).
@@ -551,6 +558,7 @@ def sync_calendar(
     classify: Callable[[str], tuple[str, str]] | None = None,
     default_tz: str = "UTC",
     now: datetime | None = None,
+    recur_horizon_hours: float = RECUR_HORIZON_HOURS,
 ) -> SyncSummary:
     """Idempotently sync a batch of calendar events into ``commitments``.
 
@@ -570,6 +578,9 @@ def sync_calendar(
             without their own ``tzid`` (see :func:`to_utc`).
         now: Reference instant for expanding recurring events (defaults to the
             current UTC time); injectable for tests.
+        recur_horizon_hours: How far ahead to materialize recurring occurrences
+            (default :data:`RECUR_HORIZON_HOURS`, two weeks). One-off events are
+            unaffected — they carry no horizon.
 
     Returns:
         A :class:`SyncSummary`.
@@ -582,7 +593,8 @@ def sync_calendar(
     # else — a weekly event ships as one long-past-dated master, so this is what
     # makes today's instance exist at all.
     events = expand_recurrences(
-        events, now=now or utcnow(), default_tz=default_tz
+        events, now=now or utcnow(), default_tz=default_tz,
+        horizon_hours=recur_horizon_hours,
     )
     normalized = [  # validate all up front
         normalize_event(e, default_tz=default_tz) for e in events
