@@ -961,6 +961,7 @@ const SC_META = {
   meal: { icon: "🍽️", label: "Meals" },
   water: { icon: "💧", label: "Water" },
   meds: { icon: "💊", label: "Meds" },
+  biobreak: { icon: "🚻", label: "Bio breaks" },
 };
 
 // Compact readout for a check: a recurring check (target > 1) shows real
@@ -977,16 +978,17 @@ function scRow(c) {
   const recurring = c.target > 1;
   // Fill green up to the daily target; extra taps read as full, not overflow.
   const fill = c.target > 0 ? Math.min(100, (c.count / c.target) * 100) : 0;
-  // A plain tap adds one (a once-a-day check that's already done has nothing to
-  // add); shift-click removes one (nothing to remove at zero). The click handler
-  // enforces this; the tooltip advertises whichever actions actually apply.
-  const canAdd = recurring || !c.done;
+  // A plain tap adds one until the target, then cycles back to zero (the
+  // mobile-friendly wrap-around — touch has no shift-click); shift-click still
+  // removes one on desktop (nothing to remove at zero). The click handler enforces
+  // this; the tooltip advertises whichever actions actually apply.
+  const atMax = c.target > 0 && c.count >= c.target;
   // Flash any check that's behind (server-computed `overdue`): a once-a-day
   // essential past its time and not done (meds/meal), or a recurring one that's
   // fallen behind its expected pace (water). The gentle amber pulse clears as soon
   // as you catch up or hit the target.
   const overdue = !!c.overdue;
-  const acts = [canAdd ? "tap to log one" : null, c.count > 0 ? "shift-click to remove one" : null]
+  const acts = [atMax ? "tap to reset" : "tap to log one", c.count > 0 ? "shift-click to remove one" : null]
     .filter(Boolean).join(", ");
   const state = recurring
     ? `${m.label}: ${c.count} of ${c.target} today${overdue ? " — behind" : ""}`
@@ -2236,21 +2238,28 @@ document.addEventListener("change", (e) => {
 
 // Self-care card: tapping a chip logs a confirm for that check today — the way
 // to record something you did after missing (or ignoring) its notification,
-// counting one toward the daily target like a one-tap notification would.
-// Shift-clicking rewinds an accidental count by one (never below zero).
-// Settings (master switch, targets, cadence) live on /settings, not here.
+// counting one toward the daily target like a one-tap notification would. A tap
+// at the target cycles the count back to zero (the mobile wrap-around, so a
+// mis-tap is fixable without a keyboard); shift-click still rewinds by one on
+// desktop (never below zero). Settings (targets, cadence) live on /settings.
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("#c-selfcare [data-sc-mark]");
   if (!btn || btn.disabled) return;
-  const undo = e.shiftKey;
   const count = +btn.dataset.scCount || 0;
   const target = +btn.dataset.scTarget || 1;
-  // Nothing to remove at zero; a once-a-day check that's already met has
-  // nothing to add on a plain tap (extra taps would just overshoot the target).
-  if (undo ? count <= 0 : target <= 1 && count >= target) return;
+  const key = btn.dataset.scMark;
+  let body;
+  if (e.shiftKey) {
+    if (count <= 0) return;              // nothing to remove
+    body = { key, undo: true };
+  } else if (count >= target) {
+    body = { key, reset: true };         // at max — wrap around to zero
+  } else {
+    body = { key };                      // log one
+  }
   btn.disabled = true;  // guard against a double-tap logging two
   try {
-    const status = await post("/self-care/mark", { key: btn.dataset.scMark, undo });
+    const status = await post("/self-care/mark", body);
     $("#c-selfcare .body").innerHTML = renderSelfCare(status);
   } catch (_) { btn.disabled = false; /* post() surfaced the error */ }
 });

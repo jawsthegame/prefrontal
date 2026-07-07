@@ -114,9 +114,10 @@
 <div class="wrap" id="wrap" data-collapse-key="prefrontal_settings_layout" style="display:none">
   <section class="card" id="c-selfcare">
     <h2>Self-care checks</h2>
-    <p class="sub">Meal, water, and meds nudges. Turn the whole thing on or off,
-      and set each check's daily target, the hour it starts, and how often it
-      re-asks. Logging what you've done today happens on the Dashboard card.</p>
+    <p class="sub">Meal, water, meds, and bio-break nudges. Turn the whole thing on
+      or off, and set each check's daily target, the hour it starts (and, for bio
+      breaks, the hour it stops), and how often it re-asks. Logging what you've done
+      today happens on the Dashboard card.</p>
     <div id="selfcare"></div>
     <div class="saved" id="sc-saved"></div>
   </section>
@@ -176,6 +177,7 @@ const SC_META = {
   meal: { icon: "🍽️", label: "Meals" },
   water: { icon: "💧", label: "Water" },
   meds: { icon: "💊", label: "Meds" },
+  biobreak: { icon: "🚻", label: "Bio breaks" },
 };
 
 function scProgress(c) {
@@ -192,11 +194,17 @@ function scRow(c) {
   const cadence = c.target > 1
     ? `<span class="sc-field">every ${num("interval_minutes", c.interval_minutes, 'min="1"')}m</span>`
     : "";
+  // A window-bounded check (the server sends a non-null end_hour) also offers a
+  // "to HH:00" stop; others run until their target / responsive hours.
+  const endHour = (c.end_hour != null)
+    ? `<span class="sc-field">to ${num("end_hour", c.end_hour, 'min="0" max="23"')}:00</span>`
+    : "";
   return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
     <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
     + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
     <span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>
     <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
+    ${endHour}
     ${cadence}
   </div>`;
 }
@@ -207,7 +215,7 @@ function renderSelfCare(d) {
     + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;
   if (!on) {
     return `<div class="sc-controls">${master}`
-      + `<span class="sc-hint">Turn on to get meal, water &amp; meds nudges.</span></div>`;
+      + `<span class="sc-hint">Turn on to get meal, water, meds &amp; bio-break nudges.</span></div>`;
   }
   const rows = (d.checks || []).map(scRow).join("");
   return `<div class="sc-controls">${master}${rows}</div>`;
