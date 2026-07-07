@@ -352,3 +352,42 @@ def test_disabled_user_token_is_rejected(store):
             headers={"X-Prefrontal-Token": SECRET},
         )
     assert resp.status_code == 401
+
+
+def test_calendar_slots_finds_free_windows(client, user_store):
+    """GET /calendar/slots returns open windows of at least the requested length."""
+    # No commitments over a fortnight: some future waking day always has room, so
+    # the response is non-empty regardless of the wall-clock time the suite runs.
+    resp = client.get(
+        "/calendar/slots?minutes=30&days=14", headers={"X-Prefrontal-Token": SECRET}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["minutes"] == 30 and body["days"] == 14
+    assert len(body["slots"]) >= 1
+    slot = body["slots"][0]
+    # Each slot carries the UTC bounds plus pre-formatted local labels for display.
+    assert set(slot) >= {"start_at", "end_at", "minutes", "day", "start", "end"}
+    assert slot["minutes"] >= 30
+
+
+def test_calendar_slots_validates_query(client):
+    """Out-of-range minutes / days are rejected at the edge (422)."""
+    hdr = {"X-Prefrontal-Token": SECRET}
+    assert client.get("/calendar/slots?minutes=0", headers=hdr).status_code == 422
+    assert client.get("/calendar/slots?minutes=1441", headers=hdr).status_code == 422
+    assert client.get("/calendar/slots?days=0", headers=hdr).status_code == 422
+    assert client.get("/calendar/slots?days=15", headers=hdr).status_code == 422
+
+
+def test_calendar_slots_requires_auth(client):
+    """The slot finder is auth-guarded like the other read endpoints."""
+    assert client.get("/calendar/slots").status_code == 401
+
+
+def test_calendar_page_served_unauthenticated(client):
+    """The read-only calendar shell is a data-less page (no token needed)."""
+    resp = client.get("/calendar")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Household calendar" in resp.text

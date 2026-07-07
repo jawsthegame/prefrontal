@@ -33,6 +33,7 @@ from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
     APP_VERSION,
+    CALENDAR_HTML,
     DASHBOARD_HTML,
     HOUSEHOLD_HTML,
     REVIEW_HTML,
@@ -98,6 +99,20 @@ def build_router(services: RouterServices) -> APIRouter:
         overlay backed by ``/panic``. Reachable over Tailscale from any device.
         """
         return _page(DASHBOARD_HTML)
+
+    @router.get("/calendar", response_class=HTMLResponse, tags=["system"])
+    def calendar() -> HTMLResponse:
+        """Serve the read-only visual household calendar (a self-contained HTML shell).
+
+        A calm week-ahead agenda over the caller's commitments (``GET
+        /commitments``), plus a "find a free slot" control that queries ``GET
+        /calendar/slots`` and highlights the open windows of the requested length
+        inline in their day. Like the other web surfaces the shell is
+        unauthenticated and carries no data — it signs in via Google session or an
+        access code, then reads the auth-guarded JSON endpoints. Read-only: events
+        are edited in the user's own calendar app and sync in.
+        """
+        return _page(CALENDAR_HTML)
 
     @router.get("/household", response_class=HTMLResponse, tags=["system"])
     def household() -> HTMLResponse:

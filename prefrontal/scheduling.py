@@ -120,6 +120,87 @@ def first_window_fitting(
     return next((w for w in windows if w.minutes >= minutes), None)
 
 
+#: How many local days ahead :func:`find_slots` scans by default.
+DEFAULT_SLOT_DAYS = 7
+#: Never return more than this many slots (a wide-open week is otherwise a wall).
+DEFAULT_SLOT_LIMIT = 24
+
+
+def find_slots(
+    commitments: list[dict[str, Any]],
+    now: datetime,
+    tz: str,
+    *,
+    minutes: float,
+    days: int = DEFAULT_SLOT_DAYS,
+    awake_band: tuple[str, str] = ("06:00", "22:00"),
+    default_event_minutes: float = DEFAULT_EVENT_MINUTES,
+    limit: int = DEFAULT_SLOT_LIMIT,
+) -> list[FreeWindow]:
+    """Free windows of at least ``minutes`` across the next ``days`` local days.
+
+    "Find me a 45-minute slot this week": each local calendar day contributes only
+    its waking band (``awake_band``, local ``HH:MM`` bounds), so an open slot is
+    never offered overnight; today's band is clamped to start no earlier than
+    ``now`` (a slot you can actually use). Within each day the busy commitments are
+    subtracted (:func:`free_windows`) and only gaps ``>= minutes`` survive.
+
+    Args:
+        commitments: Commitment dicts (``start_at`` + optional ``end_at``, UTC).
+        now: The current instant as naive UTC.
+        tz: IANA timezone for the local days / waking band (falls back to UTC).
+        minutes: The slot length to look for — gaps shorter than this are dropped.
+        days: How many local days to scan, starting today.
+        awake_band: ``("HH:MM", "HH:MM")`` local waking hours (non-wrapping); the
+            usual off-zone complement. A malformed or wrapping band falls back to
+            the whole day.
+        default_event_minutes: Assumed length for a commitment with no ``end_at``.
+        limit: Cap on the number of slots returned (chronological, soonest first).
+
+    Returns:
+        Free windows (naive-UTC ``start``/``end`` + ``minutes``), soonest first.
+    """
+    if minutes <= 0 or days <= 0:
+        return []
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    band = parse_window(f"{awake_band[0]}-{awake_band[1]}")
+    # A wrapping (overnight) or unparseable band is meaningless as a waking window;
+    # fall back to the full local day so slots are still found, never overnight-only.
+    if band is None or band[0] >= band[1]:
+        band = (0, 24 * 60 - 1)
+    sh, sm = divmod(band[0], 60)
+    eh, em = divmod(band[1], 60)
+    today_local = now.replace(tzinfo=timezone.utc).astimezone(zone).date()
+
+    def _naive_utc(local_dt: datetime) -> datetime:
+        return local_dt.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+    slots: list[FreeWindow] = []
+    for offset in range(days):
+        day = today_local + timedelta(days=offset)
+        start_utc = _naive_utc(datetime(day.year, day.month, day.day, sh, sm, tzinfo=zone))
+        end_utc = _naive_utc(datetime(day.year, day.month, day.day, eh, em, tzinfo=zone))
+        if offset == 0:
+            start_utc = max(start_utc, now)
+        if end_utc <= start_utc:
+            continue
+        slots.extend(
+            free_windows(
+                commitments,
+                start_utc,
+                end_utc,
+                min_minutes=minutes,
+                default_event_minutes=default_event_minutes,
+            )
+        )
+        if len(slots) >= limit:
+            break
+    return slots[:limit]
+
+
 def work_window_now(
     now: datetime,
     tz: str,
