@@ -22,6 +22,19 @@ cd "$PREFRONTAL_HOME"
 
 ts() { date "+%Y-%m-%dT%H:%M:%S%z"; }
 
+# Optional branch pin. By default we pull whatever branch the checkout is on (so
+# deploying a non-main branch stays possible — see docs/deployment.md). But if the
+# deploy checkout is *shared* with something that switches branches out from under
+# it (e.g. a self-hosted Claude Code environment that checks out its own dev
+# branch in the same working copy), the running service can end up stranded on the
+# wrong branch. Set PREFRONTAL_DEPLOY_BRANCH to the branch this box should serve
+# (e.g. "main") and every update restores it first, so the drift self-heals.
+if [ -n "${PREFRONTAL_DEPLOY_BRANCH:-}" ]; then
+  echo "[$(ts)] update: pin to '$PREFRONTAL_DEPLOY_BRANCH'"
+  git fetch origin "$PREFRONTAL_DEPLOY_BRANCH"
+  git checkout "$PREFRONTAL_DEPLOY_BRANCH"
+fi
+
 echo "[$(ts)] update: git pull --ff-only"
 git pull --ff-only
 

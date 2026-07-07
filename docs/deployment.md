@@ -141,7 +141,14 @@ without SSHing in.
   — then restarts the service via `launchctl kickstart -k`. `prefrontal restart`
   bounces it without pulling; `prefrontal update --no-restart` updates only. The
   deploy steps live in [`deploy/update.sh`](../deploy/update.sh) — **edit
-  `PREFRONTAL_HOME`/paths there** to match your install.
+  `PREFRONTAL_HOME`/paths there** to match your install. By default the update
+  pulls whatever branch the checkout is on (so deploying a non-`main` branch stays
+  possible). If the deploy checkout is **shared** with something that switches
+  branches out from under it — e.g. a self-hosted Claude Code environment that
+  checks out its own dev branch in the *same* working copy, which strands the
+  service on the wrong branch — either give sessions their own clone/worktree, or
+  set `PREFRONTAL_DEPLOY_BRANCH=main` in `.env` so every update restores that
+  branch first and the drift self-heals.
 - **Over HTTP** (operator + opt-in): set `PREFRONTAL_SELF_UPDATE=on` in `.env`,
   then `POST /admin/update` (or `/admin/restart`) with an operator token:
 
