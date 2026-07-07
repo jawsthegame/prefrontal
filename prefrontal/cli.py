@@ -370,6 +370,8 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _chores_check_cli(store, args, settings)
         elif args.household_action == "away":
             return _away_cli(store, args, settings)
+        elif args.household_action == "shift":
+            return _service_shift_cli(store, args, settings)
         elif args.household_action == "invite":
             from prefrontal.integrations.sms import normalize_phone, send_invite_sms
 
@@ -501,6 +503,7 @@ def _chores_cli(store, args, settings) -> int:
                 "remind_before": args.remind,
                 "impact": args.impact,
                 "away_behavior": args.away_behavior or "keep",
+                "service": args.service,
             }
         )
         if error is not None:
@@ -559,13 +562,14 @@ def _chores_cli(store, args, settings) -> int:
         owner = c.get("owner_name") or "either"
         paused = "" if c["enabled"] else " [paused]"
         away = " [skipped while away]" if c.get("away_behavior") == "suppress" else ""
+        svc = f" [service: {c['service']}]" if c.get("service") else ""
         impact = f" — {c['impact']}" if c.get("impact") else ""
         when = f"by {fmt_time_12h(eff['due_time'])}" if eff.get("due_time") else "untimed"
         routine = f" · {c['routine_title']}" if c.get("routine_title") else ""
         print(
             f"  [{box}] #{c['id']} {c['title']} "
             f"({owner} · {describe_schedule(eff['days'], eff.get('month_days'))} · {when}{routine})"
-            f"{paused}{away}{impact}"
+            f"{paused}{away}{svc}{impact}"
         )
     return 0
 
@@ -724,6 +728,79 @@ def _away_cli(store, args, settings) -> int:
     active = "active now" if away_covers(window, now_local) else "not active today"
     note = f" ({window['note']})" if window.get("note") else ""
     print(f"Away {window['starts_on']} → {window['ends_on']}{note} — {active}.")
+    return 0
+
+
+def _service_shift_cli(store, args, settings) -> int:
+    """Show, set, or clear a municipal service's holiday pickup-day shift for a week.
+
+    ``--set SERVICE WEEKDAY`` records "SERVICE moved to WEEKDAY this week" (or the
+    week containing ``--week``); ``--clear SERVICE`` removes it; no flags lists the
+    stored shifts. This is the manual twin of the (deferred) weekly scrape — same
+    store path — so a shift can be entered by hand today.
+    """
+    from prefrontal.household import service_week
+    from prefrontal.scheduling import local_datetime
+    from prefrontal.service_shifts import monday_of
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+
+    labels = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+    def _week() -> str:
+        if args.week:
+            try:
+                return monday_of(args.week)
+            except ValueError:
+                print("--week must be a 'YYYY-MM-DD' date.", file=sys.stderr)
+                return ""
+        return service_week(local_datetime(utcnow(), settings.timezone))
+
+    if args.shift_clear:
+        week = _week()
+        if not week:
+            return 1
+        service = args.shift_clear[0].strip().lower()
+        removed = scoped.clear_service_shift(service=service, week=week)
+        print(f"Cleared {service} shift for week of {week}." if removed
+              else f"No {service} shift stored for week of {week}.")
+        return 0
+    if args.shift_set:
+        week = _week()
+        if not week:
+            return 1
+        service = args.shift_set[0].strip().lower()
+        raw_day = args.shift_set[1].strip()
+        # Accept a weekday int (0=Mon) or a name/prefix like 'Wed'.
+        weekday = None
+        if raw_day.isdigit() and 0 <= int(raw_day) <= 6:
+            weekday = int(raw_day)
+        else:
+            for i, name in enumerate(labels):
+                if name.lower().startswith(raw_day[:3].lower()):
+                    weekday = i
+                    break
+        if weekday is None:
+            print("WEEKDAY must be 0–6 (0=Mon) or a name like 'Wed'.", file=sys.stderr)
+            return 1
+        scoped.set_service_shift(
+            service=service, week=week, shifted_weekday=weekday, reason=args.reason
+        )
+        tail = f" ({args.reason})" if args.reason else ""
+        print(f"Set {service} → {labels[weekday]} for week of {week}{tail}.")
+        return 0
+
+    shifts = scoped.service_shifts()
+    if not shifts:
+        print("No service shifts stored. Set one: "
+              "household shift --set trash Wed --reason 'July 4th'")
+        return 0
+    for s in shifts:
+        reason = f" ({s['reason']})" if s.get("reason") else ""
+        print(f"  {s['service']}: week of {s['week']} → {labels[s['shifted_weekday'] % 7]}{reason}")
     return 0
 
 
@@ -2939,6 +3016,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="While the household is away: 'keep' (default) or 'suppress' "
         "(location-bound — trash/mail; skipped on vacation).",
     )
+    h_chore.add_argument(
+        "--service",
+        default=None,
+        help="Link to a municipal service (e.g. 'trash') whose pickup day can shift "
+        "on a holiday week — the reminder then follows the shift (see 'household shift').",
+    )
     h_chore.add_argument("--done", type=int, default=None, help="Mark chore done today, by id.")
     h_chore.add_argument("--remove", type=int, default=None, help="Remove chore by id.")
     h_chore.add_argument("--enable", type=int, default=None, help="Resume chore by id.")
@@ -2995,6 +3078,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     h_away.add_argument(
         "--clear", action="store_true", help="Clear the away window (back to not-away)."
+    )
+    h_shift = house_sub.add_parser(
+        "shift",
+        help="Show/set/clear a municipal service's holiday pickup-day shift for a week.",
+    )
+    h_shift.add_argument("--user", default=None, help="Handle of a household member.")
+    h_shift.add_argument(
+        "--set",
+        dest="shift_set",
+        nargs=2,
+        metavar=("SERVICE", "WEEKDAY"),
+        default=None,
+        help="Set a shift: SERVICE (e.g. trash) and the WEEKDAY it moved to "
+        "(0=Mon…6=Sun, or a name like 'Wed').",
+    )
+    h_shift.add_argument(
+        "--week",
+        default=None,
+        help="The affected week as any date in it 'YYYY-MM-DD' (default: this week).",
+    )
+    h_shift.add_argument("--reason", default=None, help="Why it shifted, e.g. 'July 4th'.")
+    h_shift.add_argument(
+        "--clear",
+        dest="shift_clear",
+        nargs=1,
+        metavar="SERVICE",
+        default=None,
+        help="Clear the shift for SERVICE in --week (default: this week).",
     )
     h_inv = house_sub.add_parser(
         "invite", help="Generate a shareable invite code for your household."

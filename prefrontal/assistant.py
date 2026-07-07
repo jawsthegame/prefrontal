@@ -190,14 +190,17 @@ ASSISTANT_SYSTEM = (
     "\"household.chores\" — set_chore can't rename. Pass enabled:false to pause. "
     "away_behavior controls what happens while the household is away (see below): "
     "\"keep\" (default — bills, meds still fire) or \"suppress\" (a location-bound "
-    "chore like trash/mail/plants that can't be done from afar, so it's skipped):\n"
+    "chore like trash/mail/plants that can't be done from afar, so it's skipped). "
+    "service links a chore to a municipal service (e.g. \"trash\", \"recycling\") "
+    "whose pickup day can shift on a holiday week — set it for the trash/recycling "
+    "reminder so a scraped shift moves that week's reminder (null = ordinary chore):\n"
     '- {"op":"set_chore","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
     '"month_days":[1-31]?,"remind_before":int?,"impact":str?,"enabled":bool?,'
-    '"owner_id":int?,"routine_id":int?,"away_behavior":"keep"|"suppress"?}\n'
+    '"owner_id":int?,"routine_id":int?,"away_behavior":"keep"|"suppress"?,"service":str?}\n'
     '- {"op":"edit_chore","chore_id":int,"title":str?,"due_time":"HH:MM"?,'
     '"days":[0-6]?,"month_days":[1-31]?,"remind_before":int?,"impact":str?,'
     '"enabled":bool?,"owner_id":int?,"routine_id":int?,'
-    '"away_behavior":"keep"|"suppress"?}\n'
+    '"away_behavior":"keep"|"suppress"?,"service":str?}\n'
     '- {"op":"remove_chore","chore_id":int}\n'
     "An \"away window\" marks the whole household as away (vacation / travel) over "
     "an inclusive local date range — while it's active, chores with "
@@ -346,6 +349,7 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
                 "owner_id": ch.get("owner_id"),
                 "routine_id": ch.get("routine_id"),
                 "away_behavior": ch.get("away_behavior") or "keep",
+                "service": ch.get("service"),
             }
             for ch in memory.chores()
         ],
@@ -1081,6 +1085,10 @@ def _v_edit_chore(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> 
         # Re-normalized against AWAY_BEHAVIORS by the handler's normalize_chore.
         params["away_behavior"] = action.get("away_behavior")
         changes.append(f"while away → {params['away_behavior']}")
+    if "service" in action:
+        # Normalized by the handler's normalize_chore; None/"" unlinks the service.
+        params["service"] = action.get("service")
+        changes.append(f"service → {params['service'] or 'none'}")
     if "owner_id" in action:
         oid = _resolve_link(action, household, "owner_id", "members")
         params["owner_id"] = oid
@@ -1469,6 +1477,7 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
                 impact=p.get("impact"),
                 enabled=p.get("enabled", True),
                 away_behavior=p.get("away_behavior", "keep"),
+                service=p.get("service"),
                 updated_by=memory.user_id,
             )
             result.update(ok=True, detail=f"chore #{cid}")

@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.household import (
+    apply_service_shift,
     away_covers,
     build_sheet,
     capped_away_window,
@@ -26,6 +27,7 @@ from prefrontal.household import (
     chore_missed_partner_message,
     chore_reminder_cover_message,
     chore_reminder_message,
+    chore_reminder_shift_message,
     describe_chore_days,
     describe_month_days,
     describe_schedule,
@@ -47,6 +49,7 @@ from prefrontal.household import (
     routine_is_complete,
     run_chores_check,
     scheduled_on,
+    service_week,
     with_effective_schedule,
 )
 from prefrontal.impact import utcnow
@@ -198,6 +201,7 @@ def test_normalize_chore_clean():
         "impact": "it makes the morning harder",
         "enabled": True,
         "away_behavior": "keep",
+        "service": None,
     }
 
 
@@ -686,6 +690,84 @@ def test_sweep_unassigned_chore_skips_away_members(store, dana, alex):
     run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
     # Unassigned → only the present member is reminded (Alex is away).
     assert [s["topic"] for s in sent] == ["dana-topic"]
+
+
+# --- service shifts (holiday pickup-day changes) -----------------------------
+
+# REMIND_NOW is Wed 2026-07-01; its week starts Mon 2026-06-29.
+_WEEK = "2026-06-29"
+_TUE = datetime.datetime(2026, 6, 30, 21, 40, 0)  # Tue in the same week, reminder window
+
+
+def test_service_week_is_the_local_monday():
+    assert service_week(REMIND_NOW) == _WEEK          # Wed → that Monday
+    assert service_week(_TUE) == _WEEK                # Tue → same Monday
+    assert service_week(datetime.datetime(2026, 6, 29, 8, 0)) == _WEEK  # Monday itself
+
+
+def test_apply_service_shift_moves_days_and_message():
+    chore = {"id": 1, "title": "take out trash", "due_time": "22:00", "days": "1",
+             "month_days": "5"}
+    shifted = apply_service_shift(chore, {"shifted_weekday": 2, "reason": "July 4th"})
+    assert shifted["days"] == "2" and shifted["month_days"] == ""   # moved to Wed, month cleared
+    msg = chore_reminder_shift_message(shifted)
+    assert "Wed" in msg and "July 4th" in msg and "take out trash" in msg
+
+
+def test_service_and_shift_round_trip_through_store(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="take out trash", due_time="22:00", days="1",
+                         service="trash", updated_by=dana_id)
+    assert dana.chores()[0]["service"] == "trash"
+    assert dana.chore(cid)["service"] == "trash"
+    dana.set_service_shift(service="trash", week=_WEEK, shifted_weekday=2, reason="July 4th")
+    got = dana.service_shift("trash", _WEEK)
+    assert got["shifted_weekday"] == 2 and got["reason"] == "July 4th"
+    assert dana.service_shift("trash", "2026-07-06") is None  # a different week
+    assert dana.clear_service_shift(service="trash", week=_WEEK) is True
+    assert dana.service_shift("trash", _WEEK) is None
+
+
+def test_sweep_moves_service_chore_to_shifted_day(store, dana):
+    """A holiday shift fires the reminder on the new day, with a 'moved' note."""
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    # Normally Tuesday (day 1) trash; this week a holiday moved it to Wednesday (2).
+    dana.set_chore(title="take out trash", due_time="22:00", days="1", owner_id=dana_id,
+                   service="trash", updated_by=dana_id)
+    dana.set_service_shift(service="trash", week=_WEEK, shifted_weekday=2, reason="July 4th")
+
+    # On the shifted day (Wed = REMIND_NOW) it fires, rephrased.
+    client, sent = _capture_client()
+    res = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+    assert res and res[0]["stage"] == "reminder"
+    assert [s["topic"] for s in sent] == ["dana-topic"]
+    assert "moved to Wed this week" in sent[0]["message"] and "July 4th" in sent[0]["message"]
+
+
+def test_sweep_service_chore_silent_on_normal_day_when_shifted(store, dana):
+    """With the pickup moved to Wed, the normal Tue reminder does NOT fire."""
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    dana.set_chore(title="take out trash", due_time="22:00", days="1", owner_id=dana_id,
+                   service="trash", updated_by=dana_id)
+    dana.set_service_shift(service="trash", week=_WEEK, shifted_weekday=2, reason="July 4th")
+
+    client, sent = _capture_client()
+    res = run_chores_check(dana, settings=UTC, now=_TUE, client=client)  # Tuesday
+    assert res == [] and sent == []  # moved off Tuesday → nothing on the old day
+
+
+def test_sweep_service_chore_unaffected_without_a_shift(store, dana):
+    """No shift stored → the service chore behaves exactly like a normal one."""
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    dana.set_chore(title="take out trash", due_time="22:00", days="2", owner_id=dana_id,
+                   service="trash", updated_by=dana_id)  # normally Wed
+    client, sent = _capture_client()
+    res = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)  # Wed
+    assert res and res[0]["stage"] == "reminder"
+    assert "moved to" not in sent[0]["message"]  # plain reminder, no shift note
 
 
 # --- HTTP + one-tap ----------------------------------------------------------
