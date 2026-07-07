@@ -473,6 +473,7 @@ def build_router(services: RouterServices) -> APIRouter:
     @router.get("/commitments", tags=["schedule"])
     def commitments_list(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        limit: int = 50,
     ) -> dict[str, Any]:
         """List active upcoming commitments, soonest first.
 
@@ -486,10 +487,15 @@ def build_router(services: RouterServices) -> APIRouter:
         un-hide affordance. ``previous`` carries recently-elapsed commitments still
         awaiting a made/missed answer (surfaced for about a day) so the dashboard
         can offer the "I made it / missed it" affordance.
+
+        ``limit`` (1–1000, default 50) bounds the upcoming list. The dashboard card
+        and widget use the default; the calendar page passes a high limit so it can
+        show everything we have (the card windows to the next week client-side).
         """
         memory = ctx.store
+        limit = max(1, min(1000, limit))
         return {
-            "commitments": memory.upcoming_commitments(),
+            "commitments": memory.upcoming_commitments(limit=limit),
             "previous": memory.previous_commitments(),
             "hidden": memory.hidden_commitments(),
             "calendars": resolved_settings.calendar_label_map,

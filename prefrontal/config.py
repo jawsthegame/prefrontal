@@ -114,10 +114,10 @@ class Settings:
             compatibility; set it to your actual zone so unzoned events don't land
             hours off.
         calendar_horizon_days: How far ahead calendar sync expands *recurring*
-            events (default 14). One-off events ingest at any distance; this only
-            bounds how far a weekly/standing series is materialized, so the week
-            view and slot finder see two weeks out instead of ~1 day. Env:
-            ``PREFRONTAL_CALENDAR_HORIZON_DAYS``.
+            events (default 30). One-off events ingest at any distance; this only
+            bounds how far a weekly/standing series is materialized (a series must
+            be bounded), so the calendar page and slot finder see a month out
+            instead of ~1 day. Env: ``PREFRONTAL_CALENDAR_HORIZON_DAYS``.
     """
 
     db_path: str = "prefrontal.db"
@@ -201,10 +201,10 @@ class Settings:
     timezone: str = "UTC"
     # How far ahead calendar sync materializes *recurring* events, in days (default
     # 14). One-off events ingest at any distance; this only bounds how far a weekly/
-    # standing series is expanded, so the household calendar and slot finder see two
-    # weeks out rather than ~1 day. The CLI/webhook sync pass it to `sync_calendar`
+    # standing series is expanded, so the calendar page and slot finder see a month
+    # out rather than ~1 day. The CLI/webhook sync pass it to `sync_calendar`
     # as `recur_horizon_hours`. See `prefrontal.commitments.RECUR_HORIZON_HOURS`.
-    calendar_horizon_days: float = 14.0
+    calendar_horizon_days: float = 30.0
     # Suggestion time windows: when a todo may be proposed into free time. The
     # off-zone is a hard local band nothing is ever suggested inside (default
     # 22:00-06:00 overnight); `todo_windows` maps a todo *category* or *source*
@@ -424,7 +424,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         account_domains=account_domains,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         calendar_horizon_days=float(
-            os.environ.get("PREFRONTAL_CALENDAR_HORIZON_DAYS", "14") or "14"
+            os.environ.get("PREFRONTAL_CALENDAR_HORIZON_DAYS", "30") or "30"
         ),
         todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
         todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),

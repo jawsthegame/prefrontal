@@ -1306,7 +1306,20 @@ function renderScrubber(count) {
   </div>`;
 }
 function renderCommitments(list, conflicts, cascade) {
-  const c = (list.commitments || []);
+  // The dashboard card is a "this week" view — the full horizon lives on the
+  // /calendar page. Recurring events now populate ~30 days out (and one-offs
+  // further), so cap the card's list to the next week to keep it glanceable and
+  // stop a month of events from burying today.
+  const CARD_HORIZON_DAYS = 7;
+  const cutoffMs = Date.now() + CARD_HORIZON_DAYS * 86400000;
+  const startMs = (ts) => {
+    const d = new Date(String(ts).replace(" ", "T") + "Z");
+    return isNaN(d) ? null : d.getTime();
+  };
+  const c = (list.commitments || []).filter((x) => {
+    const ms = startMs(x.start_at);
+    return ms == null || ms <= cutoffMs;  // keep undated (defensive) + within a week
+  });
   // Config-driven calendar pills: the /commitments response maps each feed slug
   // (calendar_key) to a {label, color}. A commitment whose calendar has no config
   // entry falls back to its default label as a plain pill — nothing hard-coded.
