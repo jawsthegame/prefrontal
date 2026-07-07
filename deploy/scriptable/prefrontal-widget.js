@@ -339,19 +339,26 @@ function fmtTimeShort(ts) {
   return `${h}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// The circular-slot value for the next commitment: the short time, prefixed with
-// a compact day token when it isn't today, so a commitment days out doesn't read
-// as a time this morning. Kept terse ("Wed 9:00", "7/14 9:00") to survive the
-// tiny slot's auto-shrink; today stays just the time.
-function fmtWhenShort(ts) {
-  if (!ts || isToday(ts)) return fmtTimeShort(ts);
+// A compact day token for a date that isn't today: a weekday within the coming
+// week ("Wed"), else a numeric date ("7/14"). Empty for today / an unparseable ts.
+function dayTokShort(ts) {
+  if (!ts || isToday(ts)) return "";
   const d = new Date(String(ts).replace(" ", "T") + "Z");
-  if (isNaN(d)) return fmtTimeShort(ts);
+  if (isNaN(d)) return "";
   const dayDiff = daysFromToday(d);
-  const tok = dayDiff > 0 && dayDiff < 7
+  return dayDiff > 0 && dayDiff < 7
     ? d.toLocaleDateString([], { weekday: "short" })
     : `${d.getMonth() + 1}/${d.getDate()}`;
-  return `${tok} ${fmtTimeShort(ts)}`;
+}
+
+// The circular-slot value for the next commitment: the short time, prefixed with
+// a compact day token when it isn't today, so a commitment days out doesn't read
+// as a time this morning. Kept terse ("Wed 9:00", "7/14 9:00"); the circular
+// renderer stacks the token over the time (see facetNext.lines) so a two-word
+// value doesn't truncate ("Wed 11:…") in the tiny slot.
+function fmtWhenShort(ts) {
+  const tok = dayTokShort(ts);
+  return tok ? `${tok} ${fmtTimeShort(ts)}` : fmtTimeShort(ts);
 }
 
 // A due departure ("leave now") arrives as the most recent *departure* nudge;
@@ -389,9 +396,17 @@ function facetInProgress() {
 }
 function facetNext() {
   if (!nextCommitment) return null;
+  const ts = nextCommitment.start_at;
+  const tok = dayTokShort(ts);
   return {
-    glyph: "calendar", value: fmtWhenShort(nextCommitment.start_at),
-    label: `${fmtWhen(nextCommitment.start_at)} ${nextCommitment.title}`,
+    glyph: "calendar", value: fmtWhenShort(ts),
+    // Circular slot only: stack the day token over the time so a two-word value
+    // ("Wed 11:00") doesn't truncate to "Wed 11:…" in the narrow circle. Today
+    // (no token) stays a single, larger line.
+    lines: tok
+      ? [{ text: tok, size: 12 }, { text: fmtTimeShort(ts), size: 15, bold: true }]
+      : [{ text: fmtTimeShort(ts), size: 17, bold: true }],
+    label: `${fmtWhen(ts)} ${nextCommitment.title}`,
     // Rectangular's second line carries the leave-by when we have one, so the
     // Lock Screen "next" slot says when to leave, not only the title.
     sub: nextDeparture ? `${nextCommitment.title} · ${leaveByText(nextDeparture)}` : nextCommitment.title,
@@ -487,28 +502,36 @@ function renderInline() {
 }
 
 function renderCircular() {
-  // A single glyph over a single value — big enough to read at arm's length.
+  // A glyph over its value — big enough to read at arm's length. Rows are laid
+  // out vertically and each is horizontally centered (spacer on both sides).
   w.addAccessoryWidgetBackground = true;
   w.setPadding(0, 0, 0, 0);
   const col = w.addStack();
   col.layoutVertically();
   col.centerAlignContent();
-  const top = col.addStack(); top.addSpacer();
-  const bot = col.addStack(); bot.addSpacer();
+  const row = () => { const r = col.addStack(); r.addSpacer(); return r; };
+  const centerText = (s, opts) => { const r = row(); text(r, s, opts); r.addSpacer(); };
+  const top = row();
   if (!ok) {
     symbol(top, "wifi.slash", 15); top.addSpacer();
-    text(bot, "—", { size: 15 }); bot.addSpacer();
+    centerText("—", { size: 15 });
     return;
   }
   const f = pickFacet();
   symbol(top, f.glyph, 15); top.addSpacer();
   // Outing: a live elapsed timer under the phase glyph, so the clock keeps
   // ticking between reloads — until it passes an hour, when the ticking seconds
-  // are dropped for static minutes. Other facets: the static value, auto-shrunk
-  // so a wider value (a time like "12:30") fits the circle instead of clipping.
-  if (f.timerDate && !f.elapsedIsLong) timer(bot, f.timerDate, { size: 16, bold: true, minScale: 0.5 });
-  else text(bot, f.timerDate ? f.elapsedStatic : f.value, { size: 16, bold: true, minScale: 0.5 });
-  bot.addSpacer();
+  // are dropped for static minutes. A multi-line facet (the "next" slot stacks
+  // its day token over the time) renders one centered row per line so neither
+  // truncates in the narrow circle. Otherwise the single value, auto-shrunk hard
+  // so a wider value (a time like "12:30") fits instead of clipping.
+  if (f.timerDate && !f.elapsedIsLong) {
+    const r = row(); timer(r, f.timerDate, { size: 16, bold: true, minScale: 0.5 }); r.addSpacer();
+  } else if (f.lines) {
+    for (const ln of f.lines) centerText(ln.text, { size: ln.size || 16, bold: !!ln.bold, minScale: 0.45 });
+  } else {
+    centerText(f.timerDate ? f.elapsedStatic : f.value, { size: 16, bold: true, minScale: 0.45 });
+  }
 }
 
 function renderRectangular() {
