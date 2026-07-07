@@ -360,8 +360,10 @@ positive `children.id`.
 - **`household_routines`** — a named grouping of chores with ONE **accountable**
   owner (`accountable_id`, RACI "A" — the mental-load holder, distinct from a
   chore's `owner_id` "responsible" doer). Carries the schedule its chores inherit:
-  `days` (weekday-int CSV; empty = every day) and `due_time` (`HH:MM` local, or
-  `''` = not time-tied — a pure grouping). Plus `impact`, `enabled`, provenance.
+  `days` (weekday-int CSV; empty = every day), `month_days` (day-of-month-int CSV
+  `"1,15"`; when set it takes precedence over `days`, and a day past a short month
+  fires on its last day), and `due_time` (`HH:MM` local, or `''` = not time-tied —
+  a pure grouping). Plus `impact`, `enabled`, provenance.
   `UNIQUE (household_id, title)`. Accountability is load: it's the "carrying" facet
   of the balance view (`accountability_counts`). Endpoints `POST /household/routines`
   (+`/enabled`, `/remove`); CLI `household routine`.
@@ -369,8 +371,9 @@ positive `children.id`.
 - **`household_chores`** — recurring shared chores (the active load-balancer):
   `title`, `owner_id` (RACI "R" — whose job to do it; NULL = either parent),
   `routine_id` (NULL = stands alone), `days` (weekday-int CSV; empty = inherit
-  routine / every day), `due_time` (`HH:MM` local; `''` = inherit the routine's
-  time, or run *untimed* — a checklist chore with no reminder), `remind_before`
+  routine / every day), `month_days` (day-of-month-int CSV `"1,15"`; when set it
+  takes precedence over `days`), `due_time` (`HH:MM` local; `''` = inherit the
+  routine's time, or run *untimed* — a checklist chore with no reminder), `remind_before`
   (minutes), `impact` (the "why"), `enabled`, and two local-date dedup cursors
   `last_reminded_on` / `last_missed_on`. A chore in a routine inherits its schedule
   unless it sets its own time (`effective_chore_schedule`). The sweep

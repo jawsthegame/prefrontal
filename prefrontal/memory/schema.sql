@@ -698,7 +698,8 @@ CREATE INDEX IF NOT EXISTS idx_household_invites_code ON household_invites (code
 -- Routines — a named grouping of chores with ONE accountable owner (RACI "A":
 -- the parent who holds the mental load and is answerable for the whole thing,
 -- distinct from whoever is "responsible" for doing each chore). A routine
--- carries the schedule its chores inherit (days + optional due time), so
+-- carries the schedule its chores inherit (weekdays or days of the month, +
+-- optional due time), so
 -- "Monday pickup prep" is defined once and every chore under it runs on that
 -- cadence unless the chore overrides. Accountability itself is load — the
 -- balance view counts it as a second facet ("carrying") alongside doing. See
@@ -709,6 +710,7 @@ CREATE TABLE IF NOT EXISTS household_routines (
     title          TEXT NOT NULL,                    -- "Monday pickup prep"
     accountable_id INTEGER REFERENCES users(id),     -- RACI "A" — mental-load holder (NULL = unassigned)
     days           TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = every day
+    month_days     TEXT NOT NULL DEFAULT '',         -- day-of-month ints CSV "1,15"; when set, takes precedence over days
     due_time       TEXT NOT NULL DEFAULT '',         -- "HH:MM" local, or '' = not time-tied
     impact         TEXT,                             -- why it matters ("mornings run late without it")
     enabled        INTEGER NOT NULL DEFAULT 1,       -- 0/1
@@ -723,7 +725,7 @@ CREATE INDEX IF NOT EXISTS idx_household_routines ON household_routines (househo
 -- Recurring shared chores — the "someone has to do this every day, and if it
 -- slips it lands on the other parent" load. Unlike a star chart (about the
 -- kids), a chore is about the *co-parents'* shared load: it's owned by one
--- member, recurs on chosen weekdays at a due time, and carries the plain reason
+-- member, recurs on chosen weekdays (or days of the month) at a due time, and carries the plain reason
 -- it matters ("makes the morning harder"). The notification flow reads it: a
 -- lead-time reminder to the owner, and — if the due time passes undone — a gentle
 -- heads-up to the *other* parent so the slip isn't a morning surprise. Completion
@@ -738,6 +740,7 @@ CREATE TABLE IF NOT EXISTS household_chores (
     owner_id      INTEGER REFERENCES users(id),     -- RACI "R" — whose job it is to do it (NULL = either parent)
     routine_id    INTEGER REFERENCES household_routines(id),  -- part of a routine (NULL = stands alone)
     days          TEXT NOT NULL DEFAULT '',         -- weekday ints CSV "0,1,2"; empty = inherit routine / every day
+    month_days    TEXT NOT NULL DEFAULT '',         -- day-of-month ints CSV "1,15"; when set, takes precedence over days
     due_time      TEXT NOT NULL DEFAULT '',         -- "HH:MM" local; '' = inherit routine, or not time-tied
     remind_before INTEGER NOT NULL DEFAULT 30,      -- minutes before due to nudge the owner
     impact        TEXT,                             -- why it matters ("makes the morning harder")

@@ -732,6 +732,13 @@ class ChoreSet(BaseModel):
         default_factory=list,
         description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = inherit routine / every day.",
     )
+    month_days: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Days of the month it recurs on: 1 … 31 (a day past a short month fires "
+            "on its last day). When set, takes precedence over `days`. Empty = none."
+        ),
+    )
     owner_id: int | None = Field(
         default=None,
         description="RACI 'R' — a member's user id whose job it is; null = either parent.",
@@ -771,6 +778,13 @@ class RoutineSet(BaseModel):
     days: list[int] = Field(
         default_factory=list,
         description="Weekdays it recurs on: 0=Mon … 6=Sun. Empty = every day.",
+    )
+    month_days: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Days of the month it recurs on: 1 … 31 (a day past a short month fires "
+            "on its last day). When set, takes precedence over `days`. Empty = none."
+        ),
     )
     impact: str | None = Field(
         default=None, description="Why the routine matters if it slips."

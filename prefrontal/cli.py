@@ -458,7 +458,7 @@ def _chores_cli(store, args, settings) -> int:
     deletes it, and ``--enable``/``--disable`` pause or resume its reminders.
     """
     from prefrontal.household import (
-        describe_chore_days,
+        describe_schedule,
         fmt_time_12h,
         normalize_chore,
         with_effective_schedule,
@@ -494,6 +494,7 @@ def _chores_cli(store, args, settings) -> int:
                 "title": args.add,
                 "due_time": args.due,
                 "days": args.days.split(",") if args.days else [],
+                "month_days": args.month_days.split(",") if args.month_days else [],
                 "owner_id": owner_id,
                 "remind_before": args.remind,
                 "impact": args.impact,
@@ -553,7 +554,7 @@ def _chores_cli(store, args, settings) -> int:
         routine = f" · {c['routine_title']}" if c.get("routine_title") else ""
         print(
             f"  [{box}] #{c['id']} {c['title']} "
-            f"({owner} · {describe_chore_days(eff['days'])} · {when}{routine})"
+            f"({owner} · {describe_schedule(eff['days'], eff.get('month_days'))} · {when}{routine})"
             f"{paused}{impact}"
         )
     return 0
@@ -567,7 +568,7 @@ def _routines_cli(store, args, settings) -> int:
     ``--accountable`` sets who holds it, ``--remove`` deletes it (its chores
     survive, unlinked), and ``--enable``/``--disable`` pause or resume it.
     """
-    from prefrontal.household import describe_chore_days, fmt_time_12h, normalize_routine
+    from prefrontal.household import describe_schedule, fmt_time_12h, normalize_routine
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
@@ -587,6 +588,7 @@ def _routines_cli(store, args, settings) -> int:
                 "title": args.add,
                 "due_time": args.due,
                 "days": args.days.split(",") if args.days else [],
+                "month_days": args.month_days.split(",") if args.month_days else [],
                 "accountable_id": accountable_id,
                 "impact": args.impact,
             }
@@ -627,7 +629,7 @@ def _routines_cli(store, args, settings) -> int:
         n = r.get("chore_count") or 0
         print(
             f"  #{r['id']} {r['title']} "
-            f"(accountable: {holder} · {describe_chore_days(r['days'])} · {when} · "
+            f"(accountable: {holder} · {describe_schedule(r['days'], r.get('month_days'))} · {when} · "
             f"{n} chore{'' if n == 1 else 's'}){paused}{impact}"
         )
     return 0
@@ -2840,6 +2842,12 @@ def build_parser() -> argparse.ArgumentParser:
     h_chore.add_argument(
         "--days", default=None, help="Weekday CSV '0,1,2' (0=Mon; omit = every day)."
     )
+    h_chore.add_argument(
+        "--month-days",
+        dest="month_days",
+        default=None,
+        help="Day-of-month CSV '1,15' (1–31; when set, wins over --days).",
+    )
     h_chore.add_argument("--owner", default=None, help="Owner's handle (with --add).")
     h_chore.add_argument(
         "--routine", default=None, help="Routine title to file this chore under (with --add)."
@@ -2865,6 +2873,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     h_routine.add_argument(
         "--days", default=None, help="Weekday CSV '0,1,2' (0=Mon; omit = every day)."
+    )
+    h_routine.add_argument(
+        "--month-days",
+        dest="month_days",
+        default=None,
+        help="Day-of-month CSV '1,15' (1–31; when set, wins over --days).",
     )
     h_routine.add_argument("--impact", default=None, help="Why the routine matters if it slips.")
     h_routine.add_argument("--remove", type=int, default=None, help="Remove routine by id.")

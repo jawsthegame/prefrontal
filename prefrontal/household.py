@@ -28,6 +28,7 @@ Sections, in order (§6 of the spec):
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 from dataclasses import dataclass, field
@@ -102,9 +103,9 @@ class HouseholdSheet:
         upcoming: Upcoming child appointments, soonest first.
         shopping: Shopping-list dicts (id/item/spec/where_to_buy/got/child_name/
             added_by_name), still-needed first.
-        chores: Recurring-chore dicts (id/title/owner_name/due_time/days/impact/
-            enabled) each carrying ``done_today`` for today's local date, enabled
-            first.
+        chores: Recurring-chore dicts (id/title/owner_name/due_time/days/month_days/
+            impact/enabled) each carrying ``done_today`` for today's local date,
+            enabled first.
         counts: ``{children, facts, agreements, upcoming, shopping, chores}`` for a
             summary line (``shopping`` is the still-needed count; ``chores`` counts
             the enabled ones).
@@ -313,6 +314,7 @@ def _chores_with_status(
             **c,
             "done_today": c["id"] in done_ids,
             "effective_days": eff["days"],
+            "effective_month_days": eff["month_days"],
             "effective_due_time": eff["due_time"],
         })
     out.sort(
@@ -998,8 +1000,44 @@ def format_chore_days(days: Any) -> str:
     return ",".join(str(d) for d in parse_chore_days(days))
 
 
+def parse_month_days(raw: Any) -> list[int]:
+    """Parse a stored day-of-month CSV (``"1,15"``) into sorted ints, or ``[]``.
+
+    The month counterpart to :func:`parse_chore_days`: only 1–31 survive (junk and
+    out-of-range dropped, de-duped, sorted). An empty list means "not month-scheduled"
+    — the schedule falls back to :func:`parse_chore_days`' weekday behaviour.
+    """
+    if isinstance(raw, (list, tuple, set)):
+        parts: list[Any] = list(raw)
+    else:
+        parts = str(raw or "").split(",")
+    days: set[int] = set()
+    for p in parts:
+        try:
+            n = int(str(p).strip())
+        except (ValueError, TypeError):
+            continue
+        if 1 <= n <= 31:
+            days.add(n)
+    return sorted(days)
+
+
+def format_month_days(days: Any) -> str:
+    """Format a day-of-month list back to the stored CSV (``[15,1]`` → ``"1,15"``)."""
+    return ",".join(str(d) for d in parse_month_days(days))
+
+
 #: Short weekday labels for the human-readable schedule (Mon=0 … Sun=6).
 _WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _ordinal(n: int) -> str:
+    """English ordinal for a day-of-month number (1 → "1st", 22 → "22nd", 31 → "31st")."""
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 def describe_chore_days(days: Any) -> str:
@@ -1012,6 +1050,30 @@ def describe_chore_days(days: Any) -> str:
     if parsed == [5, 6]:
         return "weekends"
     return ", ".join(_WEEKDAY_LABELS[d] for d in parsed)
+
+
+def describe_month_days(days: Any) -> str:
+    """A human phrase for a day-of-month schedule: "the 1st & 15th", "" if none."""
+    parsed = parse_month_days(days)
+    if not parsed:
+        return ""
+    ordinals = [_ordinal(d) for d in parsed]
+    if len(ordinals) == 1:
+        joined = ordinals[0]
+    else:
+        joined = ", ".join(ordinals[:-1]) + " & " + ordinals[-1]
+    return f"the {joined} of the month"
+
+
+def describe_schedule(days: Any, month_days: Any = "") -> str:
+    """The human schedule phrase, month-day-aware: month days win when set, else weekdays.
+
+    Mirrors :func:`scheduled_on`'s precedence so a surface reads the same cadence the
+    reminder sweep fires on — "the 1st & 15th of the month" when month days are set,
+    otherwise the weekday phrase ("every day", "weekdays", "Mon, Wed", …).
+    """
+    md = describe_month_days(month_days)
+    return md or describe_chore_days(days)
 
 
 def fmt_time_12h(hhmm: Any) -> str:
@@ -1027,10 +1089,11 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
 
     ``clean`` carries a storage-ready shape: ``title`` (trimmed, non-empty),
     ``owner_id`` (int or ``None`` = either parent), ``days`` as a weekday CSV
-    (empty = every day), ``due_time`` as ``"HH:MM"``, ``remind_before`` (1 …
-    :data:`MAX_CHORE_REMIND_BEFORE_MINUTES` minutes), ``impact`` (collapsed,
-    length-capped, or ``None``), and ``enabled``. Membership of ``owner_id`` is
-    the caller's to check — that needs the store.
+    (empty = every day), ``month_days`` as a day-of-month CSV (empty = not
+    month-scheduled; when set it takes precedence over ``days``), ``due_time`` as
+    ``"HH:MM"``, ``remind_before`` (1 … :data:`MAX_CHORE_REMIND_BEFORE_MINUTES`
+    minutes), ``impact`` (collapsed, length-capped, or ``None``), and ``enabled``.
+    Membership of ``owner_id`` is the caller's to check — that needs the store.
     """
     if not isinstance(raw, dict):
         return None, "chore must be an object"
@@ -1048,6 +1111,7 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
             return None, "due_time must be 'HH:MM' (24-hour), e.g. '22:00', or blank"
         due_time = due.strftime("%H:%M")  # tz-ok: normalizes a local schedule "HH:MM"
     days = format_chore_days(raw.get("days", []))
+    month_days = format_month_days(raw.get("month_days", []))
     remind_before = raw.get("remind_before", DEFAULT_CHORE_REMIND_BEFORE_MINUTES)
     try:
         remind_before = int(remind_before)
@@ -1068,6 +1132,7 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "title": title,
         "owner_id": owner_id,
         "days": days,
+        "month_days": month_days,
         "due_time": due_time,
         "remind_before": remind_before,
         "impact": impact,
@@ -1081,9 +1146,10 @@ def normalize_routine(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     A routine groups chores and names one **accountable** owner (RACI "A" — the
     mental-load holder, distinct from the "responsible" doer of each chore). It
     carries the schedule its chores inherit: ``days`` (weekday CSV, empty = every
-    day) and ``due_time`` (``"HH:MM"``, or empty = *not* time-tied — a plain
-    grouping with no clock). ``accountable_id`` is an int member id or ``None``
-    (unassigned); membership is the caller's to check (needs the store).
+    day), ``month_days`` (day-of-month CSV, empty = not month-scheduled; when set it
+    takes precedence over ``days``), and ``due_time`` (``"HH:MM"``, or empty = *not*
+    time-tied — a plain grouping with no clock). ``accountable_id`` is an int member
+    id or ``None`` (unassigned); membership is the caller's to check (needs the store).
     """
     if not isinstance(raw, dict):
         return None, "routine must be an object"
@@ -1112,6 +1178,7 @@ def normalize_routine(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "title": title,
         "accountable_id": accountable_id,
         "days": format_chore_days(raw.get("days", [])),
+        "month_days": format_month_days(raw.get("month_days", [])),
         "due_time": due_time,
         "impact": impact,
         "enabled": bool(raw.get("enabled", True)),
@@ -1120,35 +1187,66 @@ def normalize_routine(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
 
 def effective_chore_schedule(
     chore: dict[str, Any], routine: dict[str, Any] | None = None
-) -> tuple[str, str]:
-    """The ``(days, due_time)`` a chore actually runs on (schedule inheritance).
+) -> tuple[str, str, str]:
+    """The ``(days, month_days, due_time)`` a chore actually runs on (schedule inheritance).
 
-    A chore that sets its **own** ``due_time`` overrides fully (its own days +
-    time win). Otherwise it **inherits** its routine's schedule. A standalone
-    chore with no time of its own is *untimed* — it never fires a reminder or
-    miss-handoff; it's a checklist item you mark done (which still counts toward
-    the "doing" balance).
+    A chore that sets its **own** ``due_time`` overrides fully (its own days /
+    month days + time win). Otherwise it **inherits** its routine's whole schedule
+    (weekdays, days-of-month, and time together). A standalone chore with no time
+    of its own is *untimed* — it never fires a reminder or miss-handoff; it's a
+    checklist item you mark done (which still counts toward the "doing" balance).
     """
     own_due = _parse_hhmm(chore.get("due_time"))
     if own_due is not None:
-        return format_chore_days(chore.get("days")), own_due.strftime("%H:%M")  # tz-ok: local schedule "HH:MM"
+        return (
+            format_chore_days(chore.get("days")),
+            format_month_days(chore.get("month_days")),
+            own_due.strftime("%H:%M"),  # tz-ok: local schedule "HH:MM"
+        )
     if routine is not None:
-        return format_chore_days(routine.get("days")), str(routine.get("due_time") or "")
-    return format_chore_days(chore.get("days")), ""
+        return (
+            format_chore_days(routine.get("days")),
+            format_month_days(routine.get("month_days")),
+            str(routine.get("due_time") or ""),
+        )
+    return (
+        format_chore_days(chore.get("days")),
+        format_month_days(chore.get("month_days")),
+        "",
+    )
 
 
 def with_effective_schedule(
     chore: dict[str, Any], routine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """A copy of ``chore`` with ``days``/``due_time`` resolved via its routine."""
-    days, due_time = effective_chore_schedule(chore, routine)
-    return {**chore, "days": days, "due_time": due_time}
+    """A copy of ``chore`` with ``days``/``month_days``/``due_time`` resolved via its routine."""
+    days, month_days, due_time = effective_chore_schedule(chore, routine)
+    return {**chore, "days": days, "month_days": month_days, "due_time": due_time}
 
 
-def chore_scheduled_on(days: Any, now_local: datetime) -> bool:
-    """Whether a chore with ``days`` runs on ``now_local``'s weekday (empty = every day)."""
-    parsed = parse_chore_days(days)
-    return not parsed or now_local.weekday() in parsed
+def _month_day_matches(month_days: list[int], now_local: datetime) -> bool:
+    """Whether ``now_local``'s day-of-month matches any chosen day (short-month clamped).
+
+    A day past the current month's length (e.g. the 31st in February) fires on the
+    *last* day instead of silently skipping — so "pay rent on the 31st" still lands
+    at the end of a 28/30-day month.
+    """
+    last = calendar.monthrange(now_local.year, now_local.month)[1]
+    return any(now_local.day == min(d, last) for d in month_days)
+
+
+def scheduled_on(days: Any, month_days: Any, now_local: datetime) -> bool:
+    """Whether a schedule runs on ``now_local`` — month days win when set, else weekdays.
+
+    When ``month_days`` is non-empty the schedule is a monthly one (those calendar
+    days, regardless of weekday). Otherwise it falls back to the weekday behaviour:
+    the chosen weekdays, or every day when ``days`` is empty too.
+    """
+    md = parse_month_days(month_days)
+    if md:
+        return _month_day_matches(md, now_local)
+    wd = parse_chore_days(days)
+    return not wd or now_local.weekday() in wd
 
 
 def _due_minute(chore: dict[str, Any]) -> int | None:
@@ -1174,7 +1272,7 @@ def reminder_due(
     """
     if not chore.get("enabled", True) or done_today:
         return False
-    if not chore_scheduled_on(chore.get("days"), now_local):
+    if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
         return False
     due_min = _due_minute(chore)
     if due_min is None:
@@ -1201,7 +1299,7 @@ def miss_due(
     """
     if not chore.get("enabled", True) or done_today:
         return False
-    if not chore_scheduled_on(chore.get("days"), now_local):
+    if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
         return False
     due_min = _due_minute(chore)
     if due_min is None:
@@ -1482,7 +1580,7 @@ def render_sheet(sheet: HouseholdSheet) -> str:
         lines.append("## Routines")
         for r in sheet.routines:
             holder = r.get("accountable_name") or "unassigned"
-            bits = [f"accountable: {holder}", describe_chore_days(r.get("days"))]
+            bits = [f"accountable: {holder}", describe_schedule(r.get("days"), r.get("month_days"))]
             bits.append(f"by {fmt_time_12h(r['due_time'])}" if r.get("due_time") else "no set time")
             if not r.get("enabled"):
                 bits.append("paused")
@@ -1499,7 +1597,10 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             due = c.get("effective_due_time", c.get("due_time"))
             bits = [
                 f"{owner}",
-                describe_chore_days(c.get("effective_days", c.get("days"))),
+                describe_schedule(
+                    c.get("effective_days", c.get("days")),
+                    c.get("effective_month_days", c.get("month_days")),
+                ),
                 f"by {fmt_time_12h(due)}" if due else "untimed",
             ]
             if c.get("routine_title"):
