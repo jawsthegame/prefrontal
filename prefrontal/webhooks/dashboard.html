@@ -966,14 +966,15 @@ function scRow(c) {
   // add); shift-click removes one (nothing to remove at zero). The click handler
   // enforces this; the tooltip advertises whichever actions actually apply.
   const canAdd = recurring || !c.done;
-  // Flash a once-a-day essential (meds/meal) that's past its time and still not
-  // done — the can't-miss "you haven't taken your meds yet" case. Recurring checks
-  // (water) pace themselves and would strobe all day, so they don't flash.
-  const overdue = !!c.overdue && !recurring;
+  // Flash any check that's behind (server-computed `overdue`): a once-a-day
+  // essential past its time and not done (meds/meal), or a recurring one that's
+  // fallen behind its expected pace (water). The gentle amber pulse clears as soon
+  // as you catch up or hit the target.
+  const overdue = !!c.overdue;
   const acts = [canAdd ? "tap to log one" : null, c.count > 0 ? "shift-click to remove one" : null]
     .filter(Boolean).join(", ");
   const state = recurring
-    ? `${m.label}: ${c.count} of ${c.target} today`
+    ? `${m.label}: ${c.count} of ${c.target} today${overdue ? " — behind" : ""}`
     : (c.done ? `${m.label}: done today` : (overdue ? `${m.label}: not done yet — overdue` : m.label));
   const label = acts ? `${state} — ${acts}` : state;
   return `<button class="sc-chip${c.done ? " done" : ""}${overdue ? " sc-overdue" : ""}" data-sc-mark="${c.key}"`
