@@ -637,6 +637,90 @@ def test_routine_ops_validation_guards(hh_memory, memory):
     assert errors and "household" in errors[0]
 
 
+def test_execute_chore_create_edit_rename_remove(hh_memory):
+    # Create.
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "set_chore", "title": "Dishes", "due_time": "20:00", "days": [0, 1, 2]}],
+    )
+    assert res[0]["ok"] is True
+    cid = hh_memory.chores()[0]["id"]
+
+    # Edit by id: rename + pause, leaving the time untouched (merge preserves it).
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "edit_chore", "chore_id": cid, "title": "Kitchen tidy", "enabled": False}],
+    )
+    assert res[0]["ok"] is True
+    row = next(c for c in hh_memory.chores() if c["id"] == cid)
+    assert row["title"] == "Kitchen tidy"
+    assert row["enabled"] == 0
+    assert row["due_time"] == "20:00"  # unspecified field preserved across the edit
+
+    # Remove.
+    res = _plan_and_execute(hh_memory, [{"op": "remove_chore", "chore_id": cid}])
+    assert res[0]["ok"] is True
+    assert hh_memory.chores() == []
+
+
+def test_assistant_assigns_owner_and_accountable(hh_memory):
+    """A chore's owner and a routine's accountable holder resolve to a member id."""
+    hid = hh_memory.household_id_or_none()
+    provision_user(hh_memory, "alex", display_name="Alex")
+    hh_memory.set_user_household("alex", hid)
+    snap = assistant.build_snapshot(hh_memory)
+    members = {m["name"]: m["id"] for m in snap["household"]["members"]}
+    assert {"Dana", "Alex"} <= set(members)
+    alex = members["Alex"]
+
+    # Chore created with an owner, and a routine created with an accountable holder.
+    _plan_and_execute(
+        hh_memory,
+        [
+            {"op": "set_routine", "title": "Bedtime", "accountable_id": alex},
+            {"op": "set_chore", "title": "Trash", "due_time": "21:00", "owner_id": alex},
+        ],
+    )
+    assert next(r for r in hh_memory.routines() if r["title"] == "Bedtime")["accountable_id"] == alex
+    assert next(c for c in hh_memory.chores() if c["title"] == "Trash")["owner_id"] == alex
+
+    # Re-assign the chore's owner to the other parent, then clear it (either parent).
+    cid = next(c for c in hh_memory.chores() if c["title"] == "Trash")["id"]
+    dana = members["Dana"]
+    _plan_and_execute(hh_memory, [{"op": "edit_chore", "chore_id": cid, "owner_id": dana}])
+    assert next(c for c in hh_memory.chores() if c["id"] == cid)["owner_id"] == dana
+    _plan_and_execute(hh_memory, [{"op": "edit_chore", "chore_id": cid, "owner_id": None}])
+    assert next(c for c in hh_memory.chores() if c["id"] == cid)["owner_id"] is None
+
+
+def test_chore_ops_validation_guards(hh_memory, memory):
+    hh_memory.set_chore(title="Laundry", due_time="18:00", updated_by=hh_memory.user_id)
+    snap = assistant.build_snapshot(hh_memory)
+    cid = hh_memory.chores()[0]["id"]
+
+    # set_chore onto an existing name is refused (steered to edit_chore).
+    _a, errors = assistant.validate_actions([{"op": "set_chore", "title": "Laundry"}], snap)
+    assert errors and "already exists" in errors[0]
+    # edit/remove with an unknown id are refused.
+    _a, errors = assistant.validate_actions(
+        [{"op": "edit_chore", "chore_id": 9999, "title": "x"}], snap
+    )
+    assert errors and "no chore" in errors[0]
+    # An edit that changes nothing is refused.
+    _a, errors = assistant.validate_actions([{"op": "edit_chore", "chore_id": cid}], snap)
+    assert errors and "at least one field" in errors[0]
+    # Assigning an owner who isn't a household member is refused (id-discipline).
+    _a, errors = assistant.validate_actions(
+        [{"op": "edit_chore", "chore_id": cid, "owner_id": 9999}], snap
+    )
+    assert errors and "members" in errors[0]
+    # Chore ops are unavailable to a user with no household.
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_chore", "title": "Solo"}], assistant.build_snapshot(memory)
+    )
+    assert errors and "household" in errors[0]
+
+
 # --- endpoints ------------------------------------------------------------
 
 

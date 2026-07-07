@@ -330,6 +330,32 @@ def test_remove_and_enable(store, dana):
     assert dana.remove_chore(cid) is False
 
 
+def test_update_chore_edits_renames_and_guards(store, dana, alex):
+    """update_chore edits any attribute by id (incl. rename); ok/missing/duplicate."""
+    dana_id = store.get_user("dana")["id"]
+    alex_id = store.get_user("alex")["id"]
+    rid = dana.set_routine(title="Evening", due_time="20:00", updated_by=dana_id)
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=dana_id,
+                         updated_by=dana_id)
+
+    # Rename + reassign owner + retime + link under a routine, all at once.
+    assert dana.update_chore(
+        cid, title="run the dishwasher", due_time="21:30", owner_id=alex_id,
+        routine_id=rid, updated_by=dana_id,
+    ) == "ok"
+    got = next(c for c in dana.chores() if c["id"] == cid)
+    assert got["title"] == "run the dishwasher"
+    assert got["owner_id"] == alex_id
+    assert got["due_time"] == "21:30"
+    assert got["routine_id"] == rid
+
+    # A missing id → "missing"; renaming onto another chore's name → "duplicate".
+    assert dana.update_chore(9999, title="x", updated_by=dana_id) == "missing"
+    other = dana.set_chore(title="trash", due_time="19:00", updated_by=dana_id)
+    assert dana.update_chore(other, title="run the dishwasher",
+                             updated_by=dana_id) == "duplicate"
+
+
 # --- sheet render ------------------------------------------------------------
 
 
