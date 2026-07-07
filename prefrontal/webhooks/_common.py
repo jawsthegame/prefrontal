@@ -21,14 +21,32 @@ ACTION_OUTCOME: dict[str, str] = {
     "partial": "partial",
 }
 
+#: The shared card-column layout (draggable/collapsible columns), read once and
+#: injected into every page that opts in with a ``.masonry[data-layout-key]``
+#: container. Kept in standalone .css/.js files (editor tooling) but folded into
+#: each page at import so the served HTML stays self-contained — the same reason
+#: the pages inline everything else.
+_CARD_LAYOUT_CSS = (Path(__file__).with_name("_card_layout.css")).read_text(encoding="utf-8")
+_CARD_LAYOUT_JS = (Path(__file__).with_name("_card_layout.js")).read_text(encoding="utf-8")
+
+
+def _with_card_layout(html: str) -> str:
+    """Fold the shared card-layout CSS/JS into a page at its ``<!--CARD_LAYOUT_*-->``
+    tokens. A page without the tokens is returned unchanged."""
+    return (
+        html.replace("<!--CARD_LAYOUT_CSS-->", _CARD_LAYOUT_CSS)
+        .replace("<!--CARD_LAYOUT_JS-->", f"<script>\n{_CARD_LAYOUT_JS}\n</script>")
+    )
+
+
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
 DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
 #: The editable household hub — the one writable surface for the shared sheet
 #: (kids, pets, facts, agreements, shopping, routines).
-HOUSEHOLD_HTML = (Path(__file__).with_name("household.html")).read_text(encoding="utf-8")
+HOUSEHOLD_HTML = _with_card_layout((Path(__file__).with_name("household.html")).read_text(encoding="utf-8"))
 #: The read-only lens shell, parameterized per focus by replacing ``__LENS__``
 #: with ``kids`` / ``pets`` (see :func:`lens_html`). One file backs both lenses.
-LENS_HTML = (Path(__file__).with_name("lens.html")).read_text(encoding="utf-8")
+LENS_HTML = _with_card_layout((Path(__file__).with_name("lens.html")).read_text(encoding="utf-8"))
 
 
 def lens_html(lens: str) -> str:
@@ -41,7 +59,7 @@ def lens_html(lens: str) -> str:
     """
     return LENS_HTML.replace("__LENS__", lens)
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
-STATS_HTML = (Path(__file__).with_name("stats.html")).read_text(encoding="utf-8")
+STATS_HTML = _with_card_layout((Path(__file__).with_name("stats.html")).read_text(encoding="utf-8"))
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
 #: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
 REVIEW_HTML = (Path(__file__).with_name("review.html")).read_text(encoding="utf-8")

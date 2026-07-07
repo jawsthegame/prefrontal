@@ -46,10 +46,10 @@
   .theme-toggle:hover { border-color: var(--accent); }
 
   /* ── Page ──────────────────────────────────────────────────────────────── */
-  header { max-width: 720px; margin: 0 auto; padding: 22px 18px 4px; }
+  header { max-width: 1400px; margin: 0 auto; padding: 22px 18px 4px; }
   header h1 { font-size: 24px; margin: 0; font-weight: 680; }
   header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 4px 16px 48px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
     padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
   .label { font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
@@ -98,6 +98,7 @@
   #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
     color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
   #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+<!--CARD_LAYOUT_CSS-->
 </style>
 </head>
 <body>
@@ -112,6 +113,11 @@
     <a href="/review">Review</a>
     <a href="/settings">Settings</a>
   </div>
+  <label class="col-picker" title="How many columns to arrange cards into">Cols
+    <select id="col-count" aria-label="Number of card columns">
+      <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+    </select>
+  </label>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
 </nav>
 
@@ -121,6 +127,7 @@
 </header>
 
 <div class="wrap" id="wrap" style="display:none">
+  <main class="masonry" data-layout-key="prefrontal_stats_layout">
   <section class="card" id="c-time">
     <p class="label">Time-estimation accuracy</p>
     <p class="sub">How long things actually take vs. what you estimated.</p>
@@ -144,6 +151,7 @@
     <p class="sub">How you answer the basic-needs checks — and the learned cadence.</p>
     <div id="selfcare-body"></div>
   </section>
+  </main>
 
   <footer>Learned from your logged outcomes · updates as you go</footer>
 </div>
@@ -161,6 +169,7 @@
   </div>
 </div>
 
+<!--CARD_LAYOUT_JS-->
 <script>
 const KEY = "prefrontal_token";
 const REFRESH_MS = 60000;
@@ -325,6 +334,7 @@ async function load() {
   const n = (data.counts || {}).episodes || 0;
   $("#status").textContent = `${n} event${n === 1 ? "" : "s"} · updated ` +
     new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (window.initCardLayout) initCardLayout();  // arrange cards once the container is visible
 }
 
 function start() { load(); clearInterval(timer); timer = setInterval(load, REFRESH_MS); }
