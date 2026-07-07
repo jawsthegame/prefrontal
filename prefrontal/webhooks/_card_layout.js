@@ -259,4 +259,37 @@
       });
     }
   };
+
+  // Collapse-only mode — for pages that want collapsible, persisted cards but
+  // no column layout (a single-column form/list page). Opt in with a container
+  // <div … data-collapse-key="prefrontal_<view>_layout">; each <section class="card">
+  // inside it that has an id becomes collapsible by clicking its heading.
+  window.initCardCollapse = function () {
+    const box = document.querySelector("[data-collapse-key]");
+    if (!box || box.dataset.collapseReady) return;
+    box.dataset.collapseReady = "1";
+    const KEY = box.dataset.collapseKey;
+    let state; try { state = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (_) { state = {}; }
+    state.collapsed = state.collapsed || {};
+    const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {} };
+    box.querySelectorAll(".card").forEach((card) => {
+      if (!card.id) return;
+      const h = card.querySelector(":scope > h2, :scope > .label");
+      if (h && !h.querySelector(".collapse-caret")) {
+        h.classList.add("collapsible-head");
+        const car = document.createElement("span");
+        car.className = "collapse-caret"; car.setAttribute("aria-hidden", "true");
+        h.insertBefore(car, h.firstChild);
+      }
+      card.classList.toggle("collapsed", !!state.collapsed[card.id]);
+    });
+    box.addEventListener("click", (e) => {
+      const h = e.target.closest("h2, .label");
+      if (!h || !h.parentElement || !h.parentElement.classList.contains("card") || !h.parentElement.id) return;
+      const card = h.parentElement;
+      const on = card.classList.toggle("collapsed");
+      if (on) state.collapsed[card.id] = true; else delete state.collapsed[card.id];
+      save();
+    });
+  };
 })();
