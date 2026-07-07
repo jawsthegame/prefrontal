@@ -431,10 +431,20 @@ def render_briefing(
 ) -> str:
     """Render a :class:`Briefing` as Markdown (the deterministic digest).
 
-    The layout leads with today and what to act on (schedule → leave-by →
-    risks → opportunities), then closes with the gentler look-back (what slipped,
-    focus, balance) and a one-line note — so the actionable part is up top and the
-    reflective part sits by the encouragement at the end.
+    The digest is organized into three scannable zones under ``##`` headers, so
+    the eye can land on the part it wants instead of reading a flat wall of
+    equal-weight lines:
+
+    - **📅 Today** — the schedule and what to act on now (leave-by, double-bookings,
+      the tight-stretch preview).
+    - **🎯 On your radar** — things you *could* pick up (what keeps sliding, triage's
+      worth-a-look items, spare-time suggestions).
+    - **🔎 Looking back** — the gentler weekly view (what slipped, focus switches,
+      focus balance), sitting by the closing note.
+
+    A zone's header is only emitted when it has something to show, so a quiet day
+    stays short. Within a zone each item is one calm line (or a small bullet list),
+    separated by blank lines — no stacked bold headers competing for attention.
 
     Honors ``briefing.format``: ``short`` keeps it to headlines, ``long`` lists
     every commitment.
@@ -451,49 +461,51 @@ def render_briefing(
         A Markdown string suitable for printing or delivery.
     """
     long = briefing.format == "long"
-    lines = [f"# Morning briefing — {briefing.date}", ""]
+    lines: list[str] = [f"# Morning briefing — {briefing.date}"]
 
-    # --- What today looks like, and what to act on -----------------------------
+    def block(*item_lines: str) -> None:
+        """Append a blank-line-separated block so blocks never run together.
 
-    # Today.
+        Markdown collapses adjacent non-list lines into one paragraph, so every
+        distinct one-liner needs its own block; the leading blank is what gives
+        the digest its breathing room.
+        """
+        lines.append("")
+        lines.extend(item_lines)
+
+    # ── 📅 Today — the schedule and what to act on now ─────────────────────────
     if not briefing.today:
-        lines.append("**📅 Today:** nothing on the calendar. 🎉")
+        block("## 📅 Today", "You've got nothing on the calendar. 🎉")
     else:
         n = len(briefing.today)
         hard = sum(1 for c in briefing.today if c.get("hardness") == "hard")
         noun = "commitment" if n == 1 else "commitments"
-        lines.append(
-            f"**📅 Today:** {n} {noun}" + (f", {hard} hard." if hard else ".")
-        )
-        if long or len(briefing.today) <= 5:
+        head = f"## 📅 Today · {n} {noun}" + (f" ({hard} hard)" if hard else "")
+        rows: list[str] = []
+        if long or n <= 5:
             for c in briefing.today:
                 mark = " (hard)" if c.get("hardness") == "hard" else ""
                 cal = f" · {c['calendar']}" if c.get("calendar") else ""
                 fyi = " · FYI" if c.get("kind") == "fyi" else ""
-                lines.append(f"- {_time_of(c, briefing.tz)} — {c['title']}{mark}{cal}{fyi}")
-    lines.append("")
+                rows.append(f"- {_time_of(c, briefing.tz)} — {c['title']}{mark}{cal}{fyi}")
+        block(head, *rows)
 
     # Leave by — when to head out for today's remaining travel commitments, so the
     # digest surfaces the actionable time (departure), not only the start time.
-    if briefing.departures:
-        lines.append("**🚶 Leave by:**")
-        for d in briefing.departures:
-            travel = (
-                f" (~{round(d['travel_minutes'])} min travel)"
-                if d.get("travel_minutes") is not None
-                else ""
-            )
-            lines.append(f"- {_local_hm(d['leave_by'], briefing.tz)} for {d['title']}{travel}")
-        lines.append("")
+    for d in briefing.departures:
+        travel = (
+            f" (~{round(d['travel_minutes'])} min travel)"
+            if d.get("travel_minutes") is not None
+            else ""
+        )
+        block(f"🚶 Leave by {_local_hm(d['leave_by'], briefing.tz)} for {d['title']}{travel}")
 
     # Conflicts.
-    if briefing.conflicts:
-        lines.append(f"**⚠️ Double-bookings:** {len(briefing.conflicts)}")
-        for c in briefing.conflicts:
-            lines.append(
-                f"- '{c['a']}' overlaps '{c['b']}' by {c['overlap_minutes']:g} min"
-            )
-        lines.append("")
+    for c in briefing.conflicts:
+        block(
+            f"⚠️ Double-booking: '{c['a']}' overlaps '{c['b']}' by "
+            f"{c['overlap_minutes']:g} min"
+        )
 
     # Fragile stretch — a back-to-back run that holds on paper but topples if you
     # run your usual bit long. A preview, not an alarm: framed as "if things run
@@ -504,67 +516,71 @@ def render_briefing(
             f"{f['title']} (~{round(f['delay_minutes'])} min late)" for f in shown
         )
         more = "" if len(briefing.fragile) <= 3 else f" +{len(briefing.fragile) - 3} more"
-        first = briefing.fragile[0]
-        trigger = first.get("caused_by") or "the first"
-        lines.append(
-            f"**⏳ Tight stretch:** if today runs long, {chain}{more} — "
+        trigger = briefing.fragile[0].get("caused_by") or "the first"
+        block(
+            f"⏳ Tight stretch: if today runs long, {chain}{more} — "
             f"it starts with '{trigger}' overrunning."
         )
-        lines.append("")
 
-    # Avoidance — the important things that keep sliding. Named plainly, but
-    # without a scolding "you keep …": a nudge to pick one up, not a telling-off.
-    if briefing.avoided:
-        lines.append("**🐢 Keeps sliding:**")
-        for a in briefing.avoided:
-            lines.append(f"- {a['title']} — open {a['days_open']:g} days")
-        lines.append("")
-
-    # Worth a look — triage surfaced these (seen once, no action taken for you).
-    if briefing.surfaced:
-        lines.append("**📥 Worth a look:**")
-        for s in briefing.surfaced[:5]:
-            src = f" ({s['source']})" if s.get("source") else ""
-            lines.append(f"- {s['title']}{src}")
-        lines.append("")
-
-    # Spare time + suggestions.
+    # ── 🎯 On your radar — things you could pick up ────────────────────────────
     suggested = [s for s in briefing.spare if s["suggestion"]]
-    if suggested:
-        lines.append("**✨ Spare time:**")
-        for s in suggested:
-            alts = s.get("alternatives") or []
-            or_line = f" _(or: {', '.join(alts)})_" if alts else ""
-            lines.append(
-                f"- {_local_hm(s['start'], briefing.tz)} ({s['minutes']:g} min free) — good for: "
-                f"{s['suggestion']}{or_line}"
+    if briefing.avoided or briefing.surfaced or suggested:
+        block("## 🎯 On your radar")
+
+        # Avoidance — the important things that keep sliding. Named plainly, but
+        # without a scolding "you keep …": a nudge to pick one up, not a telling-off.
+        if briefing.avoided:
+            block(
+                "🐢 Keeps sliding",
+                *[f"- {a['title']} — open {a['days_open']:g} days" for a in briefing.avoided],
             )
-        lines.append("")
 
-    # --- The gentler look-back, down by the closing note -----------------------
+        # Worth a look — triage surfaced these (seen once, no action taken for you).
+        if briefing.surfaced:
+            block(
+                "📥 Worth a look",
+                *[
+                    f"- {s['title']}" + (f" ({s['source']})" if s.get("source") else "")
+                    for s in briefing.surfaced[:5]
+                ],
+            )
 
-    # What slipped.
-    if briefing.slips:
-        total = sum(briefing.slips.values())
-        detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
-        lines.append(f"**📉 Slipped (last {SLIP_WINDOW_DAYS}d):** {total} — {detail}.")
-        lines.append("")
+        # Spare time + suggestions.
+        if suggested:
+            spare_lines: list[str] = []
+            for s in suggested:
+                alts = s.get("alternatives") or []
+                spare_lines.append(
+                    f"- {_local_hm(s['start'], briefing.tz)} "
+                    f"({s['minutes']:g} min free) — {s['suggestion']}"
+                )
+                if alts:
+                    spare_lines.append(f"  _or: {', '.join(alts)}_")
+            block("✨ Spare time", *spare_lines)
 
-    # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
-    if briefing.switch_feedback:
-        lines.append(f"**🔁 Focus switches (last 24h):** {briefing.switch_feedback}.")
-        lines.append("")
+    # ── 🔎 Looking back — the gentler weekly view ──────────────────────────────
+    if briefing.slips or briefing.switch_feedback or briefing.balance:
+        block("## 🔎 Looking back")
 
-    # Focus balance — where the week's out-of-home time went, by life-sphere.
-    if briefing.balance:
-        lines.append(f"**⚖️ Focus balance:** {briefing.balance}")
-        lines.append("")
+        # What slipped.
+        if briefing.slips:
+            total = sum(briefing.slips.values())
+            detail = ", ".join(f"{n} {t}" for t, n in sorted(briefing.slips.items()))
+            block(f"📉 Slipped (last {SLIP_WINDOW_DAYS}d): {total} — {detail}.")
+
+        # Switch-rate reflection (Impulsivity) — deferrals framed as the win.
+        if briefing.switch_feedback:
+            block(f"🔁 Focus switches (last 24h): {briefing.switch_feedback}.")
+
+        # Focus balance — where the week's out-of-home time went, by life-sphere.
+        if briefing.balance:
+            block(f"⚖️ Focus balance: {briefing.balance}")
 
     # Closing note. When the encouragement layer flagged the day (spec §6.2), its
     # line takes the place of the usual time-bias reminder — a rough/packed day
     # doesn't need a nag, and a wide-open one gets the relax-vs-accomplish choice.
     if briefing.encouragement:
-        lines.append(f"_{briefing.encouragement}_")
+        block(f"_{briefing.encouragement}_")
     else:
         bias = briefing.coaching.get("time_estimation_bias")
         if bias:
@@ -574,7 +590,7 @@ def render_briefing(
                 pct = 0
             # Only nudge when there's a real learned overrun — "~0%" is noise.
             if pct > 0:
-                lines.append(
+                block(
                     f"_Reminder: you tend to underestimate time by ~{pct}% — "
                     f"give today's plans a little extra room._"
                 )

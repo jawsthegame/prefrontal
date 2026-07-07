@@ -85,7 +85,7 @@ def test_briefing_renders_times_in_local_zone(store, monkeypatch):
     text = render_briefing(build_briefing(store, now=now))
     assert "- 10:00 — Dentist" in text  # commitment line in local time
     assert "14:00" not in text  # the UTC wall clock never leaks through
-    assert "- 09:45 for Dentist" in text  # leave-by (start − 15 min) in local time
+    assert "Leave by 09:45 for Dentist" in text  # leave-by (start − 15 min) in local time
 
 
 def test_build_briefing_collects_today_conflicts_slips(store):
@@ -199,7 +199,7 @@ def test_briefing_surfaces_leave_by_for_travel_commitment(store):
     leave = b.departures[0]["leave_by"]
     assert leave[11:16] == (now + timedelta(minutes=105)).strftime("%H:%M")
     text = render_briefing(b)
-    assert "🚶 Leave by:" in text
+    assert "🚶 Leave by " in text
     assert "for Dentist" in text
 
 
