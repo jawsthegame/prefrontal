@@ -47,6 +47,7 @@ from prefrontal.todos import (
     avoided_todos,
     category_stats,
     decompose_task,
+    focus_conflict,
     follow_through_stats,
     heuristic_category,
     heuristic_deadline,
@@ -59,6 +60,7 @@ from prefrontal.todos import (
     reclassify_hygiene_drops,
     requires_travel,
     resolve_category,
+    sort_todos_for_display,
     todo_episode_fields,
 )
 from tests.conftest import scoped_default
@@ -1056,6 +1058,87 @@ def test_todos_avoided_endpoint_and_flag(client, store_open):
     flagged = {t["title"]: t["avoidance"] is not None for t in todos}
     assert flagged["Call insurance"] is True
     assert flagged["Just added"] is False
+
+
+# -- focus conflict (working on the wrong thing) & display pinning ------------
+
+
+def test_focus_conflict_flags_lower_priority_started_task():
+    now = datetime(2026, 7, 1, 12, 0, 0)
+    # An important task, aged into "avoided", not started.
+    important = _aged_todo(id=1, title="Renew passport", priority=3)
+    # A minor task you've actually started working on.
+    minor = _aged_todo(
+        id=2, title="Sort desk photos", priority=1,
+        created_at="2026-07-01 09:00:00", started_at="2026-07-01 11:00:00",
+    )
+    conflict = focus_conflict([important, minor], now)
+    assert conflict is not None
+    assert conflict["working_on"]["id"] == 2
+    assert conflict["instead"]["id"] == 1
+    assert conflict["days_open"] == 6.0
+
+
+def test_focus_conflict_quiet_cases():
+    now = datetime(2026, 7, 1, 12, 0, 0)
+    important = _aged_todo(id=1, title="Renew passport", priority=3)
+    started_important = {**important, "started_at": "2026-07-01 11:00:00"}
+    minor_started = _aged_todo(
+        id=2, title="Sort photos", priority=1,
+        created_at="2026-07-01 09:00:00", started_at="2026-07-01 11:00:00",
+    )
+
+    # Nothing started → nothing to be "working on".
+    assert focus_conflict([important], now) is None
+    # You've started the important thing too → you're engaged, no nag.
+    assert focus_conflict([started_important, minor_started], now) is None
+    # An aged, important, *started* task is the only todo → it's the thing you're
+    # working on, so there's no more-important unstarted task to switch to.
+    assert focus_conflict(
+        [_aged_todo(id=3, title="Big thing", priority=3, started_at="2026-07-01 11:00:00")],
+        now,
+    ) is None
+    # The important task isn't avoided yet (fresh) → no conflict.
+    fresh_important = _aged_todo(
+        id=4, title="Fresh big thing", priority=3, created_at="2026-07-01 09:00:00"
+    )
+    assert focus_conflict([fresh_important, minor_started], now) is None
+
+
+def test_focus_conflict_endpoint(client, store_open):
+    minor = store_open.add_todo("Tidy inbox", estimate_minutes=10, priority=1)
+    important = store_open.add_todo("Renew passport", estimate_minutes=20, priority=3)
+    store_open.conn.execute(
+        "UPDATE todos SET created_at = ? WHERE id = ?", ("2020-01-01 00:00:00", important)
+    )
+    store_open.conn.commit()
+    store_open.start_todo(minor)  # working on the minor one
+
+    fc = client.get("/todos", headers=_auth()).json()["focus_conflict"]
+    assert fc is not None
+    assert fc["working_on"] == "Tidy inbox" and fc["instead"] == "Renew passport"
+    assert fc["working_on_id"] == minor and fc["instead_id"] == important
+
+
+def test_sort_todos_for_display_pins_started_first():
+    """Started todos rise to the top; order within each group is preserved."""
+    todos = [
+        {"id": 1, "title": "A", "started_at": None},
+        {"id": 2, "title": "B", "started_at": "2026-07-01 09:00:00"},
+        {"id": 3, "title": "C", "started_at": None},
+        {"id": 4, "title": "D", "started_at": "2026-07-01 10:00:00"},
+    ]
+    assert [t["id"] for t in sort_todos_for_display(todos)] == [2, 4, 1, 3]
+
+
+def test_todos_list_pins_in_progress_to_top(client, store_open):
+    """The list endpoint surfaces a started (lower-priority) todo above an unstarted
+    higher-priority one, even though open_todos() would order by priority."""
+    low = store_open.add_todo("Water the plants", estimate_minutes=5, priority=1)
+    store_open.add_todo("File the report", estimate_minutes=30, priority=3)
+    store_open.start_todo(low)
+    titles = [t["title"] for t in client.get("/todos", headers=_auth()).json()["todos"]]
+    assert titles[0] == "Water the plants"
 
 
 def test_briefing_surfaces_avoided(store):

@@ -813,6 +813,78 @@ def avoided_todos(
     return out
 
 
+def _todo_priority(todo: dict[str, Any]) -> int:
+    """A todo's priority as an int, defaulting an absent value to 1 (normal).
+
+    The same normalization :func:`avoidance_score` and :func:`_dropped_is_give_up`
+    apply inline; named here so :func:`focus_conflict` compares on the same scale.
+    """
+    priority = todo.get("priority")
+    return 1 if priority is None else int(priority)
+
+
+def focus_conflict(
+    todos: list[dict[str, Any]], now: datetime
+) -> dict[str, Any] | None:
+    """Whether you're mid-flight on a *less important* task than one you're avoiding.
+
+    The honest-prioritization companion to :func:`avoided_todos`: it's not enough
+    to surface the thing you keep skipping — the sharper signal is catching it while
+    you're actively working on something *lower* priority instead. "Working on" is a
+    todo the user explicitly **started** (``started_at`` set, still open).
+
+    Fires only when *everything* you've started is strictly lower priority than the
+    most-important task you're **avoiding and haven't started** (the top of
+    :func:`avoided_todos`). If you've also started something at least as important,
+    you're already engaged with what matters, so there's no conflict — this stays
+    quiet rather than nagging. Low-priority "someday" items can't be the "instead"
+    (``avoided_todos`` already exempts them), so it never pushes a genuine maybe.
+
+    Returns ``{working_on, instead, days_open}`` — the low-priority started todo, the
+    more-important avoided one, and how long the latter's sat — or ``None`` when
+    nothing is started, nothing important is being avoided, or you're already on it.
+    """
+    started = [
+        t
+        for t in todos
+        if (t.get("status") or "open") == "open" and t.get("started_at")
+    ]
+    if not started:
+        return None
+    instead_hit = next(
+        (a for a in avoided_todos(todos, now) if not a["todo"].get("started_at")),
+        None,
+    )
+    if instead_hit is None:
+        return None
+    instead = instead_hit["todo"]
+    instead_priority = _todo_priority(instead)
+    # Quiet unless the *most* important thing you've started still ranks below the
+    # avoided task — otherwise you're engaged with something that matters.
+    if max(_todo_priority(t) for t in started) >= instead_priority:
+        return None
+    working_on = min(started, key=_todo_priority)
+    return {
+        "working_on": working_on,
+        "instead": instead,
+        "days_open": instead_hit["days_open"],
+    }
+
+
+def sort_todos_for_display(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return ``todos`` with in-progress (started) ones pinned to the top.
+
+    A *stable* sort on "not started", so the caller's existing order (from
+    :meth:`~prefrontal.memory.repos.todos.TodosRepo.open_todos` — priority then
+    deadline) is preserved within both the started and not-started groups. This is a
+    display concern only: it keeps the task you're mid-flight on visible at the top
+    of the list instead of letting it sink under a higher-priority item you haven't
+    begun, without touching the store's ordering (which scheduling/briefing/fitting
+    all read raw).
+    """
+    return sorted(todos, key=lambda t: 0 if t.get("started_at") else 1)
+
+
 # --- Category rollup (grouping → trends) -------------------------------------
 #
 # The derived-set view of categories: no registry table, so "the categories in
