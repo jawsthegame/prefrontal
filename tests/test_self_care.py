@@ -441,6 +441,26 @@ def test_status_reports_progress_and_meds_disabled(store):
     assert by_key["meal"]["start_hour"] == 11 and by_key["water"]["start_hour"] == 9
 
 
+def test_status_overdue_flag(store):
+    """A check is overdue when enabled, unmet, and past its start hour — the flash cue."""
+    store.set_state("self_care", "on")
+    store.set_state("meds_enabled", "on")  # meds ship off; turn on for this user
+    # Meds start hour is 9. At 15:00 with nothing logged → overdue.
+    late = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    assert next(c for c in late["checks"] if c["key"] == "meds")["overdue"] is True
+    # Before the start hour (08:00) → not overdue yet.
+    early = self_care_status(store, datetime(2026, 7, 2, 8, 0, 0), "UTC")
+    assert next(c for c in early["checks"] if c["key"] == "meds")["overdue"] is False
+    # Once taken, it's not overdue even later in the day.
+    store.set_state("meds_count", "2026-07-02|1")
+    taken = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    assert next(c for c in taken["checks"] if c["key"] == "meds")["overdue"] is False
+    # A disabled check is never overdue (meal left on by the master switch here).
+    store.set_state("meds_enabled", "off")
+    off = self_care_status(store, datetime(2026, 7, 2, 15, 0, 0), "UTC")
+    assert next(c for c in off["checks"] if c["key"] == "meds")["overdue"] is False
+
+
 def test_status_start_hour_tolerates_hh_mm(store):
     """A start hour hand-edited to "HH:MM" still reports the right hour."""
     store.set_state("self_care", "on")
