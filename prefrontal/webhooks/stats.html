@@ -76,6 +76,8 @@
   .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
   .legend .k { display: inline-flex; align-items: center; gap: 6px; }
   .legend .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  /* enabled check with no responses yet — a recessive, greyed placeholder row */
+  .sc-empty { opacity: .5; }
 
   /* outcome sparkline (recent history, newest right) */
   .spark { display: flex; gap: 2px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap; }
@@ -278,15 +280,26 @@ function renderChannels(rows) {
 }
 
 function renderSelfCare(rows) {
-  const active = (rows || []).filter((r) => r.n > 0);
-  if (!active.length) {
-    // No self-care responses yet — hide the whole section (mirrors empty states).
+  // Show a check if it has responses, or if it's on (so an enabled-but-untouched
+  // check appears as a greyed placeholder rather than vanishing until its 1st tap).
+  const shown = (rows || []).filter((r) => r.n > 0 || r.enabled);
+  if (!shown.length) {
+    // Nothing on and no history — hide the whole section (mirrors empty states).
     $("#c-selfcare").style.display = "none";
     return;
   }
   $("#c-selfcare").style.display = "";
-  $("#selfcare-body").innerHTML = active.map((r) => {
+  $("#selfcare-body").innerHTML = shown.map((r) => {
     const name = SC_LABEL[r.key] || cap(r.key);
+    if (!r.n) {
+      // Enabled but no responses yet — a greyed placeholder with just its cadence.
+      return `<div class="sc-empty" style="margin:0 0 18px">
+        <div class="barrow" title="${esc(name)}: no responses yet">
+          <span class="bl">${esc(name)}</span>
+          <span class="track"></span>
+          <span class="bv">no responses yet</span></div>
+        <div class="legend"><span class="k">every ${r.interval_minutes}m</span></div></div>`;
+    }
     const rate = pct(r.response_rate);
     // known verbs, then the unaccounted remainder (grey) so segments fill the bar
     const parts = ["confirmed", "snoozed", "ignored", "unknown"];

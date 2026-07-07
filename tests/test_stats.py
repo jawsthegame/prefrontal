@@ -198,6 +198,7 @@ def test_self_care_empty_history_is_zeroed(scoped):
         assert r["n"] == 0
         assert r["confirmed"] == 0 and r["snoozed"] == 0 and r["ignored"] == 0
         assert r["unknown"] == 0
+        assert r["enabled"] is False  # master self-care switch is off by default
         assert r["response_rate"] is None
         assert r["avg_latency_seconds"] is None
         # interval falls back to the check's default when unset
@@ -246,6 +247,22 @@ def test_self_care_avg_latency_none_without_timed_confirms(scoped):
     assert meds["confirmed"] == 1 and meds["snoozed"] == 1
     assert meds["response_rate"] == 0.5
     assert meds["avg_latency_seconds"] is None
+
+
+def test_self_care_enabled_tracks_master_and_per_check_switches(scoped):
+    """Each row's `enabled` is the master switch AND the check's own toggle — so the
+    Insights card can show an on-but-untouched check as a greyed placeholder."""
+    # Master switch off (default) — nothing counts as on, whatever the per-check state.
+    rows = {r["key"]: r for r in build_stats(scoped)["self_care"]}
+    assert all(r["enabled"] is False for r in rows.values())
+    # Master on: meal/water default on; flip water off and meds on explicitly.
+    scoped.set_state("self_care", "on", source="explicit")
+    scoped.set_state("water_enabled", "off", source="explicit")
+    scoped.set_state("meds_enabled", "on", source="explicit")
+    rows = {r["key"]: r for r in build_stats(scoped)["self_care"]}
+    assert rows["meal"]["enabled"] is True
+    assert rows["water"]["enabled"] is False
+    assert rows["meds"]["enabled"] is True
 
 
 def test_self_care_interval_reflects_coaching_state_override(scoped):
