@@ -27,6 +27,7 @@ from prefrontal.modules.self_care import (
     apply_self_care_action,
     apply_self_care_config,
     apply_self_care_mark,
+    apply_self_care_unmark,
     mark_self_care_prompted,
     meal_message,
     self_care_status,
@@ -558,3 +559,47 @@ def test_self_care_mark_endpoint_counts_and_returns_status(client, store):
 
 def test_self_care_mark_unknown_key_404(client):
     assert client.post("/self-care/mark", json={"key": "nope"}, headers=_auth()).status_code == 404
+
+
+# -- apply_self_care_unmark + POST /self-care/mark {undo: true} --------------
+# The chip's shift-click mis-tap correction: rewind today's count by one, never
+# below zero, touching only the day cursor (episodes are an immutable log).
+
+
+def test_apply_unmark_decrements_and_floors_at_zero(store):
+    today = "2026-07-03"
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    for _ in range(2):
+        apply_self_care_mark(store, "water", now=t0, today=today)
+    assert store.get_state("water_count") == f"{today}|2"
+    assert apply_self_care_unmark(store, "water", today=today)  # confirmation copy
+    assert store.get_state("water_count") == f"{today}|1"
+    apply_self_care_unmark(store, "water", today=today)
+    assert store.get_state("water_count") == f"{today}|0"
+    apply_self_care_unmark(store, "water", today=today)  # already zero — stays put
+    assert store.get_state("water_count") == f"{today}|0"
+
+
+def test_apply_unmark_leaves_the_episode_log_intact(store):
+    today = "2026-07-03"
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    apply_self_care_mark(store, "meal", now=t0, today=today)
+    apply_self_care_unmark(store, "meal", today=today)
+    # The count is rewound, but the confirm we logged stays in history.
+    assert store.get_state("meal_count") == f"{today}|0"
+    eps = store.episodes_by_type("self_care")
+    assert len(eps) == 1 and eps[0]["outcome"] == "confirmed"
+
+
+def test_apply_unmark_unknown_key_is_none(store):
+    assert apply_self_care_unmark(store, "nope", today="2026-07-03") is None
+
+
+def test_self_care_mark_undo_endpoint_flips_done_off(client, store):
+    today = utcnow().strftime("%Y-%m-%d")
+    client.post("/self-care/mark", json={"key": "meal"}, headers=_auth())
+    resp = client.post("/self-care/mark", json={"key": "meal", "undo": True}, headers=_auth())
+    assert resp.status_code == 200
+    assert store.get_state("meal_count") == f"{today}|0"
+    by_key = {c["key"]: c for c in resp.json()["checks"]}
+    assert by_key["meal"]["count"] == 0 and by_key["meal"]["done"] is False

@@ -686,6 +686,11 @@ class SelfCareMark(BaseModel):
     """
 
     key: str = Field(description="Which check to confirm: meal / water / meds.")
+    undo: bool = Field(
+        default=False,
+        description="If true, reduce today's count by one (floored at zero) "
+        "instead of logging a confirm — the chip's shift-click mis-tap correction.",
+    )
 
 
 class InviteCreate(BaseModel):
