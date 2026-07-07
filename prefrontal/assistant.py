@@ -146,10 +146,19 @@ ASSISTANT_SYSTEM = (
     "you could move. Use set_commitment_hardness for \"this one's non-negotiable\" "
     "or \"that's just a soft hold\".\n"
     "An outing is a trip out with a stated 'back in N minutes' window "
-    "(time_window_minutes) that started at start_at. You can fix what it was for, "
-    "adjust the window (e.g. 'give me 15 more minutes' — add to the outing's "
-    "current time_window_minutes from the snapshot), or correct when it started. "
-    "All work on the current outing and past ones:\n"
+    "(time_window_minutes) that started at start_at. To START a new outing — the "
+    "user is heading out (\"running to the store, back in 20\", \"walking the dog\") "
+    "— use start_outing with the intention and time_window_minutes (your best "
+    "estimate of how long they'll be out, in minutes; e.g. a coffee run ~15, "
+    "groceries ~45). Include time_window_minutes whenever you can reasonably guess; "
+    "omit it only if the errand gives no clue at all. It starts now unless the user "
+    "says otherwise (then pass start_at):\n"
+    '- {"op":"start_outing","intention":str,"time_window_minutes":number?,'
+    '"start_at":"YYYY-MM-DD HH:MM"?}\n'
+    "The rest work on an EXISTING outing (current or past) — resolve outing_id from "
+    "the snapshot. You can fix what it was for, adjust the window (e.g. 'give me 15 "
+    "more minutes' — add to the outing's current time_window_minutes from the "
+    "snapshot), or correct when it started:\n"
     '- {"op":"rename_outing","outing_id":int,"intention":str}\n'
     '- {"op":"set_outing_window","outing_id":int,"time_window_minutes":number}\n'
     '- {"op":"set_outing_start","outing_id":int,"start_at":"YYYY-MM-DD HH:MM"}\n\n'
@@ -856,6 +865,29 @@ def _v_dismiss_conflict(
     return ValidatedAction(op, {"key": key}, f"Dismiss conflict: {label}")
 
 
+def _v_start_outing(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    intention = _nonblank(action.get("intention"), "intention")
+    raw = action.get("time_window_minutes")
+    if raw is not None:
+        minutes = _as_outing_window(raw)
+    else:
+        # No explicit window: parse one from the intention ("back in 20"), else
+        # fall back to a sane default — same order the /outing/start endpoint uses,
+        # minus the LLM inference (this assistant is already the model, and its
+        # prompt asks it to supply time_window_minutes when it can).
+        from prefrontal.modules.location_anchor import (
+            DEFAULT_INFERRED_WINDOW_MINUTES,
+            parse_time_window,
+        )
+        minutes = parse_time_window(intention) or DEFAULT_INFERRED_WINDOW_MINUTES
+    params: dict[str, Any] = {"intention": intention, "time_window_minutes": minutes}
+    if action.get("start_at") is not None:
+        params["start_at"] = _nonblank(action.get("start_at"), "start_at")  # parsed at execute
+    return ValidatedAction(
+        op, params, f"Start outing: “{intention}” (back in {minutes:g}m)"
+    )
+
+
 def _v_rename_outing(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     oid, intention = _require_outing(action, snapshot)
     new_intention = _nonblank(action.get("intention"), "intention")
@@ -1198,6 +1230,7 @@ _VALIDATORS: dict[
     "set_commitment_notes": _v_set_commitment_notes,
     "set_commitment_hardness": _v_set_commitment_hardness,
     "dismiss_conflict": _v_dismiss_conflict,
+    "start_outing": _v_start_outing,
     "rename_outing": _v_rename_outing,
     "set_outing_window": _v_set_outing_window,
     "set_outing_start": _v_set_outing_start,
@@ -1382,6 +1415,12 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
         elif op == "dismiss_conflict":
             memory.dismiss_conflict(p["key"])
             result["ok"] = True
+        elif op == "start_outing":
+            departure = _to_utc_or_none(p.get("start_at"), tz)
+            oid = memory.start_outing(
+                p["intention"], p["time_window_minutes"], departure_at=departure
+            )
+            result.update(ok=True, detail=f"outing #{oid}")
         elif op == "rename_outing":
             result["ok"] = memory.set_outing_intention(p["outing_id"], p["intention"]) is not None
         elif op == "set_outing_window":
