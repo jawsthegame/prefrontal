@@ -363,10 +363,15 @@ positive `children.id`.
   `days` (weekday-int CSV; empty = every day), `month_days` (day-of-month-int CSV
   `"1,15"`; when set it takes precedence over `days`, and a day past a short month
   fires on its last day), and `due_time` (`HH:MM` local, or `''` = not time-tied —
-  a pure grouping). Plus `impact`, `enabled`, provenance.
+  a pure grouping). Plus `impact`, `enabled`, provenance, and `last_completed_on`
+  (local "YYYY-MM-DD" all its chores were last done — the per-day cursor that dedups
+  the completion celebration).
   `UNIQUE (household_id, title)`. Accountability is load: it's the "carrying" facet
-  of the balance view (`accountability_counts`). Endpoints `POST /household/routines`
-  (+`/enabled`, `/remove`); CLI `household routine`.
+  of the balance view (`accountability_counts`). A routine is "done for the day"
+  once every one of its enabled chores is logged done today; finishing that last
+  chore congratulates both parents once (`log_chore_done_and_celebrate`, the shared
+  path behind every "mark done" surface) and the sheet highlights it. Endpoints
+  `POST /household/routines` (+`/enabled`, `/remove`); CLI `household routine`.
 
 - **`household_chores`** — recurring shared chores (the active load-balancer):
   `title`, `owner_id` (RACI "R" — whose job to do it; NULL = either parent),

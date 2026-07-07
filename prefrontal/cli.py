@@ -512,14 +512,20 @@ def _chores_cli(store, args, settings) -> int:
         print(f"Added chore #{cid}: {clean['title']} ({when}){into}.")
         return 0
     if args.done is not None:
+        from prefrontal.household import log_chore_done_and_celebrate
+
         today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
-        result = scoped.log_chore_done(
-            chore_id=args.done, done_on=today, done_by=scoped.user_id
+        result = log_chore_done_and_celebrate(
+            scoped, chore_id=args.done, done_on=today, done_by=scoped.user_id,
+            settings=settings,
         )
         if result is None:
             print(f"No chore #{args.done}.", file=sys.stderr)
             return 1
         print(f"Marked #{args.done} done for today.")
+        done = result.get("routine_completed")
+        if done:
+            print(f"🎉 That completes '{done['title']}' for today — both parents notified.")
         return 0
     if args.remove is not None:
         if not scoped.remove_chore(args.remove):

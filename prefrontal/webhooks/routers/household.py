@@ -38,6 +38,7 @@ from prefrontal.household import (
     checkin_question,
     digest_interval_ok,
     digest_message,
+    log_chore_done_and_celebrate,
     normalize_checkin_config,
     normalize_chore,
     normalize_prompt,
@@ -930,15 +931,22 @@ def build_router(services: RouterServices) -> APIRouter:
 
         ``days_ago`` (0 today, 1 yesterday; default today) lets the card's day
         selector back-fill a day someone forgot to tick. The body is optional so
-        the ntfy one-tap Done and older clients keep logging "today".
+        the ntfy one-tap Done and older clients keep logging "today". Finishing a
+        routine's last chore for that day congratulates both parents once (via
+        :func:`log_chore_done_and_celebrate`); the response echoes any
+        ``routine_completed`` so a client can celebrate too.
         """
         done_on = _chore_local_date(payload.days_ago if payload else 0)
-        result = ctx.store.log_chore_done(
-            chore_id=chore_id, done_on=done_on, done_by=ctx.user["id"]
+        result = log_chore_done_and_celebrate(
+            ctx.store, chore_id=chore_id, done_on=done_on, done_by=ctx.user["id"],
+            settings=resolved_settings,
         )
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
-        return {"ok": True, "created": result["created"], "done_on": done_on}
+        return {
+            "ok": True, "created": result["created"], "done_on": done_on,
+            "routine_completed": result.get("routine_completed"),
+        }
 
     @router.post("/household/chores/{chore_id}/undone", tags=["household"])
     def unmark_chore_done(

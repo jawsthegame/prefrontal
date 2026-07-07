@@ -965,11 +965,27 @@ class HouseholdRepo(Repo):
     def routine(self, routine_id: int) -> dict[str, Any] | None:
         """One routine row (scoped to the household), or ``None`` if not found."""
         row = self.conn.execute(
-            "SELECT id, title, accountable_id, days, month_days, due_time, impact, enabled "
+            "SELECT id, title, accountable_id, days, month_days, due_time, impact, "
+            "enabled, last_completed_on "
             "FROM household_routines WHERE id = ? AND household_id = ?",
             (routine_id, self._household_id()),
         ).fetchone()
         return _row_to_dict(row)
+
+    def mark_routine_completed(self, routine_id: int, on: str) -> bool:
+        """Stamp ``last_completed_on`` = local date ``on`` (dedups the celebration to once/day).
+
+        Mirrors :meth:`mark_chore_reminded`/:meth:`mark_prompted`: a per-day cursor
+        so finishing a routine's last chore congratulates the household exactly once,
+        even if a chore is re-tapped. ``True`` if a row changed.
+        """
+        cur = self.conn.execute(
+            "UPDATE household_routines SET last_completed_on = ? "
+            "WHERE id = ? AND household_id = ?",
+            (on, routine_id, self._household_id()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def accountability_counts(self) -> list[dict[str, Any]]:
         """Per-member count of *enabled* routines they're accountable for (the "carrying" facet).
