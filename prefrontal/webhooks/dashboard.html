@@ -111,9 +111,11 @@
   .sc-hint { color: var(--muted); font-size: 13px; }
   .sc-hint a { color: var(--accent); text-decoration: none; }
   .sc-hint a:hover { text-decoration: underline; }
-  .sc-check { display: flex; align-items: center; gap: 8px 12px;
+  .sc-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
     padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
   .sc-label { display: inline-flex; align-items: center; gap: 6px; }
+  /* today's progress: green = confirmed toward target, grey track = not done yet */
+  .sc-bar { flex-basis: 100%; margin-top: 0; }
   .sc-prog { margin-left: auto; }
   .sc-prog b { font-variant-numeric: tabular-nums; }
   .sc-sub { color: var(--muted); font-size: 12px; }
@@ -925,10 +927,14 @@ function scRow(c) {
   // A once-a-day check has nothing left to log once it's done — lock the button.
   const locked = !recurring && c.done;
   const label = recurring ? "＋ Log one" : (c.done ? "Done ✓" : "Mark done");
+  // Fill green up to the daily target; the remaining track stays grey ("not done
+  // yet"). Extra taps past the target still read as a full bar, not overflow.
+  const fill = c.target > 0 ? Math.min(100, (c.count / c.target) * 100) : 0;
   return `<div class="sc-check">
     <span class="sc-label">${m.icon} ${esc(m.label)}</span>
     <span class="sc-prog">${scProgress(c)}</span>
     <button class="sc-mark" data-sc-mark="${c.key}"${locked ? " disabled" : ""}>${label}</button>
+    <div class="bar sc-bar" title="${c.count}/${c.target} done today"><span style="width:${fill.toFixed(0)}%;background:var(--good)"></span></div>
   </div>`;
 }
 
