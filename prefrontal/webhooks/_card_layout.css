@@ -1,0 +1,50 @@
+/* Shared card-column layout (injected by _common.py). Styles any opted-in
+   <main class="masonry" data-layout-key="…"> and its per-card controls. Cards
+   may use an <h2> or a <p class="label"> heading. Relies on the pages' shared
+   theme variables (--card, --line, --fg, --muted, --accent). */
+.masonry { display: flex; align-items: flex-start; gap: 16px; }
+.masonry > .col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.masonry .card { position: relative; }
+.masonry > .col > .card { margin: 0; }
+.masonry .card.dragging { opacity: .4; }
+.masonry > .col.drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 16px; }
+
+/* Reserve room at the top-right of each card's heading for the controls, and
+   hint the heading as a drag grip. */
+.masonry .card > h2, .masonry .card > .label { padding-right: 150px; }
+.masonry:not(.compact) .card > h2, .masonry:not(.compact) .card > .label { cursor: grab; }
+.masonry.dragging-active { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+.masonry.dragging-active .card > h2, .masonry.dragging-active .card > .label { cursor: grabbing; }
+
+.card-ctl { position: absolute; top: 14px; right: 16px; z-index: 2; display: flex; gap: 3px; align-items: center; }
+.card-ctl .drag-handle { color: var(--muted); cursor: grab; user-select: none; touch-action: none;
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; line-height: 1; }
+.card-ctl .drag-handle:hover { color: var(--fg); }
+.card-ctl .drag-handle:active { cursor: grabbing; }
+.card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 9px; line-height: 1; padding: 0; }
+.card-ctl .cardbtn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+.card-ctl .cardbtn:disabled { opacity: .3; cursor: default; }
+
+/* Compact: the viewport fits fewer columns than chosen, so the stored
+   arrangement shows merged and read-only — hide the move controls and reclaim
+   the reserved heading space. */
+.masonry.compact .card-ctl .drag-handle,
+.masonry.compact .card-ctl [data-arr],
+.masonry.compact .card-ctl [data-col] { display: none; }
+.masonry.compact .card > h2, .masonry.compact .card > .label { padding-right: 0; }
+
+/* Collapse a card to just its heading. */
+.card.collapsed > *:not(h2):not(.label):not(.card-ctl) { display: none; }
+.card.collapsed > h2, .card.collapsed > .label { margin-bottom: 0; }
+
+/* Columns picker (sits in the top nav). */
+.col-picker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted);
+  font-size: 12px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+.col-picker select { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 9px; height: 34px; padding: 0 6px; font: inherit; font-size: 13px; cursor: pointer; }
+.col-picker select:hover { border-color: var(--accent); }
+
+@media (max-width: 520px) {
+  .col-picker { display: none; }  /* one column only at this width — nothing to pick */
+}
