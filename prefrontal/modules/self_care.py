@@ -87,8 +87,10 @@ DEFAULT_BIOBREAK_START_HOUR = 8
 DEFAULT_BIOBREAK_END_HOUR = 19
 DEFAULT_BIOBREAK_INTERVAL_MINUTES = 120
 DEFAULT_BIOBREAK_SNOOZE_MINUTES = 30
-#: 8:00→18:00 every 2h ≈ six windows; the end hour, not this total, is the real
-#: stop, but a matching target makes the dashboard read "n/6 today" cleanly.
+#: Bio breaks are open-ended (not a quota), so this is only an informational
+#: tally cap — the end hour, never a daily total, is what stops the reminders. It
+#: no longer drives a "n/6" dashboard readout (that goal display was dropped when
+#: the check became open-ended); it just bounds the count kept for the record.
 DEFAULT_BIOBREAK_DAILY_TARGET = 6
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
