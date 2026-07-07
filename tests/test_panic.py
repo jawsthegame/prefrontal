@@ -185,6 +185,30 @@ def test_todo_deadlines_bucket_and_urgent_flag(store, noon):
     assert soon_titles == {"Submit expense report", "Fix the leak"}
 
 
+def test_late_commitment_outranks_a_stale_overdue_todo(store, noon):
+    """A commitment you're late to leave for leads over any overdue todo.
+
+    Coarse-tier contract: the "start here" first step is the commitment you're
+    late for, never a stale todo — even a long-overdue, top-priority one (whose
+    score must stay in the [800, 1000) band, below the commitment tiers).
+    """
+    store.upsert_commitment(
+        title="Dentist", start_at=_at(noon + timedelta(minutes=30)),
+        lead_minutes=60,  # should have left 30 min ago
+        external_id="personal:1", hardness="hard",
+    )
+    # Very overdue (10 days) and top priority — the old scoring would push this
+    # above the late commitment and make it the first step.
+    store.add_todo(
+        "Sort the garage", deadline=(noon - timedelta(days=10)).strftime("%Y-%m-%d"),
+        priority=3,
+    )
+    plan = build_panic(store, now=noon)
+    assert plan.late[0].title == "Leave for Dentist"
+    assert plan.first_step_for == "Leave for Dentist"
+    assert plan.late[0].score > plan.late[1].score  # commitment strictly above todo
+
+
 def test_date_only_deadline_today_is_not_overdue(store, noon):
     """A todo due 'today' (date-only) is soon, not late — end-of-day, not midnight."""
     plan = build_panic(store, now=noon)

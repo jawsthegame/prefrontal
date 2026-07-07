@@ -664,6 +664,12 @@ class LocationAnchorModule(Module):
             elif ev.action == "at_home" and ev.fire:
                 # You're home — a soft "want to end it?" cue. Deduped per arrival
                 # (the stamp clears when you leave), so it asks once per homecoming.
+                # The first poll stamps the arrival (``ev.arrived_at``); a later
+                # in-grace re-ask deliberately returns ``arrived_at=None`` (so it
+                # doesn't re-stamp), but by then the arrival is persisted on the
+                # outing — so key off that first, falling back to the fresh stamp,
+                # so both polls share one dedup key and the prompt fires once.
+                arrival_stamp = outing.get("home_arrived_at") or ev.arrived_at or "held"
                 cues.append(
                     Cue(
                         module=self.key,
@@ -671,7 +677,7 @@ class LocationAnchorModule(Module):
                         urgency="nudge",
                         text=ev.message,
                         context_key="outing",
-                        dedup_key=f"outing_home_prompt:{outing['id']}:{ev.arrived_at or 'held'}",
+                        dedup_key=f"outing_home_prompt:{outing['id']}:{arrival_stamp}",
                         ref={"outing_id": outing["id"]},
                     )
                 )

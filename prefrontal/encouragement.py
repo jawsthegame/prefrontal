@@ -656,18 +656,29 @@ def briefing_note(
 
 # --- Debounce cursor ---------------------------------------------------------
 
-#: Coaching-state key holding the last UTC date (YYYY-MM-DD) an encouragement was
-#: delivered — caps delivery at once per day regardless of poll frequency (§5).
+#: Coaching-state key holding the last *local* date (YYYY-MM-DD) an encouragement
+#: was delivered — caps delivery at once per day regardless of poll frequency (§5).
 _SENT_KEY = "last_encouragement_date"
+
+
+def _local_date(now: Any) -> str:
+    """The user's local calendar date for ``now`` (naive UTC), as ``YYYY-MM-DD``.
+
+    The debounce boundary must match the local day :func:`assess_day` scopes
+    "today" to — otherwise the cap keys on the UTC date and, for a non-UTC user,
+    resets mid-afternoon (double-firing) or suppresses the first hours of a new
+    local day (never firing) around the UTC-midnight rollover.
+    """
+    return local_datetime(now, get_settings().timezone).strftime("%Y-%m-%d")
 
 
 def already_sent_today(store: MemoryStore, now: Any | None = None) -> bool:
     """Whether an encouragement was already delivered today (debounce read)."""
     now = now or utcnow()
-    return store.get_state(_SENT_KEY, "") == now.strftime("%Y-%m-%d")
+    return store.get_state(_SENT_KEY, "") == _local_date(now)
 
 
 def mark_sent_today(store: MemoryStore, now: Any | None = None) -> None:
     """Stamp today as delivered so a later poll won't re-send (explicit write)."""
     now = now or utcnow()
-    store.set_state(_SENT_KEY, now.strftime("%Y-%m-%d"), source="inferred")
+    store.set_state(_SENT_KEY, _local_date(now), source="inferred")
