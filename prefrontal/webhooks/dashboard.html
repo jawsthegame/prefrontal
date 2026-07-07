@@ -1284,13 +1284,31 @@ function renderCommitments(list, conflicts, cascade) {
   // actually made it. Answering (or Hide) resolves the row and it drops off; an
   // untouched one ages out of the server's window on its own.
   if (prev.length) {
+    // Feed slugs that count as "work" (attend-mode) — those get the extra
+    // "did you feel prepared?" post-mortem below the made/missed row.
+    const attendCals = new Set(list.attend_calendars || []);
     html += `<div class="sub" style="margin-top:10px;opacity:.85">Recent · did you make it?</div>`;
     html += prev.map((x) => {
       const cal = calPill(x.calendar_key, x.calendar);
       const src = x.url ? ` <a class="src" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="Open source event">↗</a>` : "";
+      // Preparedness reflection — work commitments only (independent of made/missed).
+      let prepRow = "";
+      if (attendCals.has(x.calendar_key)) {
+        if (x.prepared === "yes" || x.prepared === "no") {
+          const done = x.prepared === "yes" ? "✓ felt prepared" : "✗ felt under-prepared";
+          prepRow = `<div class="sub prep" style="margin-top:4px">${done} · `
+            + `<button class="lnk" data-action="commitment-prepared" data-id="${x.id}" data-prepared="" title="Clear this answer">change</button></div>`;
+        } else {
+          prepRow = `<div class="prep" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">`
+            + `<span class="sub">Felt prepared?</span>`
+            + `<button class="btn-sm btn-go" data-action="commitment-prepared" data-id="${x.id}" data-prepared="yes" title="Yes — I felt prepared for this">👍 Yes</button>`
+            + `<button class="btn-sm btn-x" data-action="commitment-prepared" data-id="${x.id}" data-prepared="no" title="No — I felt under-prepared">👎 No</button></div>`;
+        }
+      }
       return `<div class="row"><div class="main">
         <div><span class="title">${esc(x.title)}</span>${src}${cal}</div>
         <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""}</div>
+        ${prepRow}
       </div>
       <div class="acts">
         <button class="btn-sm btn-go" data-action="commitment-made" data-id="${x.id}" title="I made it — mark this commitment done">Made it</button>
@@ -2297,6 +2315,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "commitment-unhide") { await post(`/commitments/${id}/hidden`, { hidden: false }); }
     else if (act === "commitment-made") { await post(`/commitments/${id}/outcome`, { outcome: "made" }); }
     else if (act === "commitment-missed") { await post(`/commitments/${id}/outcome`, { outcome: "missed" }); }
+    else if (act === "commitment-prepared") { await post(`/commitments/${id}/prepared`, { prepared: el.dataset.prepared || null }); }
     else if (act === "commitment-domain") {
       // Life-sphere picker for a commitment; the menu POSTs + reloads itself.
       openDomainMenu(el, id, el.dataset.domain || "", {

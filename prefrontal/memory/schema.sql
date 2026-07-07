@@ -248,6 +248,8 @@ CREATE TABLE IF NOT EXISTS commitments (
     hidden       BOOLEAN NOT NULL DEFAULT 0,        -- user "don't show me this": dropped from every surface (dashboard, widget, conflicts, departures); survives calendar re-sync
     outcome      TEXT,                              -- user self-report on a past commitment: made | missed (NULL = undecided); like `hidden`, never touched by re-sync
     outcome_at   DATETIME,                          -- when the outcome was recorded (NULL until answered)
+    prepared     TEXT,                              -- user reflection on a past WORK commitment: yes | no (NULL = unanswered) — "did you feel prepared?"; like `outcome`, never touched by re-sync
+    prepared_at  DATETIME,                          -- when preparedness was answered (NULL until answered)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
