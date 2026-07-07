@@ -130,15 +130,18 @@
   .sc-chip:hover:not(:disabled) { border-color: var(--accent); }
   .sc-chip:disabled { cursor: default; }
   /* A once-a-day essential that's past its time and still not done (e.g. meds not
-     taken) pulses for attention — a soft "radar ping", not a harsh strobe, and
-     stilled to a steady red outline for anyone who prefers reduced motion. */
+     taken) draws attention in amber — "worth noticing", not the alarm-red of an
+     error. A gentle breathing pulse (border + soft glow easing in and out) makes
+     it clearly visible without strobing; under reduced motion it rests as a steady
+     amber outline. */
   @keyframes sc-pulse {
-    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--call) 55%, transparent); }
-    70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--call) 0%, transparent); }
-    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--call) 0%, transparent); }
+    0%, 100% { border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+               box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 30%, transparent); }
+    50%      { border-color: var(--warn);
+               box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 14%, transparent); }
   }
-  .sc-chip.sc-overdue { border-color: var(--call); color: var(--call);
-    animation: sc-pulse 1.4s ease-out infinite; }
+  .sc-chip.sc-overdue { border-color: var(--warn); color: var(--warn);
+    animation: sc-pulse 1.7s ease-in-out infinite; }
   @media (prefers-reduced-motion: reduce) {
     .sc-chip.sc-overdue { animation: none; }
   }
