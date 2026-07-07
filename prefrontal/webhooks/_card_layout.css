@@ -38,6 +38,14 @@
 .card.collapsed > *:not(h2):not(.label):not(.card-ctl) { display: none; }
 .card.collapsed > h2, .card.collapsed > .label { margin-bottom: 0; }
 
+/* Collapse-only pages (no drag controls): a caret makes the clickable heading
+   discoverable. Column pages use heading-click too but signal it via the card
+   controls, so they don't get a caret. */
+.collapsible-head { cursor: pointer; display: flex; align-items: baseline; gap: 7px; }
+.collapse-caret { color: var(--muted); font-size: .8em; line-height: 1; transition: transform .12s ease; }
+.collapse-caret::before { content: "▾"; }
+.card.collapsed .collapse-caret::before { content: "▸"; }
+
 /* Columns picker (sits in the top nav). */
 .col-picker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted);
   font-size: 12px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }

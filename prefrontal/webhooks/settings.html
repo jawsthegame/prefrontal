@@ -87,6 +87,7 @@
   #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
     color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
   #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+<!--CARD_LAYOUT_CSS-->
 </style>
 </head>
 <body>
@@ -109,8 +110,8 @@
   <div class="meta" id="status">loading…</div>
 </header>
 
-<div class="wrap" id="wrap" style="display:none">
-  <section class="card">
+<div class="wrap" id="wrap" data-collapse-key="prefrontal_settings_layout" style="display:none">
+  <section class="card" id="c-selfcare">
     <h2>Self-care checks</h2>
     <p class="sub">Meal, water, and meds nudges. Turn the whole thing on or off,
       and set each check's daily target, the hour it starts, and how often it
@@ -133,6 +134,7 @@
   </div>
 </div>
 
+<!--CARD_LAYOUT_JS-->
 <script>
 const KEY = "prefrontal_token";
 let token = localStorage.getItem(KEY);
@@ -260,6 +262,7 @@ async function load() {
     $("#selfcare").innerHTML = renderSelfCare(data);
   }
   $("#status").textContent = "your preferences";
+  if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible
 }
 
 $("#token-save").onclick = () => {

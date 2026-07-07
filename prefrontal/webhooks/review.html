@@ -98,6 +98,7 @@
   #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
     color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
   #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+<!--CARD_LAYOUT_CSS-->
 </style>
 </head>
 <body>
@@ -120,8 +121,8 @@
   <div class="meta" id="status">loading…</div>
 </header>
 
-<div class="wrap" id="wrap" style="display:none">
-  <section class="card">
+<div class="wrap" id="wrap" data-collapse-key="prefrontal_review_layout" style="display:none">
+  <section class="card" id="c-note">
     <p class="label">Jot a note</p>
     <p class="sub">Anything you notice about how you work. The assistant proposes
       small updates for you to confirm — it never saves anything on its own.</p>
@@ -132,7 +133,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="c-proposals">
     <p class="label">Pending proposals</p>
     <p class="sub">Candidate updates awaiting your review. Accept to apply
       (recorded as LLM-inferred), or reject to dismiss.</p>
@@ -155,6 +156,7 @@
   </div>
 </div>
 
+<!--CARD_LAYOUT_JS-->
 <script>
 const KEY = "prefrontal_token";
 let token = localStorage.getItem(KEY);
@@ -265,6 +267,7 @@ async function load() {
   $("#status").textContent = rows.length
     ? `${rows.length} pending`
     : "all caught up";
+  if (window.initCardCollapse) initCardCollapse();  // make cards collapsible once visible
 }
 
 $("#observe").onclick = observe;
