@@ -315,11 +315,13 @@
       <select id="chore-owner" title="Whose job"></select>
       <select id="chore-routine" title="Part of a routine"></select>
       <input id="chore-due" type="time" title="Due by (optional)" />
-      <input id="chore-monthdays" type="text" placeholder="days of month, e.g. 1, 15"
+      <div class="days" id="chore-days" title="Weekdays it recurs (none = every day)"></div>
+      <input id="chore-monthdays" type="text" placeholder="or days of month, e.g. 1, 15"
              title="Days of the month it recurs (optional; wins over weekdays)" />
       <button class="primary" type="submit">Add chore</button>
-      <span class="hint">Tick one off to log who did it — completing chores counts toward
-        the balance below. Leave the time blank for an untimed to-do.</span>
+      <span class="hint">Pick weekdays <em>or</em> type days of the month. Tick one off to log
+        who did it — completing chores counts toward the balance below. Leave the time blank
+        for an untimed to-do.</span>
     </form>
   </section>
 
@@ -330,11 +332,13 @@
       <input id="routine-title" type="text" placeholder="e.g. Monday pickup prep" required />
       <select id="routine-accountable" title="Who holds the mental load"></select>
       <input id="routine-due" type="time" title="Time its chores inherit (optional)" />
-      <input id="routine-monthdays" type="text" placeholder="days of month, e.g. 1, 15"
+      <div class="days" id="routine-days" title="Weekdays it recurs (none = every day)"></div>
+      <input id="routine-monthdays" type="text" placeholder="or days of month, e.g. 1, 15"
              title="Days of the month it recurs (optional; wins over weekdays)" />
       <button class="primary" type="submit">Add routine</button>
-      <span class="hint">A routine groups chores and names one person <em>accountable</em>
-        for it — the mental load, tracked separately from who does each chore.</span>
+      <span class="hint">Pick weekdays <em>or</em> type days of the month. A routine groups chores
+        and names one person <em>accountable</em> for it — the mental load, tracked separately
+        from who does each chore.</span>
     </form>
   </section>
 
@@ -710,13 +714,29 @@ function monthDaysLabel(csv) {
   return "the " + joined;
 }
 
+// A weekday CSV ("0,2") → short phrase, or "" for every day (kept off the list
+// to stay uncluttered — "every day" is the unremarkable default).
+function weekdaysLabel(csv) {
+  const d = (csv || "").split(",").filter((s) => s !== "").map(Number)
+    .filter((n) => n >= 0 && n <= 6).sort((a, b) => a - b);
+  if (!d.length || d.length === 7) return "";
+  if (d.length === 5 && d.every((x, i) => x === i)) return "weekdays";
+  if (d.length === 2 && d[0] === 5 && d[1] === 6) return "weekends";
+  return d.map((x) => DAY_NAMES[x]).join(", ");
+}
+
+// The schedule phrase for the lists — month days win when set (mirrors the
+// server's describe_schedule), else the weekday phrase.
+const scheduleLabel = (daysCsv, monthDaysCsv) =>
+  monthDaysLabel(monthDaysCsv) || weekdaysLabel(daysCsv);
+
 function _choreWhen(c) {
   // Show the *effective* schedule (a chore inherits its routine's unless it
-  // sets its own); the server resolves this into effective_days/due_time.
+  // sets its own); the server resolves this into effective_days/month_days/due_time.
   const due = c.effective_due_time || c.due_time;
-  const md = monthDaysLabel(c.effective_month_days || c.month_days);
+  const sched = scheduleLabel(c.effective_days || c.days, c.effective_month_days || c.month_days);
   const when = due ? "by " + fmtTime(due) : "untimed";
-  return md ? `${md} · ${when}` : when;
+  return sched ? `${sched} · ${when}` : when;
 }
 
 function renderChores(chores) {
@@ -744,8 +764,8 @@ function renderRoutines(routines) {
   }
   $("#routines").innerHTML = _routines.map((r) => {
     const holder = r.accountable_name || "unassigned";
-    const md = monthDaysLabel(r.month_days);
-    const when = (md ? " · " + md : "") + (r.due_time ? " · by " + fmtTime(r.due_time) : "");
+    const sched = scheduleLabel(r.days, r.month_days);
+    const when = (sched ? " · " + sched : "") + (r.due_time ? " · by " + fmtTime(r.due_time) : "");
     const n = r.chore_count || 0;
     const paused = r.enabled ? "" : " · paused";
     return `<div class="task-row${r.enabled ? "" : " done"}" data-routinerow="${r.id}">
@@ -1170,6 +1190,19 @@ const parseMonthDays = (v) =>
   (v || "").split(",").map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= 31);
 
+// Weekday chip pickers on the create forms (multi-select; empty = every day) —
+// so a chore/routine's weekdays are settable at create time, symmetric with the
+// "days of month" field. Mirrors the routine edit form's picker.
+const pickedDays = (el) => [...el.querySelectorAll(".day.on")].map((d) => Number(d.getAttribute("data-day")));
+const clearDays = (el) => el.querySelectorAll(".day.on").forEach((d) => d.classList.remove("on"));
+["#chore-days", "#routine-days"].forEach((sel) => {
+  const el = $(sel);
+  el.innerHTML = DAY_NAMES.map((n, i) => `<span class="day" data-day="${i}">${n}</span>`).join("");
+  el.addEventListener("click", (e) => {
+    if (e.target.classList.contains("day")) e.target.classList.toggle("on");
+  });
+});
+
 $("#chore-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   await post("/household/chores", {
@@ -1177,9 +1210,11 @@ $("#chore-form").addEventListener("submit", async (e) => {
     owner_id: _sel($("#chore-owner").value),
     routine_id: _sel($("#chore-routine").value),
     due_time: $("#chore-due").value || "",
+    days: pickedDays($("#chore-days")),
     month_days: parseMonthDays($("#chore-monthdays").value),
   });
   $("#chore-title").value = ""; $("#chore-due").value = ""; $("#chore-monthdays").value = "";
+  clearDays($("#chore-days"));
   await loadSheet();
 });
 $("#chores").addEventListener("click", async (e) => {
@@ -1204,9 +1239,11 @@ $("#routine-form").addEventListener("submit", async (e) => {
     title: $("#routine-title").value.trim(),
     accountable_id: _sel($("#routine-accountable").value),
     due_time: $("#routine-due").value || "",
+    days: pickedDays($("#routine-days")),
     month_days: parseMonthDays($("#routine-monthdays").value),
   });
   $("#routine-title").value = ""; $("#routine-due").value = ""; $("#routine-monthdays").value = "";
+  clearDays($("#routine-days"));
   await loadSheet();
 });
 $("#routines").addEventListener("click", async (e) => {
