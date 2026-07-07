@@ -12,9 +12,15 @@ from datetime import datetime
 
 from prefrontal.scheduling import (
     end_of_local_day_utc,
+    find_slots,
     local_day_bounds,
     local_time_utc,
 )
+
+
+def _commit(start_at, end_at=None):
+    """Minimal commitment dict for the slot/window helpers."""
+    return {"start_at": start_at, "end_at": end_at}
 
 # July → EDT (UTC-4) for America/New_York, so the arithmetic below is offset −4.
 
@@ -74,3 +80,76 @@ def test_parse_deadline_anchors_to_local_end_of_day(monkeypatch):
     assert todos._parse_deadline("2026-07-07") == expected
     assert todos._parse_deadline("2026-07-07 00:00:00") == expected
     assert panic._parse_deadline("2026-07-07") == expected
+
+
+# ── find_slots: free windows of a specific length across the coming days ──────
+
+
+def test_find_slots_returns_gaps_at_least_minutes_long():
+    # UTC keeps the arithmetic literal. A single 10–11 meeting today.
+    now = datetime(2026, 7, 7, 9, 0, 0)
+    commitments = [_commit("2026-07-07 10:00:00", "2026-07-07 11:00:00")]
+    slots = find_slots(commitments, now, "UTC", minutes=30, days=1)
+    # 09:00→10:00 (clamped to now) and 11:00→22:00 (band end) both qualify.
+    assert [(s.start, s.end) for s in slots] == [
+        ("2026-07-07 09:00:00", "2026-07-07 10:00:00"),
+        ("2026-07-07 11:00:00", "2026-07-07 22:00:00"),
+    ]
+    assert slots[0].minutes == 60.0
+
+
+def test_find_slots_drops_gaps_shorter_than_requested():
+    now = datetime(2026, 7, 7, 9, 0, 0)
+    commitments = [_commit("2026-07-07 10:00:00", "2026-07-07 11:00:00")]
+    # The 09:00–10:00 gap is only 60 min, so a 90-min ask skips it.
+    slots = find_slots(commitments, now, "UTC", minutes=90, days=1)
+    assert [(s.start, s.end) for s in slots] == [
+        ("2026-07-07 11:00:00", "2026-07-07 22:00:00"),
+    ]
+
+
+def test_find_slots_never_offers_overnight_and_spans_days():
+    # No commitments, two days: each day contributes only its waking band, so a
+    # slot never runs through the night.
+    now = datetime(2026, 7, 7, 9, 0, 0)
+    slots = find_slots([], now, "UTC", minutes=60, days=2)
+    assert [(s.start, s.end) for s in slots] == [
+        ("2026-07-07 09:00:00", "2026-07-07 22:00:00"),   # today, clamped to now
+        ("2026-07-08 06:00:00", "2026-07-08 22:00:00"),   # tomorrow's full band
+    ]
+
+
+def test_find_slots_today_clamped_to_now():
+    now = datetime(2026, 7, 7, 14, 30, 0)
+    slots = find_slots([], now, "UTC", minutes=30, days=1)
+    assert slots[0].start == "2026-07-07 14:30:00"
+
+
+def test_find_slots_waking_band_is_local():
+    # 12:00 UTC is 08:00 EDT. The 06:00–22:00 *local* band ends at 22:00 EDT =
+    # 02:00 UTC next day, so today's single slot runs now→02:00 UTC.
+    now = datetime(2026, 7, 7, 12, 0, 0)
+    slots = find_slots([], now, "America/New_York", minutes=60, days=1)
+    assert [(s.start, s.end) for s in slots] == [
+        ("2026-07-07 12:00:00", "2026-07-08 02:00:00"),
+    ]
+
+
+def test_find_slots_custom_awake_band():
+    now = datetime(2026, 7, 7, 6, 0, 0)
+    slots = find_slots([], now, "UTC", minutes=30, days=1, awake_band=("09:00", "17:00"))
+    assert [(s.start, s.end) for s in slots] == [
+        ("2026-07-07 09:00:00", "2026-07-07 17:00:00"),
+    ]
+
+
+def test_find_slots_respects_limit():
+    now = datetime(2026, 7, 7, 9, 0, 0)
+    slots = find_slots([], now, "UTC", minutes=30, days=10, limit=3)
+    assert len(slots) == 3
+
+
+def test_find_slots_rejects_nonpositive():
+    now = datetime(2026, 7, 7, 9, 0, 0)
+    assert find_slots([], now, "UTC", minutes=0, days=1) == []
+    assert find_slots([], now, "UTC", minutes=30, days=0) == []

@@ -41,6 +41,9 @@ def _with_card_layout(html: str) -> str:
 
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
 DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
+#: The read-only visual household calendar (week-ahead agenda + slot finder);
+#: reads GET /commitments and GET /calendar/slots.
+CALENDAR_HTML = (Path(__file__).with_name("calendar.html")).read_text(encoding="utf-8")
 #: The editable household hub — the one writable surface for the shared sheet
 #: (kids, pets, facts, agreements, shopping, routines).
 HOUSEHOLD_HTML = _with_card_layout((Path(__file__).with_name("household.html")).read_text(encoding="utf-8"))

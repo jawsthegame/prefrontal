@@ -83,7 +83,11 @@ from prefrontal.panic import (
     render_panic,
 )
 from prefrontal.scheduling import (
+    DEFAULT_SLOT_DAYS,
+    find_slots,
+    local_datetime,
     local_day_bounds,
+    window_config_for,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -487,6 +491,66 @@ def build_router(services: RouterServices) -> APIRouter:
             "hidden": memory.hidden_commitments(),
             "calendars": resolved_settings.calendar_label_map,
         }
+
+    @router.get("/calendar/slots", tags=["schedule"])
+    def calendar_slots(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        minutes: int = 30,
+        days: int = DEFAULT_SLOT_DAYS,
+    ) -> dict[str, Any]:
+        """Find open slots of a specific length over the next few days — read-only.
+
+        "Where does a 45-minute block fit this week?" For each upcoming local day
+        it scans the waking band (the user's off-zone complement, so a slot is
+        never offered overnight), subtracts the calendar's commitments, and returns
+        every remaining gap at least ``minutes`` long, soonest first. Today's band
+        starts no earlier than now, so every slot is one you can still use. Purely
+        derived and side-effect-free — it never nudges or records, so a widget or
+        the read-only calendar page can poll it freely.
+
+        Query params: ``minutes`` (the slot length to look for, 1–1440; default 30)
+        and ``days`` (how many local days ahead to scan, 1–14; default 7). Each slot
+        carries UTC ``start_at``/``end_at`` plus pre-formatted local ``day`` /
+        ``start`` / ``end`` labels so a client renders without re-deriving the zone.
+        """
+        if not 1 <= minutes <= 1440:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="minutes must be between 1 and 1440",
+            )
+        if not 1 <= days <= 14:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="days must be between 1 and 14",
+            )
+        memory = ctx.store
+        tz = resolved_settings.timezone
+        # The waking band is the user's own off-zone complement (state over env over
+        # the 06:00–22:00 default), so slot-finding respects the same "not overnight"
+        # policy the todo suggester uses.
+        awake = window_config_for(resolved_settings, memory).awake_band()
+        found = find_slots(
+            memory.upcoming_commitments(),
+            utcnow(),
+            tz,
+            minutes=float(minutes),
+            days=days,
+            awake_band=awake,
+        )
+
+        def dump(w: Any) -> dict[str, Any]:
+            start_local = local_datetime(_parse_dt_or_none(w.start), tz)
+            end_local = local_datetime(_parse_dt_or_none(w.end), tz)
+            return {
+                "start_at": w.start,
+                "end_at": w.end,
+                "minutes": w.minutes,
+                "day": start_local.strftime("%a %b %-d"),
+                "start": start_local.strftime("%-I:%M %p"),
+                "end": end_local.strftime("%-I:%M %p"),
+            }
+
+        return {"minutes": minutes, "days": days, "slots": [dump(w) for w in found]}
 
     @router.get("/departure/next", tags=["schedule"])
     def departure_next(

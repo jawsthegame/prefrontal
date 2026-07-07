@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Calendar</title>
+<!-- Set the theme before first paint so there's no flash. -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /household, /kids, /pets, /dashboard) ── */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px;
+    padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 4px 18px 48px; }
+  header { max-width: 1400px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; letter-spacing: .2px; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .readonly-note { color: var(--muted); font-size: 13px; margin: 10px auto 0; max-width: 1400px; padding: 0 18px; }
+  .readonly-note a { color: var(--accent); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow);
+  }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted); margin: 0 0 12px; font-weight: 700; }
+  .empty { color: var(--muted); }
+
+  /* ── Slot finder ─────────────────────────────────────────────────────────*/
+  .finder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .finder .lead { color: var(--muted); font-size: 14px; margin-right: 2px; }
+  .presets { display: flex; gap: 4px; flex-wrap: wrap; }
+  .presets button, .finder .go {
+    font: inherit; font-size: 14px; cursor: pointer; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    padding: 6px 13px; }
+  .presets button:hover { border-color: var(--accent); }
+  .presets button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg);
+    border-color: var(--accent); font-weight: 650; }
+  .finder input[type="number"] { width: 74px; font: inherit; font-size: 15px; padding: 6px 9px;
+    border-radius: 9px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  .finder select { font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  .finder .go { background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+    font-weight: 650; padding: 7px 16px; }
+  .finder .clear { color: var(--muted); background: none; border: none; cursor: pointer;
+    font: inherit; font-size: 13px; text-decoration: underline; }
+  .slotsummary { margin-top: 12px; color: var(--muted); font-size: 14px; }
+  .slotsummary b { color: var(--fg); }
+
+  /* ── The days grid (a light week/agenda view) ────────────────────────────*/
+  .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 16px; }
+  .day { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 12px 14px 14px; box-shadow: var(--shadow); min-height: 90px; }
+  .day.is-today { border-color: var(--accent); }
+  .day h3 { margin: 0 0 8px; font-size: 14px; font-weight: 700; display: flex;
+    align-items: baseline; gap: 7px; }
+  .day h3 .dow { color: var(--fg); }
+  .day h3 .date { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .day h3 .today-pill { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .5px; }
+  .day .none { color: var(--muted); font-size: 14px; padding: 2px 0; }
+
+  .ev { display: flex; gap: 9px; padding: 7px 0; border-top: 1px solid var(--line); align-items: flex-start; }
+  .ev:first-of-type { border-top: none; }
+  .ev .bar { width: 3px; align-self: stretch; border-radius: 3px; background: var(--muted); flex: none; min-height: 30px; }
+  .ev .body { flex: 1; min-width: 0; }
+  .ev .t { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .ev .ttl { font-size: 15px; margin-top: 1px; word-break: break-word; }
+  .ev .sub { color: var(--muted); font-size: 13px; margin-top: 1px; }
+  .pill { display: inline-block; font-size: 11px; border-radius: 999px; padding: 0 8px;
+    line-height: 18px; vertical-align: middle; border: 1px solid var(--line); color: var(--muted); }
+
+  /* A found free slot, rendered inline in its day among the events. */
+  .ev.slot .bar { background: var(--accent); }
+  .ev.slot { background: color-mix(in srgb, var(--accent) 9%, transparent); border-radius: 9px;
+    padding-left: 7px; margin: 3px 0; border-top: none; }
+  .ev.slot .ttl { color: var(--accent); font-weight: 650; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+  footer a { color: var(--muted); }
+
+  /* Gate (sign-in) */
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate p { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar" aria-current="page">Calendar</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>📅 Household calendar</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+<p class="readonly-note">A read-only view of the week ahead — add or edit events in your calendar app; they sync in.</p>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card" id="finder-card">
+    <p class="label">Find a free slot</p>
+    <div class="finder">
+      <span class="lead">I need</span>
+      <div class="presets" id="presets"></div>
+      <input type="number" id="minutes" min="5" max="1440" step="5" value="30" aria-label="Minutes" />
+      <span class="lead">minutes, within</span>
+      <select id="days" aria-label="Days ahead">
+        <option value="1">today</option>
+        <option value="3">3 days</option>
+        <option value="7" selected>a week</option>
+        <option value="14">2 weeks</option>
+      </select>
+      <button class="go" id="find" type="button">Find slots</button>
+      <button class="clear" id="clear" type="button" style="display:none">clear</button>
+    </div>
+    <div class="slotsummary" id="slot-summary"></div>
+  </section>
+
+  <div class="days" id="days-grid"></div>
+
+  <footer>Read-only · updates on its own · edit events in your calendar app, manage the household on the
+    <a href="/household">Household</a> page</footer>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+const REFRESH_MS = 60000;
+const PRESETS = [15, 30, 45, 60, 90];
+// How many day-columns the agenda shows (a rolling week from today).
+const AGENDA_DAYS = 7;
+// A small, colour-blind-friendly palette assigned to calendars in first-seen order.
+const PALETTE = ["#4a7c59", "#b9762f", "#3a6ea5", "#8a5a9e", "#a8506a", "#4a8f8f", "#8a7b3a"];
+
+let token = localStorage.getItem(KEY);
+let timer = null;
+let calColors = {};       // calendar_key → colour
+let slotMinutes = null;   // the currently-shown slot length (null = none)
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    if (btn) btn.textContent = dark ? "☀" : "☾";
+  };
+  sync();
+  if (btn) btn.onclick = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+// ── Time helpers ──────────────────────────────────────────────────────────
+// A stored "YYYY-MM-DD HH:MM:SS" stamp is UTC; parse it as such and render in the
+// viewer's local zone (matching the dashboard). A bad/empty stamp yields null.
+function parseUTC(ts) {
+  if (!ts) return null;
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d) ? null : d;
+}
+const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+const hm = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function niceDuration(mins) {
+  mins = Math.round(mins);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h} hr ${m} min` : `${h} hr`;
+}
+
+function colorFor(key) {
+  if (!key) return "var(--muted)";
+  if (!(key in calColors)) calColors[key] = PALETTE[Object.keys(calColors).length % PALETTE.length];
+  return calColors[key];
+}
+
+// ── Auth / fetch ────────────────────────────────────────────────────────
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY); clearInterval(timer);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path) {
+  const r = await fetch(path, { headers: token ? { "X-Prefrontal-Token": token } : {} });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+let lastCommitments = [];
+let lastCalendars = {};
+let lastSlots = [];
+
+function eventHtml(ev) {
+  const s = parseUTC(ev.start_at), e = parseUTC(ev.end_at);
+  const when = s ? (e ? `${hm(s)} – ${hm(e)}` : hm(s)) : "";
+  const calLabel = lastCalendars[ev.calendar_key] || ev.calendar || "";
+  const pill = calLabel ? ` <span class="pill">${esc(calLabel)}</span>` : "";
+  const loc = ev.location ? `<div class="sub">📍 ${esc(ev.location)}</div>` : "";
+  const col = colorFor(ev.calendar_key || ev.calendar);
+  return `<div class="ev"><div class="bar" style="background:${col}"></div>
+    <div class="body"><div class="t">${esc(when)}</div>
+      <div class="ttl">${esc(ev.title || "(untitled)")}${pill}</div>${loc}</div></div>`;
+}
+
+function slotHtml(slot) {
+  const s = parseUTC(slot.start_at), e = parseUTC(slot.end_at);
+  const when = s ? (e ? `${hm(s)} – ${hm(e)}` : hm(s)) : "";
+  return `<div class="ev slot"><div class="bar"></div><div class="body">
+    <div class="t">${esc(when)}</div>
+    <div class="ttl">Free · ${esc(niceDuration(slot.minutes))}</div></div></div>`;
+}
+
+function render() {
+  const grid = $("#days-grid");
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // Bucket events and any found slots by their local day.
+  const byDay = {};   // dayKey → { events:[], slots:[] }
+  const bucket = (ts, kind, item) => {
+    const d = parseUTC(ts); if (!d) return;
+    const k = dayKey(d);
+    (byDay[k] = byDay[k] || { events: [], slots: [] })[kind].push({ d, item });
+  };
+  (lastCommitments || []).forEach((c) => bucket(c.start_at, "events", c));
+  (lastSlots || []).forEach((s) => bucket(s.start_at, "slots", s));
+
+  // A rolling window of day columns from today, extended to cover any later day
+  // that actually has something to show (an event or a found slot).
+  let horizon = AGENDA_DAYS;
+  Object.values(byDay).flatMap((b) => [...b.events, ...b.slots]).forEach(({ d }) => {
+    const diff = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today0) / 86400000);
+    if (diff + 1 > horizon) horizon = Math.min(diff + 1, 21);
+  });
+
+  const cards = [];
+  for (let i = 0; i < horizon; i++) {
+    const day = new Date(today0); day.setDate(today0.getDate() + i);
+    const b = byDay[dayKey(day)] || { events: [], slots: [] };
+    // Interleave events and free slots in start-time order within the day.
+    const rows = [
+      ...b.events.map((x) => ({ d: x.d, html: eventHtml(x.item) })),
+      ...b.slots.map((x) => ({ d: x.d, html: slotHtml(x.item) })),
+    ].sort((a, z) => a.d - z.d);
+    const isToday = i === 0;
+    const body = rows.length
+      ? rows.map((r) => r.html).join("")
+      : `<div class="none">nothing scheduled</div>`;
+    cards.push(`<div class="day${isToday ? " is-today" : ""}">
+      <h3><span class="dow">${day.toLocaleDateString([], { weekday: "short" })}</span>
+        <span class="date">${day.toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+        ${isToday ? `<span class="today-pill">Today</span>` : ""}</h3>
+      ${body}</div>`);
+  }
+  grid.innerHTML = cards.join("");
+}
+
+async function loadCalendar() {
+  $("#status").textContent = "updating…";
+  let data;
+  try {
+    data = await api("/commitments");
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  $("#gate").style.display = "none";
+  $("#wrap").style.display = "block";
+  lastCommitments = data.commitments || [];
+  lastCalendars = data.calendars || {};
+  render();
+  const n = lastCommitments.length;
+  $("#status").textContent = `${n} event${n === 1 ? "" : "s"} on the calendar · updated ` +
+    new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+async function findSlots() {
+  const mins = Math.max(5, Math.min(1440, parseInt($("#minutes").value, 10) || 30));
+  const days = parseInt($("#days").value, 10) || 7;
+  $("#slot-summary").textContent = "looking…";
+  let data;
+  try {
+    data = await api(`/calendar/slots?minutes=${mins}&days=${days}`);
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#slot-summary").textContent = "couldn't find slots — retry";
+    return;
+  }
+  slotMinutes = mins;
+  lastSlots = data.slots || [];
+  $("#clear").style.display = "";
+  const label = $("#days").selectedOptions[0].textContent;
+  if (lastSlots.length) {
+    $("#slot-summary").innerHTML =
+      `Found <b>${lastSlots.length}</b> open slot${lastSlots.length === 1 ? "" : "s"} ` +
+      `of at least <b>${niceDuration(mins)}</b> within ${esc(label)} — highlighted below.`;
+  } else {
+    $("#slot-summary").innerHTML =
+      `No open <b>${niceDuration(mins)}</b> slot within ${esc(label)}. Try a shorter block or a longer window.`;
+  }
+  render();
+}
+
+function clearSlots() {
+  slotMinutes = null; lastSlots = [];
+  $("#slot-summary").textContent = "";
+  $("#clear").style.display = "none";
+  document.querySelectorAll("#presets button").forEach((b) => b.setAttribute("aria-pressed", "false"));
+  render();
+}
+
+// ── Slot-finder controls ────────────────────────────────────────────────
+(function buildPresets() {
+  $("#presets").innerHTML = PRESETS.map((m) =>
+    `<button type="button" data-min="${m}" aria-pressed="false">${m}</button>`).join("");
+  $("#presets").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-min]"); if (!btn) return;
+    document.querySelectorAll("#presets button").forEach((b) =>
+      b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+    $("#minutes").value = btn.dataset.min;
+    findSlots();
+  });
+})();
+$("#minutes").addEventListener("input", () =>
+  document.querySelectorAll("#presets button").forEach((b) =>
+    b.setAttribute("aria-pressed", b.dataset.min === $("#minutes").value ? "true" : "false")));
+$("#minutes").addEventListener("keydown", (e) => { if (e.key === "Enter") findSlots(); });
+$("#find").onclick = findSlots;
+$("#clear").onclick = clearSlots;
+$("#days").addEventListener("change", () => { if (slotMinutes != null) findSlots(); });
+
+// ── Boot ────────────────────────────────────────────────────────────────
+function start() { loadCalendar(); clearInterval(timer); timer = setInterval(loadCalendar, REFRESH_MS); }
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  $("#gate").style.display = "none"; $("#gate-err").textContent = "";
+  start();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) loadCalendar(); });
+
+start();  // try the session cookie / saved code; the gate appears only on 401
+</script>
+</body>
+</html>
