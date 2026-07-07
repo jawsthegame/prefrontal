@@ -198,6 +198,14 @@
   #c-todos .row .acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
   .row .title { font-weight: 600; }
   .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  /* Collapsed "Hidden · N" fold in the Commitments card — muted, closed by
+     default, with a rotating chevron; the hidden rows live inside it. */
+  .hidden-fold { margin-top: 10px; }
+  .hidden-fold > summary { list-style: none; cursor: pointer; color: var(--muted);
+    font-size: 13px; opacity: .85; user-select: none; }
+  .hidden-fold > summary::-webkit-details-marker { display: none; }
+  .hidden-fold > summary::before { content: "▸"; display: inline-block; width: 1em; }
+  .hidden-fold[open] > summary::before { content: "▾"; }
 
   .badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase;
            padding: 2px 8px; border-radius: 999px; letter-spacing: .4px; vertical-align: middle; }
@@ -1296,7 +1304,9 @@ function renderCommitments(list, conflicts, cascade) {
   // surface (widget, conflicts, departures); listed here only so they can be
   // brought back. Collapsed under a muted header so they don't clutter the glance.
   if (hidden.length) {
-    html += `<div class="sub" style="margin-top:10px;opacity:.85">Hidden · ${hidden.length}</div>`;
+    // Collapsed by default behind a native <details> fold — hidden commitments are
+    // deliberately out of the glance; you open the fold only to bring one back.
+    html += `<details class="hidden-fold"><summary>Hidden · ${hidden.length}</summary>`;
     html += hidden.map((x) => {
       const cal = calPill(x.calendar_key, x.calendar);
       const src = x.url ? ` <a class="src" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="Open source event">↗</a>` : "";
@@ -1307,6 +1317,7 @@ function renderCommitments(list, conflicts, cascade) {
       <div class="acts"><button class="btn-sm" data-action="commitment-unhide" data-id="${x.id}" title="Un-hide — show this commitment again everywhere">Unhide</button></div>
     </div>`;
     }).join("");
+    html += `</details>`;
   }
   return html;
 }
