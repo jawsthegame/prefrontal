@@ -285,6 +285,46 @@ def test_config_sets_biobreak_end_hour_and_ignores_it_elsewhere(store):
     assert store.get_state("water_end_hour") is None
 
 
+def test_biobreak_is_open_ended_no_count_ever_silences_it(store):
+    """Bio breaks are a reminder, not a quota — a high count never stops the nudge.
+
+    A quota check (water) goes quiet once its daily target is met; the open-ended
+    bio-break keeps firing within its window no matter how many are logged.
+    """
+    _biobreak_only(store)
+    today = datetime(2026, 7, 2).strftime("%Y-%m-%d")
+    # Log well past the old daily target of 6 — a quota would be long done.
+    store.set_state("biobreak_count", f"{today}|20")
+    at_noon = _ctx(datetime(2026, 7, 2, 12, 0, 0))
+    assert _by_kind(SelfCareModule().evaluate(store, at_noon), "biobreak")  # still nudging
+
+
+def test_biobreak_went_defers_an_interval_but_is_never_done(store):
+    """'Went' spaces the next reminder out and logs the response, but never 'done'.
+
+    Unlike a quota confirm (which can end the check for the day), an open-ended
+    confirm only defers — status never reports the bio-break as done, and it
+    resumes nudging once the deferral elapses.
+    """
+    _biobreak_only(store)
+    now = datetime(2026, 7, 2, 12, 0, 0)
+    today = now.strftime("%Y-%m-%d")
+    msg = apply_self_care_action(store, "biobreak_went", now=now, today=today)
+    assert msg and "🚻" in msg  # confirmation copy, no "done for the day" framing
+    # Counted (as an informational tally) and the next reminder pushed a full
+    # interval out (default 120 min), so it's quiet right after the tap…
+    assert store.get_state("biobreak_count") == f"{today}|1"
+    deferred = datetime.strptime(store.get_state("biobreak_snoozed_until"), "%Y-%m-%d %H:%M:%S")
+    assert timedelta(minutes=115) < (deferred - now) <= timedelta(minutes=121)
+    assert SelfCareModule().evaluate(store, _ctx(now)) == []  # deferred by the confirm
+    # …but it's never "done", and it fires again once the interval elapses.
+    status = self_care_status(store, now, "UTC")
+    bio = {c["key"]: c for c in status["checks"]}["biobreak"]
+    assert bio["open_ended"] is True and bio["done"] is False
+    later = now + timedelta(minutes=125)
+    assert _by_kind(SelfCareModule().evaluate(store, _ctx(later)), "biobreak")
+
+
 # -- one-tap actions ---------------------------------------------------------
 
 

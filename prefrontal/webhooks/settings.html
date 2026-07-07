@@ -181,6 +181,8 @@ const SC_META = {
 };
 
 function scProgress(c) {
+  // Open-ended check (bio breaks): a reminder, not a quota — show a bare tally.
+  if (c.open_ended) return c.count > 0 ? `<b>${c.count}</b>` : `<span class="sc-sub">—</span>`;
   if (c.target > 1) return `<b>${c.count}/${c.target}</b>${c.done ? " ✓" : ""}`;
   return c.done ? "<b>✓</b>" : `<span class="sc-sub">—</span>`;
 }
@@ -190,8 +192,9 @@ function scRow(c) {
   const num = (field, val, attrs) =>
     `<input class="sc-num" type="number" ${attrs} data-sc-check="${c.key}" `
     + `data-sc-field="${field}" value="${val}"${c.enabled ? "" : " disabled"} />`;
-  // Cadence only matters for a recurring check (target > 1).
-  const cadence = c.target > 1
+  // Cadence matters for a recurring quota (target > 1) and for an open-ended
+  // interval reminder (bio breaks) — both nudge on an interval.
+  const cadence = (c.target > 1 || c.open_ended)
     ? `<span class="sc-field">every ${num("interval_minutes", c.interval_minutes, 'min="1"')}m</span>`
     : "";
   // A window-bounded check (the server sends a non-null end_hour) also offers a
@@ -199,10 +202,15 @@ function scRow(c) {
   const endHour = (c.end_hour != null)
     ? `<span class="sc-field">to ${num("end_hour", c.end_hour, 'min="0" max="23"')}:00</span>`
     : "";
+  // An open-ended check has no quota, so it offers no "target" control — just its
+  // window (from/to) and cadence.
+  const target = c.open_ended
+    ? ""
+    : `<span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>`;
   return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
     <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
     + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
-    <span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>
+    ${target}
     <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
     ${endHour}
     ${cadence}
