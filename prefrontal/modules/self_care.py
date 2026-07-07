@@ -406,6 +406,24 @@ def apply_self_care_mark(
     return apply_self_care_action(store, check.confirm_action, now=now, today=today)
 
 
+def apply_self_care_unmark(store: MemoryStore, key: str, *, today: str) -> str | None:
+    """Reduce a check's logged count for *today* by one, flooring at zero.
+
+    Backs the dashboard chip's shift-click mis-tap correction ("I logged that by
+    accident"). It rewinds only the day counter — the chip's ``count``/``target``
+    readout and its done-for-the-day state both derive from it — so a decrement
+    below target flips the check back to not-done. The historical ``self_care``
+    episodes are an append-only log (Insights reads them) and are deliberately
+    left untouched. Returns confirmation copy, or ``None`` for an unknown key.
+    """
+    check = next((c for c in CHECKS if c.key == key), None)
+    if check is None:
+        return None
+    count = max(0, day_count(store, check, today) - 1)
+    store.set_state(check.count_key, f"{today}|{count}", source="explicit")
+    return f"Removed one — {count}/{_target(store, check)} today."
+
+
 def _latency_note(store: MemoryStore, check: BasicCheck, now: datetime) -> str:
     """Pop the prompt stamp and render the nudge→tap latency as a note token.
 

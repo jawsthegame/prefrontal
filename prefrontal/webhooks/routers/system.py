@@ -25,6 +25,7 @@ from prefrontal.clock import utcnow
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
+    apply_self_care_unmark,
     self_care_status,
 )
 from prefrontal.scheduling import local_datetime
@@ -225,16 +226,19 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """Log that the signed-in user did a self-care check today.
 
-        Backs the dashboard card's "mark done" buttons — the way to record a
-        check you completed after missing (or ignoring) its notification. Counts
-        one toward the check's daily target with the same semantics as a one-tap
-        notification confirm, then returns the fresh status (plus a short
-        ``headline`` for feedback) so the card re-renders from the response.
+        Backs the dashboard chips — a plain tap records a check you completed
+        (counts one toward its daily target, same semantics as a one-tap
+        notification confirm); a shift-click sends ``undo`` to rewind an
+        accidental count by one (floored at zero). Returns the fresh status
+        (plus a short ``headline`` for feedback) so the card re-renders from it.
         """
         now = utcnow()
         tz = services.settings.timezone
         today = local_datetime(now, tz).strftime("%Y-%m-%d")
-        headline = apply_self_care_mark(ctx.store, payload.key, now=now, today=today)
+        if payload.undo:
+            headline = apply_self_care_unmark(ctx.store, payload.key, today=today)
+        else:
+            headline = apply_self_care_mark(ctx.store, payload.key, now=now, today=today)
         if headline is None:
             raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
         return {"headline": headline, **self_care_status(ctx.store, now, tz)}

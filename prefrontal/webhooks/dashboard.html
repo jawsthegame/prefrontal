@@ -930,15 +930,20 @@ function scReadout(c) {
 function scRow(c) {
   const m = SC_META[c.key] || { icon: "", label: c.key };
   const recurring = c.target > 1;
-  // A once-a-day check has nothing left to log once it's done — lock the chip.
-  const locked = !recurring && c.done;
   // Fill green up to the daily target; extra taps read as full, not overflow.
   const fill = c.target > 0 ? Math.min(100, (c.count / c.target) * 100) : 0;
-  // The icon carries the identity; the full name rides in the tooltip / a11y label.
-  const label = recurring
-    ? `${m.label}: ${c.count} of ${c.target} today — tap to log one`
-    : (c.done ? `${m.label}: done today` : `${m.label} — tap to mark done`);
-  return `<button class="sc-chip${c.done ? " done" : ""}" data-sc-mark="${c.key}"${locked ? " disabled" : ""}`
+  // A plain tap adds one (a once-a-day check that's already done has nothing to
+  // add); shift-click removes one (nothing to remove at zero). The click handler
+  // enforces this; the tooltip advertises whichever actions actually apply.
+  const canAdd = recurring || !c.done;
+  const acts = [canAdd ? "tap to log one" : null, c.count > 0 ? "shift-click to remove one" : null]
+    .filter(Boolean).join(", ");
+  const state = recurring
+    ? `${m.label}: ${c.count} of ${c.target} today`
+    : (c.done ? `${m.label}: done today` : m.label);
+  const label = acts ? `${state} — ${acts}` : state;
+  return `<button class="sc-chip${c.done ? " done" : ""}" data-sc-mark="${c.key}"`
+    + ` data-sc-count="${c.count}" data-sc-target="${c.target}"`
     + ` style="--p:${fill.toFixed(0)}%" aria-label="${esc(label)}" title="${esc(label)}">`
     + `<span class="ic">${m.icon}</span>${scReadout(c)}</button>`;
 }
@@ -2112,16 +2117,23 @@ document.addEventListener("change", (e) => {
   applyCap(card.id);
 });
 
-// Self-care card: "Mark done" logs a confirm for that check today — the way to
-// record something you did after missing (or ignoring) its notification. It
-// counts one toward the daily target exactly like a one-tap notification would.
+// Self-care card: tapping a chip logs a confirm for that check today — the way
+// to record something you did after missing (or ignoring) its notification,
+// counting one toward the daily target like a one-tap notification would.
+// Shift-clicking rewinds an accidental count by one (never below zero).
 // Settings (master switch, targets, cadence) live on /settings, not here.
 document.addEventListener("click", async (e) => {
   const btn = e.target.closest("#c-selfcare [data-sc-mark]");
   if (!btn || btn.disabled) return;
+  const undo = e.shiftKey;
+  const count = +btn.dataset.scCount || 0;
+  const target = +btn.dataset.scTarget || 1;
+  // Nothing to remove at zero; a once-a-day check that's already met has
+  // nothing to add on a plain tap (extra taps would just overshoot the target).
+  if (undo ? count <= 0 : target <= 1 && count >= target) return;
   btn.disabled = true;  // guard against a double-tap logging two
   try {
-    const status = await post("/self-care/mark", { key: btn.dataset.scMark });
+    const status = await post("/self-care/mark", { key: btn.dataset.scMark, undo });
     $("#c-selfcare .body").innerHTML = renderSelfCare(status);
   } catch (_) { btn.disabled = false; /* post() surfaced the error */ }
 });
