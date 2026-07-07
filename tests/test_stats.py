@@ -19,6 +19,7 @@ from prefrontal.modules.self_care import (
     DEFAULT_WATER_INTERVAL_MINUTES,
 )
 from prefrontal.stats import (
+    CHORE_SERIES_LEN,
     FOLLOW_SERIES_LEN,
     MAX_ESTIMATE_POINTS,
     build_stats,
@@ -58,6 +59,47 @@ def test_empty_history_is_safe_and_zeroed(scoped):
     assert ft["counts"] == {"success": 0, "partial": 0, "miss": 0}
     assert ft["series"] == []
     assert data["channels"] == []
+    # Chores view is present and zeroed even for a user with no household.
+    ch = data["chores"]
+    assert ch["total"] == 0 and ch["today"] == 0 and ch["yesterday"] == 0
+    assert ch["by_person"] == [] and ch["enabled_chores"] == 0
+    assert len(ch["series"]) == CHORE_SERIES_LEN
+
+
+def test_chores_view_tallies_completions_per_person_and_day():
+    """Completions roll up into totals, a per-person split, and today/yesterday counts."""
+    import datetime as _dt
+
+    from prefrontal.clock import utcnow
+    from prefrontal.scheduling import local_datetime
+
+    conn = init_db(":memory:")
+    s = MemoryStore(conn)
+    try:
+        provision_user(s, "dana", display_name="Dana", token="dana-tok")
+        provision_user(s, "alex", display_name="Alex", token="alex-tok")
+        hid = s.create_household("Kims")
+        s.set_user_household("dana", hid)
+        s.set_user_household("alex", hid)
+        dana = s.scoped(s.get_user("dana")["id"])
+        did, aid = s.get_user("dana")["id"], s.get_user("alex")["id"]
+        cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=did, updated_by=did)
+        tz = Settings().timezone
+        today = local_datetime(utcnow(), tz).date().isoformat()
+        yday = (local_datetime(utcnow(), tz).date() - _dt.timedelta(days=1)).isoformat()
+        dana.log_chore_done(chore_id=cid, done_on=today, done_by=did)
+        dana.log_chore_done(chore_id=cid, done_on=yday, done_by=aid)
+
+        ch = build_stats(dana)["chores"]
+        assert ch["total"] == 2
+        assert ch["today"] == 1 and ch["yesterday"] == 1
+        assert ch["active_days"] == 2 and ch["avg_per_active_day"] == 1.0
+        assert ch["enabled_chores"] == 1
+        assert {p["name"]: p["count"] for p in ch["by_person"]} == {"Dana": 1, "Alex": 1}
+        # The recent series' last entry is today, carrying today's count.
+        assert ch["series"][-1] == {"day": today, "count": 1}
+    finally:
+        conn.close()
 
 
 # --- time estimation ---------------------------------------------------------

@@ -1266,6 +1266,50 @@ class HouseholdRepo(Repo):
         )
         self.conn.commit()
 
+    def unlog_chore_done(
+        self, *, chore_id: int, done_on: str
+    ) -> dict[str, Any] | None:
+        """Un-mark a chore for local date ``done_on`` (idempotent). Returns a result dict.
+
+        Returns ``None`` if the chore isn't in this household (so a tap can 404).
+        ``removed`` is ``False`` when nothing was logged for that day — un-ticking
+        an already-blank day is a no-op, not an error. Mirrors :meth:`log_chore_done`
+        so the day-selector card can toggle a completion off as well as on.
+        """
+        hid = self._household_id()
+        chore = self.conn.execute(
+            "SELECT title FROM household_chores WHERE id = ? AND household_id = ?",
+            (chore_id, hid),
+        ).fetchone()
+        if chore is None:
+            return None
+        cur = self.conn.execute(
+            "DELETE FROM household_chore_log "
+            "WHERE household_id = ? AND chore_id = ? AND done_on = ?",
+            (hid, chore_id, done_on),
+        )
+        self.conn.commit()
+        return {"title": chore["title"], "removed": cur.rowcount > 0, "done_on": done_on}
+
+    def chore_log_since(self, since: str) -> list[dict[str, Any]]:
+        """Completion-log rows on/after local date ``since`` ("YYYY-MM-DD"), newest first.
+
+        Joins the acting parent's display name so Insights can split completions
+        per person. Household-scoped; a chore deleted since is simply absent (its
+        log rows go with it via :meth:`remove_chore`).
+        """
+        rows = self.conn.execute(
+            """
+            SELECT l.chore_id, l.done_on, l.done_by, u.display_name AS done_by_name
+              FROM household_chore_log l
+              LEFT JOIN users u ON u.id = l.done_by
+             WHERE l.household_id = ? AND l.done_on >= ?
+             ORDER BY l.done_on DESC, l.id DESC
+            """,
+            (self._household_id(), since),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def mark_chore_reminded(self, chore_id: int, on: str) -> None:
         """Stamp ``last_reminded_on`` = local date ``on`` (dedups the reminder to once/day)."""
         self.conn.execute(

@@ -781,6 +781,20 @@ class ChoreEnabled(BaseModel):
     enabled: bool = Field(default=True, description="True = active, false = paused.")
 
 
+class ChoreDone(BaseModel):
+    """Body of ``POST /household/chores/{id}/done`` and ``/undone`` — which day.
+
+    ``days_ago`` is 0 for today or 1 for yesterday; the server resolves it to a
+    local date so the client needn't know the deployment's timezone. The card's
+    day selector only reaches one day back, so anything outside {0, 1} is
+    rejected (422) rather than silently clamped.
+    """
+
+    days_ago: int = Field(
+        default=0, ge=0, le=1, description="0 = today, 1 = yesterday."
+    )
+
+
 class RoutineSet(BaseModel):
     """Body of ``POST /household/routines`` — upsert a routine (grouping + accountability)."""
 

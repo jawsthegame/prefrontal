@@ -76,6 +76,7 @@ from prefrontal.webhooks.schemas import (
     CheckinConfig,
     ChildCreate,
     ChildRename,
+    ChoreDone,
     ChoreEnabled,
     ChoreSet,
     DigestConfig,
@@ -888,19 +889,73 @@ def build_router(services: RouterServices) -> APIRouter:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
         return {"ok": True, "enabled": payload.enabled}
 
+    def _chore_local_date(days_ago: int) -> str:
+        """Local "YYYY-MM-DD" for ``days_ago`` before today (0 today, 1 yesterday).
+
+        The client sends a small offset rather than a date so the deployment's
+        timezone stays the single source of truth for "which day".
+        """
+        day = local_datetime(utcnow(), resolved_settings.timezone) - timedelta(
+            days=days_ago
+        )
+        return day.strftime("%Y-%m-%d")
+
+    @router.get("/household/chores/done", tags=["household"])
+    def chores_done_on(
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+        days_ago: int = 0,
+    ) -> dict[str, Any]:
+        """The ids of chores completed ``days_ago`` before today (0 today, 1 yesterday).
+
+        Powers the card's day selector: it can show a past day's tick state
+        without reloading the whole sheet. Only today and yesterday are
+        addressable, matching what the selector can reach.
+        """
+        if days_ago not in (0, 1):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="days_ago must be 0 (today) or 1 (yesterday)",
+            )
+        done_on = _chore_local_date(days_ago)
+        ids = sorted(ctx.store.chore_ids_done_on(done_on))
+        return {"days_ago": days_ago, "done_on": done_on, "ids": ids}
+
     @router.post("/household/chores/{chore_id}/done", tags=["household"])
     def mark_chore_done(
         chore_id: int,
         ctx: Annotated[ScopedRequest, Depends(require_member)],
+        payload: ChoreDone | None = None,
     ) -> dict[str, Any]:
-        """Mark a chore done for today (idempotent), attributed to the acting parent."""
-        today = local_datetime(utcnow(), resolved_settings.timezone).strftime("%Y-%m-%d")
+        """Mark a chore done (idempotent), attributed to the acting parent.
+
+        ``days_ago`` (0 today, 1 yesterday; default today) lets the card's day
+        selector back-fill a day someone forgot to tick. The body is optional so
+        the ntfy one-tap Done and older clients keep logging "today".
+        """
+        done_on = _chore_local_date(payload.days_ago if payload else 0)
         result = ctx.store.log_chore_done(
-            chore_id=chore_id, done_on=today, done_by=ctx.user["id"]
+            chore_id=chore_id, done_on=done_on, done_by=ctx.user["id"]
         )
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
-        return {"ok": True, "created": result["created"], "done_on": today}
+        return {"ok": True, "created": result["created"], "done_on": done_on}
+
+    @router.post("/household/chores/{chore_id}/undone", tags=["household"])
+    def unmark_chore_done(
+        chore_id: int,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+        payload: ChoreDone | None = None,
+    ) -> dict[str, Any]:
+        """Un-mark a chore for today or yesterday (idempotent) — corrects a mistaken tick.
+
+        The web card's checkbox is two-way; ``days_ago`` picks which day to clear
+        (0 today, 1 yesterday). Un-ticking a day with nothing logged is a no-op.
+        """
+        done_on = _chore_local_date(payload.days_ago if payload else 0)
+        result = ctx.store.unlog_chore_done(chore_id=chore_id, done_on=done_on)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such chore")
+        return {"ok": True, "removed": result["removed"], "done_on": done_on}
 
     @router.post("/household/chores/{chore_id}/remove", tags=["household"])
     def remove_chore(

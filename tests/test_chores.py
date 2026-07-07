@@ -606,6 +606,63 @@ def test_one_tap_done_on_missing_chore_is_graceful(client):
     assert r.status_code == 200 and "no longer on the list" in r.text
 
 
+def test_chore_done_selector_marks_and_reads_a_past_day(client, store, dana):
+    """The day selector can back-fill yesterday and read a past day's tick state."""
+    did = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=did, updated_by=did)
+    tz = Settings().timezone
+    today = local_datetime(utcnow(), tz).strftime("%Y-%m-%d")
+    yday = (local_datetime(utcnow(), tz) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Default body (no days_ago) still logs today — back-compat with the ntfy tap.
+    r = client.post(f"/household/chores/{cid}/done", headers=_h("dana-tok"))
+    assert r.status_code == 200 and r.json()["done_on"] == today
+    # Explicit days_ago=1 back-fills yesterday, attributed to the caller.
+    r = client.post(f"/household/chores/{cid}/done", json={"days_ago": 1}, headers=_h("alex-tok"))
+    assert r.status_code == 200 and r.json()["done_on"] == yday
+    assert cid in dana.chore_ids_done_on(yday)
+
+    # The read endpoint resolves the offset server-side (timezone-owned).
+    assert client.get("/household/chores/done?days_ago=0", headers=_h("dana-tok")).json() == {
+        "days_ago": 0, "done_on": today, "ids": [cid]}
+    assert client.get("/household/chores/done?days_ago=1", headers=_h("alex-tok")).json() == {
+        "days_ago": 1, "done_on": yday, "ids": [cid]}
+
+
+def test_chore_undone_clears_a_day_and_is_idempotent(client, store, dana):
+    """Un-ticking removes that day's completion; re-undoing is a harmless no-op."""
+    did = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=did, updated_by=did)
+    client.post(f"/household/chores/{cid}/done", json={"days_ago": 1}, headers=_h("dana-tok"))
+    tz = Settings().timezone
+    yday = (local_datetime(utcnow(), tz) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    assert cid in dana.chore_ids_done_on(yday)
+
+    r = client.post(f"/household/chores/{cid}/undone", json={"days_ago": 1}, headers=_h("dana-tok"))
+    assert r.status_code == 200 and r.json()["removed"] is True
+    assert cid not in dana.chore_ids_done_on(yday)
+    # Idempotent: nothing left to remove.
+    r = client.post(f"/household/chores/{cid}/undone", json={"days_ago": 1}, headers=_h("dana-tok"))
+    assert r.status_code == 200 and r.json()["removed"] is False
+    # A missing chore still 404s.
+    assert client.post("/household/chores/9999/undone", headers=_h("dana-tok")).status_code == 404
+
+
+def test_chore_day_selector_rejects_out_of_range(client, store, dana):
+    """Only today and yesterday are addressable — further back is a 422, not a clamp."""
+    did = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="dishes", due_time="22:00", owner_id=did, updated_by=did)
+    assert client.post(
+        f"/household/chores/{cid}/done", json={"days_ago": 2}, headers=_h("dana-tok")
+    ).status_code == 422
+    assert client.post(
+        f"/household/chores/{cid}/undone", json={"days_ago": -1}, headers=_h("dana-tok")
+    ).status_code == 422
+    assert client.get(
+        "/household/chores/done?days_ago=2", headers=_h("dana-tok")
+    ).status_code == 422
+
+
 def test_chores_check_endpoint(client, store, dana):
     dana_id = store.get_user("dana")["id"]
     store.scoped(dana_id).set_state("ntfy_topic", "dana-topic")
