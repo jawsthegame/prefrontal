@@ -62,7 +62,14 @@ CREATE TABLE IF NOT EXISTS households (
     -- Opt-in "who's keeping the sheet up" balance view — a gentle, non-accusatory
     -- picture from updated_by/awarded_by counts. Off by default; shown on /kids
     -- (no push). Derived on read, so there's nothing else to store.
-    balance_enabled      INTEGER NOT NULL DEFAULT 0   -- 0/1, opt-in
+    balance_enabled      INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
+    -- Optional "we're away" window (vacation / travel). A single household-wide
+    -- window of inclusive local dates; while today falls within it, chores marked
+    -- away_behavior='suppress' are skipped. All NULL = not away. `away_note` is a
+    -- short free-text reason surfaced in the skip explanation ("beach trip").
+    away_start           TEXT,                        -- inclusive local "YYYY-MM-DD", or NULL
+    away_end             TEXT,                        -- inclusive local "YYYY-MM-DD", or NULL
+    away_note            TEXT                         -- short reason, e.g. "beach trip"
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -745,6 +752,12 @@ CREATE TABLE IF NOT EXISTS household_chores (
     remind_before INTEGER NOT NULL DEFAULT 30,      -- minutes before due to nudge the owner
     impact        TEXT,                             -- why it matters ("makes the morning harder")
     enabled       INTEGER NOT NULL DEFAULT 1,       -- 0/1
+    -- What to do with this chore while the household is "away" (see households.away_*):
+    -- 'keep' = fire as normal (default — e.g. "pay the water bill" still matters on
+    -- vacation); 'suppress' = a location-bound chore (trash, mail, plants) that can't
+    -- be done while away, so it's silently skipped with a logged reason. ('reassign'
+    -- is reserved for a later phase.) Constant default so ADD COLUMN can backfill it.
+    away_behavior TEXT NOT NULL DEFAULT 'keep',     -- keep | suppress
     updated_by    INTEGER REFERENCES users(id),
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -663,6 +663,56 @@ def test_execute_chore_create_edit_rename_remove(hh_memory):
     assert hh_memory.chores() == []
 
 
+def test_execute_chore_away_behavior_and_edit_preserves_it(hh_memory):
+    # Create a location-bound chore.
+    _plan_and_execute(
+        hh_memory,
+        [{"op": "set_chore", "title": "Trash", "due_time": "20:00", "away_behavior": "suppress"}],
+    )
+    cid = hh_memory.chores()[0]["id"]
+    assert hh_memory.chores()[0]["away_behavior"] == "suppress"
+    # An edit that touches only the time must NOT reset away_behavior (merge preserves it).
+    _plan_and_execute(hh_memory, [{"op": "edit_chore", "chore_id": cid, "due_time": "21:00"}])
+    row = next(c for c in hh_memory.chores() if c["id"] == cid)
+    assert row["due_time"] == "21:00" and row["away_behavior"] == "suppress"
+
+
+def test_execute_set_and_clear_away_window(hh_memory):
+    res = _plan_and_execute(
+        hh_memory,
+        [{"op": "set_away", "starts_on": "2026-07-10", "ends_on": "2026-07-17", "note": "beach"}],
+    )
+    assert res[0]["ok"] is True
+    assert hh_memory.away_window() == {
+        "starts_on": "2026-07-10", "ends_on": "2026-07-17", "note": "beach"
+    }
+    # It shows up in the snapshot so the assistant can see/report it.
+    assert assistant.build_snapshot(hh_memory)["household"]["away_window"]["note"] == "beach"
+    res = _plan_and_execute(hh_memory, [{"op": "clear_away"}])
+    assert res[0]["ok"] is True
+    assert hh_memory.away_window() is None
+
+
+def test_away_op_validation_guards(hh_memory, memory):
+    snap = assistant.build_snapshot(hh_memory)
+    # Backwards range is refused.
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_away", "starts_on": "2026-07-17", "ends_on": "2026-07-10"}], snap
+    )
+    assert errors and "on or after" in errors[0]
+    # A malformed date is refused.
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_away", "starts_on": "July 10", "ends_on": "2026-07-17"}], snap
+    )
+    assert errors and "YYYY-MM-DD" in errors[0]
+    # Away ops are unavailable to a user with no household.
+    _a, errors = assistant.validate_actions(
+        [{"op": "set_away", "starts_on": "2026-07-10", "ends_on": "2026-07-17"}],
+        assistant.build_snapshot(memory),
+    )
+    assert errors and "household" in errors[0]
+
+
 def test_assistant_assigns_owner_and_accountable(hh_memory):
     """A chore's owner and a routine's accountable holder resolve to a member id."""
     hid = hh_memory.household_id_or_none()

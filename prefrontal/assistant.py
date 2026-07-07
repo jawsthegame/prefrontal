@@ -187,14 +187,25 @@ ASSISTANT_SYSTEM = (
     "reminder lead (remind_before, minutes before due), and may link under a routine "
     "(routine_id from \"household.routines\", or null to stand alone). Create with "
     "set_chore; to rename or change an existing one use edit_chore with its id from "
-    "\"household.chores\" — set_chore can't rename. Pass enabled:false to pause:\n"
+    "\"household.chores\" — set_chore can't rename. Pass enabled:false to pause. "
+    "away_behavior controls what happens while the household is away (see below): "
+    "\"keep\" (default — bills, meds still fire) or \"suppress\" (a location-bound "
+    "chore like trash/mail/plants that can't be done from afar, so it's skipped):\n"
     '- {"op":"set_chore","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
     '"month_days":[1-31]?,"remind_before":int?,"impact":str?,"enabled":bool?,'
-    '"owner_id":int?,"routine_id":int?}\n'
+    '"owner_id":int?,"routine_id":int?,"away_behavior":"keep"|"suppress"?}\n'
     '- {"op":"edit_chore","chore_id":int,"title":str?,"due_time":"HH:MM"?,'
     '"days":[0-6]?,"month_days":[1-31]?,"remind_before":int?,"impact":str?,'
-    '"enabled":bool?,"owner_id":int?,"routine_id":int?}\n'
+    '"enabled":bool?,"owner_id":int?,"routine_id":int?,'
+    '"away_behavior":"keep"|"suppress"?}\n'
     '- {"op":"remove_chore","chore_id":int}\n'
+    "An \"away window\" marks the whole household as away (vacation / travel) over "
+    "an inclusive local date range — while it's active, chores with "
+    "away_behavior:\"suppress\" are skipped. Set it when the user says they'll be "
+    "away; clear it when they're back or the plan changes. Dates are \"YYYY-MM-DD\"; "
+    "note is a short optional reason (\"beach trip\"):\n"
+    '- {"op":"set_away","starts_on":"YYYY-MM-DD","ends_on":"YYYY-MM-DD","note":str?}\n'
+    '- {"op":"clear_away"}\n'
     "Shared shopping list — add things to buy, check them off, or remove them. "
     "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
     "resolve the item to an id from \"household.shopping\"; \"got\" defaults to "
@@ -327,9 +338,13 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
                 "enabled": bool(ch.get("enabled")),
                 "owner_id": ch.get("owner_id"),
                 "routine_id": ch.get("routine_id"),
+                "away_behavior": ch.get("away_behavior") or "keep",
             }
             for ch in memory.chores()
         ],
+        # The current "we're away" window (vacation / travel), or null if not away —
+        # so the assistant can report it, avoid re-setting, or clear it on return.
+        "away_window": memory.away_window(),
     }
 
 
@@ -1052,6 +1067,10 @@ def _v_edit_chore(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> 
     if "enabled" in action:
         params["enabled"] = bool(action.get("enabled"))
         changes.append("resume" if params["enabled"] else "pause")
+    if "away_behavior" in action:
+        # Re-normalized against AWAY_BEHAVIORS by the handler's normalize_chore.
+        params["away_behavior"] = action.get("away_behavior")
+        changes.append(f"while away → {params['away_behavior']}")
     if "owner_id" in action:
         oid = _resolve_link(action, household, "owner_id", "members")
         params["owner_id"] = oid
@@ -1077,6 +1096,40 @@ def _v_remove_chore(
     household = _require_household(snapshot)
     cid, title = _require_chore(action, household)
     return ValidatedAction(op, {"chore_id": cid}, f"Remove chore: “{title}”")
+
+
+def _as_iso_date(value: Any, field_name: str) -> str:
+    """Validate a ``"YYYY-MM-DD"`` local date string, or raise :class:`_ActionError`."""
+    if not isinstance(value, str):
+        raise _ActionError(f"{field_name} must be a 'YYYY-MM-DD' date")
+    try:
+        datetime.strptime(value.strip(), "%Y-%m-%d")  # tz-ok: validates a local date
+    except ValueError:
+        raise _ActionError(f"{field_name} must be a 'YYYY-MM-DD' date") from None
+    return value.strip()
+
+
+def _v_set_away(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    _require_household(snapshot)
+    starts_on = _as_iso_date(action.get("starts_on"), "starts_on")
+    ends_on = _as_iso_date(action.get("ends_on"), "ends_on")
+    if ends_on < starts_on:
+        raise _ActionError("ends_on must be on or after starts_on")
+    note = action.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise _ActionError("note must be text")
+        note = note.strip()[:120] or None
+    params = {"starts_on": starts_on, "ends_on": ends_on, "note": note}
+    detail = f"Mark household away {starts_on} → {ends_on}"
+    if note:
+        detail += f" ({note})"
+    return ValidatedAction(op, params, detail)
+
+
+def _v_clear_away(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    _require_household(snapshot)
+    return ValidatedAction(op, {}, "Clear the household away window")
 
 
 #: op → validator. This registry *is* the whitelist: :data:`ALLOWED_OPS` is
@@ -1116,6 +1169,8 @@ _VALIDATORS: dict[
     "set_chore": _v_set_chore,
     "edit_chore": _v_edit_chore,
     "remove_chore": _v_remove_chore,
+    "set_away": _v_set_away,
+    "clear_away": _v_clear_away,
 }
 
 #: The ops the assistant may emit — the security boundary, derived from the
@@ -1374,6 +1429,7 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
                 remind_before=p.get("remind_before", 30),
                 impact=p.get("impact"),
                 enabled=p.get("enabled", True),
+                away_behavior=p.get("away_behavior", "keep"),
                 updated_by=memory.user_id,
             )
             result.update(ok=True, detail=f"chore #{cid}")
@@ -1399,6 +1455,14 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
                     result["detail"] = "another chore already has that name"
         elif op == "remove_chore":
             result["ok"] = memory.remove_chore(p["chore_id"])
+        elif op == "set_away":
+            memory.set_away_window(
+                starts_on=p["starts_on"], ends_on=p["ends_on"], note=p.get("note")
+            )
+            result.update(ok=True, detail=f"away {p['starts_on']} → {p['ends_on']}")
+        elif op == "clear_away":
+            memory.clear_away_window()
+            result.update(ok=True, detail="away window cleared")
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except Exception as exc:  # noqa: BLE001 — one bad action must never abort the batch

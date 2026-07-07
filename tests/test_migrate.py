@@ -62,6 +62,38 @@ def test_backfill_brings_a_stale_table_up_to_schema():
     backfill_added_columns(conn)  # idempotent — a second run adds nothing
 
 
+def test_backfill_adds_away_behavior_default_to_existing_chores():
+    """A pre-away_behavior chores row gains the column with its 'keep' default."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    # An "old" household_chores table with every original column *except*
+    # away_behavior (which schema.sql later grew). Keeping the CURRENT_TIMESTAMP
+    # columns present means the only column the back-fill adds is away_behavior —
+    # which must carry a constant default so ADD COLUMN is legal.
+    conn.execute(
+        "CREATE TABLE household_chores ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, household_id INTEGER NOT NULL, "
+        "title TEXT NOT NULL, owner_id INTEGER, routine_id INTEGER, "
+        "days TEXT NOT NULL DEFAULT '', month_days TEXT NOT NULL DEFAULT '', "
+        "due_time TEXT NOT NULL DEFAULT '', remind_before INTEGER NOT NULL DEFAULT 30, "
+        "impact TEXT, enabled INTEGER NOT NULL DEFAULT 1, updated_by INTEGER, "
+        "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "last_reminded_on TEXT, last_missed_on TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO household_chores (household_id, title) VALUES (1, 'trash')"
+    )
+    assert "away_behavior" not in _columns(conn, "household_chores")
+
+    backfill_added_columns(conn)
+
+    assert "away_behavior" in _columns(conn, "household_chores")
+    # The constant DEFAULT reaches the pre-existing row (not NULL).
+    row = conn.execute("SELECT away_behavior FROM household_chores WHERE title='trash'").fetchone()
+    assert row["away_behavior"] == "keep"
+
+
 def test_backfill_is_a_noop_on_a_fresh_database():
     """A database created from schema.sql already has every column."""
     with MemoryStore.open(":memory:") as store:

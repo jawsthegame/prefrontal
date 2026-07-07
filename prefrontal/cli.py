@@ -368,6 +368,8 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _routines_cli(store, args, settings)
         elif args.household_action == "chores-check":
             return _chores_check_cli(store, args, settings)
+        elif args.household_action == "away":
+            return _away_cli(store, args, settings)
         elif args.household_action == "invite":
             from prefrontal.integrations.sms import normalize_phone, send_invite_sms
 
@@ -498,6 +500,7 @@ def _chores_cli(store, args, settings) -> int:
                 "owner_id": owner_id,
                 "remind_before": args.remind,
                 "impact": args.impact,
+                "away_behavior": args.away_behavior or "keep",
             }
         )
         if error is not None:
@@ -549,13 +552,14 @@ def _chores_cli(store, args, settings) -> int:
         box = "x" if c["id"] in done_ids else " "
         owner = c.get("owner_name") or "either"
         paused = "" if c["enabled"] else " [paused]"
+        away = " [skipped while away]" if c.get("away_behavior") == "suppress" else ""
         impact = f" — {c['impact']}" if c.get("impact") else ""
         when = f"by {fmt_time_12h(eff['due_time'])}" if eff.get("due_time") else "untimed"
         routine = f" · {c['routine_title']}" if c.get("routine_title") else ""
         print(
             f"  [{box}] #{c['id']} {c['title']} "
             f"({owner} · {describe_schedule(eff['days'], eff.get('month_days'))} · {when}{routine})"
-            f"{paused}{impact}"
+            f"{paused}{away}{impact}"
         )
     return 0
 
@@ -653,7 +657,59 @@ def _chores_check_cli(store, args, settings) -> int:
         print("No chore reminders due right now.")
         return 0
     for s in sent:
-        print(f"  → {s['stage']}: {s['title']} ({len(s['notified'])} notified)")
+        if s["stage"] == "suppressed":
+            print(f"  → suppressed: {s['title']} ({s['reason']})")
+        else:
+            print(f"  → {s['stage']}: {s['title']} ({len(s['notified'])} notified)")
+    return 0
+
+
+def _away_cli(store, args, settings) -> int:
+    """Show, set, or clear the household's 'we're away' window.
+
+    ``--set START END`` marks the household away over an inclusive local date range
+    (chores with ``away_behavior=suppress`` are skipped while it's active);
+    ``--clear`` removes it; no flags prints the current window.
+    """
+    from datetime import datetime
+
+    from prefrontal.household import away_covers
+    from prefrontal.impact import utcnow
+    from prefrontal.scheduling import local_datetime
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+
+    if args.clear:
+        scoped.clear_away_window()
+        print("Cleared the away window — back to not-away.")
+        return 0
+    if args.away_set:
+        start, end = args.away_set
+        for label, value in (("START", start), ("END", end)):
+            try:
+                datetime.strptime(value, "%Y-%m-%d")  # tz-ok: validates a local date
+            except ValueError:
+                print(f"{label} must be a 'YYYY-MM-DD' date.", file=sys.stderr)
+                return 1
+        if end < start:
+            print("END must be on or after START.", file=sys.stderr)
+            return 1
+        scoped.set_away_window(starts_on=start, ends_on=end, note=args.note)
+        tail = f" ({args.note})" if args.note else ""
+        print(f"Household marked away {start} → {end}{tail}.")
+        return 0
+
+    window = scoped.away_window()
+    if window is None:
+        print("Not away. Set a window: household away --set 2026-07-10 2026-07-17")
+        return 0
+    now_local = local_datetime(utcnow(), settings.timezone)
+    active = "active now" if away_covers(window, now_local) else "not active today"
+    note = f" ({window['note']})" if window.get("note") else ""
+    print(f"Away {window['starts_on']} → {window['ends_on']}{note} — {active}.")
     return 0
 
 
@@ -2861,6 +2917,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--remind", type=int, default=30, help="Minutes before due to nudge (with --add)."
     )
     h_chore.add_argument("--impact", default=None, help="Why it matters if it slips.")
+    h_chore.add_argument(
+        "--away-behavior",
+        dest="away_behavior",
+        choices=("keep", "suppress"),
+        default=None,
+        help="While the household is away: 'keep' (default) or 'suppress' "
+        "(location-bound — trash/mail; skipped on vacation).",
+    )
     h_chore.add_argument("--done", type=int, default=None, help="Mark chore done today, by id.")
     h_chore.add_argument("--remove", type=int, default=None, help="Remove chore by id.")
     h_chore.add_argument("--enable", type=int, default=None, help="Resume chore by id.")
@@ -2893,6 +2957,25 @@ def build_parser() -> argparse.ArgumentParser:
         "chores-check", help="Fire any chore reminders / miss-handoffs due now."
     )
     h_chk.add_argument("--user", default=None, help="Handle of a household member.")
+    h_away = house_sub.add_parser(
+        "away",
+        help="Show/set/clear the 'we're away' window (skips away_behavior=suppress chores).",
+    )
+    h_away.add_argument("--user", default=None, help="Handle of a household member.")
+    h_away.add_argument(
+        "--set",
+        dest="away_set",
+        nargs=2,
+        metavar=("START", "END"),
+        default=None,
+        help="Set the away window: two inclusive local dates 'YYYY-MM-DD YYYY-MM-DD'.",
+    )
+    h_away.add_argument(
+        "--note", default=None, help="Short reason (with --set), e.g. 'beach trip'."
+    )
+    h_away.add_argument(
+        "--clear", action="store_true", help="Clear the away window (back to not-away)."
+    )
     h_inv = house_sub.add_parser(
         "invite", help="Generate a shareable invite code for your household."
     )

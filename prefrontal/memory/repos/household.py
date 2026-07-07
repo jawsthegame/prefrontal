@@ -38,6 +38,8 @@ FACT_CATEGORIES: tuple[str, ...] = (
     "health",   # pediatrician / dentist / insurance / meds
     "school",   # teacher / room / activities / pickup
     "contact",  # role -> name / phone (a facts facet; see docs §3.7)
+    "location", # where the household / a key person is — municipality, addresses
+    "services", # municipal / recurring services — trash day, schedule URL, provider
 )
 
 #: Human labels for the fact categories, used by the render's section headings.
@@ -48,6 +50,8 @@ FACT_CATEGORY_LABELS: dict[str, str] = {
     "health": "Health",
     "school": "School & activities",
     "contact": "Key contacts",
+    "location": "Location",
+    "services": "Household services",
 }
 
 #: Allowed ``household_agreements.kind`` values.
@@ -1016,6 +1020,7 @@ class HouseholdRepo(Repo):
         remind_before: int = 30,
         impact: str | None = None,
         enabled: bool = True,
+        away_behavior: str = "keep",
         updated_by: int | None,
     ) -> int:
         """Upsert a recurring chore (keyed on title within the household), returning its id.
@@ -1032,8 +1037,8 @@ class HouseholdRepo(Repo):
             """
             INSERT INTO household_chores
                 (household_id, title, owner_id, routine_id, days, month_days, due_time,
-                 remind_before, impact, enabled, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 remind_before, impact, enabled, away_behavior, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 owner_id      = excluded.owner_id,
                 routine_id    = excluded.routine_id,
@@ -1043,11 +1048,12 @@ class HouseholdRepo(Repo):
                 remind_before = excluded.remind_before,
                 impact        = excluded.impact,
                 enabled       = excluded.enabled,
+                away_behavior = excluded.away_behavior,
                 updated_by    = excluded.updated_by,
                 updated_at    = CURRENT_TIMESTAMP
             """,
             (hid, title.strip(), owner_id, routine_id, days, month_days, due_time,
-             int(remind_before), impact, 1 if enabled else 0, updated_by),
+             int(remind_before), impact, 1 if enabled else 0, away_behavior, updated_by),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -1069,6 +1075,7 @@ class HouseholdRepo(Repo):
         remind_before: int = 30,
         impact: str | None = None,
         enabled: bool = True,
+        away_behavior: str = "keep",
         updated_by: int | None,
     ) -> str:
         """Edit a chore by id — including **renaming** it, which the title-keyed
@@ -1098,11 +1105,11 @@ class HouseholdRepo(Repo):
             UPDATE household_chores SET
                 title = ?, owner_id = ?, routine_id = ?, days = ?, month_days = ?,
                 due_time = ?, remind_before = ?, impact = ?, enabled = ?,
-                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                away_behavior = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND household_id = ?
             """,
             (title, owner_id, routine_id, days, month_days, due_time,
-             int(remind_before), impact, 1 if enabled else 0, updated_by,
+             int(remind_before), impact, 1 if enabled else 0, away_behavior, updated_by,
              chore_id, hid),
         )
         self.conn.commit()
@@ -1141,8 +1148,8 @@ class HouseholdRepo(Repo):
         rows = self.conn.execute(
             """
             SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.month_days,
-                   c.due_time, c.remind_before, c.impact, c.enabled, c.last_reminded_on,
-                   c.last_missed_on,
+                   c.due_time, c.remind_before, c.impact, c.enabled, c.away_behavior,
+                   c.last_reminded_on, c.last_missed_on,
                    COALESCE(u.display_name, u.handle) AS owner_name,
                    r.title AS routine_title
             FROM household_chores c
@@ -1163,7 +1170,8 @@ class HouseholdRepo(Repo):
         """
         row = self.conn.execute(
             "SELECT id, title, owner_id, routine_id, days, month_days, due_time, "
-            "remind_before, impact, enabled, last_reminded_on, last_missed_on "
+            "remind_before, impact, enabled, away_behavior, last_reminded_on, "
+            "last_missed_on "
             "FROM household_chores WHERE id = ? AND household_id = ?",
             (chore_id, self._household_id()),
         ).fetchone()
@@ -1211,6 +1219,52 @@ class HouseholdRepo(Repo):
         )
         self.conn.commit()
         return {"title": chore["title"], "created": not already, "done_on": done_on}
+
+    # -- "we're away" window (vacation / travel) ------------------------------
+    #
+    # A single household-wide window of inclusive local dates stored on the
+    # household row (mirrors the check-in config trio). While today falls inside
+    # it, chores marked away_behavior='suppress' are skipped by run_chores_check.
+    # The "is today inside it?" decision is pure (prefrontal.household.away_covers);
+    # this layer just stores and reads.
+
+    def away_window(self) -> dict[str, Any] | None:
+        """The household's active away window, or ``None`` if not set.
+
+        Returns ``{"starts_on", "ends_on", "note"}`` (local "YYYY-MM-DD" strings,
+        note optional) when both dates are set, else ``None``. Whether *today*
+        falls inside it is the caller's call (:func:`prefrontal.household.away_covers`).
+        """
+        row = self.conn.execute(
+            "SELECT away_start, away_end, away_note FROM households WHERE id = ?",
+            (self._household_id(),),
+        ).fetchone()
+        if row is None or not row["away_start"] or not row["away_end"]:
+            return None
+        return {
+            "starts_on": row["away_start"],
+            "ends_on": row["away_end"],
+            "note": row["away_note"],
+        }
+
+    def set_away_window(
+        self, *, starts_on: str, ends_on: str, note: str | None = None
+    ) -> None:
+        """Set the household-wide away window (inclusive local dates). Last write wins."""
+        self.conn.execute(
+            "UPDATE households SET away_start = ?, away_end = ?, away_note = ? WHERE id = ?",
+            (starts_on, ends_on, note, self._household_id()),
+        )
+        self.conn.commit()
+
+    def clear_away_window(self) -> None:
+        """Clear the away window (back to not-away). Idempotent."""
+        self.conn.execute(
+            "UPDATE households SET away_start = NULL, away_end = NULL, away_note = NULL "
+            "WHERE id = ?",
+            (self._household_id(),),
+        )
+        self.conn.commit()
 
     def mark_chore_reminded(self, chore_id: int, on: str) -> None:
         """Stamp ``last_reminded_on`` = local date ``on`` (dedups the reminder to once/day)."""
