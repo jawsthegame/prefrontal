@@ -20,6 +20,7 @@ from prefrontal.config import Settings
 from prefrontal.household import (
     away_covers,
     build_sheet,
+    capped_away_window,
     chore_missed_cover_message,
     chore_missed_owner_message,
     chore_missed_partner_message,
@@ -299,6 +300,14 @@ def test_resolve_chore_context_all_members_away_suppresses_like_household():
     assert resolve_chore_context(
         trash, now_local=_WED, away_window=None, all_members_away=False
     ).action == "proceed"
+
+
+def test_capped_away_window_starts_at_departure_ends_capped():
+    # Departed the 1st, confirming on the 3rd → window covers from the 1st (so an
+    # already-slipped chore is covered) and ends cap_days after today.
+    w = capped_away_window("2026-07-01", "2026-07-03", cap_days=14)
+    assert w == {"starts_on": "2026-07-01", "ends_on": "2026-07-17",
+                 "note": "auto-detected trip"}
 
 
 def test_cover_message_builders_name_the_away_owner():

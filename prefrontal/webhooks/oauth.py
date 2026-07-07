@@ -168,6 +168,7 @@ NUDGE_ACTIONS = (
     "briefing_helped",     # morning briefing → 👍 it helped (steers the voice)
     "briefing_not_helped", # morning briefing → 👎 it didn't (tighten it up)
     "chore_done",      # shared chore → mark it done for today (whoever tapped)
+    "away_confirm",    # multi-day-absence proposal → mark me away (chores reassign)
     "trip_domain_shop",      # trip-label ask → file this trip under shop
     "trip_domain_work",      # trip-label ask → file this trip under work
     "trip_domain_home",      # trip-label ask → file this trip under home

@@ -61,6 +61,7 @@ _CUE_ACTION_KIND = {
     "water": ("water", "target"),
     "meds": ("meds", "target"),
     "trip": ("trip_label", "trip_id"),
+    "away_proposal": ("away", "trip_id"),
 }
 
 

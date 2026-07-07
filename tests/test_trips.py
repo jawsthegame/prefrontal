@@ -281,6 +281,68 @@ def test_module_asks_to_label_unlabeled_trip(store):
     assert module.evaluate(store, ctx) == []
 
 
+def _household_store(conn):
+    """A store scoped to one co-parent in a two-person household (for away proposals)."""
+    from prefrontal.memory.store import provision_user
+
+    root = MemoryStore(conn)
+    provision_user(root, "dana", display_name="Dana", token="d")
+    provision_user(root, "alex", display_name="Alex", token="a")
+    hid = root.create_household("Home")
+    root.set_user_household("dana", hid)
+    root.set_user_household("alex", hid)
+    return root.scoped(root.get_user("dana")["id"])
+
+
+def test_module_proposes_away_after_multi_day_trip():
+    """An open trip past the multi-day threshold yields a one-tap away proposal."""
+    from prefrontal.coaching import CoachContext
+
+    conn = init_db(":memory:")
+    try:
+        store = _household_store(conn)
+        store.set_home(*HOME)
+        store.open_trip(departed_at=_minutes_ago(3 * 1440))  # away 3 days
+        module = get_module("trip_tracking")
+        ctx = CoachContext(now=datetime.utcnow())
+
+        cues = [c for c in module.evaluate(store, ctx) if c.context_key == "away_proposal"]
+        assert len(cues) == 1
+        assert cues[0].ref["trip_id"] == store.active_trip()["id"]
+        assert "away" in cues[0].text.lower()
+
+        # Once the member is marked away, the proposal stops (nothing to propose).
+        store.set_member_away(starts_on="2000-01-01", ends_on="2999-12-31")
+        assert [c for c in module.evaluate(store, ctx)
+                if c.context_key == "away_proposal"] == []
+    finally:
+        conn.close()
+
+
+def test_module_no_away_proposal_for_short_trip_or_solo_user(store):
+    """A brief trip doesn't trigger it, and a user with no household never does."""
+    from prefrontal.coaching import CoachContext
+
+    module = get_module("trip_tracking")
+    ctx = CoachContext(now=datetime.utcnow())
+
+    # Solo user (the default fixture store), even a long trip → no proposal.
+    store.set_home(*HOME)
+    store.open_trip(departed_at=_minutes_ago(3 * 1440))
+    assert [c for c in module.evaluate(store, ctx) if c.context_key == "away_proposal"] == []
+
+    # Household user, but only an hour out → under the multi-day floor.
+    conn = init_db(":memory:")
+    try:
+        hh = _household_store(conn)
+        hh.set_home(*HOME)
+        hh.open_trip(departed_at=_minutes_ago(60))
+        assert [c for c in module.evaluate(hh, ctx)
+                if c.context_key == "away_proposal"] == []
+    finally:
+        conn.close()
+
+
 def test_module_profile_section_summarizes(store):
     store.set_home(*HOME)
     trip_id = store.open_trip(departed_at=_minutes_ago(25))

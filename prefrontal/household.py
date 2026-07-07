@@ -989,6 +989,17 @@ MAX_CHORE_REMIND_BEFORE_MINUTES = 720
 AWAY_BEHAVIORS: tuple[str, ...] = ("keep", "suppress")
 DEFAULT_AWAY_BEHAVIOR = "keep"
 
+#: How many days a member must be continuously away from home before the coach
+#: *proposes* marking them away (their chores would then fall to the present
+#: co-parent). A short overnight trip shouldn't trigger it; two days is the floor
+#: where "someone else should cover my chores" starts to matter.
+AWAY_AUTODETECT_MIN_DAYS = 2
+#: Safety cap on an auto-detected away window's length. We can't know the return
+#: date from a departure, so the confirmed window auto-expires after this many
+#: days rather than lingering forever if the user forgets to clear it (returning
+#: home before then is the normal end; this is just the backstop).
+AWAY_AUTODETECT_CAP_DAYS = 14
+
 
 def parse_chore_days(raw: Any) -> list[int]:
     """Parse a stored weekday CSV (``"0,2,4"``) into sorted ints, or ``[]`` (every day).
@@ -1350,6 +1361,23 @@ def away_covers(window: dict[str, Any] | None, now_local: datetime) -> bool:
         return False
     today = now_local.strftime("%Y-%m-%d")  # tz-ok: local calendar date
     return start <= today <= end
+
+
+def capped_away_window(
+    starts_on: str, today: str, *, cap_days: int = AWAY_AUTODETECT_CAP_DAYS
+) -> dict[str, str]:
+    """The member-away window to write when an auto-detected absence is confirmed.
+
+    Starts at the trip's departure date (``starts_on``, a local ``"YYYY-MM-DD"``)
+    so a chore that already slipped while away is covered, and ends ``cap_days``
+    after ``today`` — a backstop so a forgotten window can't suppress/reassign
+    forever (the real end is returning home). Tagged so it's recognizable as a
+    system-proposed window rather than one the user typed.
+    """
+    end = (
+        datetime.strptime(today, "%Y-%m-%d") + timedelta(days=cap_days)
+    ).strftime("%Y-%m-%d")  # tz-ok: local calendar arithmetic
+    return {"starts_on": starts_on, "ends_on": end, "note": "auto-detected trip"}
 
 
 @dataclass(frozen=True)

@@ -62,6 +62,9 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Recurring shared chore — mark it done for today in one tap (whoever taps
     # gets the credit, so a partner picking up a slipped chore closes the loop).
     "chore": (("chore_done", "✓ Done"),),
+    # Multi-day-absence proposal — one tap marks the member away, so their chores
+    # reassign to the present co-parent for the trip (target rides the trip id).
+    "away": (("away_confirm", "✅ Mark me away"),),
     # Closed-loop trip label ask — one-tap file into a life-sphere for focus
     # balance. ntfy caps buttons at 3, so these are the three spheres the balance
     # feature exists to *protect* (home/kids/personal) — the ones you most want to
