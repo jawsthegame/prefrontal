@@ -724,6 +724,7 @@ CREATE TABLE IF NOT EXISTS household_routines (
     updated_by     INTEGER REFERENCES users(id),
     created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_completed_on TEXT,                           -- local "YYYY-MM-DD" all its chores were last done (dedups the celebration)
     UNIQUE (household_id, title)
 );
 

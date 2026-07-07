@@ -30,6 +30,7 @@ from prefrontal.household import (
     fmt_time_12h,
     format_chore_days,
     format_month_days,
+    log_chore_done_and_celebrate,
     miss_due,
     normalize_chore,
     normalize_routine,
@@ -38,6 +39,9 @@ from prefrontal.household import (
     reminder_due,
     render_sheet,
     resolve_chore_context,
+    routine_chore_status,
+    routine_complete_message,
+    routine_is_complete,
     run_chores_check,
     scheduled_on,
     with_effective_schedule,
@@ -866,3 +870,115 @@ def test_routine_update_endpoint_edits_and_renames(client, store):
                         headers=_h("dana-tok")).json()["id"]
     assert client.post(f"/household/routines/{other}/update", json={"title": "AM launch"},
                        headers=_h("dana-tok")).status_code == 409
+
+
+# --- routine completion: track, celebrate, highlight -------------------------
+
+
+def test_routine_completion_pure():
+    chores = [
+        {"id": 1, "routine_id": 5, "enabled": True},
+        {"id": 2, "routine_id": 5, "enabled": True},
+        {"id": 3, "routine_id": 5, "enabled": False},   # disabled — ignored
+        {"id": 4, "routine_id": 9, "enabled": True},     # a different routine
+    ]
+    assert routine_chore_status(5, chores, {1}) == (1, 2)
+    assert not routine_is_complete(5, chores, {1})            # one still open
+    assert routine_is_complete(5, chores, {1, 2})             # disabled #3 doesn't block
+    assert not routine_is_complete(7, chores, {1, 2})         # routine with no chores
+    assert routine_is_complete(5, chores, {1, 2, 3})          # extra done is fine
+
+
+def test_routine_complete_message_names_the_routine_and_holder():
+    msg = routine_complete_message({"title": "Bedtime", "accountable_name": "Dana"}, 3)
+    assert "Bedtime" in msg and "Dana" in msg and "🎉" in msg
+    # No accountable holder → warm teamwork line, still names the routine.
+    assert "teamwork" in routine_complete_message({"title": "Mornings"}, 1)
+
+
+def test_mark_routine_completed_cursor(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    rid = dana.set_routine(title="Evening", updated_by=dana_id)
+    assert dana.routine(rid)["last_completed_on"] is None
+    dana.mark_routine_completed(rid, "2026-07-01")
+    assert dana.routine(rid)["last_completed_on"] == "2026-07-01"
+
+
+def test_finishing_last_chore_celebrates_routine_once(store, dana, alex):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    alex.set_state("ntfy_topic", "alex-topic")
+    rid = dana.set_routine(title="Bedtime", due_time="20:00", updated_by=dana_id)
+    c1 = dana.set_chore(title="baths", due_time="", routine_id=rid, updated_by=dana_id)
+    c2 = dana.set_chore(title="teeth", due_time="", routine_id=rid, updated_by=dana_id)
+    client, sent = _capture_client()
+    today = "2026-07-01"
+
+    # First of two chores done → routine not complete → no celebration.
+    r1 = log_chore_done_and_celebrate(
+        dana, chore_id=c1, done_on=today, done_by=dana_id, settings=UTC, client=client)
+    assert r1["routine_completed"] is None and sent == []
+
+    # The last chore done → complete → both parents congratulated, once.
+    r2 = log_chore_done_and_celebrate(
+        dana, chore_id=c2, done_on=today, done_by=dana_id, settings=UTC, client=client)
+    assert r2["routine_completed"]["title"] == "Bedtime"
+    assert {s["topic"] for s in sent} == {"dana-topic", "alex-topic"}
+    assert "Bedtime" in sent[0]["message"]
+
+    # Re-tapping the same chore doesn't re-fire the celebration (per-day cursor).
+    before = len(sent)
+    r3 = log_chore_done_and_celebrate(
+        dana, chore_id=c2, done_on=today, done_by=dana_id, settings=UTC, client=client)
+    assert r3["routine_completed"] is None and len(sent) == before
+
+
+def test_celebrate_ignores_disabled_chores_and_missing_household(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    rid = dana.set_routine(title="Tidy", due_time="18:00", updated_by=dana_id)
+    live = dana.set_chore(title="counters", due_time="", routine_id=rid, updated_by=dana_id)
+    skip = dana.set_chore(title="garage", due_time="", routine_id=rid, updated_by=dana_id)
+    dana.set_chore_enabled(skip, False)  # only the live chore counts
+    client, sent = _capture_client()
+    r = log_chore_done_and_celebrate(
+        dana, chore_id=live, done_on="2026-07-02", done_by=dana_id, settings=UTC, client=client)
+    assert r["routine_completed"]["title"] == "Tidy"          # disabled chore didn't block
+    # A chore not in this household → None (so the caller 404s), no crash.
+    assert log_chore_done_and_celebrate(
+        dana, chore_id=9999, done_on="2026-07-02", done_by=dana_id, settings=UTC, client=client) is None
+
+
+def test_standalone_chore_never_celebrates(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    cid = dana.set_chore(title="bins", due_time="22:00", updated_by=dana_id)  # no routine
+    client, sent = _capture_client()
+    r = log_chore_done_and_celebrate(
+        dana, chore_id=cid, done_on="2026-07-02", done_by=dana_id, settings=UTC, client=client)
+    assert r["routine_completed"] is None and sent == []
+
+
+def test_sheet_flags_and_renders_completed_routine(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    rid = dana.set_routine(title="Bedtime", due_time="20:00", updated_by=dana_id)
+    cid = dana.set_chore(title="teeth", due_time="", routine_id=rid, updated_by=dana_id)
+    today = REMIND_NOW.strftime("%Y-%m-%d")
+
+    sheet = build_sheet(dana, now=REMIND_NOW, timezone="UTC")
+    r = next(x for x in sheet.routines if x["id"] == rid)
+    assert r["done_today"] is False and r["chores_total"] == 1 and r["chores_done"] == 0
+
+    dana.log_chore_done(chore_id=cid, done_on=today, done_by=dana_id)
+    sheet2 = build_sheet(dana, now=REMIND_NOW, timezone="UTC")
+    r2 = next(x for x in sheet2.routines if x["id"] == rid)
+    assert r2["done_today"] is True and r2["chores_done"] == 1
+    assert "all done today" in render_sheet(sheet2)
+
+
+def test_done_endpoint_reports_routine_completion(client, store, dana):
+    dana_id = store.get_user("dana")["id"]
+    rid = dana.set_routine(title="Bedtime", due_time="20:00", updated_by=dana_id)
+    cid = dana.set_chore(title="teeth", due_time="", routine_id=rid, updated_by=dana_id)
+    r = client.post(f"/household/chores/{cid}/done", headers=_h("dana-tok")).json()
+    assert r["routine_completed"] and r["routine_completed"]["title"] == "Bedtime"

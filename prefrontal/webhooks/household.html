@@ -142,6 +142,10 @@
     font-size: 13px; color: var(--fg); }
   .daynav .iconbtn { padding: 1px 10px; font-size: 15px; line-height: 1.35; }
   .iconbtn:disabled { opacity: .35; cursor: default; border-color: var(--line); }
+  /* A routine whose every chore is done today — a small shared win, gently lit. */
+  .task-badge.celebrate { color: var(--accent-fg); background: var(--accent); }
+  .task-row.routine-done { border-left: 3px solid var(--good); padding-left: 8px;
+    background: color-mix(in srgb, var(--good) 8%, transparent); border-radius: 6px; }
   .shop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
     border-bottom: 1px dashed var(--line); }
   .shop-row:last-child { border-bottom: none; }
@@ -813,9 +817,14 @@ function renderRoutines(routines) {
     const when = (sched ? " · " + sched : "") + (r.due_time ? " · by " + fmtTime(r.due_time) : "");
     const n = r.chore_count || 0;
     const paused = r.enabled ? "" : " · paused";
-    return `<div class="task-row${r.enabled ? "" : " done"}" data-routinerow="${r.id}">
-      <span class="task-txt">${esc(r.title)}
-        <span class="task-sub">accountable: ${esc(holder)}${when} · ${n} chore${n === 1 ? "" : "s"}${paused}</span></span>
+    // All chores done today → celebrate; otherwise show progress toward it.
+    const celebrating = r.enabled && r.done_today;
+    const total = r.chores_total || 0;
+    const progress = celebrating ? "" : (total ? ` · ${r.chores_done || 0}/${total} done` : "");
+    const badge = celebrating ? ` <span class="task-badge celebrate">🎉 done today</span>` : "";
+    return `<div class="task-row${r.enabled ? "" : " done"}${celebrating ? " routine-done" : ""}" data-routinerow="${r.id}">
+      <span class="task-txt">${esc(r.title)}${badge}
+        <span class="task-sub">accountable: ${esc(holder)}${when} · ${n} chore${n === 1 ? "" : "s"}${progress}${paused}</span></span>
       <span class="rowbtns">
         <button class="iconbtn" data-editroutine="${r.id}" title="Edit">✎</button>
         <button class="iconbtn del" data-delroutine="${r.id}" title="Remove (its chores stay)">🗑</button></span></div>`;

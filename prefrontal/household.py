@@ -259,9 +259,17 @@ def build_sheet(
     # 5. Shared shopping list — still-needed first.
     shopping = store.shopping_items()
 
-    # 6. Recurring shared chores — with today's local done/pending status.
+    # 6. Recurring shared chores — with today's local done/pending status, and the
+    # routines that group them (each flagged done_today once all its chores are in).
     routines = store.routines()
     chores = _chores_with_status(store, now, timezone, routines)
+    today_local = local_datetime(now, timezone).strftime("%Y-%m-%d")
+    done_ids = store.chore_ids_done_on(today_local)
+    for r in routines:
+        done, total = routine_chore_status(r["id"], chores, done_ids)
+        r["chores_done"] = done
+        r["chores_total"] = total
+        r["done_today"] = total > 0 and done == total
 
     counts = {
         "children": len(children),
@@ -1530,6 +1538,117 @@ def run_chores_check(
     return sent
 
 
+# --- routine completion (pure + notify) --------------------------------------
+#
+# A routine groups chores; it's "done for the day" once every one of its enabled
+# chores has been logged done today. Finishing that last chore is a small shared
+# win worth naming — so the done-path (endpoint, one-tap, CLI) runs the check and,
+# on the first completion of the day, congratulates *both* parents (like a star
+# goal) and the sheet highlights the routine. The completion test is pure (fed the
+# routine's chores + today's done-ids); a per-day cursor (`last_completed_on`)
+# dedups the celebration to once per local day.
+
+
+def routine_chore_status(
+    routine_id: int, chores: list[dict[str, Any]], done_ids: set[int]
+) -> tuple[int, int]:
+    """``(done, total)`` for a routine's **enabled** linked chores given today's done-ids."""
+    linked = [
+        c for c in chores
+        if c.get("routine_id") == routine_id and c.get("enabled", True)
+    ]
+    done = sum(1 for c in linked if c["id"] in done_ids)
+    return done, len(linked)
+
+
+def routine_is_complete(
+    routine_id: int, chores: list[dict[str, Any]], done_ids: set[int]
+) -> bool:
+    """Whether every enabled chore under ``routine_id`` is done today.
+
+    A routine with no enabled chores is never "complete" — there's nothing to
+    finish, so it never fires a hollow celebration.
+    """
+    done, total = routine_chore_status(routine_id, chores, done_ids)
+    return total > 0 and done == total
+
+
+def routine_complete_message(routine: dict[str, Any], total: int) -> str:
+    """The warm "you finished the whole routine" note sent to both parents."""
+    title = routine.get("title") or "that routine"
+    holder = routine.get("accountable_name")
+    count = f"all {total} " if total > 1 else "the "
+    tail = f" Nice work, {holder} 💛" if holder else " Nice teamwork 💛"
+    return f"🎉 “{title}” is done for today — {count}task{'s' if total != 1 else ''} sorted.{tail}"
+
+
+def log_chore_done_and_celebrate(
+    store: MemoryStore,
+    *,
+    chore_id: int,
+    done_on: str,
+    done_by: int | None,
+    settings: Any = None,
+    client: Any = None,
+) -> dict[str, Any] | None:
+    """Log a chore done, then congratulate the household if it finished a routine.
+
+    The single path behind every "mark done" surface (the HTTP endpoint, the
+    one-tap button, the CLI) — mirroring :func:`award_stars_and_notify` as the one
+    place the "did this cross a line? then tell both parents" rule lives. Logs the
+    completion (idempotent), and if this chore's routine just had its **last**
+    enabled chore finished for the first time today, delivers an encouraging notice
+    to both parents and stamps the routine's per-day cursor so it fires once.
+
+    Returns ``None`` when the chore isn't in the store's household (so the caller
+    can 404), otherwise the ``log_chore_done`` result dict plus a
+    ``routine_completed`` key: ``None``, or ``{routine_id, title, notified}``.
+    """
+    result = store.log_chore_done(chore_id=chore_id, done_on=done_on, done_by=done_by)
+    if result is None:
+        return None
+    result["routine_completed"] = _celebrate_routine_if_complete(
+        store, chore_id, done_on, settings=settings, client=client
+    )
+    return result
+
+
+def _celebrate_routine_if_complete(
+    store: MemoryStore,
+    chore_id: int,
+    today: str,
+    *,
+    settings: Any = None,
+    client: Any = None,
+) -> dict[str, Any] | None:
+    """Notify + stamp if ``chore_id``'s routine is now fully done today (else ``None``)."""
+    chore = store.chore(chore_id)
+    routine_id = chore.get("routine_id") if chore else None
+    if not routine_id:
+        return None
+    routine = store.routine(routine_id)
+    if routine is None or not routine.get("enabled"):
+        return None
+    if routine.get("last_completed_on") == today:
+        return None  # already celebrated today — don't re-fire on a re-tap
+    done_ids = store.chore_ids_done_on(today)
+    _, total = routine_chore_status(routine_id, store.chores(), done_ids)
+    if not routine_is_complete(routine_id, store.chores(), done_ids):
+        return None
+    store.mark_routine_completed(routine_id, today)
+    # Lazy import: delivery pulls in webhooks.notify (see award_stars_and_notify).
+    from prefrontal.integrations.delivery import deliver_to_household, household_notice
+
+    notified = deliver_to_household(
+        store,
+        store.household_id_or_none(),
+        household_notice(routine_complete_message(routine, total), channel="sound"),
+        settings=settings,
+        client=client,
+    )
+    return {"routine_id": routine_id, "title": routine["title"], "notified": notified}
+
+
 # --- render ------------------------------------------------------------------
 
 
@@ -1672,10 +1791,16 @@ def render_sheet(sheet: HouseholdSheet) -> str:
             holder = r.get("accountable_name") or "unassigned"
             bits = [f"accountable: {holder}", describe_schedule(r.get("days"), r.get("month_days"))]
             bits.append(f"by {fmt_time_12h(r['due_time'])}" if r.get("due_time") else "no set time")
+            total = r.get("chores_total") or 0
+            if r.get("done_today"):
+                bits.append("✅ all done today!")
+            elif total:
+                bits.append(f"{r.get('chores_done', 0)}/{total} done")
             if not r.get("enabled"):
                 bits.append("paused")
             impact = f" — {r['impact']}" if r.get("impact") else ""
-            lines.append(f"- **{r['title']}** ({' · '.join(bits)}){impact}")
+            done_mark = "🎉 " if r.get("done_today") else ""
+            lines.append(f"- {done_mark}**{r['title']}** ({' · '.join(bits)}){impact}")
         lines.append("")
 
     # 7. Shared chores — today's status, whose job, when it's due (effective), why.

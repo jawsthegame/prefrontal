@@ -41,6 +41,7 @@ from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
     checkin_summary,
+    log_chore_done_and_celebrate,
     week_key,
 )
 from prefrontal.impact import (
@@ -599,11 +600,16 @@ def build_router(services: RouterServices) -> APIRouter:
             # attributed to whoever tapped — so a partner picking up a slipped
             # chore closes the loop and stops the miss-handoff re-firing.
             today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
-            result = memory.log_chore_done(
-                chore_id=target_id, done_on=today, done_by=user["id"]
+            result = log_chore_done_and_celebrate(
+                memory, chore_id=target_id, done_on=today, done_by=user["id"],
+                settings=settings,
             )
             if result is None:
                 return _ack("That chore is no longer on the list.")
+            # Finishing a routine's last chore also congratulates both parents.
+            done = result.get("routine_completed")
+            if done:
+                return _ack(f"Done — that wraps up “{done['title']}” for today! 🎉")
             return _ack(f"Done — “{result['title']}” is sorted for today. 🙌")
 
         if action in ("briefing_helped", "briefing_not_helped"):

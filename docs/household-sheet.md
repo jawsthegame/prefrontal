@@ -456,13 +456,24 @@ its chores (pack laundry, prep bags) live under it.
     never the low contributor.
 - **`household_routines`**: `title` (unique per household), `accountable_id` (NULL
   = unassigned), `days`, `month_days` (day-of-month CSV; wins over `days` when set),
-  `due_time` (`''` = not time-tied), `impact`, `enabled`,
-  provenance. Removing a routine **unlinks** its chores (they survive, standing
-  alone) rather than deleting them.
+  `due_time` (`''` = not time-tied), `impact`, `enabled`, provenance, and
+  `last_completed_on` (per-day cursor for the completion celebration). Removing a
+  routine **unlinks** its chores (they survive, standing alone) rather than
+  deleting them.
+- **Completion is a shared win.** A routine is *done for the day* once every one of
+  its enabled chores is logged done today. Finishing that last chore — via any
+  "mark done" surface (`log_chore_done_and_celebrate` is the one path they share,
+  mirroring `award_stars_and_notify`) — sends **both** parents an encouraging notice
+  and the sheet **highlights** it (a "🎉 done today" badge, plus `done_today` /
+  `chores_done` / `chores_total` on each routine from `build_sheet`). The
+  `last_completed_on` cursor dedups it to once per local day; the completion test
+  (`routine_is_complete`) is pure and counts only enabled chores.
 - **Surfaces**: `POST /household/routines` (+`/{id}/enabled`, `/{id}/remove`),
   `chore.routine_id` on `POST /household/chores`, a **Routines** section on the
-  sheet, the carrying facet in the balance panel, and `prefrontal household
-  routine`.
+  sheet (with the completion highlight), the carrying facet in the balance panel,
+  and `prefrontal household routine`. Marking a chore done
+  (`POST /household/chores/{id}/done`, the one-tap ✓ button, or `household chore
+  --done`) returns/echoes any `routine_completed`.
 
 ### 3.7 What reuses existing tables (no new schema)
 
