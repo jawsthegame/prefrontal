@@ -214,7 +214,9 @@ also defines:
   episode notes it ("completed/abandoned after starting"), and a started-then-
   dropped todo always counts as a give-up (`miss`) rather than a hygiene discard
   (`todo_episode_fields` / `_dropped_is_give_up`). The dashboard shows an
-  in-progress badge on started todos.
+  in-progress badge on started todos, and the insights panel a **follow-through**
+  headline — of the tasks you started, how many you finished (`follow_through_stats`,
+  surfaced by `GET /todos/categories`).
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).

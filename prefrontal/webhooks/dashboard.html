@@ -215,6 +215,10 @@
   .cat-menu .cat-act:hover { color: var(--fg); border-color: var(--muted); }
   .cat-menu .cat-sep { flex-basis: 100%; height: 0; border-top: 1px solid var(--line); margin: 1px 0; }
   .catlead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  /* Follow-through headline: of the tasks you started, how many you finished. */
+  .ft-lead { font-size: 13px; color: var(--fg); margin: 0 0 10px; padding: 8px 10px;
+             background: var(--good-bg); border-left: 3px solid var(--good); border-radius: 0 6px 6px 0; }
+  .ft-lead .ft-rate { font-weight: 700; color: var(--good); font-size: 15px; }
   /* The exact text appended to the triage prompt on the next sync — the concrete
      impact your drops have on what mail gets flagged. */
   .addendum { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0;
@@ -1104,9 +1108,21 @@ function renderTodos(d) {
     </div>`;
   }).join("");
 }
+// Follow-through headline: of the tasks you *started*, how many you finished.
+// Renders nothing until at least one started task has been closed (else there's
+// no rate to show yet) — so it only appears once it means something.
+function renderFollowThrough(ft) {
+  if (!ft || ft.rate == null) return "";
+  const pct = Math.round(ft.rate * 100);
+  const resolved = ft.completed + ft.abandoned;
+  const prog = ft.in_progress ? ` · ${ft.in_progress} in progress` : "";
+  return `<div class="ft-lead"><span class="ft-rate">${pct}%</span> follow-through
+    — you finished ${ft.completed} of ${resolved} tasks you started${prog}</div>`;
+}
 function renderCategories(d) {
+  const ft = renderFollowThrough(d.follow_through);
   const s = (d.stats || []);
-  if (!s.length) return `<div class="empty">No categories yet.</div>`;
+  if (!s.length) return ft || `<div class="empty">No categories yet.</div>`;
   // avoidance relative to the busiest category, for a simple 0–100% bar.
   const maxAvoid = Math.max(1, ...s.map((c) => c.avoidance || 0));
   const capNote = d.at_cap ? ` <span class="badge avoiding">at cap ${d.cap}</span>` : "";
@@ -1121,7 +1137,7 @@ function renderCategories(d) {
       ${av > 0 ? `<div class="bar" title="avoidance ${av}"><span style="width:${pct}%;background:var(--high)"></span></div>` : ""}
     </div></div>`;
   }).join("");
-  return `<div class="catlead">${s.length}/${d.cap} categories in use${capNote}</div>` + rows;
+  return ft + `<div class="catlead">${s.length}/${d.cap} categories in use${capNote}</div>` + rows;
 }
 // The domino strip: when a cascade projects you late, the chain of commitments
 // that topple — each with scheduled → projected time, how late, and the upstream
