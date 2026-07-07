@@ -288,6 +288,36 @@ def test_act_switch_switch_closes_the_block(client, store):
     assert store.get_focus_session(sid)["status"] == "switched"
 
 
+def test_away_confirm_button_verifies(client, store):
+    """The 'away' one-tap button carries a signed away_confirm action on the trip."""
+    from prefrontal.webhooks.notify import nudge_actions
+
+    buttons = nudge_actions("away", 7, base_url=BASE, secret=SIGNING, handle=DEFAULT_HANDLE)
+    assert [b["label"] for b in buttons] == ["✅ Mark me away"]
+    token = buttons[0]["url"].split("t=", 1)[1]
+    assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, "away_confirm", 7)
+
+
+def test_act_away_confirm_marks_member_away(client, store):
+    # An open trip 3 days old → tapping "Mark me away" writes the member window,
+    # starting at the departure date and capped, so chores reassign to the partner.
+    trip_id = store.open_trip(
+        departed_at=(utcnow() - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+    )
+    token = sign_action(DEFAULT_HANDLE, "away_confirm", trip_id, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200
+    window = store.member_away_window()
+    assert window is not None and window["note"] == "auto-detected trip"
+
+
+def test_act_away_confirm_is_noop_when_back_home(client, store):
+    # No open trip (they're home) → a stale tap marks nobody away.
+    resp = client.get(f"/nudge/act?t={sign_action(DEFAULT_HANDLE, 'away_confirm', 999, SIGNING)}")
+    assert resp.status_code == 200
+    assert store.member_away_window() is None
+
+
 def test_act_rejects_bad_token(client):
     assert client.get("/nudge/act?t=garbage").status_code == 400
     assert client.get("/nudge/act").status_code == 400

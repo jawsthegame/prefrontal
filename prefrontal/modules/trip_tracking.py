@@ -73,6 +73,16 @@ class ClosedLoopTripModule(Module):
                 trigger="a targeted life-domain falls under half its weekly aim",
                 status="active",
             ),
+            Intervention(
+                name="away_proposal",
+                description=(
+                    "When an open trip has run multiple days, offer a one-tap "
+                    "'mark me away' so the member's chores fall to the present "
+                    "co-parent instead of nagging someone who isn't home."
+                ),
+                trigger="an open trip has lasted AWAY_AUTODETECT_MIN_DAYS+ days",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
@@ -109,7 +119,50 @@ class ClosedLoopTripModule(Module):
             )
 
         cues.extend(self._focus_balance_cues(store, ctx))
+        cues.extend(self._away_proposal_cues(store, ctx))
         return cues
+
+    def _away_proposal_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """At most one "you've been away a while — mark you away?" proposal.
+
+        Passive multi-day-absence detection: the single open trip *is* the "away
+        since <departure>" state. When it's run past
+        :data:`~prefrontal.household.AWAY_AUTODETECT_MIN_DAYS`, offer a one-tap
+        confirm that marks this member away so their chores reassign to the present
+        co-parent (see :func:`prefrontal.household.run_chores_check`). Only in a
+        household (nobody to hand off to otherwise), silent once already away, and
+        deduped to the trip so it proposes once per absence — never a repeat nag.
+        """
+        from prefrontal.household import AWAY_AUTODETECT_MIN_DAYS, away_covers
+        from prefrontal.scheduling import local_datetime
+
+        if store.household_id_or_none() is None:
+            return []
+        trip = store.active_trip()
+        if not trip:
+            return []
+        elapsed = trip.get("elapsed_minutes") or 0
+        if elapsed < AWAY_AUTODETECT_MIN_DAYS * 1440:
+            return []
+        now_local = local_datetime(ctx.now, ctx.timezone)
+        if away_covers(store.member_away_window(), now_local):
+            return []  # already marked away — nothing to propose
+        days = int(elapsed // 1440)
+        return [
+            Cue(
+                module=self.key,
+                intervention="away_proposal",
+                urgency="nudge",
+                text=(
+                    f"You've been away from home for {days} days. Want me to mark you "
+                    "away so your chores fall to your co-parent while you're gone? "
+                    "Tap ✅ if so."
+                ),
+                context_key="away_proposal",
+                dedup_key=f"away_proposal:{trip['id']}",
+                ref={"trip_id": trip["id"]},
+            )
+        ]
 
     def _focus_balance_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """At most one weekly "you're light on <sphere>" nudge, when opted in.

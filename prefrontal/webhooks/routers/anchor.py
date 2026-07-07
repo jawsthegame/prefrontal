@@ -40,6 +40,7 @@ from prefrontal.focus_balance import (
 from prefrontal.household import (
     CHECKIN_ACTION_RESPONSE,
     award_stars_and_notify,
+    capped_away_window,
     checkin_summary,
     log_chore_done_and_celebrate,
     week_key,
@@ -611,6 +612,28 @@ def build_router(services: RouterServices) -> APIRouter:
             if done:
                 return _ack(f"Done — that wraps up “{done['title']}” for today! 🎉")
             return _ack(f"Done — “{result['title']}” is sorted for today. 🙌")
+
+        if action == "away_confirm":
+            # The multi-day-absence proposal was accepted: mark this member away so
+            # their chores reassign to the present co-parent. Recompute the window
+            # from the still-open trip at tap time — if they've since returned home
+            # there's no open trip, so it's a friendly no-op rather than marking a
+            # member who's back home as away.
+            from datetime import timedelta
+
+            trip = memory.active_trip()
+            if trip is None:
+                return _ack("Looks like you're back home — nothing to mark. 🙂")
+            now_local = local_datetime(utcnow(), settings.timezone)
+            departed_local = now_local - timedelta(minutes=trip.get("elapsed_minutes") or 0)
+            window = capped_away_window(
+                departed_local.strftime("%Y-%m-%d"), now_local.strftime("%Y-%m-%d")
+            )
+            memory.set_member_away(**window)
+            return _ack(
+                f"Marked you away through {window['ends_on']} — your chores will fall "
+                "to your co-parent while you're gone. 💛 (Tap it away anytime you're back.)"
+            )
 
         if action in ("briefing_helped", "briefing_not_helped"):
             # The morning briefing has no entity id — the vote is about "the digest
