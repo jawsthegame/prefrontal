@@ -371,6 +371,38 @@ def test_calendar_slots_finds_free_windows(client, user_store):
     assert slot["minutes"] >= 30
 
 
+def test_calendar_slots_respects_custom_hour_guard(client, user_store):
+    """Slots honor the user's own hour guard (off-zone), not just the 06:00–22:00 default.
+
+    The endpoint derives its waking band from ``window_config_for(...).awake_band()``,
+    so a per-user off-zone override must narrow the results. This guards the wiring:
+    ``find_slots``'s default band equals the *default* off-zone complement, so a test
+    on the default config would still pass even if the guard were dropped — only a
+    customized band proves the endpoint reads the user's config.
+    """
+    from datetime import datetime
+
+    # Awake only 09:00–16:00 local (tz defaults to UTC, so labels are UTC too).
+    user_store.set_state("todo_offzone", "16:00-09:00", source="test")
+    resp = client.get(
+        "/calendar/slots?minutes=30&days=14", headers={"X-Prefrontal-Token": SECRET}
+    )
+    assert resp.status_code == 200
+    slots = resp.json()["slots"]
+    assert slots, "a fortnight of empty waking days should yield some slot"
+
+    def hour(label: str) -> int:
+        return datetime.strptime(label, "%I:%M %p").hour
+
+    # Nothing falls outside the custom band — no early-morning or evening slots.
+    for s in slots:
+        assert hour(s["start"]) >= 9, f"slot starts before the guard: {s['start']}"
+        assert hour(s["end"]) <= 16, f"slot ends after the guard: {s['end']}"
+    # And a full future day opens exactly at the custom band start (9am, not the
+    # default 6am) — proof the guard is the user's, not find_slots' fallback.
+    assert any(s["start"] == "9:00 AM" for s in slots)
+
+
 def test_calendar_slots_validates_query(client):
     """Out-of-range minutes / days are rejected at the edge (422)."""
     hdr = {"X-Prefrontal-Token": SECRET}
