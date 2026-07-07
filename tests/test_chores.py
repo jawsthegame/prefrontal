@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.household import (
+    away_covers,
     build_sheet,
     chore_missed_owner_message,
     chore_missed_partner_message,
@@ -36,6 +37,7 @@ from prefrontal.household import (
     parse_month_days,
     reminder_due,
     render_sheet,
+    resolve_chore_context,
     run_chores_check,
     scheduled_on,
     with_effective_schedule,
@@ -188,7 +190,24 @@ def test_normalize_chore_clean():
         "remind_before": 45,
         "impact": "it makes the morning harder",
         "enabled": True,
+        "away_behavior": "keep",
     }
+
+
+def test_normalize_chore_away_behavior():
+    # Explicit suppress is accepted and normalized (case-insensitive).
+    clean, err = normalize_chore(
+        {"title": "take out trash", "due_time": "20:00", "away_behavior": "SUPPRESS"}
+    )
+    assert err is None and clean["away_behavior"] == "suppress"
+    # Blank / missing falls back to the safe default.
+    clean, err = normalize_chore({"title": "pay bill", "due_time": "20:00", "away_behavior": ""})
+    assert err is None and clean["away_behavior"] == "keep"
+    # An unknown value is rejected, not silently coerced.
+    bad, err = normalize_chore(
+        {"title": "x", "due_time": "20:00", "away_behavior": "reassign"}
+    )
+    assert bad is None and "away_behavior" in err
 
 
 def test_normalize_chore_and_routine_carry_month_days():
@@ -212,6 +231,50 @@ def test_normalize_chore_and_routine_carry_month_days():
 def test_normalize_chore_rejects_bad_input(raw):
     clean, err = normalize_chore(raw)
     assert clean is None and err
+
+
+# --- context gate: away window (pure) ----------------------------------------
+
+_WED = REMIND_NOW  # 2026-07-01, a Wednesday
+_AWAY = {"starts_on": "2026-06-30", "ends_on": "2026-07-05", "note": "beach trip"}
+
+
+@pytest.mark.parametrize(
+    "window, covered",
+    [
+        (_AWAY, True),                                                    # inside
+        ({"starts_on": "2026-07-01", "ends_on": "2026-07-01"}, True),     # single-day, inclusive
+        ({"starts_on": "2026-07-02", "ends_on": "2026-07-05"}, False),    # starts tomorrow
+        ({"starts_on": "2026-06-20", "ends_on": "2026-06-30"}, False),    # ended yesterday
+        (None, False),                                                    # not away
+        ({"starts_on": "2026-06-30", "ends_on": ""}, False),              # half-set → fail-open
+    ],
+)
+def test_away_covers(window, covered):
+    assert away_covers(window, _WED) is covered
+
+
+def test_resolve_chore_context_suppresses_only_location_bound_when_away():
+    trash = {"id": 1, "title": "trash", "enabled": True, "days": "", "month_days": "",
+             "away_behavior": "suppress"}
+    bill = {"id": 2, "title": "pay bill", "enabled": True, "days": "", "month_days": "",
+            "away_behavior": "keep"}
+    # Away: the location-bound chore is suppressed (with a reason), the bill proceeds.
+    d = resolve_chore_context(trash, now_local=_WED, away_window=_AWAY)
+    assert d.action == "suppress" and "beach trip" in d.reason and "2026-07-05" in d.reason
+    assert resolve_chore_context(bill, now_local=_WED, away_window=_AWAY).action == "proceed"
+    # Not away: even a suppress-tagged chore proceeds normally.
+    assert resolve_chore_context(trash, now_local=_WED, away_window=None).action == "proceed"
+
+
+def test_resolve_chore_context_ignores_unscheduled_and_disabled():
+    # Only tomorrow (Thursday=3), so not scheduled on _WED → no suppression to report.
+    not_today = {"id": 1, "title": "trash", "enabled": True, "days": "3", "month_days": "",
+                 "away_behavior": "suppress"}
+    assert resolve_chore_context(not_today, now_local=_WED, away_window=_AWAY).action == "proceed"
+    paused = {"id": 2, "title": "trash", "enabled": False, "days": "", "month_days": "",
+              "away_behavior": "suppress"}
+    assert resolve_chore_context(paused, now_local=_WED, away_window=_AWAY).action == "proceed"
 
 
 # --- pure: timing predicates -------------------------------------------------
@@ -330,6 +393,29 @@ def test_remove_and_enable(store, dana):
     assert dana.remove_chore(cid) is False
 
 
+def test_away_behavior_round_trips_through_store(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    cid = dana.set_chore(title="trash", due_time="20:00", away_behavior="suppress",
+                         updated_by=dana_id)
+    assert dana.chores()[0]["away_behavior"] == "suppress"
+    assert dana.chore(cid)["away_behavior"] == "suppress"  # single-row read carries it too
+    # update_chore preserves it when unspecified? No — update passes the full shape;
+    # here we flip it back to the default explicitly.
+    assert dana.update_chore(cid, title="trash", due_time="20:00", away_behavior="keep",
+                             updated_by=dana_id) == "ok"
+    assert dana.chores()[0]["away_behavior"] == "keep"
+
+
+def test_away_window_set_get_clear(store, dana, alex):
+    assert dana.away_window() is None  # not away by default
+    dana.set_away_window(starts_on="2026-07-10", ends_on="2026-07-17", note="beach")
+    got = alex.away_window()  # household-scoped: the co-parent sees the same window
+    assert got == {"starts_on": "2026-07-10", "ends_on": "2026-07-17", "note": "beach"}
+    dana.clear_away_window()
+    assert dana.away_window() is None
+    dana.clear_away_window()  # idempotent
+
+
 def test_update_chore_edits_renames_and_guards(store, dana, alex):
     """update_chore edits any attribute by id (incl. rename); ok/missing/duplicate."""
     dana_id = store.get_user("dana")["id"]
@@ -425,6 +511,34 @@ def test_sweep_unassigned_chore_reminds_everyone(store, dana, alex):
     client, sent = _capture_client()
     run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
     assert {s["topic"] for s in sent} == {"dana-topic", "alex-topic"}
+
+
+def test_sweep_suppresses_location_bound_chore_while_away(store, dana):
+    dana_id = store.get_user("dana")["id"]
+    dana.set_state("ntfy_topic", "dana-topic")
+    trash = dana.set_chore(title="take out trash", due_time="22:00", owner_id=dana_id,
+                           away_behavior="suppress", updated_by=dana_id)
+    dana.set_chore(title="pay the water bill", due_time="22:00", owner_id=dana_id,
+                   away_behavior="keep", updated_by=dana_id)
+    # REMIND_NOW is 2026-07-01 — inside this window.
+    dana.set_away_window(starts_on="2026-06-30", ends_on="2026-07-05", note="beach trip")
+
+    client, sent = _capture_client()
+    result = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client)
+
+    stages = {r["title"]: r["stage"] for r in result}
+    assert stages == {"take out trash": "suppressed", "pay the water bill": "reminder"}
+    # Only the bill actually notified; trash is silent while away.
+    assert [s["topic"] for s in sent] == ["dana-topic"]
+    assert "pay the water bill" in sent[0]["message"]
+    # The suppressed chore left NO cursor, so it resumes cleanly once we're back:
+    # clearing the window and sweeping again fires its reminder.
+    assert next(c for c in dana.chores() if c["id"] == trash)["last_reminded_on"] is None
+    dana.clear_away_window()
+    client2, sent2 = _capture_client()
+    result2 = run_chores_check(dana, settings=UTC, now=REMIND_NOW, client=client2)
+    assert any(r["title"] == "take out trash" and r["stage"] == "reminder" for r in result2)
+    assert "take out trash" in sent2[0]["message"]
 
 
 # --- HTTP + one-tap ----------------------------------------------------------

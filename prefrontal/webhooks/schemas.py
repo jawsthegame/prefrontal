@@ -765,6 +765,14 @@ class ChoreSet(BaseModel):
         description="Why it matters if it slips, e.g. 'it makes the morning harder'.",
     )
     enabled: bool = Field(default=True, description="Whether the chore's reminders fire.")
+    away_behavior: str = Field(
+        default="keep",
+        description=(
+            "What happens while the household is away (see the away window): 'keep' "
+            "(default — bills/meds still fire) or 'suppress' (a location-bound chore "
+            "like trash/mail/plants, skipped on vacation)."
+        ),
+    )
 
 
 class ChoreEnabled(BaseModel):

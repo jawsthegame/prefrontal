@@ -973,6 +973,14 @@ DEFAULT_CHORE_REMIND_BEFORE_MINUTES = 30
 #: config slip, not an intention, so we reject it rather than nudge at dawn.
 MAX_CHORE_REMIND_BEFORE_MINUTES = 720
 
+#: What a chore does while the household is "away" (vacation / travel). ``keep``
+#: (the safe default) fires as normal — bills and meds don't pause for a trip.
+#: ``suppress`` is a location-bound chore (trash, mail, plants) that simply can't
+#: be done from afar, so it's silently skipped with a logged reason while away.
+#: (``reassign`` is reserved for a later phase; not accepted yet.)
+AWAY_BEHAVIORS: tuple[str, ...] = ("keep", "suppress")
+DEFAULT_AWAY_BEHAVIOR = "keep"
+
 
 def parse_chore_days(raw: Any) -> list[int]:
     """Parse a stored weekday CSV (``"0,2,4"``) into sorted ints, or ``[]`` (every day).
@@ -1128,6 +1136,12 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     impact = raw.get("impact")
     if impact is not None:
         impact = re.sub(r"\s+", " ", str(impact).strip())[:160] or None
+    away_behavior = raw.get("away_behavior", DEFAULT_AWAY_BEHAVIOR)
+    if away_behavior in (None, ""):
+        away_behavior = DEFAULT_AWAY_BEHAVIOR
+    away_behavior = str(away_behavior).strip().lower()
+    if away_behavior not in AWAY_BEHAVIORS:
+        return None, f"away_behavior must be one of {', '.join(AWAY_BEHAVIORS)}"
     return {
         "title": title,
         "owner_id": owner_id,
@@ -1137,6 +1151,7 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "remind_before": remind_before,
         "impact": impact,
         "enabled": bool(raw.get("enabled", True)),
+        "away_behavior": away_behavior,
     }, None
 
 
@@ -1310,6 +1325,70 @@ def miss_due(
     return now_min >= due_min
 
 
+def away_covers(window: dict[str, Any] | None, now_local: datetime) -> bool:
+    """Whether ``now_local``'s local date falls within an away ``window`` (inclusive).
+
+    ``window`` is the ``{"starts_on", "ends_on", "note"}`` shape from
+    :meth:`HouseholdRepo.away_window` (or ``None`` = not away). Dates are local
+    ``"YYYY-MM-DD"`` strings, compared lexically — which is a correct chronological
+    compare for that fixed format. A malformed or half-set window is treated as
+    "not away" (fail-open: we'd rather nudge than silently swallow a real chore).
+    """
+    if not window:
+        return False
+    start = window.get("starts_on")
+    end = window.get("ends_on")
+    if not start or not end:
+        return False
+    today = now_local.strftime("%Y-%m-%d")  # tz-ok: local calendar date
+    return start <= today <= end
+
+
+@dataclass(frozen=True)
+class ChoreDecision:
+    """A chore's context gate outcome for one sweep tick.
+
+    ``action`` is ``"proceed"`` (let the normal reminder/miss predicates decide) or
+    ``"suppress"`` (skip this chore today — it can't or shouldn't fire). ``reason``
+    is a short human explanation, present only when suppressed, so the skip is
+    legible in the sweep result rather than silent. (Later phases add ``"shift"`` /
+    ``"reassign"``; this phase is proceed/suppress only.)
+    """
+
+    action: str
+    reason: str = ""
+
+
+def resolve_chore_context(
+    chore: dict[str, Any],
+    *,
+    now_local: datetime,
+    away_window: dict[str, Any] | None = None,
+) -> ChoreDecision:
+    """Decide whether a chore should be suppressed by household context this tick.
+
+    The single context gate that sits between "is this chore scheduled today?" and
+    the timing predicates in :func:`run_chores_check`. For this phase it knows one
+    thing: an active **away window** suppresses a chore marked
+    ``away_behavior="suppress"`` (a location-bound chore — trash, mail, plants —
+    that can't be done from afar). Everything else proceeds normally, so bills and
+    meds still fire on vacation. Only reports a suppression for a chore that is
+    enabled and actually scheduled today, so the sweep result stays meaningful.
+    """
+    if not chore.get("enabled", True):
+        return ChoreDecision("proceed")
+    if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
+        return ChoreDecision("proceed")
+    if chore.get("away_behavior") == "suppress" and away_covers(away_window, now_local):
+        note = (away_window or {}).get("note")
+        ends = (away_window or {}).get("ends_on")
+        why = f" ({note})" if note else ""
+        return ChoreDecision(
+            "suppress", f"household is away through {ends}{why}"
+        )
+    return ChoreDecision("proceed")
+
+
 def _impact_clause(chore: dict[str, Any]) -> str:
     """" If it slips, <impact>." — the reason the chore matters, or "" if none set."""
     impact = chore.get("impact")
@@ -1384,6 +1463,9 @@ def run_chores_check(
     # with_effective_schedule); resolve once so the pure timing predicates below
     # see the effective days/due_time. An untimed chore never fires.
     routines_by_id = {r["id"]: r for r in store.routines()}
+    # The household's away window (vacation / travel), if any — resolved once so
+    # the per-chore context gate below can silently skip location-bound chores.
+    away = store.away_window()
     deliver_kw = {
         "settings": settings,
         "client": client,
@@ -1403,6 +1485,14 @@ def run_chores_check(
         chore = with_effective_schedule(
             raw_chore, routines_by_id.get(raw_chore.get("routine_id"))
         )
+        # Context gate: an active away window skips location-bound chores. Skipping
+        # (vs. stamping a cursor) means the chore resumes cleanly once we're back —
+        # no stale "you missed it" waiting on the far side of the trip.
+        decision = resolve_chore_context(chore, now_local=now_local, away_window=away)
+        if decision.action == "suppress":
+            sent.append({"chore_id": chore["id"], "title": chore["title"],
+                         "stage": "suppressed", "reason": decision.reason})
+            continue
         done = chore["id"] in done_ids
         if reminder_due(
             chore, now_local=now_local, done_today=done,
