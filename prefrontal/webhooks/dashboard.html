@@ -964,11 +964,13 @@ const SC_META = {
   biobreak: { icon: "🚻", label: "Bio breaks" },
 };
 
-// Compact readout for a check: a recurring check (target > 1) shows real
+// Compact readout for a check: a recurring quota (target > 1) shows real
 // count/target; a once-a-day check (target 1) reads as ✓ once done and shows
 // nothing otherwise — the "N/1" fraction adds nothing and looks broken once
-// extra taps push the count past 1 (e.g. "3/1").
+// extra taps push the count past 1 (e.g. "3/1"). An open-ended check (bio breaks)
+// is a reminder, not a quota, so it shows only a bare informational tally.
 function scReadout(c) {
+  if (c.open_ended) return c.count > 0 ? `<b>${c.count}</b>` : "";
   if (c.target > 1) return `<b>${c.count}/${c.target}</b>`;
   return c.done ? "<b>✓</b>" : "";
 }
@@ -976,26 +978,32 @@ function scReadout(c) {
 function scRow(c) {
   const m = SC_META[c.key] || { icon: "", label: c.key };
   const recurring = c.target > 1;
-  // Fill green up to the daily target; extra taps read as full, not overflow.
-  const fill = c.target > 0 ? Math.min(100, (c.count / c.target) * 100) : 0;
+  // An open-ended check (bio breaks) is a reminder, not a quota: no goal fill, no
+  // "done" state, and a tap never wraps to zero — it just logs an informational
+  // tally (shift-click still removes one).
+  const fill = (!c.open_ended && c.target > 0) ? Math.min(100, (c.count / c.target) * 100) : 0;
   // A plain tap adds one until the target, then cycles back to zero (the
   // mobile-friendly wrap-around — touch has no shift-click); shift-click still
   // removes one on desktop (nothing to remove at zero). The click handler enforces
-  // this; the tooltip advertises whichever actions actually apply.
-  const atMax = c.target > 0 && c.count >= c.target;
+  // this; the tooltip advertises whichever actions actually apply. An open-ended
+  // check never wraps (there's no target to reach).
+  const atMax = !c.open_ended && c.target > 0 && c.count >= c.target;
   // Flash any check that's behind (server-computed `overdue`): a once-a-day
-  // essential past its time and not done (meds/meal), or a recurring one that's
-  // fallen behind its expected pace (water). The gentle amber pulse clears as soon
-  // as you catch up or hit the target.
+  // essential past its time and not done (meds/meal), a recurring quota that's
+  // fallen behind pace (water), or an open-ended reminder that's currently due
+  // (bio breaks). The gentle amber pulse clears as soon as you respond.
   const overdue = !!c.overdue;
-  const acts = [atMax ? "tap to reset" : "tap to log one", c.count > 0 ? "shift-click to remove one" : null]
-    .filter(Boolean).join(", ");
-  const state = recurring
-    ? `${m.label}: ${c.count} of ${c.target} today${overdue ? " — behind" : ""}`
-    : (c.done ? `${m.label}: done today` : (overdue ? `${m.label}: not done yet — overdue` : m.label));
+  const acts = [(!c.open_ended && atMax) ? "tap to reset" : "tap to log one",
+    c.count > 0 ? "shift-click to remove one" : null].filter(Boolean).join(", ");
+  const state = c.open_ended
+    ? `${m.label}: reminder every ${c.interval_minutes || "?"} min${c.count ? ` · ${c.count} today` : ""}${overdue ? " — a reminder's due" : ""}`
+    : recurring
+      ? `${m.label}: ${c.count} of ${c.target} today${overdue ? " — behind" : ""}`
+      : (c.done ? `${m.label}: done today` : (overdue ? `${m.label}: not done yet — overdue` : m.label));
   const label = acts ? `${state} — ${acts}` : state;
-  return `<button class="sc-chip${c.done ? " done" : ""}${overdue ? " sc-overdue" : ""}" data-sc-mark="${c.key}"`
-    + ` data-sc-count="${c.count}" data-sc-target="${c.target}"`
+  const doneClass = (!c.open_ended && c.done) ? " done" : "";
+  return `<button class="sc-chip${doneClass}${overdue ? " sc-overdue" : ""}" data-sc-mark="${c.key}"`
+    + ` data-sc-count="${c.count}" data-sc-target="${c.target}"${c.open_ended ? ' data-sc-open="1"' : ""}`
     + ` style="--p:${fill.toFixed(0)}%" aria-label="${esc(label)}" title="${esc(label)}">`
     + `<span class="ic">${m.icon}</span>${scReadout(c)}</button>`;
 }
@@ -2247,15 +2255,16 @@ document.addEventListener("click", async (e) => {
   if (!btn || btn.disabled) return;
   const count = +btn.dataset.scCount || 0;
   const target = +btn.dataset.scTarget || 1;
+  const openEnded = btn.dataset.scOpen === "1";
   const key = btn.dataset.scMark;
   let body;
   if (e.shiftKey) {
     if (count <= 0) return;              // nothing to remove
     body = { key, undo: true };
-  } else if (count >= target) {
-    body = { key, reset: true };         // at max — wrap around to zero
+  } else if (!openEnded && count >= target) {
+    body = { key, reset: true };         // quota at max — wrap around to zero
   } else {
-    body = { key };                      // log one
+    body = { key };                      // log one (open-ended never wraps)
   }
   btn.disabled = true;  // guard against a double-tap logging two
   try {

@@ -20,13 +20,18 @@ window-bounded one, an **end hour**):
   reminder out a full interval, and once you hit the target it's done for the day.
 - **meds** (target 1) — **off by default** even when self-care is on, because
   medication is personal (opt in via ``meds_enabled``).
-- **biobreak** (recurring) — on with self-care, like meal/water. Adds the one
-  wrinkle: an **end hour** (``biobreak_end_hour``, default 19), so a "take a
-  bathroom break" nudge every ``biobreak_interval_minutes`` (default 120) from 8:00
-  simply stops in the evening rather than running to a daily total.
+- **biobreak** (**open-ended**) — on with self-care, like meal/water, but *not a
+  quota*: it's a plain interval reminder, not a count-to-N goal. A "take a
+  bathroom break" nudge fires every ``biobreak_interval_minutes`` (default 120)
+  from 8:00 within a **window** — bounded by an **end hour** (``biobreak_end_hour``,
+  default 19), never by a daily total. No count silences it; tapping **Went** just
+  defers the next reminder a full interval (and logs how you responded), and it's
+  never "done for the day". The point is the nudge + your response, not hitting a
+  number.
 
 So "how many yeses stops it for the day" is just the target (1 for a meal, N for
-water); a check with an end hour also stops at it, target met or not. Off by
+water) — except for an open-ended check, which no count ever stops; a check with
+an end hour also stops at it, target met or not. Off by
 default — set the ``self_care`` coaching key to ``on`` (each check can then be
 turned off individually with ``meal_enabled`` / ``water_enabled`` / …).
 
@@ -164,6 +169,13 @@ class BasicCheck:
     target and — until the target is met — defers the next reminder a full
     interval; meeting the target ends the check for the day. Adding a new basic
     (meds, sleep) is one more entry here plus its ntfy buttons.
+
+    An **open-ended** check (``open_ended=True``, bio breaks) breaks that mold: it
+    isn't a quota. There's nothing to "finish" — it just reminds on its interval
+    within the window and tracks how you respond. No count ever silences it (only
+    the end hour and responsive hours bound it), a confirm just defers the next
+    reminder a full interval, and it's never "done for the day". Its ``target`` is
+    ignored for gating; the daily count is kept only as an informational tally.
     """
 
     key: str                # context_key + ntfy button kind: "meal" | "water"
@@ -189,6 +201,11 @@ class BasicCheck:
     #: an end hour stops nudging at it regardless of whether the target was met.
     end_hour_key: str | None = None
     end_hour_default: int | None = None
+    #: When ``True`` this check is a pure interval reminder, not a quota: no daily
+    #: count silences it (only its end hour / responsive hours do), a confirm just
+    #: defers the next reminder, and it's never "done for the day". The ``target``
+    #: is ignored for gating; the count is kept as an informational tally only.
+    open_ended: bool = False
 
 
 CHECKS: tuple[BasicCheck, ...] = (
@@ -269,10 +286,13 @@ CHECKS: tuple[BasicCheck, ...] = (
         message=biobreak_message,
         confirm_action="biobreak_went",
         snooze_action="biobreak_snooze",
-        progress_headline="Good — {count}/{target} today. 🚻",
-        done_headline="That's all {target} for today — nicely done. 🚻",
+        # Open-ended: not a quota, so the confirm copy doesn't count toward a goal
+        # (done_headline is never shown — it's never "done for the day").
+        progress_headline="Good — I'll check back in a bit. 🚻",
+        done_headline="Good — I'll check back in a bit. 🚻",
         end_hour_key="biobreak_end_hour",
         end_hour_default=DEFAULT_BIOBREAK_END_HOUR,
+        open_ended=True,
     ),
 )
 
@@ -377,10 +397,27 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
         count = day_count(store, check, today)
         target = _target(store, check)
         enabled = (store.get_state(check.enabled_key, "on") or "on") == "on"
-        done = count >= target
+        # An open-ended check (bio breaks) is never "done" — it's a reminder, not a
+        # quota — so the count can't complete it.
+        done = (not check.open_ended) and count >= target
         start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
         end_hour = _end_hour(store, check)
         interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
+        if check.open_ended:
+            # "Behind" doesn't mean off-pace-vs-quota here; it means a reminder is
+            # due right now — within the window, past the start hour, and not
+            # currently deferred by a recent Went/Snooze. So the dashboard flashes
+            # exactly when there's a nudge to respond to, and clears for an interval
+            # after you tap Went.
+            snoozed_until = _parse_ts(store.get_state(check.snooze_key))
+            within = local.hour >= start_hour and (end_hour is None or local.hour < end_hour)
+            overdue = enabled and within and (snoozed_until is None or now >= snoozed_until)
+        else:
+            overdue = _is_overdue(
+                enabled=enabled, done=done, target=target, count=count,
+                start_hour=start_hour, interval=interval, local=local,
+                end_hour=end_hour,
+            )
         checks.append(
             {
                 "key": check.key,
@@ -388,24 +425,24 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 "count": count,
                 "target": target,
                 "done": done,
+                # A reminder, not a quota: surfaces render count without a "/target"
+                # goal and never show a "done ✓" for it.
+                "open_ended": check.open_ended,
                 "start_hour": start_hour,
                 # Local hour the check stops for the day, or None when it's bounded
                 # only by its target + responsive hours (a surface renders the window
                 # as "from 8:00" vs "8:00–19:00").
                 "end_hour": end_hour,
-                # "You're behind on this" — the flag a surface flashes on. Always
-                # false when done, disabled, or before the start hour. For a
-                # once-a-day check (target 1) that's simply "past the start hour and
-                # still not done". For a recurring check (water) it's *pace-aware*:
-                # you'd expect roughly one per interval since the start hour, so it
-                # flags only when the count has fallen short of that running
-                # expectation — it clears as you catch up, instead of nagging all
-                # day just because you're not yet at the daily total.
-                "overdue": _is_overdue(
-                    enabled=enabled, done=done, target=target, count=count,
-                    start_hour=start_hour, interval=interval, local=local,
-                    end_hour=end_hour,
-                ),
+                # "You're behind on this" — the flag a surface flashes on (computed
+                # above). Always false when done, disabled, or before the start hour.
+                # For a once-a-day check (target 1) that's simply "past the start
+                # hour and still not done". For a recurring quota (water) it's
+                # *pace-aware*: you'd expect roughly one per interval since the start
+                # hour, so it flags only when the count has fallen short of that
+                # running expectation — it clears as you catch up, instead of nagging
+                # all day just because you're not yet at the daily total. For an
+                # open-ended check (bio breaks) it means a reminder is due right now.
+                "overdue": overdue,
                 "interval_minutes": interval,
             }
         )
@@ -448,7 +485,8 @@ def apply_self_care_config(
             store.set_state(
                 check.enabled_key, "on" if cfg["enabled"] else "off", source="explicit"
             )
-        if cfg.get("target") is not None:
+        if cfg.get("target") is not None and not check.open_ended:
+            # An open-ended check has no quota to set — ignore a stray target write.
             store.set_state(check.target_key, str(max(1, int(cfg["target"]))), source="explicit")
         if cfg.get("start_hour") is not None:
             hour = str(min(23, max(0, int(cfg["start_hour"]))))
@@ -488,16 +526,20 @@ def apply_self_care_action(
         count = day_count(store, check, today) + 1
         store.set_state(check.count_key, f"{today}|{count}", source="explicit")
         target = _target(store, check)
+        # An open-ended check logs the tally but has no target to progress toward.
+        notes = f"{count} {lat}" if check.open_ended else f"{count}/{target} {lat}"
         store.log_episode(
             SELF_CARE_EPISODE,
             acknowledged=True,
             context=f"{check.key}: confirmed",
             outcome="confirmed",
-            notes=f"{count}/{target} {lat}",
+            notes=notes,
         )
-        if count >= target:
+        # A quota check ends for the day once met; an open-ended one never does —
+        # it just spaces the next reminder a full interval out, same as a
+        # not-yet-met quota confirm.
+        if not check.open_ended and count >= target:
             return check.done_headline.format(count=count, target=target)
-        # Not there yet — space the next reminder a full interval out.
         interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
         store.set_state(check.snooze_key, _stamp(now, interval), source="explicit")
         return check.progress_headline.format(count=count, target=target)
@@ -819,10 +861,11 @@ class SelfCareModule(Module):
         "meds_reask_minutes": str(DEFAULT_MEDS_REASK_MINUTES),
         "meds_snooze_minutes": str(DEFAULT_MEDS_SNOOZE_MINUTES),
         "meds_daily_target": str(DEFAULT_MEDS_DAILY_TARGET),
-        # Bio breaks: on when self_care is on (like meal/water). Recurring within a
-        # window, so unlike the others it carries an end hour — it stops at
-        # biobreak_end_hour, not just at the daily target. Turn off per person via
-        # biobreak_enabled.
+        # Bio breaks: on when self_care is on (like meal/water), but open-ended —
+        # a plain interval reminder, not a quota. It nudges within a window and
+        # stops at biobreak_end_hour; no daily count silences it. The seeded
+        # biobreak_daily_target is kept only as an informational tally. Turn off
+        # per person via biobreak_enabled.
         "biobreak_enabled": "on",
         "biobreak_start_hour": str(DEFAULT_BIOBREAK_START_HOUR),
         "biobreak_end_hour": str(DEFAULT_BIOBREAK_END_HOUR),
@@ -868,10 +911,11 @@ class SelfCareModule(Module):
                 name="biobreak_check",
                 description=(
                     "Between biobreak_start_hour and biobreak_end_hour, a 'take a "
-                    "bathroom break' reminder every biobreak_interval_minutes. Bounded "
-                    "by the end hour (stops in the evening), not just the daily target. "
-                    "On with self_care; toggle with biobreak_enabled. One-tap Went / "
-                    "Snooze on ntfy."
+                    "bathroom break' reminder every biobreak_interval_minutes. A "
+                    "reminder, not a quota: no daily count silences it — the end "
+                    "hour bounds it, and Went just defers the next one. On with "
+                    "self_care; toggle with biobreak_enabled. One-tap Went / Snooze "
+                    "on ntfy."
                 ),
                 trigger="on an interval through the day, within a set time window",
                 status="active",
@@ -896,7 +940,9 @@ class SelfCareModule(Module):
         for check in CHECKS:
             if (store.get_state(check.enabled_key, "on") or "on") == "off":
                 continue
-            if day_count(store, check, today) >= _target(store, check):
+            # An open-ended check (bio breaks) is a reminder, not a quota — no count
+            # silences it; only its window + snooze/confirm-interval below gate it.
+            if not check.open_ended and day_count(store, check, today) >= _target(store, check):
                 continue  # hit the day's target already
             snoozed_until = _parse_ts(store.get_state(check.snooze_key))
             if snoozed_until is not None and ctx.now < snoozed_until:
@@ -942,7 +988,10 @@ class SelfCareModule(Module):
             end = _end_hour(store, check)
             every = store.get_state(check.interval_key) or str(check.interval_default)
             target = _target(store, check)
-            goal = "" if target == 1 else f" (up to {target}/day)"
+            if check.open_ended:
+                goal = " (a reminder, not a quota)"
+            else:
+                goal = "" if target == 1 else f" (up to {target}/day)"
             window = f"from {start}:00" if end is None else f"{start}:00–{end}:00"
             lines.append(
                 f"- {check.key.title()} check on: {window}, every {every} min"
