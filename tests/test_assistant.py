@@ -298,6 +298,50 @@ def test_validate_dismiss_conflict_known_key(snapshot):
     assert actions[0].op == "dismiss_conflict"
 
 
+def test_validate_start_outing_with_explicit_window(snapshot):
+    actions, errors = assistant.validate_actions(
+        [{"op": "start_outing", "intention": "Grocery run", "time_window_minutes": 45}],
+        snapshot,
+    )
+    assert errors == []
+    assert actions[0].params == {"intention": "Grocery run", "time_window_minutes": 45.0}
+    assert "Grocery run" in actions[0].summary and "45m" in actions[0].summary
+
+
+def test_validate_start_outing_parses_window_from_intention(snapshot):
+    """No explicit window → parse one from the text ('back in 20')."""
+    actions, errors = assistant.validate_actions(
+        [{"op": "start_outing", "intention": "Coffee, back in 20 minutes"}], snapshot
+    )
+    assert errors == []
+    assert actions[0].params["time_window_minutes"] == 20.0
+
+
+def test_validate_start_outing_defaults_window_when_unparseable(snapshot):
+    """No window and nothing to parse → a sane default, not an error."""
+    from prefrontal.modules.location_anchor import DEFAULT_INFERRED_WINDOW_MINUTES
+
+    actions, errors = assistant.validate_actions(
+        [{"op": "start_outing", "intention": "out for a bit"}], snapshot
+    )
+    assert errors == []
+    assert actions[0].params["time_window_minutes"] == DEFAULT_INFERRED_WINDOW_MINUTES
+
+
+def test_validate_start_outing_needs_intention(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "start_outing", "intention": "  ", "time_window_minutes": 20}], snapshot
+    )
+    assert errors
+
+
+def test_validate_start_outing_window_out_of_range(snapshot):
+    _actions, errors = assistant.validate_actions(
+        [{"op": "start_outing", "intention": "Errand", "time_window_minutes": 99999}], snapshot
+    )
+    assert errors
+
+
 def test_validate_rename_outing_resolves(snapshot):
     actions, errors = assistant.validate_actions(
         [{"op": "rename_outing", "outing_id": 3, "intention": "Grocery run"}], snapshot
@@ -490,6 +534,38 @@ def test_execute_add_and_cancel_commitment(memory):
     cancel = _plan_and_execute(memory, [{"op": "cancel_commitment", "commitment_id": cid}])
     assert cancel[0]["ok"] is True
     assert all(c["id"] != cid for c in memory.upcoming_commitments())
+
+
+def test_execute_start_outing_creates_it(memory):
+    """The assistant can start a brand-new outing (not just edit existing ones)."""
+    before = len(memory.recent_outings(limit=50))
+    results = _plan_and_execute(
+        memory,
+        [{"op": "start_outing", "intention": "Hardware store", "time_window_minutes": 30}],
+    )
+    assert results[0]["ok"] is True
+    outings = memory.recent_outings(limit=50)
+    assert len(outings) == before + 1
+    new = next(o for o in outings if o["intention"] == "Hardware store")
+    assert new["time_window_minutes"] == 30.0
+    # It's active (no return recorded) so it shows up as the current outing.
+    assert memory.most_recent_active_outing()["intention"] == "Hardware store"
+
+
+def test_execute_start_outing_honors_explicit_start_at(memory):
+    """A user-supplied start time backdates the departure (local→UTC)."""
+    results = _plan_and_execute(
+        memory,
+        [{
+            "op": "start_outing", "intention": "Walk the dog",
+            "time_window_minutes": 25, "start_at": "2026-07-02 09:15",
+        }],
+        tz="America/New_York",
+    )
+    assert results[0]["ok"] is True
+    new = next(o for o in memory.recent_outings(limit=50) if o["intention"] == "Walk the dog")
+    # 09:15 EDT → 13:15 UTC.
+    assert new["departure_at"].startswith("2026-07-02 13:15")
 
 
 def test_execute_rename_and_adjust_outing(memory):
