@@ -315,16 +315,21 @@ def test_render_empty_sheet_is_a_gentle_prompt(dana):
 
 def test_upcoming_appointments_from_child_commitments(store, alex):
     """A kind='child' commitment on a parent's calendar surfaces on the sheet."""
+    # Clock-relative: the sheet's "upcoming" filter runs against the *real* clock
+    # (upcoming_commitments), so a hardcoded date becomes a time-bomb once it
+    # passes. Anchor a couple of days out from now.
+    now = utcnow()
+    start = now + datetime.timedelta(days=2)
     alex.add_child(name="Sam")
     alex.upsert_commitment(
         title="Sam dentist",
-        start_at="2026-07-07 15:00:00",
+        start_at=start.strftime("%Y-%m-%d %H:%M:%S"),
         location="Dr. Lin",
         source="manual",
         kind="child",
         kind_source="user",
     )
-    sheet = build_sheet(alex, now=NOW)
+    sheet = build_sheet(alex, now=now)
     assert sheet.counts["upcoming"] == 1
     assert sheet.upcoming[0].title == "Sam dentist"
     assert "Upcoming appointments" in render_sheet(sheet)
@@ -333,19 +338,28 @@ def test_upcoming_appointments_from_child_commitments(store, alex):
 def test_upcoming_appointment_time_is_local(store, alex):
     """A child appointment's 'when' reads in the household's zone, not raw UTC.
 
-    15:00 UTC is 11:00am EDT — the sheet must say "11:00am", not "3:00pm".
+    Stored 15:00 UTC must render in America/New_York (e.g. 11:00am EDT), never the
+    raw UTC wall clock. Clock-relative (see the sibling test) and DST-correct — the
+    expected local time is derived with the same helper the sheet uses.
     """
+    now = utcnow()
+    start = (now + datetime.timedelta(days=2)).replace(
+        hour=15, minute=0, second=0, microsecond=0
+    )
     alex.add_child(name="Sam")
     alex.upsert_commitment(
         title="Sam dentist",
-        start_at="2026-07-07 15:00:00",
+        start_at=start.strftime("%Y-%m-%d %H:%M:%S"),
         location="Dr. Lin",
         source="manual",
         kind="child",
         kind_source="user",
     )
-    sheet = build_sheet(alex, now=NOW, timezone="America/New_York")
-    assert sheet.upcoming[0].when == "Tue 11:00am"  # 5 days out → weekday; local time
+    sheet = build_sheet(alex, now=now, timezone="America/New_York")
+    when = sheet.upcoming[0].when
+    expected_time = local_datetime(start, "America/New_York").strftime("%-I:%M%p").lower()
+    assert expected_time in when          # rendered in the household zone
+    assert "15:00" not in when and "3:00pm" not in when  # raw UTC never leaks
 
 
 # --- assistant ops -----------------------------------------------------------
