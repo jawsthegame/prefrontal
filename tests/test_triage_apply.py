@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -66,10 +66,14 @@ def test_todo_route_creates_an_augmented_todo(store):
 
 
 def test_commitment_route_with_a_date_creates_a_commitment(store):
+    # Clock-relative: upcoming_commitments filters against the real clock, so the
+    # target date must be in the future relative to *now*, not a fixed calendar day.
+    today = date.today()
+    when = (today + timedelta(days=4)).isoformat()
     rep = apply(
         _sig(title="Dentist Tuesday"),
-        _decide("commitment", "later", "commitment", when="2026-07-07"),
-        store, today=TODAY,
+        _decide("commitment", "later", "commitment", when=when),
+        store, today=today,
     )
     assert rep["routed_ref"].startswith("commitment:")
     ups = store.upcoming_commitments()
