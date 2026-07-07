@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS todos (
     status           TEXT    NOT NULL DEFAULT 'open', -- open | done | dropped
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at       DATETIME,                       -- when the user marked "I started this" (NULL = not started); the initiation half of the follow-through signal
     completed_at     DATETIME
 );
 

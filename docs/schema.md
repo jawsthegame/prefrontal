@@ -207,6 +207,14 @@ also defines:
   22:00–06:00) applies to everything — see `WindowConfig` in
   `prefrontal/scheduling.py` and `POST /todos/{id}/window`. A travel-requiring
   todo is additionally never suggested after `TRAVEL_LATEST_HOUR` (18:00).
+  A nullable `started_at` records that the user marked "I've started this"
+  (`POST /todos/{id}/start`, cleared by `/unstart`, CLI `todo start`) — the
+  initiation half of a **follow-through** signal: pairing the start with the
+  eventual close tells whether a *started* task actually got finished. The close
+  episode notes it ("completed/abandoned after starting"), and a started-then-
+  dropped todo always counts as a give-up (`miss`) rather than a hygiene discard
+  (`todo_episode_fields` / `_dropped_is_give_up`). The dashboard shows an
+  in-progress badge on started todos.
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).

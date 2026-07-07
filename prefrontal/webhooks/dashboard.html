@@ -253,6 +253,11 @@
   .scrubval { min-width: 46px; text-align: right; font-weight: 700; color: var(--fg); }
   .cascade-clear { font-size: 13px; color: var(--muted); padding: 2px 0 8px; }
   .avoiding { background: var(--call-bg); color: var(--call); }
+  /* An open todo the user has marked "started" — in progress, gently lit so the
+     follow-through (did the started thing get finished?) is visible at a glance. */
+  .badge.started { background: var(--good-bg); color: var(--good); }
+  .row.started { border-left: 3px solid var(--good); padding-left: 8px; }
+  .btn-sm.btn-started { border-color: var(--good); color: var(--good); }
   .badge.first { background: var(--good-bg); color: var(--good); }
   .firststep { margin-top: 8px; padding: 8px 10px; background: var(--good-bg);
                border-left: 3px solid var(--good); border-radius: 0 6px 6px 0; font-size: 14px; }
@@ -1076,15 +1081,23 @@ function renderTodos(d) {
       : "";
     const dueText = x.deadline ? "due " + fmtDeadline(x.deadline) : "no deadline";
     const src = x.source_url ? ` <a class="src" href="${esc(x.source_url)}" target="_blank" rel="noopener noreferrer" title="Open source email">↗</a>` : "";
-    return `<div class="row">
+    const started = !!x.started_at;
+    const startedBadge = started ? ` <span class="badge started">▶ in progress</span>` : "";
+    // Start (before Done) captures the initiation, so a later Done/Drop reads as
+    // follow-through. Once started it flips to a muted toggle to undo a mis-tap.
+    const startBtn = started
+      ? `<button class="btn-sm btn-started" data-action="todo-unstart" data-id="${x.id}" title="Started — click to undo">▶ Started</button>`
+      : `<button class="btn-sm" data-action="todo-start" data-id="${x.id}" title="I've started this">Start</button>`;
+    return `<div class="row${started ? " started" : ""}">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
+        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${startedBadge}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
         ${dismiss}
       </div>
       <div class="acts">
         ${breakBtn}
+        ${startBtn}
         <button class="btn-sm btn-go" data-action="todo-done" data-id="${x.id}">Done</button>
         <button class="btn-sm btn-x" data-action="todo-drop" data-id="${x.id}">Drop</button>
       </div>
@@ -2217,6 +2230,8 @@ document.addEventListener("click", async (e) => {
     else if (act === "shop-clear-got") { if (!confirm("Clear all checked-off items?")) return; await post("/household/shopping/clear-got", {}); }
     else if (act === "todo-done") { await post(`/todos/${id}/done`); }
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
+    else if (act === "todo-start") { await post(`/todos/${id}/start`); }
+    else if (act === "todo-unstart") { await post(`/todos/${id}/unstart`); }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }

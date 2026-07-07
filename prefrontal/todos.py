@@ -924,7 +924,13 @@ def _dropped_is_give_up(todo: dict[str, Any], ref: datetime | None) -> bool:
     Recomputes the avoidance inputs directly rather than calling
     :func:`avoidance_score`, because that is status-gated and the row is already
     ``dropped`` by the time a close is recorded.
+
+    A todo the user explicitly **started** and then dropped is always a give-up —
+    you engaged with it and abandoned it, which is the follow-through failure worth
+    counting — regardless of priority or age.
     """
+    if todo.get("started_at"):
+        return True
     priority = todo.get("priority")
     priority = 1 if priority is None else int(priority)
     if priority < 1:
@@ -971,18 +977,33 @@ def todo_episode_fields(
     if start is not None and end is not None:
         days = max(0.0, (end - start).total_seconds() / 86400.0)
         notes = f"{'completed' if done else 'dropped'} after {days:.1f}d open"
+    # Follow-through signal: was this a task the user had explicitly *started*?
+    # "started → completed" is a follow-through win; "started → dropped" is an
+    # abandon-after-starting — the exact pattern worth tracking. Record it in the
+    # note (and mark the context) so the learning pass and briefing can see it.
+    started_at = _parse_ts(todo.get("started_at"))
+    started = started_at is not None
+    if started:
+        tail = "completed after starting" if done else "abandoned after starting"
+        if started_at is not None and end is not None:
+            hours = max(0.0, (end - started_at).total_seconds() / 3600.0)
+            tail += f" ({hours:.1f}h in)"
+        notes = f"{notes}; {tail}" if notes else tail
     if done:
         outcome = "success"
     elif _dropped_is_give_up(todo, end):
         outcome = "miss"
     else:
         outcome = DISCARDED_OUTCOME
+    verb = "done" if done else "dropped"
+    if started:
+        verb += ", started"
     return {
         "episode_type": "task",
         "predicted_value": todo.get("estimate_minutes"),
         "actual_value": None,
         "acknowledged": None,
-        "context": f"todo {'done' if done else 'dropped'}: {todo.get('title')}",
+        "context": f"todo {verb}: {todo.get('title')}",
         "outcome": outcome,
         "notes": notes,
     }
