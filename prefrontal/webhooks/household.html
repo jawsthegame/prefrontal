@@ -136,6 +136,12 @@
   .re-enabled-l { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
   .task-badge { font-size: 11px; font-weight: 600; color: var(--accent);
     background: var(--line); border-radius: 999px; padding: 1px 8px; }
+  /* Chores day selector: arrows to view/update today or the day before. */
+  .daynav { display: flex; align-items: center; gap: 8px; margin: 0 0 9px; }
+  .daynav .dn-label { min-width: 80px; text-align: center; font-weight: 600;
+    font-size: 13px; color: var(--fg); }
+  .daynav .iconbtn { padding: 1px 10px; font-size: 15px; line-height: 1.35; }
+  .iconbtn:disabled { opacity: .35; cursor: default; border-color: var(--line); }
   .shop-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
     border-bottom: 1px dashed var(--line); }
   .shop-row:last-child { border-bottom: none; }
@@ -309,6 +315,12 @@
 
   <section class="card" id="c-chores">
     <p class="label">Shared chores</p>
+    <div class="daynav" id="chore-daynav">
+      <button class="iconbtn" id="chore-prev" type="button" title="Previous day" aria-label="Previous day">‹</button>
+      <span class="dn-label" id="chore-day-label">Today</span>
+      <button class="iconbtn" id="chore-next" type="button" title="Next day" aria-label="Next day">›</button>
+      <span class="hint" style="width:auto;margin:0">tick a past day if you forgot — up to yesterday</span>
+    </div>
     <div id="chores"></div>
     <form class="inline" id="chore-form">
       <input id="chore-title" type="text" placeholder="e.g. run the dishwasher" required />
@@ -739,16 +751,49 @@ function _choreWhen(c) {
   return sched ? `${sched} · ${when}` : when;
 }
 
+// Chores day selector: 0 = today, 1 = yesterday (at most one day back). `_chores`
+// caches the last sheet's list so switching days re-renders without a full reload;
+// `choreDoneIds` holds a past day's completed-ids (null = use today's done_today).
+let _chores = [];
+let choreDaysAgo = 0;
+let choreDoneIds = null;
+
+function updateChoreNav() {
+  const lbl = $("#chore-day-label");
+  if (lbl) lbl.textContent = choreDaysAgo === 0 ? "Today" : "Yesterday";
+  const prev = $("#chore-prev"), next = $("#chore-next");
+  if (prev) prev.disabled = choreDaysAgo >= 1;   // yesterday is as far back as it goes
+  if (next) next.disabled = choreDaysAgo <= 0;   // never into the future
+}
+
+// Switch the visible day. Today uses the sheet's done_today; a past day pulls its
+// completed set from the server (which owns the timezone) before re-rendering.
+async function setChoreDay(daysAgo) {
+  choreDaysAgo = Math.max(0, Math.min(1, daysAgo));
+  if (choreDaysAgo === 0) {
+    choreDoneIds = null;
+  } else {
+    try {
+      const data = await api(`/household/chores/done?days_ago=${choreDaysAgo}`);
+      choreDoneIds = new Set(data.ids || []);
+    } catch (_) { choreDoneIds = new Set(); }
+  }
+  renderChores(_chores);
+}
+
 function renderChores(chores) {
-  chores = chores || [];
-  if (!chores.length) { $("#chores").innerHTML = `<div class="empty">No chores yet.</div>`; return; }
-  $("#chores").innerHTML = chores.map((c) => {
+  _chores = chores || [];
+  updateChoreNav();
+  if (!_chores.length) { $("#chores").innerHTML = `<div class="empty">No chores yet.</div>`; return; }
+  $("#chores").innerHTML = _chores.map((c) => {
+    const done = choreDaysAgo === 0 ? !!c.done_today : !!(choreDoneIds && choreDoneIds.has(c.id));
     const owner = c.owner_name || "either";
     const badge = c.routine_title ? `<span class="task-badge">${esc(c.routine_title)}</span>` : "";
     const paused = c.enabled ? "" : " · paused";
     const sub = `<span class="task-sub">${esc(owner)} · ${_choreWhen(c)}${paused}</span>`;
-    return `<div class="task-row${c.done_today ? " done" : ""}">
-      <input type="checkbox" data-chdone="${c.id}" ${c.done_today ? "checked" : ""} title="Done today" />
+    return `<div class="task-row${done ? " done" : ""}">
+      <input type="checkbox" data-chdone="${c.id}" ${done ? "checked" : ""}
+        title="Mark done for the selected day" />
       <span class="task-txt">${esc(c.title)} ${sub} ${badge}</span>
       <button class="iconbtn del" data-delchore="${c.id}" title="Remove">🗑</button></div>`;
   }).join("");
@@ -1225,13 +1270,19 @@ $("#chores").addEventListener("click", async (e) => {
 });
 $("#chores").addEventListener("change", async (e) => {
   const id = e.target.getAttribute("data-chdone");
-  // "Done today" is one-way (like the ntfy Done button). Ticking logs it; an
-  // untick just re-renders (loadSheet snaps the box back to its logged state).
-  if (id) {
-    if (e.target.checked) await post(`/household/chores/${id}/done`, {});
-    await loadSheet();
-  }
+  if (!id) return;
+  // Two-way on the card: tick logs the completion for the selected day, untick
+  // clears it — so you can also correct a mistaken tick or back-fill yesterday.
+  const body = { days_ago: choreDaysAgo };
+  if (e.target.checked) await post(`/household/chores/${id}/done`, body);
+  else await post(`/household/chores/${id}/undone`, body);
+  // Refresh: today reloads the whole sheet (updates the balance too); a past day
+  // just re-pulls that day's set and re-renders the list.
+  if (choreDaysAgo === 0) await loadSheet();
+  else await setChoreDay(choreDaysAgo);
 });
+$("#chore-prev").addEventListener("click", () => setChoreDay(choreDaysAgo + 1));
+$("#chore-next").addEventListener("click", () => setChoreDay(choreDaysAgo - 1));
 
 $("#routine-form").addEventListener("submit", async (e) => {
   e.preventDefault();

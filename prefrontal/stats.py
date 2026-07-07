@@ -18,22 +18,29 @@ three signature views the Insights page renders (all pure and model-free, mirror
 4. **Self-care** — per basic-needs check (meal, water, meds): how often you
    genuinely acted on the nudge vs. snoozed/ignored it, the average nudge→tap
    latency on the taps you confirmed, and the learned cadence vs. its default.
+5. **Chores** — shared-chore completions over the last month: the total, a
+   per-person split, today/yesterday counts, and a recent day-by-day series —
+   read from the ``household_chore_log`` rather than ``episodes``.
 
-Everything is derived straight from ``episodes`` (not the ``patterns`` table), so
-the page is meaningful even before ``prefrontal learn`` has ever run.
+The first four are derived straight from ``episodes`` (not the ``patterns``
+table), so the page is meaningful even before ``prefrontal learn`` has ever run;
+the chores view reads the household completion log.
 """
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from statistics import fmean, median
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from prefrontal.clock import utcnow
 from prefrontal.commitments import resolve_zone
 from prefrontal.config import get_settings
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.self_care import CHECKS, SELF_CARE_EPISODE
+from prefrontal.scheduling import local_datetime
 
 #: Outcome values we treat as terminal for the follow-through view, in display order.
 OUTCOMES: tuple[str, ...] = ("success", "partial", "miss")
@@ -43,6 +50,12 @@ FOLLOW_SERIES_LEN = 24
 
 #: How many estimate points the scatter/summary keeps (most recent).
 MAX_ESTIMATE_POINTS = 60
+
+#: Rolling window (days) for the Insights chores view.
+CHORE_WINDOW_DAYS = 30
+
+#: How many recent days the chores completion sparkline shows (oldest→newest).
+CHORE_SERIES_LEN = 14
 
 
 def _ratio_summary(pairs: list[float]) -> dict[str, Any]:
@@ -219,6 +232,55 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
     return rows
 
 
+def _chores(store: MemoryStore) -> dict[str, Any]:
+    """Chore completions over the last :data:`CHORE_WINDOW_DAYS`: totals, per-person, cadence.
+
+    Reads ``household_chore_log`` — the same ledger the ntfy Done tap and the
+    card's day selector write — one row per (chore, local day). Completions are
+    already keyed by local ``done_on``, so a late-evening tap lands on the right
+    day. Returns a per-person split, a recent day-by-day series for a sparkline,
+    and today/yesterday counts. Safe/zeroed on an empty history or no household.
+    """
+    try:
+        rows = store.chore_log_since(
+            (
+                local_datetime(utcnow(), get_settings().timezone).date()
+                - timedelta(days=CHORE_WINDOW_DAYS - 1)
+            ).isoformat()
+        )
+    except Exception:
+        # No household (unscoped/solo store) → nothing shared to tally.
+        rows = []
+    today = local_datetime(utcnow(), get_settings().timezone).date()
+    by_person = Counter((r.get("done_by_name") or "Someone") for r in rows)
+    by_day = Counter(str(r.get("done_on")) for r in rows)
+    active_days = len(by_day)
+    series = [
+        {
+            "day": (day := (today - timedelta(days=i)).isoformat()),
+            "count": by_day.get(day, 0),
+        }
+        for i in range(CHORE_SERIES_LEN - 1, -1, -1)
+    ]
+    try:
+        enabled = sum(1 for c in store.chores() if c.get("enabled"))
+    except Exception:
+        enabled = 0
+    return {
+        "window_days": CHORE_WINDOW_DAYS,
+        "total": len(rows),
+        "active_days": active_days,
+        "avg_per_active_day": round(len(rows) / active_days, 1) if active_days else 0.0,
+        "today": by_day.get(today.isoformat(), 0),
+        "yesterday": by_day.get((today - timedelta(days=1)).isoformat(), 0),
+        "enabled_chores": enabled,
+        "by_person": [
+            {"name": name, "count": count} for name, count in by_person.most_common()
+        ],
+        "series": series,
+    }
+
+
 def build_stats(store: MemoryStore) -> dict[str, Any]:
     """Assemble the Insights payload from the (scoped) user's episodes.
 
@@ -236,5 +298,6 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
         "follow_through": _follow_through(episodes),
         "channels": _channels(episodes),
         "self_care": _self_care(store),
+        "chores": _chores(store),
         "counts": {"episodes": len(episodes)},
     }

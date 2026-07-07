@@ -153,6 +153,12 @@
     <p class="sub">Your typical-day average vs. each check's daily goal — grey is the shortfall.</p>
     <div id="selfcare-body"></div>
   </section>
+
+  <section class="card" id="c-chorestats" style="display:none">
+    <p class="label">Chores</p>
+    <p class="sub">Shared-chore completions over the last month — who did what, and the daily rhythm.</p>
+    <div id="chorestats-body"></div>
+  </section>
   </main>
 
   <footer>Learned from your logged outcomes · updates as you go</footer>
@@ -324,6 +330,44 @@ function renderSelfCare(rows) {
   }).join("");
 }
 
+// Palette for the per-person split (stable order, wraps if a big household).
+const CHORE_PALETTE = ["var(--good)", "var(--warn)", "var(--accent)", "var(--muted)"];
+
+function renderChoreStats(ch) {
+  // Hide the card until there's something to show — completions or active chores.
+  if (!ch || (!ch.total && !ch.enabled_chores)) {
+    $("#c-chorestats").style.display = "none";
+    return;
+  }
+  $("#c-chorestats").style.display = "";
+  const total = ch.total || 0;
+  let html = `<div class="hero"><span class="n">${total}</span>
+    <span class="u">done in ${ch.window_days} days</span>
+    <span style="flex:1"></span>
+    <span class="u">${ch.today} today · ${ch.yesterday} yst</span></div>`;
+  // Who did what — a composition bar sized by share, labelled below.
+  const people = ch.by_person || [];
+  if (total && people.length) {
+    html += `<div class="compbar">` + people.map((p, i) =>
+      `<span class="seg" title="${esc(p.name)}: ${p.count}" style="width:${(p.count / total) * 100}%;background:${CHORE_PALETTE[i % CHORE_PALETTE.length]}"></span>`
+    ).join("") + `</div>`;
+    html += `<div class="legend">` + people.map((p, i) =>
+      `<span class="k"><span class="dot" style="background:${CHORE_PALETTE[i % CHORE_PALETTE.length]}"></span>${esc(p.name)} · ${p.count}</span>`
+    ).join("") + `</div>`;
+  }
+  // Recent daily rhythm — one bar per day, height ∝ that day's count.
+  const series = ch.series || [];
+  if (series.length) {
+    const max = Math.max(1, ...series.map((o) => o.count || 0));
+    html += `<div class="spark">` + series.map((o) =>
+      `<span class="tick" title="${esc(o.day)}: ${o.count}" style="height:${o.count ? Math.max(3, Math.round((o.count / max) * 22)) : 3}px;background:${o.count ? "var(--accent)" : "var(--line)"}"></span>`
+    ).join("") + `</div>`;
+  }
+  html += `<div class="legend"><span class="k">avg ${ch.avg_per_active_day}/active day</span>`;
+  html += `<span class="k">${ch.enabled_chores} active chore${ch.enabled_chores === 1 ? "" : "s"}</span></div>`;
+  $("#chorestats-body").innerHTML = html;
+}
+
 async function load() {
   $("#status").textContent = "updating…";
   let data;
@@ -340,6 +384,7 @@ async function load() {
   renderFollow(data.follow_through);
   renderChannels(data.channels);
   renderSelfCare(data.self_care);
+  renderChoreStats(data.chores);
   const n = (data.counts || {}).episodes || 0;
   $("#status").textContent = `${n} event${n === 1 ? "" : "s"} · updated ` +
     new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
