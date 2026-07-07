@@ -215,6 +215,9 @@
   .lvl-call { background: var(--call-bg); color: var(--call); }
   .pill { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--chip); color: var(--muted); }
   .pill.fyi { background: var(--fyi-bg); color: var(--fyi); }
+  /* A kid's appointment (kind=child) — outlined in the accent so it reads as
+     distinct from the filled FYI pill, in both themes. */
+  .pill.kid { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
   /* Account/calendar pill: names the mail inbox a todo came from, or the
      calendar a commitment belongs to. Solid color + dark text so a bright
      configured color (orange, magenta, blue) reads clearly. */
@@ -1251,11 +1254,26 @@ function renderCommitments(list, conflicts, cascade) {
   if (!c.length && !prev.length && !hidden.length) return html || `<div class="empty">No upcoming commitments.</div>`;
   html += c.map((x) => {
     const fyi = x.kind === "fyi";
+    const kid = x.kind === "child";
     const cal = calPill(x.calendar_key, x.calendar);
-    const fyiBadge = fyi ? ' <span class="pill fyi" title="Where someone will be — never a conflict">FYI</span>' : "";
+    // Kind badge: FYI (someone else will be there) or a kid's appointment (which
+    // also shows on the household sheet). A plain "self" commitment gets no badge.
+    const kindBadge = fyi
+      ? ' <span class="pill fyi" title="Where someone will be — never a conflict">FYI</span>'
+      : kid
+      ? ' <span class="pill kid" title="Kid’s appointment — also shown on the household sheet">kid</span>'
+      : "";
     const dbl = (!fyi && ids.has(x.id)) ? ' <span class="pill conflict">double-booked</span>' : "";
-    const target = fyi ? "self" : "fyi";
-    const btnTitle = fyi ? "Not FYI — mark as your own commitment" : "Mark FYI (where someone will be — never a conflict)";
+    // Reclassify button: your own (self) ⇄ FYI, and a kid appt goes straight to
+    // "Mine" (self). The server marks it kind_source=user, so a later calendar
+    // sync won't re-classify it back.
+    const kindTarget = x.kind === "self" ? "fyi" : "self";
+    const kindLabel = x.kind === "self" ? "FYI" : "Mine";
+    const kindTitle = kid
+      ? "Not a kid’s appointment — mark as your own"
+      : fyi
+      ? "Not FYI — mark as your own commitment"
+      : "Mark FYI (where someone will be — never a conflict)";
     const isHard = x.hardness === "hard";
     // Toggle firmness: hard = a must-happen obligation (panic treats a slip as a
     // fire); soft = an elastic block you'd yield in a pinch. The button flips it.
@@ -1270,11 +1288,11 @@ function renderCommitments(list, conflicts, cascade) {
     const cdomStyle = cdom ? ` style="color:${catColor(cdom)};border-color:${catColor(cdom)}"` : "";
     const cdomPill = ` <button class="${cdom ? "pill dom" : "pill dom none"}"${cdomStyle} data-action="commitment-domain" data-id="${x.id}" data-domain="${esc(cdom)}" title="Set life sphere (work/home/kids/…)">${esc(cdom || "+ domain")}<span class="caret">▾</span></button>`;
     return `<div class="row"><div class="main">
-      <div><span class="title">${esc(x.title)}</span>${src}${cal}${fyiBadge}${dbl}${cdomPill}</div>
+      <div><span class="title">${esc(x.title)}</span>${src}${cal}${kindBadge}${dbl}${cdomPill}</div>
       <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
     </div>
     <div class="acts">
-      <button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${target}" title="${btnTitle}">${fyi ? "Mine" : "FYI"}</button>
+      <button class="btn-sm" data-action="commitment-kind" data-id="${x.id}" data-kind="${kindTarget}" title="${kindTitle}">${kindLabel}</button>
       <button class="btn-sm" data-action="commitment-hardness" data-id="${x.id}" data-hardness="${hardTarget}" title="${hardTitle}">${isHard ? "Soft" : "Hard"}</button>
       <button class="btn-sm" data-action="commitment-hide" data-id="${x.id}" title="Hide — remove from the dashboard and widget (reversible below)">Hide</button>
     </div>
