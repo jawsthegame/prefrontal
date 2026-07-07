@@ -449,6 +449,17 @@ class CommitmentOutcome(BaseModel):
     )
 
 
+class CommitmentPrepared(BaseModel):
+    """Body of ``POST /commitments/{id}/prepared`` — the "felt prepared?" reflection."""
+
+    prepared: str | None = Field(
+        description=(
+            "`yes` or `no` (did you feel prepared for this work commitment?); "
+            "`null` clears it."
+        ),
+    )
+
+
 class CommitmentNotes(BaseModel):
     """Body of ``POST /commitments/{id}/notes`` — set or clear a commitment's notes."""
 

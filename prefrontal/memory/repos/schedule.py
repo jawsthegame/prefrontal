@@ -223,6 +223,26 @@ class ScheduleRepo(Repo):
         self.conn.commit()
         return self.get_commitment(commitment_id)
 
+    def set_commitment_prepared(
+        self, commitment_id: int, prepared: str | None
+    ) -> dict[str, Any] | None:
+        """Record (or clear) a past commitment's "did you feel prepared?" answer.
+
+        A user reflection (``yes``/``no``) on an elapsed work commitment — like
+        :meth:`set_commitment_outcome`'s ``outcome`` it is deliberately *not*
+        touched by :meth:`upsert_commitment`, so a calendar re-sync never clobbers
+        it. Passing ``None`` clears the answer (and its timestamp). Returns
+        ``None`` if no such commitment exists.
+        """
+        self.conn.execute(
+            "UPDATE commitments SET prepared = ?, "
+            "prepared_at = CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (prepared, prepared, commitment_id, self._uid()),
+        )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
     def set_commitment_notes(
         self, commitment_id: int, notes: str | None
     ) -> dict[str, Any] | None:

@@ -526,6 +526,31 @@ def test_set_commitment_outcome_resolves_and_survives_resync(store):
     assert [c["id"] for c in store.previous_commitments()] == [cid]
 
 
+def test_set_commitment_prepared_survives_resync_and_is_independent(store):
+    """"Felt prepared?" is a user field kept across re-sync, separate from outcome."""
+    sync_calendar(
+        store, [{"title": "Standup", "start_at": _iso(-90), "external_id": "work:s1"}]
+    )
+    (row,) = store.previous_commitments()
+    cid = row["id"]
+    assert row["prepared"] is None
+
+    updated = store.set_commitment_prepared(cid, "no")
+    assert updated["prepared"] == "no" and updated["prepared_at"] is not None
+    # Independent of made/missed: the row is still awaiting an outcome answer.
+    assert [c["id"] for c in store.previous_commitments()] == [cid]
+
+    # A re-sync re-activates the row but must not clobber the reflection.
+    sync_calendar(
+        store, [{"title": "Standup", "start_at": _iso(-90), "external_id": "work:s1"}]
+    )
+    assert store.get_commitment(cid)["prepared"] == "no"
+
+    # Clearing wipes the value and its stamp.
+    cleared = store.set_commitment_prepared(cid, None)
+    assert cleared["prepared"] is None and cleared["prepared_at"] is None
+
+
 def test_hidden_past_commitment_absent_from_previous(store):
     """Hiding an elapsed commitment removes it from the 'did you make it?' list too."""
     cid, _ = store.upsert_commitment(title="Ended", start_at=to_utc(_iso(-30)))
@@ -722,6 +747,34 @@ def test_commitment_outcome_endpoint(client):
                        json={"outcome": "nope"}).status_code == 422
     assert client.post("/commitments/99999/outcome", headers=_auth(),
                        json={"outcome": "made"}).status_code == 404
+
+
+def test_commitment_prepared_endpoint(client):
+    """POST /commitments/{id}/prepared records the 'felt prepared?' reflection."""
+    client.post(
+        "/webhooks/calendar/sync",
+        headers=_auth(),
+        json={"events": [
+            {"title": "1:1", "start_at": _iso(-90), "external_id": "work:p1"},
+        ]},
+    )
+    data = client.get("/commitments", headers=_auth()).json()
+    assert "work" in data["attend_calendars"]  # dashboard gates the prompt on this
+    cid = data["previous"][0]["id"]
+
+    r = client.post(f"/commitments/{cid}/prepared", headers=_auth(), json={"prepared": "no"})
+    assert r.status_code == 200 and r.json()["commitment"]["prepared"] == "no"
+    # Independent of made/missed — the row still awaits its outcome answer.
+    prev = client.get("/commitments", headers=_auth()).json()["previous"]
+    assert [c["id"] for c in prev] == [cid] and prev[0]["prepared"] == "no"
+
+    # null clears; bad value → 422; unknown id → 404.
+    client.post(f"/commitments/{cid}/prepared", headers=_auth(), json={"prepared": None})
+    assert client.get("/commitments", headers=_auth()).json()["previous"][0]["prepared"] is None
+    assert client.post(f"/commitments/{cid}/prepared", headers=_auth(),
+                       json={"prepared": "maybe"}).status_code == 422
+    assert client.post("/commitments/99999/prepared", headers=_auth(),
+                       json={"prepared": "yes"}).status_code == 404
 
 
 def test_commitment_notes_endpoint(client):

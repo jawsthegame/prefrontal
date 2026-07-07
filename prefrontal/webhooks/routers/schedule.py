@@ -51,6 +51,7 @@ from prefrontal.config import (
 )
 from prefrontal.departure import (
     DEFAULT_DEPARTURE_GRACE_MINUTES,
+    _attend_slugs,
     attribute_departure,
     departure_kwargs,
     evaluate_departure_check,
@@ -110,6 +111,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentKind,
     CommitmentNotes,
     CommitmentOutcome,
+    CommitmentPrepared,
     ConflictDismiss,
     PlaceCreate,
 )
@@ -490,6 +492,9 @@ def build_router(services: RouterServices) -> APIRouter:
             "previous": memory.previous_commitments(),
             "hidden": memory.hidden_commitments(),
             "calendars": resolved_settings.calendar_label_map,
+            # Feed slugs treated as "work" (attend-mode). The dashboard uses these
+            # to show the post-mortem "felt prepared?" prompt only on work items.
+            "attend_calendars": list(_attend_slugs(memory)),
         }
 
     @router.get("/calendar/slots", tags=["schedule"])
@@ -877,6 +882,35 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
             )
         updated = memory.set_commitment_outcome(commitment_id, outcome)
+        return {"commitment": updated}
+
+    @router.post("/commitments/{commitment_id}/prepared", tags=["schedule"])
+    def set_commitment_prepared(
+        commitment_id: int,
+        payload: CommitmentPrepared,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Record "did you feel prepared?" for a past work commitment (``yes``/``no``).
+
+        A reflection independent of the made/missed outcome — a work commitment
+        can be attended yet felt under-prepared. Passing ``prepared: null`` clears
+        it. Like the outcome, it's a user field kept across calendar re-syncs.
+        Returns the updated row.
+        """
+        prepared = payload.prepared
+        if prepared is not None:
+            prepared = prepared.strip().lower()
+            if prepared not in ("yes", "no"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="prepared must be 'yes', 'no', or null",
+                )
+        memory = ctx.store
+        if memory.get_commitment(commitment_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        updated = memory.set_commitment_prepared(commitment_id, prepared)
         return {"commitment": updated}
 
     @router.post("/commitments/{commitment_id}/notes", tags=["schedule"])
