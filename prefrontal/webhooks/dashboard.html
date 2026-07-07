@@ -130,11 +130,16 @@
   .masonry .card.has-cap > h2 { padding-right: 198px; }
   .card-ctl { position: absolute; top: 12px; right: 12px; z-index: 2;
     display: flex; gap: 3px; align-items: center; }
-  .card-ctl .drag-handle { color: var(--muted); cursor: grab; user-select: none;
+  .card-ctl .drag-handle { color: var(--muted); cursor: grab; user-select: none; touch-action: none;
     width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
     font-size: 13px; line-height: 1; }
   .card-ctl .drag-handle:hover { color: var(--fg); }
   .card-ctl .drag-handle:active { cursor: grabbing; }
+  /* The heading is also a drag grip (mouse), so hint it with a grab cursor. */
+  .masonry:not(.compact) .card > h2 { cursor: grab; }
+  /* While a drag is in progress, suppress text selection and show the grab cursor. */
+  .masonry.dragging-active { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+  .masonry.dragging-active .card > h2 { cursor: grabbing; }
   .card-ctl .cardbtn { background: var(--card); border: 1px solid var(--line); color: var(--muted);
     border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 9px; line-height: 1; padding: 0; }
   .card-ctl .cardbtn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
@@ -1892,7 +1897,7 @@ function injectControls() {
     if (card.querySelector(":scope > .card-ctl")) return;  // inject once
     const ctl = document.createElement("div");
     ctl.className = "card-ctl";
-    let html = `<span class="drag-handle" draggable="true" title="Drag to move this card" aria-hidden="true">⠿</span>`
+    let html = `<span class="drag-handle" title="Drag to move this card (or its heading)" aria-hidden="true">⠿</span>`
       + `<button class="cardbtn" data-col="left" title="Move to previous column" aria-label="Move card to previous column">◀</button>`
       + `<button class="cardbtn" data-arr="up" title="Move up" aria-label="Move card up">▲</button>`
       + `<button class="cardbtn" data-arr="down" title="Move down" aria-label="Move card down">▼</button>`
@@ -1914,11 +1919,16 @@ function injectControls() {
 // The card node is moved live during dragover so the layout reflows under the
 // pointer; the arrangement is persisted on drop. (HTML5 drag is pointer-only —
 // the ◀▶▲▼ buttons are the touch/keyboard path.)
-let dragCard = null, dragOrigin = null, dragDropped = false;
+// Drag-and-drop via Pointer Events (works with mouse and touch, unlike native
+// HTML5 drag). Grab a card by its ⠿ handle or its heading; once the pointer
+// moves past a small threshold the card follows the pointer, reflowing the
+// columns live, and the arrangement is persisted on release.
+let drag = null;  // { card, grip, origin, pointerId, startX, startY, active, fromHeading }
 function initDragAndDrop() {
   const main = document.querySelector(".masonry");
   if (!main || main.dataset.dndWired) return;
   main.dataset.dndWired = "1";
+  const THRESH = 5;  // px of movement before a press becomes a drag (vs. a click)
   const clearTargets = () => main.querySelectorAll(".col.drop-target").forEach((c) => c.classList.remove("drop-target"));
   const colFromX = (x) => {
     const cols = [...main.querySelectorAll(":scope > .col")];
@@ -1936,39 +1946,55 @@ function initDragAndDrop() {
     for (const c of cards) { const r = c.getBoundingClientRect(); if (y < r.top + r.height / 2) return c; }
     return null;
   };
-  main.addEventListener("dragstart", (e) => {
-    const h = e.target.closest(".drag-handle");
-    if (!h || main.classList.contains("compact")) { e.preventDefault(); return; }
-    dragCard = h.closest(".card");
-    dragOrigin = { parent: dragCard.parentElement, next: dragCard.nextElementSibling };
-    dragDropped = false;
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", dragCard.id);  // required for Firefox to start a drag
-    try { e.dataTransfer.setDragImage(dragCard, 24, 16); } catch (_) {}
-    requestAnimationFrame(() => dragCard && dragCard.classList.add("dragging"));
+
+  main.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;         // left / primary only
+    if (main.classList.contains("compact")) return;          // merged view is read-only
+    // Never hijack a press on an interactive control.
+    if (e.target.closest(".cardbtn, .capsel, .cap-more, input, textarea, select, button, a, [contenteditable]")) return;
+    let grip = e.target.closest(".drag-handle"), fromHeading = false;
+    if (!grip) { const h2 = e.target.closest("h2"); if (h2 && h2.closest(".masonry")) { grip = h2; fromHeading = true; } }
+    if (!grip) return;
+    const card = grip.closest(".card");
+    if (!card || !card.closest(".masonry")) return;
+    drag = { card, grip, origin: { parent: card.parentElement, next: card.nextElementSibling },
+             pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, active: false, fromHeading };
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    if (!fromHeading) e.preventDefault();  // handle: block text selection immediately
   });
-  main.addEventListener("dragover", (e) => {
-    if (!dragCard) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+  main.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (!drag.active) {
+      if (Math.abs(e.clientX - drag.startX) < THRESH && Math.abs(e.clientY - drag.startY) < THRESH) return;
+      drag.active = true;
+      drag.card.classList.add("dragging");
+      main.classList.add("dragging-active");
+    }
+    e.preventDefault();  // stop scroll/selection while dragging
     const col = colFromX(e.clientX); if (!col) return;
     clearTargets(); col.classList.add("drop-target");
     const after = cardAfterY(col, e.clientY);
-    if (after) col.insertBefore(dragCard, after); else col.appendChild(dragCard);
+    if (after) col.insertBefore(drag.card, after); else col.appendChild(drag.card);
   });
-  main.addEventListener("drop", (e) => {
-    if (!dragCard) return;
-    e.preventDefault();
-    dragDropped = true;
-    serializeColumns(); refreshMoveButtons();
-  });
-  main.addEventListener("dragend", () => {
-    if (!dragCard) return;
-    dragCard.classList.remove("dragging");
-    if (!dragDropped && dragOrigin) dragOrigin.parent.insertBefore(dragCard, dragOrigin.next);  // canceled → snap back
-    clearTargets();
-    dragCard = null; dragOrigin = null; dragDropped = false;
-  });
+  const finish = (e) => {
+    if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+    try { drag.grip.releasePointerCapture(drag.pointerId); } catch (_) {}
+    if (drag.active) {
+      drag.card.classList.remove("dragging");
+      main.classList.remove("dragging-active");
+      clearTargets();
+      serializeColumns(); refreshMoveButtons();
+      // A heading drag would otherwise fire a click that toggles collapse — eat it.
+      if (drag.fromHeading) {
+        const kill = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+        document.addEventListener("click", kill, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener("click", kill, true), 350);
+      }
+    }
+    drag = null;
+  };
+  main.addEventListener("pointerup", finish);
+  main.addEventListener("pointercancel", finish);
 }
 
 // Columns picker: set the preferred column count and redraw.
