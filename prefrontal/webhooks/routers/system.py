@@ -25,6 +25,7 @@ from prefrontal.clock import utcnow
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
+    apply_self_care_reset,
     apply_self_care_unmark,
     self_care_status,
 )
@@ -243,14 +244,18 @@ def build_router(services: RouterServices) -> APIRouter:
 
         Backs the dashboard chips — a plain tap records a check you completed
         (counts one toward its daily target, same semantics as a one-tap
-        notification confirm); a shift-click sends ``undo`` to rewind an
-        accidental count by one (floored at zero). Returns the fresh status
-        (plus a short ``headline`` for feedback) so the card re-renders from it.
+        notification confirm); a shift-click sends ``undo`` to rewind an accidental
+        count by one (floored at zero); and ``reset`` cycles the count back to zero
+        once it's at the target — the mobile-friendly wrap-around, since touch has
+        no shift-click. Returns the fresh status (plus a short ``headline`` for
+        feedback) so the card re-renders from it.
         """
         now = utcnow()
         tz = services.settings.timezone
         today = local_datetime(now, tz).strftime("%Y-%m-%d")
-        if payload.undo:
+        if payload.reset:
+            headline = apply_self_care_reset(ctx.store, payload.key, today=today)
+        elif payload.undo:
             headline = apply_self_care_unmark(ctx.store, payload.key, today=today)
         else:
             headline = apply_self_care_mark(ctx.store, payload.key, now=now, today=today)

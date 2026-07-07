@@ -8,7 +8,8 @@ reminder is needed, not suppressed.
 
 It's a small **registry of basic-needs checks**, each riding the coaching-agent
 tick (:meth:`Module.evaluate`) so responsive-hours + debounce come for free (no
-overnight nag). Two ship today, differing only in their **daily target**:
+overnight nag). They differ mainly in their **daily target** (and, for a
+window-bounded one, an **end hour**):
 
 - **meal** (target 1) — from ``meal_start_hour`` (default 11), ask "have you
   eaten?" and re-ask every ``meal_reask_minutes`` until you confirm; one "Ate"
@@ -17,10 +18,17 @@ overnight nag). Two ship today, differing only in their **daily target**:
   (default 9), a "drink some water" reminder every ``water_interval_minutes``
   (default 90); each **Drank** counts one toward the target and pushes the next
   reminder out a full interval, and once you hit the target it's done for the day.
+- **meds** (target 1) — **off by default** even when self-care is on, because
+  medication is personal (opt in via ``meds_enabled``).
+- **biobreak** (recurring) — on with self-care, like meal/water. Adds the one
+  wrinkle: an **end hour** (``biobreak_end_hour``, default 19), so a "take a
+  bathroom break" nudge every ``biobreak_interval_minutes`` (default 120) from 8:00
+  simply stops in the evening rather than running to a daily total.
 
-So "how many yeses stops it for the day" is just the target: 1 for a meal, N for
-water. Off by default — set the ``self_care`` coaching key to ``on`` (each check
-can then be turned off individually with ``meal_enabled`` / ``water_enabled``).
+So "how many yeses stops it for the day" is just the target (1 for a meal, N for
+water); a check with an end hour also stops at it, target met or not. Off by
+default — set the ``self_care`` coaching key to ``on`` (each check can then be
+turned off individually with ``meal_enabled`` / ``water_enabled`` / …).
 
 Cadence without fighting the engine debounce: a cue's ``dedup_key`` carries a
 per-interval *bucket* (which window of the day we're in), so each window fires
@@ -65,6 +73,18 @@ DEFAULT_MEDS_START_HOUR = 9
 DEFAULT_MEDS_REASK_MINUTES = 30
 DEFAULT_MEDS_SNOOZE_MINUTES = 30
 DEFAULT_MEDS_DAILY_TARGET = 1
+#: Bio-break defaults (recurring within a time *window*: every 2h from 8:00,
+#: ending at 19:00). The first check bounded by an **end hour** — it stops at
+#: ``biobreak_end_hour`` regardless of the daily total, since a bathroom-break
+#: reminder past the evening is just noise. On with self_care (like meal/water);
+#: turn off per person via ``biobreak_enabled``.
+DEFAULT_BIOBREAK_START_HOUR = 8
+DEFAULT_BIOBREAK_END_HOUR = 19
+DEFAULT_BIOBREAK_INTERVAL_MINUTES = 120
+DEFAULT_BIOBREAK_SNOOZE_MINUTES = 30
+#: 8:00→18:00 every 2h ≈ six windows; the end hour, not this total, is the real
+#: stop, but a matching target makes the dashboard read "n/6 today" cleanly.
+DEFAULT_BIOBREAK_DAILY_TARGET = 6
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -126,6 +146,15 @@ def meds_message(name: str = "") -> str:
     return f"{lead} — have you taken your meds? 💊 Tap Took once you have."
 
 
+def biobreak_message(name: str = "") -> str:
+    """The "take a bio break" nudge text, greeting by name when we have one."""
+    lead = f"{name}, quick break" if name else "Quick break"
+    return (
+        f"{lead} — time to get up and take a bathroom break. 🚻 "
+        "Tap Went once you have."
+    )
+
+
 @dataclass(frozen=True)
 class BasicCheck:
     """One basic-needs check, declared by its config keys and daily target.
@@ -155,6 +184,11 @@ class BasicCheck:
     snooze_action: str      # NUDGE_ACTIONS name for the snooze button
     progress_headline: str  # confirm that isn't yet the target ({count}/{target})
     done_headline: str      # confirm that meets the target ({count}/{target})
+    #: Local hour after which the check goes quiet for the day (``None`` = no end
+    #: hour, so only the daily target and responsive hours bound it). A check with
+    #: an end hour stops nudging at it regardless of whether the target was met.
+    end_hour_key: str | None = None
+    end_hour_default: int | None = None
 
 
 CHECKS: tuple[BasicCheck, ...] = (
@@ -218,6 +252,28 @@ CHECKS: tuple[BasicCheck, ...] = (
         progress_headline="Got it — {count}/{target} today. 💊",
         done_headline="Meds done for today. 💊 Nice.",
     ),
+    BasicCheck(
+        key="biobreak",
+        intervention="biobreak_check",
+        enabled_key="biobreak_enabled",
+        count_key="biobreak_count",
+        target_key="biobreak_daily_target",
+        target_default=DEFAULT_BIOBREAK_DAILY_TARGET,
+        snooze_key="biobreak_snoozed_until",
+        start_hour_key="biobreak_start_hour",
+        start_hour_default=DEFAULT_BIOBREAK_START_HOUR,
+        interval_key="biobreak_interval_minutes",
+        interval_default=DEFAULT_BIOBREAK_INTERVAL_MINUTES,
+        snooze_minutes_key="biobreak_snooze_minutes",
+        snooze_minutes_default=DEFAULT_BIOBREAK_SNOOZE_MINUTES,
+        message=biobreak_message,
+        confirm_action="biobreak_went",
+        snooze_action="biobreak_snooze",
+        progress_headline="Good — {count}/{target} today. 🚻",
+        done_headline="That's all {target} for today — nicely done. 🚻",
+        end_hour_key="biobreak_end_hour",
+        end_hour_default=DEFAULT_BIOBREAK_END_HOUR,
+    ),
 )
 
 #: One-tap action name → the check it resolves (built from CHECKS).
@@ -236,6 +292,17 @@ def _stamp(now: datetime, minutes: int) -> str:
 
 def _target(store: MemoryStore, check: BasicCheck) -> int:
     return max(1, int(store.get_float(check.target_key, check.target_default)))
+
+
+def _end_hour(store: MemoryStore, check: BasicCheck) -> int | None:
+    """The local hour after which ``check`` goes quiet, or ``None`` if it has none.
+
+    Only checks that declare an ``end_hour_key`` (bio breaks today) are bounded by
+    a wall-clock end; the rest run until their daily target or responsive hours.
+    """
+    if check.end_hour_key is None:
+        return None
+    return store.get_hour(check.end_hour_key, check.end_hour_default or 24)
 
 
 def day_count(store: MemoryStore, check: BasicCheck, today: str) -> int:
@@ -265,19 +332,23 @@ def _is_overdue(
     start_hour: int,
     interval: int,
     local: datetime,
+    end_hour: int | None = None,
 ) -> bool:
     """Whether a check is "behind" right now — the flag a surface flashes on (pure).
 
-    Never overdue when disabled, already met, or before the start hour. A once-a-day
-    check (``target <= 1``) is overdue simply once past its start hour and not done.
-    A recurring check is *pace-aware*: since its start hour you'd expect about one
-    confirm per ``interval`` minutes, so it's overdue only when ``count`` has fallen
-    below that running expectation — so water flags when you've genuinely lagged the
-    pace, not merely because you're not yet at the daily total. Expectation is capped
-    at ``target`` (you're never "behind" once you've done enough).
+    Never overdue when disabled, already met, before the start hour, or (for a
+    window-bounded check) past its end hour. A once-a-day check (``target <= 1``)
+    is overdue simply once past its start hour and not done. A recurring check is
+    *pace-aware*: since its start hour you'd expect about one confirm per
+    ``interval`` minutes, so it's overdue only when ``count`` has fallen below that
+    running expectation — so water flags when you've genuinely lagged the pace, not
+    merely because you're not yet at the daily total. Expectation is capped at
+    ``target`` (you're never "behind" once you've done enough).
     """
     if not enabled or done or local.hour < start_hour:
         return False
+    if end_hour is not None and local.hour >= end_hour:
+        return False  # past the check's window — it's gone quiet, not "behind"
     if target <= 1:
         return True
     minutes_since = (local.hour - start_hour) * 60 + local.minute
@@ -308,6 +379,7 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
         enabled = (store.get_state(check.enabled_key, "on") or "on") == "on"
         done = count >= target
         start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
+        end_hour = _end_hour(store, check)
         interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
         checks.append(
             {
@@ -317,6 +389,10 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 "target": target,
                 "done": done,
                 "start_hour": start_hour,
+                # Local hour the check stops for the day, or None when it's bounded
+                # only by its target + responsive hours (a surface renders the window
+                # as "from 8:00" vs "8:00–19:00").
+                "end_hour": end_hour,
                 # "You're behind on this" — the flag a surface flashes on. Always
                 # false when done, disabled, or before the start hour. For a
                 # once-a-day check (target 1) that's simply "past the start hour and
@@ -328,6 +404,7 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 "overdue": _is_overdue(
                     enabled=enabled, done=done, target=target, count=count,
                     start_hour=start_hour, interval=interval, local=local,
+                    end_hour=end_hour,
                 ),
                 "interval_minutes": interval,
             }
@@ -355,8 +432,10 @@ def apply_self_care_config(
     Args:
         store: A user-scoped store.
         enabled: Master switch, when provided.
-        checks: ``{check_key: {enabled?, target?, start_hour?, interval_minutes?}}``.
-            Unknown check keys are ignored; absent fields are left untouched.
+        checks: ``{check_key: {enabled?, target?, start_hour?, end_hour?,
+            interval_minutes?}}``. ``end_hour`` applies only to a window-bounded
+            check (bio breaks); it's ignored for the rest. Unknown check keys are
+            ignored; absent fields are left untouched.
     """
     if enabled is not None:
         store.set_state("self_care", "on" if enabled else "off", source="explicit")
@@ -374,6 +453,11 @@ def apply_self_care_config(
         if cfg.get("start_hour") is not None:
             hour = str(min(23, max(0, int(cfg["start_hour"]))))
             store.set_state(check.start_hour_key, hour, source="explicit")
+        if cfg.get("end_hour") is not None and check.end_hour_key is not None:
+            # Only meaningful for a window-bounded check (bio breaks); ignored for
+            # the rest, which have no end-hour key to write.
+            hour = str(min(23, max(0, int(cfg["end_hour"]))))
+            store.set_state(check.end_hour_key, hour, source="explicit")
         if cfg.get("interval_minutes") is not None:
             store.set_state(
                 check.interval_key, str(max(1, int(cfg["interval_minutes"]))), source="explicit"
@@ -466,6 +550,24 @@ def apply_self_care_unmark(store: MemoryStore, key: str, *, today: str) -> str |
     count = max(0, day_count(store, check, today) - 1)
     store.set_state(check.count_key, f"{today}|{count}", source="explicit")
     return f"Removed one — {count}/{_target(store, check)} today."
+
+
+def apply_self_care_reset(store: MemoryStore, key: str, *, today: str) -> str | None:
+    """Reset a check's day count to zero — the chip's tap-at-max wrap-around.
+
+    On mobile there's no shift-click to rewind a mis-tap, so once a chip reaches
+    its daily target a further tap cycles it back to zero (this) rather than
+    overshooting or doing nothing — the counter reads as ``0…target`` and wraps.
+    Like :func:`apply_self_care_unmark` it only rewinds the day counter (flipping
+    the check back to not-done, so it can nudge again); the append-only
+    ``self_care`` episodes Insights reads are left untouched. Returns confirmation
+    copy, or ``None`` for an unknown key.
+    """
+    check = next((c for c in CHECKS if c.key == key), None)
+    if check is None:
+        return None
+    store.set_state(check.count_key, f"{today}|0", source="explicit")
+    return f"Reset — 0/{_target(store, check)} today."
 
 
 def _latency_note(store: MemoryStore, check: BasicCheck, now: datetime) -> str:
@@ -717,6 +819,16 @@ class SelfCareModule(Module):
         "meds_reask_minutes": str(DEFAULT_MEDS_REASK_MINUTES),
         "meds_snooze_minutes": str(DEFAULT_MEDS_SNOOZE_MINUTES),
         "meds_daily_target": str(DEFAULT_MEDS_DAILY_TARGET),
+        # Bio breaks: on when self_care is on (like meal/water). Recurring within a
+        # window, so unlike the others it carries an end hour — it stops at
+        # biobreak_end_hour, not just at the daily target. Turn off per person via
+        # biobreak_enabled.
+        "biobreak_enabled": "on",
+        "biobreak_start_hour": str(DEFAULT_BIOBREAK_START_HOUR),
+        "biobreak_end_hour": str(DEFAULT_BIOBREAK_END_HOUR),
+        "biobreak_interval_minutes": str(DEFAULT_BIOBREAK_INTERVAL_MINUTES),
+        "biobreak_snooze_minutes": str(DEFAULT_BIOBREAK_SNOOZE_MINUTES),
+        "biobreak_daily_target": str(DEFAULT_BIOBREAK_DAILY_TARGET),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -752,6 +864,18 @@ class SelfCareModule(Module):
                 trigger="from your meds hour, until you confirm the day's dose(s)",
                 status="active",
             ),
+            Intervention(
+                name="biobreak_check",
+                description=(
+                    "Between biobreak_start_hour and biobreak_end_hour, a 'take a "
+                    "bathroom break' reminder every biobreak_interval_minutes. Bounded "
+                    "by the end hour (stops in the evening), not just the daily target. "
+                    "On with self_care; toggle with biobreak_enabled. One-tap Went / "
+                    "Snooze on ntfy."
+                ),
+                trigger="on an interval through the day, within a set time window",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
@@ -783,6 +907,9 @@ class SelfCareModule(Module):
             start_min = start_hour * 60
             if minute_of_day < start_min:
                 continue  # too early in the day for this check
+            end_hour = _end_hour(store, check)
+            if end_hour is not None and local.hour >= end_hour:
+                continue  # past this check's window (e.g. no bio-break nudges after 7pm)
 
             # A fresh bucket each `interval` minutes → a new dedup_key, so the
             # engine fires each window once (the re-ask/repeat rhythm).
@@ -812,11 +939,13 @@ class SelfCareModule(Module):
             if (store.get_state(check.enabled_key, "on") or "on") == "off":
                 continue
             start = store.get_hour(check.start_hour_key, check.start_hour_default)
+            end = _end_hour(store, check)
             every = store.get_state(check.interval_key) or str(check.interval_default)
             target = _target(store, check)
             goal = "" if target == 1 else f" (up to {target}/day)"
+            window = f"from {start}:00" if end is None else f"{start}:00–{end}:00"
             lines.append(
-                f"- {check.key.title()} check on: from {start}:00, every {every} min"
+                f"- {check.key.title()} check on: {window}, every {every} min"
                 f"{goal} — allowed to interrupt a focus block."
             )
         return "\n".join(lines) if lines else None

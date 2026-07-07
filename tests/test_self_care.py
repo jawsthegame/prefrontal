@@ -27,7 +27,9 @@ from prefrontal.modules.self_care import (
     apply_self_care_action,
     apply_self_care_config,
     apply_self_care_mark,
+    apply_self_care_reset,
     apply_self_care_unmark,
+    biobreak_message,
     mark_self_care_prompted,
     meal_message,
     self_care_status,
@@ -94,11 +96,12 @@ def test_off_by_default(store):
     assert SelfCareModule().evaluate(store, ctx) == []
 
 
-def test_both_checks_fire_when_enabled(store):
-    """With the master on, meal + water both fire in their windows."""
+def test_default_checks_fire_when_enabled(store):
+    """With the master on, the default-on checks (meal, water, bio breaks) all fire
+    in their windows; meds stays off until opted in."""
     store.set_state("self_care", "on")
     cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom"))
-    assert {c.context_key for c in cues} == {"meal", "water"}
+    assert {c.context_key for c in cues} == {"meal", "water", "biobreak"}
 
 
 def test_meds_off_by_default_but_opt_in_fires(store):
@@ -106,6 +109,7 @@ def test_meds_off_by_default_but_opt_in_fires(store):
     store.set_state("self_care", "on")
     store.set_state("meal_enabled", "off")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     at_10 = _ctx(datetime(2026, 7, 2, 10, 0, 0), name="Tom")
     assert SelfCareModule().evaluate(store, at_10) == []  # off by default
     store.set_state("meds_enabled", "on")
@@ -127,6 +131,7 @@ def test_act_meds_took_counts_and_logs(client, store):
 def test_meal_fires_when_due(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom"))
     assert len(cues) == 1
     cue = cues[0]
@@ -142,6 +147,7 @@ def test_water_is_recurring_and_starts_earlier(store):
     """Water fires from 9:00 (before the meal window) and has no daily 'done'."""
     store.set_state("self_care", "on")
     store.set_state("meal_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     # 10:00 — after water's 9:00 start but before the meal's 11:00.
     cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 10, 0, 0)))
     assert [c.context_key for c in cues] == ["water"]
@@ -151,6 +157,7 @@ def test_water_is_recurring_and_starts_earlier(store):
 def test_meal_silent_before_start_hour(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     # 09:00 is before the default 11:00 meal start.
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 9, 0, 0))) == []
 
@@ -158,6 +165,7 @@ def test_meal_silent_before_start_hour(store):
 def test_meal_silent_once_target_met(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     store.set_state("meal_count", "2026-07-02|1")  # target is 1 — done for the day
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
     # A new day re-arms it (the count is date-scoped).
@@ -168,6 +176,7 @@ def test_water_stops_after_daily_target(store):
     """Water keeps firing until the daily target of confirms is reached."""
     store.set_state("self_care", "on")
     store.set_state("meal_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     now = _ctx(datetime(2026, 7, 2, 10, 0, 0))
     store.set_state("water_count", "2026-07-02|5")  # one short of the default 6
     assert _by_kind(SelfCareModule().evaluate(store, now), "water")
@@ -178,6 +187,7 @@ def test_water_stops_after_daily_target(store):
 def test_meal_silent_while_snoozed(store):
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     now = datetime(2026, 7, 2, 15, 0, 0)
     store.set_state(SNOOZED_UNTIL_KEY, (now + timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S"))
     assert SelfCareModule().evaluate(store, _ctx(now)) == []
@@ -189,12 +199,90 @@ def test_reask_bucket_advances_dedup_key(store):
     """Same re-ask window → same dedup_key; a later window → a new one."""
     store.set_state("self_care", "on")
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     mod = SelfCareModule()
     k1 = mod.evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0)))[0].dedup_key
     k2 = mod.evaluate(store, _ctx(datetime(2026, 7, 2, 15, 20, 0)))[0].dedup_key
     k3 = mod.evaluate(store, _ctx(datetime(2026, 7, 2, 15, 45, 0)))[0].dedup_key
     assert k1 == k2  # within the same 40-min window
     assert k3 != k1  # a later window
+
+
+# -- bio breaks: a recurring check bounded by an end hour (every 2h, 8:00–19:00) --
+
+
+def _biobreak_only(store):
+    """Enable self-care with only the bio-break check on (it's opt-in)."""
+    store.set_state("self_care", "on")
+    for other in ("meal", "water", "meds"):
+        store.set_state(f"{other}_enabled", "off")
+    store.set_state("biobreak_enabled", "on")
+
+
+def test_biobreak_on_by_default_and_can_be_disabled(store):
+    """Bio breaks fire with self_care on (like meal/water); biobreak_enabled=off silences it."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_enabled", "off")
+    store.set_state("water_enabled", "off")
+    at_10 = _ctx(datetime(2026, 7, 2, 10, 0, 0), name="Tom")
+    cues = SelfCareModule().evaluate(store, at_10)
+    assert [c.context_key for c in cues] == ["biobreak"]  # on by default
+    assert cues[0].intervention == "biobreak_check"
+    assert "break" in cues[0].text.lower()
+    store.set_state("biobreak_enabled", "off")
+    assert SelfCareModule().evaluate(store, at_10) == []
+
+
+def test_biobreak_silent_before_start_and_after_end_hour(store):
+    """The window is the point: nothing before 8:00 or at/after the 19:00 end hour."""
+    _biobreak_only(store)
+    mod = SelfCareModule()
+    assert mod.evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0))) == []   # before start
+    assert _by_kind(mod.evaluate(store, _ctx(datetime(2026, 7, 2, 12, 0, 0))), "biobreak")  # midday
+    assert mod.evaluate(store, _ctx(datetime(2026, 7, 2, 19, 0, 0))) == []   # at the end hour
+    assert mod.evaluate(store, _ctx(datetime(2026, 7, 2, 21, 0, 0))) == []   # well past it
+
+
+def test_biobreak_end_hour_is_configurable(store):
+    """A custom end hour narrows the window — quiet once past it."""
+    _biobreak_only(store)
+    store.set_state("biobreak_end_hour", "14")
+    mod = SelfCareModule()
+    assert _by_kind(mod.evaluate(store, _ctx(datetime(2026, 7, 2, 13, 0, 0))), "biobreak")
+    assert mod.evaluate(store, _ctx(datetime(2026, 7, 2, 14, 0, 0))) == []
+
+
+def test_biobreak_message_greets_by_name():
+    assert biobreak_message("Tom").startswith("Tom, quick break")
+    assert biobreak_message().startswith("Quick break")
+
+
+def test_status_reports_end_hour_only_for_biobreak(store):
+    """end_hour is present (int) for bio breaks, None for the time-unbounded checks."""
+    status = self_care_status(store, datetime(2026, 7, 2, 12, 0, 0), "UTC")
+    by_key = {c["key"]: c for c in status["checks"]}
+    assert by_key["biobreak"]["end_hour"] == 19
+    assert by_key["meal"]["end_hour"] is None
+    assert by_key["water"]["end_hour"] is None
+
+
+def test_biobreak_not_overdue_past_its_window(store):
+    """A recurring check that's behind pace still clears its overdue flag past the end hour."""
+    _biobreak_only(store)
+    # 18:00 with nothing logged: behind pace, so flagged overdue inside the window…
+    inside = self_care_status(store, datetime(2026, 7, 2, 18, 0, 0), "UTC")
+    assert {c["key"]: c for c in inside["checks"]}["biobreak"]["overdue"] is True
+    # …but at/after 19:00 the window has closed — it's quiet, not "behind".
+    past = self_care_status(store, datetime(2026, 7, 2, 19, 30, 0), "UTC")
+    assert {c["key"]: c for c in past["checks"]}["biobreak"]["overdue"] is False
+
+
+def test_config_sets_biobreak_end_hour_and_ignores_it_elsewhere(store):
+    """POST-style config writes end_hour for bio breaks; a no-op for checks without one."""
+    apply_self_care_config(store, checks={"biobreak": {"end_hour": 20}, "water": {"end_hour": 20}})
+    assert store.get_state("biobreak_end_hour") == "20"
+    # Water has no end-hour key, so the field is silently ignored (no stray state).
+    assert store.get_state("water_end_hour") is None
 
 
 # -- one-tap actions ---------------------------------------------------------
@@ -423,7 +511,7 @@ def test_status_reports_off_master_switch(store):
     assert status["enabled"] is False
     # Even off, the per-check shape is present so the card can render it.
     keys = {c["key"] for c in status["checks"]}
-    assert keys == {"meal", "water", "meds"}
+    assert keys == {"meal", "water", "meds", "biobreak"}
 
 
 def test_status_reports_progress_and_meds_disabled(store):
@@ -640,3 +728,48 @@ def test_self_care_mark_undo_endpoint_flips_done_off(client, store):
     assert store.get_state("meal_count") == f"{today}|0"
     by_key = {c["key"]: c for c in resp.json()["checks"]}
     assert by_key["meal"]["count"] == 0 and by_key["meal"]["done"] is False
+
+
+# -- apply_self_care_reset + POST /self-care/mark {reset: true} --------------
+# The chip's tap-at-max wrap-around: once a check hits its target, the next plain
+# tap cycles the count back to zero (mobile has no shift-click). Like unmark it
+# rewinds only the day cursor; the episode log is left intact.
+
+
+def test_apply_reset_zeroes_the_day_count(store):
+    today = "2026-07-03"
+    t0 = datetime(2026, 7, 3, 12, 0, 0)
+    for _ in range(3):
+        apply_self_care_mark(store, "water", now=t0, today=today)
+    assert store.get_state("water_count") == f"{today}|3"
+    headline = apply_self_care_reset(store, "water", today=today)
+    assert headline  # confirmation copy
+    assert store.get_state("water_count") == f"{today}|0"
+    # The confirms we logged stay in history (an append-only log).
+    assert len(store.episodes_by_type("self_care")) == 3
+
+
+def test_apply_reset_unknown_key_is_none(store):
+    assert apply_self_care_reset(store, "nope", today="2026-07-03") is None
+
+
+def test_self_care_mark_reset_endpoint_wraps_to_zero(client, store):
+    """A recurring check at its target: reset cycles it back to 0 and not-done."""
+    today = utcnow().strftime("%Y-%m-%d")
+    store.set_state("water_count", f"{today}|6")  # at the default target of 6
+    resp = client.post("/self-care/mark", json={"key": "water", "reset": True}, headers=_auth())
+    assert resp.status_code == 200
+    assert store.get_state("water_count") == f"{today}|0"
+    by_key = {c["key"]: c for c in resp.json()["checks"]}
+    assert by_key["water"]["count"] == 0 and by_key["water"]["done"] is False
+
+
+def test_self_care_mark_reset_takes_precedence_over_undo(client, store):
+    """reset zeroes the count even if undo is also set (documented precedence)."""
+    today = utcnow().strftime("%Y-%m-%d")
+    store.set_state("meal_count", f"{today}|1")
+    resp = client.post(
+        "/self-care/mark", json={"key": "meal", "undo": True, "reset": True}, headers=_auth()
+    )
+    assert resp.status_code == 200
+    assert store.get_state("meal_count") == f"{today}|0"

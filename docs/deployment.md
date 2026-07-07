@@ -689,9 +689,15 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
   basic-needs check with a **daily target** — the meal check is target 1 (one Ate
   ends it for the day; tune `meal_start_hour`, `meal_reask_minutes`), water is
   `water_daily_target` (default 6; tune `water_start_hour`, `water_interval_minutes`),
-  and each Drank counts one and defers a full interval. Both interrupt a focus
-  block by design, respect responsive hours, and can be toggled individually
-  (`meal_enabled` / `water_enabled`). The intervals also **self-tune** in the
+  and each Drank counts one and defers a full interval. A **bio-break** check is
+  also on with `self_care` (`biobreak_enabled`) — a "take a bathroom break" nudge
+  every `biobreak_interval_minutes` (default 120) from `biobreak_start_hour` (8)
+  that, unlike the others, is bounded by an **end hour** (`biobreak_end_hour`,
+  default 19): it stops in the evening rather than running to a daily total. A
+  **meds** check (target 1, `meds_enabled`) ships **off even when `self_care` is
+  on** — medication is personal, so opt in. All interrupt a focus block by design,
+  respect responsive hours, and can be toggled individually (`meal_enabled` /
+  `water_enabled` / …). The intervals also **self-tune** in the
   nightly `learn`: snooze a lot and it widens; respond genuinely and it eases off
   — but a burst of *instant* confirms (reflexive dismissals) holds it rather than
   backing off. Pin an interval yourself (set it with `source='explicit'`) and the

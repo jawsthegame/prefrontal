@@ -670,6 +670,13 @@ class SelfCareCheckConfig(BaseModel):
     start_hour: int | None = Field(
         default=None, ge=0, le=23, description="Local hour the check starts nudging."
     )
+    end_hour: int | None = Field(
+        default=None, ge=0, le=23,
+        description=(
+            "Local hour the check stops nudging for the day. Only applies to a "
+            "window-bounded check (bio breaks); ignored for the others."
+        ),
+    )
     interval_minutes: int | None = Field(
         default=None, ge=1, description="Minutes between nudges (re-ask / recurring cadence)."
     )
@@ -680,7 +687,8 @@ class SelfCareConfig(BaseModel):
 
     Every field is optional so the UI can send a partial update (e.g. just the
     master switch, or just one check's target). ``checks`` is keyed by check key
-    (``meal`` / ``water`` / ``meds``); unknown keys are ignored server-side.
+    (``meal`` / ``water`` / ``meds`` / ``biobreak``); unknown keys are ignored
+    server-side.
     """
 
     enabled: bool | None = Field(default=None, description="Master self-care switch.")
@@ -696,11 +704,17 @@ class SelfCareMark(BaseModel):
     notification confirm would.
     """
 
-    key: str = Field(description="Which check to confirm: meal / water / meds.")
+    key: str = Field(description="Which check to confirm: meal / water / meds / biobreak.")
     undo: bool = Field(
         default=False,
         description="If true, reduce today's count by one (floored at zero) "
         "instead of logging a confirm — the chip's shift-click mis-tap correction.",
+    )
+    reset: bool = Field(
+        default=False,
+        description="If true, reset today's count to zero instead of logging a "
+        "confirm — the chip's tap-at-max wrap-around (mobile has no shift-click). "
+        "Takes precedence over ``undo``.",
     )
 
 
