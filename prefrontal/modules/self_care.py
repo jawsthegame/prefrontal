@@ -262,8 +262,9 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
     A pure read that mirrors what :meth:`SelfCareModule.evaluate` gates on, so a
     surface can show *why* a check is or isn't nudging: the ``enabled`` master
     switch, and per check whether it's individually enabled, today's progress
-    toward its target, whether that target is already met, and the effective
-    start hour + cadence. No side effects — it never fires or records anything.
+    toward its target, whether that target is already met, whether it's ``overdue``
+    (past its start hour today and still unmet), and the effective start hour +
+    cadence. No side effects — it never fires or records anything.
 
     The whole point is visibility: a silently-``off`` master switch (the common
     "why aren't I getting nudges?" cause) shows up as ``enabled: false`` rather
@@ -275,14 +276,21 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
     for check in CHECKS:
         count = day_count(store, check, today)
         target = _target(store, check)
+        enabled = (store.get_state(check.enabled_key, "on") or "on") == "on"
+        done = count >= target
+        start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
         checks.append(
             {
                 "key": check.key,
-                "enabled": (store.get_state(check.enabled_key, "on") or "on") == "on",
+                "enabled": enabled,
                 "count": count,
                 "target": target,
-                "done": count >= target,
-                "start_hour": store.get_hour(check.start_hour_key, check.start_hour_default),
+                "done": done,
+                "start_hour": start_hour,
+                # Past its start hour today and still not met — the "you were meant
+                # to have done this by now" flag a surface can flash on (e.g. meds
+                # not taken). False once done, before the start hour, or disabled.
+                "overdue": enabled and not done and local.hour >= start_hour,
                 "interval_minutes": max(
                     1, int(store.get_float(check.interval_key, check.interval_default))
                 ),
