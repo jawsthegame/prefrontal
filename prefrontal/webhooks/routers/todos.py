@@ -62,9 +62,11 @@ from prefrontal.todos import (
     avoided_todos,
     category_stats,
     decompose_task,
+    focus_conflict,
     follow_through_stats,
     normalize_category,
     record_todo_closed,
+    sort_todos_for_display,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -192,10 +194,18 @@ def build_router(services: RouterServices) -> APIRouter:
         operator-configured ``accounts`` label map so the dashboard can render a
         friendly, colored pill (e.g. ``work`` → an orange "Acme" pill) without
         hard-coding any account names or colors.
+
+        In-progress todos (``started_at`` set) are pinned to the top of the list
+        (:func:`~prefrontal.todos.sort_todos_for_display`) so the thing you're
+        mid-flight on stays visible. ``focus_conflict`` is set when you're actively
+        working on a *lower*-priority task than one you're avoiding — the honest-
+        prioritization alert (:func:`~prefrontal.todos.focus_conflict`), or ``None``.
         """
         memory = ctx.store
+        now = utcnow()
         todos = memory.open_todos()
-        avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, utcnow())}
+        avoided = {a["todo"]["id"]: a for a in avoided_todos(todos, now)}
+        conflict = focus_conflict(todos, now)
         sources = memory.mail_sources_for_todos([t["id"] for t in todos])
         for todo in todos:
             todo["decomposition"] = memory.get_decomposition(todo["id"])
@@ -213,7 +223,25 @@ def build_router(services: RouterServices) -> APIRouter:
             todo["avoidance"] = (
                 {"days_open": hit["days_open"], "score": hit["score"]} if hit else None
             )
-        return {"todos": todos, "accounts": resolved_settings.account_label_map}
+        return {
+            "todos": sort_todos_for_display(todos),
+            "accounts": resolved_settings.account_label_map,
+            # The lower-priority-than-what-you're-avoiding alert, as {ids + titles +
+            # days_open} the dashboard renders into a gentle banner (null = no conflict).
+            "focus_conflict": (
+                {
+                    "working_on_id": conflict["working_on"]["id"],
+                    "working_on": conflict["working_on"]["title"],
+                    "working_on_priority": conflict["working_on"].get("priority"),
+                    "instead_id": conflict["instead"]["id"],
+                    "instead": conflict["instead"]["title"],
+                    "instead_priority": conflict["instead"].get("priority"),
+                    "days_open": conflict["days_open"],
+                }
+                if conflict
+                else None
+            ),
+        }
 
     @router.get("/todos/avoided", tags=["todos"])
     def todos_avoided(

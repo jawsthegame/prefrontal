@@ -294,6 +294,12 @@
   .scrubval { min-width: 46px; text-align: right; font-weight: 700; color: var(--fg); }
   .cascade-clear { font-size: 13px; color: var(--muted); padding: 2px 0 8px; }
   .avoiding { background: var(--call-bg); color: var(--call); }
+  /* Honest-prioritization note: you're working on a lower-priority task than one
+     you're avoiding. Warn-tinted, but a note (not an error) — the tone is a nudge. */
+  .focus-alert { margin: 0 0 10px; padding: 8px 11px; border-radius: 8px;
+    background: var(--call-bg); color: var(--call); border-left: 3px solid var(--warn);
+    font-size: 13px; line-height: 1.45; }
+  .focus-alert b { color: var(--fg); }
   /* An open todo the user has marked "started" — in progress, gently lit so the
      follow-through (did the started thing get finished?) is visible at a glance. */
   .badge.started { background: var(--good-bg); color: var(--good); }
@@ -1120,9 +1126,23 @@ function paintTodos() {
   if (typeof applyCap === "function") applyCap("c-todos");
   if (typeof updateSummaries === "function") updateSummaries();  // keep the collapsed preview in sync with the filter
 }
+// Honest-prioritization banner: you've *started* a lower-priority task while a
+// more important one you keep avoiding sits untouched (server-computed in
+// focus_conflict). A gentle note, not a scold — it names both tasks and how long
+// the important one has waited, and leaves the choice to switch to the user.
+function renderFocusConflict(fc) {
+  if (!fc) return "";
+  const names = ["low", "normal", "high", "urgent"];
+  const pri = (p) => (p != null && names[p] ? ` <span class="pill pri-${p}">${names[p]}</span>` : "");
+  const waited = Math.round(fc.days_open);
+  return `<div class="focus-alert">Heads up — you're mid-task on
+    <b>${esc(fc.working_on)}</b>${pri(fc.working_on_priority)}, but
+    <b>${esc(fc.instead)}</b>${pri(fc.instead_priority)} is more important and has
+    sat ${waited}d. Worth switching?</div>`;
+}
 function renderTodos(d) {
   const t = (d.todos || []);
-  if (!t.length) return `<div class="empty">No open todos.</div>`;
+  if (!t.length) return renderFocusConflict(d.focus_conflict) || `<div class="empty">No open todos.</div>`;
   const names = ["low", "normal", "high", "urgent"];
   // Config-driven account pills: the /todos response maps each account name to a
   // {label, color}. A todo's account with no config entry gets a plain pill
@@ -1156,7 +1176,7 @@ function renderTodos(d) {
     const cls = cur ? "pill dom" : "pill dom none";
     return ` <button class="${cls}"${style} data-action="todo-domain" data-id="${id}" data-domain="${esc(cur)}" title="Change life domain (work/home)">${esc(label)}<span class="caret">▾</span></button>`;
   };
-  return t.map((x) => {
+  const rows = t.map((x) => {
     const dc = x.decomposition;
     let step = "";
     if (dc) {
@@ -1212,6 +1232,7 @@ function renderTodos(d) {
       </div>
     </div>`;
   }).join("");
+  return renderFocusConflict(d.focus_conflict) + rows;
 }
 // Follow-through headline: of the tasks you *started*, how many you finished.
 // Renders nothing until at least one started task has been closed (else there's
