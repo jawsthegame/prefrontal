@@ -25,9 +25,13 @@ the page is meaningful even before ``prefrontal learn`` has ever run.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from statistics import fmean, median
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from prefrontal.commitments import resolve_zone
+from prefrontal.config import get_settings
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.self_care import CHECKS, SELF_CARE_EPISODE
 
@@ -134,6 +138,28 @@ def _self_care_latency(notes: str | None) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _active_local_days(episodes: list[dict[str, Any]], tz: ZoneInfo) -> int:
+    """Count the distinct local calendar days on which any episode occurred.
+
+    Episode timestamps are stored UTC-naive; we read them in the deployment's
+    home zone so a late-evening tap counts toward the right local day (not the
+    next UTC one). This is the denominator for the typical-day average.
+    """
+    days: set[Any] = set()
+    for e in episodes:
+        raw = e.get("timestamp")
+        if not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        days.add(dt.astimezone(tz).date())
+    return len(days)
+
+
 def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
     """Per basic-needs check: response split, act-on-it rate, latency, and cadence.
 
@@ -147,16 +173,23 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
     # (mirrors self_care_status). The Insights card shows every on check, greying
     # the ones that have no responses yet, so `enabled` travels with each row.
     master_on = (store.get_state("self_care", "off") or "off") == "on"
+    tz = resolve_zone(None, get_settings().timezone)
     rows: list[dict[str, Any]] = []
     for check in CHECKS:
         prefix = f"{check.key}: "
         mine = [e for e in episodes if str(e.get("context") or "").startswith(prefix)]
         counts = {o: sum(1 for e in mine if e.get("outcome") == o) for o in SELF_CARE_OUTCOMES}
         # `n` is every episode for the check; anything whose outcome isn't one of
-        # the three known verbs is "unknown" (unaccounted) — the composition bar
-        # renders that remainder as a neutral grey segment.
+        # the three known verbs is "unknown" (unaccounted). Kept for completeness
+        # (the Insights bar now greys the daily-target shortfall, not this).
         n = len(mine)
         unknown = n - sum(counts.values())
+        # Typical-day adherence: average confirms per active local day vs the
+        # daily target, so the Insights bar fills green toward the goal and greys
+        # the shortfall — rather than normalising to responses received.
+        target = max(1, int(store.get_float(check.target_key, check.target_default)))
+        active_days = _active_local_days(mine, tz)
+        avg_per_day = round(counts["confirmed"] / active_days, 1) if active_days else 0.0
         latencies = [
             lat
             for e in mine
@@ -173,6 +206,8 @@ def _self_care(store: MemoryStore) -> list[dict[str, Any]]:
                 "snoozed": counts["snoozed"],
                 "ignored": counts["ignored"],
                 "unknown": unknown,
+                "target": target,
+                "avg_per_day": avg_per_day,
                 "response_rate": round(counts["confirmed"] / n, 2) if n else None,
                 "avg_latency_seconds": round(fmean(latencies), 1) if latencies else None,
                 "interval_minutes": max(
