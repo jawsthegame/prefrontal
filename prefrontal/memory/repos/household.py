@@ -1056,6 +1056,58 @@ class HouseholdRepo(Repo):
         ).fetchone()
         return int(row["id"])
 
+    def update_chore(
+        self,
+        chore_id: int,
+        *,
+        title: str,
+        due_time: str = "",
+        days: str = "",
+        month_days: str = "",
+        owner_id: int | None = None,
+        routine_id: int | None = None,
+        remind_before: int = 30,
+        impact: str | None = None,
+        enabled: bool = True,
+        updated_by: int | None,
+    ) -> str:
+        """Edit a chore by id — including **renaming** it, which the title-keyed
+        upsert in :meth:`set_chore` can't do (mirrors :meth:`update_routine`).
+
+        Returns a status string so the caller can pick the right response:
+        ``"ok"`` (updated), ``"missing"`` (no such chore in this household), or
+        ``"duplicate"`` (the new title collides with another chore — the
+        ``UNIQUE (household_id, title)`` key). The completion log and dedup cursors
+        are untouched; only the definition changes.
+        """
+        hid = self._household_id()
+        title = title.strip()
+        if self.conn.execute(
+            "SELECT 1 FROM household_chores WHERE id = ? AND household_id = ?",
+            (chore_id, hid),
+        ).fetchone() is None:
+            return "missing"
+        if self.conn.execute(
+            "SELECT 1 FROM household_chores "
+            "WHERE household_id = ? AND title = ? AND id <> ?",
+            (hid, title, chore_id),
+        ).fetchone() is not None:
+            return "duplicate"
+        self.conn.execute(
+            """
+            UPDATE household_chores SET
+                title = ?, owner_id = ?, routine_id = ?, days = ?, month_days = ?,
+                due_time = ?, remind_before = ?, impact = ?, enabled = ?,
+                updated_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND household_id = ?
+            """,
+            (title, owner_id, routine_id, days, month_days, due_time,
+             int(remind_before), impact, 1 if enabled else 0, updated_by,
+             chore_id, hid),
+        )
+        self.conn.commit()
+        return "ok"
+
     def set_chore_enabled(self, chore_id: int, enabled: bool) -> bool:
         """Pause or resume a chore without deleting it. ``True`` if a row changed."""
         cur = self.conn.execute(

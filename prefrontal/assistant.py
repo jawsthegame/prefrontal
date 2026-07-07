@@ -37,7 +37,7 @@ from typing import Any
 
 from prefrontal.clock import utcnow
 from prefrontal.commitments import to_utc
-from prefrontal.household import normalize_routine
+from prefrontal.household import normalize_chore, normalize_routine
 from prefrontal.integrations import Generator
 from prefrontal.llm_json import generate_json
 from prefrontal.log import get_logger
@@ -164,18 +164,37 @@ ASSISTANT_SYSTEM = (
     '- {"op":"set_agreement","title":str,"body":str,'
     '"kind":"reward"|"consistency"|"routine"?,"child":int?,"structured":object?}\n'
     '- {"op":"remove_agreement","agreement_id":int}\n'
+    "To assign a chore's owner or a routine's accountable person, resolve the "
+    "adult's name to a user id from \"household.members\" (the co-parents — NOT "
+    "\"household.children\"). Use accountable_id/owner_id:null to leave it "
+    "unassigned (\"either parent\").\n"
     "A routine groups chores under an accountable owner and carries a schedule "
     "(days: 0=Mon…6=Sun, empty = every day; month_days: 1–31 for a day-of-month "
     "schedule that wins over days when set; due_time \"HH:MM\", blank = not "
-    "time-tied). Create with set_routine (a new routine starts unassigned — who's "
-    "accountable is set on the dashboard). To rename or change an existing one, use "
-    "edit_routine with its id from \"household.routines\" — set_routine can't rename. "
-    "Pass enabled:false to pause, true to resume:\n"
+    "time-tied). Create with set_routine; set accountable_id to name who holds it. "
+    "To rename or change an existing one, use edit_routine with its id from "
+    "\"household.routines\" — set_routine can't rename. Pass enabled:false to "
+    "pause, true to resume:\n"
     '- {"op":"set_routine","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
-    '"month_days":[1-31]?,"impact":str?,"enabled":bool?}\n'
+    '"month_days":[1-31]?,"impact":str?,"enabled":bool?,"accountable_id":int?}\n'
     '- {"op":"edit_routine","routine_id":int,"title":str?,"due_time":"HH:MM"?,'
-    '"days":[0-6]?,"month_days":[1-31]?,"impact":str?,"enabled":bool?}\n'
+    '"days":[0-6]?,"month_days":[1-31]?,"impact":str?,"enabled":bool?,'
+    '"accountable_id":int?}\n'
     '- {"op":"remove_routine","routine_id":int}\n'
+    "A chore is one recurring shared task (whose miss lands on the other parent). "
+    "It has an owner (the doer — owner_id, or null for either parent), its own "
+    "schedule (days/month_days/due_time — blank due_time inherits its routine's), a "
+    "reminder lead (remind_before, minutes before due), and may link under a routine "
+    "(routine_id from \"household.routines\", or null to stand alone). Create with "
+    "set_chore; to rename or change an existing one use edit_chore with its id from "
+    "\"household.chores\" — set_chore can't rename. Pass enabled:false to pause:\n"
+    '- {"op":"set_chore","title":str,"due_time":"HH:MM"?,"days":[0-6]?,'
+    '"month_days":[1-31]?,"remind_before":int?,"impact":str?,"enabled":bool?,'
+    '"owner_id":int?,"routine_id":int?}\n'
+    '- {"op":"edit_chore","chore_id":int,"title":str?,"due_time":"HH:MM"?,'
+    '"days":[0-6]?,"month_days":[1-31]?,"remind_before":int?,"impact":str?,'
+    '"enabled":bool?,"owner_id":int?,"routine_id":int?}\n'
+    '- {"op":"remove_chore","chore_id":int}\n'
     "Shared shopping list — add things to buy, check them off, or remove them. "
     "Put size/brand/quantity in \"spec\". For check_shopping/remove_shopping, "
     "resolve the item to an id from \"household.shopping\"; \"got\" defaults to "
@@ -261,17 +280,28 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
     """Household context for the shared sheet, or ``None`` if the user is in none.
 
     Gives the model the roster (so "Sam" resolves to a real ``child`` id), the
-    controlled fact-category vocabulary, open agreements (so "remove the sticker
-    plan" resolves to a real ``agreement_id``), and the shopping list (so "check
-    off the milk" resolves to a real shopping id) — the same id-discipline as the
-    todo/commitment snapshot. Omitted entirely for a user with no household, which
-    is the signal the household-op validators key on.
+    adult ``members`` (so "make it Alex's job" resolves to a real owner/accountable
+    user id), the controlled fact-category vocabulary, open agreements (so "remove
+    the sticker plan" resolves to a real ``agreement_id``), the shopping list (so
+    "check off the milk" resolves to a real shopping id), and the routines and
+    chores (so "move the dishes to 8pm" resolves to a real ``chore_id``) — the same
+    id-discipline as the todo/commitment snapshot. Omitted entirely for a user with
+    no household, which is the signal the household-op validators key on.
     """
-    if memory.household_id_or_none() is None:
+    hid = memory.household_id_or_none()
+    if hid is None:
         return None
     return {
         "children": [
             {"id": c["id"], "name": c.get("name")} for c in memory.children()
+        ],
+        # The adult roster (co-parents) — the owner/accountable candidates. Kept
+        # distinct from ``children``: a chore's owner or a routine's accountable
+        # holder is a member, never a kid.
+        "members": [
+            {"id": m["id"], "name": m.get("display_name") or m.get("handle")}
+            for m in memory.household_members(hid)
+            if m.get("status") == "active"
         ],
         "pets": [
             {"id": p["id"], "name": p.get("name"), "species": p.get("species")}
@@ -289,6 +319,16 @@ def _household_snapshot(memory: Any) -> dict[str, Any] | None:
         "routines": [
             {"id": r["id"], "title": r.get("title"), "enabled": bool(r.get("enabled"))}
             for r in memory.routines()
+        ],
+        "chores": [
+            {
+                "id": ch["id"],
+                "title": ch.get("title"),
+                "enabled": bool(ch.get("enabled")),
+                "owner_id": ch.get("owner_id"),
+                "routine_id": ch.get("routine_id"),
+            }
+            for ch in memory.chores()
         ],
     }
 
@@ -549,6 +589,48 @@ def _require_routine(
         if r.get("id") == rid:
             return rid, (r.get("title") or f"routine #{rid}")
     raise _ActionError(f"no routine with id {rid}")
+
+
+def _require_chore(
+    action: dict[str, Any], household: dict[str, Any]
+) -> tuple[int, str]:
+    """Resolve ``chore_id`` against the snapshot, returning ``(id, title)``."""
+    cid = _as_int(action.get("chore_id"))
+    if cid is None:
+        raise _ActionError("chore_id must be an integer")
+    for c in household.get("chores", []):
+        if c.get("id") == cid:
+            return cid, (c.get("title") or f"chore #{cid}")
+    raise _ActionError(f"no chore with id {cid}")
+
+
+def _resolve_link(
+    action: dict[str, Any], household: dict[str, Any], key: str, listing: str
+) -> int | None:
+    """Resolve an optional cross-reference id (``owner_id``/``accountable_id``/
+    ``routine_id``) against a snapshot listing, so the assistant can only point at
+    real household members/routines — the same id-discipline as everything else.
+
+    Returns the validated int, or ``None`` when the field is absent or explicitly
+    null (the "unassign / either parent" signal). Raises :class:`_ActionError` for
+    a non-int or an id not present in ``household[listing]``.
+    """
+    if key not in action or action.get(key) is None:
+        return None
+    rid = _as_int(action.get(key))
+    if rid is None:
+        raise _ActionError(f"{key} must be an integer id, or null")
+    if any(row.get("id") == rid for row in household.get(listing, [])):
+        return rid
+    raise _ActionError(f"{key} {rid} is not in this household's {listing}")
+
+
+def _name_of(household: dict[str, Any], listing: str, uid: int | None) -> str:
+    """Display name/title for an id in a snapshot listing, for an action summary."""
+    for row in household.get(listing, []):
+        if row.get("id") == uid:
+            return row.get("name") or row.get("title") or f"#{uid}"
+    return f"#{uid}"
 
 
 def _as_fact_category(value: Any) -> str:
@@ -866,10 +948,14 @@ def _v_set_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) ->
                 f"a routine named “{title}” already exists — "
                 "edit it with edit_routine and its routine_id"
             )
-    # Who's accountable is a dashboard choice (needs the adult roster), not
-    # something the assistant resolves — a new routine starts unassigned.
-    clean["accountable_id"] = None
-    return ValidatedAction(op, clean, f"Add routine “{title}”")
+    # Who's accountable resolves against the adult roster in the snapshot (a real
+    # member id, or unassigned when omitted). `normalize_routine` already accepts
+    # accountable_id, but re-resolve it here so a stale/non-member id is refused.
+    clean["accountable_id"] = _resolve_link(action, household, "accountable_id", "members")
+    detail = f"Add routine “{title}”"
+    if clean["accountable_id"] is not None:
+        detail += f", accountable: {_name_of(household, 'members', clean['accountable_id'])}"
+    return ValidatedAction(op, clean, detail)
 
 
 def _v_edit_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
@@ -895,6 +981,13 @@ def _v_edit_routine(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -
     if "enabled" in action:
         params["enabled"] = bool(action.get("enabled"))
         changes.append("resume" if params["enabled"] else "pause")
+    if "accountable_id" in action:
+        aid = _resolve_link(action, household, "accountable_id", "members")
+        params["accountable_id"] = aid
+        changes.append(
+            f"accountable → {_name_of(household, 'members', aid)}" if aid is not None
+            else "clear accountable owner"
+        )
     if len(params) == 1:  # only routine_id — nothing to do
         raise _ActionError("edit_routine needs at least one field to change")
     return ValidatedAction(op, params, f"Edit routine “{cur_title}”: {', '.join(changes)}")
@@ -906,6 +999,84 @@ def _v_remove_routine(
     household = _require_household(snapshot)
     rid, title = _require_routine(action, household)
     return ValidatedAction(op, {"routine_id": rid}, f"Remove routine: “{title}”")
+
+
+def _v_set_chore(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    clean, error = normalize_chore(action)
+    if error is not None:
+        raise _ActionError(error)
+    title = clean["title"]
+    # set_chore is title-keyed, so re-using an existing name overwrites that chore.
+    # Point the model at edit_chore (by id) instead of silently clobbering.
+    for c in household.get("chores", []):
+        if (c.get("title") or "").strip().lower() == title.lower():
+            raise _ActionError(
+                f"a chore named “{title}” already exists — "
+                "edit it with edit_chore and its chore_id"
+            )
+    # owner (the "responsible" doer) and routine link resolve against the snapshot.
+    clean["owner_id"] = _resolve_link(action, household, "owner_id", "members")
+    clean["routine_id"] = _resolve_link(action, household, "routine_id", "routines")
+    detail = f"Add chore “{title}”"
+    if clean["owner_id"] is not None:
+        detail += f", owner: {_name_of(household, 'members', clean['owner_id'])}"
+    if clean["routine_id"] is not None:
+        detail += f", under {_name_of(household, 'routines', clean['routine_id'])}"
+    return ValidatedAction(op, clean, detail)
+
+
+def _v_edit_chore(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    household = _require_household(snapshot)
+    cid, cur_title = _require_chore(action, household)
+    params: dict[str, Any] = {"chore_id": cid}
+    changes: list[str] = []
+    if action.get("title") is not None:
+        params["title"] = _as_title(action.get("title"))
+        changes.append(f"rename to “{params['title']}”")
+    if "due_time" in action:
+        params["due_time"] = action.get("due_time")
+        changes.append("change time")
+    if "days" in action:
+        params["days"] = action.get("days")
+        changes.append("change days")
+    if "month_days" in action:
+        params["month_days"] = action.get("month_days")
+        changes.append("change days of month")
+    if "remind_before" in action:
+        params["remind_before"] = action.get("remind_before")
+        changes.append("change reminder lead")
+    if action.get("impact") is not None:
+        params["impact"] = action.get("impact")
+        changes.append("update why-it-matters")
+    if "enabled" in action:
+        params["enabled"] = bool(action.get("enabled"))
+        changes.append("resume" if params["enabled"] else "pause")
+    if "owner_id" in action:
+        oid = _resolve_link(action, household, "owner_id", "members")
+        params["owner_id"] = oid
+        changes.append(
+            f"owner → {_name_of(household, 'members', oid)}" if oid is not None
+            else "clear owner (either parent)"
+        )
+    if "routine_id" in action:
+        lid = _resolve_link(action, household, "routine_id", "routines")
+        params["routine_id"] = lid
+        changes.append(
+            f"link to {_name_of(household, 'routines', lid)}" if lid is not None
+            else "unlink from routine"
+        )
+    if len(params) == 1:  # only chore_id — nothing to do
+        raise _ActionError("edit_chore needs at least one field to change")
+    return ValidatedAction(op, params, f"Edit chore “{cur_title}”: {', '.join(changes)}")
+
+
+def _v_remove_chore(
+    op: str, action: dict[str, Any], snapshot: dict[str, Any]
+) -> ValidatedAction:
+    household = _require_household(snapshot)
+    cid, title = _require_chore(action, household)
+    return ValidatedAction(op, {"chore_id": cid}, f"Remove chore: “{title}”")
 
 
 #: op → validator. This registry *is* the whitelist: :data:`ALLOWED_OPS` is
@@ -942,6 +1113,9 @@ _VALIDATORS: dict[
     "set_routine": _v_set_routine,
     "edit_routine": _v_edit_routine,
     "remove_routine": _v_remove_routine,
+    "set_chore": _v_set_chore,
+    "edit_chore": _v_edit_chore,
+    "remove_chore": _v_remove_chore,
 }
 
 #: The ops the assistant may emit — the security boundary, derived from the
@@ -1189,6 +1363,42 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
                     result["detail"] = "another routine already has that name"
         elif op == "remove_routine":
             result["ok"] = memory.remove_routine(p["routine_id"])
+        elif op == "set_chore":
+            cid = memory.set_chore(
+                title=p["title"],
+                due_time=p["due_time"],
+                days=p["days"],
+                month_days=p.get("month_days", ""),
+                owner_id=p.get("owner_id"),
+                routine_id=p.get("routine_id"),
+                remind_before=p.get("remind_before", 30),
+                impact=p.get("impact"),
+                enabled=p.get("enabled", True),
+                updated_by=memory.user_id,
+            )
+            result.update(ok=True, detail=f"chore #{cid}")
+        elif op == "edit_chore":
+            cur = memory.chore(p["chore_id"])
+            if cur is None:
+                result["detail"] = "no such chore"
+            else:
+                # Merge the requested changes over the current row, then normalize —
+                # so unspecified fields (owner, schedule, …) are preserved. The
+                # routine link isn't part of normalize_chore's shape, so carry the
+                # edited value if one was set, else keep the current link.
+                merged = {**cur, **{k: v for k, v in p.items() if k != "chore_id"}}
+                clean, err = normalize_chore(merged)
+                if err is not None:
+                    raise ValueError(err)
+                routine_id = p["routine_id"] if "routine_id" in p else cur.get("routine_id")
+                outcome = memory.update_chore(
+                    p["chore_id"], updated_by=memory.user_id, routine_id=routine_id, **clean
+                )
+                result["ok"] = outcome == "ok"
+                if outcome == "duplicate":
+                    result["detail"] = "another chore already has that name"
+        elif op == "remove_chore":
+            result["ok"] = memory.remove_chore(p["chore_id"])
         if not result["ok"] and not result["detail"]:
             result["detail"] = "nothing changed (item may have already moved)"
     except Exception as exc:  # noqa: BLE001 — one bad action must never abort the batch
