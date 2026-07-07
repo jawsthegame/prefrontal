@@ -249,6 +249,8 @@
     color: var(--muted); border: 1px dashed var(--line); cursor: pointer; font-weight: 400; }
   .cat-menu .cat-act:hover { color: var(--fg); border-color: var(--muted); }
   .cat-menu .cat-sep { flex-basis: 100%; height: 0; border-top: 1px solid var(--line); margin: 1px 0; }
+  .cat-menu input { flex-basis: 100%; font: inherit; font-size: 13px; color: var(--fg);
+    background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
   .catlead { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   /* Follow-through headline: of the tasks you started, how many you finished. */
   .ft-lead { font-size: 13px; color: var(--fg); margin: 0 0 10px; padding: 8px 10px;
@@ -838,6 +840,22 @@ function closePillMenu() {
   document.removeEventListener("click", onPillOutside, true);
 }
 function onPillOutside(e) { if (pillMenuEl && !pillMenuEl.contains(e.target)) closePillMenu(); }
+// An inline text field for coining a new value inside a pill menu — replaces a
+// window.prompt() (suppressed in a standalone iOS web app). Commits the trimmed
+// value on Enter, cancels on Escape; the menu's outside-click dismissal covers
+// tapping away. Focus is deferred so the field is ready to type into.
+function pillNewInput(placeholder, onCommit) {
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = "pill-new";
+  inp.placeholder = placeholder;
+  inp.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); const v = inp.value.trim(); if (v) onCommit(v); }
+    else if (e.key === "Escape") closePillMenu();
+  };
+  setTimeout(() => inp.focus(), 0);
+  return inp;
+}
 // Drop a freshly-built menu into the page under its anchor (nudged left to stay
 // on-screen) and arm the outside-click dismissal.
 function placePillMenu(menu, anchor) {
@@ -882,11 +900,9 @@ async function openCategoryMenu(anchor, id, current) {
     const nb = document.createElement("button");
     nb.className = "cat-act";
     nb.textContent = "＋ New…";
-    nb.onclick = () => {
-      const v = prompt("New category:");
-      if (v && v.trim()) pick(v.trim());
-      else closePillMenu();
-    };
+    // Swap the button for an inline field (not a prompt(), which a standalone
+    // web app suppresses); Enter commits the new category.
+    nb.onclick = () => nb.replaceWith(pillNewInput("New category", (v) => pick(v)));
     menu.appendChild(nb);
   }
   if (current) {
@@ -941,17 +957,55 @@ async function openDomainMenu(anchor, id, current, opts = {}) {
   const nb = document.createElement("button");
   nb.className = "cat-act";
   nb.textContent = "＋ New…";
-  nb.onclick = () => {
-    const v = prompt("New domain (e.g. work, home):");
-    if (v && v.trim()) pick(v.trim());
-    else closePillMenu();
-  };
+  // Inline field instead of a prompt() (suppressed in a standalone web app);
+  // Enter commits the new domain.
+  nb.onclick = () => nb.replaceWith(pillNewInput("New domain (e.g. work, home)", (v) => pick(v)));
   menu.appendChild(nb);
   if (current) {
     const cb = document.createElement("button");
     cb.className = "cat-act";
     cb.textContent = "✕ Clear";
     cb.onclick = () => pick(null);
+    menu.appendChild(cb);
+  }
+  placePillMenu(menu, anchor);
+}
+
+// Deadline editor popover: a native date picker anchored under the "edit" link,
+// reusing the pill-menu shell. Replaces a window.prompt() — prompt() is unreliable
+// (suppressed outright in an installed/standalone iOS web app, which is how this
+// dashboard is used on a phone), so the edit "did nothing". A deadline is
+// date-granular ("due by end of that day"), so <input type="date"> is the right
+// control and it works everywhere. Save writes the date; Clear removes it.
+function openDeadlineMenu(anchor, id, current) {
+  closePillMenu();
+  const menu = document.createElement("div");
+  menu.className = "cat-menu";
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.textContent = "Due by the end of…";
+  menu.appendChild(lead);
+  const inp = document.createElement("input");
+  inp.type = "date";
+  // Stored as "YYYY-MM-DD HH:MM:SS" UTC; the date input wants just the date part.
+  if (current) inp.value = current.slice(0, 10);
+  menu.appendChild(inp);
+  const save = async (deadline) => {
+    closePillMenu();
+    await post(`/todos/${id}/deadline`, { deadline });
+    load();
+  };
+  const setBtn = document.createElement("button");
+  setBtn.className = "cat-act";
+  setBtn.textContent = "Save";
+  // A date input reads "YYYY-MM-DD" (or "" if cleared); empty saves as no deadline.
+  setBtn.onclick = () => save(inp.value || null);
+  menu.appendChild(setBtn);
+  if (current) {
+    const cb = document.createElement("button");
+    cb.className = "cat-act";
+    cb.textContent = "✕ Clear";
+    cb.onclick = () => save(null);
     menu.appendChild(cb);
   }
   placePillMenu(menu, anchor);
@@ -2376,11 +2430,10 @@ document.addEventListener("click", async (e) => {
     else if (act === "decompose") { await post(`/todos/${id}/decompose`); }
     else if (act === "decompose-dismiss") { await post(`/todos/${id}/decompose/dismiss`, { reason: el.dataset.reason }); }
     else if (act === "todo-deadline") {
-      // Stored as "YYYY-MM-DD HH:MM:SS" UTC; offer the date as the default.
-      const cur = el.dataset.deadline || "";
-      const v = prompt("New deadline (YYYY-MM-DD, or YYYY-MM-DD HH:MM). Blank to clear:", cur ? cur.slice(0, 10) : "");
-      if (v === null) return; // cancelled — leave it untouched
-      await post(`/todos/${id}/deadline`, { deadline: v.trim() || null });
+      // Date-picker popover anchored under the link; it POSTs + reloads itself
+      // (a native date input, not a prompt() that a standalone web app suppresses).
+      openDeadlineMenu(el, id, el.dataset.deadline || "");
+      return;
     }
     else if (act === "todo-category") {
       // Open a dropdown of the existing categories anchored under the pill; the
