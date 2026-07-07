@@ -171,6 +171,32 @@ class TodosRepo(Repo):
         """
         return self._update_todo_field(todo_id, "notes", notes)
 
+    def start_todo(self, todo_id: int) -> bool:
+        """Stamp an open todo ``started_at`` = now — "I've begun this". ``True`` if changed.
+
+        The initiation half of the follow-through signal: pairing a start with the
+        eventual close (done vs dropped) is what tells whether a *started* task
+        actually got finished. Only open todos, and only the first start sticks
+        (an already-started todo is left as-is so re-tapping doesn't reset the clock).
+        """
+        cur = self.conn.execute(
+            "UPDATE todos SET started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open' AND started_at IS NULL",
+            (todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def unstart_todo(self, todo_id: int) -> bool:
+        """Clear an open todo's ``started_at`` — undo a mistaken "started". ``True`` if changed."""
+        cur = self.conn.execute(
+            "UPDATE todos SET started_at = NULL, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND user_id = ? AND status = 'open' AND started_at IS NOT NULL",
+            (todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 

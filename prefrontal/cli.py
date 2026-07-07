@@ -2214,7 +2214,24 @@ def _cmd_todo(args: argparse.Namespace) -> int:
             for t in todos:
                 est = f" ~{t['estimate_minutes']:g}m" if t.get("estimate_minutes") else ""
                 cat = f" ({t['category']})" if t.get("category") else ""
-                print(f"#{t['id']} [P{t['priority']}]{est}{cat} {t['title']}")
+                started = " ▶ started" if t.get("started_at") else ""
+                print(f"#{t['id']} [P{t['priority']}]{est}{cat} {t['title']}{started}")
+        elif args.todo_action == "start":
+            if store.start_todo(args.todo_id):
+                print(f"Todo #{args.todo_id} marked started. 💪")
+            else:
+                t = store.get_todo(args.todo_id)
+                if t is not None and t.get("status") == "open":
+                    print(f"Todo #{args.todo_id} was already started.")
+                else:
+                    print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)
+                    return 1
+        elif args.todo_action == "unstart":
+            if store.unstart_todo(args.todo_id):
+                print(f"Todo #{args.todo_id} no longer marked started.")
+            else:
+                print(f"Todo #{args.todo_id} wasn't marked started.", file=sys.stderr)
+                return 1
         elif args.todo_action in ("done", "drop"):
             status_ = "done" if args.todo_action == "done" else "dropped"
             if store.close_todo(args.todo_id, status=status_):
@@ -3442,6 +3459,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--category", default=None, help="Topic label. Omit to infer (keyword guess)."
     )
     todo_sub.add_parser("list", help="List open todos.")
+    t_start = todo_sub.add_parser("start", help="Mark that you've started a todo.")
+    t_start.add_argument("todo_id", type=int)
+    t_unstart = todo_sub.add_parser("unstart", help="Undo a mistaken 'started'.")
+    t_unstart.add_argument("todo_id", type=int)
     t_done = todo_sub.add_parser("done", help="Mark a todo done.")
     t_done.add_argument("todo_id", type=int)
     t_drop = todo_sub.add_parser("drop", help="Drop a todo.")

@@ -105,6 +105,21 @@ def test_todo_lifecycle(store):
     assert store.close_todo(tid, status="done") is True
     assert [t["title"] for t in store.open_todos()] == ["Plan birthday"]
     assert store.close_todo(tid) is False  # already closed
+
+
+def test_start_and_unstart_todo(store):
+    """start_todo stamps started_at (idempotently); unstart clears it; open-only."""
+    tid = store.add_todo("Draft memo", estimate_minutes=30)
+    assert store.get_todo(tid)["started_at"] is None
+    assert store.start_todo(tid) is True
+    assert store.get_todo(tid)["started_at"] is not None
+    assert store.start_todo(tid) is False          # already started — the first start sticks
+    assert store.unstart_todo(tid) is True
+    assert store.get_todo(tid)["started_at"] is None
+    assert store.unstart_todo(tid) is False         # nothing to clear
+    # A closed todo can't be (un)started.
+    store.close_todo(tid, status="done")
+    assert store.start_todo(tid) is False
     assert store.get_todo(tid)["status"] == "done"
 
 
@@ -1097,6 +1112,42 @@ def test_todo_episode_fields_drop_is_miss_with_now_for_age():
     assert fields["notes"] == "dropped after 5.0d open"
 
 
+def test_todo_episode_fields_started_then_completed_notes_follow_through():
+    """A started todo that's completed records the follow-through in note + context."""
+    fields = todo_episode_fields(
+        {
+            "title": "File taxes",
+            "status": "done",
+            "started_at": "2026-06-01 09:00:00",
+            "created_at": "2026-06-01 08:00:00",
+            "completed_at": "2026-06-01 11:00:00",
+        }
+    )
+    assert fields["outcome"] == "success"
+    assert fields["context"] == "todo done, started: File taxes"
+    assert "completed after starting" in fields["notes"]
+
+
+def test_started_then_dropped_is_always_a_give_up():
+    """Dropping a *started* todo is a give-up (miss), even when it'd otherwise read
+    as a quick hygiene discard — starting-then-abandoning is the follow-through miss."""
+    base = {
+        "title": "Reconcile budget",
+        "status": "dropped",
+        "priority": 0,                      # low priority + fresh → normally 'discarded'
+        "created_at": "2026-06-06 08:00:00",
+        "completed_at": None,
+    }
+    now = datetime(2026, 6, 6, 9, 0, 0)
+    # Without a start: hygiene discard.
+    assert todo_episode_fields(base, now=now)["outcome"] == DISCARDED_OUTCOME
+    # Having started it flips the drop to a real miss.
+    started = {**base, "started_at": "2026-06-06 08:30:00"}
+    fields = todo_episode_fields(started, now=now)
+    assert fields["outcome"] == "miss"
+    assert "abandoned after starting" in fields["notes"]
+
+
 def test_todo_close_endpoint_logs_episode(client, store_open):
     """Closing a todo over HTTP logs a task episode and returns its id."""
     tid = client.post(
@@ -1111,6 +1162,35 @@ def test_todo_close_endpoint_logs_episode(client, store_open):
     assert len(eps) == 1
     assert eps[0]["outcome"] == "success"
     assert eps[0]["context"] == "todo done: Call dentist"
+
+
+def test_todo_start_endpoint_marks_started_and_is_idempotent(client, store_open):
+    """POST /todos/{id}/start stamps started_at; re-tapping is a no-op; unstart clears."""
+    tid = client.post(
+        "/todos", json={"title": "Write proposal"}, headers=_auth()
+    ).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/start", headers=_auth())
+    assert r.status_code == 200 and r.json()["todo"]["started_at"] is not None
+    # It reads back as started on the list, and re-starting stays 200 (idempotent).
+    listed = client.get("/todos", headers=_auth()).json()["todos"]
+    assert next(t for t in listed if t["id"] == tid)["started_at"] is not None
+    assert client.post(f"/todos/{tid}/start", headers=_auth()).status_code == 200
+    # Unstart clears it; starting a non-existent todo 404s.
+    assert client.post(f"/todos/{tid}/unstart", headers=_auth()).json()["todo"]["started_at"] is None
+    assert client.post("/todos/99999/start", headers=_auth()).status_code == 404
+
+
+def test_started_then_dropped_endpoint_logs_a_miss(client, store_open):
+    """Start then drop → the close episode is a follow-through miss, not a discard."""
+    tid = client.post(
+        "/todos", json={"title": "Reorg garage", "priority": 0}, headers=_auth()
+    ).json()["todo_id"]
+    client.post(f"/todos/{tid}/start", headers=_auth())
+    client.post(f"/todos/{tid}/drop", headers=_auth())
+    eps = store_open.episodes_by_type("task")
+    assert len(eps) == 1
+    assert eps[0]["outcome"] == "miss"                       # started-then-abandoned counts
+    assert eps[0]["context"] == "todo dropped, started: Reorg garage"
 
 
 def test_todo_drop_of_fresh_todo_is_discarded_not_a_miss(client, store_open):

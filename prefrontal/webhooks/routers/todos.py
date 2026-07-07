@@ -622,6 +622,42 @@ def build_router(services: RouterServices) -> APIRouter:
             "decomposition": memory.get_decomposition(todo_id),
         }
 
+    @router.post("/todos/{todo_id}/start", tags=["todos"])
+    def todo_start(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mark that you've *started* an open todo (stamps ``started_at``).
+
+        The initiation half of the follow-through signal: recording a start means a
+        later done/drop is understood as "did the thing I began actually get
+        finished?" — the data point behind chronic non-completion. Idempotent: the
+        first start sticks, re-tapping doesn't reset the clock. 404 if it isn't open.
+        """
+        memory = ctx.store
+        if not memory.start_todo(todo_id) and (
+            (t := memory.get_todo(todo_id)) is None or t.get("status") != "open"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
+
+    @router.post("/todos/{todo_id}/unstart", tags=["todos"])
+    def todo_unstart(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Undo a mistaken "started" on an open todo (clears ``started_at``)."""
+        memory = ctx.store
+        memory.unstart_todo(todo_id)
+        if memory.get_todo(todo_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Todo {todo_id} not found."
+            )
+        return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
+
     @router.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(
         todo_id: int,
