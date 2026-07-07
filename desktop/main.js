@@ -71,6 +71,9 @@ const PREFRONTAL_BIN =
   process.env.PREFRONTAL_BIN || (fs.existsSync(VENV_BIN) ? VENV_BIN : 'prefrontal');
 
 const ICON_PATH = path.join(__dirname, 'assets', 'icon.png');
+// Menu-bar icon. The "Template" suffix tells macOS to render it as a monochrome
+// template (auto light/dark), and Electron auto-loads the @2x variant alongside.
+const TRAY_ICON_PATH = path.join(__dirname, 'assets', 'iconTemplate.png');
 
 // ---------------------------------------------------------------------------
 // State
@@ -248,11 +251,15 @@ function createSettingsWindow() {
 
 function createTray() {
   if (tray) tray.destroy(); // avoid a duplicate icon when rebuilt after a URL change
-  let image = nativeImage.createFromPath(ICON_PATH);
-  if (!image.isEmpty()) {
-    image = image.resize({ width: 18, height: 18 });
-    image.setTemplateImage(true);
+  // Prefer the dedicated monochrome glyph (transparent background) so the menu
+  // bar shows a crisp "P" silhouette rather than a filled square. Fall back to
+  // the full-colour app icon if the template asset is missing.
+  let image = nativeImage.createFromPath(TRAY_ICON_PATH);
+  if (image.isEmpty()) {
+    image = nativeImage.createFromPath(ICON_PATH);
+    if (!image.isEmpty()) image = image.resize({ width: 18, height: 18 });
   }
+  if (!image.isEmpty()) image.setTemplateImage(true);
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
   tray.setToolTip('Prefrontal');
 
