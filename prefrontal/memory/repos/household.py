@@ -1037,6 +1037,7 @@ class HouseholdRepo(Repo):
         impact: str | None = None,
         enabled: bool = True,
         away_behavior: str = "keep",
+        service: str | None = None,
         updated_by: int | None,
     ) -> int:
         """Upsert a recurring chore (keyed on title within the household), returning its id.
@@ -1053,8 +1054,9 @@ class HouseholdRepo(Repo):
             """
             INSERT INTO household_chores
                 (household_id, title, owner_id, routine_id, days, month_days, due_time,
-                 remind_before, impact, enabled, away_behavior, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 remind_before, impact, enabled, away_behavior, service, updated_by,
+                 updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 owner_id      = excluded.owner_id,
                 routine_id    = excluded.routine_id,
@@ -1065,11 +1067,13 @@ class HouseholdRepo(Repo):
                 impact        = excluded.impact,
                 enabled       = excluded.enabled,
                 away_behavior = excluded.away_behavior,
+                service       = excluded.service,
                 updated_by    = excluded.updated_by,
                 updated_at    = CURRENT_TIMESTAMP
             """,
             (hid, title.strip(), owner_id, routine_id, days, month_days, due_time,
-             int(remind_before), impact, 1 if enabled else 0, away_behavior, updated_by),
+             int(remind_before), impact, 1 if enabled else 0, away_behavior, service,
+             updated_by),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -1092,6 +1096,7 @@ class HouseholdRepo(Repo):
         impact: str | None = None,
         enabled: bool = True,
         away_behavior: str = "keep",
+        service: str | None = None,
         updated_by: int | None,
     ) -> str:
         """Edit a chore by id — including **renaming** it, which the title-keyed
@@ -1121,12 +1126,13 @@ class HouseholdRepo(Repo):
             UPDATE household_chores SET
                 title = ?, owner_id = ?, routine_id = ?, days = ?, month_days = ?,
                 due_time = ?, remind_before = ?, impact = ?, enabled = ?,
-                away_behavior = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                away_behavior = ?, service = ?, updated_by = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND household_id = ?
             """,
             (title, owner_id, routine_id, days, month_days, due_time,
-             int(remind_before), impact, 1 if enabled else 0, away_behavior, updated_by,
-             chore_id, hid),
+             int(remind_before), impact, 1 if enabled else 0, away_behavior, service,
+             updated_by, chore_id, hid),
         )
         self.conn.commit()
         return "ok"
@@ -1165,7 +1171,7 @@ class HouseholdRepo(Repo):
             """
             SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.month_days,
                    c.due_time, c.remind_before, c.impact, c.enabled, c.away_behavior,
-                   c.last_reminded_on, c.last_missed_on,
+                   c.service, c.last_reminded_on, c.last_missed_on,
                    COALESCE(u.display_name, u.handle) AS owner_name,
                    r.title AS routine_title
             FROM household_chores c
@@ -1186,7 +1192,7 @@ class HouseholdRepo(Repo):
         """
         row = self.conn.execute(
             "SELECT id, title, owner_id, routine_id, days, month_days, due_time, "
-            "remind_before, impact, enabled, away_behavior, last_reminded_on, "
+            "remind_before, impact, enabled, away_behavior, service, last_reminded_on, "
             "last_missed_on "
             "FROM household_chores WHERE id = ? AND household_id = ?",
             (chore_id, self._household_id()),
@@ -1281,6 +1287,70 @@ class HouseholdRepo(Repo):
             (self._household_id(),),
         )
         self.conn.commit()
+
+    # -- municipal service shifts (holiday pickup-day changes) ----------------
+    #
+    # One row per (service, week): "this week, trash moved to Wednesday." A weekly
+    # scrape upserts them; the chore sweep reads service_shift() to move that
+    # week's reminder. Whether a shift applies *today* is pure
+    # (prefrontal.household.shifted_chore_days); this layer just stores and reads.
+
+    def set_service_shift(
+        self,
+        *,
+        service: str,
+        week: str,
+        shifted_weekday: int,
+        reason: str | None = None,
+        source_url: str | None = None,
+    ) -> None:
+        """Upsert a holiday shift for a service in a given week (last write wins).
+
+        ``week`` is the local Monday ``"YYYY-MM-DD"`` the shift applies to;
+        ``shifted_weekday`` is 0=Mon…6=Sun the pickup moved to. Re-scraping the same
+        week overwrites in place (keyed on household+service+week).
+        """
+        self.conn.execute(
+            """
+            INSERT INTO service_shifts
+                (household_id, service, week, shifted_weekday, reason, source_url, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (household_id, service, week) DO UPDATE SET
+                shifted_weekday = excluded.shifted_weekday,
+                reason          = excluded.reason,
+                source_url      = excluded.source_url,
+                fetched_at      = CURRENT_TIMESTAMP
+            """,
+            (self._household_id(), service, week, int(shifted_weekday), reason, source_url),
+        )
+        self.conn.commit()
+
+    def service_shift(self, service: str, week: str) -> dict[str, Any] | None:
+        """The shift for ``service`` in ``week`` (local Monday), or ``None`` if none."""
+        row = self.conn.execute(
+            "SELECT service, week, shifted_weekday, reason, source_url, fetched_at "
+            "FROM service_shifts WHERE household_id = ? AND service = ? AND week = ?",
+            (self._household_id(), service, week),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def service_shifts(self) -> list[dict[str, Any]]:
+        """All stored service shifts for the household, most recent week first."""
+        rows = self.conn.execute(
+            "SELECT service, week, shifted_weekday, reason, source_url, fetched_at "
+            "FROM service_shifts WHERE household_id = ? ORDER BY week DESC, service ASC",
+            (self._household_id(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def clear_service_shift(self, *, service: str, week: str) -> bool:
+        """Delete one service shift. ``True`` if a row was removed."""
+        cur = self.conn.execute(
+            "DELETE FROM service_shifts WHERE household_id = ? AND service = ? AND week = ?",
+            (self._household_id(), service, week),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def unlog_chore_done(
         self, *, chore_id: int, done_on: str

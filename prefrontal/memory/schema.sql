@@ -759,6 +759,12 @@ CREATE TABLE IF NOT EXISTS household_chores (
     -- be done while away, so it's silently skipped with a logged reason. ('reassign'
     -- is reserved for a later phase.) Constant default so ADD COLUMN can backfill it.
     away_behavior TEXT NOT NULL DEFAULT 'keep',     -- keep | suppress
+    -- Optional link to a municipal/recurring *service* (e.g. 'trash', 'recycling')
+    -- whose pickup day can shift for a holiday week. When set and a matching
+    -- service_shifts row covers the current week, the chore's reminder moves to the
+    -- shifted day (see prefrontal.household). NULL = an ordinary chore. Free text,
+    -- normalized lowercase; pairs with a services fact holding the schedule URL.
+    service       TEXT,
     updated_by    INTEGER REFERENCES users(id),
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -784,6 +790,27 @@ CREATE TABLE IF NOT EXISTS household_chore_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_household_chore_log ON household_chore_log (household_id, chore_id, done_on);
+
+-- Holiday/one-off shifts to a recurring municipal service's pickup day, one row
+-- per (service, week). A weekly job scrapes the township collection calendar (the
+-- URL lives in a services fact) and records "this week, trash moved to Wednesday";
+-- the chore sweep reads it to move that week's reminder off the normal day onto
+-- the shifted one (prefrontal.household). `week` is the local Monday "YYYY-MM-DD"
+-- the shift applies to, so a stale shift simply stops matching once the week rolls
+-- over. `source_url`/`fetched_at` carry provenance for the scrape.
+CREATE TABLE IF NOT EXISTS service_shifts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id    INTEGER NOT NULL REFERENCES households(id),
+    service         TEXT NOT NULL,                   -- 'trash' | 'recycling' | … (matches household_chores.service)
+    week            TEXT NOT NULL,                   -- local Monday "YYYY-MM-DD" this shift applies to
+    shifted_weekday INTEGER NOT NULL,                -- 0=Mon … 6=Sun the pickup moved to that week
+    reason          TEXT,                            -- "Independence Day", etc.
+    source_url      TEXT,                            -- where it was scraped from (provenance)
+    fetched_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (household_id, service, week)
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_shifts ON service_shifts (household_id, service, week);
 
 -- Triage audit/idempotency log (docs/triage-agent.md §7.3). One row per triaged
 -- inbound signal: what it was classified as, why, and the row it routed into.

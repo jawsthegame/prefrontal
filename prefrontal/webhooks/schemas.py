@@ -773,6 +773,14 @@ class ChoreSet(BaseModel):
             "like trash/mail/plants, skipped on vacation)."
         ),
     )
+    service: str | None = Field(
+        default=None,
+        description=(
+            "Optional municipal service this chore tracks (e.g. 'trash', 'recycling') "
+            "whose pickup day can shift on a holiday week; the reminder follows the "
+            "shift. Null = an ordinary chore."
+        ),
+    )
 
 
 class ChoreEnabled(BaseModel):

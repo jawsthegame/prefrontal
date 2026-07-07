@@ -1161,6 +1161,11 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     away_behavior = str(away_behavior).strip().lower()
     if away_behavior not in AWAY_BEHAVIORS:
         return None, f"away_behavior must be one of {', '.join(AWAY_BEHAVIORS)}"
+    service = raw.get("service")
+    if service is not None:
+        # Free text (like a fact category), just normalized: lowercased, single-
+        # spaced, capped. Blank → None (an ordinary, non-service chore).
+        service = re.sub(r"\s+", " ", str(service).strip().lower())[:40] or None
     return {
         "title": title,
         "owner_id": owner_id,
@@ -1171,6 +1176,7 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "impact": impact,
         "enabled": bool(raw.get("enabled", True)),
         "away_behavior": away_behavior,
+        "service": service,
     }, None
 
 
@@ -1380,6 +1386,46 @@ def capped_away_window(
     return {"starts_on": starts_on, "ends_on": end, "note": "auto-detected trip"}
 
 
+def service_week(now_local: datetime) -> str:
+    """The local Monday date (``"YYYY-MM-DD"``) of the week containing ``now_local``.
+
+    Service shifts are keyed per calendar week, so this is the join key between a
+    scraped shift and "which week are we in now". A shift for a past week simply
+    stops matching once the week rolls over — no cleanup needed.
+    """
+    monday = now_local - timedelta(days=now_local.weekday())  # tz-ok: local week
+    return monday.strftime("%Y-%m-%d")
+
+
+def apply_service_shift(chore: dict[str, Any], shift: dict[str, Any]) -> dict[str, Any]:
+    """A copy of ``chore`` whose schedule is moved to this week's shifted pickup day.
+
+    When a holiday bumps trash from Tue to Wed, the reminder should follow: we
+    replace the chore's effective ``days`` with just the shifted weekday (and clear
+    ``month_days``) so it fires on the new day and *not* the normal one — no wrong-day
+    nudge. The original ``shift`` rides along under ``_service_shift`` so the reminder
+    text can explain the move (:func:`chore_reminder_shift_message`).
+    """
+    return {
+        **chore,
+        "days": str(int(shift["shifted_weekday"])),
+        "month_days": "",
+        "_service_shift": shift,
+    }
+
+
+def chore_reminder_shift_message(chore: dict[str, Any]) -> str:
+    """The owner's reminder on a shifted pickup day — names the moved day + why."""
+    shift = chore.get("_service_shift") or {}
+    day = _WEEKDAY_LABELS[int(shift.get("shifted_weekday", 0)) % 7]
+    reason = shift.get("reason")
+    why = f" ({reason})" if reason else ""
+    return (
+        f"🧼 {chore['title']} goes out tonight — pickup moved to {day} this week{why}, "
+        f"by {fmt_time_12h(chore.get('due_time'))}. Tap Done once it's out."
+    )
+
+
 @dataclass(frozen=True)
 class ChoreDecision:
     """A chore's context gate outcome for one sweep tick.
@@ -1532,6 +1578,10 @@ def run_chores_check(
     }
     present_members = [m for m in members if m["id"] not in away_member_ids]
     all_members_away = bool(members) and not present_members
+    # Municipal service shifts apply per calendar week (e.g. a holiday bumped trash
+    # to Wednesday this week). Resolve the week key once; a service-linked chore
+    # below moves its reminder to the shifted day when a matching shift exists.
+    week = service_week(now_local)
     deliver_kw = {
         "settings": settings,
         "client": client,
@@ -1549,11 +1599,25 @@ def run_chores_check(
         )
         return {"handle": member["handle"], "delivery": row}
 
+    def _reminder_text(c: dict[str, Any]) -> str:
+        """The owner/everyone reminder — rephrased when a service shift moved the day."""
+        if c.get("_service_shift"):
+            return chore_reminder_shift_message(c)
+        return chore_reminder_message(c)
+
     sent: list[dict[str, Any]] = []
     for raw_chore in store.chores():
         chore = with_effective_schedule(
             raw_chore, routines_by_id.get(raw_chore.get("routine_id"))
         )
+        # Service shift: if this chore tracks a municipal service (trash/recycling)
+        # and a holiday moved this week's pickup, move the reminder to the shifted
+        # day — so it fires then, not on the normal (now-wrong) day.
+        service = raw_chore.get("service")
+        if service:
+            shift = store.service_shift(service, week)
+            if shift:
+                chore = apply_service_shift(chore, shift)
         # Context gate: an active away window skips location-bound chores. Skipping
         # (vs. stamping a cursor) means the chore resumes cleanly once we're back —
         # no stale "you missed it" waiting on the far side of the trip.
@@ -1582,9 +1646,9 @@ def run_chores_check(
                 text = chore_reminder_cover_message(chore, _member_name(owner))
                 notified = [_to_member(m, text, cid) for m in present_members]
             elif owner is not None:  # owner present (or all away → they still get it)
-                notified = [_to_member(owner, chore_reminder_message(chore), cid)]
+                notified = [_to_member(owner, _reminder_text(chore), cid)]
             else:  # unassigned — everyone present owns it (all, if nobody's home)
-                text = chore_reminder_message(chore)
+                text = _reminder_text(chore)
                 notified = [_to_member(m, text, cid) for m in (present_members or members)]
             store.mark_chore_reminded(cid, today)
             sent.append({"chore_id": cid, "title": chore["title"],
