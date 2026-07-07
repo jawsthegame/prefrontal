@@ -1,0 +1,505 @@
+{
+  "name": "Prefrontal — Calendar Sync (3 ICS feeds: personal + work + Outlook)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "33d82c44-506d-441d-af9b-1b4aa9e6bd78",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1184,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PERSONAL_ICS_URL }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "3f2b0e19-9ecf-42d9-9007-5ddc983f0f86",
+      "name": "Get Personal ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        448
+      ],
+      "notes": "Google Calendar → Settings → your calendar → 'Secret address in iCal format'. NOTE: Google caches this; new events can lag a few hours."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments.\n// Times pass through raw with their TZID; Prefrontal resolves the zone to UTC.\nconst NS = 'personal:';\nconst ME = ['tfleischer@gmail.com', 'tom@vistarmedia.com', 'tom.fleischer@t-mobile.com'];\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;                 // date-only (all-day)\n  if (z) return `${Y}-${Mo}-${D}T${h}:${mi}:${s}Z`; // explicit UTC\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}`;         // naive; zone travels in tzid\n}\nfunction tzOf(params) {\n  // The DTSTART/DTEND TZID param (e.g. 'America/New_York' or Windows 'Eastern\n  // Standard Time'); Prefrontal resolves it to UTC server-side, so no fragile\n  // in-n8n conversion. Absent for UTC/date-only/floating times.\n  const m = params && params.match(/TZID=\"?([^:;\"]+)/);\n  return m ? m[1] : null;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at && !cur.declined) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'URL') cur.url = val;\n    else if (name === 'DTSTART') { cur.start_at = icsDate(val); cur.tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'DTEND') { cur.end_at = icsDate(val); cur.end_tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'ATTENDEE') {\n      const email = val.replace(/^mailto:/i, '').trim().toLowerCase();\n      if (ME.includes(email) && /PARTSTAT=DECLINED/i.test(line.slice(0, idx))) cur.declined = true;\n    }\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));\n"
+      },
+      "id": "89dd4fd8-e5c5-4eae-b5cd-2010da71c021",
+      "name": "Parse Personal ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.WORK_ICS_URL }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "ca064706-71b1-464a-ad8e-4bae35ae27f6",
+      "name": "Get Work ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        688
+      ],
+      "notes": "Paste your work calendar's shared/secret iCal feed URL (read-only)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments.\n// Times pass through raw with their TZID; Prefrontal resolves the zone to UTC.\nconst NS = 'work:';\nconst ME = ['tfleischer@gmail.com', 'tom@vistarmedia.com', 'tom.fleischer@t-mobile.com'];\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;                 // date-only (all-day)\n  if (z) return `${Y}-${Mo}-${D}T${h}:${mi}:${s}Z`; // explicit UTC\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}`;         // naive; zone travels in tzid\n}\nfunction tzOf(params) {\n  // The DTSTART/DTEND TZID param (e.g. 'America/New_York' or Windows 'Eastern\n  // Standard Time'); Prefrontal resolves it to UTC server-side, so no fragile\n  // in-n8n conversion. Absent for UTC/date-only/floating times.\n  const m = params && params.match(/TZID=\"?([^:;\"]+)/);\n  return m ? m[1] : null;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at && !cur.declined) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'URL') cur.url = val;\n    else if (name === 'DTSTART') { cur.start_at = icsDate(val); cur.tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'DTEND') { cur.end_at = icsDate(val); cur.end_tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'ATTENDEE') {\n      const email = val.replace(/^mailto:/i, '').trim().toLowerCase();\n      if (ME.includes(email) && /PARTSTAT=DECLINED/i.test(line.slice(0, idx))) cur.declined = true;\n    }\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));\n"
+      },
+      "id": "074d03cd-3454-43ae-90ea-01b7fd9ac936",
+      "name": "Parse Work ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.OUTLOOK_ICS_URL }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "19ca18aa-05c4-4548-966e-07a41ce039f6",
+      "name": "Get Outlook ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        928
+      ],
+      "notes": "Outlook/M365 → Settings → Calendar → Shared calendars → Publish a calendar → copy the ICS link."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments.\n// Times pass through raw with their TZID; Prefrontal resolves the zone to UTC.\nconst NS = 'outlook:';\nconst ME = ['tfleischer@gmail.com', 'tom@vistarmedia.com', 'tom.fleischer@t-mobile.com'];\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;                 // date-only (all-day)\n  if (z) return `${Y}-${Mo}-${D}T${h}:${mi}:${s}Z`; // explicit UTC\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}`;         // naive; zone travels in tzid\n}\nfunction tzOf(params) {\n  // The DTSTART/DTEND TZID param (e.g. 'America/New_York' or Windows 'Eastern\n  // Standard Time'); Prefrontal resolves it to UTC server-side, so no fragile\n  // in-n8n conversion. Absent for UTC/date-only/floating times.\n  const m = params && params.match(/TZID=\"?([^:;\"]+)/);\n  return m ? m[1] : null;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at && !cur.declined) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'URL') cur.url = val;\n    else if (name === 'DTSTART') { cur.start_at = icsDate(val); cur.tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'DTEND') { cur.end_at = icsDate(val); cur.end_tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'ATTENDEE') {\n      const email = val.replace(/^mailto:/i, '').trim().toLowerCase();\n      if (ME.includes(email) && /PARTSTAT=DECLINED/i.test(line.slice(0, idx))) cur.declined = true;\n    }\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));\n"
+      },
+      "id": "b7351da7-ba9a-46e1-857a-82eca2f4008e",
+      "name": "Parse Outlook ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "id": "17f66891-8c2f-4c02-bc78-9009edcb816a",
+      "name": "Merge feeds",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1904,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect mapped events from every feed, then: (a) keep only the near-term\n// window — raw ICS feeds dump full history; (b) guarantee a title, since ICS\n// events without SUMMARY would 422 the whole batch; (c) DEDUPE across feeds by\n// the bare UID — the same event often appears on more than one calendar\n// (personal mirrors work/Outlook invites), and the per-feed namespace prefix\n// would otherwise make them look distinct. First feed wins (order: personal,\n// work, outlook); the dropped namespace's stale row is pruned on next sync.\nconst now = Date.now();\nconst FROM = now - 60 * 60 * 1000;\nconst TO = now + 36 * 60 * 60 * 1000;\nconst seen = new Set();\nconst events = [];\nfor (const item of $input.all()) {\n  const e = item.json;\n  const t = Date.parse(e.start_at);\n  if (Number.isNaN(t) || t < FROM || t > TO) continue;\n  const uid = String(e.external_id || '').replace(/^[^:]+:/, '');\n  if (uid) { if (seen.has(uid)) continue; seen.add(uid); }\n  events.push({ ...e, title: (e.title && String(e.title).trim()) || '(busy)' });\n}\nreturn [{ json: { events } }];"
+      },
+      "id": "6fe06740-c77e-4e33-9b35-decc404ca33b",
+      "name": "Bundle events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/calendar/sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Prefrontal-Token",
+              "value": "={{ $env.PREFRONTAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ events: $json.events }) }}",
+        "options": {}
+      },
+      "id": "c76f138f-50e4-49c1-8f92-bf64cd7e22a0",
+      "name": "POST /webhooks/calendar/sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2352,
+        688
+      ],
+      "notes": "127.0.0.1 (NOT localhost): Node resolves localhost to ::1, Prefrontal binds IPv4 only."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "new-conflict",
+              "leftValue": "={{ $json.new_conflict }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9c28c5e9-0455-4511-a549-013dd7e7ae88",
+      "name": "Double-booked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NTFY_SERVER }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"🧠 Prefrontal — double-booking\",\n  \"message\": \"⚠️ {{ $json.conflicts }} overlapping commitment(s) on your calendar. Check /commitments/conflicts.\",\n  \"priority\": 4\n}",
+        "options": {}
+      },
+      "id": "38ad293c-6d39-4c43-b1fb-84cb0f9bc349",
+      "name": "Double-booking alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2784,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.FAMILY_ICS_URL }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "b603345b-2d45-4fba-ad4c-f1bbd9b03e4f",
+      "name": "Get Family ICS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        1184
+      ],
+      "notes": "Google Calendar → Settings → your calendar → 'Secret address in iCal format'. NOTE: Google caches this; new events can lag a few hours."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Minimal ICS parser -> Prefrontal commitments.\n// Times pass through raw with their TZID; Prefrontal resolves the zone to UTC.\nconst NS = 'family:';\nconst ME = ['tfleischer@gmail.com', 'tom@vistarmedia.com', 'tom.fleischer@t-mobile.com'];\nconst text = String($input.first().json.data || $input.first().json.body || '');\nconst unfolded = text.replace(/\\r\\n[ \\t]/g, '').replace(/\\n[ \\t]/g, '');\nconst lines = unfolded.split(/\\r?\\n/);\nfunction icsDate(v) {\n  const m = v.match(/(\\d{4})(\\d{2})(\\d{2})(?:T(\\d{2})(\\d{2})(\\d{2})(Z)?)?/);\n  if (!m) return null;\n  const [, Y, Mo, D, h, mi, s, z] = m;\n  if (!h) return `${Y}-${Mo}-${D}`;                 // date-only (all-day)\n  if (z) return `${Y}-${Mo}-${D}T${h}:${mi}:${s}Z`; // explicit UTC\n  return `${Y}-${Mo}-${D}T${h}:${mi}:${s}`;         // naive; zone travels in tzid\n}\nfunction tzOf(params) {\n  // The DTSTART/DTEND TZID param (e.g. 'America/New_York' or Windows 'Eastern\n  // Standard Time'); Prefrontal resolves it to UTC server-side, so no fragile\n  // in-n8n conversion. Absent for UTC/date-only/floating times.\n  const m = params && params.match(/TZID=\"?([^:;\"]+)/);\n  return m ? m[1] : null;\n}\nconst out = [];\nlet cur = null;\nfor (const line of lines) {\n  if (line === 'BEGIN:VEVENT') cur = {};\n  else if (line === 'END:VEVENT') { if (cur && cur.start_at && !cur.declined) out.push(cur); cur = null; }\n  else if (cur) {\n    const idx = line.indexOf(':');\n    if (idx < 0) continue;\n    const name = line.slice(0, idx).split(';')[0];\n    const val = line.slice(idx + 1);\n    if (name === 'UID') cur.external_id = NS + val;\n    else if (name === 'SUMMARY') cur.title = val;\n    else if (name === 'LOCATION') cur.location = val;\n    else if (name === 'URL') cur.url = val;\n    else if (name === 'DTSTART') { cur.start_at = icsDate(val); cur.tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'DTEND') { cur.end_at = icsDate(val); cur.end_tzid = tzOf(line.slice(0, idx)); }\n    else if (name === 'ATTENDEE') {\n      const email = val.replace(/^mailto:/i, '').trim().toLowerCase();\n      if (ME.includes(email) && /PARTSTAT=DECLINED/i.test(line.slice(0, idx))) cur.declined = true;\n    }\n  }\n}\nreturn out.map((e) => ({ json: { hard: false, location: null, ...e } }));\n"
+      },
+      "id": "6a210039-3593-4ffa-9e5c-dd26952d08ef",
+      "name": "Parse Family ICS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "new-conflict",
+              "leftValue": "={{ $json.new_possible_conflict }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9e0ecf9d-f61b-46cd-b728-b8a24fb179bd",
+      "name": "Possible conflict?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NTFY_SERVER }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"{{ $env.NTFY_TOPIC }}\",\n  \"title\": \"🧠 Prefrontal — possible conflict\",\n  \"message\": \"🟡 {{ $json.possible_conflicts }} possible conflict(s): a hold (Busy/Block) overlaps a real event. Review or dismiss at /dashboard.\",\n  \"priority\": 3\n}",
+        "options": {}
+      },
+      "id": "85886972-9f05-4aa7-a901-ad3cc214689b",
+      "name": "Possible-conflict alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2848,
+        896
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [
+        [
+          {
+            "node": "Get Personal ICS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Work ICS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Outlook ICS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Family ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Personal ICS": {
+      "main": [
+        [
+          {
+            "node": "Parse Personal ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Personal ICS": {
+      "main": [
+        [
+          {
+            "node": "Merge feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Work ICS": {
+      "main": [
+        [
+          {
+            "node": "Parse Work ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Work ICS": {
+      "main": [
+        [
+          {
+            "node": "Merge feeds",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get Outlook ICS": {
+      "main": [
+        [
+          {
+            "node": "Parse Outlook ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Outlook ICS": {
+      "main": [
+        [
+          {
+            "node": "Merge feeds",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge feeds": {
+      "main": [
+        [
+          {
+            "node": "Bundle events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bundle events": {
+      "main": [
+        [
+          {
+            "node": "POST /webhooks/calendar/sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /webhooks/calendar/sync": {
+      "main": [
+        [
+          {
+            "node": "Double-booked?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Possible conflict?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Double-booked?": {
+      "main": [
+        [
+          {
+            "node": "Double-booking alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Family ICS": {
+      "main": [
+        [
+          {
+            "node": "Parse Family ICS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Family ICS": {
+      "main": [
+        [
+          {
+            "node": "Merge feeds",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Possible conflict?": {
+      "main": [
+        [
+          {
+            "node": "Possible-conflict alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "pinData": {},
+  "meta": {
+    "templateredirect": false
+  }
+}
