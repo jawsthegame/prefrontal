@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any
 
+from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_dt
 from prefrontal.commitments import KIND_CHILD
 from prefrontal.impact import utcnow
@@ -543,10 +544,16 @@ def star_congrats_text(child_name: str | None, goal: dict[str, Any]) -> str:
 
 
 def _resolve_child_name(store: MemoryStore, child_id: int) -> str | None:
-    """The roster name for ``child_id`` (``None`` for household-wide id 0)."""
+    """The roster name for ``child_id`` (``None`` for household-wide id 0).
+
+    Searches the whole roster — kids and pets — since a fact/agreement can hang
+    off either (they share the ``children.id`` space, so an id matches at most one
+    row).
+    """
     if not child_id:
         return None
-    return next((c["name"] for c in store.children() if c["id"] == child_id), None)
+    roster = store.children() + store.pets()
+    return next((m["name"] for m in roster if m["id"] == child_id), None)
 
 
 def award_stars_and_notify(
@@ -1678,6 +1685,184 @@ def run_chores_check(
             sent.append({"chore_id": cid, "title": chore["title"],
                          "stage": "missed", "notified": notified})
     return sent
+
+
+# --- periodic household sweeps (one orchestration path per check) ------------
+#
+# Each of these is the single place a periodic household check runs, shared by
+# its ``POST /webhooks/household/*/check`` endpoint and its ``prefrontal
+# household *-check`` CLI twin — the same "one service, two thin callers" shape
+# as run_chores_check / award_stars_and_notify. The service owns the domain
+# decision (who's due, is this a shared household, has it fired this window) and
+# the delivery; each caller only formats the returned data (JSON vs printed
+# lines). Delivery failures never raise (the transport swallows them).
+
+
+def run_star_prompt_sweep(
+    store: MemoryStore,
+    *,
+    settings: Any,
+    now: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Fire any star-award prompts due now, pushing both parents a one-tap ask.
+
+    For each chart whose schedule is due it sends both parents a "did <kid> earn a
+    star?" push and stamps ``last_prompted_at`` so it fires once per local day.
+
+    Args:
+        store: A store scoped to a household member.
+        settings: Operator settings (timezone + one-tap signing origin/secret).
+        now: Optional naive-UTC "now".
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+
+    Returns:
+        ``{"sent": [{agreement_id, title, question, notified}], "checked_at": "%Y-%m-%d %H:%M"}``.
+    """
+    from prefrontal.integrations.delivery import (
+        deliver_to_household,
+        household_prompt_notice,
+    )
+
+    now = now or utcnow()
+    now_local = local_datetime(now, settings.timezone)
+    hid = store.household_id_or_none()
+    sent: list[dict[str, Any]] = []
+    for agreement in store.agreements():
+        structured = parse_structured(agreement.get("structured"))
+        last_dt = (
+            _parse_dt(agreement["last_prompted_at"])
+            if agreement.get("last_prompted_at") else None
+        )
+        last_local = local_datetime(last_dt, settings.timezone) if last_dt else None
+        if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
+            continue
+        child_name = _resolve_child_name(store, agreement.get("child_id") or 0)
+        question = prompt_question(structured, child_name, agreement["title"])
+        notified = deliver_to_household(
+            store, hid,
+            household_prompt_notice(question, agreement["id"], channel="push"),
+            settings=settings, client=client,
+            base_url=settings.oauth_base_url, secret=settings.session_secret,
+        )
+        store.mark_prompted(agreement["id"])
+        sent.append(
+            {"agreement_id": agreement["id"], "title": agreement["title"],
+             "question": question, "notified": notified}
+        )
+    return {"sent": sent, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
+
+
+def run_checkin_sweep(
+    store: MemoryStore,
+    *,
+    settings: Any,
+    now: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Send the weekly mental-load check-in to both parents if it's due.
+
+    Load-balancing is a two-parent concern, so a solo household is skipped. Fires
+    once per ISO week (stamps ``checkin_last_sent_at``).
+
+    Args:
+        store: A store scoped to a household member.
+        settings: Operator settings (timezone + one-tap signing origin/secret).
+        now: Optional naive-UTC "now".
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+
+    Returns:
+        ``{"sent": bool, "notified": [...], "checked_at": "%Y-%m-%d %H:%M",
+        "reason": None | "not_shared" | "not_due"}`` — ``notified`` is populated
+        only when ``sent`` is true.
+    """
+    from prefrontal.integrations.delivery import (
+        deliver_to_household,
+        household_checkin_notice,
+    )
+
+    now = now or utcnow()
+    now_local = local_datetime(now, settings.timezone)
+    checked_at = now_local.strftime("%Y-%m-%d %H:%M")
+    if not store.is_shared_household():
+        return {"sent": False, "notified": [], "checked_at": checked_at,
+                "reason": "not_shared"}
+    config = store.get_checkin_config()
+    last_dt = (
+        _parse_dt(config["last_sent_at"]) if config.get("last_sent_at") else None
+    )
+    last_local = local_datetime(last_dt, settings.timezone) if last_dt else None
+    if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
+        return {"sent": False, "notified": [], "checked_at": checked_at,
+                "reason": "not_due"}
+    notified = deliver_to_household(
+        store, store.household_id_or_none(),
+        household_checkin_notice(checkin_question(), channel="push"),
+        settings=settings, client=client,
+        base_url=settings.oauth_base_url, secret=settings.session_secret,
+    )
+    store.mark_checkin_sent()
+    return {"sent": True, "notified": notified, "checked_at": checked_at,
+            "reason": None}
+
+
+def run_digest_sweep(
+    store: MemoryStore,
+    *,
+    settings: Any,
+    now: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Push each parent the *other* parent's unseen sheet changes (self-suppressing).
+
+    Per member, diff what the other parent changed since that member last looked
+    (or was last digested), and — if there's anything new and it's been ~a day
+    since their last digest — send just that member a catch-up. Silent when
+    nothing's new; a solo or digest-off household is skipped.
+
+    Args:
+        store: A store scoped to a household member.
+        settings: Operator settings (timezone + one-tap signing origin/secret).
+        now: Optional naive-UTC "now".
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+
+    Returns:
+        ``{"sent": [{handle, count, delivery}], "checked_at": <TS_FMT>,
+        "reason": None | "not_shared" | "disabled"}``.
+    """
+    from prefrontal.integrations.delivery import (
+        deliver_to_member,
+        household_digest_notice,
+    )
+
+    now = now or utcnow()
+    now_str = now.strftime(TS_FMT)
+    if not store.is_shared_household():
+        return {"sent": [], "checked_at": now_str, "reason": "not_shared"}
+    if not store.get_digest_enabled():
+        return {"sent": [], "checked_at": now_str, "reason": "disabled"}
+    hid = store.household_id_or_none()
+    sent: list[dict[str, Any]] = []
+    for member in store.household_members(hid):
+        if member.get("status") not in (None, "active"):
+            continue
+        m_store = store.scoped(member["id"])
+        digested = m_store.get_state("household_digested_at")
+        since = max(m_store.get_state("household_seen_at") or "", digested or "")
+        changes = unseen_changes(m_store, viewer_id=member["id"], since=since)
+        if not changes or not digest_interval_ok(digested, now):
+            continue
+        delivery = deliver_to_member(
+            m_store,
+            household_digest_notice(digest_message(changes), channel="push"),
+            handle=member["handle"], settings=settings, client=client,
+            base_url=settings.oauth_base_url, secret=settings.session_secret,
+        )
+        m_store.set_state("household_digested_at", now_str, source="inferred")
+        sent.append(
+            {"handle": member["handle"], "count": len(changes), "delivery": delivery}
+        )
+    return {"sent": sent, "checked_at": now_str, "reason": None}
 
 
 # --- routine completion (pure + notify) --------------------------------------
