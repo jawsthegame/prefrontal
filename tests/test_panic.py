@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.impact import utcnow
+from prefrontal.integrations.anthropic import AnthropicError
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.panic import (
@@ -293,6 +294,26 @@ def test_summarize_panic_llm_and_fallback(store):
     assert ok.source == "llm" and "okay" in ok.text
 
     fb = summarize_panic(store, client=_FakeClient(error=True))
+    assert fb.source == "heuristic" and "Panic mode" in fb.text
+
+
+def test_summarize_panic_falls_back_on_non_ollama_provider_error(store):
+    """A provider failure that isn't an OllamaError must still fall back.
+
+    Regression: summarize_panic once caught only OllamaError, so if the panic
+    agent were routed to Anthropic (e.g. ANTHROPIC_AGENTS=all) a request-time
+    AnthropicError would escape instead of degrading to the deterministic triage.
+    It now delegates to summarize_or_fallback, which catches the shared
+    ProviderError base.
+    """
+
+    class _AnthropicDown:
+        model = "claude"
+
+        def generate(self, prompt, *, system=None):
+            raise AnthropicError("429 overloaded")
+
+    fb = summarize_panic(store, client=_AnthropicDown())
     assert fb.source == "heuristic" and "Panic mode" in fb.text
 
 

@@ -640,8 +640,9 @@ def summarize_briefing(
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
         client: A model client — the local Ollama client, or Claude when the
-            ``briefing`` agent is opted into the Anthropic provider (defaults to
-            a local client built from settings).
+            ``briefing`` agent is opted into the Anthropic provider. Defaults to
+            the client the ``briefing`` agent resolves to via
+            :class:`~prefrontal.integrations.provider.ProviderResolver`.
         now: Optional naive-UTC "now".
         fallback: Fall back to the deterministic digest on model failure.
 
@@ -652,22 +653,17 @@ def summarize_briefing(
         prefrontal.integrations.base.ProviderError: If the model fails and
             ``fallback`` is ``False``.
     """
-    from prefrontal.integrations.base import ProviderError
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations.summarize import summarize_or_fallback
 
     rendered = render_briefing(build_briefing(store, now=now))
-    client = client or OllamaClient.from_settings()
     # Fold the running 👍/👎 feedback into the voice — a run of "not useful" taps
     # tightens the prose, a run of "useful" taps holds the current shape.
     system = BRIEFING_SYSTEM_PROMPT + learned_briefing_guidance(store)
-    try:
-        prose = client.generate(rendered, system=system).strip()
-    except ProviderError:
-        if not fallback:
-            raise
-        return BriefingResult(text=rendered, source="heuristic")
-    if not prose:
-        if not fallback:
-            raise ProviderError("The model returned an empty briefing.")
-        return BriefingResult(text=rendered, source="heuristic")
-    return BriefingResult(text=prose, source="llm", model=client.model)
+    summary = summarize_or_fallback(
+        rendered,
+        system=system,
+        agent="briefing",
+        client=client,
+        fallback=fallback,
+    )
+    return BriefingResult(text=summary.text, source=summary.source, model=summary.model)

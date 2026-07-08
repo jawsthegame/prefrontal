@@ -49,7 +49,7 @@ from prefrontal.todos import avoided_todos, decompose_task
 
 if TYPE_CHECKING:
     from prefrontal.briefing import Briefing
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
 
 #: ``rough_score`` at/above which a day is flagged (the ``encouragement_threshold``
 #: coaching key overrides it). One missed hard commitment (3.0) trips it alone;
@@ -443,17 +443,17 @@ class EncouragementResult:
 def summarize_encouragement(
     store: MemoryStore,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     now: Any | None = None,
     fallback: bool = True,
 ) -> EncouragementResult:
     """Assess the day and, if rough, rewrite the recovery message as warm prose.
 
     Returns the deterministic render on a not-rough day, an empty text with
-    ``rough=False`` when nothing's wrong, or Ollama prose (heuristic fallback) for
+    ``rough=False`` when nothing's wrong, or model prose (heuristic fallback) for
     a rough day — mirroring :func:`prefrontal.briefing.summarize_briefing`.
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations.summarize import summarize_or_fallback
 
     now = now or utcnow()
     assessment = assess_day(store, now=now)
@@ -462,21 +462,19 @@ def summarize_encouragement(
     if not assessment.rough:
         return EncouragementResult(text=rendered, source="heuristic", rough=False)
 
-    client = client or OllamaClient.from_settings()
     system = ENCOURAGEMENT_SYSTEM_PROMPTS.get(
         assessment.tone, ENCOURAGEMENT_SYSTEM_PROMPTS["warm"]
     )
-    try:
-        prose = client.generate(rendered, system=system).strip()
-    except OllamaError:
-        if not fallback:
-            raise
-        return EncouragementResult(text=rendered, source="heuristic", rough=True)
-    if not prose:
-        if not fallback:
-            raise OllamaError("Ollama returned an empty encouragement message.")
-        return EncouragementResult(text=rendered, source="heuristic", rough=True)
-    return EncouragementResult(text=prose, source="llm", rough=True, model=client.model)
+    summary = summarize_or_fallback(
+        rendered,
+        system=system,
+        agent="encouragement",
+        client=client,
+        fallback=fallback,
+    )
+    return EncouragementResult(
+        text=summary.text, source=summary.source, rough=True, model=summary.model
+    )
 
 
 # --- Morning-briefing note (spec §6.2) ---------------------------------------
