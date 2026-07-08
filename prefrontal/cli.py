@@ -39,13 +39,8 @@ from prefrontal.briefing import build_briefing, render_briefing, summarize_brief
 from prefrontal.clarify import MAX_SWEEP_ITEMS
 from prefrontal.clock import TS_FMT
 from prefrontal.coaching import (
-    DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
     collect_cues,
-    decide,
-    note_delivered,
-    record_fired,
-    sweep_stale_nudges,
 )
 from prefrontal.config import get_settings
 from prefrontal.encouragement import (
@@ -70,8 +65,6 @@ from prefrontal.memory.summarizer import (
 from prefrontal.modules import available, enabled_modules
 from prefrontal.modules.self_care import (
     adapt_self_care,
-    mark_self_care_prompted,
-    sweep_unanswered_self_care,
 )
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
@@ -1445,62 +1438,40 @@ def _coach_tick(
     (with ``--deliver``) publishes them plus the proactive overwhelm nudge.
     ``--dry-run`` prints the raw cues and returns without mutating state.
     """
+    from prefrontal.coaching import run_coaching_tick
+    from prefrontal.integrations.ollama import OllamaClient
+
     now = utcnow()
-    ctx = build_context(store, now=now, timezone=settings.timezone)
-    modules = enabled_modules(settings)
-    cues = collect_cues(store, modules, ctx)
     if args.dry_run:
+        # Read-only debug path: show the raw cues without running any of the
+        # (mutating) sweeps or recording anything.
+        ctx = build_context(store, now=now, timezone=settings.timezone)
+        cues = collect_cues(store, enabled_modules(settings), ctx)
         if not cues:
             print("No cues due.")
         for c in cues:
             print(f"[{c.urgency}] {c.module}/{c.intervention}: {c.text}")
         return
-    # Close out prior nudges whose ack window lapsed unanswered → channel
-    # "misses" that shift future channel choice (spec §8). Off the dry-run
-    # path so a debug run never mutates outcome state.
-    swept = sweep_stale_nudges(
-        store,
-        now,
-        ack_window_minutes=store.get_float(
-            "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
-        ),
-    )
-    if swept:
-        print(f"({swept} unanswered nudge(s) logged as channel misses)")
-    # Self-care nudges track latency separately; sweep their unanswered ones
-    # into "ignored" episodes so the cadence learner sees "too frequent".
-    ignored = sweep_unanswered_self_care(store, now)
-    if ignored:
-        print(f"({ignored} unanswered self-care nudge(s) logged as ignored)")
-    # Break down the tasks being avoided (the model decides whether each is
-    # worth it) — the sibling of the /webhooks/coach/check sweep.
-    from prefrontal.integrations.ollama import OllamaClient
-    from prefrontal.todos import sweep_avoided_decompositions
-
+    # The whole tick — the sweeps (in order, before cue collection), collect,
+    # decide, and record — is the shared run_coaching_tick service, so this CLI
+    # and POST /webhooks/coach/check can't drift on what a tick does.
     tick_ollama = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
-    broken = sweep_avoided_decompositions(store, tick_ollama, now=now)
-    if broken:
-        print(f"({broken} avoided task(s) broken down)")
-    # Notice newly-ambiguous items and file an inline clarifying question — the
-    # sibling of the /webhooks/coach/check sweep (never re-asks a known item).
-    from prefrontal.clarify import sweep_ambiguous_items
-
-    asked = sweep_ambiguous_items(store, tick_ollama)
-    if asked:
-        print(f"({len(asked)} ambiguous item(s) flagged for clarification)")
-    decisions = decide(store, cues, ctx)
+    result = run_coaching_tick(store, settings=settings, ollama=tick_ollama, now=now)
+    if result.swept_stale:
+        print(f"({result.swept_stale} unanswered nudge(s) logged as channel misses)")
+    if result.ignored_self_care:
+        print(f"({result.ignored_self_care} unanswered self-care nudge(s) logged as ignored)")
+    if result.decomposed:
+        print(f"({result.decomposed} avoided task(s) broken down)")
+    if result.clarified:
+        print(f"({result.clarified} ambiguous item(s) flagged for clarification)")
+    decisions = result.decisions
     for d in decisions:
         print(f"[{d.channel}] {d.cue.module}/{d.cue.intervention}: {d.text}")
     if not decisions:
-        print(f"Nothing to say right now ({len(cues)} cue(s) held).")
-    if decisions:
-        if args.deliver:
-            _deliver_decisions(unscoped, store, decisions, settings)
-        record_fired(store, decisions, now)
-        # Track interactive nudges so a tap (or the next sweep) records the channel.
-        note_delivered(store, decisions, now)
-        # Stamp self-care delivery time for the adaptive-cadence latency signal.
-        mark_self_care_prompted(store, decisions, now)
+        print(f"Nothing to say right now ({len(result.cues)} cue(s) held).")
+    if decisions and args.deliver:
+        _deliver_decisions(unscoped, store, decisions, settings)
     # Proactive overwhelm nudge — its own edge/cooldown/quiet-hours-defer
     # decision, delivered on this same native tick so panic no longer needs an
     # n8n poll of /webhooks/panic/check. Only on a delivering tick, so a

@@ -433,3 +433,115 @@ def sweep_stale_nudges(
         store.delete_state(key)
         swept += 1
     return swept
+
+
+@dataclass(frozen=True)
+class TickResult:
+    """The outcome of one coaching tick (see :func:`run_coaching_tick`).
+
+    Attributes:
+        decisions: The fire-worthy decisions, already recorded/marked.
+        cues: Every cue collected this tick (a superset of ``decisions``' cues —
+            some were held by suppression). Callers report ``len(cues)`` as "held".
+        swept_stale: Unanswered nudges logged as channel misses this tick.
+        ignored_self_care: Unanswered self-care nudges logged as "ignored".
+        decomposed: Avoided tasks broken down into a first step this tick.
+        clarified: Newly-ambiguous items filed as clarifying questions this tick.
+    """
+
+    decisions: list[Decision]
+    cues: list[Cue]
+    swept_stale: int
+    ignored_self_care: int
+    decomposed: int
+    clarified: int
+
+
+def run_coaching_tick(
+    store: Any,
+    *,
+    settings: Any,
+    ollama: Any,
+    now: datetime | None = None,
+    current_lat: float | None = None,
+    current_lon: float | None = None,
+    display_name: str = "",
+) -> TickResult:
+    """Run one coaching tick: close prior outcomes, refresh inputs, decide, record.
+
+    The single orchestration path behind ``POST /webhooks/coach/check`` and
+    ``prefrontal coach [--deliver]`` (the general form of the anchor's fire-once
+    guard). In order:
+
+    1. Sweep last round's unanswered nudges into channel *misses* and self-care
+       *ignored* episodes (the learn-pass signals, spec §8).
+    2. Refresh avoided-task decompositions and ambiguity questions **before**
+       collecting cues, so ``tiny_first_step`` uses the fresh first step and the
+       clarify queue fills passively. Bounded model calls; no-ops when nothing's
+       due.
+    3. Collect every enabled module's cues, decide channel + suppression, and
+       stamp each decision fired / delivered / self-care-prompted.
+
+    This owns *which sweeps constitute a tick* and their order, so the endpoint
+    and CLI callers can't drift (they previously each inlined this and had). The
+    callers only format or deliver the returned decisions.
+
+    Args:
+        store: A store scoped to the user being coached.
+        settings: Operator settings (timezone).
+        ollama: The model client for the decomposition / clarification sweeps.
+        now: Optional naive-UTC "now" (defaults to :func:`prefrontal.impact.utcnow`).
+        current_lat: Optional latitude for location-aware evaluators.
+        current_lon: Optional longitude for location-aware evaluators.
+        display_name: The user's display name, threaded into the context.
+
+    Returns:
+        A :class:`TickResult`.
+    """
+    from prefrontal.clarify import sweep_ambiguous_items
+    from prefrontal.impact import utcnow
+    from prefrontal.modules import enabled_modules
+    from prefrontal.modules.self_care import (
+        mark_self_care_prompted,
+        sweep_unanswered_self_care,
+    )
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    now = now or utcnow()
+    # Close last round's outcomes first (taps clear their own markers, so what's
+    # swept really went unanswered).
+    swept_stale = sweep_stale_nudges(
+        store,
+        now,
+        ack_window_minutes=store.get_float(
+            "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
+        ),
+    )
+    ignored_self_care = sweep_unanswered_self_care(store, now)
+    # Refresh model-derived inputs *before* collecting cues so tiny_first_step and
+    # the clarify queue see fresh state.
+    decomposed = sweep_avoided_decompositions(store, ollama, now=now)
+    clarified = len(sweep_ambiguous_items(store, ollama))
+    ctx = build_context(
+        store,
+        now=now,
+        timezone=settings.timezone,
+        display_name=display_name,
+        current_lat=current_lat,
+        current_lon=current_lon,
+    )
+    cues = collect_cues(store, enabled_modules(settings), ctx)
+    decisions = decide(store, cues, ctx)
+    # Recorded at decision time (not on confirmed delivery), matching how
+    # outing/check advances last_level when it decides to fire.
+    record_fired(store, decisions, now)
+    note_delivered(store, decisions, now)
+    mark_self_care_prompted(store, decisions, now)
+    return TickResult(
+        decisions=decisions,
+        cues=cues,
+        swept_stale=swept_stale,
+        ignored_self_care=ignored_self_care,
+        decomposed=decomposed,
+        clarified=clarified,
+    )
