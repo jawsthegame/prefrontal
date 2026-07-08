@@ -47,7 +47,7 @@ from prefrontal.scheduling import end_of_local_day_utc, local_day_bounds
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
 
 if TYPE_CHECKING:
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations import Generator
 
 #: Commitments whose latest safe departure falls within this many minutes are
 #: "bearing down soon"; earlier than that and they're not a panic item yet.
@@ -620,15 +620,16 @@ class PanicResult:
 def summarize_panic(
     store: MemoryStore,
     *,
-    client: OllamaClient | None = None,
+    client: Generator | None = None,
     now: Any | None = None,
     fallback: bool = True,
 ) -> PanicResult:
-    """Render the panic triage and optionally rewrite it as prose via Ollama.
+    """Render the panic triage and optionally rewrite it as prose via the model.
 
     Args:
         store: An open :class:`~prefrontal.memory.store.MemoryStore`.
-        client: An Ollama client (defaults to one built from settings).
+        client: A model client (defaults to the one the ``panic`` agent resolves
+            to via :class:`~prefrontal.integrations.provider.ProviderResolver`).
         now: Optional naive-UTC "now".
         fallback: Fall back to the deterministic digest on model failure.
 
@@ -636,24 +637,20 @@ def summarize_panic(
         A :class:`PanicResult`.
 
     Raises:
-        prefrontal.integrations.ollama.OllamaError: If the model fails and
+        prefrontal.integrations.base.ProviderError: If the model fails and
             ``fallback`` is ``False``.
     """
-    from prefrontal.integrations.ollama import OllamaClient, OllamaError
+    from prefrontal.integrations.summarize import summarize_or_fallback
 
     rendered = render_panic(build_panic(store, now=now))
-    client = client or OllamaClient.from_settings()
-    try:
-        prose = client.generate(rendered, system=PANIC_SYSTEM_PROMPT).strip()
-    except OllamaError:
-        if not fallback:
-            raise
-        return PanicResult(text=rendered, source="heuristic")
-    if not prose:
-        if not fallback:
-            raise OllamaError("Ollama returned an empty panic summary.")
-        return PanicResult(text=rendered, source="heuristic")
-    return PanicResult(text=prose, source="llm", model=client.model)
+    summary = summarize_or_fallback(
+        rendered,
+        system=PANIC_SYSTEM_PROMPT,
+        agent="panic",
+        client=client,
+        fallback=fallback,
+    )
+    return PanicResult(text=summary.text, source=summary.source, model=summary.model)
 
 
 # --- Proactive alerting ------------------------------------------------------
