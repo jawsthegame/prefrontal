@@ -54,6 +54,9 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Self-care wind-down check — confirm you're heading to bed (settles it for the
     # night) or snooze a little.
     "winddown": (("winddown_started", "🌙 Winding down"), ("winddown_snooze", "Snooze")),
+    # Self-care movement check — confirm you moved/stretched (settles it for the
+    # day) or snooze a little.
+    "movement": (("movement_stretched", "🧘 Stretched"), ("movement_snooze", "Snooze")),
     # Star-chart award prompt — award a star in one tap, or skip for today.
     "star": (("star_award", "⭐ Yes"), ("star_skip", "Not today")),
     # Weekly mental-load check-in — a gentle self-report (ntfy caps buttons at 3).

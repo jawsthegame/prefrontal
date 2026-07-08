@@ -59,7 +59,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
 | Closed-Loop Trip Tracking | `trip_tracking` | Passively logs undeclared round trips (leave home → return), then asks for a label, category, life-domain, and an honest plain-English "how it went" that feeds the learning engine. Rolls out-of-home time up by life-sphere (shop/work/home/kids/personal) into a **focus-balance** read, with an opt-in "light on kids/personal this week" nudge |
-| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day), "drink some water" (to a daily target), and an opt-in "taken your meds?" (`meds_enabled`), re-asked until met (opt-in via the `self_care` key) |
+| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day), "drink some water" (to a daily target), an opt-in "taken your meds?" (`meds_enabled`), and an opt-in daily-movement floor — "time to move / stretch" (`movement_enabled`) — re-asked until met (opt-in via the `self_care` key) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
 profile, and declares the interventions it provides. Select a subset with

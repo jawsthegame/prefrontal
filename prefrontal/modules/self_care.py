@@ -36,6 +36,15 @@ window-bounded one, an **end hour**):
   it deliberately leans on the engine's quiet-hours gate (a cue outside responsive
   hours is suppressed) so it never nags past bedtime, rather than modelling a
   bedtime itself.
+- **movement** (target 1) — **off by default** even when self-care is on, because
+  an exercise cadence is personal (like meds/winddown). The daily-movement
+  *floor*: a tiny, always-doable minimum (a few minutes of stretching) that
+  survives the worst day, so a movement habit never hits zero. From
+  ``movement_start_hour`` (default 20, the *evening* — anchored to the wind-down
+  ramp, the slot nothing schedules over) it nudges "time to move" every
+  ``movement_reask_minutes`` until one "Stretched" settles it for the day. The
+  re-ask until met is the point: blowing past the exact minute doesn't lose the
+  day, which is what makes it survivable for time-blindness.
 
 So "how many yeses stops it for the day" is just the target (1 for a meal, N for
 water) — except for an open-ended check, which no count ever stops; a check with
@@ -112,6 +121,19 @@ DEFAULT_WINDDOWN_START_HOUR = 21
 DEFAULT_WINDDOWN_REASK_MINUTES = 30
 DEFAULT_WINDDOWN_SNOOZE_MINUTES = 15
 DEFAULT_WINDDOWN_DAILY_TARGET = 1
+#: Movement/stretch defaults (target 1: one "Stretched" and it's done for the day).
+#: The daily-movement *floor* — a tiny, always-doable minimum (a few minutes of
+#: stretching) that survives the worst day, so a movement habit never hits zero.
+#: Like meds/winddown it's the personal-preference kind of nudge (an exercise
+#: cadence is personal), so it's **off even when self_care is on** — opt in via
+#: ``movement_enabled``. It defaults to the *evening*, anchored to the wind-down
+#: ramp: the most protected slot of the day (nothing schedules over going to bed),
+#: and stretching there doubles as a wind-down aid. Target 1 with a re-ask until
+#: met, so blowing past the exact minute doesn't lose the day.
+DEFAULT_MOVEMENT_START_HOUR = 20
+DEFAULT_MOVEMENT_REASK_MINUTES = 45
+DEFAULT_MOVEMENT_SNOOZE_MINUTES = 30
+DEFAULT_MOVEMENT_DAILY_TARGET = 1
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -188,6 +210,15 @@ def winddown_message(name: str = "") -> str:
     return (
         f"{lead} — it's getting late. Time to start winding down for bed. 🌙 "
         "Tap Winding down once you begin."
+    )
+
+
+def movement_message(name: str = "") -> str:
+    """The "time to move/stretch" nudge text, greeting by name when we have one."""
+    lead = f"{name}, movement check" if name else "Movement check"
+    return (
+        f"{lead} — time to move. 🧘 Even 3 minutes of stretching counts. "
+        "Tap Stretched once you have."
     )
 
 
@@ -346,6 +377,28 @@ CHECKS: tuple[BasicCheck, ...] = (
         # progress_headline is a belt-and-braces default it never actually reaches.
         progress_headline="Good — winding down. 🌙",
         done_headline="Good — wind down and rest well. 🌙 Night.",
+    ),
+    BasicCheck(
+        key="movement",
+        intervention="movement_check",
+        enabled_key="movement_enabled",
+        count_key="movement_count",
+        target_key="movement_daily_target",
+        target_default=DEFAULT_MOVEMENT_DAILY_TARGET,
+        snooze_key="movement_snoozed_until",
+        start_hour_key="movement_start_hour",
+        start_hour_default=DEFAULT_MOVEMENT_START_HOUR,
+        interval_key="movement_reask_minutes",
+        interval_default=DEFAULT_MOVEMENT_REASK_MINUTES,
+        snooze_minutes_key="movement_snooze_minutes",
+        snooze_minutes_default=DEFAULT_MOVEMENT_SNOOZE_MINUTES,
+        message=movement_message,
+        confirm_action="movement_stretched",
+        snooze_action="movement_snooze",
+        # Target 1, like the meal/wind-down once-a-day checks: the first confirm
+        # meets it and shows done_headline; progress_headline is never reached.
+        progress_headline="Nice — that's some movement in. 🧘",
+        done_headline="Nice — that's your movement floor for today. 🧘 Well done.",
     ),
 )
 
@@ -884,7 +937,10 @@ def adapt_self_care(store: MemoryStore, now: datetime | None = None) -> list[dic
 
 
 class SelfCareModule(Module):
-    """Nudges the basic needs a focus state quietly overrides (meals, water, meds, sleep)."""
+    """Nudges the basic needs a focus state quietly overrides.
+
+    Meals, water, meds, sleep (wind-down), and a daily-movement floor.
+    """
 
     key = "self_care"
     title = "Self-Care"
@@ -933,6 +989,16 @@ class SelfCareModule(Module):
         "winddown_reask_minutes": str(DEFAULT_WINDDOWN_REASK_MINUTES),
         "winddown_snooze_minutes": str(DEFAULT_WINDDOWN_SNOOZE_MINUTES),
         "winddown_daily_target": str(DEFAULT_WINDDOWN_DAILY_TARGET),
+        # Movement/stretch: the daily-movement floor. Off even when self_care is
+        # on (an exercise cadence is personal, like meds/winddown) — opt in via
+        # movement_enabled. Defaults to the evening, anchored to the wind-down
+        # ramp; target 1 so one stretch settles it for the day, re-asking until
+        # then so a missed moment doesn't lose the day.
+        "movement_enabled": "off",
+        "movement_start_hour": str(DEFAULT_MOVEMENT_START_HOUR),
+        "movement_reask_minutes": str(DEFAULT_MOVEMENT_REASK_MINUTES),
+        "movement_snooze_minutes": str(DEFAULT_MOVEMENT_SNOOZE_MINUTES),
+        "movement_daily_target": str(DEFAULT_MOVEMENT_DAILY_TARGET),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -991,6 +1057,20 @@ class SelfCareModule(Module):
                     "One-tap Winding down / Snooze on ntfy."
                 ),
                 trigger="evening run-up to bed, until you confirm you're winding down",
+                status="active",
+            ),
+            Intervention(
+                name="movement_check",
+                description=(
+                    "From movement_start_hour, ask for a few minutes of movement / "
+                    "stretching and re-ask every movement_reask_minutes until you "
+                    "confirm. The daily-movement floor — a tiny, always-doable "
+                    "minimum that survives the worst day. Off unless "
+                    "movement_enabled — an exercise cadence is personal; defaults "
+                    "to the evening, anchored to the wind-down ramp. One-tap "
+                    "Stretched / Snooze on ntfy."
+                ),
+                trigger="from your movement hour, until you confirm you've moved",
                 status="active",
             ),
         ]

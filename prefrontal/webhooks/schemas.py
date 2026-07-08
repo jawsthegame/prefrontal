@@ -687,8 +687,8 @@ class SelfCareConfig(BaseModel):
 
     Every field is optional so the UI can send a partial update (e.g. just the
     master switch, or just one check's target). ``checks`` is keyed by check key
-    (``meal`` / ``water`` / ``meds`` / ``biobreak`` / ``winddown``); unknown keys
-    are ignored server-side.
+    (``meal`` / ``water`` / ``meds`` / ``biobreak`` / ``winddown`` /
+    ``movement``); unknown keys are ignored server-side.
     """
 
     enabled: bool | None = Field(default=None, description="Master self-care switch.")
@@ -704,7 +704,9 @@ class SelfCareMark(BaseModel):
     notification confirm would.
     """
 
-    key: str = Field(description="Which check to confirm: meal / water / meds / biobreak / winddown.")
+    key: str = Field(
+        description="Which check to confirm: meal / water / meds / biobreak / winddown / movement."
+    )
     undo: bool = Field(
         default=False,
         description="If true, reduce today's count by one (floored at zero) "

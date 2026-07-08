@@ -235,7 +235,9 @@ def _log_self_care(scoped, key, outcome, notes):
 def test_self_care_empty_history_is_zeroed(scoped):
     """No self-care episodes ⇒ one zeroed row per check, in order, at default cadence."""
     rows = build_stats(scoped)["self_care"]
-    assert [r["key"] for r in rows] == ["meal", "water", "meds", "biobreak", "winddown"]
+    assert [r["key"] for r in rows] == [
+        "meal", "water", "meds", "biobreak", "winddown", "movement",
+    ]
     for r in rows:
         assert r["n"] == 0
         assert r["confirmed"] == 0 and r["snoozed"] == 0 and r["ignored"] == 0
