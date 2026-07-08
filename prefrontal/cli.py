@@ -1198,6 +1198,9 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             if summary.category_bias:
                 cats = ", ".join(f"{c}={v}" for c, v in sorted(summary.category_bias.items()))
                 print(f"[{label}] category bias -> {cats}")
+            if summary.activity_bias:
+                acts = ", ".join(f"{a}={v}" for a, v in sorted(summary.activity_bias.items()))
+                print(f"[{label}] activity bias -> {acts}")
             cal = summary.calibration
             if cal is not None and cal.status == "ok":
                 if cal.helps:

@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from prefrontal.memory.patterns import (
+    ACTIVITY_BIAS_PREFIX,
     CATEGORY_BIAS_PREFIX,
     ENERGY_BIAS_PREFIX,
     TYPE_BIAS_PREFIX,
@@ -169,6 +170,7 @@ def build_profile(
             for prefix, label in (
                 (ENERGY_BIAS_PREFIX, "By energy"),
                 (CATEGORY_BIAS_PREFIX, "By category"),
+                (ACTIVITY_BIAS_PREFIX, "By activity"),
             ):
                 dim = [
                     (k[len(prefix):], v.get("value"))

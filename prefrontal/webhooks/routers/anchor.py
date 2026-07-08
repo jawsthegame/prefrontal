@@ -48,6 +48,9 @@ from prefrontal.household import (
 from prefrontal.impact import (
     utcnow,
 )
+from prefrontal.memory.patterns import (
+    resolve_bias,
+)
 from prefrontal.memory.store import (
     MemoryStore,
 )
@@ -250,7 +253,10 @@ def build_router(services: RouterServices) -> APIRouter:
         home_grace = memory.get_float(
             "home_arrive_grace_minutes", DEFAULT_HOME_ARRIVE_GRACE_MINUTES
         )
-        bias = memory.get_float("time_estimation_bias", 1.0)
+        # Outing-specific bias (falls back to global, then 1.0), so a coffee run is
+        # projected against outing history rather than the pooled task multiplier —
+        # mirrors the coaching-tick evaluator in location_anchor.evaluate.
+        bias = resolve_bias(memory, activity="outing")
         commitments = memory.upcoming_commitments()
         # Real travel legs from the phone's current location, so "you're behind"
         # reflects the drive to each venue, not a flat lead. Empty (→ static leads)
