@@ -102,6 +102,19 @@ def test_parse_ics_unfolds_continuation_lines():
     assert events[0]["title"] == "A very long title that folds"
 
 
+def test_parse_ics_reads_recurrence_id_and_url():
+    """RECURRENCE-ID (a moved instance) and URL lines are parsed onto the event."""
+    ics = (
+        "BEGIN:VEVENT\r\nUID:evt-moved\r\nSUMMARY:Moved instance\r\n"
+        "DTSTART;TZID=America/New_York:20990707T100000\r\n"
+        "RECURRENCE-ID;TZID=America/New_York:20990707T090000\r\n"
+        "URL:https://example.com/event/evt-moved\r\nEND:VEVENT\r\n"
+    )
+    (e,) = parse_ics(ics, namespace="work")
+    assert e["recurrence_id"] == "2099-07-07T09:00:00"
+    assert e["url"] == "https://example.com/event/evt-moved"
+
+
 # -- registry (URL sealed) ---------------------------------------------------
 
 

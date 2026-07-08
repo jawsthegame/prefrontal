@@ -90,6 +90,18 @@ def test_commitment_without_a_date_is_logged_but_not_routed(store):
     assert store.recent_triage()[0]["route"] == "commitment"  # classification still logged
 
 
+def test_commitment_with_an_unparseable_date_is_logged_but_not_routed(store):
+    """A garbage `when` (to_utc raises) drops to logged-only, never a bad commitment."""
+    rep = apply(
+        _sig(title="Some meeting"),
+        _decide("commitment", "later", "commitment", when="not-a-date"),
+        store, today=TODAY,
+    )
+    assert rep["routed_ref"] is None
+    assert store.upcoming_commitments() == []
+    assert store.recent_triage()[0]["route"] == "commitment"  # still logged
+
+
 def test_episode_route_logs_an_episode(store):
     rep = apply(
         _sig(title="I made it on time"), _decide("outcome", "none", "episode"),
@@ -129,6 +141,16 @@ def test_non_urgent_does_not_fire(store):
 def test_absent_n8n_is_a_no_op(store):
     rep = apply(_sig(), _decide("action", "now", "todo"), store, n8n=None, today=TODAY)
     assert rep["fired"] is False  # nothing to fire, no error
+
+
+def test_urgent_but_n8n_not_delivered_reports_not_fired(store):
+    """fired mirrors the n8n result: the event is sent, but delivered=False → fired=False."""
+    n8n = FakeN8n(delivered=False)
+    rep = apply(
+        _sig(title="OVERDUE"), _decide("action", "now", "todo"), store, n8n=n8n, today=TODAY
+    )
+    assert len(n8n.calls) == 1     # the urgent event was attempted...
+    assert rep["fired"] is False   # ...but n8n reported it wasn't delivered
 
 
 # --- idempotency -------------------------------------------------------------

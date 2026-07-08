@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, seed_user_state
 from prefrontal.memory.summarizer import build_profile
 from tests.conftest import scoped_default
 
@@ -58,16 +58,14 @@ def test_seed_rows_present(store):
 
 
 def test_seed_is_idempotent_and_non_clobbering():
-    """Re-initializing must not duplicate rows or overwrite user-changed values."""
+    """Re-seeding a user's defaults must not duplicate rows or overwrite user values."""
     with MemoryStore.open(":memory:") as raw:
         store = scoped_default(raw)
         store.set_state("time_estimation_bias", "1.6", source="explicit")
-        # Re-applying the structural schema (init_db) again on the same
-        # connection must not touch the per-user state.
-        from prefrontal.memory.db import SCHEMA_PATH
-
-        store.conn.executescript(SCHEMA_PATH.read_text())
-        store.conn.commit()
+        # Re-run the *per-user* seed — the real non-clobber path. (The old test
+        # re-ran schema.sql, which no longer seeds coaching_state, so its
+        # assertions could not fail regardless of any seeding regression.)
+        seed_user_state(store)
         # Value the user changed is preserved; no duplicate keys.
         assert store.get_state("time_estimation_bias") == "1.6"
         count = store.conn.execute(

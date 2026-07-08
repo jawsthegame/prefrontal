@@ -104,9 +104,9 @@ def test_callback_rejects_disallowed_email(client, monkeypatch):
     assert "set-cookie" not in cb.headers or "prefrontal_session" not in cb.headers["set-cookie"]
 
 
-def test_callback_rejects_bad_state(client, monkeypatch):
-    monkeypatch.setattr(oauth, "_exchange_code_for_email",
-                        lambda code, settings, client=None: "tom@example.com")
+def test_callback_rejects_bad_state(client):
+    # verify_state runs before any code exchange, so a forged state 400s without
+    # the exchange ever being reached (no _exchange_code_for_email patch needed).
     _login_state(client)  # sets a state cookie
     cb = client.get("/auth/google/callback?code=abc&state=forged", follow_redirects=False)
     assert cb.status_code == 400

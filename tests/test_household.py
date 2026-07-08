@@ -832,8 +832,11 @@ def test_household_and_lens_pages_serve(client):
     assert client.get("/household").status_code == 200
     assert client.get("/kids").status_code == 200
     assert client.get("/pets").status_code == 200
-    # /family is retired → redirects to the writable hub (client follows it).
-    assert "/household" in client.get("/family").text
+    # /family is retired → 308-redirects to the writable hub. Assert the redirect
+    # itself (following it and finding "/household" in the hub's body proves
+    # nothing — the hub links to itself regardless).
+    r = client.get("/family", follow_redirects=False)
+    assert r.status_code == 308 and r.headers["location"] == "/household"
 
 
 def test_household_shell_has_chores_routines_and_carrying(client):

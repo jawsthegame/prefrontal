@@ -131,7 +131,7 @@ def test_bootstrap_secret_maps_to_operator(store):
 
 def test_outing_check_returns_delivery_fields(client):
     """The check response carries per-user delivery routing for n8n."""
-    # Configure Sam's delivery target, then start an outing as Sam.
+    # Sam has no delivery target set, so the routing block reports unconfigured.
     client.post(
         "/webhooks/outing/start",
         json={"intention": "coffee", "time_window_minutes": 15},
@@ -144,4 +144,20 @@ def test_outing_check_returns_delivery_fields(client):
     active = resp.json()["active"]
     assert len(active) == 1
     assert "delivery" in active[0]
-    assert active[0]["delivery_configured"] is False  # none set yet
+    assert active[0]["delivery_configured"] is False  # no target set
+
+
+def test_outing_check_reports_delivery_configured_when_target_set(client, store):
+    """With a delivery target set, the routing block flips delivery_configured True."""
+    sam_id = store.get_user("sam")["id"]
+    store.scoped(sam_id).set_state("ntfy_topic", "sam-topic", source="explicit")
+    client.post(
+        "/webhooks/outing/start",
+        json={"intention": "coffee", "time_window_minutes": 15},
+        headers={"X-Prefrontal-Token": USER_TOKEN},
+    )
+    resp = client.post(
+        "/webhooks/outing/check", json={}, headers={"X-Prefrontal-Token": USER_TOKEN}
+    )
+    active = resp.json()["active"]
+    assert active[0]["delivery_configured"] is True

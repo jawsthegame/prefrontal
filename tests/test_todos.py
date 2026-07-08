@@ -591,9 +591,10 @@ def test_all_todos_includes_closed(store):
     a = store.add_todo("open one", category="work")
     b = store.add_todo("done one", category="work")
     store.close_todo(b, status="done")
-    statuses = {t["title"]: t["status"] for t in store.all_todos()}
+    rows = store.all_todos()
+    statuses = {t["title"]: t["status"] for t in rows}
     assert statuses == {"open one": "open", "done one": "done"}
-    assert a  # both present regardless of status
+    assert {a, b} == {t["id"] for t in rows}  # both ids present regardless of status
 
 
 def test_create_todo_returns_category(client):
@@ -682,6 +683,8 @@ def test_heuristics_fill_fields_from_title():
     assert heuristic_estimate("Draft the Q3 plan") == 45.0
     assert heuristic_estimate("Wander aimlessly") == 30.0  # default
     assert heuristic_priority("Pay rent ASAP") == 3
+    assert heuristic_priority("Important: send the deck today") == 2  # _HIGH cue
+    assert heuristic_priority("Reply to Bob") == 1  # no cue → normal
     assert heuristic_priority("Someday learn guitar") == 0
     assert heuristic_energy("Email Bob") == "low"
     assert heuristic_energy("Write the proposal") == "high"
@@ -1180,8 +1183,10 @@ def test_briefing_surfaces_avoided(store):
     store.conn.commit()
     b = build_briefing(store, now=now)
     assert any(a["title"] == "Renew passport" for a in b.avoided)
+    # The avoided todo surfaces in the rendered briefing text (behavioral); we don't
+    # pin the exact header copy, which is incidental and churns on wording tweaks.
     text = render_briefing(b)
-    assert "Keeps sliding" in text and "Renew passport" in text
+    assert "Renew passport" in text
 
 
 # -- outcome capture (closing a todo feeds the learning loop) -----------------
