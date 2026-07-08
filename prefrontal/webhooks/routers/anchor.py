@@ -21,11 +21,6 @@ from fastapi.responses import (
     HTMLResponse,
 )
 
-from prefrontal.briefing import record_briefing_feedback
-from prefrontal.clock import TS_FMT
-from prefrontal.coaching import (
-    resolve_ack,
-)
 from prefrontal.config import (
     Settings,
 )
@@ -34,29 +29,13 @@ from prefrontal.departure import (
     travel_leads,
 )
 from prefrontal.focus_balance import (
-    FOCUS_DOMAINS,
     normalize_focus_domain,
-)
-from prefrontal.household import (
-    CHECKIN_ACTION_RESPONSE,
-    award_stars_and_notify,
-    capped_away_window,
-    checkin_summary,
-    log_chore_done_and_celebrate,
-    week_key,
-)
-from prefrontal.impact import (
-    utcnow,
 )
 from prefrontal.memory.patterns import (
     resolve_bias,
 )
 from prefrontal.memory.store import (
     MemoryStore,
-)
-from prefrontal.modules.hyperfocus import (
-    record_focus_end,
-    record_focus_switched,
 )
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
@@ -74,11 +53,7 @@ from prefrontal.modules.location_anchor import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
-from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
-from prefrontal.panic import (
-    resolve_panic_step,
-)
-from prefrontal.scheduling import local_datetime
+from prefrontal.nudges import apply_nudge_action
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -102,20 +77,6 @@ from prefrontal.webhooks.schemas import (
     OutingStarted,
 )
 from prefrontal.webhooks.services import RouterServices
-
-#: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
-#: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).
-#: Actions absent here (the ``switch_*`` pause resolutions) aren't coaching cues,
-#: so they map to no context and :func:`resolve_ack` no-ops.
-_ACT_CONTEXT = {
-    "focus_end": "focus",
-    "outing_return": "outing",
-    "outing_abandon": "outing",
-    "made_it": "departure",
-    "missed_it": "departure",
-    # One-tap domain filing from the trip-label ask (all resolve the "trip" cue).
-    **{f"trip_domain_{d}": "trip" for d in FOCUS_DOMAINS},
-}
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -473,200 +434,12 @@ def build_router(services: RouterServices) -> APIRouter:
             )
             return _dismiss_page(headline)
 
-        # A tap is an acknowledgement: if the coaching agent delivered this nudge,
-        # record which channel landed (feeds channel_response; spec §8). A no-op
-        # for nudges the engine didn't originate.
-        resolve_ack(memory, _ACT_CONTEXT.get(action, ""), target_id)
-
-        if action == "focus_end":
-            closed = memory.close_focus_session(target_id, status="ended")
-            if closed is None:
-                return _ack("That focus session is already wrapped up.")
-            record_focus_end(memory, closed, outcome=None, breadcrumb=None)
-            label = closed.get("intended_task") or "your session"
-            return _ack(f"Wrapped up “{label}.” Nice work.")
-
-        if action in ("outing_return", "outing_abandon"):
-            status_ = "returned" if action == "outing_return" else "abandoned"
-            closed = memory.close_outing(target_id, status=status_)
-            if closed is None:
-                return _ack("That outing is already closed.")
-            if status_ == "returned":
-                record_outing_return(memory, closed)
-                return _ack("Welcome back — outing logged.")
-            record_outing_abandoned(memory, closed)
-            return _ack("Outing closed. No worries.")
-
-        if action.startswith("trip_domain_"):
-            # One-tap file a just-finished trip into a life-sphere (focus balance).
-            # target_id is the trip id; the domain is the action suffix.
-            domain = action[len("trip_domain_") :]
-            if domain not in FOCUS_DOMAINS:
-                return _ack("That trip filing option is no longer available.")
-            updated = memory.set_trip_domain(target_id, domain)
-            if updated is None:
-                return _ack("That trip is no longer available.")
-            return _ack(f"Filed under {domain}. Thanks — that keeps your balance honest.")
-
-        if action in ("switch_return", "switch_defer", "switch_switch"):
-            # Resolve a reflective pause in one tap (mirrors /webhooks/focus/resolve;
-            # the impulse was already counted when the pause fired). The buttons
-            # ride on the SwitchPause response, so the session is the pull's target.
-            session = memory.get_focus_session(target_id)
-            if session is None or session.get("status") != "active":
-                return _ack("That focus block is already resolved.")
-            task = session.get("intended_task") or "your task"
-            if action == "switch_return":
-                return _ack(f"Staying on “{task}.” 👊")
-            if action == "switch_defer":
-                memory.add_todo(
-                    f"Come back to what pulled you off “{task}”", source="impulse"
-                )
-                memory.mark_switch_deferred(target_id)
-                return _ack(
-                    "Parked it as a todo — back to what you were doing. "
-                    "(Rename it later if you like.)"
-                )
-            closed = memory.close_focus_session(target_id, status="switched")
-            if closed is not None:
-                record_focus_switched(memory, closed)
-            return _ack(f"Switched away from “{task}.” Logged it.")
-
-        if action == "panic_step_done":
-            # target_id is the pending panic episode logged when the nudge fired.
-            done = resolve_panic_step(memory, target_id)
-            if not done:
-                return _ack("Already logged — nice work either way.")
-            return _ack("Logged — you took the first step. 👏 That's the hard part.")
-
-        if action in SELF_CARE_ACTIONS:
-            # A self-care check has no entity id — it acts on "now"/"today", so we
-            # recompute the local date at tap time rather than trust the synthetic
-            # target. apply_self_care_action owns the confirm/snooze semantics.
-            now = utcnow()
-            today = local_datetime(now, settings.timezone).strftime("%Y-%m-%d")
-            headline = apply_self_care_action(memory, action, now=now, today=today)
-            return _ack(headline or "Done.")
-
-        if action == "star_award":
-            # target_id is the star-chart agreement id. Award one star, attributed
-            # to whoever tapped; a crossed reward goal congratulates both parents.
-            result = award_stars_and_notify(
-                memory, target_id, delta=1, awarded_by=user["id"],
-                note="via prompt", settings=settings,
-            )
-            if result is None:
-                return _ack("That star chart is no longer available.")
-            who = result["child_name"] or "the kids"
-            line = f"⭐ Star added for {who} — {result['total']} total."
-            if result["goals_reached"]:
-                line += " 🎉 Reward unlocked!"
-            return _ack(line)
-
-        if action == "star_skip":
-            return _ack("No star today — that's okay. 🙂")
-
-        if action in CHECKIN_ACTION_RESPONSE:
-            # Weekly mental-load check-in: record how *this* parent's week felt
-            # (no entity id — resolve the ISO week at tap time). Once everyone has
-            # replied, send both parents the gentle shared note.
-            from prefrontal.integrations.delivery import (
-                deliver_to_household,
-                household_notice,
-            )
-
-            now_local = local_datetime(utcnow(), settings.timezone)
-            week = week_key(now_local)
-            memory.record_checkin_response(
-                week=week, user_id=user["id"], response=CHECKIN_ACTION_RESPONSE[action]
-            )
-            hid = memory.household_id_or_none()
-            members = [
-                m for m in memory.household_members(hid)
-                if m.get("status") in (None, "active")
-            ] if hid is not None else []
-            responses = memory.checkin_responses(week) if hid is not None else []
-            if members and len(responses) >= len(members):
-                note = checkin_summary([r["response"] for r in responses])
-                deliver_to_household(
-                    memory, hid, household_notice(note, channel="push"), settings=settings
-                )
-            return _ack("Thanks for checking in 💛 That's really helpful.")
-
-        if action == "digest_seen":
-            # Mark the shared sheet seen "now" so the delta digest won't re-surface
-            # these changes — the one-tap equivalent of opening /kids.
-            now = utcnow()
-            memory.set_state(
-                "household_seen_at", now.strftime(TS_FMT), source="inferred"
-            )
-            return _ack("All caught up 💛")
-
-        if action == "chore_done":
-            # target_id is the chore id. Log it done for today (local date),
-            # attributed to whoever tapped — so a partner picking up a slipped
-            # chore closes the loop and stops the miss-handoff re-firing.
-            today = local_datetime(utcnow(), settings.timezone).strftime("%Y-%m-%d")
-            result = log_chore_done_and_celebrate(
-                memory, chore_id=target_id, done_on=today, done_by=user["id"],
-                settings=settings,
-            )
-            if result is None:
-                return _ack("That chore is no longer on the list.")
-            # Finishing a routine's last chore also congratulates both parents.
-            done = result.get("routine_completed")
-            if done:
-                return _ack(f"Done — that wraps up “{done['title']}” for today! 🎉")
-            return _ack(f"Done — “{result['title']}” is sorted for today. 🙌")
-
-        if action == "away_confirm":
-            # The multi-day-absence proposal was accepted: mark this member away so
-            # their chores reassign to the present co-parent. Recompute the window
-            # from the still-open trip at tap time — if they've since returned home
-            # there's no open trip, so it's a friendly no-op rather than marking a
-            # member who's back home as away.
-            from datetime import timedelta
-
-            trip = memory.active_trip()
-            if trip is None:
-                return _ack("Looks like you're back home — nothing to mark. 🙂")
-            now_local = local_datetime(utcnow(), settings.timezone)
-            departed_local = now_local - timedelta(minutes=trip.get("elapsed_minutes") or 0)
-            window = capped_away_window(
-                departed_local.strftime("%Y-%m-%d"), now_local.strftime("%Y-%m-%d")
-            )
-            memory.set_member_away(**window)
-            return _ack(
-                f"Marked you away through {window['ends_on']} — your chores will fall "
-                "to your co-parent while you're gone. 💛 (Tap it away anytime you're back.)"
-            )
-
-        if action in ("briefing_helped", "briefing_not_helped"):
-            # The morning briefing has no entity id — the vote is about "the digest
-            # you just read" (target rides a synthetic 0). Record it; the tally
-            # steers the LLM briefing voice via learned_briefing_guidance.
-            helped = action == "briefing_helped"
-            record_briefing_feedback(memory, helpful=helped)
-            return _ack(
-                "Glad it helped 💛 I'll keep them like this." if helped
-                else "Thanks — I'll make the next one tighter and more focused."
-            )
-
-        # made_it / missed_it — log a commitment's departure outcome.
-        commitment = memory.get_commitment(target_id)
-        title = (commitment or {}).get("title") or "your commitment"
-        made = action == "made_it"
-        memory.log_episode(
-            "departure",
-            acknowledged=True,
-            context=f"commitment: {title}",
-            outcome="success" if made else "miss",
-            notes=f"one-tap: {'made it' if made else 'missed it'}",
-        )
-        memory.dismiss_departure(target_id)
+        # Everything a tapped button *does* — close/record, award, check-in, file
+        # a trip, log a chore, … — lives in the shared apply_nudge_action service,
+        # reusing the same helpers as the dedicated endpoints. The router keeps
+        # only verify → scope → apply → ack.
         return _ack(
-            f"Logged — you made it to “{title}.” 🎯" if made
-            else f"Logged — ran late for “{title}.” It happens."
+            apply_nudge_action(memory, action, target_id, user=user, settings=settings)
         )
 
     @router.get("/outings", tags=["anchor"])
