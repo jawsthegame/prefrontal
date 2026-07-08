@@ -21,7 +21,8 @@ capability with real examples, plus an API/CLI reference.
 - [**schema.md**](schema.md) — the SQLite memory model (episodes, patterns, commitments, todos, household tables, …).
 - [**entity-relationship.md**](entity-relationship.md) — the ERD: every table and its foreign-key relationships, as a Mermaid diagram.
 - [**interventions.md**](interventions.md) — every module's interventions (what each does, its trigger, its status).
-- [`../ROADMAP.md`](../ROADMAP.md) — what's shipped and what's planned.
+- [`../ROADMAP.md`](../ROADMAP.md) — what's planned and still open.
+- [`../CHANGELOG.md`](../CHANGELOG.md) — what's already shipped.
 
 **Design specs** (the "why" behind individual pieces)
 - [**household-sheet.md**](household-sheet.md) — the shared co-parent sheet / Parent-pack backbone.
