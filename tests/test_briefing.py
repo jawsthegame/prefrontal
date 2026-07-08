@@ -373,6 +373,14 @@ def test_summarize_briefing_folds_feedback_into_prompt(store):
     assert "Tighten up" in client.system
 
 
+def test_summarize_briefing_prompt_mirrors_zone_structure(store):
+    """The LLM voice is told to keep the render's three scannable zones."""
+    client = _CapturingClient()
+    summarize_briefing(store, client=client)
+    for zone in ("📅 Today", "🎯 On your radar", "🔎 Looking back"):
+        assert zone in client.system
+
+
 def test_summarize_briefing_llm_and_fallback(store):
     """LLM prose when available; deterministic digest on failure."""
     ok = summarize_briefing(store, client=_FakeClient(reply="Morning! Light day ahead."))

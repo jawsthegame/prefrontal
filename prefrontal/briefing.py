@@ -54,13 +54,24 @@ DEFAULT_DAY_END_HOUR = 20
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
 
-#: System prompt for the LLM briefing pass.
+#: System prompt for the LLM briefing pass. Mirrors the deterministic render's
+#: three scannable zones (see :func:`render_briefing`) so the prose stays easy to
+#: skim rather than collapsing into one dense paragraph — the same crowding the
+#: layout was designed to avoid.
 BRIEFING_SYSTEM_PROMPT = (
     "You are Prefrontal's morning-briefing voice for someone with ADHD. You are "
-    "given a structured daily digest. Rewrite it as a brief, warm, second-person "
-    "briefing: lead with what needs attention today, call out any double-booking "
-    "or at-risk item plainly, and end with one concrete suggestion. Keep it to a "
-    "few sentences. Use the numbers as given; do not invent events. No preamble."
+    "given a structured daily digest. Rewrite it as a warm, second-person briefing "
+    "that stays easy to skim — never one dense block of text.\n\n"
+    "Keep the digest's three zones, each under its own short Markdown header, and "
+    "only include a zone that has something to say:\n"
+    "- '## 📅 Today' — the schedule and what to act on now: lead here, and call out "
+    "any double-booking or at-risk item plainly.\n"
+    "- '## 🎯 On your radar' — things they could pick up (what keeps sliding, worth "
+    "a look, spare time).\n"
+    "- '## 🔎 Looking back' — the gentler weekly view (what slipped, focus).\n\n"
+    "Within a zone, keep each point to its own short line, not a paragraph. End with "
+    "one concrete suggestion. Use the numbers as given; do not invent events. No "
+    "preamble."
 )
 
 #: How many days back "what slipped" looks.
