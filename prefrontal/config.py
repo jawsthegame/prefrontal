@@ -185,6 +185,14 @@ class Settings:
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from: str = ""
+    # Operator-default recipient for the ``voice``-channel escalation (the outing
+    # 150% "your phone rings" nudge the coaching tick now places natively via
+    # Twilio, replacing the n8n call node). Empty ⇒ no operator default; a per-user
+    # ``twilio_to`` in ``coaching_state`` targets each person's own phone (and, on a
+    # multi-user box, is required — the operator default is withheld so one person's
+    # call never rings another's phone). The account creds above are shared; only
+    # this recipient number is per-user.
+    twilio_to: str = ""
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     #: Logical account names that are Gmail inboxes (resolved from IMAP host
@@ -416,6 +424,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN", "").strip(),
         twilio_from=os.environ.get("TWILIO_FROM", "").strip(),
+        twilio_to=os.environ.get("TWILIO_TO", "").strip(),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         gmail_accounts=gmail_accounts,

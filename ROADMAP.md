@@ -91,9 +91,14 @@ the first test. Code follow-ups below are optional polish.
   **Made it / Missed it** buttons through the native delivery client. The endpoint
   stays for now (shares nothing that double-fires — the engine owns the coach-side
   dedup), to be deprecated once the tick has run clean. Covered by
-  `tests/test_modules.py`. *(Next folds toward a fully n8n-free delivery: panic and
-  the household sweeps as coach cues / native ticks; then a launchd `coach
-  --deliver` schedule replacing the nudge workflows.)*
+  `tests/test_modules.py`. *(That fold toward n8n-free delivery has since landed:
+  panic rides the same coach tick, the household sweeps have their own native
+  launchd job (`com.prefrontal-household.plist`), and **a launchd `coach --deliver`
+  schedule now drives the tick** (`deploy/com.prefrontal-coach.plist` +
+  `deploy/coach.sh`, every 60s), replacing the coach-check / hyperfocus-check /
+  departure-reminder / panic-check poll workflows in one job. With the native
+  Twilio voice call below, the outing 150% escalation is native too — so the nudge
+  workflows can all be deactivated; see "Delivery layer".)*
 - **Parent pack / shared household sheet** ✅ — the co-parent surface shipped end
   to end (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; the `/kids` dashboard + `/family` glance;
@@ -911,6 +916,27 @@ ordered by leverage; each is independent but builds on denser capture.
     engine's `suppressed`/`record_fired` already gated the decision; this layer
     only routes and sends. Wired into `prefrontal coach --deliver` (a launchd
     tick can now deliver without n8n); covered by `tests/test_delivery.py`.
+  - **native Twilio voice call for the `critical`/`voice` channel** ✅ — the last
+    thing the n8n delivery workflows still owned. `TwilioVoiceClient`
+    (`prefrontal/integrations/delivery.py`) places the outing 150% escalation call
+    natively via Twilio's REST API using **inline TwiML** (`<Say>`), so no public
+    callback URL is needed — as self-contained and local-first as the other
+    transports (no-ops when unconfigured; errors reported, never raised; shares the
+    account creds + `normalize_phone` with the invite `TwilioSmsClient`). The
+    `voice` branch now tries local **TTS** first (you're at the machine), then a
+    **call** when Twilio is configured (you're out — the true critical case), then
+    falls back to a max-priority push, so a `voice` cue is never dropped. Account
+    creds + caller-ID are the operator's; the recipient (`twilio_to` / `TWILIO_TO`)
+    is per-user routing like an ntfy topic and is withheld on a multi-user box so a
+    call never rings the wrong phone. Covered by `tests/test_delivery.py`.
+  - **launchd `coach --deliver` schedule** ✅ — `deploy/com.prefrontal-coach.plist`
+    + `deploy/coach.sh` run the native tick every 60s (`coach --deliver
+    --all-users`), fanning over every enabled module and delivering what fired —
+    replacing the coach-check, hyperfocus-check, departure-reminder, and
+    panic-check n8n poll workflows in one job. Per-user delivery via `resolve_route`
+    (a user without their own target is computed but never delivered to the
+    operator's device). Household sweeps and calendar/mail sync have their own
+    native launchd jobs too (`com.prefrontal-{household,calendar,mail}.plist`).
   - **proactive panic nudge — first step inline + open-triage button** ✅ — the
     overwhelm nudge already carried the first step in its message; it now also
     returns an `actions` list (`panic_actions`, a signed-free ntfy `view` button)
@@ -924,7 +950,8 @@ ordered by leverage; each is independent but builds on denser capture.
   - **ntfy is now the default delivery across the board** ✅ — every remaining
     Pushover-based n8n workflow was converted to publish to ntfy (the
     `prefrontal-me` topic): departure-reminder, coffee-shop-nudge (the 50%/100%
-    pushes; the 150% **Twilio call stays**), hyperfocus-check, calendar-sync
+    pushes; the 150% Twilio call has since moved native too — see the
+    `TwilioVoiceClient` bullet above), hyperfocus-check, calendar-sync
     (double-booking + possible-conflict alerts), and morning-briefing — joining
     panic-check, coach-check, interactive-nudge, and encouragement which already
     did. Each nudge workflow passes the endpoint's signed `actions` through so the

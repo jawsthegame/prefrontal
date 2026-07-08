@@ -20,7 +20,9 @@ from prefrontal.integrations.delivery import (
     NtfyClient,
     PushoverClient,
     Route,
+    TwilioVoiceClient,
     resolve_route,
+    voice_twiml,
 )
 from prefrontal.memory.store import MemoryStore
 from prefrontal.webhooks.oauth import verify_action
@@ -296,6 +298,7 @@ def _mock_client(handler) -> DeliveryClient:
     return DeliveryClient(
         ntfy=NtfyClient(transport=transport),
         pushover=PushoverClient(transport=transport),
+        voice=TwilioVoiceClient(transport=transport),
     )
 
 
@@ -483,6 +486,148 @@ def test_voice_speaks_locally_when_tts_enabled():
     assert result.transport == "tts"
     assert result.delivered is True
     assert tts.spoken == ("Still out — heading back?", True)
+
+
+# -- voice → Twilio call (the native 150% escalation) ------------------------
+
+
+def _twilio_route(**kw) -> Route:
+    base = dict(
+        twilio_account_sid="AC123", twilio_auth_token="tok",
+        twilio_from="+15550001111", twilio_to="+15559998888",
+    )
+    base.update(kw)
+    return Route(**base)
+
+
+def test_voice_twiml_escapes_and_wraps():
+    assert voice_twiml("back now") == "<Response><Say>back now</Say></Response>"
+    # A stray & / < can't malform the payload.
+    assert voice_twiml("A & B <x>") == "<Response><Say>A &amp; B &lt;x&gt;</Say></Response>"
+
+
+def test_voice_places_twilio_call_when_configured():
+    captured: dict = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["body"] = request.read().decode()
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(201)  # Twilio returns 201 Created on a queued call
+
+    client = _mock_client(handler)
+    result = client.deliver(_decision("voice", context_key="outing"), _twilio_route())
+
+    assert result.transport == "twilio" and result.delivered is True
+    assert result.channel == "voice" and result.status_code == 201
+    assert captured["url"] == "https://api.twilio.com/2010-04-01/Accounts/AC123/Calls.json"
+    # From/To and the spoken TwiML all ride in the form body; auth is basic.
+    assert "From=%2B15550001111" in captured["body"]
+    assert "To=%2B15559998888" in captured["body"]
+    assert "Say" in captured["body"] and captured["auth"].startswith("Basic ")
+
+
+def test_voice_prefers_local_tts_over_calling(store):
+    """TTS (you're at the machine) wins over a call when both are available."""
+    class _FakeTTS:
+        def speak(self, message, *, enabled):
+            return DeliveryResult(channel="voice", transport="tts", delivered=True)
+
+    called = False
+
+    def handler(request):
+        nonlocal called
+        called = True
+        return httpx.Response(201)
+
+    client = DeliveryClient(
+        tts=_FakeTTS(), voice=TwilioVoiceClient(transport=httpx.MockTransport(handler))
+    )
+    result = client.deliver(_decision("voice"), _twilio_route(tts_enabled=True))
+    assert result.transport == "tts" and called is False  # never dialed
+
+
+def test_voice_falls_back_to_push_when_twilio_unconfigured():
+    """No Twilio (and no TTS) → a voice cue still lands as a max-priority ntfy push."""
+    captured: dict = {}
+
+    def handler(request):
+        import json
+
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(200)
+
+    client = _mock_client(handler)
+    result = client.deliver(_decision("voice"), Route(ntfy_topic="me"))
+    assert result.transport == "ntfy" and result.delivered is True
+    assert captured["body"]["priority"] == 5  # voice → ntfy max/urgent
+
+
+def test_voice_call_no_op_without_credentials():
+    called = False
+
+    def handler(request):
+        nonlocal called
+        called = True
+        return httpx.Response(201)
+
+    result = TwilioVoiceClient(transport=httpx.MockTransport(handler)).call(
+        "", "", sender="", to="", message="hi"
+    )
+    assert result.delivered is False and called is False
+    assert result.transport == "twilio" and "not configured" in result.detail
+
+
+def test_voice_call_rejects_invalid_recipient():
+    called = False
+
+    def handler(request):
+        nonlocal called
+        called = True
+        return httpx.Response(201)
+
+    result = TwilioVoiceClient(transport=httpx.MockTransport(handler)).call(
+        "AC123", "tok", sender="+15550001111", to="not-a-number", message="hi"
+    )
+    assert result.delivered is False and called is False  # never dialed a bad number
+
+
+def test_voice_call_transport_error_is_reported_not_raised():
+    def handler(request):
+        raise httpx.ConnectError("network down")
+
+    result = TwilioVoiceClient(transport=httpx.MockTransport(handler)).call(
+        "AC123", "tok", sender="+15550001111", to="+15559998888", message="hi"
+    )
+    assert result.delivered is False and "failed" in result.detail
+
+
+def test_resolve_route_twilio_recipient_is_per_user_target(store):
+    # Account creds + caller-ID are the operator's (non-targeting → always default);
+    # the recipient number is per-user, honored from coaching_state.
+    store.set_state("twilio_to", "+15551234567", source="explicit")
+    settings = Settings(
+        twilio_account_sid="AC", twilio_auth_token="tok",
+        twilio_from="+15550001111", twilio_to="+15550000000",
+    )
+    route = resolve_route(store, settings)
+    assert route.twilio_account_sid == "AC" and route.twilio_from == "+15550001111"
+    assert route.twilio_to == "+15551234567"  # per-user wins
+
+
+def test_resolve_route_withholds_twilio_recipient_in_multi_user(store):
+    # The recipient number is a device target, so on a multi-user box an
+    # unprovisioned user must NOT inherit the operator's — that would ring the
+    # wrong phone. The shared account creds still default.
+    store.create_user("second", display_name="Second")
+    settings = Settings(
+        twilio_account_sid="AC", twilio_auth_token="tok",
+        twilio_from="+15550001111", twilio_to="+15550000000",
+    )
+    route = resolve_route(store, settings)
+    assert route.twilio_to == ""                     # withheld — no wrong-phone call
+    assert route.twilio_account_sid == "AC"          # shared account cred — kept
+    assert route.twilio_from == "+15550001111"
 
 
 def test_deliver_all_returns_one_result_per_decision():
