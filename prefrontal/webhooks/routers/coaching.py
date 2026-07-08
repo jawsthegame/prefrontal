@@ -62,6 +62,7 @@ _CUE_ACTION_KIND = {
     "meds": ("meds", "target"),
     "biobreak": ("biobreak", "target"),
     "winddown": ("winddown", "target"),
+    "movement": ("movement", "target"),
     "trip": ("trip_label", "trip_id"),
     "away_proposal": ("away", "trip_id"),
 }

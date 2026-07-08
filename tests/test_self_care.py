@@ -414,12 +414,93 @@ def test_winddown_relies_on_quiet_hours_not_an_end_hour(store):
     assert suppressed(store, early, ok) is False
 
 
+# -- movement / stretch: a morning once-a-day floor, off by default (like meds) --
+
+
+def _movement_only(store):
+    """Enable self-care with only the movement check on (it's opt-in)."""
+    store.set_state("self_care", "on")
+    for other in ("meal", "water", "meds", "biobreak"):
+        store.set_state(f"{other}_enabled", "off")
+    store.set_state("movement_enabled", "on")
+
+
+def test_movement_off_by_default_but_opt_in_fires(store):
+    """Movement stays silent even with self_care on until movement_enabled is set."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_enabled", "off")
+    store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
+    at_8 = _ctx(datetime(2026, 7, 2, 8, 0, 0), name="Tom")
+    assert SelfCareModule().evaluate(store, at_8) == []  # off by default
+    store.set_state("movement_enabled", "on")
+    cues = SelfCareModule().evaluate(store, at_8)
+    assert [c.context_key for c in cues] == ["movement"]
+    assert cues[0].intervention == "movement_check"
+    assert "move" in cues[0].text.lower() and "stretch" in cues[0].text.lower()
+
+
+def test_movement_silent_before_its_morning_start(store):
+    """Nothing before the 07:00 morning-coffee start; it fires once past it."""
+    _movement_only(store)
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 6, 0, 0))) == []
+    morning = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0)))
+    assert _by_kind(morning, "movement")
+
+
+def test_movement_start_hour_is_configurable(store):
+    """The anchor is a one-setting change — an evening person can move it to 20:00."""
+    _movement_only(store)
+    store.set_state("movement_start_hour", "20")
+    # Past the default 07:00 but before the reconfigured 20:00 — silent.
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 9, 0, 0))) == []
+    evening = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 20, 30, 0)))
+    assert _by_kind(evening, "movement")
+
+
+def test_movement_silent_once_confirmed(store):
+    """One 'Stretched' settles it for the day (target 1), re-arming next day."""
+    _movement_only(store)
+    store.set_state("movement_count", "2026-07-02|1")  # target 1 — done for the day
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0))) == []
+    # A new day re-arms it (the count is date-scoped).
+    assert _by_kind(
+        SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 7, 30, 0))), "movement"
+    )
+
+
+def test_movement_message_greets_by_name():
+    from prefrontal.modules.self_care import movement_message
+    assert movement_message("Tom").startswith("Tom, movement check")
+    assert movement_message().startswith("Movement check")
+
+
+def test_movement_status_has_no_end_hour(store):
+    """Like meal/meds/winddown it's bounded by its target + responsive hours, not a wall clock."""
+    status = self_care_status(store, datetime(2026, 7, 2, 20, 0, 0), "UTC")
+    by_key = {c["key"]: c for c in status["checks"]}
+    assert by_key["movement"]["end_hour"] is None
+    assert by_key["movement"]["open_ended"] is False
+
+
+def test_act_movement_stretched_counts_logs_and_settles(client, store):
+    """A 'Stretched' tap counts toward target 1, logs an episode, done for the day."""
+    token = sign_action(DEFAULT_HANDLE, "movement_stretched", 20260702, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("movement_count") == f"{today}|1"  # target 1 met
+    eps = store.episodes_by_type("self_care")
+    assert eps and eps[0]["outcome"] == "confirmed" and "movement" in eps[0]["context"]
+
+
 # -- one-tap actions ---------------------------------------------------------
 
 
 def test_self_care_actions_in_allowlist():
     for action in ("meal_ate", "meal_snooze", "water_drank", "water_snooze",
-                   "meds_took", "meds_snooze", "winddown_started", "winddown_snooze"):
+                   "meds_took", "meds_snooze", "winddown_started", "winddown_snooze",
+                   "movement_stretched", "movement_snooze"):
         token = sign_action(DEFAULT_HANDLE, action, 20260702, SIGNING)
         assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, action, 20260702)
 
@@ -640,7 +721,7 @@ def test_status_reports_off_master_switch(store):
     assert status["enabled"] is False
     # Even off, the per-check shape is present so the card can render it.
     keys = {c["key"] for c in status["checks"]}
-    assert keys == {"meal", "water", "meds", "biobreak", "winddown"}
+    assert keys == {"meal", "water", "meds", "biobreak", "winddown", "movement"}
 
 
 def test_status_reports_progress_and_meds_disabled(store):
