@@ -25,19 +25,12 @@ from fastapi import (
 )
 
 from prefrontal.clock import TS_FMT
-from prefrontal.clock import (
-    parse_ts as _parse_dt_or_none,
-)
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
     BALANCE_WINDOW_DAYS,
     award_stars_and_notify,
     balance_view,
     build_sheet,
-    checkin_due,
-    checkin_question,
-    digest_interval_ok,
-    digest_message,
     log_chore_done_and_celebrate,
     normalize_checkin_config,
     normalize_chore,
@@ -45,10 +38,11 @@ from prefrontal.household import (
     normalize_routine,
     parse_star_tiers,
     parse_structured,
-    prompt_due,
-    prompt_question,
     render_sheet,
+    run_checkin_sweep,
     run_chores_check,
+    run_digest_sweep,
+    run_star_prompt_sweep,
     unseen_changes,
     week_key,
 )
@@ -103,17 +97,6 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "household" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-
-    def _child_name(ctx: ScopedRequest, child_id: int) -> str | None:
-        """The roster name for ``child_id`` (``None`` for household-wide id 0).
-
-        Searches the whole roster — kids and pets — since a fact/agreement can hang
-        off either (they share the ``children.id`` space).
-        """
-        if not child_id:
-            return None
-        roster = ctx.store.children() + ctx.store.pets()
-        return next((m["name"] for m in roster if m["id"] == child_id), None)
 
     def _valid_category(value: str) -> str:
         cat = normalize_fact_category(value)
@@ -531,42 +514,7 @@ def build_router(services: RouterServices) -> APIRouter:
         one-tap "did <kid> earn a star?" push, and stamps ``last_prompted_at`` so it
         fires once per local day. Idempotent — a second call the same day is a no-op.
         """
-        from prefrontal.integrations.delivery import (
-            deliver_to_household,
-            household_prompt_notice,
-        )
-
-        now = utcnow()
-        now_local = local_datetime(now, resolved_settings.timezone)
-        hid = ctx.store.household_id_or_none()
-        sent: list[dict[str, Any]] = []
-        for agreement in ctx.store.agreements():
-            structured = parse_structured(agreement.get("structured"))
-            last_local = None
-            if agreement.get("last_prompted_at"):
-                last_dt = _parse_dt_or_none(agreement["last_prompted_at"])
-                last_local = (
-                    local_datetime(last_dt, resolved_settings.timezone)
-                    if last_dt else None
-                )
-            if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
-                continue
-            child_name = _child_name(ctx, agreement.get("child_id") or 0)
-            question = prompt_question(structured, child_name, agreement["title"])
-            notified = deliver_to_household(
-                ctx.store,
-                hid,
-                household_prompt_notice(question, agreement["id"], channel="push"),
-                settings=resolved_settings,
-                base_url=resolved_settings.oauth_base_url,
-                secret=resolved_settings.session_secret,
-            )
-            ctx.store.mark_prompted(agreement["id"])
-            sent.append(
-                {"agreement_id": agreement["id"], "title": agreement["title"],
-                 "question": question, "notified": notified}
-            )
-        return {"sent": sent, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
+        return run_star_prompt_sweep(ctx.store, settings=resolved_settings)
 
     # -- weekly mental-load check-in ------------------------------------------
 
@@ -596,38 +544,14 @@ def build_router(services: RouterServices) -> APIRouter:
         endpoint pushes both parents the warm one-tap self-report and stamps
         ``checkin_last_sent_at`` so it fires once that week. Idempotent within a week.
         """
-        now_local = local_datetime(utcnow(), resolved_settings.timezone)
-        # Load-balancing is a two-parent concern — a solo household skips it.
-        if not ctx.store.is_shared_household():
-            return {"sent": False, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
-        from prefrontal.integrations.delivery import (
-            deliver_to_household,
-            household_checkin_notice,
-        )
-
-        config = ctx.store.get_checkin_config()
-        last_local = None
-        if config.get("last_sent_at"):
-            last_dt = _parse_dt_or_none(config["last_sent_at"])
-            last_local = (
-                local_datetime(last_dt, resolved_settings.timezone) if last_dt else None
-            )
-        if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
-            return {"sent": False, "checked_at": now_local.strftime("%Y-%m-%d %H:%M")}
-        notified = deliver_to_household(
-            ctx.store,
-            ctx.store.household_id_or_none(),
-            household_checkin_notice(checkin_question(), channel="push"),
-            settings=resolved_settings,
-            base_url=resolved_settings.oauth_base_url,
-            secret=resolved_settings.session_secret,
-        )
-        ctx.store.mark_checkin_sent()
-        return {
-            "sent": True,
-            "notified": notified,
-            "checked_at": now_local.strftime("%Y-%m-%d %H:%M"),
-        }
+        result = run_checkin_sweep(ctx.store, settings=resolved_settings)
+        if result["sent"]:
+            return {
+                "sent": True,
+                "notified": result["notified"],
+                "checked_at": result["checked_at"],
+            }
+        return {"sent": False, "checked_at": result["checked_at"]}
 
     # -- daily delta digest ---------------------------------------------------
 
@@ -660,41 +584,8 @@ def build_router(services: RouterServices) -> APIRouter:
         there's anything new and it's been ~a day since their last digest — send
         just that member a warm catch-up. Silent when nothing's new; opt-in.
         """
-        now = utcnow()
-        now_str = now.strftime(TS_FMT)
-        # Nothing to balance in a household of one — skip (and it can't have any
-        # "other parent" changes anyway).
-        if not ctx.store.is_shared_household() or not ctx.store.get_digest_enabled():
-            return {"sent": [], "checked_at": now_str}
-        from prefrontal.integrations.delivery import (
-            deliver_to_member,
-            household_digest_notice,
-        )
-
-        hid = ctx.store.household_id_or_none()
-        sent: list[dict[str, Any]] = []
-        for member in ctx.store.household_members(hid):
-            if member.get("status") not in (None, "active"):
-                continue
-            m_store = ctx.store.scoped(member["id"])
-            digested = m_store.get_state("household_digested_at")
-            since = max(m_store.get_state("household_seen_at") or "", digested or "")
-            changes = unseen_changes(m_store, viewer_id=member["id"], since=since)
-            if not changes or not digest_interval_ok(digested, now):
-                continue
-            delivery = deliver_to_member(
-                m_store,
-                household_digest_notice(digest_message(changes), channel="push"),
-                handle=member["handle"],
-                settings=resolved_settings,
-                base_url=resolved_settings.oauth_base_url,
-                secret=resolved_settings.session_secret,
-            )
-            m_store.set_state("household_digested_at", now_str, source="inferred")
-            sent.append(
-                {"handle": member["handle"], "count": len(changes), "delivery": delivery}
-            )
-        return {"sent": sent, "checked_at": now_str}
+        result = run_digest_sweep(ctx.store, settings=resolved_settings)
+        return {"sent": result["sent"], "checked_at": result["checked_at"]}
 
     # -- shared shopping list -------------------------------------------------
 

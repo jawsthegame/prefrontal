@@ -1157,6 +1157,38 @@ def test_star_prompt_check_skips_charts_without_a_schedule(client):
     ).status_code == 404  # non-member
 
 
+def test_household_sweep_services_expose_skip_reasons(store, dana):
+    """The shared sweep services return a ``reason`` the CLI and endpoint branch on.
+
+    The star-prompt / check-in / digest sweeps used to be duplicated inline in both
+    the router and the CLI; they now live once in ``prefrontal.household`` and the
+    two callers only format the result. The ``reason`` is what lets the CLI print
+    "single-parent" vs "digest off" vs "not due" without re-deriving the guard.
+    """
+    from prefrontal.household import (
+        run_checkin_sweep,
+        run_digest_sweep,
+        run_star_prompt_sweep,
+    )
+
+    settings = Settings()
+    # Shared household (Dana + Alex): star charts none → nothing sent; the check-in
+    # and delta digest are opt-in (both default off) → not_due / disabled.
+    assert run_star_prompt_sweep(dana, settings=settings)["sent"] == []
+    checkin = run_checkin_sweep(dana, settings=settings)
+    assert checkin["sent"] is False and checkin["reason"] == "not_due"
+    digest = run_digest_sweep(dana, settings=settings)
+    assert digest["sent"] == [] and digest["reason"] == "disabled"
+
+    # A solo household skips both as not_shared — load-balancing is a two-parent thing.
+    provision_user(store, "sol", display_name="Sol", token="sol-tok")
+    hid = store.create_household("Solo House")
+    store.set_user_household("sol", hid)
+    sol = store.scoped(store.get_user("sol")["id"])
+    assert run_checkin_sweep(sol, settings=settings)["reason"] == "not_shared"
+    assert run_digest_sweep(sol, settings=settings)["reason"] == "not_shared"
+
+
 # --- scheduled award prompts: one-tap buttons + tap --------------------------
 
 

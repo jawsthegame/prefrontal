@@ -38,7 +38,6 @@ from prefrontal import __version__
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.clarify import MAX_SWEEP_ITEMS
 from prefrontal.clock import TS_FMT
-from prefrontal.clock import parse_ts as _parse_last
 from prefrontal.coaching import (
     DEFAULT_ACK_WINDOW_MINUTES,
     build_context,
@@ -841,50 +840,24 @@ def _digest_cli(store, args, settings) -> int:
     trigger or a manual test. Self-suppressing: silent per parent when there's
     nothing new or they were digested within the last day.
     """
-    from prefrontal.household import (
-        digest_interval_ok,
-        digest_message,
-        unseen_changes,
-    )
-    from prefrontal.integrations.delivery import (
-        deliver_to_member,
-        household_digest_notice,
-    )
+    from prefrontal.household import run_digest_sweep
 
     scoped = _resolve_user_store(store, args.user)
-    hid = scoped.household_id_or_none()
-    if hid is None:
+    if scoped.household_id_or_none() is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
-    if not scoped.is_shared_household():
+    result = run_digest_sweep(scoped, settings=settings)
+    if result["reason"] == "not_shared":
         print("Single-parent household — the delta digest is off.")
         return 0
-    if not scoped.get_digest_enabled():
+    if result["reason"] == "disabled":
         print("The daily digest is off for this household.")
         return 0
-    now = utcnow()
-    now_str = now.strftime(TS_FMT)
-    sent = 0
-    for member in scoped.household_members(hid):
-        if member.get("status") not in (None, "active"):
-            continue
-        m_store = store.scoped(member["id"])
-        digested = m_store.get_state("household_digested_at")
-        since = max(m_store.get_state("household_seen_at") or "", digested or "")
-        changes = unseen_changes(m_store, viewer_id=member["id"], since=since)
-        if not changes or not digest_interval_ok(digested, now):
-            continue
-        row = deliver_to_member(
-            m_store,
-            household_digest_notice(digest_message(changes), channel="push"),
-            handle=member["handle"], settings=settings,
-            base_url=settings.oauth_base_url, secret=settings.session_secret,
-        )
-        m_store.set_state("household_digested_at", now_str, source="inferred")
+    for item in result["sent"]:
+        row = item["delivery"]
         state = "sent" if row["delivered"] else "not sent"
-        print(f"  → {member['handle']}: {len(changes)} change(s) — {state} ({row['detail']})")
-        sent += 1
-    if not sent:
+        print(f"  → {item['handle']}: {item['count']} change(s) — {state} ({row['detail']})")
+    if not result["sent"]:
         print("No digests to send (everyone's caught up or recently digested).")
     return 0
 
@@ -896,37 +869,20 @@ def _checkin_cli(store, args, settings) -> int:
     trigger or a manual test. No-op (with a message) when the check-in is off or
     already sent this week.
     """
-    from prefrontal.household import checkin_due, checkin_question
-    from prefrontal.integrations.delivery import (
-        deliver_to_household,
-        household_checkin_notice,
-    )
-    from prefrontal.scheduling import local_datetime
+    from prefrontal.household import run_checkin_sweep
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
-    if not scoped.is_shared_household():
+    result = run_checkin_sweep(scoped, settings=settings)
+    if result["reason"] == "not_shared":
         print("Single-parent household — the load check-in is off.")
         return 0
-    now_local = local_datetime(utcnow(), settings.timezone)
-    config = scoped.get_checkin_config()
-    last_local = None
-    last_dt = _parse_last(config["last_sent_at"]) if config.get("last_sent_at") else None
-    if last_dt is not None:  # a malformed stored stamp reads as "never sent"
-        last_local = local_datetime(last_dt, settings.timezone)
-    if not checkin_due(config, now_local=now_local, last_sent_local=last_local):
+    if not result["sent"]:
         print("Weekly check-in not due right now (off, wrong day/time, or already sent).")
         return 0
-    rows = deliver_to_household(
-        store, scoped.household_id_or_none(),
-        household_checkin_notice(checkin_question(), channel="push"),
-        settings=settings,
-        base_url=settings.oauth_base_url, secret=settings.session_secret,
-    )
-    scoped.mark_checkin_sent()
-    for row in rows:
+    for row in result["notified"]:
         state = "sent" if row["delivered"] else "not sent"
         print(f"  → {row['handle']}: {state} ({row['detail']})")
     print("Weekly check-in sent to both parents.")
@@ -980,46 +936,16 @@ def _star_prompts_cli(store, args, settings) -> int:
     one-tap "did <kid> earn a star?" push for each chart whose schedule is due now,
     and marks it so it fires once per local day.
     """
-    from prefrontal.household import (
-        parse_structured,
-        prompt_due,
-        prompt_question,
-    )
-    from prefrontal.integrations.delivery import (
-        deliver_to_household,
-        household_prompt_notice,
-    )
-    from prefrontal.scheduling import local_datetime
+    from prefrontal.household import run_star_prompt_sweep
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
         print("That user isn't in a household.", file=sys.stderr)
         return 1
-    now_local = local_datetime(utcnow(), settings.timezone)
-    hid = scoped.household_id_or_none()
-    sent = 0
-    for agreement in scoped.agreements():
-        structured = parse_structured(agreement.get("structured"))
-        last = agreement.get("last_prompted_at")
-        last_dt = _parse_last(last) if last else None
-        last_local = local_datetime(last_dt, settings.timezone) if last_dt is not None else None
-        if not prompt_due(structured, now_local=now_local, last_prompted_local=last_local):
-            continue
-        child_name = next(
-            (c["name"] for c in scoped.children() if c["id"] == (agreement.get("child_id") or 0)),
-            None,
-        )
-        question = prompt_question(structured, child_name, agreement["title"])
-        deliver_to_household(
-            store, hid,
-            household_prompt_notice(question, agreement["id"], channel="push"),
-            settings=settings,
-            base_url=settings.oauth_base_url, secret=settings.session_secret,
-        )
-        scoped.mark_prompted(agreement["id"])
-        print(f"Prompted: {agreement['title']} — “{question}”")
-        sent += 1
-    if not sent:
+    result = run_star_prompt_sweep(scoped, settings=settings)
+    for item in result["sent"]:
+        print(f"Prompted: {item['title']} — “{item['question']}”")
+    if not result["sent"]:
         print("No prompts due right now.")
     return 0
 
