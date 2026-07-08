@@ -88,16 +88,6 @@ class SourcesRepo(Repo):
             tuple(params),
         )
 
-    def set_source_enabled(self, kind: str, account: str, enabled: bool) -> bool:
-        """Enable or disable a source; return ``True`` if a row changed."""
-        cur = self.conn.execute(
-            "UPDATE sources SET enabled = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE user_id = ? AND kind = ? AND account = ?",
-            (1 if enabled else 0, self._uid(), kind, account),
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
-
     def delete_source(self, kind: str, account: str) -> bool:
         """Delete a source outright; return ``True`` if a row was removed."""
         cur = self.conn.execute(

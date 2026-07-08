@@ -73,11 +73,9 @@ def test_repo_list_filters_by_kind_and_enabled(store):
     assert len(store.list_sources(kind=IMAP, include_disabled=False)) == 1
 
 
-def test_repo_set_enabled_and_delete(store):
-    """Enable/disable toggles the flag; delete removes the row."""
+def test_repo_delete_removes_the_row(store):
+    """delete removes the source row; a second delete is a no-op."""
     store.upsert_source(kind=IMAP, account="personal", config="{}")
-    assert store.set_source_enabled(IMAP, "personal", False) is True
-    assert store.get_source(IMAP, "personal")["enabled"] == 0
     assert store.delete_source(IMAP, "personal") is True
     assert store.get_source(IMAP, "personal") is None
     assert store.delete_source(IMAP, "personal") is False

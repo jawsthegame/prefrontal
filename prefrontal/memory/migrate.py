@@ -165,15 +165,6 @@ def needs_migration(conn: sqlite3.Connection) -> bool:
     return bool(cols) and "user_id" not in cols
 
 
-def is_multi_tenant(conn: sqlite3.Connection) -> bool:
-    """Report whether ``conn``'s database is on (or ready for) the row-scoped schema.
-
-    The inverse of a legacy database needing migration: ``True`` for a fresh DB
-    (nothing to migrate), an already-migrated DB, or one stamped current.
-    """
-    return not needs_migration(conn)
-
-
 def migrate_to_multi_tenant(
     conn: sqlite3.Connection, *, handle: str | None = None
 ) -> MigrationResult:

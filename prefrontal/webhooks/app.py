@@ -37,7 +37,7 @@ from prefrontal.integrations.nominatim import (
 from prefrontal.integrations.ollama import (
     OllamaClient,
 )
-from prefrontal.log import configure_logging
+from prefrontal.log import configure_logging, get_logger
 from prefrontal.memory.store import (
     MemoryStore,
 )
@@ -99,6 +99,16 @@ def create_app(
         anthropic=anthropic_client,
         anthropic_agents=frozenset(resolved_settings.anthropic_agents),
     )
+    # Surface operator typos: an ANTHROPIC_AGENTS entry that matches no real agent
+    # is silently ignored, so warn once at startup rather than leaving a mistyped
+    # name a mystery ("why isn't the assistant using Claude?").
+    unknown_agents = provider.unknown_agents()
+    if unknown_agents:
+        get_logger(__name__).warning(
+            "ANTHROPIC_AGENTS contains unknown agent name(s): %s — they match no real "
+            "agent and are ignored. Check the spelling against the known agents.",
+            ", ".join(sorted(unknown_agents)),
+        )
     # Forward-geocoder for commitment destinations. Built from settings unless
     # injected (tests pass a stub). Only consulted when the runtime
     # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.

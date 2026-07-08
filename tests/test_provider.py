@@ -140,6 +140,18 @@ def test_unknown_agents_surfaces_typos():
     assert r.unknown_agents() == frozenset({"sumarizer"})
 
 
+def test_create_app_warns_on_unknown_anthropic_agent(caplog):
+    """A typo'd ANTHROPIC_AGENTS name is logged at startup, not silently ignored."""
+    import logging
+
+    from prefrontal.config import Settings
+    from prefrontal.webhooks.app import create_app
+
+    with caplog.at_level(logging.WARNING):
+        create_app(settings=Settings(anthropic_agents=("assistant", "sumarizer")))
+    assert any("sumarizer" in r.getMessage() for r in caplog.records)
+
+
 # --- shared error base ------------------------------------------------------
 
 
