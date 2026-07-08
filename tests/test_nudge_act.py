@@ -321,3 +321,28 @@ def test_act_away_confirm_is_noop_when_back_home(client, store):
 def test_act_rejects_bad_token(client):
     assert client.get("/nudge/act?t=garbage").status_code == 400
     assert client.get("/nudge/act").status_code == 400
+
+
+def test_apply_nudge_action_service_returns_headlines():
+    """Direct coverage of the extracted service. The endpoint (verified above)
+    only adds the signature check, user scoping, and the push-back + HTML page;
+    apply_nudge_action owns performing the action and the confirmation headline.
+    """
+    from prefrontal.nudges import apply_nudge_action
+
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        user = {"id": store.user_id}
+        settings = Settings(timezone="UTC")
+        # Spent-button branch is idempotent (no such focus session).
+        assert "already wrapped up" in apply_nudge_action(
+            store, "focus_end", 999, user=user, settings=settings
+        )
+        # A departure outcome and its confirmation.
+        assert "made it" in apply_nudge_action(
+            store, "made_it", 0, user=user, settings=settings
+        ).lower()
+        # A no-entity household action.
+        assert "okay" in apply_nudge_action(
+            store, "star_skip", 0, user=user, settings=settings
+        ).lower()
