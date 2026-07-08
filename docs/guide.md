@@ -134,14 +134,16 @@ calendar add-source` (URLs are sealed at rest), then the `com.prefrontal-calenda
 launchd job runs `prefrontal calendar sync --all-users` every 15 min: it fetches
 each feed, parses + dedupes them, and upserts the batch into `commitments`.
 Events you've RSVP'd *no* to are dropped; the same event on two calendars is
-de-duplicated by UID.
+de-duplicated by matching title + start/end time (the feed-namespaced UIDs differ
+across calendars, so the match is on the event's identity, not its id).
 
 ```bash
 curl -s "$PF/commitments" -H "X-Prefrontal-Token: $TOK"   # upcoming, soonest first
 ```
 
-Each event is classified **self** (you attend — can conflict) vs **fyi** (just
-informational). Fix a misclassification with
+Each event is classified **self** (you attend — can conflict), **fyi** (just
+informational — where someone else will be), or **child** (a kid's appointment on
+the shared household sheet). Fix a misclassification with
 `POST /commitments/{id}/kind {"kind":"fyi"}`.
 
 ### Conflicts (hard and possible)
@@ -580,9 +582,10 @@ Full design: [`multi-tenant.md`](multi-tenant.md).
 
 ## Reference
 
-Every endpoint requires the `X-Prefrontal-Token` header except `/health`,
-`/dashboard`, and `/family` (the page shells carry no data and prompt for the
-token client-side).
+Every endpoint requires the `X-Prefrontal-Token` header except `/health` and the
+page shells — `/dashboard`, `/household`, `/kids`, `/pets`, `/calendar`, `/stats`,
+`/review`, `/settings`, etc. (they carry no data and prompt for the token
+client-side; `/family` now 308-redirects to `/household`).
 
 ### Endpoints
 
@@ -608,7 +611,7 @@ token client-side).
 | `POST /commitments/geocode` | Resolve missing coordinates |
 | `GET /commitments/conflicts` | Hard + possible conflicts |
 | `POST /commitments/conflicts/dismiss` | Dismiss a possible conflict (by `key`) |
-| `POST /commitments/{id}/kind` | Set `self` vs `fyi` |
+| `POST /commitments/{id}/kind` | Set `self` / `fyi` / `child` |
 | `POST /commitments/{id}/hardness` | Set `hard` vs `soft` (a user override; sticky across re-syncs) |
 | `POST /commitments/{id}/notes` | Set / clear a note (folded into the departure nudge; kept across re-syncs) |
 | `POST /todos` · `GET /todos` | Add (auto-augmented) / list (in-progress pinned first, with decomposition, avoidance, and a `focus_conflict` flag) |

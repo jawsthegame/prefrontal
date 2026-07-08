@@ -844,18 +844,18 @@ CREATE INDEX IF NOT EXISTS idx_triage_user ON triage_log (user_id, received_at);
 -- Per-user external source registry: the credentials + config for the mailboxes
 -- and calendars a user connects, so ingestion reads *that user's* accounts rather
 -- than one global set from the environment (see docs/design/per-user-sources.md).
--- `kind` selects the connector ('imap' for a mailbox, 'gcal' for Google
--- Calendar); `account` is the logical name within a kind ('personal'/'work' for
--- imap, 'google' for gcal). `config` is connector-shaped JSON (imap:
--- host/username/mailbox/important_only/retention; gcal: calendar_ids/namespace).
--- `secret_enc` is the Fernet-sealed secret (IMAP password or Google refresh
--- token) — never plaintext (see prefrontal/crypto.py). `enabled` pauses a source
+-- `kind` selects the connector ('imap' for a mailbox, 'ics' for a private ICS
+-- calendar feed); `account` is the logical name within a kind ('personal'/'work'
+-- for imap, 'personal'/'work'/'outlook'/... for ics). `config` is connector-shaped
+-- JSON (imap: host/username/mailbox/important_only/retention; ics:
+-- namespace/me_emails/label). `secret_enc` is the Fernet-sealed secret (IMAP
+-- password or ICS feed URL) — never plaintext (see prefrontal/crypto.py). `enabled` pauses a source
 -- without deleting it. UNIQUE(user_id, kind, account) makes re-connecting an
 -- account an idempotent upsert.
 CREATE TABLE IF NOT EXISTS sources (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id),
-    kind        TEXT     NOT NULL,                 -- 'imap' | 'gcal'
+    kind        TEXT     NOT NULL,                 -- 'imap' | 'ics'
     account     TEXT     NOT NULL,                 -- logical name within the kind
     config      TEXT     NOT NULL DEFAULT '{}',    -- connector-shaped JSON
     secret_enc  BLOB,                              -- Fernet-sealed secret (never plaintext)

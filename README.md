@@ -101,7 +101,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 |---|---|---|
 | Memory layer (SQLite) | `prefrontal/memory/` | ✅ Implemented — episodes, patterns, coaching state + feature tables |
 | Learning pass (episodes → patterns) | `prefrontal/memory/patterns.py` | ✅ Implemented — `prefrontal learn` derives patterns + bias, and tunes the early-start alarm cutoff from late morning departures |
-| Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (Google + ICS) + double-booking detection |
+| Schedule / calendar ingestion | `prefrontal/commitments.py` | ✅ Calendar sync (private ICS feeds, incl. Google/Outlook secret-address URLs) + cross-feed dedup + double-booking detection |
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); closes with a day-shaped encouragement line when the layer's on (packed/rough reassurance, open-day relax-vs-accomplish choice); `prefrontal briefing` |
@@ -165,7 +165,7 @@ prefrontal learn
 prefrontal profile
 
 # Summarize it into prioritized prose via a local Ollama model. Caches the
-# narrative (served by GET /profile) and writes profile.md. Falls back to the
+# narrative (served by GET /profile) and writes profile-<handle>.md. Falls back to the
 # structured profile if Ollama isn't running. Run nightly after `learn`.
 prefrontal summarize
 
@@ -220,7 +220,7 @@ Interactive API docs are available at `http://localhost:8000/docs` while the ser
 | n8n | Workflow orchestration |
 | Ollama | Local model inference |
 | SQLite | Behavioral memory |
-| Google Apps Script | Work email digest (stays within Google) |
+| Google Apps Script | Work email digest (stays within Google) — *planned, not yet implemented* |
 | iOS Shortcuts | Location triggers, one-tap logging |
 | ntfy (Pushover optional) | Notification delivery — one-tap action buttons |
 | Tailscale | Remote access |

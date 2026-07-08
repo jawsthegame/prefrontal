@@ -34,7 +34,7 @@ Ask only what you can't infer. You need:
 
 1. **Base URL** of the deployment — the Mac mini's Tailscale name/IP, e.g.
    `http://mac-mini.tail-scale.ts.net:8000`. Check `.env`
-   (`PREFRONTAL_BASE_URL` / any existing docs) before asking.
+   (`OAUTH_BASE_URL` / any existing docs) before asking.
 2. **New account or existing user?**
    - *Brand-new person* → provision a user (Step 1). Only an **operator** can do
      this; it prints a token shown **once**.
@@ -73,7 +73,7 @@ household mints a code and the newcomer redeems it, no operator step:
 ```sh
 # An existing household member creates a code (expires in 7 days):
 prefrontal household invite --user <existing-member-handle>
-#   → Invite code: PLUM-7F2Q  (share it, or the <base-url>/kids?invite=PLUM-7F2Q link)
+#   → Invite code: PLUM-7F2Q  (share it, or the <base-url>/household?invite=PLUM-7F2Q link)
 
 # ...or text the join link straight to the newcomer via Twilio (needs TWILIO_*
 # configured — the same account the voice-call escalation uses):

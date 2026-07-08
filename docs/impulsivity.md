@@ -399,7 +399,7 @@ to read real data, the way hyperfocus/anchor do:
 - From recent sessions: median focus-block length actually sustained before a
   honored switch — a concrete, motivating number.
 
-This prose flows into `profile.md` via the summarizer and thus into every
+This prose flows into `profile-<handle>.md` via the summarizer and thus into every
 agent's system prompt, so other modules' coaching is aware of the user's
 switching tendency.
 

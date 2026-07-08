@@ -33,7 +33,7 @@ prefrontal/
 │   ├── modules/              # challenge-area modules
 │   │   ├── base.py            # Module ABC + Intervention dataclass
 │   │   ├── registry.py        # register / available / enabled_modules
-│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor, self_care
+│   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor, self_care, trip_tracking
 │   ├── mail/                  # mail ingestion: normalize -> triage -> surface as todos (incl. imap.py)
 │   ├── integrations/          # external systems: n8n, ollama, anthropic, nominatim, delivery (ntfy/Pushover/TTS)
 │   ├── coaching.py            # the coaching tick engine (fans over modules' evaluate())
@@ -67,7 +67,7 @@ Requires Python 3.10+.
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"      # installs the package plus pytest and ruff
 cp .env.example .env         # then edit as needed
-prefrontal init-db           # create and seed the SQLite database
+prefrontal init-db           # create the SQLite database (structure only; per-user seeding happens at `prefrontal user add`)
 ```
 
 ## Running the checks

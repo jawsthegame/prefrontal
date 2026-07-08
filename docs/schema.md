@@ -280,7 +280,7 @@ also defines:
   `prefrontal note` / `prefrontal proposals list|accept|reject`.
 - **`sources`** — the per-user external **source registry**: one row per ingestion
   feed keyed `(user_id, kind, account)` where `kind` is `imap` (a mailbox) or
-  `gcal` (a private ICS calendar feed). Holds connector-shaped `config` JSON and a
+  `ics` (a private ICS calendar feed). Holds connector-shaped `config` JSON and a
   Fernet-sealed `secret_enc` (the feed URL / mailbox password — **never**
   plaintext, `prefrontal/crypto.py`); `enabled=0` pauses a source without deleting
   it. Managed via `prefrontal mail add-source` / `prefrontal calendar add-source`
@@ -449,7 +449,7 @@ Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 
 ## System Prompt Injection
 
-A summarizer agent runs periodically and writes a `profile.md` from the above
+A summarizer agent runs periodically and writes a `profile-<handle>.md` from the above
 tables, **caching** the result in `profile_cache`. Every agent prepends this to
 its system prompt; `GET /profile` serves the cached narrative (regenerate with
 `?refresh=1`, or get the raw structured input with `?format=structured`).

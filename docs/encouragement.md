@@ -100,7 +100,7 @@ reads/writes for the debounce cursor (§5).
 |---|---|---|---|
 | Missed **hard** commitment | `commitments` with `hardness="hard"` whose `start_at − lead_minutes` is past **and** the linked outing/episode resolved `miss` (or `impact.analyze_impact` flags it `at_risk` with no slack left) | **high** | The heaviest signal — a hard thing was actually blown. |
 | `miss` episodes today | `store.episodes_since(midnight)` filtered to `outcome=="miss"` (same filter the briefing uses, `briefing.py:109`) | medium, per miss | Late departures, abandoned outings, ignored reminders. |
-| Outings run long | today's outings auto-closed `abandoned` (`abandon_after_ratio`, ROADMAP §"Module 1") or returned with `actual ≫ window` | medium, per outing | Overruns compound time-blindness; already logged as drift `miss`. |
+| Panic / overwhelmed | the acute "buried right now" signal lifted from panic mode (`panic.overwhelm_level`, reusing its pressing thresholds) | **high** | A genuinely overwhelmed plate trips a rough day on its own. |
 | Rising drift | `patterns` rows `pattern_type="drift"` with `observed_value` above a baseline and non-trivial `confidence` (`patterns.py:234`) | low (modifier) | Background trend, not a today-event — caps in, doesn't dominate. |
 | Unresolved double-bookings today | `commitments.find_conflicts(today)` (the briefing's `conflicts`) | low | A structurally overloaded day. |
 | Avoidance pile-up | `todos.avoided_todos(open_todos, now)` top scores (`todos.py:420`) | low | Important things repeatedly skipped — feeds the *plan* more than the *score*. |
@@ -114,9 +114,9 @@ new ingestion source. The detector uses only the rows above.
 DEFAULT_ROUGH_THRESHOLD = 3.0
 SIGNAL_WEIGHTS = {
     "missed_hard": 3.0,    # one missed hard commitment alone trips the threshold
-    "miss_episode": 1.0,   # per miss today
-    "long_outing": 1.0,    # per overrun/abandoned outing today
+    "miss_episode": 1.0,   # per miss today (abandoned/overrun outings score here)
     "conflict": 0.5,       # per unresolved double-booking
+    "overwhelmed": 3.0,    # acute panic-mode "buried right now" — trips alone
 }
 ```
 

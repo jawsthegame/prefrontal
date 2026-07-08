@@ -575,7 +575,7 @@ accrue. Run the learning pass on a schedule (nightly is plenty for one user):
 
 ```bash
 prefrontal learn       # episodes -> calibrated patterns + time-estimation bias
-prefrontal summarize   # profile -> Ollama -> cache (+ profile.md) as prose
+prefrontal summarize   # profile -> Ollama -> cache (+ profile-<handle>.md) as prose
 ```
 
 `learn` is **recency-weighted**: each episode counts by an exponential decay on
@@ -603,7 +603,7 @@ keys, both off by default):
 `prefrontal summarize` generates the narrative with the local Ollama model from
 `.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it falls back to
 the structured profile, so it always produces something. It **caches** the
-narrative in the `profile_cache` table (and writes `profile.md` for inspection),
+narrative in the `profile_cache` table (and writes `profile-<handle>.md` for inspection),
 so the live `GET /profile` endpoint serves that prose to agents without a
 per-request model call. Add `?refresh=1` to regenerate on demand, or
 `?format=structured` to get the raw structured profile instead. The `X-Profile-*`

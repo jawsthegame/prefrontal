@@ -562,17 +562,19 @@ the first test. Code follow-ups below are optional polish.
   normalizes the body into a `Signal` and runs the Triage agent (classify →
   route → maybe nudge), joined by `POST /triage` and `GET /triage/recent`. See
   "Recently shipped" below and `docs/triage-agent.md`.
-- **Module interventions** — all six modules have `status="active"`
+- **Module interventions** — all seven modules have `status="active"`
   interventions: **Location-Aware Task Anchor** (escalation, location-gating,
   auto-close), **Hyperfocus** (protect/interrupt focus sessions), **Time
   Blindness** (`estimate_correction` + `departure_buffer` — departure timing +
   outcome capture — plus `elapsed_time_callouts`: an opt-in "you've been on this
   N min" time check fired from `evaluate()` during a focus block, deduped per
-  elapsed bucket, off unless `elapsed_callout_minutes` > 0), **Task Paralysis**
+  elapsed bucket, off unless `elapsed_callout_minutes` > 0 — and `morning_prep`:
+  a night-before nudge to set an alarm ahead of an early start), **Task Paralysis**
   (`tiny_first_step` / `auto_decompose` / `body_double_nudge` — see below),
   **Impulsivity** (`reflective_pause` + `capture_and_defer` + `switch_rate_feedback`
-  active), and **Self-Care** (`meal_check` + `water_check` basic-needs nudges,
-  opt-in). With `switch_rate_feedback` now live (per-session `switch` episodes → a
+  active), **Self-Care** (`meal_check` + `water_check` basic-needs nudges,
+  opt-in), and **Closed-Loop Trip Tracking** (`label_prompt` / `reflection_capture`
+  / `focus_balance` / `away_proposal`). With `switch_rate_feedback` now live (per-session `switch` episodes → a
   `context_switch` pattern → the briefing's switch-rate line), **every declared
   module intervention is `active`** — none remain `planned`. Run
   `prefrontal modules -v` for the live per-intervention status.
@@ -1093,10 +1095,11 @@ ordered by leverage; each is independent but builds on denser capture.
   Off unless the `self_care` coaching key is `on`. **Water** shipped alongside meal
   (`water_check`, to a daily target), confirm/snooze **log `self_care` episodes**,
   and an adaptive-cadence learner tunes the interval. The basics pack has since
-  grown to five: **meds** (target 1, opt-in), an open-ended **bio-break** reminder,
-  and now a **wind-down / sleep** check (an evening once-a-day "start winding down"
+  grown to six: **meds** (target 1, opt-in), an open-ended **bio-break** reminder,
+  a **wind-down / sleep** check (an evening once-a-day "start winding down"
   nudge, off by default like meds, that leans on the engine's quiet-hours gate so
-  it never nags into the night). *(The open "does it broaden into a self-care/basics
+  it never nags into the night), and a **movement / stretch** check (a "time to
+  move" nudge anchored to the morning-coffee floor). *(The open "does it broaden into a self-care/basics
   pack?" question is effectively answered — the five checks cover the basics; a
   formal `Pack` bundle is possible but not required to use them.)*
 ## Iceboxed (out of scope)
