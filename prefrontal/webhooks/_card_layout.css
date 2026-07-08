@@ -55,4 +55,15 @@
 
 @media (max-width: 520px) {
   .col-picker { display: none; }  /* one column only at this width — nothing to pick */
+  /* The top-nav link strip is a flex row of 6–8 links; at phone widths it is
+     wider than the viewport and would scroll the whole page sideways, dragging
+     the cards with it (the "cards overflowing on mobile" symptom). Let the strip
+     scroll within itself instead — min-width:0 lets it shrink below its content
+     — so the page never gains horizontal scroll and the cards stay pinned to the
+     viewport. Mirrors the dashboard's own top-nav treatment. */
+  .topnav { gap: 8px; }
+  .topnav .links { flex-wrap: nowrap; overflow-x: auto; min-width: 0;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .topnav .links::-webkit-scrollbar { display: none; }
+  .topnav .links a { flex: none; white-space: nowrap; }
 }
