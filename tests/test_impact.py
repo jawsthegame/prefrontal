@@ -28,9 +28,28 @@ from tests.conftest import scoped_default
 SECRET = "impact-secret"
 
 
-def _utc(delta_minutes: float) -> str:
-    """Stored-format UTC timestamp `delta_minutes` from now."""
-    return (utcnow() + timedelta(minutes=delta_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+def _utc(delta_minutes: float, base: datetime | None = None) -> str:
+    """Stored-format UTC timestamp `delta_minutes` from `base` (real now if None)."""
+    return ((base or utcnow()) + timedelta(minutes=delta_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+#: A fixed mid-day reference for the cascade endpoint tests. The cascade is scoped
+#: to the seed's *local* day (it correctly won't push you "behind" onto tomorrow's
+#: schedule — a domino doesn't survive the night). With a real-``now`` seed, a
+#: +45-min event stored near local midnight lands in *tomorrow* and drops out of
+#: the chain — but only when the suite happens to run late in the day, a wall-clock
+#: flake. Pinning both the server clock and the seeded event times to mid-day makes
+#: these tests deterministic without weakening the (correct) day-scoping.
+_CASCADE_NOW = datetime(2026, 7, 8, 12, 0, 0)
+
+
+@pytest.fixture()
+def frozen_cascade_now(monkeypatch):
+    """Freeze the cascade endpoint's server clock at :data:`_CASCADE_NOW`."""
+    monkeypatch.setattr(
+        "prefrontal.webhooks.routers.schedule.utcnow", lambda: _CASCADE_NOW
+    )
+    return _CASCADE_NOW
 
 
 # -- pure functions ----------------------------------------------------------
@@ -202,16 +221,18 @@ def test_check_surfaces_impact_and_names_it_in_message(client, store):
     assert "Team sync" in item["message"]
 
 
-def test_cascade_endpoint_propagates_and_reports_source(client, store):
+def test_cascade_endpoint_propagates_and_reports_source(client, store, frozen_cascade_now):
     """GET /impact/cascade projects a chain from an explicit free-time."""
     # A starts in 5 min (10-min lead) and runs 30 min; B starts in 45 min. With
     # over_minutes=0 (free now) you're late to A, which pushes you late for B.
+    # Seeded off the frozen mid-day clock so both stay within today's local window.
+    now = frozen_cascade_now
     store.upsert_commitment(
-        title="Standup", start_at=_utc(5), end_at=_utc(35), lead_minutes=10,
+        title="Standup", start_at=_utc(5, now), end_at=_utc(35, now), lead_minutes=10,
         hardness="hard", external_id="work:c1",
     )
     store.upsert_commitment(
-        title="Review", start_at=_utc(45), lead_minutes=10, external_id="work:c2",
+        title="Review", start_at=_utc(45, now), lead_minutes=10, external_id="work:c2",
     )
     body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
     assert body["source"] == "over_minutes"
@@ -225,10 +246,11 @@ def test_cascade_endpoint_propagates_and_reports_source(client, store):
     assert "cascades" in body["phrase"]
 
 
-def test_cascade_endpoint_travel_aware_with_location(client, store):
+def test_cascade_endpoint_travel_aware_with_location(client, store, frozen_cascade_now):
     """A known location + destination coords make the cascade use real travel legs."""
     store.upsert_commitment(
-        title="Gym", start_at=_utc(30), dest_lat=1.0, dest_lon=1.0, external_id="work:g",
+        title="Gym", start_at=_utc(30, frozen_cascade_now), dest_lat=1.0, dest_lon=1.0,
+        external_id="work:g",
     )
     aware = client.get(
         "/impact/cascade?over_minutes=0&current_lat=0&current_lon=0", headers=_auth()
