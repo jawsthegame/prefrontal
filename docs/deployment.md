@@ -702,7 +702,14 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
   that, unlike the others, is bounded by an **end hour** (`biobreak_end_hour`,
   default 19): it stops in the evening rather than running to a daily total. A
   **meds** check (target 1, `meds_enabled`) ships **off even when `self_care` is
-  on** — medication is personal, so opt in. All interrupt a focus block by design,
+  on** — medication is personal, so opt in. A **wind-down / sleep** check (target 1,
+  `winddown_enabled`) also ships **off even when `self_care` is on** — a bedtime is
+  a personal preference: from `winddown_start_hour` (evening, default 21) it nudges
+  "start winding down for bed" every `winddown_reask_minutes` until one *Winding
+  down* settles it for the night. Unlike the daytime checks it sits against the
+  responsive-hours edge and deliberately leans on that gate — a wind-down cue
+  outside responsive hours is suppressed like any other — so it never nags into the
+  night. All interrupt a focus block by design,
   respect responsive hours, and can be toggled individually (`meal_enabled` /
   `water_enabled` / …). The intervals also **self-tune** in the
   nightly `learn`: snooze a lot and it widens; respond genuinely and it eases off

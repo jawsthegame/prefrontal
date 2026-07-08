@@ -51,6 +51,8 @@ All interventions below are **active** (wired end-to-end) unless noted.
 | `meal_check` | From `meal_start_hour`, ask "have you eaten?" and re-ask every `meal_reask_minutes` until confirmed — even mid-focus. One-tap Ate / Snooze on ntfy. | mid-morning onward, until you confirm you've eaten |
 | `water_check` | From `water_start_hour`, a "drink some water" reminder every `water_interval_minutes` until you hit `water_daily_target`. One-tap Drank / Snooze on ntfy. | through the day, on an interval, up to the daily target |
 | `meds_check` | From `meds_start_hour`, ask "taken your meds?" and re-ask every `meds_reask_minutes` until you hit `meds_daily_target`. Off unless `meds_enabled` — medication is personal. One-tap Took / Snooze on ntfy. | from your meds hour, until you confirm the day's dose(s) |
+| `biobreak_check` | Between `biobreak_start_hour` and `biobreak_end_hour`, a "take a bathroom break" reminder every `biobreak_interval_minutes`. A reminder, not a quota: no daily count silences it — the end hour bounds it, and Went just defers the next. On with `self_care`; toggle with `biobreak_enabled`. One-tap Went / Snooze on ntfy. | on an interval through the day, within a set time window |
+| `winddown_check` | From `winddown_start_hour` (evening), a "start winding down for bed" reminder every `winddown_reask_minutes` until you confirm. Off unless `winddown_enabled` — a bedtime is personal. Leans on responsive hours so it never nags past your quiet-hours start. One-tap Winding down / Snooze on ntfy. | evening run-up to bed, until you confirm you're winding down |
 
 ## Task Paralysis
 *Difficulty initiating tasks despite intent — the task stalls before it ever begins, especially for ambiguous or large work.*

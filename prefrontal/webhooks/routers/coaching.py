@@ -60,6 +60,8 @@ _CUE_ACTION_KIND = {
     "meal": ("meal", "target"),
     "water": ("water", "target"),
     "meds": ("meds", "target"),
+    "biobreak": ("biobreak", "target"),
+    "winddown": ("winddown", "target"),
     "trip": ("trip_label", "trip_id"),
     "away_proposal": ("away", "trip_id"),
 }

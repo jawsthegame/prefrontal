@@ -161,6 +161,8 @@ NUDGE_ACTIONS = (
     "meds_snooze",     # self-care meds check → ask again in a bit
     "biobreak_went",   # self-care bio-break check → got up (defer a full interval)
     "biobreak_snooze", # self-care bio-break check → remind again shortly
+    "winddown_started", # self-care wind-down check → heading to bed (settles the night)
+    "winddown_snooze",  # self-care wind-down check → remind again shortly
     "star_award",      # star-chart prompt → award a star for the child today
     "star_skip",       # star-chart prompt → no star today
     "load_light",      # weekly load check-in → felt light this week
