@@ -241,6 +241,30 @@ def test_triage_uses_model_verdict_when_available():
     assert v.waiting_on == "Sarah"
 
 
+def test_triage_coerces_out_of_vocab_enums_to_safe_defaults():
+    """A model emitting garbage urgency/category is coerced, not trusted verbatim."""
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "screaming", "category": "bogus"}
+    )
+    item = normalize_message(_msg(), account="p", policy="full")
+    v = triage_message(item, client=client)
+    assert v.source == "llm"          # still the model verdict...
+    assert v.needs_action is True
+    assert v.urgency == "normal"      # ...but the invalid enums fell back to safe values
+    assert v.category == "other"
+
+
+def test_triage_falls_back_to_heuristic_on_unparseable_200():
+    """A 200 whose body isn't JSON (model prose) → parse None → heuristic, not a crash."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"response": "Sorry, I can't analyze that."})
+
+    client = OllamaClient(transport=httpx.MockTransport(handler))
+    item = normalize_message(_msg(), account="p", policy="full")
+    v = triage_message(item, client=client)
+    assert v.source == "heuristic"
+
+
 def test_triage_falls_back_to_heuristic_when_model_down():
     item = normalize_message(_msg(), account="p", policy="full")
     v = triage_message(item, client=_ollama_down())

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from prefrontal.commitments import conflict_dismissal_key, find_conflicts
 from prefrontal.config import Settings
 from prefrontal.encouragement import (
     already_sent_today,
@@ -148,6 +149,41 @@ def test_single_late_commitment_is_not_overwhelmed(store):
     a = assess_day(store, now=now)
     assert a.rough is False
     assert not any(s["kind"] == "overwhelmed" for s in a.signals)
+
+
+def test_a_double_booking_contributes_a_conflict_signal(store):
+    # Two real, overlapping commitments today (neither dismissed, neither hard) are
+    # a structural double-booking — the one signal weighted 0.5. It shows up in the
+    # assessment but a lone conflict is well under the 3.0 rough threshold.
+    now = _NOW
+    for title in ("Call Alice", "Call Bob"):
+        store.upsert_commitment(
+            title=title,
+            start_at=_at(now, hour=15, minute=0, second=0, microsecond=0),
+            source="manual",
+        )
+    a = assess_day(store, now=now)
+    assert [s["kind"] for s in a.signals] == ["conflict"]
+    assert a.rough_score == 0.5 and a.rough is False  # 0.5 < 3.0
+
+
+def test_dismissed_double_booking_contributes_no_conflict_signal(store):
+    # Dismissing the double-booking ("it's fine") removes its stress weight.
+    now = _NOW
+    for title in ("Call Alice", "Call Bob"):
+        store.upsert_commitment(
+            title=title,
+            start_at=_at(now, hour=15, minute=0, second=0, microsecond=0),
+            source="manual",
+        )
+    # Build the conflict from the day's commitments the same way assess_day does
+    # (upcoming_commitments would filter by the real clock, past the frozen _NOW).
+    today = store.commitments_between("2026-06-15 00:00:00", "2026-06-16 00:00:00")
+    conflicts = find_conflicts(today)
+    store.dismiss_conflict(conflict_dismissal_key(conflicts[0]))
+    a = assess_day(store, now=now)
+    assert not any(s["kind"] == "conflict" for s in a.signals)
+    assert a.rough_score == 0.0
 
 
 def test_drift_modifier_tips_a_borderline_day(store):

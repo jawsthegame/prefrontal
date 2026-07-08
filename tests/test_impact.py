@@ -271,38 +271,49 @@ def test_cascade_endpoint_falls_back_to_now_when_schedule_clear(client, store):
     assert body["phrase"] == ""
 
 
-def test_cascade_endpoint_excludes_fyi_commitments(client, store):
+def test_cascade_endpoint_excludes_fyi_commitments(client, store, frozen_cascade_now):
     """An FYI event (where someone else will be) never topples your schedule."""
     # If counted, this FYI's assumed length would run right into the real
     # commitment after it and flag it late — but an FYI is never yours to attend,
     # so it must not consume your time (the same rule every other surface makes).
+    # Seed + server clock pinned to _CASCADE_NOW so the +20-min real event never
+    # rolls past the local day boundary (which would empty the chain and pass the
+    # assertions for the wrong reason near local midnight).
     store.upsert_commitment(
-        title="Kids at grandma's", start_at=_utc(5), kind="fyi", external_id="cal:fyi",
+        title="Kids at grandma's", start_at=_utc(5, frozen_cascade_now), kind="fyi",
+        external_id="cal:fyi",
     )
     store.upsert_commitment(
-        title="Tax", start_at=_utc(20), lead_minutes=10, external_id="work:tax",
+        title="Tax", start_at=_utc(20, frozen_cascade_now), lead_minutes=10,
+        external_id="work:tax",
     )
     body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
     titles = [c["title"] for c in body["cascade"]]
-    assert "Kids at grandma's" not in titles  # FYI excluded from the walk
+    assert "Tax" in titles                    # the real commitment is walked...
+    assert "Kids at grandma's" not in titles  # ...but the FYI is excluded from the walk
     assert body["at_risk"] == []              # Tax alone has slack, nothing topples
 
 
-def test_cascade_endpoint_excludes_placeholder_holds(client, store):
+def test_cascade_endpoint_excludes_placeholder_holds(client, store, frozen_cascade_now):
     """A generic HOLD/OOO block is elastic time, never a topple in the chain."""
     # Standup runs long (55 min) and would push anything sitting after it. A
     # bare "HOLD" block in its shadow must NOT be walked as a real commitment
     # that topples — it's elastic time you'd yield the moment a real meeting
     # needed it (is_attendable excludes it), so it neither appears in the chain
-    # nor manufactures an at-risk domino.
+    # nor manufactures an at-risk domino. Clock/seed pinned to _CASCADE_NOW so
+    # the events can't slip past the local day boundary near midnight.
     store.upsert_commitment(
-        title="Standup", start_at=_utc(5), end_at=_utc(60), lead_minutes=0,
+        title="Standup", start_at=_utc(5, frozen_cascade_now),
+        end_at=_utc(60, frozen_cascade_now), lead_minutes=0,
         external_id="work:standup",
     )
-    store.upsert_commitment(title="HOLD", start_at=_utc(20), external_id="cal:hold")
+    store.upsert_commitment(
+        title="HOLD", start_at=_utc(20, frozen_cascade_now), external_id="cal:hold"
+    )
     body = client.get("/impact/cascade?over_minutes=0", headers=_auth()).json()
     titles = [c["title"] for c in body["cascade"]]
-    assert "HOLD" not in titles                              # excluded from the walk
+    assert "Standup" in titles  # the real commitment is walked...
+    assert "HOLD" not in titles  # ...but the HOLD block is excluded from the walk
     assert all(c["title"] != "HOLD" for c in body["at_risk"])
 
 

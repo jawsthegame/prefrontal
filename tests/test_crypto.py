@@ -73,6 +73,20 @@ def test_key_from_file(tmp_path):
     assert unseal(token, settings=settings) == "from-file"
 
 
+def test_inline_key_wins_over_keyfile(tmp_path):
+    """When both secret_key and secret_key_file are set, the inline value wins."""
+    inline, filed = generate_key(), generate_key()
+    keyfile = tmp_path / "secret.key"
+    keyfile.write_text(filed + "\n", encoding="utf-8")
+    both = _settings(secret_key=inline, secret_key_file=str(keyfile))
+    # A token sealed with the inline key alone opens under the both-set settings...
+    assert unseal(seal("s", settings=_settings(secret_key=inline)), settings=both) == "s"
+    # ...while one sealed with the (ignored) file's key does not.
+    filed_token = seal("s", settings=_settings(secret_key=filed))
+    with pytest.raises(SecretKeyError):
+        unseal(filed_token, settings=both)
+
+
 def test_generate_key_is_usable():
     """A freshly generated key is a valid Fernet key."""
     settings = _settings(secret_key=generate_key())

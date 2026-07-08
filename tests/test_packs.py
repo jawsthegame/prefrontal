@@ -117,14 +117,25 @@ def test_resolve_vocabulary_unions_and_earlier_pack_wins():
 def test_enabled_pack_seeds_coaching_defaults_absent_only(monkeypatch):
     monkeypatch.setenv("PREFRONTAL_PACKS", "parent")
     from prefrontal.config import get_settings
+    from prefrontal.memory.store import seed_user_state
 
     get_settings.cache_clear()
     try:
         with MemoryStore.open(":memory:") as store:
             user, _ = provision_user(store, "p", display_name="P", is_operator=True)
             scoped = store.scoped(user["id"])
+            # All six of the parent pack's coaching defaults are seeded on provision.
             assert scoped.get_state("todo_window:school") == "08:00-15:00"
             assert scoped.get_state("todo_window:childcare") == "06:00-20:00"
+            assert scoped.get_state("focus_balance_nudge") == "1"
+            assert scoped.get_state("focus_target:kids") == "300"
+            assert scoped.get_state("focus_target:home") == "120"
+            assert scoped.get_state("focus_target:personal") == "120"
+            # Absent-only: a value the user has since changed survives a re-seed
+            # (the actual guarantee the test name claims — previously unexercised).
+            scoped.set_state("focus_target:kids", "60", source="explicit")
+            seed_user_state(scoped)
+            assert scoped.get_state("focus_target:kids") == "60"
     finally:
         get_settings.cache_clear()
 

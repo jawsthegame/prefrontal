@@ -62,6 +62,9 @@ def test_generate_json_returns_none_on_unparseable_reply():
     assert generate_json("hi", client=client) is None
 
 
-@pytest.mark.parametrize("reply", ['[{"op":"x"}]', '{"a":1}'])
-def test_generate_json_handles_object_and_array(reply):
-    assert generate_json("p", client=_FakeClient(reply=reply)) is not None
+@pytest.mark.parametrize(
+    "reply,expected",
+    [('[{"op":"x"}]', [{"op": "x"}]), ('{"a":1}', {"a": 1})],
+)
+def test_generate_json_handles_object_and_array(reply, expected):
+    assert generate_json("p", client=_FakeClient(reply=reply)) == expected
