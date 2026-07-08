@@ -96,11 +96,15 @@ def note_hint(notes: str | None, *, max_chars: int = NOTE_HINT_MAX_CHARS) -> str
 
 
 class ModuleLike(Protocol):
-    """The slice of a module the engine uses — just its key and evaluator."""
+    """The slice of a module the engine uses — its key, evaluator, and hooks."""
 
     key: str
 
     def evaluate(self, store: Any, ctx: CoachContext) -> list[Cue]: ...
+
+    def before_collect(self, store: Any, ctx: CoachContext) -> None: ...
+
+    def after_fire(self, store: Any, decisions: list[Decision], now: datetime) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,11 @@ class CoachContext:
     min_channel_samples: int = DEFAULT_MIN_CHANNEL_SAMPLES
     current_lat: float | None = None
     current_lon: float | None = None
+    # Whether an aligned hyperfocus block is currently shielding the user. Set
+    # once per tick (from hyperfocus.is_focus_protected) so the suppression gate
+    # can hold non-critical, non-self-care cues centrally, rather than each module
+    # re-checking it — see :func:`suppressed`.
+    focus_protected: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +167,7 @@ def build_context(
     display_name: str = "",
     current_lat: float | None = None,
     current_lon: float | None = None,
+    focus_protected: bool = False,
 ) -> CoachContext:
     """Load the shared per-tick context from coaching state (spec §3)."""
     return CoachContext(
@@ -177,6 +187,7 @@ def build_context(
         ),
         current_lat=current_lat,
         current_lon=current_lon,
+        focus_protected=focus_protected,
     )
 
 
@@ -234,14 +245,23 @@ def _fired_key(dedup_key: str) -> str:
 def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     """Whether a cue should be held back right now (spec §6).
 
-    Two gates: **quiet hours** (outside responsive hours, everything but
-    ``critical`` is held) and **debounce** (the same ``dedup_key`` won't refire
-    within ``debounce_minutes``). ``critical`` bypasses quiet hours — a missed
-    hard commitment at 6am still warrants the call — but still debounces.
+    Three gates: **quiet hours** (outside responsive hours, everything but
+    ``critical`` is held), **protected hyperfocus** (while an aligned block is
+    shielded, non-critical cues are held — except self-care, which pierces flow),
+    and **debounce** (the same ``dedup_key`` won't refire within
+    ``debounce_minutes``). ``critical`` bypasses quiet hours and protection — a
+    missed hard commitment at 6am still warrants the call — but still debounces.
     """
     if cue.urgency != "critical":
         hour = local_hour_of(ctx.now, ctx.timezone)
         if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
+            return True
+        # Protected hyperfocus: an aligned, healthy deep-work block shields the
+        # user from *other* modules' noise. Self-care (eat / drink / meds) is the
+        # deliberate exception — it's meant to pierce flow — and hyperfocus's own
+        # interrupt cues only arise once the block is no longer protected. This is
+        # the one central gate, so a module never has to re-check it (spec §6).
+        if ctx.focus_protected and cue.module != "self_care":
             return True
     last = _parse_ts(store.get_state(_fired_key(cue.dedup_key)))
     if last is not None:
@@ -444,7 +464,6 @@ class TickResult:
         cues: Every cue collected this tick (a superset of ``decisions``' cues —
             some were held by suppression). Callers report ``len(cues)`` as "held".
         swept_stale: Unanswered nudges logged as channel misses this tick.
-        ignored_self_care: Unanswered self-care nudges logged as "ignored".
         decomposed: Avoided tasks broken down into a first step this tick.
         clarified: Newly-ambiguous items filed as clarifying questions this tick.
     """
@@ -452,9 +471,28 @@ class TickResult:
     decisions: list[Decision]
     cues: list[Cue]
     swept_stale: int
-    ignored_self_care: int
     decomposed: int
     clarified: int
+
+
+def _run_module_hooks(
+    modules: list[ModuleLike], run: Any, phase: str
+) -> None:
+    """Run a per-module lifecycle hook, isolating a raising module.
+
+    Mirrors :func:`collect_cues`' robustness: one module's ``before_collect`` /
+    ``after_fire`` blowing up is logged and skipped rather than sinking the tick.
+    """
+    for module in modules:
+        try:
+            run(module)
+        except Exception:  # noqa: BLE001 — isolate a bad hook, keep the tick alive
+            logger.warning(
+                "module %r %s hook raised; skipping it this tick",
+                getattr(module, "key", "?"),
+                phase,
+                exc_info=True,
+            )
 
 
 def run_coaching_tick(
@@ -473,18 +511,23 @@ def run_coaching_tick(
     ``prefrontal coach [--deliver]`` (the general form of the anchor's fire-once
     guard). In order:
 
-    1. Sweep last round's unanswered nudges into channel *misses* and self-care
-       *ignored* episodes (the learn-pass signals, spec §8).
+    1. Sweep last round's unanswered nudges into channel *misses* (engine-native
+       channel learning, spec §8).
     2. Refresh avoided-task decompositions and ambiguity questions **before**
        collecting cues, so ``tiny_first_step`` uses the fresh first step and the
        clarify queue fills passively. Bounded model calls; no-ops when nothing's
        due.
-    3. Collect every enabled module's cues, decide channel + suppression, and
-       stamp each decision fired / delivered / self-care-prompted.
+    3. Run each enabled module's :meth:`~prefrontal.modules.base.Module.before_collect`
+       hook (its own pre-collection housekeeping — e.g. self-care sweeps its
+       unanswered nudges into "ignored" episodes), collect every module's cues,
+       decide channel + suppression, record the fires, then run each module's
+       :meth:`~prefrontal.modules.base.Module.after_fire` hook (e.g. self-care
+       stamps its delivery time). The engine never names a module here — the two
+       hooks replaced the old hard-coded self-care sweep/stamp.
 
-    This owns *which sweeps constitute a tick* and their order, so the endpoint
-    and CLI callers can't drift (they previously each inlined this and had). The
-    callers only format or deliver the returned decisions.
+    This owns *which steps constitute a tick* and their order, so the endpoint and
+    CLI callers can't drift. The callers only format or deliver the returned
+    decisions.
 
     Args:
         store: A store scoped to the user being coached.
@@ -501,15 +544,14 @@ def run_coaching_tick(
     from prefrontal.clarify import sweep_ambiguous_items
     from prefrontal.impact import utcnow
     from prefrontal.modules import enabled_modules
-    from prefrontal.modules.self_care import (
-        mark_self_care_prompted,
-        sweep_unanswered_self_care,
-    )
+    from prefrontal.modules.hyperfocus import is_focus_protected
     from prefrontal.todos import sweep_avoided_decompositions
 
     now = now or utcnow()
-    # Close last round's outcomes first (taps clear their own markers, so what's
-    # swept really went unanswered).
+    modules = enabled_modules(settings)
+    # Close last round's channel outcomes (taps clear their own markers, so what's
+    # swept really went unanswered). Engine-native; a module's own pre-collection
+    # housekeeping runs through its before_collect hook below.
     swept_stale = sweep_stale_nudges(
         store,
         now,
@@ -517,7 +559,6 @@ def run_coaching_tick(
             "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
         ),
     )
-    ignored_self_care = sweep_unanswered_self_care(store, now)
     # Refresh model-derived inputs *before* collecting cues so tiny_first_step and
     # the clarify queue see fresh state.
     decomposed = sweep_avoided_decompositions(store, ollama, now=now)
@@ -529,19 +570,20 @@ def run_coaching_tick(
         display_name=display_name,
         current_lat=current_lat,
         current_lon=current_lon,
+        focus_protected=is_focus_protected(store),
     )
-    cues = collect_cues(store, enabled_modules(settings), ctx)
+    _run_module_hooks(modules, lambda m: m.before_collect(store, ctx), "before_collect")
+    cues = collect_cues(store, modules, ctx)
     decisions = decide(store, cues, ctx)
     # Recorded at decision time (not on confirmed delivery), matching how
     # outing/check advances last_level when it decides to fire.
     record_fired(store, decisions, now)
     note_delivered(store, decisions, now)
-    mark_self_care_prompted(store, decisions, now)
+    _run_module_hooks(modules, lambda m: m.after_fire(store, decisions, now), "after_fire")
     return TickResult(
         decisions=decisions,
         cues=cues,
         swept_stale=swept_stale,
-        ignored_self_care=ignored_self_care,
         decomposed=decomposed,
         clarified=clarified,
     )

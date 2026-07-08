@@ -1142,6 +1142,21 @@ class SelfCareModule(Module):
             )
         return cues
 
+    def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
+        """Sweep self-care nudges left unanswered past their window into ``ignored``
+        episodes — the "wrong time / too frequent" signal the cadence learner reads
+        alongside snoozes. Runs each tick via the engine's ``before_collect`` hook
+        (this was a self-care-specific step hard-coded into the tick loop)."""
+        sweep_unanswered_self_care(store, ctx.now)
+
+    def after_fire(
+        self, store: MemoryStore, decisions: list[Any], now: datetime
+    ) -> None:
+        """Stamp the delivery time of any self-care cue that just fired, so a later
+        Ate / Drank / Snooze tap can be timed — the honesty-check latency signal
+        for adaptive cadence. Filters ``decisions`` to self-care cues itself."""
+        mark_self_care_prompted(store, decisions, now)
+
     def profile_section(self, store: MemoryStore) -> str | None:
         """Report which basic-needs checks are on."""
         if (store.get_state("self_care", "off") or "off") != "on":

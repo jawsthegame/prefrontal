@@ -194,10 +194,11 @@ class TaskParalysisModule(Module):
            one you're avoiding (:func:`~prefrontal.todos.focus_conflict`), flag it
            and suggest a switch. This subsumes ``tiny_first_step`` for the tick: it
            names not just what you're skipping but that you're mid-flight on the
-           wrong thing. Held while an aligned hyperfocus block is protected
-           (:func:`~prefrontal.modules.hyperfocus.is_focus_protected`) — flow that's
-           on-task shouldn't be yanked — and deduped per (working, instead) pair so
-           it fires once per distinct conflict.
+           wrong thing. Like every non-critical cue it's held while an aligned
+           hyperfocus block is protected — flow that's on-task shouldn't be yanked
+           — but that gate now lives centrally in the engine's
+           :func:`~prefrontal.coaching.suppressed`, not here. Deduped per (working,
+           instead) pair so it fires once per distinct conflict.
         2. ``tiny_first_step`` — otherwise, pick the worst-avoided open todo
            (``avoided_todos`` — age × priority, honest prioritization over the shiny
            thing) and reframe it as one <5-minute first action, preferring the
@@ -207,13 +208,9 @@ class TaskParalysisModule(Module):
         (:func:`~prefrontal.coaching.note_hint`), so the context they left rides
         along. Quiet hours + debounce are applied downstream by the coaching engine.
         """
-        # Lazy import: is_focus_protected lives in the hyperfocus module; importing
-        # it at module top would couple two sibling modules at registration time.
-        from prefrontal.modules.hyperfocus import is_focus_protected
-
         open_todos = store.open_todos()
         conflict = focus_conflict(open_todos, ctx.now)
-        if conflict is not None and not is_focus_protected(store):
+        if conflict is not None:
             working = conflict["working_on"]
             instead = conflict["instead"]
             text = (
