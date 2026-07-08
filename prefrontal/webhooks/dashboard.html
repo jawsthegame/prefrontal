@@ -551,6 +551,12 @@
        as evenly-sized, thumb-sized tap targets (todos: Break it down/Done/Drop,
        outings: Back/Abandon, etc.). */
     .row { flex-direction: column; gap: 8px; }
+    /* #c-todos .row .main carries flex:1 1 150px so it keeps a sane min-*width*
+       in the masonry columns. Once the row stacks into a column that 150px
+       flex-basis is read along the main (vertical) axis, so it reserves ~150px
+       of blank height above the actions — the big empty gap seen on phones.
+       Reset the basis to content height here. */
+    #c-todos .row .main { flex: 0 1 auto; }
     .row .acts { width: 100%; }
     .row .acts .btn-sm { flex: 1; min-height: 38px; }
     /* Give the title room to wrap rather than truncate against the pills. */
