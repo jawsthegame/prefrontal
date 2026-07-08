@@ -261,25 +261,22 @@ A small admin surface, guarded by `is_operator` on the resolved user:
 These are thin HTTP wrappers over the same functions the CLI uses (§6.5), so the
 operator can provision over Tailscale or on the box.
 
-### 6.5 Delivery routing (the part outside Python)
+### 6.5 Delivery routing (per-user)
 
-Today the n8n workflows hardcode one Pushover user key and one Twilio To/From.
-For multi-tenant, **delivery identifiers live in per-user `coaching_state`**
-(operator sets them at provision time): `pushover_user_key`, `twilio_to`,
-`twilio_from`, `ntfy_topic`. The check endpoints already return per-outing data;
-we add the **routing fields to the response** so n8n delivers to the right
-target without its own user lookup:
+**Delivery identifiers live in per-user `coaching_state`**, set by the operator
+with `prefrontal user route`: `ntfy_topic`/`ntfy_server`/`ntfy_token` and
+`pushover_user_key`/`pushover_token`. Delivery is now **native**, not driven by an
+n8n response: `prefrontal coach --deliver --all-users` (the `com.prefrontal-coach`
+launchd job — see [`docs/deployment.md`](deployment.md) §19) resolves each user's
+route server-side via `resolve_route` and publishes directly, so a nudge reaches
+that user's own device. The Twilio/Pushover/ntfy *credentials* (API tokens) can be
+global; only the *destination* is per-user. (`twilio_to`/`twilio_from` are not part
+of `user route` — the Twilio number is a global operator setting.)
 
-- `/webhooks/outing/check` response gains `delivery: {pushover_user_key, twilio_to, …}`
-  per active outing (read from the scoped store).
-- The n8n workflows change from "hardcoded credential" to "use the `delivery`
-  fields from the response." This is an n8n-side edit documented in
-  [`docs/deployment.md`](deployment.md); the Twilio/Pushover *credentials*
-  (API tokens) stay global, only the *destination* becomes per-user.
-
-A user with no delivery fields set falls back to the operator's default target
-(so a half-provisioned user still reaches *someone*), and the response flags
-`delivery_configured: false` so the dashboard can warn.
+A user with no route of their own is *computed* but not delivered to, so nudges
+never land on someone else's device; the dashboard can warn on an unconfigured
+route. The legacy alternative — n8n reading `delivery: {…}` fields off the check
+responses — is superseded by the native path above.
 
 ---
 

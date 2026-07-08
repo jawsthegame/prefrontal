@@ -102,31 +102,29 @@ prefrontal modules -v      # confirm the modules you expect are enabled
 
 ## 3. Run always-on with launchd
 
-Copy the bundled launch agent and edit the paths inside it to match your
-username and install location:
+The bundled plists ship as **templates** with `__PREFRONTAL_HOME__` / `__HOME__`
+placeholders (no personal paths committed). `deploy/install-launchd.sh` fills them
+in from the repo root + `$HOME` and loads each agent — use it rather than copying
+by hand:
 
 ```bash
-cp deploy/com.prefrontal.plist ~/Library/LaunchAgents/
-# Edit ~/Library/LaunchAgents/com.prefrontal.plist:
-#   - ProgramArguments[0] -> /Users/<you>/prefrontal/.venv/bin/prefrontal
-#   - WorkingDirectory    -> /Users/<you>/prefrontal
-#   - Std{Out,Err}Path    -> /Users/<you>/Library/Logs/prefrontal.*.log
+bash deploy/install-launchd.sh com.prefrontal   # this one agent
+# or: bash deploy/install-launchd.sh            # install all agents at once
 ```
 
-Load and start it:
+Verify:
 
 ```bash
-launchctl load -w ~/Library/LaunchAgents/com.prefrontal.plist
 launchctl list | grep prefrontal           # should show the job
 curl -s http://localhost:8000/health       # {"status":"ok",...}
 ```
 
-`KeepAlive` restarts it on crash; `RunAtLoad` starts it on login/boot. To stop
-or reload after editing:
+`KeepAlive` restarts it on crash; `RunAtLoad` starts it on login/boot. The
+installer is idempotent — re-run it after a `git pull` that changes a template
+(it unloads the old copy before loading the new one). To stop:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.prefrontal.plist
-launchctl load -w ~/Library/LaunchAgents/com.prefrontal.plist
 ```
 
 Logs: `tail -f ~/Library/Logs/prefrontal.err.log`.
@@ -476,8 +474,8 @@ Each sync expands **recurring** events 30 days ahead (`PREFRONTAL_CALENDAR_HORIZ
 default 30) so standing/weekly events populate the calendar page and the slot
 finder, not just the next day — one-off events ingest at any distance regardless.
 Because occurrences carry a stable per-occurrence `external_id`, the every-15-min
-job just upserts the same two-week window forward each run (no duplicates), so the
-cache stays fresh far more often than the horizon is wide.
+job just upserts the same ~30-day horizon window forward each run (no duplicates),
+so the cache stays fresh far more often than the horizon is wide.
 
 1. Mint the at-rest key once (it seals the feed URLs): `prefrontal secrets init`,
    then add the printed `PREFRONTAL_SECRET_KEY=…` line to `.env`.
@@ -621,15 +619,13 @@ a *periodic* job (no `KeepAlive`), distinct from the always-on server agent in
 §3.
 
 ```bash
-cp deploy/com.prefrontal-learn.plist ~/Library/LaunchAgents/
-# Edit the paths inside both files to match your install:
-#   - learn.sh:  PREFRONTAL_HOME (repo root, so the adjacent .env loads)
-#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME,
-#                Std{Out,Err}Path, and Hour/Minute if 03:30 doesn't suit
-launchctl load -w ~/Library/LaunchAgents/com.prefrontal-learn.plist
+bash deploy/install-launchd.sh com.prefrontal-learn   # fills paths, loads it
 launchctl start com.prefrontal-learn   # run once now, don't wait
 tail -f ~/Library/Logs/prefrontal.learn.log          # watch it work
 ```
+
+The wrapper (`learn.sh`) auto-detects the repo root, so no path editing is
+needed; edit the plist's `Hour`/`Minute` only if 03:30 doesn't suit.
 
 `StartCalendarInterval` fires at the wall-clock time daily; if the mini is
 asleep then, launchd runs the job on the next wake. Prefer `cron` or an n8n
@@ -643,12 +639,12 @@ If you triage email through Prefrontal, run the built-in mail fetch on a timer
 launchd.
 
 ```bash
-cp deploy/com.prefrontal-mail.plist ~/Library/LaunchAgents/
-# Edit the paths inside mail-fetch.sh + the plist to match your install
-# (PREFRONTAL_HOME, ProgramArguments[0], Std{Out,Err}Path, and the interval),
-# then load it:
-launchctl load -w ~/Library/LaunchAgents/com.prefrontal-mail.plist
+bash deploy/install-launchd.sh com.prefrontal-mail   # fills paths, loads it
 ```
+
+The wrapper (`mail-fetch.sh`) auto-detects the repo root and runs
+`mail fetch --all-users`, so no path editing is needed; edit the plist's interval
+only if you want a different cadence.
 
 (Alternatively an n8n Gmail/IMAP workflow can POST batches to
 `/webhooks/mail/sync` — the same shape as the calendar sync.)
@@ -842,16 +838,12 @@ quiet-hours + debounce, and publishes what fires — plus the proactive overwhel
 (panic) check on the same tick.
 
 ```sh
-cp deploy/coach.sh deploy/com.prefrontal-coach.plist ~/… # (repo already has them)
 # One job covers everyone: coach.sh runs `coach --deliver --all-users` (no handle
 # to set). Delivery is per-user — a user with no ntfy/Pushover target of their own
 # is computed but not delivered to, so nudges never land on someone else's device.
-# Edit paths inside both to match your install:
-#   - coach.sh:  PREFRONTAL_HOME (repo root)
-#   - plist:     ProgramArguments[0], WorkingDirectory, PREFRONTAL_HOME, Std{Out,Err}Path
-cp deploy/com.prefrontal-coach.plist ~/Library/LaunchAgents/
-PREFRONTAL_HOME=$HOME/src/prefrontal deploy/coach.sh   # run once by hand — should print what fires
-launchctl load -w ~/Library/LaunchAgents/com.prefrontal-coach.plist
+# coach.sh auto-detects the repo root, so no path editing is needed.
+deploy/coach.sh                                       # run once by hand — should print what fires
+bash deploy/install-launchd.sh com.prefrontal-coach   # fills paths, loads it
 ```
 
 **b) The household sweeps** — replaces `chores-check`, `checkin-check`,
