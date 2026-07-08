@@ -288,7 +288,8 @@ check-in, self-serve invites). What's still ahead:
 - **A source-agnostic triage agent** — routing arbitrary inbound events (mail
   triage is the first slice); native Pushover/TTS beyond today's ntfy default.
 
-See [`ROADMAP.md`](../ROADMAP.md) for the detailed, honestly-scoped list.
+See [`ROADMAP.md`](../ROADMAP.md) for the detailed, honestly-scoped list of what's
+planned, and [`CHANGELOG.md`](../CHANGELOG.md) for what's already shipped.
 
 ---
 
@@ -297,7 +298,8 @@ See [`ROADMAP.md`](../ROADMAP.md) for the detailed, honestly-scoped list.
 | Document | What it covers |
 |---|---|
 | [`README.md`](../README.md) | Capabilities, current build status, quick start. |
-| [`ROADMAP.md`](../ROADMAP.md) | What's stubbed and what's planned. |
+| [`ROADMAP.md`](../ROADMAP.md) | What's planned and still open. |
+| [`CHANGELOG.md`](../CHANGELOG.md) | What's already shipped (release notes). |
 | [`docs/schema.md`](schema.md) | The full database schema. |
 | [`docs/household-sheet.md`](household-sheet.md) | The shared co-parent sheet design spec. |
 | [`docs/coaching-agent.md`](coaching-agent.md) · [`docs/triage-agent.md`](triage-agent.md) | Agent designs. |
