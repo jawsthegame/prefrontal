@@ -14,8 +14,8 @@ import pytest
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import (
     MULTI_TENANT_VERSION,
-    is_multi_tenant,
     migrate_to_multi_tenant,
+    needs_migration,
     run_migrations,
 )
 from prefrontal.memory.patterns import recompute_patterns
@@ -389,7 +389,7 @@ def test_migration_backfills_legacy_user():
     store = MemoryStore(conn).scoped(legacy_id)
     assert store.get_state("time_estimation_bias") == "1.7"
     assert len(store.open_todos()) == 2
-    assert is_multi_tenant(conn)
+    assert not needs_migration(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == MULTI_TENANT_VERSION
 
 
@@ -408,7 +408,7 @@ def test_run_migrations_applies_both_ladder_steps():
     # Step 1: multi-tenant upgrade happened and is reported for token surfacing.
     assert result.migrated is True
     assert result.token
-    assert is_multi_tenant(conn)
+    assert not needs_migration(conn)
     # Step 2: the later-added column was back-filled by the same call.
     assert "source" in {r["name"] for r in conn.execute("PRAGMA table_info(todos)")}
     conn.close()
@@ -496,7 +496,7 @@ def test_init_db_auto_migrates_legacy_file(tmp_path):
 
     conn = init_db(str(db))
     try:
-        assert is_multi_tenant(conn)
+        assert not needs_migration(conn)
         legacy = conn.execute("SELECT id FROM users").fetchone()
         assert legacy is not None
         # All todos were backfilled to the single legacy user.
