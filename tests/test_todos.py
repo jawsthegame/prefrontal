@@ -929,9 +929,10 @@ def _breaks_down():
 
 
 def test_sweep_decomposes_only_avoided_tasks(store):
-    """The sweep breaks down avoided todos, not fresh ones."""
+    """The sweep breaks down avoided todos, not fresh ones (when opted in)."""
     from prefrontal.todos import sweep_avoided_decompositions
 
+    store.set_state("auto_decompose_enabled", "on")  # opt in (off by default)
     tid = store.add_todo("A big task", estimate_minutes=90, priority=2)
     # Right now it's fresh → nothing avoided → no-op.
     assert sweep_avoided_decompositions(store, _breaks_down(), now=utcnow()) == 0
@@ -948,6 +949,7 @@ def test_sweep_records_and_skips_model_declines(store):
     """A model decline is recorded once so later sweeps don't re-ask."""
     from prefrontal.todos import sweep_avoided_decompositions
 
+    store.set_state("auto_decompose_enabled", "on")  # opt in (off by default)
     tid = store.add_todo("Trivial avoided thing", estimate_minutes=90, priority=2)
     future = utcnow() + timedelta(days=10)
     decline = _ollama_json('{"decompose": false}')
@@ -963,6 +965,7 @@ def test_sweep_no_op_when_suppressed(store):
     """Repeated 'not needed' dismissals switch the whole sweep off."""
     from prefrontal.todos import sweep_avoided_decompositions
 
+    store.set_state("auto_decompose_enabled", "on")  # opt in so suppression is what stops it
     store.set_state("decomposition_suppress_threshold", "1")
     store.record_decomposition_dismissal(
         todo_id=None, title="prior", reason="not_needed", first_step="x", steps=[]
@@ -970,6 +973,20 @@ def test_sweep_no_op_when_suppressed(store):
     store.add_todo("Big avoided thing", estimate_minutes=120, priority=2)
     future = utcnow() + timedelta(days=10)
     assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 0
+
+
+def test_sweep_off_by_default(store):
+    """Auto-decompose is off by default — an avoided todo is left alone."""
+    from prefrontal.todos import sweep_avoided_decompositions
+
+    tid = store.add_todo("Big avoided thing", estimate_minutes=120, priority=2)
+    future = utcnow() + timedelta(days=10)  # now avoided
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 0
+    assert store.get_decomposition(tid) is None
+    # Opting in turns it on.
+    store.set_state("auto_decompose_enabled", "on")
+    assert sweep_avoided_decompositions(store, _breaks_down(), now=future) == 1
+    assert store.get_decomposition(tid) is not None
 
 
 def test_update_todo_deadline_open_only(store):
@@ -1009,6 +1026,16 @@ def test_on_demand_decompose_works_and_no_route_collision(client):
     assert d.status_code == 200 and d.json()["decomposition"]["first_step"]
 
     assert client.post(f"/todos/{tid}/done", headers=_auth()).status_code == 200
+
+
+def test_auto_decompose_toggle_endpoint(client):
+    """GET/POST /todos/auto-decompose reads and flips the master switch (off default)."""
+    assert client.get("/todos/auto-decompose", headers=_auth()).json()["enabled"] is False
+    r = client.post("/todos/auto-decompose", json={"enabled": True}, headers=_auth())
+    assert r.status_code == 200 and r.json()["enabled"] is True
+    assert client.get("/todos/auto-decompose", headers=_auth()).json()["enabled"] is True
+    client.post("/todos/auto-decompose", json={"enabled": False}, headers=_auth())
+    assert client.get("/todos/auto-decompose", headers=_auth()).json()["enabled"] is False
 
 
 # -- avoidance detection -----------------------------------------------------

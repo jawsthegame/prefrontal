@@ -8,9 +8,10 @@ layer is ``task`` episodes that are never acknowledged or that resolve to
 This module surfaces initiation friction and owns the initiation *policy*. All
 three interventions are wired:
 
-- **auto_decompose** — ``POST /todos`` breaks any todo whose estimate clears
-  ``decomposition_threshold_minutes`` into a tiny first step plus collapsed
-  remaining steps at creation time.
+- **auto_decompose** — on the coaching tick, breaks a todo the user is *avoiding*
+  into a tiny first step plus collapsed remaining steps. **Off by default** — the
+  user opts in via Settings (``auto_decompose_enabled``); the on-demand "Break it
+  down" button is always available regardless.
 - **tiny_first_step** — ``POST /todos/{id}/decompose`` (and the panic /
   ``/todos/now`` surfaces) reframe a stalled task as one <5-minute action.
 - **body_double_nudge** — :func:`repeat_stalled_tasks` finds tasks you keep
@@ -115,6 +116,9 @@ class TaskParalysisModule(Module):
         "max_first_step_minutes": "5",
         "decomposition_threshold_minutes": "30",
         "body_double_min_misses": str(DEFAULT_BODY_DOUBLE_MIN_MISSES),
+        # Automatic breakdown of avoided todos is opt-in — off unless the user
+        # turns it on in Settings. The manual "Break it down" button is unaffected.
+        "auto_decompose_enabled": "off",
     }
 
     def interventions(self) -> list[Intervention]:
@@ -136,9 +140,11 @@ class TaskParalysisModule(Module):
                     "Break a task the user is *avoiding* into a tiny first step + "
                     "collapsed remaining steps — but only if the model judges it "
                     "worth decomposing (it can decline). Runs on the coaching tick "
-                    "(sweep_avoided_decompositions), not at todo creation."
+                    "(sweep_avoided_decompositions), not at todo creation. Off by "
+                    "default (auto_decompose_enabled); opt in via Settings. The "
+                    "on-demand 'Break it down' button works regardless."
                 ),
-                trigger="a todo that has reached 'avoided' status",
+                trigger="a todo that has reached 'avoided' status (when opted in)",
                 status="active",
             ),
             Intervention(
