@@ -653,6 +653,63 @@ def test_sync_is_feed_aware(store):
     assert titles == {"Work mtg", "Coffee"}
 
 
+def test_sync_dedupes_same_event_across_feeds(store):
+    """One meeting mirrored onto two feeds is stored once, not double-booked."""
+    events = [
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "outlook:dc"},
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "work:dc"},
+    ]
+    summary = sync_calendar(store, events)
+    # Stored once, and it does not conflict with itself.
+    assert summary.added == 1
+    assert summary.conflicts == 0
+    rows = store.upcoming_commitments()
+    assert [c["title"] for c in rows] == ["Daniel Connect"]
+    # The lexicographically smallest external_id is the deterministic keeper.
+    assert rows[0]["external_id"] == "outlook:dc"
+
+
+def test_sync_dedupe_is_stable_across_polls(store):
+    """The same feed keeps winning, so a duplicate doesn't churn cancel/re-add."""
+    events = [
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "outlook:dc"},
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "work:dc"},
+    ]
+    sync_calendar(store, events)
+    second = sync_calendar(store, events)
+    assert (second.added, second.cancelled) == (0, 0)  # no flip-flop
+    assert second.updated == 1
+
+
+def test_sync_title_case_and_punctuation_insensitive_dedupe(store):
+    """Dedup is case/punctuation/emoji-insensitive (normalized title match)."""
+    events = [
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "outlook:dc"},
+        {"title": "📞 daniel  connect!", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "work:dc"},
+    ]
+    summary = sync_calendar(store, events)
+    assert summary.added == 1
+    assert summary.conflicts == 0
+
+
+def test_sync_keeps_distinct_events_at_same_time(store):
+    """Different titles at the same time are a real double-booking, not a dupe."""
+    summary = sync_calendar(store, [
+        {"title": "Daniel Connect", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "outlook:dc"},
+        {"title": "Standup", "start_at": _iso(60), "end_at": _iso(90),
+         "external_id": "work:su"},
+    ])
+    assert summary.added == 2
+    assert summary.conflicts == 1
+
+
 def test_sync_classifies_new_events_and_keeps_verdict(store):
     """New events are classified once; existing ones aren't re-classified."""
     calls: list[str] = []

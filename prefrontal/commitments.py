@@ -397,6 +397,63 @@ def normalize_event(
     }
 
 
+def _dedupe_key(fields: dict[str, Any]) -> tuple[str, str, str]:
+    """Identity of a *real* event for cross-calendar dedup: title + start + end.
+
+    Two events collapse when their normalized titles and UTC start/end match, so a
+    meeting mirrored onto two of your feeds is recognized as one regardless of the
+    feed-namespaced ``external_id``\\ s that make it look like two. The title is
+    normalized (case/punctuation/emoji-insensitive, see :func:`_normalize_title`)
+    and a missing ``end_at`` keys as ``""`` so both copies of an all-day/no-end
+    event still group.
+    """
+    return (
+        _normalize_title(fields.get("title")),
+        fields.get("start_at") or "",
+        fields.get("end_at") or "",
+    )
+
+
+def dedupe_events(normalized: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the same real event synced from more than one calendar feed.
+
+    A meeting that lands on two of a user's calendars — an invite mirrored onto an
+    Outlook feed *and* a work feed — arrives as two events with distinct,
+    feed-namespaced ``external_id``\\ s (``outlook:UID`` vs ``work:UID``). Without
+    this both are stored, so the event shows twice and, worse, the pair reads as a
+    hard double-booking of you against yourself (:func:`find_conflicts`).
+
+    Events sharing a :func:`_dedupe_key` (normalized title + UTC start + end) are
+    treated as one. The survivor is chosen deterministically — the lexicographically
+    smallest ``external_id`` — so repeated polls keep the *same* stored row rather
+    than flip-flopping between feeds (which would churn a cancel/re-add every sync).
+    An event with no ``external_id`` sorts last, so a real feed id is preferred as
+    the keeper. Input order of the survivors is preserved.
+
+    Args:
+        normalized: Events already through :func:`normalize_event` (UTC times), so
+            the key compares like-for-like.
+
+    Returns:
+        One event per distinct real event, in first-seen order.
+    """
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    order: list[tuple[str, str, str]] = []
+    for fields in normalized:
+        key = _dedupe_key(fields)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(fields)
+    out: list[dict[str, Any]] = []
+    for key in order:
+        group = groups[key]
+        # U+FFFF sorts after any real id, so a null-id event loses the keeper
+        # tie-break to any event that carries a (feed) external_id.
+        out.append(min(group, key=lambda f: f.get("external_id") or "￿"))
+    return out
+
+
 def _bare_uid(external_id: str) -> str:
     """Strip the feed namespace (``work:``/``personal:``/…) from an event id.
 
@@ -600,6 +657,9 @@ def sync_calendar(
     normalized = [  # validate all up front
         normalize_event(e, default_tz=default_tz) for e in events
     ]
+    # Collapse the same real event mirrored across feeds (outlook + work) so it's
+    # stored once, shown once, and never conflicts with itself.
+    normalized = dedupe_events(normalized)
     eids = {f["external_id"] for f in normalized if f["external_id"]}
     existing_kinds = store.kinds_by_external_id(eids)
     existing_hardness = store.hardness_by_external_id(eids)
