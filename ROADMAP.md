@@ -470,9 +470,22 @@ the first test. Code follow-ups below are optional polish.
 - **Pattern-computation pass** ✅ — `prefrontal/memory/patterns.py` derives
   `time_estimation`, `channel_response`, and `drift` patterns from `episodes`
   (confidence = `n/(n+k)`) and recomputes the `time_estimation_bias` multiplier.
-  Run via `prefrontal learn` (scheduled nightly — see step 7 above). *(Next: add
-  finer `context_key` bucketing than episode type; derive `context_switch` once
-  switch events are captured.)*
+  Run via `prefrontal learn` (scheduled nightly — see step 7 above). Both of the
+  deferred pieces have now shipped: `context_switch` derivation (from the captured
+  per-session `switch` episodes — see §5), and **finer `context_key` bucketing than
+  episode type** ✅ — a new **activity** dimension (`compute_bias_by_activity`,
+  `time_estimation_bias:activity:<activity>`) buckets `task` estimation pairs by the
+  activity read off the episode `context` (`outing` / `focus` / `trip` / …), one
+  step below `episode_type`. Every out-of-flow surface logs a `task` episode, so the
+  `type:task` multiplier pooled a coffee run ("back in 15" that stretches to 45) with
+  a well-estimated focus block; the activity bucket separates them. `resolve_bias`
+  gained an `activity` layer (band → energy → category → **activity** → type →
+  global), and the outing nudge projection (`location_anchor.evaluate` +
+  `/webhooks/outing/check`) now resolves `activity="outing"` so a coffee run
+  calibrates against *outing* history, falling back to the global until there's
+  enough outing signal. Surfaced in the profile ("By activity: …") and
+  `prefrontal learn`; auto half-life derivation and per-context half-life overrides
+  cover it like the other dimensions. Covered by `tests/test_patterns.py`.
 - **LLM-backed summarizer** ✅ — `summarize_profile()` feeds the structured
   profile to a local Ollama model (`prefrontal/integrations/ollama.py`) and
   returns prioritized coaching prose, falling back to the heuristic when the
@@ -571,8 +584,13 @@ the first test. Code follow-ups below are optional polish.
   (no fabricated duration), so they stop lingering active.
 - **Feed outings into learning** ✅ — outing returns log `task` episodes that the
   pattern pass folds into `time_estimation` and the bias multiplier.
-- **Finer `context_key`** — give outings their own pattern bucket so coffee runs
-  calibrate separately from other tasks (still open).
+- **Finer `context_key`** ✅ — outings now have their own bias bucket so coffee runs
+  calibrate separately from other tasks. A new **activity** dimension in the pattern
+  pass (`compute_bias_by_activity` → `time_estimation_bias:activity:outing`) splits
+  the `type:task` pool by the activity read off the episode `context`, and the outing
+  nudge projection (`location_anchor.evaluate` + `/webhooks/outing/check`) resolves
+  `activity="outing"` (falling back to global). See the Pattern-computation pass
+  entry above. Covered by `tests/test_patterns.py`.
 
 ## Focus balance — follow-ups
 
@@ -583,10 +601,17 @@ the profile section, the opt-in "light on kids/personal" nudge the Parent pack
 seeds, declared outings folded in alongside passive trips, and one-tap 🏠/🧒/🙋
 domain buttons on the trip-label ask). Open threads:
 
-- **Per-trip `context_key` bucket** — give trips (and outings) their own pattern
-  bucket so their durations calibrate separately from other `task` episodes,
-  rather than pooling into the shared time-estimation bias. Dovetails with the
-  Module-1 "Finer `context_key`" item above (still open).
+- **Per-trip `context_key` bucket** ✅ (mechanism) — the pattern pass gained an
+  **activity** dimension that buckets `task` estimation pairs by the activity read
+  off the episode `context` (`outing` / `focus` / `trip` / …), so out-of-flow time
+  no longer pools into one `type:task` multiplier. **Outings** get the full win —
+  they carry a predicted/actual pair, so `time_estimation_bias:activity:outing`
+  populates and the outing projection now calibrates against outing history (see the
+  Module-1 item above). **Trips** carry `predicted_value=None` by design (a passive
+  trip is undeclared — nothing was estimated), so they form no estimation pair and
+  never touched the shared bias in the first place; the activity bucket is there for
+  them the moment a trip ever carries a prediction, but there's no current pollution
+  left to separate. Covered by `tests/test_patterns.py`.
 - **Fuller one-tap label/reflect Shortcut** — beyond the three domain buttons on
   the ambient ask, a proper iOS Shortcut recipe to label + set a domain + drop a
   one-line reflection in a single interaction, so the whole retrospective closes

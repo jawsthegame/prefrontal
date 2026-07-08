@@ -12,12 +12,14 @@ from datetime import datetime
 import pytest
 
 from prefrontal.memory.patterns import (
+    ACTIVITY_BIAS_PREFIX,
     CATEGORY_BIAS_PREFIX,
     ENERGY_BIAS_PREFIX,
     TYPE_BIAS_PREFIX,
     _make_half_life_resolver,
     channel_calibration,
     compute_bias,
+    compute_bias_by_activity,
     compute_bias_by_band,
     compute_bias_by_category,
     compute_bias_by_energy,
@@ -30,6 +32,7 @@ from prefrontal.memory.patterns import (
     derive_band_half_lives,
     derive_context_half_lives,
     derive_half_life,
+    episode_activity,
     filter_to_window,
     recompute_patterns,
     resolve_bias,
@@ -559,6 +562,72 @@ def test_compute_bias_by_energy_normalizes_and_skips_untagged():
     )
     # Case/space-folded to "high"; untagged episodes never form a bucket.
     assert compute_bias_by_energy(episodes) == {"high": 2.0}
+
+
+# -- context-conditioned bias by activity (finer than episode type) ----------
+
+
+def test_episode_activity_reads_the_context_prefix():
+    # The leading word before any ":" or space, lowercased.
+    assert episode_activity(_ep(context="outing: coffee run")) == "outing"
+    assert episode_activity(_ep(context="outing abandoned: dentist")) == "outing"
+    assert episode_activity(_ep(context="focus: deep work")) == "focus"
+    assert episode_activity(_ep(context="trip")) == "trip"
+    # No context → no activity (the episode simply doesn't condition this dimension).
+    assert episode_activity(_ep(context=None)) is None
+    assert episode_activity(_ep(context="")) is None
+
+
+def test_compute_bias_by_activity_separates_outing_from_focus():
+    """The whole point: outings and focus blocks both log type=task pairs, but this
+    dimension buckets them apart so a coffee run calibrates against outing history."""
+    episodes = (
+        # Outings run 3× their stated window (chronic "back in 15" → 45).
+        [_ep(episode_type="task", context="outing: coffee", predicted_value=15, actual_value=45)
+         for _ in range(3)]
+        # Focus blocks are estimated on the nose.
+        + [_ep(episode_type="task", context="focus: writing", predicted_value=30, actual_value=30)
+           for _ in range(3)]
+        # A trip return carries no prediction (actual-only) → never forms a pair.
+        + [_ep(episode_type="task", context="trip", predicted_value=None, actual_value=25)
+           for _ in range(4)]
+    )
+    activity = compute_bias_by_activity(episodes)
+    assert activity == {"outing": 3.0, "focus": 1.0}
+    # And note the pooled type bias blends them (Σactual/Σpredicted =
+    # (135+90)/(45+90) = 1.67), landing on neither — which is exactly why the finer
+    # bucket exists: a coffee run projected at 1.67× under-shoots its real 3×.
+    assert compute_bias_by_type(episodes)["task"] == 1.67
+
+
+def test_resolve_bias_activity_is_finer_than_type():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("time_estimation_bias", "1.4")
+        store.set_state(f"{TYPE_BIAS_PREFIX}task", "2.0")
+        store.set_state(f"{ACTIVITY_BIAS_PREFIX}outing", "3.0")
+        # No context → global.
+        assert resolve_bias(store) == 1.4
+        # Type only → the pooled task multiplier.
+        assert resolve_bias(store, episode_type="task") == 2.0
+        # Activity beats type: an outing prefers its own history.
+        assert resolve_bias(store, episode_type="task", activity="outing") == 3.0
+        # Unknown activity → falls through to the type bias, not straight to global.
+        assert resolve_bias(store, episode_type="task", activity="trip") == 2.0
+        # Activity with no type and no learned activity bucket → global.
+        assert resolve_bias(store, activity="errand") == 1.4
+
+
+def test_recompute_persists_activity_bias():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for _ in range(3):
+            store.log_episode(
+                "task", context="outing: coffee", predicted_value=15, actual_value=45
+            )
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.activity_bias.get("outing") == 3.0
+        assert store.get_state(f"{ACTIVITY_BIAS_PREFIX}outing") == "3.0"
 
 
 def test_resolve_bias_full_precedence_band_energy_category_type_global():

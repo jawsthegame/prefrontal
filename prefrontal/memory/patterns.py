@@ -308,6 +308,8 @@ class PatternRunSummary:
     type_bias: dict[str, float] = field(default_factory=dict)
     energy_bias: dict[str, float] = field(default_factory=dict)
     category_bias: dict[str, float] = field(default_factory=dict)
+    #: Per-activity multipliers (``outing``/``focus``/…), finer than ``type_bias``.
+    activity_bias: dict[str, float] = field(default_factory=dict)
     #: Sliding-window length in effect this pass (``0`` = no window). ``windowed_out``
     #: is how many episodes the window excluded before learning (0 when disabled).
     window_days: float = 0.0
@@ -499,6 +501,34 @@ def compute_bias_by_band(
 TYPE_BIAS_PREFIX = "time_estimation_bias:type:"
 ENERGY_BIAS_PREFIX = "time_estimation_bias:energy:"
 CATEGORY_BIAS_PREFIX = "time_estimation_bias:category:"
+#: ...and one step **finer than episode type**: the *activity* a task episode came
+#: from, read off its ``context`` prefix (``outing`` / ``focus`` / ``trip`` / …).
+#: Every user-touch surface logs a ``task`` episode, so ``type:task`` pools a coffee
+#: run ("back in 15" that stretches to 45) with a well-estimated focus block; this
+#: dimension separates them so an outing calibrates against *outing* history, not
+#: the shared task multiplier (Module-1 / focus-balance "finer context_key" items).
+ACTIVITY_BIAS_PREFIX = "time_estimation_bias:activity:"
+
+
+def episode_activity(e: dict[str, Any]) -> str | None:
+    """The coarse *activity* a task episode came from, or ``None`` if unlabeled.
+
+    Read off the ``context`` field the loggers already stamp — the leading word
+    before any ``:`` or space, lowercased: ``"outing: coffee"`` → ``"outing"``,
+    ``"outing abandoned: …"`` → ``"outing"``, ``"focus: deep work"`` → ``"focus"``,
+    ``"trip"`` → ``"trip"``. This is finer than ``episode_type`` (all of these are
+    ``task``) but coarser than the specific intention, so histories of the *same
+    kind* of out-of-flow time bucket together. A blank/None context yields ``None``
+    (the episode simply doesn't condition this dimension). It's derived generically
+    rather than from an allowlist, so a new activity gets its own bucket for free —
+    the ``MIN_BIAS_SAMPLES`` floor drops any that never gather real signal.
+    """
+    context = e.get("context")
+    if not context:
+        return None
+    head = str(context).split(":", 1)[0].strip()
+    first = head.split()[0].lower() if head.split() else ""
+    return first or None
 
 
 def _bias_by_group(
@@ -629,6 +659,36 @@ def compute_bias_by_category(
     )
 
 
+def compute_bias_by_activity(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+    half_life_for: Callable[[str], float | None] | None = None,
+) -> dict[str, float]:
+    """Recompute the bias **per activity** — finer than episode type (learning §5).
+
+    Every out-of-flow surface (outings, focus blocks, trips) logs an
+    ``episode_type="task"`` pair, so the ``type:task`` multiplier pools them all.
+    This buckets those pairs by :func:`episode_activity` (from the episode's
+    ``context``) so a coffee-run outing calibrates against *outing* history rather
+    than being averaged in with focus sessions. Same signal floor and fallback
+    behavior as the other dimensions — an activity below ``MIN_BIAS_SAMPLES`` is
+    omitted and its consumers keep falling back to the coarser layers.
+
+    Returns:
+        ``{activity: multiplier}`` for the activities that cleared the floor.
+    """
+    return _bias_by_group(
+        episodes,
+        episode_activity,
+        now=now,
+        half_life_days=half_life_days,
+        context_prefix="activity:",
+        half_life_for=half_life_for,
+    )
+
+
 def resolve_bias(
     store: MemoryStore,
     *,
@@ -636,6 +696,7 @@ def resolve_bias(
     episode_type: str | None = None,
     energy: str | None = None,
     category: str | None = None,
+    activity: str | None = None,
 ) -> float:
     """The time-estimation multiplier to apply, preferring the most specific signal.
 
@@ -647,13 +708,16 @@ def resolve_bias(
        preserved;
     2. **energy** load — the most task-intrinsic signal (how heavy the task is);
     3. **category** of the task;
-    4. **episode type** — the coarse kind of prediction;
-    5. the global ``time_estimation_bias``; then ``1.0``.
+    4. **activity** — the kind of out-of-flow time (``outing`` / ``focus`` / …),
+       finer than the episode type it refines (so an outing prefers *outing*
+       history over the pooled ``task`` multiplier);
+    5. **episode type** — the coarse kind of prediction;
+    6. the global ``time_estimation_bias``; then ``1.0``.
 
     A consumer that supplies none keeps the global behavior unchanged; one that
     supplies several gets each finer layer as a fallback when the layer above it
-    has no data yet — so adding ``energy``/``category`` never regresses a caller
-    whose band already resolves.
+    has no data yet — so adding ``energy``/``category``/``activity`` never regresses
+    a caller whose band already resolves.
     """
 
     def _state_float(key: str) -> float | None:
@@ -672,6 +736,8 @@ def resolve_bias(
         candidates.append(f"{ENERGY_BIAS_PREFIX}{_normalized_tag(energy)}")
     if category:
         candidates.append(f"{CATEGORY_BIAS_PREFIX}{_normalized_tag(category)}")
+    if activity:
+        candidates.append(f"{ACTIVITY_BIAS_PREFIX}{_normalized_tag(activity)}")
     if episode_type:
         candidates.append(f"{TYPE_BIAS_PREFIX}{episode_type}")
     for key in candidates:
@@ -1016,6 +1082,10 @@ def derive_context_half_lives(
         episodes, lambda e: _normalized_tag(e.get("category")), global_half_life,
         now=now, context_prefix="category:",
     ))
+    out.update(_half_life_by_group(
+        episodes, episode_activity, global_half_life,
+        now=now, context_prefix="activity:",
+    ))
     return out
 
 
@@ -1091,6 +1161,7 @@ def recompute_patterns(
     type_bias: dict[str, float] = {}
     energy_bias: dict[str, float] = {}
     category_bias: dict[str, float] = {}
+    activity_bias: dict[str, float] = {}
     if update_bias:
         bias = compute_bias(episodes, now=now, half_life_days=half_life_days)
         if bias is not None:
@@ -1125,6 +1196,14 @@ def recompute_patterns(
         )
         for cat, value in category_bias.items():
             store.set_state(f"{CATEGORY_BIAS_PREFIX}{cat}", str(value), source="inferred")
+        # ...and one step finer than episode type: per *activity* (outing / focus /
+        # trip, from the episode context), so a coffee run calibrates against outing
+        # history rather than pooling into the shared task multiplier.
+        activity_bias = compute_bias_by_activity(
+            episodes, now=now, half_life_days=half_life_days, half_life_for=half_life_for
+        )
+        for act, value in activity_bias.items():
+            store.set_state(f"{ACTIVITY_BIAS_PREFIX}{act}", str(value), source="inferred")
         # Close the loop: does that bias actually improve subsequent estimates?
         # Persist the verdict so the profile and CLI can surface a bad adaptation.
         calibration = bias_calibration(episodes)
@@ -1195,6 +1274,7 @@ def recompute_patterns(
         type_bias=type_bias,
         energy_bias=energy_bias,
         category_bias=category_bias,
+        activity_bias=activity_bias,
         window_days=window_days,
         windowed_out=windowed_out,
         auto_half_lives=auto_half_lives,

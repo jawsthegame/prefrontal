@@ -36,6 +36,7 @@ from prefrontal.impact import (
 )
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
+from prefrontal.memory.patterns import resolve_bias
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -621,7 +622,10 @@ class LocationAnchorModule(Module):
         grace = store.get_float(
             "home_arrive_grace_minutes", DEFAULT_HOME_ARRIVE_GRACE_MINUTES
         )
-        bias = store.get_float("time_estimation_bias", 1.0)
+        # Prefer the *outing*-specific bias so a coffee run projects against outing
+        # history, not the task multiplier pooled with focus blocks; falls back to
+        # the global (then 1.0) until there's enough outing signal.
+        bias = resolve_bias(store, activity="outing")
         commitments = store.upcoming_commitments()
         # Travel-aware leads from the current location, matching the endpoint.
         # Lazy import: departure imports haversine_m from this module, so a
