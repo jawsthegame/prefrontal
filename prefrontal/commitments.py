@@ -34,15 +34,16 @@ from prefrontal.memory.store import MemoryStore
 DEFAULT_EVENT_MINUTES = 30.0
 
 #: How far ahead recurring events are expanded into concrete occurrences, by
-#: default — two weeks, so the calendar surfaces (household week view, slot finder)
-#: see standing/weekly events out that far, not just the next day. One-off events
+#: default — 30 days, so the calendar surfaces (the calendar page, slot finder)
+#: see standing/weekly events a month out, not just the next day. One-off events
 #: have no horizon (they ingest whenever they land); this only bounds how far a
-#: recurring *series* is materialized. Deployments tune it via
+#: recurring *series* is materialized (a series must be bounded — a never-ending
+#: RRULE would otherwise expand forever). Deployments tune it via
 #: ``PREFRONTAL_CALENDAR_HORIZON_DAYS`` → :attr:`Settings.calendar_horizon_days`,
 #: which the CLI/webhook sync pass through as ``recur_horizon_hours``. The stable
 #: per-occurrence ``external_id`` means a wider window just upserts more rows, never
 #: duplicates, and each poll rolls the window forward.
-RECUR_HORIZON_HOURS = 24.0 * 14
+RECUR_HORIZON_HOURS = 24.0 * 30
 
 #: Joins a recurring series' id to a generated occurrence's start stamp, forming a
 #: stable per-occurrence ``external_id`` so repeated polls upsert (never duplicate).
@@ -579,7 +580,7 @@ def sync_calendar(
         now: Reference instant for expanding recurring events (defaults to the
             current UTC time); injectable for tests.
         recur_horizon_hours: How far ahead to materialize recurring occurrences
-            (default :data:`RECUR_HORIZON_HOURS`, two weeks). One-off events are
+            (default :data:`RECUR_HORIZON_HOURS`, 30 days). One-off events are
             unaffected — they carry no horizon.
 
     Returns:

@@ -472,8 +472,8 @@ Prefrontal fetches each user's own **private ICS feeds** and syncs them natively
 — no n8n, no OAuth. Feed URLs live per-user in the `sources` registry (sealed at
 rest with `PREFRONTAL_SECRET_KEY`), and one launchd job covers every user.
 
-Each sync expands **recurring** events two weeks ahead (`PREFRONTAL_CALENDAR_HORIZON_DAYS`,
-default 14) so standing/weekly events populate the household week view and the slot
+Each sync expands **recurring** events 30 days ahead (`PREFRONTAL_CALENDAR_HORIZON_DAYS`,
+default 30) so standing/weekly events populate the calendar page and the slot
 finder, not just the next day — one-off events ingest at any distance regardless.
 Because occurrences carry a stable per-occurrence `external_id`, the every-15-min
 job just upserts the same two-week window forward each run (no duplicates), so the

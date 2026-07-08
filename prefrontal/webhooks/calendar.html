@@ -205,8 +205,13 @@
 const KEY = "prefrontal_token";
 const REFRESH_MS = 60000;
 const PRESETS = [15, 30, 45, 60, 90];
-// How many day-columns the agenda shows (a rolling week from today).
+// The agenda shows at least this many day-columns (a rolling week from today),
+// then extends to cover the furthest day that actually has something — up to
+// MAX_AGENDA_DAYS, so a stray far-future one-off can't render a wall of empty
+// columns. Recurring events populate ~30 days out (the sync horizon); one-off
+// events as far as the feed exports them.
 const AGENDA_DAYS = 7;
+const MAX_AGENDA_DAYS = 92;
 // A small, colour-blind-friendly palette assigned to calendars in first-seen order.
 const PALETTE = ["#4a7c59", "#b9762f", "#3a6ea5", "#8a5a9e", "#a8506a", "#4a8f8f", "#8a7b3a"];
 
@@ -311,12 +316,14 @@ function render() {
   (lastCommitments || []).forEach((c) => bucket(c.start_at, "events", c));
   (lastSlots || []).forEach((s) => bucket(s.start_at, "slots", s));
 
-  // A rolling window of day columns from today, extended to cover any later day
-  // that actually has something to show (an event or a found slot).
+  // A rolling window of day columns from today, extended to cover the furthest
+  // later day that actually has something to show (an event or a found slot) —
+  // i.e. as far out as we have data — capped at MAX_AGENDA_DAYS so a stray
+  // far-future one-off doesn't render months of empty columns.
   let horizon = AGENDA_DAYS;
   Object.values(byDay).flatMap((b) => [...b.events, ...b.slots]).forEach(({ d }) => {
     const diff = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today0) / 86400000);
-    if (diff + 1 > horizon) horizon = Math.min(diff + 1, 21);
+    if (diff + 1 > horizon) horizon = Math.min(diff + 1, MAX_AGENDA_DAYS);
   });
 
   const cards = [];
@@ -345,7 +352,9 @@ async function loadCalendar() {
   $("#status").textContent = "updating…";
   let data;
   try {
-    data = await api("/commitments");
+    // A high limit so the agenda shows everything we have out to the horizon,
+    // not just the default first 50 rows.
+    data = await api("/commitments?limit=1000");
   } catch (err) {
     if (err.code === 401) { gate("That code didn't work."); return; }
     $("#status").textContent = "couldn't load — retry";
