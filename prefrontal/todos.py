@@ -599,6 +599,17 @@ def decompose_task(
 #: override via the `decomposition_suppress_threshold` state key (0 = never suppress).
 DEFAULT_DECOMP_SUPPRESS_THRESHOLD = 3
 
+#: Coaching-state key: the master switch for *automatically* breaking down todos
+#: you're avoiding on the coaching tick. Off by default — the automatic breakdown
+#: only runs when the user opts in (Settings → "Automatically break down todos").
+#: The on-demand "Break it down" button is always available and unaffected by this.
+AUTO_DECOMPOSE_KEY = "auto_decompose_enabled"
+
+
+def auto_decompose_enabled(store: MemoryStore) -> bool:
+    """Whether the user has opted into automatic decomposition (default off)."""
+    return (store.get_state(AUTO_DECOMPOSE_KEY, "off") or "off").lower() == "on"
+
 #: Cap on negative examples injected into the decomposer prompt — bounded so the
 #: addendum stays small and can't drown the base instructions.
 _DECOMP_GUIDANCE_LIMIT = 6
@@ -666,10 +677,14 @@ def sweep_avoided_decompositions(
     (:func:`decompose_task` with ``allow_decline``). A decline is recorded so we
     don't re-ask every tick. Returns how many breakdowns were created.
 
-    Bounded by ``max_attempts`` model calls per tick (worst-avoided first), and a
-    no-op when the user has switched auto-decompose off
-    (:func:`auto_decompose_suppressed`). On-demand "Break it down" is unaffected.
+    Bounded by ``max_attempts`` model calls per tick (worst-avoided first). A
+    no-op unless the user has opted into automatic breakdown
+    (:func:`auto_decompose_enabled`, off by default), and also when repeated "not
+    needed" dismissals have learned to back off (:func:`auto_decompose_suppressed`).
+    On-demand "Break it down" is unaffected by both.
     """
+    if not auto_decompose_enabled(store):
+        return 0  # off by default — opt in via Settings; manual "Break it down" still works
     if auto_decompose_suppressed(store):
         return 0
     avoided = avoided_todos(store.open_todos(), now)

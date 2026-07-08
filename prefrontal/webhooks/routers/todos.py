@@ -55,10 +55,12 @@ from prefrontal.scheduling import (
     work_window_now,
 )
 from prefrontal.todos import (
+    AUTO_DECOMPOSE_KEY,
     DEFAULT_MAX_FIRST_STEP_MINUTES,
     MAX_CATEGORIES,
     at_category_cap,
     augment_todo,
+    auto_decompose_enabled,
     avoided_todos,
     category_stats,
     decompose_task,
@@ -76,6 +78,7 @@ from prefrontal.webhooks.helpers import (
     _decompose_and_store,
 )
 from prefrontal.webhooks.schemas import (
+    AutoDecomposeConfig,
     DismissDecomposition,
     StepDone,
     TodoCategoryUpdate,
@@ -311,6 +314,32 @@ def build_router(services: RouterServices) -> APIRouter:
                 for s in stuck
             ]
         }
+
+    @router.get("/todos/auto-decompose", tags=["todos"])
+    def get_auto_decompose(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Whether automatic breakdown of avoided todos is on (off by default).
+
+        This governs only the *proactive* breakdown on the coaching tick — the
+        on-demand "Break it down" button is always available regardless.
+        """
+        return {"enabled": auto_decompose_enabled(ctx.store)}
+
+    @router.post("/todos/auto-decompose", tags=["todos"])
+    def set_auto_decompose(
+        payload: AutoDecomposeConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Turn automatic breakdown of avoided todos on/off (Settings toggle).
+
+        Writes the ``auto_decompose_enabled`` coaching key as an explicit user
+        choice. Off by default; the manual "Break it down" button is unaffected.
+        """
+        ctx.store.set_state(
+            AUTO_DECOMPOSE_KEY, "on" if payload.enabled else "off", source="explicit"
+        )
+        return {"enabled": payload.enabled}
 
     @router.get("/todos/categories", tags=["todos"])
     def todos_categories(

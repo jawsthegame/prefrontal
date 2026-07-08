@@ -1056,6 +1056,15 @@ class StepDone(BaseModel):
     )
 
 
+class AutoDecomposeConfig(BaseModel):
+    """Body of ``POST /todos/auto-decompose`` — the automatic-breakdown master switch."""
+
+    enabled: bool = Field(
+        description="True to auto-break-down avoided todos; false (default) to leave "
+        "them alone. The on-demand 'Break it down' button is unaffected either way."
+    )
+
+
 class DismissDecomposition(BaseModel):
     """Body of ``POST /todos/{id}/decompose/dismiss`` — reject a breakdown.
 
