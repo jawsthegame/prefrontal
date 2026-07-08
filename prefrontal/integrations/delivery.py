@@ -23,8 +23,15 @@ Channel classes map to transports as:
 ``digest``   held — folds into the morning briefing, never interrupts (no send)
 ``push``     ntfy (default priority) or Pushover
 ``sound``    ntfy (high priority) or Pushover (high)
-``voice``    local TTS when enabled, else ntfy (max/urgent) / Pushover (high)
+``voice``    local TTS when enabled, then a Twilio phone call when configured,
+             else ntfy (max/urgent) / Pushover (high)
 ===========  ==================================================================
+
+The Twilio call is what lets the box place the outing 150% escalation (a
+``critical`` cue → ``voice`` channel) **natively** — the last thing the n8n
+delivery workflows still owned. It uses inline TwiML (``<Say>``) so no public
+callback URL is needed; the account credentials are the operator's and the
+recipient number (``twilio_to``) is per-user, like an ntfy topic.
 
 **Suppression and debounce are not re-done here.** The engine's
 :func:`~prefrontal.coaching.suppressed` already gated the ``Decision`` (quiet
@@ -44,10 +51,13 @@ import shutil
 import subprocess
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape as _xml_escape
 
 import httpx
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.integrations.sms import _API_ROOT as _TWILIO_API_ROOT
+from prefrontal.integrations.sms import normalize_phone
 from prefrontal.log import get_logger
 from prefrontal.webhooks.notify import alarm_actions_for_cue, nudge_actions
 
@@ -125,6 +135,13 @@ class Route:
     pushover_token: str = ""
     pushover_user_key: str = ""
     tts_enabled: bool = False
+    # Twilio voice-call transport for the ``voice`` channel. The account creds +
+    # caller-ID (``twilio_from``) are the operator's (shared); ``twilio_to`` is the
+    # recipient's own phone, so it's a per-user *targeting* field like ``ntfy_topic``.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""
+    twilio_to: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,6 +205,18 @@ def resolve_route(store: Any, settings: Settings | None = None) -> Route:
         pushover_token=_target("pushover_token", resolved.pushover_token),
         pushover_user_key=_target("pushover_user_key", resolved.pushover_user_key),
         tts_enabled=store.get_bool("tts_enabled", resolved.tts_enabled),
+        # Twilio account creds + caller-ID are the operator's — non-targeting, so
+        # they always default (like ntfy_server). Only the recipient number
+        # (twilio_to) is per-user and withheld on a multi-user box, so one person's
+        # escalation call never rings another's phone.
+        twilio_account_sid=(
+            store.get_state("twilio_account_sid") or resolved.twilio_account_sid
+        ),
+        twilio_auth_token=(
+            store.get_state("twilio_auth_token") or resolved.twilio_auth_token
+        ),
+        twilio_from=store.get_state("twilio_from") or resolved.twilio_from,
+        twilio_to=_target("twilio_to", resolved.twilio_to),
     )
 
 
@@ -346,6 +375,79 @@ class TTSClient:
         )
 
 
+def voice_twiml(message: str) -> str:
+    """Inline TwiML that speaks ``message`` on the call, then hangs up (pure).
+
+    Using inline ``Twiml`` on the call-create request means the box never has to
+    host a public callback URL for Twilio to fetch — the whole instruction rides
+    in the request, keeping this as self-contained and local-first as the other
+    transports. The message is XML-escaped so a stray ``&`` or ``<`` in a nudge
+    can't malform the payload.
+    """
+    return f"<Response><Say>{_xml_escape(message)}</Say></Response>"
+
+
+class TwilioVoiceClient:
+    """Place a phone call via Twilio's REST API, speaking the nudge aloud.
+
+    The native realization of the ``voice``/``critical`` channel that the outing
+    150% escalation needs — the piece the n8n ``coffee-shop-nudge`` workflow still
+    owned. Credential-free at construction (the account SID / auth token / from /
+    to ride in per :meth:`call`), tests inject an ``httpx`` transport, and it
+    no-ops with a clear detail when unconfigured — exactly like
+    :class:`~prefrontal.integrations.sms.TwilioSmsClient` (whose account creds and
+    :func:`~prefrontal.integrations.sms.normalize_phone` it shares) and the other
+    delivery transports. Never raises: a Twilio outage must not sink the tick.
+    """
+
+    def __init__(self, timeout: float = 10.0, transport: httpx.BaseTransport | None = None) -> None:
+        self.timeout = timeout
+        self._transport = transport
+
+    def call(
+        self,
+        account_sid: str,
+        auth_token: str,
+        *,
+        sender: str,
+        to: str,
+        message: str,
+    ) -> DeliveryResult:
+        """POST a call-create to Twilio, speaking ``message`` via inline TwiML.
+
+        No-ops (nothing dialed) unless the account SID, auth token, caller-ID, and
+        a valid recipient number are all present, so an unconfigured box just
+        reports "not configured" rather than erroring. The recipient is run through
+        :func:`~prefrontal.integrations.sms.normalize_phone` first, so a plainly
+        invalid number is rejected before a doomed request.
+        """
+        number = normalize_phone(to)
+        if not (account_sid and auth_token and sender and number):
+            return DeliveryResult(
+                channel="voice", transport="twilio", detail="twilio voice: not configured"
+            )
+        url = f"{_TWILIO_API_ROOT}/Accounts/{account_sid}/Calls.json"
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self._transport) as client:
+                resp = client.post(
+                    url,
+                    data={"From": sender, "To": number, "Twiml": voice_twiml(message)},
+                    auth=(account_sid, auth_token),
+                )
+        except httpx.HTTPError as exc:  # network down, DNS, timeout, …
+            logger.warning("twilio voice delivery failed: %s", exc)
+            return DeliveryResult(
+                channel="voice", transport="twilio", detail=f"twilio call failed: {exc}"
+            )
+        return DeliveryResult(
+            channel="voice",
+            transport="twilio",
+            delivered=resp.is_success,
+            status_code=resp.status_code,
+            detail=f"twilio call responded {resp.status_code}",
+        )
+
+
 def _actions_for_cue(
     cue: Any, *, base_url: str, secret: str, handle: str
 ) -> list[dict[str, Any]]:
@@ -387,20 +489,23 @@ class DeliveryClient:
         ntfy: NtfyClient | None = None,
         pushover: PushoverClient | None = None,
         tts: TTSClient | None = None,
+        voice: TwilioVoiceClient | None = None,
     ) -> None:
         self.ntfy = ntfy or NtfyClient()
         self.pushover = pushover or PushoverClient()
         self.tts = tts or TTSClient()
+        self.voice = voice or TwilioVoiceClient()
 
     @classmethod
     def from_settings(
         cls, settings: Settings | None = None, *, transport: httpx.BaseTransport | None = None
     ) -> DeliveryClient:
-        """Build a client. ``transport`` (tests) is shared by both HTTP transports."""
+        """Build a client. ``transport`` (tests) is shared by every HTTP transport."""
         return cls(
             ntfy=NtfyClient(transport=transport),
             pushover=PushoverClient(transport=transport),
             tts=TTSClient(),
+            voice=TwilioVoiceClient(transport=transport),
         )
 
     def deliver(
@@ -428,10 +533,25 @@ class DeliveryClient:
         if channel == "digest":
             return DeliveryResult(channel=channel, detail="held for digest")
 
-        if channel == "voice" and route.tts_enabled:
-            spoken = self.tts.speak(message, enabled=True)
-            if spoken.delivered:
-                return spoken  # already stamped channel="voice"
+        if channel == "voice":
+            # Local TTS first when enabled (you're at the machine), then a Twilio
+            # phone call when configured (you're out — the true "critical" case the
+            # 150% outing escalation exists for). Either that lands ⇒ done; else it
+            # falls through to a loud push below, so a voice cue is never dropped.
+            if route.tts_enabled:
+                spoken = self.tts.speak(message, enabled=True)
+                if spoken.delivered:
+                    return spoken  # already stamped channel="voice"
+            if route.twilio_account_sid and route.twilio_from and route.twilio_to:
+                called = self.voice.call(
+                    route.twilio_account_sid,
+                    route.twilio_auth_token,
+                    sender=route.twilio_from,
+                    to=route.twilio_to,
+                    message=message,
+                )
+                if called.delivered:
+                    return called  # already stamped channel="voice"
 
         actions = (
             extra_actions

@@ -866,11 +866,19 @@ launchd replacement both deliver, so once a launchd agent is confirmed working,
 two first. Debounce catches most accidental doubles, but don't lean on it.
 
 **Deliberately still on n8n:** `triage-ingest` pulls external data *in*
-(mail/Signal) using n8n's connectors; `coffee-shop-nudge`
-adds a Twilio **voice call** at 150% that native delivery doesn't place;
-`morning-briefing`, `encouragement`, and `focus-arm-check` don't have a native
-`--deliver` path yet. These stay until there's a first-class replacement — see
-`ROADMAP.md`.
+(mail/Signal) using n8n's connectors; `morning-briefing`, `encouragement`, and
+`focus-arm-check` don't have a native `--deliver` path yet. These stay until
+there's a first-class replacement — see `ROADMAP.md`.
+
+The **150% voice call** is no longer on that list: the native delivery client now
+places it via Twilio (the `voice`/`critical` channel dials a call with inline
+TwiML instead of only speaking on the host or falling back to a push). Configure
+`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` and a recipient
+(`TWILIO_TO`, or a per-user `twilio_to` in `coaching_state`), and the
+`coach --deliver` tick makes the escalation call itself — so `coffee-shop-nudge`'s
+Twilio node can be deactivated with the other cutover workflows. Without Twilio
+configured the call no-ops and a `voice` cue falls back to a loud push, exactly as
+before.
 
 ---
 

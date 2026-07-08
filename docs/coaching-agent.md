@@ -66,11 +66,21 @@ replace them):
   `prefrontal/integrations/delivery.py`, exercised by `prefrontal coach
   --deliver`. It's an **addition**, not a replacement: n8n delivery still works,
   and the engine's channel-choice/suppression contract here is unchanged. The
-  client just gives the box a native, n8n-free path that renders ntfy's action
-  buttons and honors per-user routing (§6.5).)*
+  client gives the box a native, n8n-free path that renders ntfy's action buttons
+  and honors per-user routing (§6.5). It now covers **every channel class**,
+  including `voice`/`critical`: local TTS, then a native **Twilio phone call**
+  (`TwilioVoiceClient`, inline TwiML — no callback URL), then a loud push. That was
+  the last piece n8n delivery still exclusively owned, so a fully n8n-free delivery
+  path exists — n8n stays only for data *ingestion* connectors, not delivery.)*
 - **No always-on Python scheduler.** Cadence is driven by n8n cron + the existing
   poll model, mirroring `outing/check` and the briefing workflow. The agent is a
   pure decision function plus a thin HTTP/CLI surface — no background threads.
+  *(Update: the "cadence comes from n8n" part has since moved to a native launchd
+  schedule — `deploy/com.prefrontal-coach.plist` + `deploy/coach.sh` run `coach
+  --deliver --all-users` every 60s, replacing the coach-check / hyperfocus-check /
+  departure-reminder / panic-check poll workflows. The engine is still a pure
+  decision function with no in-process scheduler — launchd, not a background
+  thread, drives the tick — so this non-goal holds; only the cron moved off n8n.)*
 - **No cross-module conversation or memory of dialogue.** A cue is one-shot:
   decide, deliver, log. Multi-turn check-ins ("did that help?") are noted as a v2
   in §11.
