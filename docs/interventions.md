@@ -58,16 +58,19 @@ All interventions below are **active** (wired end-to-end) unless noted.
 | Intervention | What it does | Trigger |
 |---|---|---|
 | `tiny_first_step` | Reframe a stalled task as one <5-minute concrete first action (`POST /todos/{id}/decompose`; also fed to panic and the `/todos/now` widget). | on demand, or a task you're about to start |
-| `auto_decompose` | Break a task the user is *avoiding* into a tiny first step + collapsed remaining steps — but only if the **model judges** it worth decomposing (it can decline). Runs on the coaching tick (`sweep_avoided_decompositions`), not at creation. | a todo that has reached "avoided" status |
+| `auto_decompose` | Break a task the user is *avoiding* into a tiny first step + collapsed remaining steps — but only if the **model judges** it worth decomposing (it can decline). Runs on the coaching tick (`sweep_avoided_decompositions`), not at creation. **Off by default** (`auto_decompose_enabled`); opt in via Settings. The on-demand 'Break it down' button works regardless. | a todo that has reached "avoided" status (when opted in) |
 | `body_double_nudge` | Surface a task you keep bailing on and suggest a start-together window (`GET /todos/stuck`; named in the profile). | repeated misses on the same task |
+| `clarify_ambiguous` | Notice a vague todo/commitment ('Tax', 'Mom') that can't be started because it can't be named, ask ONE inline clarifying question, and — once it resolves to a recognized task — offer a guided walkthrough (`prefrontal/clarify.py`). The detection sweep runs on the coaching tick (`sweep_ambiguous_items`) and fills the dashboard clarify card; `POST /clarifications/check` is the on-demand twin. | an ambiguous item on the schedule or todo list |
 
-> **Decomposition, in full:** breakdowns are generated only once a todo is being
-> *avoided* (the coaching-tick sweep), and the model can reply "not worth breaking
-> down." The user can dismiss a breakdown as **not needed** (repeated →
-> auto-decompose switches off) or **didn't help** (fed back as negative examples
-> to the decomposer). On-demand **Break it down** always works. See
-> `todos.decompose_task` / `sweep_avoided_decompositions` and the
-> `decomposition_feedback` table.
+> **Decomposition, in full:** automatic breakdown is **off by default** — the user
+> opts in via Settings (`auto_decompose_enabled`), and only then does the
+> coaching-tick sweep run. Once on, breakdowns are generated only for a todo being
+> *avoided*, and the model can reply "not worth breaking down." The user can
+> dismiss a breakdown as **not needed** (repeated → auto-decompose switches back
+> off) or **didn't help** (fed back as negative examples to the decomposer).
+> On-demand **Break it down** always works regardless of the setting. See
+> `todos.decompose_task` / `sweep_avoided_decompositions` / `auto_decompose_enabled`
+> and the `decomposition_feedback` table.
 
 ## Time Blindness
 *Difficulty sensing elapsed time and estimating task/travel duration, leading to chronic underestimation and late departures.*
