@@ -892,13 +892,22 @@ def test_chore_day_selector_rejects_out_of_range(client, store, dana):
     ).status_code == 422
 
 
-def test_chores_check_endpoint(client, store, dana):
+def test_chores_check_endpoint(client, store, dana, monkeypatch):
     dana_id = store.get_user("dana")["id"]
     store.scoped(dana_id).set_state("ntfy_topic", "dana-topic")
     dana.set_chore(title="dishes", due_time="00:01", owner_id=dana_id, updated_by=dana_id)
-    # due_time is 00:01 local, so by any wall-clock "now" it's already past due → miss fires.
+    # Freeze the sweep's clock at a fixed mid-day so a 00:01-due chore is
+    # unambiguously past due (a real `utcnow()` in the first minute of the local
+    # day would leave it *not* yet due, silently emptying the sweep and passing
+    # any weaker assertion for the wrong reason).
+    frozen = datetime.datetime(2026, 7, 8, 12, 0, 0)
+    monkeypatch.setattr(
+        "prefrontal.webhooks.routers.household.utcnow", lambda: frozen
+    )
     out = client.post("/webhooks/household/chores/check", headers=_h("dana-tok")).json()
-    assert isinstance(out["sent"], list)
+    # The undone, past-due chore actually fired a miss (not merely "returned a list").
+    missed = [s for s in out["sent"] if s.get("stage") == "missed"]
+    assert [s["title"] for s in missed] == ["dishes"]
 
 
 # --- routines: grouping + accountability + schedule inheritance --------------

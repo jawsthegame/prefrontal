@@ -18,6 +18,7 @@ from prefrontal.impact import utcnow
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
 from prefrontal.panic import (
+    PanicPlan,
     build_panic,
     evaluate_panic_check,
     overwhelm_level,
@@ -330,6 +331,26 @@ def test_overwhelm_level_needs_a_real_pileup(store, noon):
     assert overwhelm_level(plan) == "overwhelmed"
     assert "2 already late" in panic_alert_message(plan, name="Tom")
     assert panic_alert_message(plan).startswith("Heads up —")
+
+
+def test_overwhelm_level_second_branch_one_late_plus_full_plate():
+    """The `late>=1 and pressing>=min_pressing` disjunct (only-one-late) is honored.
+
+    The store-driven test above always drives `late>=2` (the first disjunct); this
+    exercises the second one directly, plus the min_pressing threshold, so flipping
+    the `and`→`or` or breaking the comparison would fail here.
+    """
+    def _plan(*, late, pressing):
+        return PanicPlan(date="2026-07-08", counts={"late": late, "pressing": pressing})
+
+    # One late item on a full plate (pressing == default 3) → overwhelmed.
+    assert overwhelm_level(_plan(late=1, pressing=3)) == "overwhelmed"
+    # Same single late item but a lighter plate (pressing 2 < 3) → calm.
+    assert overwhelm_level(_plan(late=1, pressing=2)) == "calm"
+    # No late item, even a heavy plate, stays calm (both disjuncts need late>=1).
+    assert overwhelm_level(_plan(late=0, pressing=5)) == "calm"
+    # A lower min_pressing makes the lighter plate trip (the param is respected).
+    assert overwhelm_level(_plan(late=1, pressing=2), min_pressing=2) == "overwhelmed"
 
 
 def _overwhelm(store, now):
