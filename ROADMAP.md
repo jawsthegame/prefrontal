@@ -183,8 +183,23 @@ the first test. Code follow-ups below are optional polish.
   signal alongside snoozes. A **meds** check now ships as a third basic (one-tap
   Took / Snooze, its own start hour / interval / daily target for multi-dose
   regimens) — **off even when self_care is on**, since medication is personal, so
-  it's opt-in per person via `meds_enabled`. *(Next: a sleep/wind-down check to
-  round out the basics pack.)*
+  it's opt-in per person via `meds_enabled`. A **bio-break** check followed
+  (open-ended: a plain interval reminder within a time *window*, bounded by an
+  `biobreak_end_hour` rather than a daily quota — no count ever silences it, `Went`
+  just defers the next). The **wind-down / sleep** check now rounds out the basics
+  pack ✅ — a once-a-day (target 1) *evening* nudge to "start winding down for bed"
+  from `winddown_start_hour`≈21, re-asking every `winddown_reask_minutes`≈30 until
+  one **Winding down** settles it for the night (`winddown_started`/`winddown_snooze`
+  in `NUDGE_ACTIONS`, a 🌙 button in `notify.py`, `winddown` in the delivery
+  `_CONTEXT_KIND`/coach `_CUE_ACTION_KIND` maps). Unlike the daytime checks it lives
+  right against the responsive-hours edge, and by design **leans on the engine's
+  quiet-hours gate** — a wind-down cue outside responsive hours is `suppressed` like
+  any other — rather than modelling a bedtime itself, so it never nags into the
+  night. **Off even when self_care is on** (a bedtime is a personal preference, like
+  meds): opt in via `winddown_enabled`. Covered by `tests/test_self_care.py`.
+  *(The "does it broaden into a self-care/basics pack?" question is now moot in
+  practice — meal + water + meds + bio-break + wind-down cover the basics; a formal
+  `Pack` bundling them with seeded defaults is possible but not needed to use them.)*
 - **Encouragement & recovery layer** ✅ — the counterweight to a system that
   nudges: when a day goes rough, shift tone from nudging to reassurance + a plan.
   `prefrontal/encouragement.py`'s deterministic `assess_day()` scores today's
@@ -1025,8 +1040,13 @@ ordered by leverage; each is independent but builds on denser capture.
   **Ate** / **Snooze** on ntfy, capped once a day and gated on responsive hours.
   Off unless the `self_care` coaching key is `on`. **Water** shipped alongside meal
   (`water_check`, to a daily target), confirm/snooze **log `self_care` episodes**,
-  and an adaptive-cadence learner tunes the interval. *(Still open: whether it
-  broadens into a self-care/basics pack alongside meds/sleep.)*
+  and an adaptive-cadence learner tunes the interval. The basics pack has since
+  grown to five: **meds** (target 1, opt-in), an open-ended **bio-break** reminder,
+  and now a **wind-down / sleep** check (an evening once-a-day "start winding down"
+  nudge, off by default like meds, that leans on the engine's quiet-hours gate so
+  it never nags into the night). *(The open "does it broaden into a self-care/basics
+  pack?" question is effectively answered — the five checks cover the basics; a
+  formal `Pack` bundle is possible but not required to use them.)*
 ## Iceboxed (out of scope)
 
 - **Shopify MCP — record-shop assistant / used-collection buying.** ❄️

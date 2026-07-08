@@ -114,9 +114,9 @@
 <div class="wrap" id="wrap" data-collapse-key="prefrontal_settings_layout" style="display:none">
   <section class="card" id="c-selfcare">
     <h2>Self-care checks</h2>
-    <p class="sub">Meal, water, meds, and bio-break nudges. Turn the whole thing on
-      or off, and set each check's daily target, the hour it starts (and, for bio
-      breaks, the hour it stops), and how often it re-asks. Logging what you've done
+    <p class="sub">Meal, water, meds, bio-break, and wind-down nudges. Turn the whole
+      thing on or off, and set each check's daily target, the hour it starts (and, for
+      bio breaks, the hour it stops), and how often it re-asks. Logging what you've done
       today happens on the Dashboard card.</p>
     <div id="selfcare"></div>
     <div class="saved" id="sc-saved"></div>
@@ -188,6 +188,7 @@ const SC_META = {
   water: { icon: "💧", label: "Water" },
   meds: { icon: "💊", label: "Meds" },
   biobreak: { icon: "🚻", label: "Bio breaks" },
+  winddown: { icon: "🌙", label: "Wind-down" },
 };
 
 function scProgress(c) {
@@ -233,7 +234,7 @@ function renderSelfCare(d) {
     + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;
   if (!on) {
     return `<div class="sc-controls">${master}`
-      + `<span class="sc-hint">Turn on to get meal, water, meds &amp; bio-break nudges.</span></div>`;
+      + `<span class="sc-hint">Turn on to get meal, water, meds, bio-break &amp; wind-down nudges.</span></div>`;
   }
   const rows = (d.checks || []).map(scRow).join("");
   return `<div class="sc-controls">${master}${rows}</div>`;

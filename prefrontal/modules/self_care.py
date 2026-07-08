@@ -28,6 +28,14 @@ window-bounded one, an **end hour**):
   defers the next reminder a full interval (and logs how you responded), and it's
   never "done for the day". The point is the nudge + your response, not hitting a
   number.
+- **winddown** (target 1) — **off by default** even when self-care is on, because
+  a bedtime is a personal preference (like meds). From ``winddown_start_hour``
+  (default 21, in the *evening*) it nudges "start winding down for bed" every
+  ``winddown_reask_minutes`` until one "Winding down" settles it for the night.
+  Unlike the daytime checks it lives right up against the responsive-hours edge:
+  it deliberately leans on the engine's quiet-hours gate (a cue outside responsive
+  hours is suppressed) so it never nags past bedtime, rather than modelling a
+  bedtime itself.
 
 So "how many yeses stops it for the day" is just the target (1 for a meal, N for
 water) — except for an open-ended check, which no count ever stops; a check with
@@ -92,6 +100,18 @@ DEFAULT_BIOBREAK_SNOOZE_MINUTES = 30
 #: no longer drives a "n/6" dashboard readout (that goal display was dropped when
 #: the check became open-ended); it just bounds the count kept for the record.
 DEFAULT_BIOBREAK_DAILY_TARGET = 6
+#: Wind-down defaults (target 1: one "Winding down" and it's settled for the night).
+#: Unlike the other basics this one lives in the *evening* — it nudges in the
+#: run-up to bed, so its default start hour sits just inside the default
+#: responsive-hours end (22:00). The engine still owns the "no overnight nag"
+#: guarantee: a wind-down cue outside responsive hours is suppressed like any
+#: other, so the check leans on that gate rather than re-implementing a bedtime.
+#: It's the personal-preference kind of nudge (a bedtime is opinionated), so like
+#: meds it's **off even when self_care is on** — opt in via ``winddown_enabled``.
+DEFAULT_WINDDOWN_START_HOUR = 21
+DEFAULT_WINDDOWN_REASK_MINUTES = 30
+DEFAULT_WINDDOWN_SNOOZE_MINUTES = 15
+DEFAULT_WINDDOWN_DAILY_TARGET = 1
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -159,6 +179,15 @@ def biobreak_message(name: str = "") -> str:
     return (
         f"{lead} — time to get up and take a bathroom break. 🚻 "
         "Tap Went once you have."
+    )
+
+
+def winddown_message(name: str = "") -> str:
+    """The "start winding down" nudge text, greeting by name when we have one."""
+    lead = f"{name}, wind-down check" if name else "Wind-down check"
+    return (
+        f"{lead} — it's getting late. Time to start winding down for bed. 🌙 "
+        "Tap Winding down once you begin."
     )
 
 
@@ -295,6 +324,28 @@ CHECKS: tuple[BasicCheck, ...] = (
         end_hour_key="biobreak_end_hour",
         end_hour_default=DEFAULT_BIOBREAK_END_HOUR,
         open_ended=True,
+    ),
+    BasicCheck(
+        key="winddown",
+        intervention="winddown_check",
+        enabled_key="winddown_enabled",
+        count_key="winddown_count",
+        target_key="winddown_daily_target",
+        target_default=DEFAULT_WINDDOWN_DAILY_TARGET,
+        snooze_key="winddown_snoozed_until",
+        start_hour_key="winddown_start_hour",
+        start_hour_default=DEFAULT_WINDDOWN_START_HOUR,
+        interval_key="winddown_reask_minutes",
+        interval_default=DEFAULT_WINDDOWN_REASK_MINUTES,
+        snooze_minutes_key="winddown_snooze_minutes",
+        snooze_minutes_default=DEFAULT_WINDDOWN_SNOOZE_MINUTES,
+        message=winddown_message,
+        confirm_action="winddown_started",
+        snooze_action="winddown_snooze",
+        # Target 1, so the first confirm meets it and shows done_headline;
+        # progress_headline is a belt-and-braces default it never actually reaches.
+        progress_headline="Good — winding down. 🌙",
+        done_headline="Good — wind down and rest well. 🌙 Night.",
     ),
 )
 
@@ -833,7 +884,7 @@ def adapt_self_care(store: MemoryStore, now: datetime | None = None) -> list[dic
 
 
 class SelfCareModule(Module):
-    """Nudges the basic needs a focus state quietly overrides (meals, water, meds)."""
+    """Nudges the basic needs a focus state quietly overrides (meals, water, meds, sleep)."""
 
     key = "self_care"
     title = "Self-Care"
@@ -874,6 +925,14 @@ class SelfCareModule(Module):
         "biobreak_interval_minutes": str(DEFAULT_BIOBREAK_INTERVAL_MINUTES),
         "biobreak_snooze_minutes": str(DEFAULT_BIOBREAK_SNOOZE_MINUTES),
         "biobreak_daily_target": str(DEFAULT_BIOBREAK_DAILY_TARGET),
+        # Wind-down: off even when self_care is on (a bedtime is a personal
+        # preference, like meds) — opt in via winddown_enabled. It nudges in the
+        # evening run-up to bed; the engine's responsive hours bound how late.
+        "winddown_enabled": "off",
+        "winddown_start_hour": str(DEFAULT_WINDDOWN_START_HOUR),
+        "winddown_reask_minutes": str(DEFAULT_WINDDOWN_REASK_MINUTES),
+        "winddown_snooze_minutes": str(DEFAULT_WINDDOWN_SNOOZE_MINUTES),
+        "winddown_daily_target": str(DEFAULT_WINDDOWN_DAILY_TARGET),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -920,6 +979,18 @@ class SelfCareModule(Module):
                     "on ntfy."
                 ),
                 trigger="on an interval through the day, within a set time window",
+                status="active",
+            ),
+            Intervention(
+                name="winddown_check",
+                description=(
+                    "From winddown_start_hour (evening), a 'start winding down for "
+                    "bed' reminder every winddown_reask_minutes until you confirm. "
+                    "Off unless winddown_enabled — a bedtime is personal. Leans on "
+                    "responsive hours so it never nags past your quiet-hours start. "
+                    "One-tap Winding down / Snooze on ntfy."
+                ),
+                trigger="evening run-up to bed, until you confirm you're winding down",
                 status="active",
             ),
         ]

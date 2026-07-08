@@ -325,12 +325,101 @@ def test_biobreak_went_defers_an_interval_but_is_never_done(store):
     assert _by_kind(SelfCareModule().evaluate(store, _ctx(later)), "biobreak")
 
 
+# -- wind-down: an evening once-a-day check, off by default (like meds) ------
+
+
+def _winddown_only(store):
+    """Enable self-care with only the wind-down check on (it's opt-in)."""
+    store.set_state("self_care", "on")
+    for other in ("meal", "water", "meds", "biobreak"):
+        store.set_state(f"{other}_enabled", "off")
+    store.set_state("winddown_enabled", "on")
+
+
+def test_winddown_off_by_default_but_opt_in_fires(store):
+    """Wind-down stays silent even with self_care on until winddown_enabled is set."""
+    store.set_state("self_care", "on")
+    store.set_state("meal_enabled", "off")
+    store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
+    at_21 = _ctx(datetime(2026, 7, 2, 21, 0, 0), name="Tom")
+    assert SelfCareModule().evaluate(store, at_21) == []  # off by default
+    store.set_state("winddown_enabled", "on")
+    cues = SelfCareModule().evaluate(store, at_21)
+    assert [c.context_key for c in cues] == ["winddown"]
+    assert cues[0].intervention == "winddown_check"
+    assert "wind" in cues[0].text.lower() and "bed" in cues[0].text.lower()
+
+
+def test_winddown_silent_before_its_evening_start(store):
+    """Nothing in the afternoon — the wind-down window is the evening (default 21:00)."""
+    _winddown_only(store)
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
+    assert _by_kind(SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 21, 30, 0))), "winddown")
+
+
+def test_winddown_silent_once_confirmed(store):
+    """One 'Winding down' settles it for the night (target 1), re-arming next day."""
+    _winddown_only(store)
+    store.set_state("winddown_count", "2026-07-02|1")  # target 1 — done for the night
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 21, 30, 0))) == []
+    # A new day re-arms it (the count is date-scoped).
+    assert _by_kind(
+        SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 21, 30, 0))), "winddown"
+    )
+
+
+def test_winddown_message_greets_by_name():
+    from prefrontal.modules.self_care import winddown_message
+    assert winddown_message("Tom").startswith("Tom, wind-down check")
+    assert winddown_message().startswith("Wind-down check")
+
+
+def test_winddown_status_has_no_end_hour(store):
+    """Like meal/meds it's bounded by its target + responsive hours, not a wall clock."""
+    status = self_care_status(store, datetime(2026, 7, 2, 21, 0, 0), "UTC")
+    by_key = {c["key"]: c for c in status["checks"]}
+    assert by_key["winddown"]["end_hour"] is None
+    assert by_key["winddown"]["open_ended"] is False
+
+
+def test_act_winddown_started_counts_logs_and_settles(client, store):
+    """A 'Winding down' tap counts toward target 1, logs an episode, done for the night."""
+    token = sign_action(DEFAULT_HANDLE, "winddown_started", 20260702, SIGNING)
+    resp = client.get(f"/nudge/act?t={token}")
+    assert resp.status_code == 200
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("winddown_count") == f"{today}|1"  # target 1 met
+    eps = store.episodes_by_type("self_care")
+    assert eps and eps[0]["outcome"] == "confirmed" and "winddown" in eps[0]["context"]
+
+
+def test_winddown_relies_on_quiet_hours_not_an_end_hour(store):
+    """The design contract: the engine's quiet-hours gate — not a bedtime in the
+    module — is what keeps wind-down from nagging into the night.
+
+    The module keeps emitting the cue while past its start hour and unmet; it's
+    ``suppressed`` that drops it once outside responsive hours."""
+    from prefrontal.coaching import suppressed
+    _winddown_only(store)
+    # Responsive hours 8–22: at 23:00 the module still *emits* a cue…
+    late = _ctx(datetime(2026, 7, 2, 23, 0, 0))
+    cue = _by_kind(SelfCareModule().evaluate(store, late), "winddown")
+    assert cue is not None
+    # …but the engine suppresses it (a non-critical cue outside responsive hours).
+    assert suppressed(store, cue, late) is True
+    # Inside responsive hours (21:30) the same cue is allowed through.
+    ok = _ctx(datetime(2026, 7, 2, 21, 30, 0))
+    early = _by_kind(SelfCareModule().evaluate(store, ok), "winddown")
+    assert suppressed(store, early, ok) is False
+
+
 # -- one-tap actions ---------------------------------------------------------
 
 
 def test_self_care_actions_in_allowlist():
     for action in ("meal_ate", "meal_snooze", "water_drank", "water_snooze",
-                   "meds_took", "meds_snooze"):
+                   "meds_took", "meds_snooze", "winddown_started", "winddown_snooze"):
         token = sign_action(DEFAULT_HANDLE, action, 20260702, SIGNING)
         assert verify_action(token, SIGNING) == (DEFAULT_HANDLE, action, 20260702)
 
@@ -551,7 +640,7 @@ def test_status_reports_off_master_switch(store):
     assert status["enabled"] is False
     # Even off, the per-check shape is present so the card can render it.
     keys = {c["key"] for c in status["checks"]}
-    assert keys == {"meal", "water", "meds", "biobreak"}
+    assert keys == {"meal", "water", "meds", "biobreak", "winddown"}
 
 
 def test_status_reports_progress_and_meds_disabled(store):
