@@ -199,9 +199,9 @@ know about users — they keep working unchanged, just handed a scoped store.
    only the state values are per-user. (Per-user module enablement is a possible
    v2; out of scope here.)
 
-`user_name` (read at `app.py:554` for nudge personalization) is replaced by the
-user's `display_name` from the `users` row, which the scoped request already has
-— one fewer state key.
+`user_name` (previously a coaching-state key read for nudge personalization) is
+replaced by the user's `display_name` from the `users` row, which the scoped
+request already has — one fewer state key.
 
 ---
 
@@ -209,8 +209,10 @@ user's `display_name` from the `users` row, which the scoped request already has
 
 ### 6.1 Token → user resolution
 
-Replace the single shared-secret check (`_verify_token`, `app.py:248`) with a
-per-user resolver implemented as a FastAPI dependency:
+Replace the single shared-secret check with a per-user resolver implemented as a
+FastAPI dependency (shipped in `prefrontal/webhooks/deps.py` — `resolve_user` +
+`ScopedRequest`; the endpoints that consume it live in `webhooks/routers/*.py`,
+not the old monolithic `app.py`):
 
 ```python
 def resolve_user(request, x_prefrontal_token) -> ScopedRequest:
@@ -382,7 +384,7 @@ co-parent can self-serve via **invites** (`POST /household/invites` →
 | Store scoping | `memory/store.py` | `user_id` on `__init__`, `scoped()`, `_uid()` guard, `AND user_id=?` on every per-user query, fix every `ON CONFLICT` |
 | User CRUD | `memory/store.py` (or new `memory/users.py`) | `create_user`, `get_user_by_token_hash`, `list_users`, `set_user_status`, `each_user` |
 | DB/migration | `memory/db.py`, new `memory/migrate.py` | rebuild-dance migration, `schema_version` |
-| Auth/scoping | `webhooks/app.py` | `resolve_user` dependency, drop `_verify_token`, swap `get_store`→scoped ctx on ~18 endpoints, `delivery` fields in check response, `/admin/users*` |
+| Auth/scoping | `webhooks/deps.py` (+ `webhooks/routers/*`) | `resolve_user` dependency + `ScopedRequest`, drop `_verify_token`, swap `get_store`→scoped ctx on ~18 endpoints, `delivery` fields in check response, `/admin/users*` (endpoints now split across routers, not one `app.py`) |
 | Config | `config.py`, `.env.example` | `PREFRONTAL_DEFAULT_USER`; retire `PREFRONTAL_WEBHOOK_SECRET` (kept only as the operator-bootstrap token) |
 | Provisioning | new `provision_user()` | seed coaching defaults + module defaults + delivery fields per user |
 | Learning fan-out | `cli.py`, `memory/patterns.py` caller, `memory/summarizer.py` caller | `--user`/`--all-users`, per-user `profile-<handle>.md` |

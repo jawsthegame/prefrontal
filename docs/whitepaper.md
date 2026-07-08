@@ -175,6 +175,7 @@ declares the interventions it provides.
 | Response inhibition | **Impulsivity** | A reflective pause before a snap switch; capture-and-defer the distraction. |
 | Prospective memory, in the field | **Location-Aware Task Anchor** | Escalating nudges (soft → firm → voice call) back to a stated intention as its window elapses, gated by actually being on-site. |
 | Basic needs, dropped in flow | **Self-Care** | Opt-in "have you eaten? / had water?" checks that pierce a focus block — not an EF dysfunction itself but a downstream casualty of one; adaptive cadence to a daily target. |
+| Undeclared trips & out-of-home balance | **Closed-Loop Trip Tracking** | Captures a round trip you didn't declare, asks for a one-tap label + honest reflection, and flags when out-of-home time skews away from a life-sphere you've set a target for. |
 
 *(See [`docs/one-sheet.pdf`](one-sheet.pdf) for the reader-facing version of
 this breakdown. Build status per module is tracked in `README.md`.)*
@@ -275,7 +276,7 @@ data stays yours.
 
 Prefrontal is in active, daily use. A lot is in place — multi-tenant memory and
 the learning pass, calendar/todo handling, briefing, panic mode, encouragement,
-mail triage, the coaching tick engine, all six challenge modules, native ntfy
+mail triage, the coaching tick engine, all seven challenge modules, native ntfy
 delivery, the LLM-as-sensor capture path, and the Parent Pack backbone (shared
 household sheet, star charts, shopping, delta digest, load-balance view, weekly
 check-in, self-serve invites). What's still ahead:

@@ -84,6 +84,7 @@ All interventions below are **active** (wired end-to-end) unless noted.
 | `estimate_correction` | Multiply the agent's raw time estimates by the learned bias. | any prediction of task or travel duration |
 | `departure_buffer` | Add a learned buffer and nudge earlier than the naive leave time. | an upcoming calendar event with a location |
 | `elapsed_time_callouts` | Periodic "you've been on this N minutes" callouts during a block. | an active focus/work block |
+| `morning_prep` | The night before an early start, nudge to set an alarm. | a commitment tomorrow whose leave-by is before the early-start threshold |
 
 ## Closed-Loop Trip Tracking
 *Trips taken without declaring them — you leave, you come back, and the time and context are gone. Passive tracking captures the round trip; a quick label, category, and honest "how it went" turns it into signal.*
@@ -93,6 +94,7 @@ All interventions below are **active** (wired end-to-end) unless noted.
 | `label_prompt` | Ask for a label + category on a completed, undeclared trip. | a location loop closes (left the home radius, then returned) |
 | `reflection_capture` | Accept a plain-English "how it went" note, classify it into an outcome, and feed it back into stats + the learning engine. | the user reflects on a completed trip |
 | `focus_balance` | A gentle weekly heads-up when out-of-home time skews away from a life-sphere you've set a target for (kids/personal) — well-being, not productivity. Opt-in via the `focus_balance_nudge` state flag. | a targeted life-domain falls under half its weekly aim |
+| `away_proposal` | When an open trip has run multiple days, offer a one-tap "mark me away" so the member's chores fall to the present co-parent instead of nagging someone who isn't home. | an open trip has lasted `AWAY_AUTODETECT_MIN_DAYS`+ days |
 
 ---
 

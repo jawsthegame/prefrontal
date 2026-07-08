@@ -1,6 +1,6 @@
 # Per-user email & calendar sources
 
-Status: **proposed** (plan for review, no code yet)
+Status: **implemented** (Phases 0–3 shipped; see the ✅ markers below)
 Author: drafted with Claude, 2026-07-06
 
 ## Problem
@@ -132,8 +132,9 @@ Document all three in `.env.example`.
   `put_imap_source`/`resolve_imap`/`imap_accounts`, `put_ics_source`/`ics_sources`).
   *(The calendar connector shipped as private-ICS-feed, not the Google-OAuth `gcal`
   originally sketched — see Decision #2 / Phase 2.)*
-- ✅ Config fields (`secret_key`, `secret_key_file`, `google_calendar_enabled`);
-  `.env.example` documented.
+- ✅ Config fields (`secret_key`, `secret_key_file`); `.env.example` documented.
+  *(The `google_calendar_enabled` gate originally sketched here was never added —
+  the connector shipped as private-ICS, so there was no OAuth scope to gate.)*
 - ✅ **Tests:** `test_crypto.py` (round-trip, encrypted-at-rest, missing/malformed/
   wrong-key errors, keyfile), `test_sources.py` (repo CRUD + service round-trips +
   password-not-in-`secret_enc`), isolation case in `test_multi_tenant.py`,
@@ -226,8 +227,12 @@ Document all three in `.env.example`.
    `import-env-sources` has run and been verified, so a half-migrated deploy
    still fetches Tom's mail.
 4. **Cutover double-ingest.** Deactivate the n8n `calendar-sync` workflow in the
-   n8n UI before enabling the launchd job, or events land twice (harmless when
-   feed slugs match — `sync_calendar` upserts by `external_id` — but avoid it).
+   n8n UI before enabling the launchd job, or events land twice. Matching feed
+   slugs are idempotent (`sync_calendar` upserts by `external_id`), and even
+   *mismatched* slugs are now collapsed in-app by `dedupe_events` (same title +
+   start/end → one commitment), so a double-ingest de-duplicates rather than
+   double-booking you against yourself — but still avoid it. (The n8n
+   `calendar-sync` workflow has since been retired entirely; see Phase 2.)
 
 ## Files touched (summary)
 

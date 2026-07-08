@@ -255,7 +255,7 @@ Giving a star only helps if someone remembers to. A chart can carry a **prompt
 schedule** in its `structured` JSON — `{enabled, days:[0=Mon … 6=Sun],
 time:"HH:MM", question}` — a recurring "did &lt;kid&gt; earn a star for
 &lt;chart&gt; today?" check-in on chosen weekdays at a time of day (configured on
-the `/kids` dashboard, weekday picker + time; validated by `normalize_prompt`).
+the `/household` hub, weekday picker + time; validated by `normalize_prompt`).
 No new table: the schedule rides the chart, and a `last_prompted_at` column dedups
 it to once per local day.
 
@@ -280,7 +280,7 @@ felt experience and the tally can diverge, and honesty needs a welcoming frame.
   solo household hides the card and the sweep no-ops (see §2).
 - **Opt-in schedule** on the household row (`checkin_enabled`, `checkin_day`,
   `checkin_time`, `checkin_last_sent_at`) — one weekday + time both parents share,
-  set on the `/kids` dashboard; off by default.
+  set on the `/household` hub; off by default.
 - **The ask** — a periodic trigger (`POST /webhooks/household/checkin/check`, and
   `prefrontal household checkin-check`; n8n workflow
   `deploy/n8n/checkin-check.workflow.json`) sends **both** parents a warm push
@@ -309,7 +309,7 @@ parent what the *other* parent changed on the sheet since they last looked.
 - **Requires a shared household** (≥2 members) — with one parent there's no "other
   parent" to catch up on, so the toggle hides and the sweep no-ops (see §2).
 - **Opt-in** household toggle `households.digest_enabled` (off by default), set on
-  the `/kids` dashboard.
+  the `/household` hub.
 - **"Seen" vs "digested"** — two per-parent `coaching_state` stamps:
   `household_seen_at` (bumped whenever they open the sheet — `GET /household/sheet`
   — or tap **Caught up 👍**) and `household_digested_at` (bumped when we last told
@@ -375,10 +375,8 @@ household-scoped table.
   `/family` and `/dashboard` hits `…/{id}/remove`.
 - Surfaces: `GET /household/shopping` (the list alone) + `POST /household/shopping`,
   `…/{id}/got`, `…/{id}/remove`, `…/clear-got` (bulk-clear checked-off items); the
-  `/kids` dashboard's checklist (with a **Clear N bought** button once anything is
-  ticked); the **`/family`**
-  view's quick-add + tap-to-check-off (the one editable spot on the otherwise
-  read-only shared glance); a **Shopping card on `/dashboard`** (direct quick-add +
+  `/household` hub's checklist (with a **Clear N bought** button once anything is
+  ticked) with quick-add + tap-to-check-off; a **Shopping card on `/dashboard`** (direct quick-add +
   check-off for household members, no model needed); the natural-language
   **assistant** (`add_shopping` / `check_shopping` / `remove_shopping`, so "add
   eggs and milk to the list" works from the dashboard or `/kids` box); and
@@ -556,12 +554,17 @@ confirm) is unchanged.
 
 ---
 
-## 6. The visible sheet (`/kids` render)
+## 6. The visible sheet (`/household` hub + `/kids`·`/pets` lenses)
 
-Assemble the household's data into a single rendered view — the editable **`/kids`**
-dashboard, with a read-only partner glance at **`/family`** (server-rendered; no
-new UI framework). Deterministic — built on request from `facts()` /
-`agreements()` / `children()` / upcoming child `commitments`.
+Assemble the household's data into a single rendered view. Edits happen on the
+**`/household`** hub — the one writable surface (kids, pets, facts, agreements +
+star charts, shopping, routines, and the NL `/assistant` box). Calm read-only
+**lenses** project subsets of the same sheet: **`/kids`** (roster, facts, plans +
+star progress, upcoming appts) and **`/pets`** (pet roster + facts). All share the
+same data-less shell that reads `GET /household/sheet`. (`/family` is retired — it
+308-redirects to `/household` so old bookmarks still land somewhere sane.)
+Deterministic — built on request from `facts()` / `agreements()` / `children()` /
+upcoming child `commitments`.
 
 Sections, in order:
 
@@ -578,9 +581,9 @@ Sections, in order:
 4. **Upcoming appointments** — child commitments in the near window, with who (if
    known) is on pickup.
 
-Reachable at `GET /kids` (editable) and `GET /family` (glance) for both parents;
-`GET /household/sheet` returns the same assembly as JSON for machine clients / the
-widget.
+Reachable at `GET /household` (editable hub) with read-only lenses at `GET /kids`
+and `GET /pets` for both parents; `GET /household/sheet` returns the same assembly
+as JSON for machine clients / the widget.
 
 ---
 
