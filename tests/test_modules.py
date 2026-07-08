@@ -292,6 +292,39 @@ def test_morning_prep_alarm_backs_off_start_for_attend_mode(store):
     assert cues[0].ref["alarm_at"] == "07:30"  # 08:15 start − 45 min
 
 
+def test_morning_prep_fires_within_responsive_hours_when_prep_hour_is_quiet(store):
+    """Regression: the "set an alarm" nudge is a non-critical cue, so quiet hours
+    hold it whenever it's emitted outside the responsive window. A user who winds
+    down early (responsive hours ending at 21:00, the default prep hour) would
+    otherwise have an empty send window — the cue regenerated every evening but
+    suppressed on every tick, so the alarm nudge silently never arrives. The prep
+    hour is clamped into the last responsive hour so there's always a live window."""
+    plans = [_plan(1, "2026-07-07 07:30:00", "2026-07-07 07:20:00", title="Tom Workout")]
+    mod = TimeBlindnessModule()
+    # Responsive hours end at 21:00, so the default 21:00 prep hour is already quiet.
+    # The clamp moves generation to 20:00, where delivery isn't yet suppressed.
+    last_hr = CoachContext(
+        now=datetime(2026, 7, 6, 20, 30), timezone="UTC", responsive_end=21
+    )
+    too_early = CoachContext(
+        now=datetime(2026, 7, 6, 19, 30), timezone="UTC", responsive_end=21
+    )
+    assert len(mod._morning_prep_cues(store, plans, last_hr)) == 1  # 20:xx: fires
+    assert mod._morning_prep_cues(store, plans, too_early) == []  # 19:xx: not yet
+
+
+def test_morning_prep_respects_configured_hour_within_responsive_window(store):
+    """When the prep hour sits inside the responsive window (the common case), it is
+    left exactly as configured — the clamp only rescues an otherwise-empty window."""
+    plans = [_plan(1, "2026-07-07 07:30:00", "2026-07-07 07:20:00", title="Tom Workout")]
+    mod = TimeBlindnessModule()
+    # prep 21, responsive end 22 (defaults): the window [21, 22) is live, no clamp.
+    before = CoachContext(now=datetime(2026, 7, 6, 20, 30), timezone="UTC", responsive_end=22)
+    at = CoachContext(now=datetime(2026, 7, 6, 21, 30), timezone="UTC", responsive_end=22)
+    assert mod._morning_prep_cues(store, plans, before) == []  # 20:xx: before prep hour
+    assert len(mod._morning_prep_cues(store, plans, at)) == 1  # 21:xx: fires
+
+
 def test_repeat_stalled_tasks_flags_repeat_misses_but_not_resolved():
     """Two+ misses on a task flag it; a task later completed drops off."""
     episodes = [
