@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.briefing import DEFAULT_DAY_END_HOUR, DEFAULT_DAY_START_HOUR
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_or_none
-from prefrontal.commitments import find_conflicts
+from prefrontal.commitments import find_conflicts, undismissed_conflicts
 from prefrontal.config import get_settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.patterns import task_bias_resolver
@@ -214,7 +214,9 @@ def assess_day(store: MemoryStore, now: Any | None = None) -> DayAssessment:
             detail = e.get("context") or e.get("episode_type") or "a miss"
             signals.append({"kind": "miss_episode", "detail": detail, "weight": 1.0})
 
-    for c in find_conflicts(today):
+    # A dismissed double-booking isn't a source of stress — the user has said it's
+    # fine — so don't let it weigh on the "rough day" score.
+    for c in undismissed_conflicts(find_conflicts(today), store.dismissed_conflicts()):
         signals.append(
             {
                 "kind": "conflict",

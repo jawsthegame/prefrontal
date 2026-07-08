@@ -227,37 +227,54 @@ def is_possible_conflict(conflict: Conflict) -> bool:
 
 
 def conflict_dismissal_key(conflict: Conflict) -> str:
-    """A stable key for dismissing a possible-conflict pair.
+    """A stable key for dismissing a conflict pair (possible or hard double-booking).
 
-    Built from each event's identity, start time, and normalized title, so a
-    dismissal sticks across re-syncs but lapses (the conflict resurfaces) if
-    either event moves or is retitled.
+    Keyed by the two events' **identities** alone (``external_id``, or the row id
+    for a manual commitment) — not their start times or titles — so a dismissal
+    stays put by *pair*: once you've said "I know these two overlap and that's
+    fine", it stays dismissed even if one event is rescheduled or retitled, as long
+    as both still exist and still overlap (a non-overlap produces no conflict to
+    key at all, and a fresh overlap between a *different* pair has a different key).
     """
 
-    def part(c: dict[str, Any]) -> str:
-        ident = c.get("external_id") or f"id:{c.get('id')}"
-        return f"{ident}@{c.get('start_at')}#{_normalize_title(c.get('title'))}"
+    def ident(c: dict[str, Any]) -> str:
+        return c.get("external_id") or f"id:{c.get('id')}"
 
-    return "::".join(sorted([part(conflict.a), part(conflict.b)]))
+    return "::".join(sorted([ident(conflict.a), ident(conflict.b)]))
 
 
 def partition_conflicts(
     conflicts: list[Conflict], dismissed: set[str]
 ) -> tuple[list[Conflict], list[Conflict]]:
-    """Split conflicts into ``(hard, possible)``.
+    """Split conflicts into ``(hard, possible)``, dropping any the user dismissed.
 
     *Hard* = a real double-booking (both sides specifically titled). *Possible* =
-    one side is a placeholder, minus any whose dismissal key is in ``dismissed``.
+    one side is a placeholder. A pair whose :func:`conflict_dismissal_key` is in
+    ``dismissed`` is dropped from **either** category — so a dismissed
+    double-booking stops firing the sync alert and stops showing in the conflicts
+    list, exactly as a dismissed possible one does.
     """
     hard: list[Conflict] = []
     possible: list[Conflict] = []
     for c in conflicts:
-        if is_possible_conflict(c):
-            if conflict_dismissal_key(c) not in dismissed:
-                possible.append(c)
-        else:
-            hard.append(c)
+        if conflict_dismissal_key(c) in dismissed:
+            continue  # user waved this pair off (hard or possible) — don't surface it
+        (possible if is_possible_conflict(c) else hard).append(c)
     return hard, possible
+
+
+def undismissed_conflicts(
+    conflicts: list[Conflict], dismissed: set[str]
+) -> list[Conflict]:
+    """The conflicts the user hasn't dismissed — a flat filter (hard + possible).
+
+    The partition-free companion to :func:`partition_conflicts` for surfaces that
+    treat every overlap the same (the briefing's double-booking line, the
+    encouragement "rough day" score): keep a conflict unless its
+    :func:`conflict_dismissal_key` is in ``dismissed``, so a dismissal is honored
+    everywhere a conflict is surfaced, not just in the conflicts endpoint.
+    """
+    return [c for c in conflicts if conflict_dismissal_key(c) not in dismissed]
 
 
 @dataclass(frozen=True)

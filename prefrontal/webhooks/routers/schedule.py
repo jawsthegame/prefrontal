@@ -733,10 +733,11 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """Report overlaps among upcoming commitments, split by firmness.
 
-        ``conflicts`` are firm double-bookings (two real events overlap).
-        ``possible_conflicts`` are soft — a placeholder (Busy/Block/Hold)
-        overlapping a real event — excluding any the user has dismissed; each
-        carries a ``key`` to dismiss it via ``POST /commitments/conflicts/dismiss``.
+        Both lists exclude anything the user has dismissed, and **every** pair —
+        firm double-booking or soft possible — carries a ``key`` to dismiss it via
+        ``POST /commitments/conflicts/dismiss``. ``conflicts`` are firm
+        double-bookings (two real events overlap); ``possible_conflicts`` are soft
+        — a placeholder (Busy/Block/Hold) overlapping a real event.
         """
         memory = ctx.store
         hard, possible = partition_conflicts(
@@ -756,13 +757,14 @@ def build_router(services: RouterServices) -> APIRouter:
                 "a": side(c.a),
                 "b": side(c.b),
                 "overlap_minutes": c.overlap_minutes,
+                # A dismissal key on every pair, so a real double-booking is
+                # dismissable too (not just soft possibles).
+                "key": conflict_dismissal_key(c),
             }
 
         return {
             "conflicts": [pair(c) for c in hard],
-            "possible_conflicts": [
-                {**pair(c), "key": conflict_dismissal_key(c)} for c in possible
-            ],
+            "possible_conflicts": [pair(c) for c in possible],
         }
 
     @router.post("/commitments/conflicts/dismiss", tags=["schedule"])
@@ -770,10 +772,13 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: ConflictDismiss,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Dismiss a possible conflict by its ``key`` (from the conflicts list).
+        """Dismiss a conflict by its ``key`` (from the conflicts list).
 
-        The dismissal sticks across re-syncs but lapses if either event moves or
-        is retitled (the key is derived from start time + title).
+        Works for either a firm double-booking or a soft possible conflict. The
+        key is the event *pair's* identity, so the dismissal stays put across
+        re-syncs and reschedules: it keeps holding as long as those two events
+        still overlap. A brand-new overlap involving a *different* event has a
+        different key, so it still surfaces.
         """
         memory = ctx.store
         memory.dismiss_conflict(payload.key)
