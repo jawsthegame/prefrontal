@@ -99,6 +99,12 @@
     padding: 16px 18px; margin: 0 0 16px; break-inside: avoid; position: relative;
   }
   .banners .card, .masonry > .col > .card { margin: 0; }
+  /* Let a banner card shrink below its content's min-content width, exactly as
+     .masonry > .col does for the flex columns. A 1fr grid track is minmax(auto,
+     1fr) and grid items default to min-width:auto, so without this a wide banner
+     (long outing title, the assistant input, an unbreakable URL in the log)
+     stretches its track past the viewport and scrolls the whole page sideways. */
+  .banners .card { min-width: 0; }
   /* Drag feedback: the card being dragged dims; the column under the pointer
      gets a dashed outline. */
   .masonry .card.dragging { opacity: .4; }
@@ -427,7 +433,8 @@
 
   /* dashboard assistant — natural-language edits with a review-then-apply step */
   #c-assistant .addrow { margin-bottom: 0; }
-  .asst-log { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .asst-log { margin-top: 12px; display: flex; flex-direction: column; gap: 10px;
+    overflow-wrap: anywhere; }  /* a long URL in a reply must wrap, not stretch the card */
   .asst-log:empty { display: none; }
   .asst-reply { background: var(--raise); border-left: 3px solid var(--accent);
     border-radius: 0 8px 8px 0; padding: 9px 12px; font-size: 14px; }
