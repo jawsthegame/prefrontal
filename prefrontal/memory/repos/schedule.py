@@ -603,7 +603,10 @@ class ScheduleRepo(Repo):
         return cancelled
 
     def dismiss_conflict(self, signature: str) -> None:
-        """Record that the user dismissed a possible-conflict pair (idempotent)."""
+        """Record that the user dismissed a conflict pair (idempotent).
+
+        The pair may be a soft possible conflict or a firm double-booking — the
+        signature is opaque here (see ``commitments.conflict_dismissal_key``)."""
         self.conn.execute(
             "INSERT OR IGNORE INTO dismissed_conflicts (user_id, signature) "
             "VALUES (?, ?)",
@@ -612,7 +615,7 @@ class ScheduleRepo(Repo):
         self.conn.commit()
 
     def dismissed_conflicts(self) -> set[str]:
-        """Return the set of dismissed possible-conflict signatures."""
+        """Return the set of dismissed conflict signatures (possible or hard)."""
         rows = self.conn.execute(
             "SELECT signature FROM dismissed_conflicts WHERE user_id = ?",
             (self._uid(),),

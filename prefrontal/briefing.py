@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts_strict as _parse_ts
-from prefrontal.commitments import find_conflicts, is_attendable
+from prefrontal.commitments import find_conflicts, is_attendable, undismissed_conflicts
 from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.focus_balance import balance_summary_line, build_focus_balance
@@ -215,14 +215,15 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     today = store.commitments_between(day_start.strftime(fmt), day_end.strftime(fmt))
 
     # Double-bookings across today's schedule (regardless of the current hour),
-    # which is what a morning overview cares about.
+    # which is what a morning overview cares about — minus any the user has
+    # dismissed, so waving one off on the dashboard also drops it from the brief.
     conflicts = [
         {
             "a": c.a["title"],
             "b": c.b["title"],
             "overlap_minutes": c.overlap_minutes,
         }
-        for c in find_conflicts(today)
+        for c in undismissed_conflicts(find_conflicts(today), store.dismissed_conflicts())
     ]
 
     since = (now - timedelta(days=SLIP_WINDOW_DAYS)).strftime(fmt)

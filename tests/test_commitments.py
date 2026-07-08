@@ -13,13 +13,16 @@ from fastapi.testclient import TestClient
 
 from prefrontal.commitments import (
     RECUR_OCCURRENCE_SEP,
+    conflict_dismissal_key,
     expand_recurrences,
     find_conflicts,
     is_attendable,
     is_placeholder_title,
     normalize_event,
+    partition_conflicts,
     sync_calendar,
     to_utc,
+    undismissed_conflicts,
 )
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
@@ -1232,6 +1235,8 @@ def test_conflicts_endpoint(client, store_open):
     titles = {conflicts[0]["a"]["title"], conflicts[0]["b"]["title"]}
     assert titles == {"Personal", "Work"}
     assert conflicts[0]["overlap_minutes"] > 0
+    # A firm double-booking now carries a dismissal key too (not just possibles).
+    assert conflicts[0]["key"]
 
 
 def test_commitment_endpoints_require_auth(client):
@@ -1274,12 +1279,11 @@ def test_is_attendable(commitment, expected):
     assert is_attendable(commitment) is expected
 
 
-#: Fixed base for _clash(), captured once at import. The possible-conflict
-#: dismissal key includes each event's start_at, and a test re-syncs the same
-#: clash after dismissing it; deriving both syncs from one frozen base makes their
-#: timestamps byte-identical, so a wall-clock tick between the syncs can't shift
-#: the key and resurface a dismissed conflict. (Was a rare intermittent flake.)
-#: Still comfortably in the future, so the events stay "upcoming".
+#: Fixed base for _clash()/_double_book(), captured once at import so the events'
+#: timestamps are stable across re-syncs within a test. (The dismissal key is now
+#: keyed by event identity, not time, so a wall-clock tick between syncs no longer
+#: affects it — but a frozen base still keeps the fixtures deterministic.) Set
+#: comfortably in the future so the events stay "upcoming".
 _CLASH_BASE = datetime.now(timezone.utc)
 
 
@@ -1323,3 +1327,93 @@ def test_possible_conflict_dismiss_endpoint(client):
         "/webhooks/calendar/sync", headers=_auth(), json={"events": _clash()}
     ).json()
     assert resync["new_possible_conflict"] is False
+
+
+# -- dismissing a firm double-booking ----------------------------------------
+
+
+def _double_book():
+    """Two real events (both specifically titled) overlapping — a hard conflict."""
+
+    def at(delta_minutes: float) -> str:
+        return (_CLASH_BASE + timedelta(minutes=delta_minutes)).isoformat()
+
+    return [
+        {"title": "Dentist", "start_at": at(60), "end_at": at(120),
+         "external_id": "personal:d"},
+        {"title": "1:1 with Casey", "start_at": at(75), "end_at": at(135),
+         "external_id": "work:c"},
+    ]
+
+
+def test_partition_conflicts_drops_dismissed_hard():
+    """A dismissed key removes a hard double-booking from the partition too."""
+    conflicts = find_conflicts(
+        [
+            {"id": 1, "title": "Dentist", "start_at": "2026-07-10 15:00:00",
+             "end_at": "2026-07-10 16:00:00", "external_id": "p:d"},
+            {"id": 2, "title": "1:1 with Casey", "start_at": "2026-07-10 15:15:00",
+             "end_at": "2026-07-10 16:15:00", "external_id": "w:c"},
+        ]
+    )
+    assert len(conflicts) == 1
+    key = conflict_dismissal_key(conflicts[0])
+    hard, possible = partition_conflicts(conflicts, set())
+    assert len(hard) == 1 and possible == []
+    hard2, _ = partition_conflicts(conflicts, {key})
+    assert hard2 == []  # dismissed → dropped from hard
+    # undismissed_conflicts (the flat filter briefing/encouragement use) agrees.
+    assert undismissed_conflicts(conflicts, {key}) == []
+
+
+def test_hard_conflict_dismiss_endpoint(client):
+    """A real double-booking is dismissable by key; it disappears and stays gone."""
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": _double_book()})
+    conf = client.get("/commitments/conflicts", headers=_auth()).json()
+    assert conf["possible_conflicts"] == []
+    assert len(conf["conflicts"]) == 1
+    key = conf["conflicts"][0]["key"]
+
+    client.post("/commitments/conflicts/dismiss", headers=_auth(), json={"key": key})
+    after = client.get("/commitments/conflicts", headers=_auth()).json()
+    assert after["conflicts"] == []
+    # A re-sync of the same double-booking stays dismissed and doesn't re-alert.
+    resync = client.post(
+        "/webhooks/calendar/sync", headers=_auth(), json={"events": _double_book()}
+    ).json()
+    assert resync["conflicts"] == 0 and resync["new_conflict"] is False
+
+
+def test_dismissed_hard_conflict_stays_dismissed_when_an_event_moves(client):
+    """Dismissal is keyed to the event *pair*, so it holds even if one is
+    rescheduled — as long as the two still overlap."""
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": _double_book()})
+    key = client.get("/commitments/conflicts", headers=_auth()).json()["conflicts"][0]["key"]
+    client.post("/commitments/conflicts/dismiss", headers=_auth(), json={"key": key})
+    assert client.get("/commitments/conflicts", headers=_auth()).json()["conflicts"] == []
+    # Shift one event 10 minutes later (still overlapping the other) → same pair →
+    # stays dismissed.
+    moved = _double_book()
+    moved[1]["start_at"] = (_CLASH_BASE + timedelta(minutes=85)).isoformat()
+    moved[1]["end_at"] = (_CLASH_BASE + timedelta(minutes=145)).isoformat()
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": moved})
+    assert client.get("/commitments/conflicts", headers=_auth()).json()["conflicts"] == []
+
+
+def test_dismissed_conflict_resurfaces_for_a_different_pair(client):
+    """A dismissal is per-pair: a new overlap involving a *different* event still
+    surfaces (the dismissal doesn't blanket-silence an event)."""
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": _double_book()})
+    key = client.get("/commitments/conflicts", headers=_auth()).json()["conflicts"][0]["key"]
+    client.post("/commitments/conflicts/dismiss", headers=_auth(), json={"key": key})
+    # A third event now overlaps "Dentist" too — a different pair → surfaces.
+    events = _double_book() + [
+        {"title": "Plumber", "start_at": (_CLASH_BASE + timedelta(minutes=70)).isoformat(),
+         "end_at": (_CLASH_BASE + timedelta(minutes=110)).isoformat(), "external_id": "home:p"},
+    ]
+    client.post("/webhooks/calendar/sync", headers=_auth(), json={"events": events})
+    conflicts = client.get("/commitments/conflicts", headers=_auth()).json()["conflicts"]
+    pairs = {frozenset({c["a"]["title"], c["b"]["title"]}) for c in conflicts}
+    # Dentist↔Casey stays dismissed; Dentist↔Plumber (and Casey↔Plumber) surface.
+    assert frozenset({"Dentist", "1:1 with Casey"}) not in pairs
+    assert frozenset({"Dentist", "Plumber"}) in pairs
