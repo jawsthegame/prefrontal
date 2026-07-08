@@ -414,7 +414,7 @@ def test_winddown_relies_on_quiet_hours_not_an_end_hour(store):
     assert suppressed(store, early, ok) is False
 
 
-# -- movement / stretch: an evening once-a-day floor, off by default (like meds) --
+# -- movement / stretch: a morning once-a-day floor, off by default (like meds) --
 
 
 def _movement_only(store):
@@ -431,39 +431,41 @@ def test_movement_off_by_default_but_opt_in_fires(store):
     store.set_state("meal_enabled", "off")
     store.set_state("water_enabled", "off")
     store.set_state("biobreak_enabled", "off")
-    at_20 = _ctx(datetime(2026, 7, 2, 20, 0, 0), name="Tom")
-    assert SelfCareModule().evaluate(store, at_20) == []  # off by default
+    at_8 = _ctx(datetime(2026, 7, 2, 8, 0, 0), name="Tom")
+    assert SelfCareModule().evaluate(store, at_8) == []  # off by default
     store.set_state("movement_enabled", "on")
-    cues = SelfCareModule().evaluate(store, at_20)
+    cues = SelfCareModule().evaluate(store, at_8)
     assert [c.context_key for c in cues] == ["movement"]
     assert cues[0].intervention == "movement_check"
     assert "move" in cues[0].text.lower() and "stretch" in cues[0].text.lower()
 
 
-def test_movement_silent_before_its_evening_start(store):
-    """Nothing in the afternoon — the movement window defaults to the evening (20:00)."""
+def test_movement_silent_before_its_morning_start(store):
+    """Nothing before the 07:00 morning-coffee start; it fires once past it."""
     _movement_only(store)
-    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
-    evening = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 20, 30, 0)))
-    assert _by_kind(evening, "movement")
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 6, 0, 0))) == []
+    morning = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0)))
+    assert _by_kind(morning, "movement")
 
 
 def test_movement_start_hour_is_configurable(store):
-    """The anchor is a one-setting change — a morning person can move it to 07:00."""
+    """The anchor is a one-setting change — an evening person can move it to 20:00."""
     _movement_only(store)
-    store.set_state("movement_start_hour", "7")
-    morning = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0)))
-    assert _by_kind(morning, "movement")
+    store.set_state("movement_start_hour", "20")
+    # Past the default 07:00 but before the reconfigured 20:00 — silent.
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 9, 0, 0))) == []
+    evening = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 20, 30, 0)))
+    assert _by_kind(evening, "movement")
 
 
 def test_movement_silent_once_confirmed(store):
     """One 'Stretched' settles it for the day (target 1), re-arming next day."""
     _movement_only(store)
     store.set_state("movement_count", "2026-07-02|1")  # target 1 — done for the day
-    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 20, 30, 0))) == []
+    assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 7, 30, 0))) == []
     # A new day re-arms it (the count is date-scoped).
     assert _by_kind(
-        SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 20, 30, 0))), "movement"
+        SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 3, 7, 30, 0))), "movement"
     )
 
 

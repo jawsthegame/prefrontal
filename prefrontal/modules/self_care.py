@@ -40,11 +40,14 @@ window-bounded one, an **end hour**):
   an exercise cadence is personal (like meds/winddown). The daily-movement
   *floor*: a tiny, always-doable minimum (a few minutes of stretching) that
   survives the worst day, so a movement habit never hits zero. From
-  ``movement_start_hour`` (default 20, the *evening* — anchored to the wind-down
-  ramp, the slot nothing schedules over) it nudges "time to move" every
-  ``movement_reask_minutes`` until one "Stretched" settles it for the day. The
-  re-ask until met is the point: blowing past the exact minute doesn't lose the
-  day, which is what makes it survivable for time-blindness.
+  ``movement_start_hour`` (default 7, the *morning* — anchored to the first
+  coffee, an existing daily pause you habit-stack the stretch onto) it nudges
+  "time to move" every ``movement_reask_minutes`` until one "Stretched" settles it
+  for the day. The re-ask until met is the point: blowing past the exact minute
+  doesn't lose the day, which is what makes it survivable for time-blindness. (A
+  7:00 start sits below the default 8:00 responsive-hours window, so it's first
+  *delivered* at 8 unless ``responsive_hours_start`` is widened to 7 — see the
+  ``DEFAULT_MOVEMENT_START_HOUR`` note.)
 
 So "how many yeses stops it for the day" is just the target (1 for a meal, N for
 water) — except for an open-ended check, which no count ever stops; a check with
@@ -126,11 +129,21 @@ DEFAULT_WINDDOWN_DAILY_TARGET = 1
 #: stretching) that survives the worst day, so a movement habit never hits zero.
 #: Like meds/winddown it's the personal-preference kind of nudge (an exercise
 #: cadence is personal), so it's **off even when self_care is on** — opt in via
-#: ``movement_enabled``. It defaults to the *evening*, anchored to the wind-down
-#: ramp: the most protected slot of the day (nothing schedules over going to bed),
-#: and stretching there doubles as a wind-down aid. Target 1 with a re-ask until
-#: met, so blowing past the exact minute doesn't lose the day.
-DEFAULT_MOVEMENT_START_HOUR = 20
+#: ``movement_enabled``. It defaults to the *morning*, anchored to the first
+#: coffee: an existing daily pause that happens regardless of how the day goes,
+#: early enough that the whole day is still ahead (a stretch sets the tone rather
+#: than being the thing you're too fried to do at night), and already a
+#: stand-and-wait moment — habit-stack the stretch onto the brew / first cup.
+#: Target 1 with a re-ask until met, so blowing past the exact minute doesn't lose
+#: the day.
+#:
+#: Note the interplay with responsive hours (:data:`~prefrontal.coaching.
+#: DEFAULT_RESPONSIVE_START`, default 8): a self-care cue is gated by quiet hours
+#: like any non-critical nudge, so with the default 7:00 start a user whose
+#: responsive window opens at 8 first *receives* it at 8 (it keeps re-asking until
+#: then). To actually land it at a 7:00 coffee, widen ``responsive_hours_start``
+#: to 7 — a deliberate choice, since it opens the whole nudge window earlier.
+DEFAULT_MOVEMENT_START_HOUR = 7
 DEFAULT_MOVEMENT_REASK_MINUTES = 45
 DEFAULT_MOVEMENT_SNOOZE_MINUTES = 30
 DEFAULT_MOVEMENT_DAILY_TARGET = 1
@@ -991,9 +1004,9 @@ class SelfCareModule(Module):
         "winddown_daily_target": str(DEFAULT_WINDDOWN_DAILY_TARGET),
         # Movement/stretch: the daily-movement floor. Off even when self_care is
         # on (an exercise cadence is personal, like meds/winddown) — opt in via
-        # movement_enabled. Defaults to the evening, anchored to the wind-down
-        # ramp; target 1 so one stretch settles it for the day, re-asking until
-        # then so a missed moment doesn't lose the day.
+        # movement_enabled. Defaults to the morning, anchored to the first coffee;
+        # target 1 so one stretch settles it for the day, re-asking until then so a
+        # missed moment doesn't lose the day.
         "movement_enabled": "off",
         "movement_start_hour": str(DEFAULT_MOVEMENT_START_HOUR),
         "movement_reask_minutes": str(DEFAULT_MOVEMENT_REASK_MINUTES),
@@ -1067,7 +1080,7 @@ class SelfCareModule(Module):
                     "confirm. The daily-movement floor — a tiny, always-doable "
                     "minimum that survives the worst day. Off unless "
                     "movement_enabled — an exercise cadence is personal; defaults "
-                    "to the evening, anchored to the wind-down ramp. One-tap "
+                    "to the morning, anchored to the first coffee. One-tap "
                     "Stretched / Snooze on ntfy."
                 ),
                 trigger="from your movement hour, until you confirm you've moved",
