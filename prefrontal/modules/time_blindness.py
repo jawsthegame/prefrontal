@@ -44,7 +44,10 @@ DEFAULT_EARLY_START_HM = (8, 30)
 #: Local hour to send the evening "set an alarm" heads-up. The module only emits
 #: the cue at or after this hour; the coaching engine's quiet hours (responsive
 #: window, default …–22:00) cap the top, so the effective window is
-#: ``[morning_prep_hour, responsive_end)``. Tunable via ``morning_prep_hour``.
+#: ``[morning_prep_hour, responsive_end)``. When the configured hour is at or past
+#: ``responsive_end`` (a user who winds down early), that window would be empty and
+#: the nudge would never deliver, so it's clamped into the last responsive hour.
+#: Tunable via ``morning_prep_hour``.
 DEFAULT_MORNING_PREP_HOUR = 21
 
 #: Minutes of morning routine (shower, breakfast, …) subtracted from the leave-by
@@ -321,6 +324,19 @@ class TimeBlindnessModule(Module):
         from prefrontal.scheduling import local_datetime, local_hour_of
 
         prep_hour = parse_hour(store.get_state("morning_prep_hour"), DEFAULT_MORNING_PREP_HOUR)
+        # This heads-up is a non-critical ``nudge``, so the coaching engine's quiet
+        # hours hold it whenever it's generated outside the responsive window (see
+        # coaching.suppressed). That makes the true send window
+        # ``[prep_hour, responsive_end)``: if the configured prep hour lands at or
+        # after the hour quiet time begins, that window is empty — the "set an alarm"
+        # cue is regenerated every evening but suppressed on every tick, so the alarm
+        # nudge silently never arrives. Someone who winds down early (responsive
+        # hours ending at, say, 21:00) would never get it. Clamp the start into the
+        # last responsive hour so there is always a live window. Only for a normal,
+        # non-wrapping daytime band; a wrapped/degenerate window (start >= end)
+        # imposes no evening ceiling, so leave the configured hour alone.
+        if ctx.responsive_start < ctx.responsive_end and prep_hour >= ctx.responsive_end:
+            prep_hour = ctx.responsive_end - 1
         if local_hour_of(ctx.now, ctx.timezone) < prep_hour:
             return []  # not yet the evening send window
         hour, minute = parse_clock_hm(
