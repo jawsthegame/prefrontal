@@ -17,17 +17,10 @@ from fastapi import (
     Request,
 )
 
-from prefrontal.clarify import sweep_ambiguous_items
 from prefrontal.coaching import (
-    DEFAULT_ACK_WINDOW_MINUTES,
-    build_context,
-    collect_cues,
-    decide,
-    note_delivered,
     record_channel_outcome,
-    record_fired,
     resolve_ack,
-    sweep_stale_nudges,
+    run_coaching_tick,
 )
 from prefrontal.encouragement import (
     already_sent_today,
@@ -39,12 +32,6 @@ from prefrontal.encouragement import (
 from prefrontal.impact import (
     utcnow,
 )
-from prefrontal.modules import enabled_modules
-from prefrontal.modules.self_care import (
-    mark_self_care_prompted,
-    sweep_unanswered_self_care,
-)
-from prefrontal.todos import sweep_avoided_decompositions
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -101,51 +88,17 @@ def build_router(services: RouterServices) -> APIRouter:
         if not isinstance(body, dict):
             body = {}
 
-        now = utcnow()
-        # Close last round's outcomes first: any nudge delivered earlier that was
-        # never tapped within the ack window becomes a channel "miss", so the
-        # nightly learn can shift channel choice (spec §8). Taps clear their own
-        # marker (see /nudge/act), so what this sweeps really went unanswered.
-        sweep_stale_nudges(
+        # The whole tick — sweeps (in the right order, before cue collection),
+        # collect, decide, and record — lives in one shared service so this
+        # endpoint and the `prefrontal coach` CLI can't drift.
+        result = run_coaching_tick(
             memory,
-            now,
-            ack_window_minutes=memory.get_float(
-                "coach_ack_window_minutes", DEFAULT_ACK_WINDOW_MINUTES
-            ),
-        )
-        # Self-care nudges have their own prompt-stamp latency track (not the
-        # coach_ack path), so sweep their unanswered ones into "ignored" episodes
-        # — the "wrong time / too frequent" signal the cadence learner reads.
-        sweep_unanswered_self_care(memory, now)
-        # Break down the tasks being avoided (the model judges whether each is even
-        # worth it), before collecting cues so tiny_first_step can use the fresh
-        # first step. Bounded model calls per tick; a no-op if none are avoided.
-        sweep_avoided_decompositions(memory, services.ollama, now=now)
-        # Notice newly-ambiguous items ("Tax", "Mom") and file an inline clarifying
-        # question, so the "Needs clarification" queue fills passively rather than
-        # only on the dashboard's manual check. Bounded model calls; skips anything
-        # already asked about (pending/answered/dismissed).
-        sweep_ambiguous_items(memory, services.ollama)
-        coach_ctx = build_context(
-            memory,
-            now=now,
-            timezone=resolved_settings.timezone,
-            display_name=ctx.user.get("display_name") or "",
+            settings=resolved_settings,
+            ollama=services.ollama,
             current_lat=body.get("current_lat"),
             current_lon=body.get("current_lon"),
+            display_name=ctx.user.get("display_name") or "",
         )
-        modules = enabled_modules(resolved_settings)
-        cues = collect_cues(memory, modules, coach_ctx)
-        decisions = decide(memory, cues, coach_ctx)
-        # Recorded at check time (not on confirmed delivery), matching how
-        # outing/check advances last_level when it decides to fire.
-        record_fired(memory, decisions, now)
-        # Track the interactive nudges we're handing off so a later tap (or the
-        # next sweep) can log which channel landed — the input to choose_channel.
-        note_delivered(memory, decisions, now)
-        # Stamp self-care delivery time so a later Ate/Drank/Snooze tap can be
-        # timed (the honesty-check signal for adaptive cadence).
-        mark_self_care_prompted(memory, decisions, now)
         handle = ctx.user.get("handle") or ""
 
         def _actions(d) -> list[dict[str, Any]]:
@@ -180,7 +133,7 @@ def build_router(services: RouterServices) -> APIRouter:
                     "ref": d.cue.ref,
                     "actions": _actions(d),
                 }
-                for d in decisions
+                for d in result.decisions
             ]
         }
 

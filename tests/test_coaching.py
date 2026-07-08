@@ -376,6 +376,31 @@ def test_coach_check_fires_a_cue_then_debounces():
         conn.close()
 
 
+def test_run_coaching_tick_service_fires_records_and_debounces():
+    """The shared tick service (used by the endpoint above and the CLI) returns a
+    TickResult, fires the avoided-task cue, and records it so a second tick
+    debounces — this is the single orchestration both callers now delegate to."""
+    from prefrontal.coaching import TickResult, run_coaching_tick
+    from prefrontal.integrations.ollama import OllamaClient
+
+    conn, unscoped = _http_store_with_avoided_todo()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        settings = Settings(timezone="UTC")
+        # A client that can't reach a model (localhost refused) → the decomposition
+        # / clarification sweeps degrade to their heuristics, like the real tick.
+        ollama = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+        first = run_coaching_tick(store, settings=settings, ollama=ollama)
+        assert isinstance(first, TickResult)
+        assert [d.cue.intervention for d in first.decisions] == ["tiny_first_step"]
+        assert first.cues  # the cue was collected this tick
+        # record_fired ran inside the service → a second tick debounces it.
+        second = run_coaching_tick(store, settings=settings, ollama=ollama)
+        assert second.decisions == []
+    finally:
+        conn.close()
+
+
 def test_coach_check_surfaces_morning_prep_alarm_button():
     """The evening morning-prep nudge comes back from the tick with a client-side
     Set-alarm view button (built from the cue's ref, no signing)."""
