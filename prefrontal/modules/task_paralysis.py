@@ -32,7 +32,7 @@ from prefrontal.coaching import CoachContext, Cue, note_hint
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
-from prefrontal.todos import avoided_todos
+from prefrontal.todos import avoided_todos, focus_conflict
 
 #: A task missed at least this many times (and not since resolved) is treated as
 #: chronically stuck — the signal a solo start isn't working and body-doubling (a
@@ -170,21 +170,70 @@ class TaskParalysisModule(Module):
                 trigger="an ambiguous item on the schedule or todo list",
                 status="active",
             ),
+            Intervention(
+                name="refocus",
+                description=(
+                    "When you're actively working on a lower-priority todo than one "
+                    "you're avoiding-and-haven't-started (focus_conflict), gently "
+                    "flag it and suggest switching — honest prioritization in the "
+                    "moment, the push twin of the dashboard's focus-conflict banner. "
+                    "Held during protected hyperfocus (is_focus_protected) and quiet "
+                    "hours; deduped per conflict so it fires once, not every tick."
+                ),
+                trigger="a started todo ranks below a task you're avoiding",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
-        """Fire ``tiny_first_step`` over the todo you're most avoiding.
+        """Fire the sharpest honest-prioritization nudge for right now.
 
-        The coaching agent's producer for initiation friction: pick the
-        worst-avoided open todo (``avoided_todos`` — age × priority, honest
-        prioritization over the shiny thing) and reframe it as one <5-minute first
-        action, preferring the stored decomposition's first step when it exists.
-        Any note the user attached to the todo is consulted and folded onto the
-        end (:func:`~prefrontal.coaching.note_hint`), so the context they left
-        ("Note: needs the account number") rides along with the nudge. One
-        ``nudge`` cue, deduped per todo so it won't nag every tick.
+        Two producers, sharpest first — one ``nudge`` cue at most:
+
+        1. ``refocus`` — if you're *actively working on* a lower-priority todo than
+           one you're avoiding (:func:`~prefrontal.todos.focus_conflict`), flag it
+           and suggest a switch. This subsumes ``tiny_first_step`` for the tick: it
+           names not just what you're skipping but that you're mid-flight on the
+           wrong thing. Held while an aligned hyperfocus block is protected
+           (:func:`~prefrontal.modules.hyperfocus.is_focus_protected`) — flow that's
+           on-task shouldn't be yanked — and deduped per (working, instead) pair so
+           it fires once per distinct conflict.
+        2. ``tiny_first_step`` — otherwise, pick the worst-avoided open todo
+           (``avoided_todos`` — age × priority, honest prioritization over the shiny
+           thing) and reframe it as one <5-minute first action, preferring the
+           stored decomposition's first step when it exists.
+
+        Any note the user attached to the target todo is folded onto the end
+        (:func:`~prefrontal.coaching.note_hint`), so the context they left rides
+        along. Quiet hours + debounce are applied downstream by the coaching engine.
         """
-        avoided = avoided_todos(store.open_todos(), ctx.now)
+        # Lazy import: is_focus_protected lives in the hyperfocus module; importing
+        # it at module top would couple two sibling modules at registration time.
+        from prefrontal.modules.hyperfocus import is_focus_protected
+
+        open_todos = store.open_todos()
+        conflict = focus_conflict(open_todos, ctx.now)
+        if conflict is not None and not is_focus_protected(store):
+            working = conflict["working_on"]
+            instead = conflict["instead"]
+            text = (
+                f"You're mid-task on “{working['title']}”, but “{instead['title']}” "
+                f"is more important and has sat {round(conflict['days_open'])}d. "
+                f"Worth switching?{note_hint(instead.get('notes'))}"
+            )
+            return [
+                Cue(
+                    module=self.key,
+                    intervention="refocus",
+                    urgency="nudge",
+                    text=text,
+                    context_key="todo",
+                    dedup_key=f"refocus:{working['id']}:{instead['id']}",
+                    ref={"todo_id": instead["id"], "working_on_id": working["id"]},
+                )
+            ]
+
+        avoided = avoided_todos(open_todos, ctx.now)
         if not avoided:
             return []
         top = avoided[0]

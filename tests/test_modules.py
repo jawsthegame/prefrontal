@@ -110,7 +110,49 @@ def test_task_paralysis_interventions_all_active():
         "auto_decompose": "active",
         "body_double_nudge": "active",
         "clarify_ambiguous": "active",
+        "refocus": "active",
     }
+
+
+def _age_todo(store, todo_id, days):
+    """Backdate a todo's created_at so it clears the avoidance floor."""
+    ts = (utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    store.conn.execute(
+        "UPDATE todos SET created_at = ? WHERE id = ?", (ts, todo_id)
+    )
+    store.conn.commit()
+
+
+def test_task_paralysis_refocus_fires_on_focus_conflict(store):
+    """Working a low-priority todo while an important one is avoided → a refocus cue."""
+    important = store.add_todo("Renew passport", estimate_minutes=20, priority=3)
+    _age_todo(store, important, 8)          # aged into "avoided", not started
+    minor = store.add_todo("Tidy desk", estimate_minutes=10, priority=1)
+    store.start_todo(minor)                 # you're mid-task on the minor one
+
+    cues = get("task_paralysis").evaluate(store, CoachContext(now=utcnow()))
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.intervention == "refocus"
+    assert "Renew passport" in cue.text and "Tidy desk" in cue.text
+    assert cue.ref == {"todo_id": important, "working_on_id": minor}
+    # Deduped per (working, instead) pair so it fires once per distinct conflict.
+    assert cue.dedup_key == f"refocus:{minor}:{important}"
+
+
+def test_task_paralysis_refocus_held_during_protected_focus(store):
+    """An aligned focus block shields the user — refocus is held, tiny_first_step fills in."""
+    important = store.add_todo("Renew passport", estimate_minutes=20, priority=3)
+    _age_todo(store, important, 8)
+    minor = store.add_todo("Tidy desk", estimate_minutes=10, priority=1)
+    store.start_todo(minor)
+    store.start_focus_session("deep work", aligned=True)  # protected hyperfocus
+
+    cues = get("task_paralysis").evaluate(store, CoachContext(now=utcnow()))
+    assert len(cues) == 1
+    # No refocus while protected; the worst-avoided todo still gets a first-step nudge.
+    assert cues[0].intervention == "tiny_first_step"
+    assert cues[0].ref["todo_id"] == important
 
 
 def test_time_blindness_intervention_statuses_are_honest():
