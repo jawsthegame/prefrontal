@@ -62,11 +62,11 @@ production automatically via `init_db`'s `CREATE TABLE IF NOT EXISTS`
 CREATE TABLE IF NOT EXISTS sources (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id),
-    kind        TEXT NOT NULL,              -- 'imap' | 'gcal'
-    account     TEXT NOT NULL,              -- logical name: 'personal','work' (imap); 'google' (gcal)
+    kind        TEXT NOT NULL,              -- 'imap' | 'ics'
+    account     TEXT NOT NULL,              -- logical name: 'personal','work' (imap); feed slug (ics)
     config      TEXT NOT NULL DEFAULT '{}', -- JSON: imap {host,mailbox,important_only,retention};
-                                            --       gcal {calendar_ids[], namespace, me_emails[]}
-    secret_enc  BLOB,                       -- Fernet(token): IMAP password | Google refresh token
+                                            --       ics {namespace, me_emails[]}
+    secret_enc  BLOB,                       -- Fernet(token): IMAP password | ICS feed URL
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -129,7 +129,9 @@ Document all three in `.env.example`.
 - ✅ `sources` table in `schema.sql`; `SourcesRepo` (CRUD, `_uid()`-scoped) wired
   into `MemoryStore`.
 - ✅ `prefrontal/sources.py` service layer (owns the seal/unseal boundary;
-  `put_imap_source`/`resolve_imap`/`imap_accounts`, `put_gcal_source`/`resolve_gcal`).
+  `put_imap_source`/`resolve_imap`/`imap_accounts`, `put_ics_source`/`ics_sources`).
+  *(The calendar connector shipped as private-ICS-feed, not the Google-OAuth `gcal`
+  originally sketched — see Decision #2 / Phase 2.)*
 - ✅ Config fields (`secret_key`, `secret_key_file`, `google_calendar_enabled`);
   `.env.example` documented.
 - ✅ **Tests:** `test_crypto.py` (round-trip, encrypted-at-rest, missing/malformed/
@@ -157,10 +159,9 @@ Document all three in `.env.example`.
   disabled-source fall-through, account listing, add/list/remove round-trip
   (password sealed, not in output/DB), import-env, `--all-users` fan-out
   isolation, missing-credential exit code.
-- ⏳ **Deferred to a follow-up (after #319/#320 merge):** switch
-  `deploy/mail-fetch.sh` + `com.prefrontal-mail.plist` to a single
-  `mail fetch --all-users` job and retire the `PREFRONTAL_USER=Tom` band-aid.
-  Held back to avoid churn/conflicts with the band-aid PR #319.
+- ✅ **Shipped:** `deploy/mail-fetch.sh` now runs a single `mail fetch --all-users`
+  job and `com.prefrontal-mail.plist` carries no `PREFRONTAL_USER` band-aid — the
+  mail launchd agent covers every user, each user's mail landing only in their scope.
 - ⏳ **Deferred:** "connect a mailbox" step in the `onboard-user` skill.
 - **Known limitation:** Gmail deep-linking (`Settings.gmail_accounts`) is still
   derived from env account names, so a DB-only Gmail account may not get Gmail
@@ -205,12 +206,10 @@ Document all three in `.env.example`.
   every source-less user would fetch that inbox into everyone's scope). A user
   with no DB `imap` source is skipped. Single-user/explicit `--user` keeps the env
   fallback (legacy).
-- ⏳ **Deferred (needs the operator's migration first):** flipping the *mail*
-  launchd job to `mail fetch --all-users`. It requires each real user to have run
-  `mail import-env-sources` (or `add-source`) first — otherwise the env-fallback
-  gate skips them and their mail pauses. One-line change to `mail-fetch.sh` +
-  plist once sources are imported; left pinned for now to avoid a silent
-  mail-fetch regression on deploy.
+- ✅ **Shipped:** the *mail* launchd job now runs `mail fetch --all-users`
+  (`deploy/mail-fetch.sh`). Each real user must have run `mail import-env-sources`
+  (or `add-source`) first — otherwise the env-fallback gate skips them — so run the
+  import as part of the cutover.
 - ⏳ Onboarding "connect a mailbox / add a calendar feed" steps.
 
 ---

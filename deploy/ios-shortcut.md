@@ -157,19 +157,17 @@ Lock Screen / Back Tap / Share Sheet so it's a one-tap, one-line gesture.
    - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
    - **Request Body (JSON):** `{ "title": "Provided Input" }` — replace the value
      with the **Provided Input** variable.
-4. **Confirm back — and surface the first step.** For any task the server
-   estimates at 30 min or more it auto-decomposes it and returns a tiny, concrete
-   **`decomposition.first_step`** — the "just start here" action that breaks
-   inertia. Read it back so the tap that captures the task also tells you how to
-   begin it:
-   - **Get Dictionary Value** `decomposition` from the response → **If** it *has
-     any value*: **Get Dictionary Value** `first_step` from it → **Show
-     Notification** (or **Speak Text**): *"Added. First step: {first_step}"*.
-   - **Otherwise** (a quick task, no decomposition): **Get Dictionary Value**
-     `estimate_minutes` → **Show Notification** *"Added — ~{estimate_minutes} min."*
-   The response also carries an `augmented` map (which fields were inferred vs
-   stated), the resolved `priority`/`energy`, and any parsed `deadline`, if you
-   want to build a richer card.
+4. **Confirm back.** The response carries the resolved `estimate_minutes`,
+   `priority`/`energy`, any parsed `deadline`, and an `augmented` map (which fields
+   were inferred vs stated) — read one back so the tap that captures the task
+   confirms it landed:
+   - **Get Dictionary Value** `estimate_minutes` from the response → **Show
+     Notification** (or **Speak Text**): *"Added — ~{estimate_minutes} min."*
+   Breakdown into a tiny first step is **not** done at capture (a fresh todo
+   returns `decomposition: null`) — it's help for a *stall*, offered on demand via
+   `POST /todos/{id}/decompose` (or by the opt-in avoided-task sweep). If you want
+   a first step now, add a follow-up **Get Contents of URL** to that endpoint and
+   read back `decomposition.first_step`.
 5. **Roaming, like the outing/panic shortcuts:** every tap crosses Tailscale from
    your phone. Wrap **Get Contents of URL** in an **If** that checks it succeeded;
    on failure **Show Notification** "Couldn't reach Prefrontal — tap again when
@@ -189,7 +187,8 @@ Lock Screen / Back Tap / Share Sheet so it's a one-tap, one-line gesture.
 >   -d '{"title":"draft the Q3 report by Friday"}' | python3 -m json.tool
 > ```
 > A big task like this comes back with an inferred `deadline`, an
-> `estimate_minutes`, the `augmented` sourcing, and a `decomposition.first_step`.
+> `estimate_minutes`, and the `augmented` sourcing (`decomposition` is `null` at
+> creation — break it down later via `POST /todos/{id}/decompose`).
 
 ## Shortcut: "Capture" (Impulsivity — capture-and-defer)
 

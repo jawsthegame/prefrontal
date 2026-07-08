@@ -199,13 +199,17 @@ write three bullet headers"), with the remaining steps tucked behind a toggle.
 "write the report."
 
 ```bash
-# Auto for todos over ~30 min; or on demand any time:
+# On demand any time (breakdown is help for a stall, not done at creation):
 curl -s -XPOST $PF/todos/42/decompose -H "X-Prefrontal-Token: $TOK"
 # → {"first_step":"Open a doc and write the five section titles",
 #    "first_step_minutes":4, "steps":["Draft the summary", ...]}
 ```
 
 Tick the first step (`POST /todos/42/steps/0/done`) and the next surfaces.
+Automatic breakdown of a todo you're *avoiding* is **opt-in (off by default)** —
+enable it (`auto_decompose_enabled`) and the coaching sweep breaks one down only
+once it's being avoided, and only when the model judges it worth it. The on-demand
+call above always works regardless.
 
 ### Time-fitting — "I have 20 minutes, what fits?"
 
@@ -235,6 +239,28 @@ curl -s "$PF/todos/avoided" -H "X-Prefrontal-Token: $TOK"
 
 It shows as a red `avoiding 8d` badge on the dashboard and a **"You keep putting
 off…"** line in the briefing.
+
+### In-progress & focus conflict — stay on the right thing
+
+**What:** Marking a todo started (`POST /todos/{id}/start`, undo with `/unstart`)
+pins it to the **top** of the list, so the thing you're mid-flight on stays
+visible instead of sinking under a higher-priority item you haven't begun. And
+when *everything* you've started ranks below an important task you're **avoiding
+and haven't started**, `GET /todos` returns a `focus_conflict` object.
+
+**Solves:** The in-progress task is where your attention already is — keep it in
+view. And self-assigned priority is gameable in the other direction too: it's easy
+to be busy on a minor thing while the important one waits.
+
+```bash
+curl -s "$PF/todos" -H "X-Prefrontal-Token: $TOK"
+# → started todos first; "focus_conflict": {"working_on":"Tidy inbox",
+#    "instead":"Renew passport", "days_open":12, ...}  (null when there's no conflict)
+```
+
+Started todos show an `▶ in progress` badge; a focus conflict renders as a gentle
+**"you're mid-task on X, but Y is more important — worth switching?"** banner atop
+the list. (CLI: `prefrontal todo start`/`unstart`.)
 
 ---
 
@@ -465,7 +491,9 @@ and every path keeps its deterministic fallback when both are down.
 ## Surfaces: dashboard, family, kids, insights, and widget
 
 - **`GET /dashboard`** — your full read-and-act monitoring page: active outings
-  (with escalation level), todos (with first-steps and avoidance badges),
+  (with escalation level), todos (with first-steps and avoidance badges,
+  in-progress items pinned to the top, and an honest-prioritization banner when
+  you're mid-task on something less important than what you're avoiding),
   commitments + conflicts, the briefing, and your profile. Add/complete todos,
   close outings, dismiss conflicts. It also has an **assistant chat box**: type
   a plain-English ask ("bump the dentist call to urgent and drop the dry-cleaning
@@ -583,7 +611,8 @@ token client-side).
 | `POST /commitments/{id}/kind` | Set `self` vs `fyi` |
 | `POST /commitments/{id}/hardness` | Set `hard` vs `soft` (a user override; sticky across re-syncs) |
 | `POST /commitments/{id}/notes` | Set / clear a note (folded into the departure nudge; kept across re-syncs) |
-| `POST /todos` · `GET /todos` | Add (auto-augmented) / list (with decomposition + avoidance) |
+| `POST /todos` · `GET /todos` | Add (auto-augmented) / list (in-progress pinned first, with decomposition, avoidance, and a `focus_conflict` flag) |
+| `POST /todos/{id}/start` · `/unstart` | Mark/unmark a todo in-progress (`started_at`) — pins it to the top |
 | `GET /todos/fit?minutes=N` | Todos that fit a free block |
 | `GET /todos/now` | The one todo that fits your free time right now (avoidance-biased, low-energy-later) |
 | `GET /todos/avoided` | Important todos you keep skipping |
@@ -630,9 +659,13 @@ token client-side).
 | `summarize` | LLM profile narrative → cache + file; `--all-users`, `--no-fallback` |
 | `profile` | Print the behavioral profile |
 | `briefing` | Print the morning digest; `--llm` for prose |
-| `todo add\|list\|done\|drop` | Manage todos (add auto-augments) |
+| `todo add\|list\|start\|unstart\|done\|drop\|domain` | Manage todos (add auto-augments; `start`/`unstart` set in-progress) |
 | `fit <minutes>` | Todos that fit a free block now |
-| `mail list\|sync\|fetch` | View / ingest / IMAP-pull mail; `--account`, `--heuristic` |
+| `place add\|list\|remove` | Curated destination aliases (name → coords) for geocoding |
+| `balance` | Out-of-home time by life-sphere (shop/work/home/kids/personal) |
+| `clarify check\|list\|resolve\|dismiss\|guide` | Ambiguous-item clarifications |
+| `mail list\|sync\|fetch\|add-source\|…` | View / ingest / IMAP-pull mail; `--account`, `--heuristic` |
+| `calendar add-source\|list-sources\|remove-source\|sync` | Private ICS feeds → commitments (native, no-n8n); `--all-users` |
 | `coach [--dry-run] [--deliver]` | Run the coaching tick — what's due, on which channel |
 | `encourage` | Rough-day check: today's recovery message if it's gone sideways |
 | `panic` | Overwhelm triage — what's on fire + one first step; `--llm` |
@@ -642,9 +675,9 @@ token client-side).
 | `modules [-v]` | List challenge-area modules and status |
 
 Data commands (`learn`, `summarize`, `profile`, `briefing`, `todo`, `fit`,
-`mail`, `coach`, `encourage`, `panic`, `crunch`, `note`/`proposals`, `household`)
-take `--user HANDLE` (or `--all-users`); with a single user they resolve
-automatically.
+`place`, `balance`, `clarify`, `mail`, `calendar`, `coach`, `encourage`, `panic`,
+`crunch`, `note`/`proposals`, `household`) take `--user HANDLE` (or `--all-users`);
+with a single user they resolve automatically.
 
 ### Key configuration
 

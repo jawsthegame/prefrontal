@@ -200,7 +200,7 @@ class Settings:
     account_domains: tuple[tuple[str, str], ...] = ()
     timezone: str = "UTC"
     # How far ahead calendar sync materializes *recurring* events, in days (default
-    # 14). One-off events ingest at any distance; this only bounds how far a weekly/
+    # 30). One-off events ingest at any distance; this only bounds how far a weekly/
     # standing series is expanded, so the calendar page and slot finder see a month
     # out rather than ~1 day. The CLI/webhook sync pass it to `sync_calendar`
     # as `recur_horizon_hours`. See `prefrontal.commitments.RECUR_HORIZON_HOURS`.

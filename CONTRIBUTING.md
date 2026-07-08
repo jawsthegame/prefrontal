@@ -13,8 +13,9 @@ prefrontal/
 ├── prefrontal/                # the Python package
 │   ├── config.py              # environment-driven Settings (see .env.example)
 │   ├── cli.py                 # `prefrontal` console script: init-db | serve | user | learn | summarize |
-│   │                          #   profile | briefing | todo | fit | mail | coach | encourage | panic |
-│   │                          #   crunch | note | proposals | household | modules | migrate-multi-tenant
+│   │                          #   profile | briefing | todo | fit | mail | calendar | coach | encourage |
+│   │                          #   panic | crunch | note | proposals | clarify | household | secrets |
+│   │                          #   notify | packs | modules | migrate-multi-tenant | … (see `--help`)
 │   ├── memory/                # the SQLite behavioral memory layer (the core)
 │   │   ├── schema.sql         # canonical schema (per-user + household tables)
 │   │   ├── db.py              # connection management + init_db()
@@ -25,8 +26,9 @@ prefrontal/
 │   │   └── summarizer.py      # build_profile() + summarize_profile() (Ollama, heuristic fallback)
 │   ├── webhooks/              # FastAPI listener for iOS Shortcut / n8n triggers
 │   │   ├── app.py             # create_app(): assembles the routers below
-│   │   ├── routers/           # one APIRouter per tag: admin, anchor, assistant, coaching, focus,
-│   │   │                      #   household, impulsivity, ingestion, memory, schedule, system, todos
+│   │   ├── routers/           # one APIRouter per tag: admin, anchor, assistant, clarify, coaching,
+│   │   │                      #   focus, household, impulsivity, ingestion, memory, schedule, sensor,
+│   │   │                      #   system, todos
 │   │   ├── _common.py         # shared deps/schemas · notify.py · oauth.py
 │   ├── modules/              # challenge-area modules
 │   │   ├── base.py            # Module ABC + Intervention dataclass

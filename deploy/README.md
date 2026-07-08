@@ -25,6 +25,13 @@ it tells you to copy/import.
 | `n8n/panic-check.workflow.json` | Proactive panic mode: every-20-min poll of `/webhooks/panic/check` → **ntfy** **only when the plate tips into overwhelm** (server edge-triggers + cooldown, so it nudges once per spike, not every poll). **Superseded by `coach.sh`** (native — panic runs on the same tick). | deployment §11 |
 | `n8n/coach-check.workflow.json` | **Unified coaching tick**: polls `/webhooks/coach/check` (the agent that fans over every enabled module), then publishes each returned cue to ntfy at a priority matching the channel the agent chose (digest→low … voice→max), passing through any one-tap `actions` a cue carries (e.g. the Self-Care meal check's **Ate** / **Snooze**). **Superseded by `coach.sh`** — the same tick, run natively instead of polled over HTTP. | deployment §15 |
 | `n8n/encouragement.workflow.json` | **Rough-day recovery** (opt-in): polls `GET /encouragement` a few times an afternoon and, on a genuinely rough & unsent day, publishes the recovery message to ntfy **once**, then `POST /encouragement/sent` to stamp the day. Off unless the `encouragement` coaching key is `on`. | deployment §16 |
+| `n8n/focus-arm-check.workflow.json` | Every-few-minutes poll of `/webhooks/focus/arm` — auto-starts a focus session from a *live* calendar focus block (zero taps). | deployment §17 |
+| `n8n/triage-ingest.workflow.json` | Gmail/IMAP intake → `POST /triage`: classify + prioritize incoming mail into action items. | deployment §17a |
+| `n8n/triage-urgent.workflow.json` | Webhook (`prefrontal-events`) → surfaces an urgent triaged item as a push. | deployment §17a |
+| `n8n/chores-check.workflow.json` | Household: poll `/webhooks/household/chores/check` → owner reminder + slip heads-up. **Superseded by `household-sweeps.sh`** (native). | deployment §18 |
+| `n8n/checkin-check.workflow.json` | Household: poll `/webhooks/household/checkin/check` → weekly mental-load check-in. **Superseded by `household-sweeps.sh`** (native). | deployment §18 |
+| `n8n/digest-check.workflow.json` | Household: poll `/webhooks/household/digest/check` → the other parent's unseen sheet changes. **Superseded by `household-sweeps.sh`** (native). | deployment §18 |
+| `n8n/star-prompt-check.workflow.json` | Household: poll `/webhooks/household/star-prompts/check` → "did they earn a star today?" prompt. **Superseded by `household-sweeps.sh`** (native). | deployment §18 |
 | `ios-shortcut.md` | Recipes for "Made it"/"Missed it", the location automation, the "Going out"/"I'm back" outing shortcuts, and the one-tap **"Panic"** shortcut. | deployment §6 |
 
 **Updating the running n8n:** rather than re-importing each file by hand, set

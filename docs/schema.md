@@ -220,6 +220,13 @@ also defines:
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).
+- **`decomposition_feedback`** — the learning signal from *dismissed* breakdowns:
+  when the user waves a breakdown off, a snapshot (`todo_id`, `title`, `first_step`,
+  `steps`, `category`, `estimate_minutes`) is recorded with a `reason` —
+  `not_useful` (folds back into the decomposer as negative examples) or
+  `not_needed` (repeated → auto-decompose switches back off), plus a `source`
+  (`llm`/`heuristic`/`llm_declined`). Read by `learned_decomposition_guidance` /
+  `auto_decompose_suppressed` (`prefrontal/todos.py`).
 - **`dismissed_conflicts`** — soft double-bookings the user has waved off, keyed
   by a signature of the event pair so a dismissal sticks across calendar re-syncs
   but lapses if either event moves (`prefrontal/commitments.py`).
@@ -255,6 +262,11 @@ also defines:
   drops a mail-derived todo, the sender/subject/summary/category/urgency and the
   `days_open` at drop time are recorded, so a repeat or quick-drop sender is
   down-weighted next time (`prefrontal/mail/`).
+- **`triage_log`** — the per-user triage audit/idempotency ledger: one row per
+  ingested signal keyed by `(user_id, source, external_id)` (partial unique index
+  when `external_id` is set), recording the `kind`/`route`/`decided_by` verdict so
+  a flaky re-poll never double-creates a todo and the triage decisions stay
+  inspectable (`prefrontal/mail/`).
 - **`nudges`** — a log of nudges the system decided to send (`kind`
   `outing`/`departure`/`star`/…, escalation `level`, the delivered `message`), so
   the widget/dashboard can surface "the last thing Prefrontal told you" and a
@@ -266,6 +278,14 @@ also defines:
   A free-text note is turned into *allowlisted* candidates that stay **pending**
   until a human accepts — nothing authoritative is written by the model.
   `prefrontal note` / `prefrontal proposals list|accept|reject`.
+- **`sources`** — the per-user external **source registry**: one row per ingestion
+  feed keyed `(user_id, kind, account)` where `kind` is `imap` (a mailbox) or
+  `gcal` (a private ICS calendar feed). Holds connector-shaped `config` JSON and a
+  Fernet-sealed `secret_enc` (the feed URL / mailbox password — **never**
+  plaintext, `prefrontal/crypto.py`); `enabled=0` pauses a source without deleting
+  it. Managed via `prefrontal mail add-source` / `prefrontal calendar add-source`
+  (`prefrontal/sources.py`) — the per-user replacement for one global set of feeds
+  in the environment.
 - **`clarifications`** — ambiguity questions for vague todos/commitments
   (`prefrontal/clarify.py`, a Task-Paralysis initiation lever): per-user rows with
   a `target_type` (`todo`/`commitment`), a loose `target_id`, the `title` snapshot,
@@ -314,12 +334,17 @@ positive `children.id`.
   digested" stamps live in each user's `coaching_state`
   (`household_seen_at` / `household_digested_at`), so it surfaces only the *other*
   parent's unseen changes; the sweep is `POST /webhooks/household/digest/check`.
-  Finally, `balance_enabled` opts into the gentle **load-balance view** — a
+  `balance_enabled` opts into the gentle **load-balance view** — a
   "who's been keeping the sheet up" split derived on read from `updated_by` /
-  `awarded_by` counts over a 30-day window (no push, shown on `/kids`).
-- **`children`** — the roster: stable identity only (`household_id`, `name`,
-  `birthday`), `UNIQUE (household_id, name)`. Everything else about a child is a
-  fact, not a column.
+  `awarded_by` counts over a 30-day window (no push, shown on `/kids`). Finally, an
+  optional **away/vacation window** — `away_start`/`away_end` (inclusive local
+  `"YYYY-MM-DD"`, all NULL = not away) and a short `away_note` — gates chores whose
+  `away_behavior='suppress'`, so a beach-trip week doesn't nag about the recycling.
+- **`children`** — the roster: stable identity (`household_id`, `name`,
+  `birthday`), `UNIQUE (household_id, name)`. Also holds **pets**: `kind`
+  (`child`/`pet`, default `child`) and `species` (dog/cat/…; NULL for a child), so
+  a pet reuses the same facts/appointments/shopping plumbing. Everything else about
+  a child is a fact, not a column.
 - **`household_facts`** — the categorized key/value grid: `child_id` (0 =
   household-wide), `category` (a controlled vocab — `sizes`, `routine`, `food`,
   `health`, `school`, `contact`), normalized `item`, free-text `value`, and
@@ -390,8 +415,12 @@ positive `children.id`.
   takes precedence over `days`), `due_time` (`HH:MM` local; `''` = inherit the
   routine's time, or run *untimed* — a checklist chore with no reminder), `remind_before`
   (minutes), `impact` (the "why"), `enabled`, and two local-date dedup cursors
-  `last_reminded_on` / `last_missed_on`. A chore in a routine inherits its schedule
-  unless it sets its own time (`effective_chore_schedule`). The sweep
+  `last_reminded_on` / `last_missed_on`. `away_behavior` (`keep`/`suppress`)
+  decides whether the chore is skipped during the household's away window; the
+  optional `service` (`trash`/`recycling`/…) links a municipal-pickup chore to a
+  `service_shifts` row so a holiday-shifted collection day moves the reminder. A
+  chore in a routine inherits its schedule unless it sets its own time
+  (`effective_chore_schedule`). The sweep
   (`POST /webhooks/household/chores/check`) sends the owner a lead-time reminder
   and — if it slips past due — the *other* parent a gentle heads-up. Pure logic +
   the shared `run_chores_check` live in `prefrontal/household.py`; CLI
@@ -404,6 +433,13 @@ positive `children.id`.
   "doing" facet of the balance view (`contribution_counts` counts completions). A
   one-tap **Done** button (`chore_done`) or `POST /household/chores/{id}/done`
   writes it.
+
+- **`service_shifts`** — scraped municipal **pickup-day shifts**: one row per
+  `(household_id, service, week)` recording that a collection (`trash`/`recycling`/…,
+  matching `household_chores.service`) moved to `shifted_weekday` (0=Mon…6=Sun) that
+  week, with a `reason` ("Independence Day") and `source_url`/`fetched_at`
+  provenance. A chore linked by `service` reads this so a holiday-shifted collection
+  reminds on the moved day rather than the usual one.
 
 Appointments are **not** a new table: a kid's appt is a `commitments` row tagged
 `kind='child'` (`prefrontal/commitments.py`), which the sheet surfaces in its

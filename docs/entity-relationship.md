@@ -1,6 +1,6 @@
 # Entity-relationship diagram
 
-Generated from `prefrontal/memory/schema.sql` on `main` (33 tables). Two roots:
+Generated from `prefrontal/memory/schema.sql` on `main` (36 tables). Two roots:
 **`users`** (every personal row is scoped to a `user_id`) and **`households`**
 (the shared co-parent tables). A user optionally belongs to one household.
 
@@ -31,6 +31,8 @@ erDiagram
     users ||--o{ dismissed_conflicts : dismisses
     users ||--o{ dismissed_departures : dismisses
     users ||--o{ decomposition_feedback : "decides on"
+    users ||--o{ clarifications : "clarifies"
+    users ||--o{ sources : "configures"
     users ||--o| profile_cache : "has"
 
     todos ||--o| todo_decompositions : "broken into"
@@ -49,6 +51,7 @@ erDiagram
     households ||--o{ household_routines : routines
     households ||--o{ household_chores : chores
     households ||--o{ household_chore_log : "chore log"
+    households ||--o{ service_shifts : "pickup shifts"
     household_agreements ||--o{ household_stars : "awards"
     household_routines ||--o{ household_chores : "recurs as"
     household_chores ||--o{ household_chore_log : "completions"
@@ -117,6 +120,23 @@ erDiagram
         string reason
         string source
         string first_step
+    }
+    clarifications {
+        int id PK
+        int user_id FK
+        string target_type
+        int target_id
+        string question
+        string status
+        string answer
+    }
+    sources {
+        int id PK
+        int user_id FK
+        string kind
+        string account
+        string config
+        bool enabled
     }
     outings {
         int id PK
@@ -229,6 +249,8 @@ erDiagram
         int household_id FK
         string name
         string birthday
+        string kind
+        string species
     }
     household_facts {
         int id PK
@@ -299,6 +321,14 @@ erDiagram
         int chore_id FK
         string done_on
         int done_by FK
+    }
+    service_shifts {
+        int id PK
+        int household_id FK
+        string service
+        string week
+        int shifted_weekday
+        string reason
     }
 ```
 

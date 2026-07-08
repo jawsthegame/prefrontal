@@ -18,8 +18,8 @@ this file wins until the work lands.
 >   **`POST /webhooks/focus/switch`** (records the impulse + returns a pause
 >   directive; 409 with no active block) and **`POST /webhooks/focus/resolve`**
 >   (`return` / `defer` / `switch`); `reflective_pause` is `status="active"`.
-> - **Schema**, all additive via the guarded `_ADDED_COLUMNS` migration
->   (`memory/db.py`): `todos.source` (§4.2) and two switch counters on
+> - **Schema**, all additive via the guarded `backfill_added_columns` migration
+>   (`memory/migrate.py`): `todos.source` (§4.2) and two switch counters on
 >   `focus_sessions` — `switch_impulses` / `switches_deferred` (§4.1's intent,
 >   grafted onto the existing table per option (a) rather than a new one). A
 >   deliberate `switch` closes the block as `status='switched'` and logs a

@@ -341,10 +341,11 @@ the first test. Code follow-ups below are optional polish.
   plan the same way. In `prefrontal/departure.py` + `routers/schedule.py`; covered
   by `tests/test_departure.py`.
 - **Task Paralysis module fully wired** ✅ — the last fully-stubbed module is now
-  live, all three interventions `active`. **auto_decompose** breaks any todo over
-  `decomposition_threshold_minutes` into a tiny first step at creation
-  (`POST /todos`); **tiny_first_step** reframes a stalled task on demand
-  (`POST /todos/{id}/decompose`, also fed to panic and `/todos/now`); and
+  live, all interventions `active`. **auto_decompose** (opt-in, **off by default**
+  via `auto_decompose_enabled`) breaks a todo you're *avoiding* into a tiny first
+  step on the coaching tick (`sweep_avoided_decompositions`), not at creation, and
+  only when the model judges it worth it; **tiny_first_step** reframes a stalled
+  task on demand (`POST /todos/{id}/decompose`, also fed to panic and `/todos/now`); and
   **body_double_nudge** is new — `repeat_stalled_tasks()`
   (`prefrontal/modules/task_paralysis.py`) finds tasks you keep bailing on
   (≥ `body_double_min_misses` `miss` episodes on the same title, not since
@@ -358,6 +359,14 @@ the first test. Code follow-ups below are optional polish.
   Exposed at `GET /todos/avoided` and woven into the morning briefing's "you keep
   putting off" line. *(Next input for the coaching agent's `tiny_first_step`
   picker — see `docs/coaching-agent.md`.)*
+- **In-progress pinning + focus-conflict alert** ✅ — a *started* todo
+  (`POST /todos/{id}/start`, cleared by `/unstart`) is pinned to the top of
+  `GET /todos` (`sort_todos_for_display`), so the task you're mid-flight on stays
+  visible. `focus_conflict()` (`prefrontal/todos.py`) flags when everything you've
+  started ranks below an important task you're avoiding-and-haven't-started —
+  returned as the `focus_conflict` field on `GET /todos` and rendered as a gentle
+  "worth switching?" banner on the dashboard. The honest-prioritization companion
+  to avoidance detection.
 - **Editable todo deadlines + per-step check-offs** ✅ — `POST /todos/{id}/deadline`
   moves or clears a deadline on an open todo, and
   `POST /todos/{id}/steps/{step_index}/done` ticks off an individual decomposition
@@ -460,10 +469,13 @@ the first test. Code follow-ups below are optional polish.
   opt into the **Anthropic provider** (`ANTHROPIC_AGENTS=summarizer`) for
   higher-quality prose, with Ollama as the fallback — see below.
 - **Calendar ingestion + double-booking** ✅ — `commitments` table +
-  `prefrontal/commitments.py`: feed-aware calendar sync
-  (`/webhooks/calendar/sync`, personal Google + work ICS merged), manual add,
-  `GET /commitments`, and overlap detection at `GET /commitments/conflicts` with
-  a Pushover alert in the sync workflow.
+  `prefrontal/commitments.py`: feed-aware calendar sync, manual add,
+  `GET /commitments`, and overlap detection at `GET /commitments/conflicts`.
+  Per-user **private ICS feeds** now sync natively (`prefrontal/ics.py`,
+  `prefrontal calendar add-source|sync --all-users`, launchd `com.prefrontal-calendar`
+  every 15 min) — the no-n8n path that *replaces* the old n8n `calendar-sync`
+  workflow (deactivate it to avoid double-ingestion). The `/webhooks/calendar/sync`
+  endpoint remains for batch/n8n callers.
 - **Impact analysis + cascade** ✅ — `prefrontal/impact.py`: projects realistic
   free-time from the `time_estimation_bias` and flags upcoming commitments now at
   risk (`start_at − lead_minutes` vs projection). `cascade_impact()` then

@@ -101,7 +101,10 @@ behavioral memory, rather than one monolithic assistant. The primitives:
 - **Commitments & todos.** Calendar sync (Google + ICS) with double-booking
   detection, plus open-loop todos that get *fitted* into your real free windows
   rather than dumped on a flat list. A stall-prone todo can be **decomposed**
-  into a tiny first step plus the rest.
+  into a tiny first step plus the rest. And because self-assigned priority is
+  gameable, it prioritizes *honestly*: it surfaces the important todo you keep
+  **not** doing, pins the task you're mid-flight on to the top, and flags when
+  you're heads-down on something less important than a task you're avoiding.
 
 - **The pipeline: capture → triage → memory → coaching → delivery.** Signals
   come in (location triggers, mail polling, calendar sync, one-tap captures); a
@@ -167,7 +170,7 @@ declares the interventions it provides.
 | Dysfunction | Module | What it does |
 |---|---|---|
 | Time perception & estimation | **Time Blindness** | Corrects estimates from your history, pads departures with a learned buffer, calls out elapsed time. |
-| Task initiation | **Task Paralysis** | Shrinks work to a 5-minute first step, auto-decomposes the large/ambiguous, offers a body-double check-in. |
+| Task initiation | **Task Paralysis** | Shrinks work to a 5-minute first step, can auto-break-down a task you're *avoiding* (opt-in), offers a body-double check-in. |
 | Focus regulation | **Hyperfocus** | Protects focus when it's aimed right; checks alignment and enforces breaks when it isn't. |
 | Response inhibition | **Impulsivity** | A reflective pause before a snap switch; capture-and-defer the distraction. |
 | Prospective memory, in the field | **Location-Aware Task Anchor** | Escalating nudges (soft → firm → voice call) back to a stated intention as its window elapses, gated by actually being on-site. |
