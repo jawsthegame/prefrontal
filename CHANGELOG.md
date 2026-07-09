@@ -27,7 +27,11 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   Fernet-encrypted `sources` row** (`kind="smtp"`), configured on the Settings page
   (`GET`/`POST /smtp`, the password sealed at rest and never echoed back). Surfaces:
   `POST /todos/{id}/delegate` + `/delegate/return` (the delegation rides along on
-  `GET /todos`) and a `prefrontal todo delegate` CLI command.
+  `GET /todos`), a `prefrontal todo delegate` CLI command, and an NL `delegate_todo`
+  op on the `/assistant` box ("have the assistant prep the dentist call" → an
+  agent hand-off; "get my VA on X, email jane@…" → an email one). The assistant's
+  execute layer now threads the selected model client through `execute_actions`
+  so the op can write its prep brief.
 
 - **Ambiguity clarification + guided playbooks (a Task-Paralysis lever)** ✅ —
   task paralysis has a quieter cause than size: you can't start what you can't

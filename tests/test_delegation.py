@@ -17,6 +17,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal import delegation, sources
+from prefrontal.assistant import (
+    ALLOWED_OPS,
+    build_snapshot,
+    execute_actions,
+    validate_actions,
+)
 from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import generate_key
 from prefrontal.delegation import (
@@ -363,3 +369,54 @@ def test_http_smtp_partial_update_keeps_password(http):
     )
     assert r.json()["password_set"] is True
     assert r.json()["host"] == "b"
+
+
+# -- NL assistant op ---------------------------------------------------------
+
+
+def test_delegate_todo_is_in_allowed_ops():
+    """The op is dispatchable — registered, so the whitelist accepts it."""
+    assert "delegate_todo" in ALLOWED_OPS
+
+
+def test_assistant_op_delegates_to_agent(store):
+    tid = store.add_todo("Book dentist")
+    snap = build_snapshot(store)
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid, "handler": "agent"}], snap
+    )
+    assert errors == []
+    results = execute_actions(
+        store, actions, client=_ollama_json({"brief": "Call and book.", "drafts": []})
+    )
+    assert results[0]["ok"] is True
+    assert store.get_delegation(tid)["status"] == STATUS_PREPPED
+
+
+def test_assistant_op_defaults_handler_to_agent(store):
+    """A bare delegate (no handler) defaults to the in-app agent."""
+    tid = store.add_todo("Book dentist")
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid}], build_snapshot(store)
+    )
+    assert errors == []
+    assert actions[0].params["handler"] == "agent"
+
+
+def test_assistant_op_email_requires_destination(store):
+    """An email hand-off with no address is rejected at validation, not executed."""
+    tid = store.add_todo("Book dentist")
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid, "handler": "email"}], build_snapshot(store)
+    )
+    assert actions == []
+    assert any("destination" in e for e in errors)
+
+
+def test_assistant_op_rejects_unknown_todo(store):
+    """delegate_todo on a non-existent id drops at validation (id not in snapshot)."""
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": 9999, "handler": "agent"}], build_snapshot(store)
+    )
+    assert actions == []
+    assert errors
