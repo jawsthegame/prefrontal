@@ -96,6 +96,10 @@ def parse_ics(
             continue
         if line == "END:VEVENT":
             if cur is not None and cur.get("start_at") and not declined and not cancelled:
+                # Titleless VEVENTs (private/busy blocks) are valid ICS; treat them
+                # as a "Busy" hold rather than rejecting the whole feed batch.
+                if not (cur.get("title") or "").strip():
+                    cur["title"] = "Busy"
                 out.append(cur)
             cur = None
             continue
