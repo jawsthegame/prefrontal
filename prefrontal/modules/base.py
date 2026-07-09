@@ -36,7 +36,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from prefrontal.coaching import CoachContext, Cue
+    from datetime import datetime
+
+    from prefrontal.coaching import CoachContext, Cue, Decision
     from prefrontal.memory.store import MemoryStore
 
 
@@ -107,6 +109,29 @@ class Module(ABC):
         lights up its coaching by filling this in — nothing else to wire.
         """
         return []
+
+    def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:  # noqa: B027
+        """Run once per tick, *before* any cue is collected. Default no-op.
+
+        The place for a module's pre-collection housekeeping — e.g. sweeping its
+        own prior unanswered nudges into outcome episodes so the tick's learning
+        signals are current. The coaching engine calls this on every enabled
+        module so no module needs bespoke wiring in the tick loop (contrast the
+        old hard-coded self-care sweep). Runs after :func:`build_context`, so
+        ``ctx`` (including ``ctx.now``) is available.
+        """
+
+    def after_fire(  # noqa: B027
+        self, store: MemoryStore, decisions: list[Decision], now: datetime
+    ) -> None:
+        """Run once per tick, *after* the fired decisions are recorded. Default no-op.
+
+        The place for a module's post-fire housekeeping — e.g. stamping a
+        delivery time so a later one-tap response can be timed. ``decisions`` is
+        the full fired list for the tick; a module filters to its own cues
+        (``d.cue.module == self.key``). Like :meth:`before_collect`, the engine
+        calls this on every enabled module.
+        """
 
     def seed(self, store: MemoryStore) -> None:
         """Seed this module's ``default_state`` into coaching state.

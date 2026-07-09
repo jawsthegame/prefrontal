@@ -1459,8 +1459,6 @@ def _coach_tick(
     result = run_coaching_tick(store, settings=settings, ollama=tick_ollama, now=now)
     if result.swept_stale:
         print(f"({result.swept_stale} unanswered nudge(s) logged as channel misses)")
-    if result.ignored_self_care:
-        print(f"({result.ignored_self_care} unanswered self-care nudge(s) logged as ignored)")
     if result.decomposed:
         print(f"({result.decomposed} avoided task(s) broken down)")
     if result.clarified:

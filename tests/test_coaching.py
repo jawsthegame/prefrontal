@@ -260,6 +260,32 @@ def test_collect_cues_isolates_a_broken_module(caplog):
     assert "boom" in caplog.text  # the swallowed failure is logged, not vanished (§8)
 
 
+def test_run_module_hooks_runs_each_and_isolates_a_failure(caplog):
+    """A module's lifecycle hook raising is logged and skipped, never sinking the
+    tick — the same robustness collect_cues gives evaluate()."""
+    from prefrontal.coaching import _run_module_hooks
+
+    ran: list[str] = []
+
+    class Ok:
+        def __init__(self, key):
+            self.key = key
+
+        def hook(self):
+            ran.append(self.key)
+
+    class Boom:
+        key = "boom"
+
+        def hook(self):
+            raise RuntimeError("hook blew up")
+
+    with caplog.at_level("WARNING"):
+        _run_module_hooks([Ok("a"), Boom(), Ok("b")], lambda m: m.hook(), "before_collect")
+    assert ran == ["a", "b"]  # the good modules' hooks still ran
+    assert "boom" in caplog.text and "before_collect" in caplog.text
+
+
 # -- Task Paralysis evaluator (the first real cue source) --------------------
 
 

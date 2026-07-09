@@ -140,19 +140,56 @@ def test_task_paralysis_refocus_fires_on_focus_conflict(store):
     assert cue.dedup_key == f"refocus:{minor}:{important}"
 
 
-def test_task_paralysis_refocus_held_during_protected_focus(store):
-    """An aligned focus block shields the user — refocus is held, tiny_first_step fills in."""
+def test_task_paralysis_refocus_held_by_engine_during_protected_focus(store):
+    """An aligned focus block shields the user from refocus — but the hold now lives
+    in the engine's central suppression gate, not the module. The module emits
+    refocus regardless; the engine holds it while the block is protected."""
+    from prefrontal.coaching import decide, suppressed
+    from prefrontal.modules.hyperfocus import is_focus_protected
+
     important = store.add_todo("Renew passport", estimate_minutes=20, priority=3)
     _age_todo(store, important, 8)
     minor = store.add_todo("Tidy desk", estimate_minutes=10, priority=1)
     store.start_todo(minor)
     store.start_focus_session("deep work", aligned=True)  # protected hyperfocus
+    assert is_focus_protected(store) is True  # the tick reads this into ctx
 
+    # The module no longer self-checks protection: it emits refocus either way.
     cues = get("task_paralysis").evaluate(store, CoachContext(now=utcnow()))
-    assert len(cues) == 1
-    # No refocus while protected; the worst-avoided todo still gets a first-step nudge.
-    assert cues[0].intervention == "tiny_first_step"
-    assert cues[0].ref["todo_id"] == important
+    assert [c.intervention for c in cues] == ["refocus"]
+
+    # Always-responsive window so only the protection gate is in play.
+    protected = CoachContext(
+        now=utcnow(), responsive_start=0, responsive_end=0, focus_protected=True
+    )
+    assert suppressed(store, cues[0], protected) is True
+    assert decide(store, cues, protected) == []
+    # Once the block is no longer protected, the same cue is let through.
+    open_ctx = CoachContext(
+        now=utcnow(), responsive_start=0, responsive_end=0, focus_protected=False
+    )
+    assert suppressed(store, cues[0], open_ctx) is False
+
+
+def test_protected_focus_gate_exempts_self_care_and_critical(store):
+    """The central protection gate holds non-critical cues from other modules, but
+    self-care pierces flow (eat/drink) and critical always lands."""
+    from prefrontal.coaching import Cue, suppressed
+
+    ctx = CoachContext(
+        now=utcnow(), responsive_start=0, responsive_end=0, focus_protected=True
+    )
+
+    def cue(module: str, urgency: str) -> Cue:
+        return Cue(
+            module=module, intervention="x", urgency=urgency, text="t",
+            context_key="c", dedup_key=f"{module}:{urgency}",
+        )
+
+    assert suppressed(store, cue("task_paralysis", "nudge"), ctx) is True
+    assert suppressed(store, cue("time_blindness", "urgent"), ctx) is True
+    assert suppressed(store, cue("self_care", "nudge"), ctx) is False
+    assert suppressed(store, cue("location_anchor", "critical"), ctx) is False
 
 
 def test_time_blindness_intervention_statuses_are_honest():
