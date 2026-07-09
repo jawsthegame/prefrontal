@@ -30,6 +30,7 @@ from prefrontal.memory.store import MemoryStore
 #: Connector kinds stored in the ``sources`` table.
 IMAP = "imap"
 ICS = "ics"
+SMTP = "smtp"
 
 
 @dataclass(frozen=True)
@@ -174,6 +175,96 @@ def ics_sources(
             )
         )
     return out
+
+
+# -- outbound mail (SMTP relay for delegating a todo to a human assistant) -----
+
+#: The single logical SMTP account per user (one sending relay is enough — a
+#: person delegates from one outbox), so callers don't have to name it.
+SMTP_ACCOUNT = "default"
+
+
+@dataclass(frozen=True)
+class SmtpSource:
+    """A resolved SMTP outbound source, with its password decrypted."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    sender: str  # the From address (defaults to username when unset)
+    use_tls: bool = True
+    enabled: bool = True
+
+    @property
+    def configured(self) -> bool:
+        """Whether this source has enough to actually send (host + a from address)."""
+        return bool(self.enabled and self.host and (self.sender or self.username))
+
+
+def put_smtp_source(
+    store: MemoryStore,
+    *,
+    host: str,
+    port: int = 587,
+    username: str = "",
+    password: str | None,
+    sender: str = "",
+    use_tls: bool = True,
+    enabled: bool = True,
+    account: str = SMTP_ACCOUNT,
+) -> int:
+    """Create or update the user's SMTP source; return its row id.
+
+    The sealed secret is the SMTP password (an app password, typically).
+    ``password=None`` leaves an existing sealed password untouched — the
+    config-only edit the dashboard uses when the operator changes the host/port
+    but re-submits without retyping the password. Operates on a **scoped** store
+    (the credential lands under that user).
+    """
+    config = json.dumps(
+        {
+            "host": host,
+            "port": int(port),
+            "username": username,
+            "sender": sender,
+            "use_tls": bool(use_tls),
+        }
+    )
+    secret_enc = seal(password) if password is not None else None
+    return store.upsert_source(
+        kind=SMTP,
+        account=account,
+        config=config,
+        secret_enc=secret_enc,
+        enabled=enabled,
+    )
+
+
+def resolve_smtp(
+    store: MemoryStore, *, account: str = SMTP_ACCOUNT
+) -> SmtpSource | None:
+    """Return the user's SMTP source (password decrypted), or ``None`` if unset.
+
+    Unlike IMAP there is no env fallback: outbound relay is configured per user
+    through the dashboard, so a user with no SMTP source simply can't send (the
+    delegation ``email`` handler then stores the brief for manual sending).
+    """
+    row = store.get_source(SMTP, account)
+    if row is None:
+        return None
+    cfg = json.loads(row["config"] or "{}")
+    password = unseal(row["secret_enc"]) if row["secret_enc"] is not None else ""
+    username = cfg.get("username", "")
+    return SmtpSource(
+        host=cfg.get("host", ""),
+        port=int(cfg.get("port", 587)),
+        username=username,
+        password=password,
+        sender=cfg.get("sender") or username,
+        use_tls=bool(cfg.get("use_tls", True)),
+        enabled=bool(row["enabled"]),
+    )
 
 
 # -- mail fetch bridge: registry source -> ImapAccount + retention policy ------

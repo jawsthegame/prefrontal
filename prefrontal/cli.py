@@ -2148,6 +2148,44 @@ def _cmd_todo(args: argparse.Namespace) -> int:
             else:
                 print(f"No todo #{args.todo_id}.", file=sys.stderr)
                 return 1
+        elif args.todo_action == "delegate":
+            from prefrontal.delegation import run_delegation
+            from prefrontal.integrations.ollama import OllamaClient
+            from prefrontal.sources import resolve_smtp
+
+            todo = store.get_todo(args.todo_id)
+            if todo is None or todo.get("status") != "open":
+                print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)
+                return 1
+            destination = (args.to or "").strip() or None
+            if args.handler == "email" and destination is None:
+                print("`--to <email>` is required for --handler email.", file=sys.stderr)
+                return 1
+            # Use the local model when it's up; otherwise prep falls back to a
+            # heuristic brief (client=None) rather than blocking on a down model.
+            ollama = OllamaClient(
+                base_url=settings.ollama_url, model=settings.ollama_model
+            )
+            client = ollama if ollama.available() else None
+            smtp = resolve_smtp(store) if args.handler == "email" else None
+            result = run_delegation(
+                store,
+                todo,
+                handler=args.handler,
+                destination=destination,
+                client=client,
+                smtp=smtp,
+            )
+            print(f"Todo #{args.todo_id} delegated to {result.handler} → {result.status}.")
+            if result.detail:
+                print(f"  {result.detail}")
+            if result.brief:
+                print(f"  Brief: {result.brief.splitlines()[0]}")
+            if result.drafts:
+                print(f"  {len(result.drafts)} draft(s) prepared.")
+            # A failed email hand-off still stored the brief — surface that it's not lost.
+            if result.status == "failed":
+                return 1
     return 0
 
 
@@ -3370,6 +3408,17 @@ def build_parser() -> argparse.ArgumentParser:
     t_domain.add_argument("todo_id", type=int)
     t_domain.add_argument(
         "domain", nargs="?", default=None, help="work / home / … (omit to clear)."
+    )
+    t_delegate = todo_sub.add_parser(
+        "delegate", help="Hand a todo to an assistant to do the prep / follow-up."
+    )
+    t_delegate.add_argument("todo_id", type=int)
+    t_delegate.add_argument(
+        "--handler", choices=["agent", "email"], default="agent",
+        help="agent = in-app AI prep (default); email = send the brief to a human VA.",
+    )
+    t_delegate.add_argument(
+        "--to", default=None, help="The assistant's email address (required for --handler email)."
     )
     p_todo.set_defaults(func=_cmd_todo)
 

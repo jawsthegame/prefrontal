@@ -37,6 +37,13 @@ from typing import Any
 
 from prefrontal.clock import utcnow
 from prefrontal.commitments import to_utc
+from prefrontal.delegation import (
+    HANDLER_AGENT,
+    HANDLER_EMAIL,
+    HANDLERS,
+    STATUS_FAILED,
+    run_delegation,
+)
 from prefrontal.household import normalize_chore, normalize_routine
 from prefrontal.integrations import Generator
 from prefrontal.llm_json import generate_json
@@ -49,6 +56,7 @@ from prefrontal.memory.repos.household import (
     normalize_fact_item,
 )
 from prefrontal.scheduling import local_datetime
+from prefrontal.sources import resolve_smtp
 from prefrontal.todos import (
     ENERGY_LEVELS,
     MAX_ESTIMATE_MINUTES,
@@ -130,6 +138,7 @@ ASSISTANT_SYSTEM = (
     '- {"op":"rename_todo","todo_id":int,"title":str}\n'
     '- {"op":"set_deadline","todo_id":int,"deadline":"YYYY-MM-DD" or null}\n'
     '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
+    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email","destination":str?}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
@@ -141,6 +150,13 @@ ASSISTANT_SYSTEM = (
     "nudge or reminder about that item, so use set_todo_notes / "
     "set_commitment_notes when the user wants to remember something *about* a "
     'task or event (notes:null clears it).\n'
+    "Delegating hands a todo to an assistant to do the PREP/follow-up (it does NOT "
+    "mark it done): use delegate_todo when the user says \"have the assistant "
+    "handle/prep X\", \"get my VA on X\", \"draft the email for X\". "
+    "handler:\"agent\" (the default) is the in-app AI — it writes a research brief "
+    "and draft messages back onto the todo; handler:\"email\" sends that brief to a "
+    "human assistant and so REQUIRES a destination email (use \"agent\" when the "
+    "user names no address).\n"
     "A commitment's hardness is how firm it is: \"hard\" = a must-happen "
     "obligation (a slip is a real problem), \"soft\" = an elastic/optional block "
     "you could move. Use set_commitment_hardness for \"this one's non-negotiable\" "
@@ -738,6 +754,23 @@ def _v_todo_status(op: str, action: dict[str, Any], snapshot: dict[str, Any]) ->
     return ValidatedAction(op, {"todo_id": tid}, f"{verb} todo: “{title}”")
 
 
+def _v_delegate_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    tid, title = _require_todo(action, snapshot)
+    handler = str(action.get("handler") or HANDLER_AGENT).strip().lower()
+    if handler not in HANDLERS:
+        raise _ActionError('handler must be "agent" or "email"')
+    params: dict[str, Any] = {"todo_id": tid, "handler": handler}
+    if handler == HANDLER_EMAIL:
+        # An email hand-off has to know who to send to — reject it here rather than
+        # letting it fall through to a "failed" delegation at execute time.
+        dest = _nonblank(action.get("destination"), "destination")
+        params["destination"] = dest
+        summary = f"Delegate “{title}” to your assistant ({dest})"
+    else:
+        summary = f"Delegate “{title}” to the AI assistant to prep"
+    return ValidatedAction(op, params, summary)
+
+
 def _v_set_priority(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     tid, title = _require_todo(action, snapshot)
     pri = _as_priority(action.get("priority"))
@@ -1220,6 +1253,7 @@ _VALIDATORS: dict[
     "add_todo": _v_add_todo,
     "complete_todo": _v_todo_status,
     "drop_todo": _v_todo_status,
+    "delegate_todo": _v_delegate_todo,
     "set_priority": _v_set_priority,
     "set_estimate": _v_set_estimate,
     "rename_todo": _v_rename_todo,
@@ -1340,7 +1374,11 @@ def _default_reply(actions: list[ValidatedAction], errors: list[str]) -> str:
 
 
 def execute_actions(
-    memory: Any, actions: list[ValidatedAction], *, timezone: str = "UTC"
+    memory: Any,
+    actions: list[ValidatedAction],
+    *,
+    timezone: str = "UTC",
+    client: Generator | None = None,
 ) -> list[dict[str, Any]]:
     """Execute validated actions against the scoped store.
 
@@ -1353,14 +1391,19 @@ def execute_actions(
         memory: A **scoped** store.
         actions: Validated actions from :func:`validate_actions`.
         timezone: IANA zone used to interpret naive deadline/commitment times.
+        client: Optional model client, used only by ``delegate_todo`` to write the
+            prep brief (falls back to a heuristic brief when ``None`` / offline).
+            Ignored by every other op, so callers with no model can omit it.
 
     Returns:
         One ``{op, summary, ok, detail}`` result per action.
     """
-    return [_execute_one(memory, a, timezone) for a in actions]
+    return [_execute_one(memory, a, timezone, client) for a in actions]
 
 
-def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any]:
+def _execute_one(
+    memory: Any, action: ValidatedAction, tz: str, client: Generator | None = None
+) -> dict[str, Any]:
     """Apply one action, returning a result row (never raises)."""
     op, p = action.op, action.params
     result = {"op": op, "summary": action.summary, "ok": False, "detail": ""}
@@ -1390,6 +1433,23 @@ def _execute_one(memory: Any, action: ValidatedAction, tz: str) -> dict[str, Any
             result["ok"] = memory.update_todo_deadline(p["todo_id"], deadline)
         elif op == "set_todo_notes":
             result["ok"] = memory.set_todo_notes(p["todo_id"], p.get("notes"))
+        elif op == "delegate_todo":
+            todo = memory.get_todo(p["todo_id"])
+            if todo is None or todo.get("status") != "open":
+                result["detail"] = "todo is no longer open"
+            else:
+                handler = p["handler"]
+                smtp = resolve_smtp(memory) if handler == HANDLER_EMAIL else None
+                outcome = run_delegation(
+                    memory, todo, handler=handler,
+                    destination=p.get("destination"), client=client, smtp=smtp,
+                )
+                # A failed hand-off (e.g. SMTP unconfigured) still stored the brief,
+                # but the delegation didn't land — report it as not-ok with the reason.
+                result.update(
+                    ok=outcome.status != STATUS_FAILED,
+                    detail=f"{outcome.status}: {outcome.detail}",
+                )
         elif op == "add_commitment":
             start_at = to_utc(p["start_at"], default_tz=tz)
             end_at = _to_utc_or_none(p.get("end_at"), tz)

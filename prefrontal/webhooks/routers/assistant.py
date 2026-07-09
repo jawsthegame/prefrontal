@@ -88,8 +88,12 @@ def build_router(services: RouterServices) -> APIRouter:
         memory = ctx.store
         snapshot = build_snapshot(memory)
         actions, errors = validate_actions(payload.actions, snapshot)
+        # A delegate_todo action writes its prep brief with the model; hand the same
+        # provider-selected client the interpret step used (falls back to a heuristic
+        # brief when unavailable). Other ops ignore it.
+        client, _ = provider.select("assistant")
         results = execute_actions(
-            memory, actions, timezone=resolved_settings.timezone
+            memory, actions, timezone=resolved_settings.timezone, client=client
         )
         applied = sum(1 for r in results if r["ok"])
         return {"applied": applied, "results": results, "errors": errors}
