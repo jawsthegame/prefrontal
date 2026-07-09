@@ -478,6 +478,27 @@ CREATE TABLE IF NOT EXISTS decomposition_feedback (
 CREATE INDEX IF NOT EXISTS idx_decomp_feedback_user
     ON decomposition_feedback (user_id, created_at);
 
+-- Delegation of an open todo to an assistant (a "do the prep / follow-up for me"
+-- handoff). One row per todo (PK todo_id, ON DELETE CASCADE — mirrors
+-- todo_decompositions), so re-delegating replaces the prior handoff. Two pluggable
+-- handlers: `agent` (the local LLM writes a research brief + draft comms straight
+-- back onto this row) and `email` (the same brief is sent to a human VA at
+-- `destination` over the user's SMTP source). `status` walks the lifecycle
+-- forwarded → in_prep → prepped → returned (or `failed`); `brief` is the prep
+-- write-up and `drafts` is a JSON array of drafted messages the user can review.
+CREATE TABLE IF NOT EXISTS todo_delegations (
+    todo_id      INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+    handler      TEXT    NOT NULL,   -- agent | email
+    destination  TEXT,               -- VA email for the `email` handler; NULL for `agent`
+    status       TEXT    NOT NULL DEFAULT 'forwarded', -- forwarded | in_prep | prepped | returned | failed
+    brief        TEXT,               -- the prep write-up (LLM or heuristic)
+    drafts       TEXT,               -- JSON array of drafted comms {channel, to, subject, body}
+    detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    prepped_at   DATETIME            -- when prep completed (status reached prepped)
+);
+
 -- User-curated named places — aliases that map a recurring destination to fixed
 -- coordinates without any network geocoding (e.g. "gym", "the office", "mom's").
 -- Checked against a commitment's location/title *before* the geocoder, so the

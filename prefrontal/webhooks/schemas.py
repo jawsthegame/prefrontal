@@ -1080,6 +1080,46 @@ class DismissDecomposition(BaseModel):
     )
 
 
+class DelegateTodo(BaseModel):
+    """Body of ``POST /todos/{id}/delegate`` — hand a todo to an assistant.
+
+    ``handler='agent'`` runs the in-app AI assistant (local model writes a brief +
+    drafts back onto the todo); ``handler='email'`` mails the brief to a human VA
+    at ``destination`` over the user's SMTP source.
+    """
+
+    handler: Literal["agent", "email"] = Field(
+        default="agent",
+        description="Who does the prep: 'agent' (in-app AI) or 'email' (human VA).",
+    )
+    destination: str | None = Field(
+        default=None,
+        description="The VA's email address (required for handler='email'; ignored for 'agent').",
+    )
+
+
+class SmtpConfig(BaseModel):
+    """Body of ``POST /smtp`` — the user's outbound-email (SMTP) source.
+
+    A partial-update: an omitted/blank ``password`` leaves the stored one in place
+    (so the operator can edit the host without retyping the secret). The password
+    is sealed at rest and never returned by ``GET /smtp``.
+    """
+
+    host: str = Field(description="SMTP server host, e.g. smtp.gmail.com.")
+    port: int = Field(default=587, ge=1, le=65535, description="SMTP port (587 for STARTTLS).")
+    username: str = Field(default="", description="SMTP login username (often the full email).")
+    password: str | None = Field(
+        default=None,
+        description="SMTP password / app password. Omit or leave blank to keep the stored one.",
+    )
+    sender: str = Field(
+        default="", description="From address (defaults to the username when blank)."
+    )
+    use_tls: bool = Field(default=True, description="Use STARTTLS (the norm for port 587).")
+    enabled: bool = Field(default=True, description="Whether the email handler may send.")
+
+
 class AssistantMessage(BaseModel):
     """Body of ``POST /assistant`` — a natural-language editing request."""
 
@@ -1115,6 +1155,7 @@ __all__ = [
     "ChoreSet",
     "CommitmentCreate",
     "CommitmentDomain",
+    "DelegateTodo",
     "CommitmentKind",
     "ConflictDismiss",
     "ConversationTurn",
@@ -1146,6 +1187,7 @@ __all__ = [
     "ShoppingAdd",
     "ShoppingGot",
     "ShortcutPayload",
+    "SmtpConfig",
     "StarAward",
     "StepDone",
     "SwitchImpulse",

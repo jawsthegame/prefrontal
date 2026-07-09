@@ -484,3 +484,107 @@ class TodosRepo(Repo):
             (self._uid(),),
         ).fetchall()
         return {int(r["todo_id"]) for r in rows}
+
+    # -- delegation (hand a todo to an assistant for prep/follow-up) -----------
+
+    def set_delegation(
+        self,
+        todo_id: int,
+        *,
+        handler: str,
+        destination: str | None = None,
+        status: str = "forwarded",
+        brief: str | None = None,
+        drafts: list[dict[str, Any]] | None = None,
+        detail: str | None = None,
+        prepped: bool = False,
+    ) -> bool:
+        """Store (or replace) a todo's delegation. Returns ``True`` if a row was written.
+
+        Mirrors :meth:`set_decomposition` — one row per todo, so re-delegating
+        overwrites the prior handoff (and its brief/drafts). ``drafts`` is
+        JSON-encoded. ``prepped=True`` stamps ``prepped_at`` (call it when the
+        handler has finished producing the brief). No-ops if the todo isn't this
+        user's.
+        """
+        if not self._owns_todo(todo_id):
+            return False
+        prepped_at = "CURRENT_TIMESTAMP" if prepped else "NULL"
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO todo_delegations "
+            f"(todo_id, handler, destination, status, brief, drafts, detail, "
+            f"prepped_at) VALUES (?, ?, ?, ?, ?, ?, ?, {prepped_at})",
+            (
+                todo_id,
+                handler,
+                destination,
+                status,
+                brief,
+                json.dumps(drafts) if drafts is not None else None,
+                detail,
+            ),
+        )
+        self.conn.commit()
+        return True
+
+    def get_delegation(self, todo_id: int) -> dict[str, Any] | None:
+        """Return a todo's delegation, or ``None``.
+
+        ``drafts`` is decoded to a list of dicts. Returns ``None`` if the todo has
+        no delegation or isn't this user's.
+        """
+        if not self._owns_todo(todo_id):
+            return None
+        row = self.conn.execute(
+            "SELECT handler, destination, status, brief, drafts, detail, "
+            "created_at, updated_at, prepped_at "
+            "FROM todo_delegations WHERE todo_id = ?",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["drafts"] = json.loads(d["drafts"]) if d["drafts"] else []
+        except (ValueError, TypeError):
+            d["drafts"] = []
+        return d
+
+    def update_delegation_status(
+        self, todo_id: int, status: str, *, detail: str | None = None, prepped: bool = False
+    ) -> bool:
+        """Advance a delegation's lifecycle status. Returns ``True`` if a row changed.
+
+        ``prepped=True`` also stamps ``prepped_at`` (when prep completes).
+        ``detail`` is an optional handler note (a failure reason, a transport
+        response) written alongside; passing ``None`` leaves the existing note.
+        No-ops if the todo has no delegation or isn't this user's.
+        """
+        if not self._owns_todo(todo_id):
+            return False
+        prepped_clause = ", prepped_at = CURRENT_TIMESTAMP" if prepped else ""
+        detail_clause = ", detail = ?" if detail is not None else ""
+        params: list[Any] = [status]
+        if detail is not None:
+            params.append(detail)
+        params.append(todo_id)
+        cur = self.conn.execute(
+            f"UPDATE todo_delegations SET status = ?{detail_clause}, "
+            f"updated_at = CURRENT_TIMESTAMP{prepped_clause} WHERE todo_id = ?",
+            tuple(params),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def delete_delegation(self, todo_id: int) -> bool:
+        """Remove a todo's delegation. Returns ``True`` if a row was deleted.
+
+        Used to recall a handoff. No-ops if the todo isn't this user's or had none.
+        """
+        if not self._owns_todo(todo_id):
+            return False
+        cur = self.conn.execute(
+            "DELETE FROM todo_delegations WHERE todo_id = ?", (todo_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0

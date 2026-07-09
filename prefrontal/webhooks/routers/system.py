@@ -30,6 +30,7 @@ from prefrontal.modules.self_care import (
     self_care_status,
 )
 from prefrontal.scheduling import local_datetime
+from prefrontal.sources import put_smtp_source, resolve_smtp
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
@@ -46,7 +47,7 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.schemas import SelfCareConfig, SelfCareMark
+from prefrontal.webhooks.schemas import SelfCareConfig, SelfCareMark, SmtpConfig
 from prefrontal.webhooks.services import RouterServices
 
 #: The web-surface HTML shells are read into memory at import and change only on
@@ -262,5 +263,75 @@ def build_router(services: RouterServices) -> APIRouter:
         if headline is None:
             raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
         return {"headline": headline, **self_care_status(ctx.store, now, tz)}
+
+    @router.get("/smtp", tags=["system"])
+    def smtp_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's outbound-email (SMTP) config, for the Settings card.
+
+        Powers the email-handoff destination for delegated todos. The password is
+        sealed at rest and **never** returned — instead ``password_set`` says
+        whether one is stored, so the form can show "•••• (saved)" without ever
+        exposing the secret to the browser.
+        """
+        src = resolve_smtp(ctx.store)
+        if src is None:
+            return {
+                "configured": False,
+                "host": "",
+                "port": 587,
+                "username": "",
+                "sender": "",
+                "use_tls": True,
+                "enabled": True,
+                "password_set": False,
+            }
+        return {
+            "configured": src.configured,
+            "host": src.host,
+            "port": src.port,
+            "username": src.username,
+            "sender": src.sender,
+            "use_tls": src.use_tls,
+            "enabled": src.enabled,
+            "password_set": bool(src.password),
+        }
+
+    @router.post("/smtp", tags=["system"])
+    def set_smtp(
+        payload: SmtpConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Save the signed-in user's SMTP source (used to email delegated todos to a VA).
+
+        A partial update: a blank/omitted ``password`` keeps the stored one
+        (``None`` into :func:`~prefrontal.sources.put_smtp_source` preserves the
+        sealed secret), so editing the host doesn't require retyping the app
+        password. The secret is sealed at rest. Returns the fresh (password-free)
+        status so the card re-renders from the response.
+        """
+        password = payload.password if (payload.password or "").strip() else None
+        put_smtp_source(
+            ctx.store,
+            host=payload.host.strip(),
+            port=payload.port,
+            username=payload.username.strip(),
+            password=password,
+            sender=payload.sender.strip(),
+            use_tls=payload.use_tls,
+            enabled=payload.enabled,
+        )
+        src = resolve_smtp(ctx.store)
+        return {
+            "configured": bool(src and src.configured),
+            "host": src.host if src else "",
+            "port": src.port if src else payload.port,
+            "username": src.username if src else "",
+            "sender": src.sender if src else "",
+            "use_tls": src.use_tls if src else payload.use_tls,
+            "enabled": src.enabled if src else payload.enabled,
+            "password_set": bool(src and src.password),
+        }
 
     return router

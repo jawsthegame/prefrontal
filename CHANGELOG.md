@@ -7,6 +7,28 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Delegate a todo to an assistant (prep / follow-up hand-off)** ✅ — some open
+  loops are less "do a tiny first step" and more "someone should go dig up the
+  options, draft the email, and hand it back ready to send." `prefrontal/delegation.py`
+  is that hand-off: a todo is delegated to a pluggable **handler** that does the
+  prep and writes it onto a new `todo_delegations` row (one per todo, mirroring
+  `todo_decompositions`). Two handlers ship, chosen from a registry (`HANDLERS`
+  derived from `_HANDLERS`, so the API can't accept a handler it can't dispatch):
+  `agent` — the local model writes a research **brief** + **draft communications**
+  straight back on-box (status `prepped`, ready to review, house-style LLM call
+  with a heuristic fallback so it still produces an outline offline); and `email`
+  — the same brief is composed into a message and sent to a human VA over the
+  user's own SMTP source (status `forwarded`; if SMTP isn't configured or the
+  relay errors, the brief is still stored and the status is `failed` so nothing is
+  lost). Lifecycle `forwarded → in_prep → prepped → returned/failed`, with a
+  heads-up push (`deliver_to_member`) when it lands. This is Prefrontal's first
+  **outbound-email** path (`prefrontal/integrations/smtp.py` — stdlib `smtplib`, a
+  no-op when unconfigured, never raises); SMTP credentials live as a **per-user
+  Fernet-encrypted `sources` row** (`kind="smtp"`), configured on the Settings page
+  (`GET`/`POST /smtp`, the password sealed at rest and never echoed back). Surfaces:
+  `POST /todos/{id}/delegate` + `/delegate/return` (the delegation rides along on
+  `GET /todos`) and a `prefrontal todo delegate` CLI command.
+
 - **Ambiguity clarification + guided playbooks (a Task-Paralysis lever)** ✅ —
   task paralysis has a quieter cause than size: you can't start what you can't
   *name*. A calendar event called "Tax" or a todo that just says "Mom" stalls

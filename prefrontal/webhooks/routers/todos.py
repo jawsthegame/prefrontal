@@ -25,6 +25,12 @@ from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import (
     to_utc,
 )
+from prefrontal.delegation import (
+    HANDLER_EMAIL,
+    STATUS_RETURNED,
+    delegation_notice,
+    run_delegation,
+)
 from prefrontal.impact import (
     utcnow,
 )
@@ -54,6 +60,7 @@ from prefrontal.scheduling import (
     window_config_for,
     work_window_now,
 )
+from prefrontal.sources import resolve_smtp
 from prefrontal.todos import (
     AUTO_DECOMPOSE_KEY,
     DEFAULT_MAX_FIRST_STEP_MINUTES,
@@ -79,6 +86,7 @@ from prefrontal.webhooks.helpers import (
 )
 from prefrontal.webhooks.schemas import (
     AutoDecomposeConfig,
+    DelegateTodo,
     DismissDecomposition,
     StepDone,
     TodoCategoryUpdate,
@@ -212,6 +220,7 @@ def build_router(services: RouterServices) -> APIRouter:
         sources = memory.mail_sources_for_todos([t["id"] for t in todos])
         for todo in todos:
             todo["decomposition"] = memory.get_decomposition(todo["id"])
+            todo["delegation"] = memory.get_delegation(todo["id"])
             src = sources.get(todo["id"]) or {}
             account = src.get("account")
             todo["account"] = account
@@ -719,6 +728,93 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"Todo {todo_id} not found."
             )
         return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
+
+    @router.post("/todos/{todo_id}/delegate", tags=["todos"])
+    def todo_delegate(
+        todo_id: int,
+        payload: DelegateTodo,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Hand an open todo to an assistant to do the prep / follow-up.
+
+        ``handler='agent'`` runs the in-app AI assistant: the local model writes a
+        research brief and any draft communications straight back onto the todo
+        (status → ``prepped``), so you get it back ready to act on. ``handler='email'``
+        mails that same brief to a human VA at ``destination`` over your SMTP source
+        (status → ``forwarded``); if SMTP isn't configured or the send fails, the
+        brief is still stored and the status is ``failed`` with the reason — nothing
+        is lost. Either way you're pushed a heads-up when it lands.
+
+        404 if the todo isn't open; 422 if ``handler='email'`` without a
+        ``destination``. Declared before the ``{action}`` route so "delegate" isn't
+        read as a done/drop action.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo.get("status") != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        destination = (payload.destination or "").strip() or None
+        if payload.handler == HANDLER_EMAIL and destination is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="handler='email' needs a 'destination' (the assistant's email).",
+            )
+        smtp = resolve_smtp(memory) if payload.handler == HANDLER_EMAIL else None
+        result = run_delegation(
+            memory,
+            todo,
+            handler=payload.handler,
+            destination=destination,
+            client=ollama_client,
+            smtp=smtp,
+        )
+        # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
+        # import keeps the delivery module (and its coaching cycle) off the hot path,
+        # matching how the household surfaces reach it.
+        message = delegation_notice(todo["title"], result)
+        if message:
+            from prefrontal.integrations.delivery import (
+                deliver_to_member,
+                household_notice,
+            )
+
+            deliver_to_member(
+                memory,
+                household_notice(message),
+                handle=ctx.user["handle"],
+                settings=resolved_settings,
+            )
+        return {
+            "todo_id": todo_id,
+            "handler": result.handler,
+            "status": result.status,
+            "brief": result.brief,
+            "drafts": result.drafts,
+            "detail": result.detail,
+        }
+
+    @router.post("/todos/{todo_id}/delegate/return", tags=["todos"])
+    def todo_delegate_return(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mark a delegated todo's prep as returned (the assistant handed it back).
+
+        Closes the loop on an ``email`` handoff once the VA's work comes back, or
+        acknowledges you've reviewed an ``agent`` brief — status → ``returned``. The
+        todo stays open (you still do or schedule the actual thing). 404 if the todo
+        has no delegation. Declared before the ``{action}`` route.
+        """
+        memory = ctx.store
+        if not memory.update_delegation_status(todo_id, STATUS_RETURNED):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no delegation to return.",
+            )
+        return {"todo_id": todo_id, "status": STATUS_RETURNED}
 
     @router.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(
