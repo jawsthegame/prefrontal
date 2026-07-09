@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from prefrontal.cli import main
+from prefrontal.commitments import sync_calendar
 from prefrontal.config import get_settings
 from prefrontal.crypto import generate_key
 from prefrontal.ics import parse_ics
@@ -91,6 +92,41 @@ def test_parse_ics_declined_filter_off_when_no_me():
     """With no me_emails, a declined event is NOT dropped (nothing to match)."""
     events = parse_ics(SAMPLE, namespace="work", me_emails=())
     assert "work:evt-declined" in {e["external_id"] for e in events}
+
+
+def test_parse_ics_titles_untitled_event_busy():
+    """A titleless VEVENT (a private/busy block — SUMMARY is optional in RFC 5545)
+    is kept and titled "Busy", not dropped."""
+    ics = (
+        "BEGIN:VEVENT\r\nUID:private-1\r\n"
+        "DTSTART:20990101T090000Z\r\nDTEND:20990101T093000Z\r\nEND:VEVENT\r\n"
+    )
+    events = parse_ics(ics, namespace="work")
+    assert len(events) == 1
+    assert events[0]["title"] == "Busy"
+    assert events[0]["external_id"] == "work:private-1"
+
+
+def test_sync_calendar_keeps_untitled_event(store):
+    """A titleless event must not reject the whole batch (sync validates up front).
+
+    Before the parser defaulted an empty title to "Busy", a single private/busy
+    block anywhere in the feed made ``normalize_event`` raise and rejected every
+    event in the sync. Both events here should land.
+    """
+    ics = (
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\nUID:real\r\nSUMMARY:Team sync\r\n"
+        "DTSTART:20990101T090000Z\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nUID:private\r\n"
+        "DTSTART:20990101T110000Z\r\nEND:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    events = parse_ics(ics, namespace="work")
+    summary = sync_calendar(store, events)
+    assert summary.added == 2  # both, not zero — the batch wasn't rejected
+    titles = {c["title"] for c in store.upcoming_commitments()}
+    assert {"Team sync", "Busy"} <= titles
 
 
 def test_parse_ics_unfolds_continuation_lines():
