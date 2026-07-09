@@ -119,14 +119,17 @@
   /* Compact rows: label + count + button on one line, a slim progress bar
      wrapped tight beneath. Rows self-separate via the top border, so the column
      needs no extra gap — keeps the card low-profile and mobile-friendly. */
-  .sc-controls { display: flex; gap: 8px; }
+  /* Wrap the check chips onto multiple rows when they can't sit comfortably on
+     one (each keeps a ~96px min tap width, below): a full row on desktop, ~3 per
+     row (so two rows for the full set of checks) on a phone, instead of cramming. */
+  .sc-controls { display: flex; flex-wrap: wrap; gap: 8px; }
   .sc-hint { color: var(--muted); font-size: 13px; }
   .sc-hint a { color: var(--accent); text-decoration: none; }
   .sc-hint a:hover { text-decoration: underline; }
   /* One-line checks: each is a tappable chip whose left-to-right green fill is
      the day's progress toward its target (count/target for recurring checks, ✓
      for once-a-day). Tapping logs one — no separate label or progress bar. */
-  .sc-chip { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center;
+  .sc-chip { flex: 1 1 96px; min-width: 96px; display: inline-flex; align-items: center;
     justify-content: center; gap: 6px; padding: 9px 8px; min-height: 42px;
     border: 1px solid var(--line); border-radius: 10px; color: var(--fg);
     font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
