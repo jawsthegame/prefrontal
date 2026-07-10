@@ -447,6 +447,41 @@ def backfill_coaching_state_defaults(conn: sqlite3.Connection) -> None:
                 scoped.set_state(key, value, source=source)
 
 
+def backfill_project_ranks(conn: sqlite3.Connection) -> None:
+    """Give every active project a forced ``rank`` if it lacks one (idempotent).
+
+    The ``rank`` column (:file:`schema.sql`) is a contiguous 1..N priority order
+    among each user's *active* projects. :func:`backfill_added_columns` adds the
+    column to an existing database but leaves it NULL; this assigns ranks to any
+    active project still missing one — per user, appended after whatever is
+    already ranked, oldest (lowest id) first. Only touches NULL ranks, so it never
+    disturbs an order the user has already set, and it is a no-op on a fresh/empty
+    database (no projects yet) or before the column exists.
+    """
+    if "rank" not in _table_columns(conn, "projects"):
+        return  # column not added yet (older DB mid-upgrade) — backfill runs first
+    user_rows = conn.execute(
+        "SELECT DISTINCT user_id FROM projects "
+        "WHERE status = 'active' AND rank IS NULL"
+    ).fetchall()
+    for (user_id,) in user_rows:
+        base = conn.execute(
+            "SELECT COALESCE(MAX(rank), 0) FROM projects "
+            "WHERE user_id = ? AND status = 'active'",
+            (user_id,),
+        ).fetchone()[0]
+        unranked = conn.execute(
+            "SELECT id FROM projects WHERE user_id = ? AND status = 'active' "
+            "AND rank IS NULL ORDER BY id ASC",
+            (user_id,),
+        ).fetchall()
+        for offset, (project_id,) in enumerate(unranked, start=1):
+            conn.execute(
+                "UPDATE projects SET rank = ? WHERE id = ?", (base + offset, project_id)
+            )
+    conn.commit()
+
+
 def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     """Apply every pending schema migration, in order, before ``schema.sql`` runs.
 
@@ -465,11 +500,14 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     3. **Coaching-state default back-fill** — :func:`backfill_coaching_state_defaults`,
        so a default key added after a user was provisioned (e.g. ``home_zip``)
        reaches existing users too. Absent-only; a no-op on a fresh/empty DB.
+    4. **Project-rank back-fill** — :func:`backfill_project_ranks`, giving existing
+       active projects a forced ``rank`` (the column added in step 2 arrives NULL).
+       Absent-only; a no-op on a fresh/empty DB.
 
     All steps run *before* ``schema.sql`` is (re)applied: step 1 must, because the
-    new schema's indexes reference ``user_id``; steps 2–3 safely can, because they
+    new schema's indexes reference ``user_id``; steps 2–4 safely can, because they
     only touch tables that already exist (fresh tables are created by ``schema.sql``
-    at their final shape, and step 3 no-ops when there are no users yet).
+    at their final shape, and steps 3–4 no-op when there is nothing to back-fill yet).
     ``schema.sql`` then fills in any missing tables, indexes, and seed rows.
 
     Args:
@@ -487,4 +525,5 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
         result = migrate_to_multi_tenant(conn)
     backfill_added_columns(conn)
     backfill_coaching_state_defaults(conn)
+    backfill_project_ranks(conn)
     return result

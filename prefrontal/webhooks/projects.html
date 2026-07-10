@@ -67,12 +67,22 @@
   .proj-domhdr { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; font-weight: 700;
     color: var(--muted); padding: 12px 10px 4px; }
   .proj-domhdr:first-child { padding-top: 4px; }
-  .proj-row { display: block; width: 100%; text-align: left; border: none; background: transparent;
-    color: var(--fg); font: inherit; cursor: pointer; border-radius: 10px; padding: 9px 10px; }
+  .proj-row { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    border: none; background: transparent; color: var(--fg); font: inherit; cursor: pointer;
+    border-radius: 10px; padding: 9px 10px; }
   .proj-row:hover { background: var(--bg); }
   .proj-row.sel { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
-  .proj-row .proj-name { font-weight: 650; display: block; }
+  .proj-row.dragging { opacity: .45; }
+  .proj-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+  .proj-rank { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px;
+    color: var(--muted); min-width: 1.5em; text-align: right; flex: none; }
+  .proj-handle { flex: none; color: var(--muted); cursor: grab; font-size: 13px; line-height: 1;
+    padding: 0 1px; user-select: none; }
+  .proj-row[draggable="true"]:active .proj-handle { cursor: grabbing; }
+  .proj-body { flex: 1; min-width: 0; }
+  .proj-row .proj-name { font-weight: 650; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .proj-row .proj-roll { color: var(--muted); font-size: 12px; }
+  .list-hint { color: var(--muted); font-size: 11px; padding: 2px 10px 8px; }
 
   /* Detail pane */
   .detail { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
@@ -139,7 +149,7 @@
     <div class="empty">Select a project to see its todos, commitments, and focus.</div>
   </section>
 </div>
-<footer id="foot" style="display:none">A project groups todos, commitments &amp; focus sessions. Edit membership from the ＋ project pill on the dashboard.</footer>
+<footer id="foot" style="display:none">A project groups todos, commitments &amp; focus sessions. Drag projects to set their priority — a higher-ranked project's todos are preferred when Prefrontal decides what to fit into your free time. Edit membership from the ＋ project pill on the dashboard.</footer>
 
 <div id="gate">
   <div class="box">
@@ -205,31 +215,92 @@ async function api(path, opts) {
   return r.json();
 }
 
-// ── Master list: projects grouped by domain (mirrors the dashboard card) ───
+// ── Master list: a forced priority ranking (drag to reorder) ───────────────
+// Projects arrive from the API in rank order (1 = top). The list is a single
+// stack-rank across domains — you're forced to say which project beats which.
+// Drag rows to reorder; archived projects (no rank) sit below, non-draggable.
+function projRow(p, rankLabel) {
+  const roll = [];
+  if (p.open_todos) roll.push(`${p.open_todos} open`);
+  if (p.next_commitment_at) roll.push(`next ${esc(fmt(p.next_commitment_at))}`);
+  if (p.focus_minutes_7d >= 1) roll.push(`${Math.round(p.focus_minutes_7d)}m/7d`);
+  const archived = p.status && p.status !== "active";
+  const sub = [esc(p.domain || "—"), roll.join(" · ") || "empty"].join(" · ");
+  return `<button class="proj-row${String(p.id) === String(selectedId) ? " sel" : ""}"`
+    + ` data-id="${p.id}"${archived ? "" : ' draggable="true"'}>`
+    + `<span class="proj-rank">${rankLabel}</span>`
+    + (archived ? "" : `<span class="proj-handle" aria-hidden="true">⠿</span>`)
+    + `<span class="proj-body">`
+    + `<span class="proj-name" style="color:${projColor(p)}">${esc(p.name)}${archived ? " · archived" : ""}</span>`
+    + `<span class="proj-roll">${sub}</span></span></button>`;
+}
+
 function renderList() {
   const el = $("#list");
   if (!projects.length) {
     el.innerHTML = `<div class="empty" style="padding:10px">No projects yet. Assign one from a todo or commitment's ＋ project pill on the dashboard.</div>`;
     return;
   }
-  const groups = {};
-  for (const p of projects) (groups[p.domain || "—"] ||= []).push(p);
-  let html = "";
-  for (const dom of Object.keys(groups)) {
-    html += `<div class="proj-domhdr">${esc(dom)}</div>`;
-    for (const p of groups[dom]) {
-      const roll = [];
-      if (p.open_todos) roll.push(`${p.open_todos} open`);
-      if (p.next_commitment_at) roll.push(`next ${esc(fmt(p.next_commitment_at))}`);
-      if (p.focus_minutes_7d >= 1) roll.push(`${Math.round(p.focus_minutes_7d)}m/7d`);
-      const archived = p.status && p.status !== "active";
-      html += `<button class="proj-row${String(p.id) === String(selectedId) ? " sel" : ""}" data-id="${p.id}">`
-        + `<span class="proj-name" style="color:${projColor(p)}">${esc(p.name)}${archived ? " · archived" : ""}</span>`
-        + `<span class="proj-roll">${roll.join(" · ") || "empty"}</span></button>`;
-    }
+  const active = projects.filter((p) => !(p.status && p.status !== "active"));
+  const archived = projects.filter((p) => p.status && p.status !== "active");
+  let html = active.map((p, i) => projRow(p, String(i + 1))).join("");
+  if (active.length > 1) html += `<div class="list-hint">Drag to set priority — #1 is what to fit in first.</div>`;
+  if (archived.length) {
+    html += `<div class="proj-domhdr">Archived</div>`;
+    html += archived.map((p) => projRow(p, "·")).join("");
   }
   el.innerHTML = html;
 }
+
+// ── Drag-to-reorder → POST /projects/reorder ───────────────────────────────
+let dragId = null;
+function activeRows() { return Array.from($("#list").querySelectorAll('.proj-row[draggable="true"]')); }
+
+async function saveOrder(orderedIds) {
+  try {
+    const data = await api("/projects/reorder", {
+      method: "POST", body: JSON.stringify({ order: orderedIds.map(Number) }),
+    });
+    projects = data.projects || projects;
+    renderList();
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    load();  // stale/failed — resync from the server's truth
+  }
+}
+
+$("#list").addEventListener("dragstart", (e) => {
+  const row = e.target.closest('.proj-row[draggable="true"]');
+  if (!row) return;
+  dragId = row.dataset.id;
+  row.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  try { e.dataTransfer.setData("text/plain", dragId); } catch (_) {}
+});
+$("#list").addEventListener("dragend", (e) => {
+  const row = e.target.closest(".proj-row");
+  if (row) row.classList.remove("dragging");
+  activeRows().forEach((r) => r.classList.remove("drag-over"));
+});
+$("#list").addEventListener("dragover", (e) => {
+  const row = e.target.closest('.proj-row[draggable="true"]');
+  if (!row || dragId == null || row.dataset.id === dragId) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  activeRows().forEach((r) => r.classList.toggle("drag-over", r === row));
+});
+$("#list").addEventListener("drop", (e) => {
+  const target = e.target.closest('.proj-row[draggable="true"]');
+  if (!target || dragId == null) return;
+  e.preventDefault();
+  const ids = activeRows().map((r) => r.dataset.id);
+  const from = ids.indexOf(dragId);
+  const to = ids.indexOf(target.dataset.id);
+  if (from < 0 || to < 0 || from === to) { dragId = null; return; }
+  ids.splice(to, 0, ids.splice(from, 1)[0]);  // move dragged item to target slot
+  dragId = null;
+  saveOrder(ids);
+});
 
 // ── Detail pane: the project's contents + rollup stats (GET /projects/{id}) ─
 function pct(x) { return x == null ? "—" : Math.round(x * 100) + "%"; }

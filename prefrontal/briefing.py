@@ -247,7 +247,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
 
     # Spare time: free windows in the rest of the day, each with a fitting todo.
     spare: list[dict[str, Any]] = []
-    todos = store.open_todos(exclude_delegated=True)
+    todos = store.open_todos(exclude_delegated=True, with_project_rank=True)
     if todos:
         try:
             bias = float(state.get("time_estimation_bias", {}).get("value", 1.0))

@@ -13,6 +13,7 @@ from prefrontal.memory.db import SCHEMA_PATH
 from prefrontal.memory.migrate import (
     _reference_columns,
     backfill_added_columns,
+    backfill_project_ranks,
 )
 from prefrontal.memory.store import MemoryStore
 
@@ -92,6 +93,41 @@ def test_backfill_adds_away_behavior_default_to_existing_chores():
     # The constant DEFAULT reaches the pre-existing row (not NULL).
     row = conn.execute("SELECT away_behavior FROM household_chores WHERE title='trash'").fetchone()
     assert row["away_behavior"] == "keep"
+
+
+def test_project_rank_backfill_assigns_contiguous_ranks_per_user():
+    """A pre-rank projects table gets contiguous ranks per user (active only)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    # A pre-`rank` projects table (original columns only).
+    conn.execute(
+        "CREATE TABLE projects ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+        "name TEXT NOT NULL, description TEXT, domain TEXT NOT NULL, notes TEXT, "
+        "color TEXT, status TEXT NOT NULL DEFAULT 'active', "
+        "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.executemany(
+        "INSERT INTO projects (user_id, name, domain, status) VALUES (?, ?, 'home', ?)",
+        [(1, "u1-a", "active"), (1, "u1-b", "active"),
+         (1, "u1-archived", "archived"), (2, "u2-a", "active")],
+    )
+
+    backfill_added_columns(conn)  # adds the NULL `rank` column
+    backfill_project_ranks(conn)  # then fills it
+
+    rows = {r["name"]: r["rank"] for r in conn.execute("SELECT name, rank FROM projects")}
+    assert rows["u1-a"] == 1 and rows["u1-b"] == 2  # per-user, by id
+    assert rows["u1-archived"] is None             # archived stays unranked
+    assert rows["u2-a"] == 1                        # separate user restarts at 1
+
+    # Idempotent + only touches NULLs: a manual reorder survives a second run.
+    conn.execute("UPDATE projects SET rank = 2 WHERE name = 'u1-a'")
+    conn.execute("UPDATE projects SET rank = 1 WHERE name = 'u1-b'")
+    backfill_project_ranks(conn)
+    rows = {r["name"]: r["rank"] for r in conn.execute("SELECT name, rank FROM projects")}
+    assert rows["u1-a"] == 2 and rows["u1-b"] == 1
 
 
 def test_backfill_is_a_noop_on_a_fresh_database():

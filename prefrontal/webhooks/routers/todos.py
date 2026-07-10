@@ -993,7 +993,7 @@ def build_router(services: RouterServices) -> APIRouter:
         now_local = local_datetime(utcnow(), resolved_settings.timezone)
         fits = fit_todos(
             minutes,
-            memory.open_todos(exclude_delegated=True),
+            memory.open_todos(exclude_delegated=True, with_project_rank=True),
             bias_fn=task_bias_resolver(memory, local_hour=now_local.hour),
         )
         return {
@@ -1005,6 +1005,8 @@ def build_router(services: RouterServices) -> APIRouter:
                     "estimate_minutes": f["todo"].get("estimate_minutes"),
                     "effective_minutes": f["effective_minutes"],
                     "priority": f["todo"].get("priority"),
+                    "project_id": f["todo"].get("project_id"),
+                    "project_rank": f["todo"].get("project_rank"),
                 }
                 for f in fits
             ],
@@ -1065,7 +1067,8 @@ def build_router(services: RouterServices) -> APIRouter:
         # Only todos whose window includes now (off-zone already excluded above).
         now_local = local_datetime(now, resolved_settings.timezone)
         open_todos = filter_suggestible(
-            memory.open_todos(exclude_delegated=True), now_local, window_config
+            memory.open_todos(exclude_delegated=True, with_project_rank=True),
+            now_local, window_config
         )
         # Context-conditioned (§5): calibrate each todo with *this hour's* band and
         # its own energy/category, falling back through to the global bias.

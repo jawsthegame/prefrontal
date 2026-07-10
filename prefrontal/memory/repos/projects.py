@@ -29,6 +29,10 @@ class ProjectsRepo(Repo):
     ) -> int:
         """Insert an active project and return its id.
 
+        The project is appended at the bottom of the user's forced priority order
+        (``rank`` = current max active rank + 1); reorder it with
+        :meth:`reorder_projects`.
+
         Args:
             name: The project's display name (unique among the user's active
                 projects — the caller checks for a clash first).
@@ -44,9 +48,11 @@ class ProjectsRepo(Repo):
             The new project's id.
         """
         cur = self.conn.execute(
-            "INSERT INTO projects (user_id, name, description, domain, notes, color) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (self._uid(), name, description, domain, notes, color),
+            "INSERT INTO projects (user_id, name, description, domain, notes, color, rank) "
+            "VALUES (?, ?, ?, ?, ?, ?, "
+            "  (SELECT COALESCE(MAX(rank), 0) + 1 FROM projects "
+            "     WHERE user_id = ? AND status = 'active'))",
+            (self._uid(), name, description, domain, notes, color, self._uid()),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -60,7 +66,10 @@ class ProjectsRepo(Repo):
         return _row_to_dict(row)
 
     def list_projects(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
-        """Return the user's projects, active first then newest.
+        """Return the user's projects in forced priority order (rank 1 first).
+
+        Active projects come first, ordered by their forced ``rank`` (top priority
+        first); archived projects (rank NULL) sort last, newest first.
 
         Args:
             include_archived: When ``False`` (default), only ``active`` projects.
@@ -68,7 +77,7 @@ class ProjectsRepo(Repo):
         status_clause = "" if include_archived else " AND status = 'active'"
         return self._query_all(
             f"SELECT * FROM projects WHERE user_id = ?{status_clause} "
-            "ORDER BY (status = 'active') DESC, id DESC",
+            "ORDER BY (status = 'active') DESC, (rank IS NULL), rank ASC, id DESC",
             (self._uid(),),
         )
 
@@ -97,7 +106,7 @@ class ProjectsRepo(Repo):
             "  WHERE f.project_id = p.id AND f.user_id = p.user_id "
             "  AND f.started_at >= datetime('now', '-7 days')) AS focus_minutes_7d "
             f"FROM projects p WHERE p.user_id = ?{status_clause} "
-            "ORDER BY p.domain ASC, p.id DESC",
+            "ORDER BY (p.rank IS NULL), p.rank ASC, p.id DESC",
             (self._uid(),),
         )
 
@@ -215,15 +224,85 @@ class ProjectsRepo(Repo):
 
         Assigned todos/commitments/sessions keep their ``project_id`` (archive is
         not delete — the history stays labeled); the unique-name index only covers
-        active rows, so the name frees up for reuse.
+        active rows, so the name frees up for reuse. The project drops out of the
+        forced priority order (its ``rank`` is cleared and the remaining active
+        projects are re-numbered contiguously), so no gap is left behind.
         """
         cur = self.conn.execute(
-            "UPDATE projects SET status = 'archived', updated_at = CURRENT_TIMESTAMP "
+            "UPDATE projects SET status = 'archived', rank = NULL, "
+            "updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND user_id = ? AND status = 'active'",
             (project_id, self._uid()),
         )
+        if cur.rowcount > 0:
+            self._normalize_ranks()
         self.conn.commit()
         return cur.rowcount > 0
+
+    def reorder_projects(self, ordered_ids: list[int]) -> list[dict[str, Any]]:
+        """Set the forced 1..N priority order of the user's active projects.
+
+        ``ordered_ids`` must be exactly the user's active project ids, each once,
+        in the desired priority order (index 0 → rank 1 = top). This is how the
+        "objective priority" is *forced*: every active project gets a distinct
+        rank, so no two can tie. Raises :class:`ValueError` if the id set doesn't
+        match the active set (stale client — the caller maps it to a 422).
+
+        Returns the projects with rollups in the new order (ready to re-render).
+        """
+        active = {
+            r["id"]
+            for r in self._query_all(
+                "SELECT id FROM projects WHERE user_id = ? AND status = 'active'",
+                (self._uid(),),
+            )
+        }
+        if len(ordered_ids) != len(set(ordered_ids)) or set(ordered_ids) != active:
+            raise ValueError(
+                "reorder must list every active project exactly once "
+                f"(got {len(ordered_ids)} ids for {len(active)} active projects)"
+            )
+        for rank, project_id in enumerate(ordered_ids, start=1):
+            self.conn.execute(
+                "UPDATE projects SET rank = ? WHERE id = ? AND user_id = ?",
+                (rank, project_id, self._uid()),
+            )
+        self.conn.commit()
+        return self.list_projects_with_rollup()
+
+    def project_rank_map(self) -> dict[int, int]:
+        """Map ``project_id → rank`` for the user's active projects.
+
+        The scheduler stays project-unaware, so the fit/now surfaces stamp each
+        open todo's ``project_rank`` from this map before ranking
+        (:func:`prefrontal.scheduling.fit_todos`) — a todo in a higher-priority
+        project (lower rank) breaks ties ahead of one in a lower-priority project.
+        """
+        return {
+            r["id"]: r["rank"]
+            for r in self._query_all(
+                "SELECT id, rank FROM projects "
+                "WHERE user_id = ? AND status = 'active' AND rank IS NOT NULL",
+                (self._uid(),),
+            )
+        }
+
+    def _normalize_ranks(self) -> None:
+        """Re-number the user's active projects to a contiguous 1..N by current rank.
+
+        Called after an archive removes a project from the order, so the remaining
+        ranks have no gaps. Does not commit (the caller does). NULL ranks (should
+        only be a just-archived row) sort last but archived rows are excluded here.
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM projects WHERE user_id = ? AND status = 'active' "
+            "ORDER BY (rank IS NULL), rank ASC, id ASC",
+            (self._uid(),),
+        ).fetchall()
+        for rank, row in enumerate(rows, start=1):
+            self.conn.execute(
+                "UPDATE projects SET rank = ? WHERE id = ?", (rank, row["id"])
+            )
 
     def _cascade_project_domain(self, project_id: int, domain: str | None) -> None:
         """Write ``domain`` onto every todo/commitment assigned to this project.

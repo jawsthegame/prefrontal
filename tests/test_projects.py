@@ -268,6 +268,79 @@ def test_staleness_threshold_configurable(store):
     assert len(ProjectStalenessModule().evaluate(store, _ctx(7))) == 1  # 7 > 5
 
 
+# --- forced priority rank --------------------------------------------------
+
+def test_new_projects_get_contiguous_ranks(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    c = store.add_project("Gamma", "home")
+    ranks = {p["id"]: p["rank"] for p in store.list_projects()}
+    assert ranks == {a: 1, b: 2, c: 3}
+
+
+def test_reorder_sets_ranks_and_orders_the_list(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    c = store.add_project("Gamma", "home")
+    store.reorder_projects([c, a, b])
+    listed = store.list_projects()
+    assert [p["id"] for p in listed] == [c, a, b]
+    assert [p["rank"] for p in listed] == [1, 2, 3]
+
+
+def test_reorder_rejects_stale_or_partial_order(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    with pytest.raises(ValueError):
+        store.reorder_projects([a])  # missing b
+    with pytest.raises(ValueError):
+        store.reorder_projects([a, b, 999])  # unknown id
+    with pytest.raises(ValueError):
+        store.reorder_projects([a, a])  # duplicate
+
+
+def test_archive_compacts_the_remaining_ranks(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    c = store.add_project("Gamma", "home")
+    assert store.archive_project(b) is True
+    ranks = {p["id"]: p["rank"] for p in store.list_projects()}
+    assert ranks == {a: 1, c: 2}  # b's rank 2 is reclaimed, no gap
+    assert store.get_project(b)["rank"] is None
+
+
+def test_project_rank_map_covers_active_only(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    store.archive_project(b)
+    assert store.project_rank_map() == {a: 1}
+
+
+def test_open_todos_carry_project_rank_when_requested(store):
+    a = store.add_project("Alpha", "home")
+    b = store.add_project("Beta", "work")
+    store.reorder_projects([b, a])  # Beta is now rank 1
+    t_a = store.add_todo("in alpha", estimate_minutes=10)
+    t_b = store.add_todo("in beta", estimate_minutes=10)
+    store.add_todo("loose", estimate_minutes=10)
+    store.set_todo_project(t_a, a)
+    store.set_todo_project(t_b, b)
+    ranks = {t["id"]: t["project_rank"] for t in store.open_todos(with_project_rank=True)}
+    assert ranks[t_a] == 2 and ranks[t_b] == 1
+    assert ranks[[k for k in ranks if k not in (t_a, t_b)][0]] is None
+    # Off by default: the plain list carries no project_rank key at all.
+    assert "project_rank" not in store.open_todos()[0]
+
+
+def test_archived_project_todo_rank_is_none(store):
+    a = store.add_project("Alpha", "home")
+    t = store.add_todo("in alpha", estimate_minutes=10)
+    store.set_todo_project(t, a)
+    store.archive_project(a)
+    ranks = {row["id"]: row["project_rank"] for row in store.open_todos(with_project_rank=True)}
+    assert ranks[t] is None
+
+
 def test_archive_frees_the_name(store):
     pid = store.add_project("Kitchen Remodel", "home")
     assert store.archive_project(pid) is True
@@ -374,6 +447,20 @@ def test_dashboard_serves_projects_ui(client):
         assert fn in html
 
 
+def test_board_page_ships_reorder_ui(client):
+    """The projects board page ships the drag-to-rank wiring."""
+    html = client.get("/projects/board").text
+    assert 'draggable="true"' in html
+    for fn in ("function saveOrder", "/projects/reorder", 'addEventListener("drop"'):
+        assert fn in html
+
+
+def test_dashboard_shows_project_rank_badge(client):
+    """The dashboard project card renders the rank badge from the API's rank field."""
+    html = client.get("/dashboard").text
+    assert "proj-rank" in html and "p.rank" in html
+
+
 def test_api_projects_list_has_rollup_for_ui(client):
     """GET /projects carries the rollup fields renderProjects reads."""
     pid = client.post(
@@ -403,6 +490,50 @@ def test_api_archive(client):
     assert client.post(f"/projects/{pid}/archive", headers=_auth()).status_code == 200
     assert client.get("/projects", headers=_auth()).json()["projects"] == []
     assert len(client.get("/projects?include_archived=1", headers=_auth()).json()["projects"]) == 1
+
+
+def _mk_project(client, name, domain="home"):
+    return client.post(
+        "/projects", json={"name": name, "domain": domain}, headers=_auth()
+    ).json()["id"]
+
+
+def test_api_reorder_sets_priority_order(client):
+    a = _mk_project(client, "Alpha")
+    b = _mk_project(client, "Beta", "work")
+    c = _mk_project(client, "Gamma")
+    r = client.post("/projects/reorder", json={"order": [c, a, b]}, headers=_auth())
+    assert r.status_code == 200
+    listed = client.get("/projects", headers=_auth()).json()["projects"]
+    assert [p["id"] for p in listed] == [c, a, b]
+    assert [p["rank"] for p in listed] == [1, 2, 3]
+
+
+def test_api_reorder_stale_list_is_422(client):
+    a = _mk_project(client, "Alpha")
+    _mk_project(client, "Beta", "work")
+    r = client.post("/projects/reorder", json={"order": [a]}, headers=_auth())
+    assert r.status_code == 422
+
+
+def test_api_fit_reflects_project_priority(client):
+    # Two equal todos (same estimate, default priority, no deadline); the one in the
+    # higher-priority project surfaces first in /todos/fit.
+    low = _mk_project(client, "Low", "home")
+    high = _mk_project(client, "High", "work")
+    client.post("/projects/reorder", json={"order": [high, low]}, headers=_auth())
+    t_low = client.post(
+        "/todos", json={"title": "low task", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+    t_high = client.post(
+        "/todos", json={"title": "high task", "estimate_minutes": 10}, headers=_auth()
+    ).json()["todo_id"]
+    client.post(f"/todos/{t_low}/project", json={"project_id": low}, headers=_auth())
+    client.post(f"/todos/{t_high}/project", json={"project_id": high}, headers=_auth())
+    fits = client.get("/todos/fit?minutes=60", headers=_auth()).json()["fits"]
+    ids = [f["todo_id"] for f in fits]
+    assert ids.index(t_high) < ids.index(t_low)
+    assert fits[ids.index(t_high)]["project_rank"] == 1
 
 
 # --- triage integration ----------------------------------------------------

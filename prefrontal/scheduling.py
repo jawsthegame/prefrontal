@@ -412,12 +412,27 @@ def pick_now(
     return {**ordered[0], "reason": "fits"}
 
 
+#: Sentinel rank for a todo with no active project — sorts after every real
+#: project rank, so on an exact deadline+priority tie a ranked-project todo edges
+#: out a loose one, but a project-less todo is never otherwise penalized (it still
+#: competes purely on deadline then priority, per the project-priority design).
+_ORPHAN_PROJECT_RANK = 1_000_000_000
+
+
 def _fit_key(item: tuple[dict[str, Any], float]) -> tuple:
-    """Sort key: soonest deadline, then highest priority, then quickest."""
+    """Sort key: soonest deadline, then highest priority, then top project, quickest.
+
+    Project priority is a *soft* tiebreak: a deadline always wins, and a todo's own
+    priority outranks its project's rank, so a project-less todo is judged purely on
+    deadline+priority. Among todos that are otherwise tied, the one in a
+    higher-priority project (lower ``project_rank``, 1 = top) comes first.
+    """
     todo, effective = item
     has_deadline = 0 if todo.get("deadline") else 1
     deadline = todo.get("deadline") or ""
-    return (has_deadline, deadline, -(todo.get("priority") or 0), effective)
+    rank = todo.get("project_rank")
+    project_rank = rank if rank is not None else _ORPHAN_PROJECT_RANK
+    return (has_deadline, deadline, -(todo.get("priority") or 0), project_rank, effective)
 
 
 def fit_todos(

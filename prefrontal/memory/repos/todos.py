@@ -79,7 +79,9 @@ class TodosRepo(Repo):
         ).fetchone()
         return _row_to_dict(row)
 
-    def open_todos(self, *, exclude_delegated: bool = False) -> list[dict[str, Any]]:
+    def open_todos(
+        self, *, exclude_delegated: bool = False, with_project_rank: bool = False
+    ) -> list[dict[str, Any]]:
         """Return open todos, highest priority then soonest deadline first.
 
         With ``exclude_delegated=True``, todos that are actively delegated (a
@@ -89,23 +91,37 @@ class TodosRepo(Repo):
         plate; the plain list keeps them (shown as "taken care of"). Statuses are
         inlined here to avoid importing the delegation layer into the repo.
 
+        With ``with_project_rank=True``, each row also carries ``project_rank`` — the
+        forced priority rank (1 = top) of the todo's project, ``None`` when it has no
+        project or that project is archived — via a left join on ``projects.rank``.
+        The fitting/suggestion surfaces opt in so a higher-priority project can break
+        ties (see :func:`prefrontal.scheduling.fit_todos`); it's off by default so the
+        scheduler stays project-unaware and the plain list has no ``projects``
+        dependency (a freshly-migrated legacy DB has no ``projects`` table yet).
+
         Returns:
             A list of todo dicts with ``status = 'open'``.
         """
-        if exclude_delegated:
-            rows = self.conn.execute(
-                "SELECT t.* FROM todos t WHERE t.user_id = ? AND t.status = 'open' "
-                "AND NOT EXISTS (SELECT 1 FROM todo_delegations d WHERE d.todo_id = t.id "
-                "AND d.status IN ('forwarded', 'in_prep', 'prepped')) "
-                "ORDER BY t.priority DESC, (t.deadline IS NULL), t.deadline ASC, t.id ASC",
-                (self._uid(),),
-            ).fetchall()
+        delegated_clause = (
+            "AND NOT EXISTS (SELECT 1 FROM todo_delegations d WHERE d.todo_id = t.id "
+            "AND d.status IN ('forwarded', 'in_prep', 'prepped')) "
+            if exclude_delegated
+            else ""
+        )
+        if with_project_rank:
+            select, join = (
+                "t.*, p.rank AS project_rank",
+                "LEFT JOIN projects p ON p.id = t.project_id "
+                "AND p.user_id = t.user_id AND p.status = 'active' ",
+            )
         else:
-            rows = self.conn.execute(
-                "SELECT * FROM todos WHERE user_id = ? AND status = 'open' "
-                "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC",
-                (self._uid(),),
-            ).fetchall()
+            select, join = "t.*", ""
+        rows = self.conn.execute(
+            f"SELECT {select} FROM todos t {join}"
+            f"WHERE t.user_id = ? AND t.status = 'open' {delegated_clause}"
+            "ORDER BY t.priority DESC, (t.deadline IS NULL), t.deadline ASC, t.id ASC",
+            (self._uid(),),
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def actively_delegated_todos(self) -> list[dict[str, Any]]:
