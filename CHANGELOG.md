@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Delegation on the dashboard todo cards** ✅ — the delegate hand-off is now a
+  first-class control on each todo, not just an API/CLI/assistant-box action. A
+  **Delegate** button opens a small popover — *🤖 Prep with AI* (one-tap agent
+  hand-off) or *✉ Email an assistant…* (reveals an address field; the SMTP outbox
+  is auto-picked from the todo's account/domain). Once a todo has a delegation it
+  shows a **status pill** (🤖 prepped / ✉ sent / ⚠ needs a hand / ↩ returned) and an
+  expandable **prep panel** with the brief + any drafted messages, plus a *Mark
+  returned* button — so the agent's work is actually readable in the UI, closing
+  the gap where `GET /todos` returned the delegation but nothing rendered it. Also
+  fixes the prep to use the longer-timeout **summarizer** client (the 10s inference
+  client would often time out a brief+drafts generation to the heuristic outline).
+
 - **Per-account SMTP for the email hand-off** ✅ — the delegation email route now
   supports **several named SMTP outboxes** instead of one. A delegated todo
   auto-sends from the account whose name matches its **mail account**, then its

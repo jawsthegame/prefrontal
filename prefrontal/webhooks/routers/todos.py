@@ -122,6 +122,11 @@ def build_router(services: RouterServices) -> APIRouter:
     router = APIRouter()
     resolved_settings = services.settings
     ollama_client = services.ollama
+    # Delegation prep writes a multi-sentence brief + draft messages — a heavier
+    # generation than the snappy window/title inference, so it uses the longer-
+    # timeout summarizer client (like the profile/briefing paths) rather than the
+    # 10s inference client, which would often time out to the heuristic outline.
+    summarizer_client = services.summarizer
 
     @router.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
     def todo_create(
@@ -775,7 +780,7 @@ def build_router(services: RouterServices) -> APIRouter:
             todo,
             handler=payload.handler,
             destination=destination,
-            client=ollama_client,
+            client=summarizer_client,
             smtp=smtp,
         )
         # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
