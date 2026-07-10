@@ -39,17 +39,35 @@ def _with_card_layout(html: str) -> str:
     )
 
 
+#: The shared nav-reveal script that shows the operator-only "Admin" link (which
+#: ships hidden in every nav) once ``GET /admin/whoami`` confirms the signed-in
+#: user is an operator. Injected into every shared-nav page below so the logic
+#: lives in one file, not copied into each shell.
+_ADMIN_NAV_JS = (Path(__file__).with_name("_admin_nav.js")).read_text(encoding="utf-8")
+
+
+def _shell(name: str) -> str:
+    """Read a self-contained page shell and reveal its operator-only Admin link.
+
+    Every shared-nav page authors the ``<a data-nav-admin>`` link hidden and gets
+    the one shared reveal script injected before ``</body>``, so the operator-gating
+    logic lives in a single file rather than being copied into each shell.
+    """
+    html = (Path(__file__).with_name(name)).read_text(encoding="utf-8")
+    return html.replace("</body>", f"<script>\n{_ADMIN_NAV_JS}\n</script>\n</body>", 1)
+
+
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
-DASHBOARD_HTML = (Path(__file__).with_name("dashboard.html")).read_text(encoding="utf-8")
+DASHBOARD_HTML = _shell("dashboard.html")
 #: The read-only visual household calendar (week-ahead agenda + slot finder);
 #: reads GET /commitments and GET /calendar/slots.
-CALENDAR_HTML = (Path(__file__).with_name("calendar.html")).read_text(encoding="utf-8")
+CALENDAR_HTML = _shell("calendar.html")
 #: The editable household hub — the one writable surface for the shared sheet
 #: (kids, pets, facts, agreements, shopping, routines).
-HOUSEHOLD_HTML = _with_card_layout((Path(__file__).with_name("household.html")).read_text(encoding="utf-8"))
+HOUSEHOLD_HTML = _with_card_layout(_shell("household.html"))
 #: The read-only lens shell, parameterized per focus by replacing ``__LENS__``
 #: with ``kids`` / ``pets`` (see :func:`lens_html`). One file backs both lenses.
-LENS_HTML = _with_card_layout((Path(__file__).with_name("lens.html")).read_text(encoding="utf-8"))
+LENS_HTML = _with_card_layout(_shell("lens.html"))
 
 
 def lens_html(lens: str) -> str:
@@ -62,13 +80,13 @@ def lens_html(lens: str) -> str:
     """
     return LENS_HTML.replace("__LENS__", lens)
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
-STATS_HTML = _with_card_layout((Path(__file__).with_name("stats.html")).read_text(encoding="utf-8"))
+STATS_HTML = _with_card_layout(_shell("stats.html"))
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
 #: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
-REVIEW_HTML = _with_card_layout((Path(__file__).with_name("review.html")).read_text(encoding="utf-8"))
+REVIEW_HTML = _with_card_layout(_shell("review.html"))
 #: The Settings page — config that adjusts behavior (currently the self-care
 #: master switch + per-check knobs), reading/writing GET + POST /self-care.
-SETTINGS_HTML = _with_card_layout((Path(__file__).with_name("settings.html")).read_text(encoding="utf-8"))
+SETTINGS_HTML = _with_card_layout(_shell("settings.html"))
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.

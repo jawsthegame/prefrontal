@@ -140,6 +140,23 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         return {"handle": handle, "status": "disabled"}
 
+    @router.post("/admin/users/{handle}/enable", tags=["admin"])
+    def admin_enable_user(
+        handle: str,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Re-enable a disabled user (their token resolves again). Idempotent.
+
+        The inverse of :func:`admin_disable_user`, so a mistaken disable is
+        recoverable from the admin UI rather than only over the CLI.
+        """
+        if not request.app.state.store.set_user_status(handle, "active"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+            )
+        return {"handle": handle, "status": "active"}
+
     # -- household membership (operator-set in v1; see docs/household-sheet.md §8)
 
     @router.post(
