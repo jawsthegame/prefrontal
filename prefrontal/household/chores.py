@@ -323,6 +323,26 @@ def with_effective_schedule(
     return {**chore, "days": days, "month_days": month_days, "due_time": due_time}
 
 
+def chore_ids_scheduled_on(
+    store: MemoryStore, now_local: datetime, routines: list[dict[str, Any]] | None = None
+) -> set[int]:
+    """Ids of chores whose *effective* schedule runs on ``now_local``'s local date.
+
+    The store twin of the sheet's ``scheduled_today`` flag, for surfaces that need
+    "which chores run on <that day>" for an arbitrary local date (e.g. the sheet's
+    day selector back-filling yesterday). Schedule is a property of the calendar,
+    not the pause state, so a paused chore scheduled that day is still included —
+    pausing silences reminders, it doesn't move the chore off the day.
+    """
+    routines_by_id = {r["id"]: r for r in (routines if routines is not None else store.routines())}
+    ids: set[int] = set()
+    for c in store.chores():
+        eff = with_effective_schedule(c, routines_by_id.get(c.get("routine_id")))
+        if scheduled_on(eff["days"], eff["month_days"], now_local):
+            ids.add(c["id"])
+    return ids
+
+
 def _month_day_matches(month_days: list[int], now_local: datetime) -> bool:
     """Whether ``now_local``'s day-of-month matches any chosen day (short-month clamped).
 

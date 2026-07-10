@@ -156,6 +156,9 @@
   .linkbtn { border: none; background: none; color: var(--muted); font-size: 12px;
     cursor: pointer; padding: 2px 4px; }
   .linkbtn:hover { color: var(--danger); text-decoration: underline; }
+  /* Neutral link toggle (e.g. the chores "show all" switch) — not a destructive action. */
+  .toggle-link:hover { color: var(--accent); }
+  .toggle-link.on { color: var(--accent); font-weight: 600; }
   .invite-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
     border-bottom: 1px dashed var(--line); }
   .invite-row:last-child { border-bottom: none; }
@@ -325,6 +328,8 @@
       <span class="dn-label" id="chore-day-label">Today</span>
       <button class="iconbtn" id="chore-next" type="button" title="Next day" aria-label="Next day">›</button>
       <span class="hint" style="width:auto;margin:0">tick a past day if you forgot — up to yesterday</span>
+      <button class="linkbtn toggle-link" id="chore-showall" type="button"
+        style="margin-left:auto">Show all</button>
     </div>
     <div id="chores"></div>
     <form class="inline" id="chore-form">
@@ -759,9 +764,14 @@ function _choreWhen(c) {
 // Chores day selector: 0 = today, 1 = yesterday (at most one day back). `_chores`
 // caches the last sheet's list so switching days re-renders without a full reload;
 // `choreDoneIds` holds a past day's completed-ids (null = use today's done_today).
+// `choreScheduledIds` is the set scheduled on the selected day (null = use each
+// chore's `scheduled_today` from the sheet); `choreShowAll` overrides the default
+// "just the selected day's chores" filter to reveal every chore for editing.
 let _chores = [];
 let choreDaysAgo = 0;
 let choreDoneIds = null;
+let choreScheduledIds = null;
+let choreShowAll = false;
 
 function updateChoreNav() {
   const lbl = $("#chore-day-label");
@@ -769,19 +779,34 @@ function updateChoreNav() {
   const prev = $("#chore-prev"), next = $("#chore-next");
   if (prev) prev.disabled = choreDaysAgo >= 1;   // yesterday is as far back as it goes
   if (next) next.disabled = choreDaysAgo <= 0;   // never into the future
+  const showall = $("#chore-showall");
+  if (showall) {
+    showall.textContent = choreShowAll ? "Today's only" : "Show all";
+    showall.classList.toggle("on", choreShowAll);
+  }
 }
 
-// Switch the visible day. Today uses the sheet's done_today; a past day pulls its
-// completed set from the server (which owns the timezone) before re-rendering.
+// Whether a chore is scheduled on the selected day: today reads the sheet's
+// `scheduled_today` flag; a past day uses the server-supplied scheduled set (the
+// server owns the timezone, so "which day" stays authoritative there too).
+function choreScheduledOnDay(c) {
+  return choreDaysAgo === 0 ? !!c.scheduled_today : !!(choreScheduledIds && choreScheduledIds.has(c.id));
+}
+
+// Switch the visible day. Today uses the sheet's done_today / scheduled_today; a
+// past day pulls its completed + scheduled sets from the server (which owns the
+// timezone) before re-rendering.
 async function setChoreDay(daysAgo) {
   choreDaysAgo = Math.max(0, Math.min(1, daysAgo));
   if (choreDaysAgo === 0) {
     choreDoneIds = null;
+    choreScheduledIds = null;
   } else {
     try {
       const data = await api(`/household/chores/done?days_ago=${choreDaysAgo}`);
       choreDoneIds = new Set(data.ids || []);
-    } catch (_) { choreDoneIds = new Set(); }
+      choreScheduledIds = new Set(data.scheduled || []);
+    } catch (_) { choreDoneIds = new Set(); choreScheduledIds = new Set(); }
   }
   renderChores(_chores);
 }
@@ -790,7 +815,17 @@ function renderChores(chores) {
   _chores = chores || [];
   updateChoreNav();
   if (!_chores.length) { $("#chores").innerHTML = `<div class="empty">No chores yet.</div>`; return; }
-  $("#chores").innerHTML = _chores.map((c) => {
+  // By default show just the selected day's chores; "Show all" reveals the rest
+  // (so an off-day chore is still editable/removable). A day with nothing on it
+  // says so, rather than looking empty.
+  const visible = choreShowAll ? _chores : _chores.filter(choreScheduledOnDay);
+  if (!visible.length) {
+    const when = choreDaysAgo === 0 ? "today" : "yesterday";
+    $("#chores").innerHTML =
+      `<div class="empty">Nothing scheduled ${when}. <button class="linkbtn toggle-link" id="chore-showall-empty" type="button">Show all chores</button></div>`;
+    return;
+  }
+  $("#chores").innerHTML = visible.map((c) => {
     const done = choreDaysAgo === 0 ? !!c.done_today : !!(choreDoneIds && choreDoneIds.has(c.id));
     const owner = c.owner_name || "either";
     const badge = c.routine_title ? `<span class="task-badge">${esc(c.routine_title)}</span>` : "";
@@ -1293,6 +1328,17 @@ $("#chores").addEventListener("change", async (e) => {
 });
 $("#chore-prev").addEventListener("click", () => setChoreDay(choreDaysAgo + 1));
 $("#chore-next").addEventListener("click", () => setChoreDay(choreDaysAgo - 1));
+
+// "Show all" ↔ "Today's only": flip the filter and re-render (no reload — the
+// list's already cached). The empty-day state has its own inline "Show all".
+function toggleChoreShowAll(force) {
+  choreShowAll = force === undefined ? !choreShowAll : force;
+  renderChores(_chores);
+}
+$("#chore-showall").addEventListener("click", () => toggleChoreShowAll());
+$("#chores").addEventListener("click", (e) => {
+  if (e.target.id === "chore-showall-empty") toggleChoreShowAll(true);
+});
 
 $("#routine-form").addEventListener("submit", async (e) => {
   e.preventDefault();

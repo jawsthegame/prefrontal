@@ -517,6 +517,27 @@ def test_sheet_shows_chores_with_today_status(store, dana):
     assert "Dana" in md and "mornings" in md
 
 
+def test_sheet_flags_scheduled_today_per_chore(store, dana):
+    """Each chore carries ``scheduled_today`` for its *effective* schedule on today."""
+    did = store.get_user("dana")["id"]
+    # REMIND_NOW is a Wednesday (weekday 2).
+    every_day = dana.set_chore(title="dishes", due_time="22:00", owner_id=did, updated_by=did)
+    today_only = dana.set_chore(title="wed thing", due_time="", days="2",
+                                owner_id=did, updated_by=did)
+    other_day = dana.set_chore(title="mon thing", due_time="", days="0",
+                               owner_id=did, updated_by=did)
+    # A chore that inherits a Wednesday routine's schedule is scheduled today too.
+    rid = dana.set_routine(title="wed routine", days="2", updated_by=did)
+    inherits = dana.set_chore(title="via routine", due_time="", owner_id=did,
+                              routine_id=rid, updated_by=did)
+    sheet = build_sheet(dana, now=REMIND_NOW, timezone="UTC")
+    flags = {c["title"]: c["scheduled_today"] for c in sheet.chores}
+    assert flags == {
+        "dishes": True, "wed thing": True, "via routine": True, "mon thing": False
+    }
+    assert every_day and today_only and other_day and inherits  # ids returned
+
+
 # --- the sweep: run_chores_check ---------------------------------------------
 
 
@@ -851,11 +872,35 @@ def test_chore_done_selector_marks_and_reads_a_past_day(client, store, dana):
     assert r.status_code == 200 and r.json()["done_on"] == yday
     assert cid in dana.chore_ids_done_on(yday)
 
-    # The read endpoint resolves the offset server-side (timezone-owned).
+    # The read endpoint resolves the offset server-side (timezone-owned). "dishes"
+    # runs every day, so it's in the scheduled set for both days too.
     assert client.get("/household/chores/done?days_ago=0", headers=_h("dana-tok")).json() == {
-        "days_ago": 0, "done_on": today, "ids": [cid]}
+        "days_ago": 0, "done_on": today, "ids": [cid], "scheduled": [cid]}
     assert client.get("/household/chores/done?days_ago=1", headers=_h("alex-tok")).json() == {
-        "days_ago": 1, "done_on": yday, "ids": [cid]}
+        "days_ago": 1, "done_on": yday, "ids": [cid], "scheduled": [cid]}
+
+
+def test_chore_done_endpoint_reports_the_days_scheduled_set(client, store, dana):
+    """The read endpoint reports which chores run on the requested day (server-owned).
+
+    Backs the card's "today's chores only" default for a past day: the selected
+    day's scheduled set comes from the server, not a browser-timezone guess.
+    """
+    did = store.get_user("dana")["id"]
+    tz = Settings().timezone
+    now_local = local_datetime(utcnow(), tz)
+    today_wd = str(now_local.weekday())
+    yday_wd = str((now_local - datetime.timedelta(days=1)).weekday())
+    every = dana.set_chore(title="dishes", due_time="", owner_id=did, updated_by=did)
+    today_c = dana.set_chore(title="today only", due_time="", days=today_wd,
+                             owner_id=did, updated_by=did)
+    yday_c = dana.set_chore(title="yday only", due_time="", days=yday_wd,
+                            owner_id=did, updated_by=did)
+
+    d0 = client.get("/household/chores/done?days_ago=0", headers=_h("dana-tok")).json()
+    assert set(d0["scheduled"]) == {every, today_c}
+    d1 = client.get("/household/chores/done?days_ago=1", headers=_h("dana-tok")).json()
+    assert set(d1["scheduled"]) == {every, yday_c}
 
 
 def test_chore_undone_clears_a_day_and_is_idempotent(client, store, dana):

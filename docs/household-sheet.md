@@ -424,8 +424,13 @@ Details:
 - **Surfaces**: `POST /household/chores`, `…/{id}/done`, `…/{id}/enabled`,
   `…/{id}/remove`, the `POST /webhooks/household/chores/check` sweep, a one-tap
   **✓ Done** ntfy button (`chore_done` → `/nudge/act`, attributed to whoever
-  taps), a **Shared chores** section on the sheet (today's done/pending status),
-  and `prefrontal household chore` / `chores-check`.
+  taps), a **Shared chores** section on the sheet (today's done/pending status).
+  The card shows only the selected day's chores by default — `build_sheet` stamps
+  each chore with `scheduled_today` (its effective schedule falling on today's
+  local date) and the day selector's `GET /household/chores/done` returns the
+  day's `scheduled` id set (`chore_ids_scheduled_on`), so "which day" stays
+  server-owned; a **Show all** toggle reveals off-day chores for editing. Also
+  `prefrontal household chore` / `chores-check`.
 
 ### 3.6.6 Routines (RACI) + accountability in the balance view — `household_routines`
 

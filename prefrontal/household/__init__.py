@@ -72,6 +72,9 @@ from prefrontal.household.chores import (
     capped_away_window as capped_away_window,
 )
 from prefrontal.household.chores import (
+    chore_ids_scheduled_on as chore_ids_scheduled_on,
+)
+from prefrontal.household.chores import (
     chore_missed_cover_message as chore_missed_cover_message,
 )
 from prefrontal.household.chores import (
@@ -478,16 +481,19 @@ def _chores_with_status(
     timezone: str,
     routines: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Chore rows with ``done_today`` + the *effective* schedule (routine-inherited).
+    """Chore rows with ``done_today``/``scheduled_today`` + the *effective* schedule.
 
     ``effective_days``/``effective_due_time`` resolve a chore's routine-inherited
     schedule (see :func:`with_effective_schedule`), so a surface renders when a
-    chore actually runs without re-deriving it. Enabled first, then by due time.
+    chore actually runs without re-deriving it. ``scheduled_today`` flags whether
+    that effective schedule falls on today's local date, so a surface can show
+    just today's chores by default. Enabled first, then by due time.
     """
     chores = store.chores()
     if not chores:
         return []
-    today = local_datetime(now, timezone).strftime("%Y-%m-%d")
+    now_local = local_datetime(now, timezone)
+    today = now_local.strftime("%Y-%m-%d")
     done_ids = store.chore_ids_done_on(today)
     routines_by_id = {r["id"]: r for r in (routines or [])}
     out = []
@@ -496,6 +502,7 @@ def _chores_with_status(
         out.append({
             **c,
             "done_today": c["id"] in done_ids,
+            "scheduled_today": scheduled_on(eff["days"], eff["month_days"], now_local),
             "effective_days": eff["days"],
             "effective_month_days": eff["month_days"],
             "effective_due_time": eff["due_time"],
