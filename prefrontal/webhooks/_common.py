@@ -79,6 +79,11 @@ def lens_html(lens: str) -> str:
     internal literal, never user input.
     """
     return LENS_HTML.replace("__LENS__", lens)
+#: The Projects page — a dedicated master/detail lens over the user's projects
+#: (list grouped by domain + per-project contents & rollup stats). Reads GET
+#: /projects and GET /projects/{id}; served at /projects/board (the bare
+#: /projects path belongs to the JSON API).
+PROJECTS_HTML = _shell("projects.html")
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
 STATS_HTML = _with_card_layout(_shell("stats.html"))
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes

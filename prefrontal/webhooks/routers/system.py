@@ -46,6 +46,7 @@ from prefrontal.webhooks._common import (
     CALENDAR_HTML,
     DASHBOARD_HTML,
     HOUSEHOLD_HTML,
+    PROJECTS_HTML,
     REVIEW_HTML,
     SETTINGS_HTML,
     STATS_HTML,
@@ -123,6 +124,24 @@ def build_router(services: RouterServices) -> APIRouter:
         are edited in the user's own calendar app and sync in.
         """
         return _page(CALENDAR_HTML)
+
+    @router.get("/projects/board", response_class=HTMLResponse, tags=["system"])
+    def projects_board() -> HTMLResponse:
+        """Serve the **Projects** page — a dedicated lens over the user's projects.
+
+        A master/detail view: the projects grouped by domain on the left, and the
+        selected project's open todos, upcoming commitments, recent focus sessions,
+        and rollup stats on the right — with an "include archived" toggle and
+        ``#p<id>`` deep-linking to a specific project. Same self-contained, data-less
+        shell as the other web surfaces; reads ``GET /projects`` and
+        ``GET /projects/{id}``.
+
+        Served at ``/projects/board`` rather than ``/projects`` because the bare
+        ``/projects`` path is the JSON list endpoint; this literal route is
+        registered ahead of the API's ``/projects/{project_id}`` so it isn't
+        swallowed by that int-typed path param.
+        """
+        return _page(PROJECTS_HTML)
 
     @router.get("/household", response_class=HTMLResponse, tags=["system"])
     def household() -> HTMLResponse:
