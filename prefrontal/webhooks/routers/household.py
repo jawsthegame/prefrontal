@@ -31,6 +31,7 @@ from prefrontal.household import (
     award_stars_and_notify,
     balance_view,
     build_sheet,
+    chore_ids_scheduled_on,
     log_chore_done_and_celebrate,
     normalize_checkin_config,
     normalize_chore,
@@ -797,20 +798,28 @@ def build_router(services: RouterServices) -> APIRouter:
         ctx: Annotated[ScopedRequest, Depends(require_member)],
         days_ago: int = 0,
     ) -> dict[str, Any]:
-        """The ids of chores completed ``days_ago`` before today (0 today, 1 yesterday).
+        """Which chores are done — and which are scheduled — ``days_ago`` before today.
 
-        Powers the card's day selector: it can show a past day's tick state
-        without reloading the whole sheet. Only today and yesterday are
-        addressable, matching what the selector can reach.
+        Powers the card's day selector: it can show a past day's tick state (and
+        that day's scheduled set, so the "today's chores only" default filters the
+        right day) without reloading the whole sheet. The server owns the timezone,
+        so ``scheduled`` mirrors the sheet's ``scheduled_today`` for that local date.
+        Only today and yesterday are addressable, matching what the selector reaches.
         """
         if days_ago not in (0, 1):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="days_ago must be 0 (today) or 1 (yesterday)",
             )
-        done_on = _chore_local_date(days_ago)
+        # One "now" for both the date string and the scheduled-set weekday, so a
+        # midnight tick can't split them across two local days.
+        day_local = local_datetime(utcnow(), resolved_settings.timezone) - timedelta(
+            days=days_ago
+        )
+        done_on = day_local.strftime("%Y-%m-%d")
         ids = sorted(ctx.store.chore_ids_done_on(done_on))
-        return {"days_ago": days_ago, "done_on": done_on, "ids": ids}
+        scheduled = sorted(chore_ids_scheduled_on(ctx.store, day_local))
+        return {"days_ago": days_ago, "done_on": done_on, "ids": ids, "scheduled": scheduled}
 
     @router.post("/household/chores/{chore_id}/done", tags=["household"])
     def mark_chore_done(

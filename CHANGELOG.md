@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Shared chores card shows today's chores by default** ✅ — the Household
+  sheet's Shared chores card used to list *every* chore regardless of whether it
+  ran that day, so a card with a dozen weekly/monthly chores buried the handful
+  actually due today. It now shows only the chores scheduled for the selected day
+  (today by default), with a **Show all** toggle to reveal the rest for editing.
+  "Which day" stays server-owned (the deployment's timezone): `build_sheet` now
+  stamps each chore with `scheduled_today` (its effective, routine-inherited
+  schedule falling on today's local date), and `GET /household/chores/done` now
+  also returns the day's `scheduled` id set so the day selector filters yesterday
+  correctly too. A day with nothing scheduled says so, with an inline Show-all
+  link. New `chore_ids_scheduled_on` helper backs the endpoint; covered by
+  `tests/test_chores.py`.
+
 - **Operator user-management UI (`/admin`)** ✅ — provisioning a co-parent used
   to be CLI-only (`prefrontal user add` on the box), which is a real onboarding
   wall: the Household sheet's access-code gate wants each person's *own* user
