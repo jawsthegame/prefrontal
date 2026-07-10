@@ -340,6 +340,24 @@
   /* "breakdown not helping? not needed · didn't help" — dismiss a decomposition. */
   .bd-dismiss { margin-top: 6px; font-size: 12px; color: var(--muted); }
 
+  /* Delegation: a status pill on the title line + an expandable prep panel
+     (brief + drafts) written back by the assistant. */
+  .pill.deleg { background: var(--chip); color: var(--muted); }
+  .pill.deleg.ok { background: var(--good); color: #fff; }
+  .pill.deleg.warn { background: var(--call); color: #fff; }
+  .deleg-panel { margin-top: 8px; font-size: 13px; border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; background: var(--raise); }
+  .deleg-panel > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .deleg-panel .brief-text { white-space: pre-wrap; margin: 8px 0; }
+  .deleg-panel .draft { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+  .deleg-panel .draft .dh { font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .4px; margin-bottom: 3px; }
+  .deleg-panel .draft .db { white-space: pre-wrap; }
+  .deleg-panel .deleg-actions { margin-top: 8px; }
+  /* Delegate popover (reuses the .cat-menu shell): AI vs. email hand-off. */
+  .cat-menu .deleg-mail { display: flex; gap: 6px; margin-top: 6px; }
+  .cat-menu .deleg-mail input { flex: 1; }
+
   .bar { height: 6px; border-radius: 4px; background: var(--chip); margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
 
@@ -1036,6 +1054,52 @@ function openDeadlineMenu(anchor, id, current) {
   placePillMenu(menu, anchor);
 }
 
+// Delegate popover: hand a todo to an assistant to prep. "Prep with AI" is a
+// one-tap agent hand-off (brief + drafts written back on-device); "Email an
+// assistant" reveals an address field and mails the brief (the SMTP outbox is
+// auto-picked from the todo's account/domain — configure it in Settings). Reuses
+// the pill-menu shell + POST-and-reload pattern, like the deadline/domain menus.
+function openDelegateMenu(anchor, id) {
+  closePillMenu();
+  const menu = document.createElement("div");
+  menu.className = "cat-menu";
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.textContent = "Hand this off to prep — you get it back ready to act on.";
+  menu.appendChild(lead);
+  const go = async (body) => { closePillMenu(); await post(`/todos/${id}/delegate`, body); load(); };
+  const ai = document.createElement("button");
+  ai.className = "cat-act";
+  ai.textContent = "🤖 Prep with AI";
+  ai.title = "The in-app assistant researches and drafts, on-device";
+  ai.onclick = () => go({ handler: "agent" });
+  menu.appendChild(ai);
+  const mail = document.createElement("button");
+  mail.className = "cat-act";
+  mail.textContent = "✉ Email an assistant…";
+  mail.title = "Email the prep brief to a person (needs SMTP set up in Settings)";
+  mail.onclick = () => {
+    // Inline field instead of prompt() (suppressed in a standalone web app).
+    const wrap = document.createElement("div");
+    wrap.className = "deleg-mail";
+    const inp = document.createElement("input");
+    inp.type = "email";
+    inp.placeholder = "assistant@example.com";
+    const send = document.createElement("button");
+    send.className = "cat-act";
+    send.textContent = "Send";
+    const submit = () => { const to = inp.value.trim(); if (to) go({ handler: "email", destination: to }); };
+    send.onclick = submit;
+    inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
+    wrap.appendChild(inp);
+    wrap.appendChild(send);
+    mail.replaceWith(wrap);
+    inp.focus();
+  };
+  menu.appendChild(mail);
+  placePillMenu(menu, anchor);
+}
+
 const SC_META = {
   meal: { icon: "🍽️", label: "Meals" },
   water: { icon: "💧", label: "Water" },
@@ -1161,6 +1225,40 @@ function renderFocusConflict(fc) {
     <b>${esc(fc.instead)}</b>${pri(fc.instead_priority)} is more important and has
     sat ${waited}d. Worth switching?</div>`;
 }
+// Delegation status pill (title line) + the expandable prep panel (body). A todo
+// carries `delegation` when it's been handed to an assistant; the agent handler
+// writes a brief + drafts back onto it, the email handler sends them to a VA.
+const DELEG_LABEL = {
+  prepped: ["🤖 prepped", "ok"], forwarded: ["✉ sent", "ok"],
+  in_prep: ["… prepping", ""], returned: ["↩ returned", ""],
+  failed: ["⚠ needs a hand", "warn"],
+};
+function delegationPill(g) {
+  const [label, cls] = DELEG_LABEL[g.status] || [g.status, ""];
+  return ` <span class="pill deleg ${cls}" title="${esc(g.detail || "")}">${label}</span>`;
+}
+function delegationPanel(x) {
+  const g = x.delegation;
+  if (!g) return "";
+  const drafts = g.drafts || [];
+  const draftHtml = drafts.map((dr) =>
+    `<div class="draft"><div class="dh">${esc(dr.channel)}${dr.to ? " → " + esc(dr.to) : ""}${dr.subject ? " · " + esc(dr.subject) : ""}</div>`
+    + `<div class="db">${esc(dr.body)}</div></div>`).join("");
+  // A returned/failed hand-off is closed out; prepped/sent can be marked returned.
+  const canReturn = g.status === "prepped" || g.status === "forwarded";
+  const ret = canReturn
+    ? `<div class="deleg-actions"><button class="btn-sm" data-action="delegate-return" data-id="${x.id}">Mark returned</button></div>`
+    : "";
+  const n = drafts.length;
+  const dcount = n ? ` · ${n} draft${n > 1 ? "s" : ""}` : "";
+  return `<details class="deleg-panel"${g.status === "prepped" ? " open" : ""}>
+    <summary>Assistant prep${dcount}</summary>
+    ${g.brief ? `<div class="brief-text">${esc(g.brief)}</div>` : ""}
+    ${draftHtml}
+    ${ret}
+  </details>`;
+}
+
 function renderTodos(d) {
   const t = (d.todos || []);
   if (!t.length) return renderFocusConflict(d.focus_conflict) || `<div class="empty">No open todos.</div>`;
@@ -1238,16 +1336,20 @@ function renderTodos(d) {
     const startBtn = started
       ? `<button class="btn-sm btn-started" data-action="todo-unstart" data-id="${x.id}" title="Started — click to undo">▶ Started</button>`
       : `<button class="btn-sm" data-action="todo-start" data-id="${x.id}" title="I've started this">Start</button>`;
+    const deleg = x.delegation;
+    const delegBtn = `<button class="btn-sm" data-action="delegate" data-id="${x.id}" title="Hand this off to an assistant to prep">${deleg ? "Assistant ▾" : "Delegate"}</button>`;
     return `<div class="row${started ? " started" : ""}">
       <div class="main">
-        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${startedBadge}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}</div>
+        <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${startedBadge}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}${deleg ? delegationPill(deleg) : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
         ${dismiss}
+        ${delegationPanel(x)}
       </div>
       <div class="acts">
         ${breakBtn}
         ${startBtn}
+        ${delegBtn}
         <button class="btn-sm btn-go" data-action="todo-done" data-id="${x.id}">Done</button>
         <button class="btn-sm btn-x" data-action="todo-drop" data-id="${x.id}">Drop</button>
       </div>
@@ -2506,6 +2608,12 @@ document.addEventListener("click", async (e) => {
       return;
     }
     else if (act === "step-toggle") { await post(`/todos/${id}/steps/${el.dataset.step}/done`, { done: el.dataset.done === "1" }); }
+    else if (act === "delegate") {
+      // Popover: AI prep vs. email a human assistant; it POSTs + reloads itself.
+      openDelegateMenu(el, id);
+      return;
+    }
+    else if (act === "delegate-return") { await post(`/todos/${id}/delegate/return`, {}); }
     else if (act === "clarify-answer") {
       const res = await post(`/clarifications/${id}/resolve`, { option_index: Number(el.dataset.index) });
       if (res && res.playbook) openGuide(res.playbook);  // a recognized task → walk it through
