@@ -241,8 +241,9 @@ follow-up, not built in v1.
 
 ## Open questions / follow-ups (tracked as issues)
 
+- Phase 2 — dashboard surface (list, pickers, detail view, surface suggestion). → #442
+- Phase 3 — per-project focus-minutes & follow-through rollups, staleness nudges,
+  optional project `deadline`. → #443
 - Explicit review-before-apply for triage suggestions (a `suggested_project_id`
-  pending column) vs. the v1 confident-auto-assign. → Phase 2 follow-up.
-- Project `deadline`/target date driving its own nudges. → Phase 3.
-- Shared / household (co-parent) projects. → later, mirrors `household_*`.
-- Per-project focus-minutes & follow-through rollups. → Phase 3.
+  pending column) vs. the v1 confident-auto-assign. → #444
+- Shared / household (co-parent) projects, mirroring `household_*`. → #445
