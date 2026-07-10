@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.mail.models import MailItem, normalize_message
 from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_message
 from prefrontal.memory.store import MemoryStore
+from prefrontal.projects import suggest_project
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
@@ -133,11 +134,17 @@ def ingest_messages(
             if suppress_todo_reason(
                 item, verdict, denylisted_senders=denylisted_senders
             ) is None:
+                todo_title = _todo_title(item, verdict)
+                todo_notes = _todo_notes(item, verdict)
+                project_id = suggest_project(
+                    todo_title, todo_notes, store.active_projects(), client=client
+                )
                 todo_id = store.add_todo(
-                    _todo_title(item, verdict),
-                    notes=_todo_notes(item, verdict),
+                    todo_title,
+                    notes=todo_notes,
                     priority=verdict.priority,
                     domain=domain,
+                    project_id=project_id,
                 )
                 summary.todos_created += 1
             else:
@@ -345,11 +352,17 @@ def retriage_messages(
             elif dry_run:
                 summary.todos_created += 1
             else:
+                todo_title = _todo_title(item, verdict)
+                todo_notes = _todo_notes(item, verdict)
+                project_id = suggest_project(
+                    todo_title, todo_notes, store.active_projects(), client=client
+                )
                 todo_id = store.add_todo(
-                    _todo_title(item, verdict),
-                    notes=_todo_notes(item, verdict),
+                    todo_title,
+                    notes=todo_notes,
                     priority=verdict.priority,
                     domain=domain,
+                    project_id=project_id,
                 )
                 summary.todos_created += 1
 

@@ -197,6 +197,32 @@ CREATE TABLE IF NOT EXISTS trips (
 
 CREATE INDEX IF NOT EXISTS idx_trips_user_status ON trips (user_id, status);
 
+-- User-created grouping across todos/commitments/focus sessions ("Kitchen
+-- Remodel", "Q3 Launch"). A project is nested under exactly one `domain` (the
+-- finer grain within a life sphere): assigning an entity to a project writes the
+-- project's domain through to that entity's own `domain`, so the scheduler's
+-- work/life guardrails keep working without knowing projects exist. `description`
+-- is a short blurb matched (together with `name`) to auto-suggest a project for a
+-- triaged item; `notes` is longer detail not used for matching. Soft-deleted via
+-- status='archived' (FKs and history are preserved); the unique-name index only
+-- covers active rows, so an archived name frees up.
+CREATE TABLE IF NOT EXISTS projects (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    name        TEXT    NOT NULL,
+    description TEXT,                                -- short blurb; matched with name to suggest a project for triaged items
+    domain      TEXT    NOT NULL,                    -- the life sphere this project sits under
+    notes       TEXT,                                -- longer free-text detail (not used for matching)
+    color       TEXT,                                -- optional UI accent (hex/token)
+    status      TEXT    NOT NULL DEFAULT 'active',   -- active | archived
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects (user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_user_name
+    ON projects (user_id, name) WHERE status = 'active';
+
 -- Active and historical "focus sessions": a declared block of deep work on a
 -- stated task, used by the Hyperfocus module. Unlike an outing (which escalates
 -- to pull you *back* home), a focus session is asymmetric — it *protects* an
@@ -210,6 +236,7 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     user_id         INTEGER NOT NULL REFERENCES users(id),
     intended_task   TEXT    NOT NULL,                  -- what you're getting into
     todo_id         INTEGER,                           -- optional link to the todo being worked (its energy/category tag the episode)
+    project_id      INTEGER REFERENCES projects(id),   -- optional grouping (see `projects`); snapshotted so it survives the todo being reassigned
     planned_minutes REAL,                              -- optional intended duration
     aligned         BOOLEAN NOT NULL DEFAULT 1,        -- is this the thing you meant to do?
     started_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -252,6 +279,7 @@ CREATE TABLE IF NOT EXISTS commitments (
     kind         TEXT    NOT NULL DEFAULT 'self',   -- self (yours) | fyi (where someone will be; never a conflict)
     kind_source  TEXT,                              -- how kind was set: llm | user | default
     domain       TEXT,                              -- work | home | kids | ... — life sphere (shop/work/home/kids/personal), the same axis todos/trips carry; snapped onto the canonical vocab on write so a kid's appt is domain='kids' rather than overloading `kind`. A user field kept across calendar re-sync (like notes/hidden/outcome).
+    project_id   INTEGER REFERENCES projects(id),   -- optional grouping (see `projects`); a user field kept across calendar re-sync (like notes/hidden/domain)
     hidden       BOOLEAN NOT NULL DEFAULT 0,        -- user "don't show me this": dropped from every surface (dashboard, widget, conflicts, departures); survives calendar re-sync
     outcome      TEXT,                              -- user self-report on a past commitment: made | missed (NULL = undecided); like `hidden`, never touched by re-sync
     outcome_at   DATETIME,                          -- when the outcome was recorded (NULL until answered)
@@ -281,6 +309,7 @@ CREATE TABLE IF NOT EXISTS todos (
     category         TEXT,                           -- inferred, editable; canonical set derived (capped at 20)
     time_window      TEXT,                           -- optional per-todo override "HH:MM-HH:MM" local; else domain/category/source/default window
     domain           TEXT,                           -- work | home | ... — the life sphere; outranks category for the window (work/life guardrails)
+    project_id       INTEGER REFERENCES projects(id), -- optional grouping (see `projects`); inherits the project's domain on assignment
     source           TEXT    NOT NULL DEFAULT 'manual', -- manual | impulse (captured-and-deferred)
     status           TEXT    NOT NULL DEFAULT 'open', -- open | done | dropped
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

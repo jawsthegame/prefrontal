@@ -4,6 +4,7 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
+import threading
 from datetime import (
     timedelta,
 )
@@ -12,8 +13,6 @@ from typing import (
     Any,
     Literal,
 )
-
-import threading
 
 from fastapi import (
     APIRouter,
@@ -36,10 +35,10 @@ from prefrontal.delegation import (
     delegation_notice,
     run_delegation,
 )
-from prefrontal.log import get_logger
 from prefrontal.impact import (
     utcnow,
 )
+from prefrontal.log import get_logger
 from prefrontal.mail.feedback import (
     record_drop_feedback,
 )
@@ -94,6 +93,7 @@ from prefrontal.webhooks.schemas import (
     AutoDecomposeConfig,
     DelegateTodo,
     DismissDecomposition,
+    EntityProjectUpdate,
     StepDone,
     TodoCategoryUpdate,
     TodoCreate,
@@ -917,6 +917,32 @@ def build_router(services: RouterServices) -> APIRouter:
                 detail=f"Todo {todo_id} has no delegation to return.",
             )
         return {"todo_id": todo_id, "status": STATUS_RETURNED}
+
+    @router.post("/todos/{todo_id}/project", tags=["todos"])
+    def todo_set_project(
+        todo_id: int,
+        payload: EntityProjectUpdate,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Assign a todo to a project (or clear it with ``null``).
+
+        On assignment the project's ``domain`` is written through to the todo (a
+        project is nested under one life sphere). A non-null ``project_id`` that
+        isn't the user's own project is a 422; a missing todo is a 404. Declared
+        before the ``{action}`` route so "project" isn't read as an action.
+        """
+        memory = ctx.store
+        if payload.project_id is not None and memory.get_project(payload.project_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No project {payload.project_id}.",
+            )
+        if not memory.set_todo_project(todo_id, payload.project_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No todo {todo_id}.",
+            )
+        return {"todo_id": todo_id, "project_id": payload.project_id}
 
     @router.post("/todos/{todo_id}/{action}", tags=["todos"])
     def todo_close(

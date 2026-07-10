@@ -49,6 +49,7 @@ _USER_TABLES = (
     "focus_sessions",
     "commitments",
     "todos",
+    "projects",
     "dismissed_conflicts",
     "kind_feedback",
     "mail_messages",

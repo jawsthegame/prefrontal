@@ -34,6 +34,7 @@ from prefrontal.commitments import to_utc
 from prefrontal.integrations import Generator, ProviderError
 from prefrontal.llm_json import extract_json_object
 from prefrontal.memory._helpers import EPISODE_TYPES
+from prefrontal.projects import suggest_project
 from prefrontal.todos import augment_todo
 
 #: What a signal is. Maps onto the memory layer triage routes into (see ROUTE_FOR_KIND).
@@ -388,10 +389,17 @@ def _route_signal(
                 deadline = to_utc(raw_deadline)
             except ValueError:
                 deadline = None
+        # Suggest a project by matching the item against the user's projects
+        # (name + description); a confident match is assigned, the user can
+        # reassign on the dashboard. Unassigned when nothing fits (projects opt-in).
+        project_id = suggest_project(
+            signal.title, signal.body or None, store.active_projects(), client=client
+        )
         tid = store.add_todo(
             signal.title, notes=signal.body or None,
             estimate_minutes=aug.estimate_minutes, priority=aug.priority,
-            deadline=deadline, energy=aug.energy, category=aug.category, source="triage",
+            deadline=deadline, energy=aug.energy, category=aug.category,
+            project_id=project_id, source="triage",
         )
         return f"todo:{tid}"
     if route == "commitment" and when:
