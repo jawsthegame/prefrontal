@@ -654,6 +654,7 @@
     </div>
     <div class="asst-log" id="asst-log"></div>
   </section>
+  <section class="card" id="c-now"><h2>One thing to do right now</h2><div class="body"></div></section>
 </div>
 
 <main class="masonry">
@@ -1214,6 +1215,42 @@ function renderRecent(d) {
     <div><span class="title">${esc(o.intention)}</span> <span class="pill">${o.status}</span></div>
     <div class="sub">window ${mins(o.time_window_minutes)} · left ${fmt(o.departure_at)} · back ${fmt(o.returned_at)}</div>
   </div></div>`).join("");
+}
+// The single best thing to do right now: the top open todo that fits the gap
+// until your next commitment (GET /todos/now → pick_now, most-avoided first).
+// No pick → say why (outside waking hours / no free time / nothing fits). A
+// high-energy pick "requires focus", so it also offers a one-tap focus start
+// that opens a session pre-filled with this very task (POST /webhooks/focus/start).
+function renderNow(d) {
+  const s = d && d.suggestion;
+  if (!s) {
+    const why = d && d.reason ? d.reason : "nothing to suggest right now";
+    return `<div class="empty">${esc(why.charAt(0).toUpperCase() + why.slice(1))}.</div>`;
+  }
+  const focus = s.energy === "high";  // deep-work task → offer a focus session
+  const tags = [];
+  if (s.priority === 3) tags.push(`<span class="badge lvl-call">urgent</span>`);
+  else if (s.priority === 2) tags.push(`<span class="badge lvl-firm">high</span>`);
+  if (s.reason === "avoided") tags.push(`<span class="badge lvl-soft">avoided</span>`);
+  if (focus) tags.push(`<span class="badge lvl-firm">focus</span>`);
+  const bits = [];
+  if (s.estimate_minutes != null) bits.push(`~${mins(s.estimate_minutes)}`);
+  bits.push(s.reason === "avoided" ? "you've been putting it off" : "fits your free time");
+  if (d.free_minutes) bits.push(`${mins(d.free_minutes)} free`);
+  if (d.next_commitment) bits.push(`before ${esc(d.next_commitment.title)} at ${fmt(d.next_commitment.start_at)}`);
+  // Pre-fill the focus session with this exact task (and its estimate/link), so
+  // "start focus session" is one tap, not a form.
+  const plannedAttr = s.estimate_minutes != null ? ` data-planned="${s.estimate_minutes}"` : "";
+  const startBtn = focus
+    ? `<div class="acts" style="margin-top:10px"><button class="btn-sm btn-go"
+        data-action="focus-start" data-todo-id="${s.todo_id}" data-task="${esc(s.title)}"${plannedAttr}
+        >▶ Start focus session</button></div>`
+    : "";
+  return `<div class="row"><div class="main">
+    <div><span class="title">${esc(s.title)}</span> ${tags.join(" ")}</div>
+    <div class="sub">${bits.join(" · ")}</div>
+    ${startBtn}
+  </div></div>`;
 }
 // Paint the todos card from the cached response, applying the search filter.
 // Kept separate from renderTodos so a keystroke re-filters without a re-fetch.
@@ -1877,12 +1914,12 @@ async function load() {
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
     api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
-    api("/self-care"),
+    api("/self-care"), api("/todos/now"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now] = results;
   // Self-care card: shown whenever the endpoint answers — including when the
   // checks are off, so a silently-disabled switch (the common "why no nudges?"
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
@@ -1907,6 +1944,7 @@ async function load() {
   }
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
+  put("#c-now", now, renderNow);
   put("#c-recent", outings, renderRecent);
   lastTodos = todos.status === "fulfilled" ? todos.value : null;
   paintTodos();
@@ -2590,6 +2628,14 @@ document.addEventListener("click", async (e) => {
     else if (act === "todo-drop") { if (!confirm("Drop this todo?")) return; await post(`/todos/${id}/drop`); }
     else if (act === "todo-start") { await post(`/todos/${id}/start`); }
     else if (act === "todo-unstart") { await post(`/todos/${id}/unstart`); }
+    else if (act === "focus-start") {
+      // Open a focus session pre-filled with the "one thing to do right now".
+      const body = { intended_task: el.dataset.task || "" };
+      if (el.dataset.todoId) body.todo_id = Number(el.dataset.todoId);
+      if (el.dataset.planned) body.planned_minutes = Number(el.dataset.planned);
+      const r = await post("/webhooks/focus/start", body);
+      if (r && r.confirmation) alert(r.confirmation);
+    }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
