@@ -30,6 +30,7 @@ from prefrontal.webhooks.schemas import (
     HouseholdCreate,
     HouseholdMember,
     UserCreate,
+    UserEmail,
 )
 from prefrontal.webhooks.services import RouterServices
 
@@ -57,18 +58,52 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Handle '{payload.handle}' is already taken.",
             )
+        if payload.email and unscoped.get_user_by_email(payload.email) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Email '{payload.email}' is already used by another user.",
+            )
         user, token = provision_user(
             unscoped,
             payload.handle,
             display_name=payload.display_name,
             is_operator=payload.is_operator,
+            email=payload.email,
         )
         return {
             "handle": user["handle"],
             "display_name": user["display_name"],
             "is_operator": bool(user["is_operator"]),
+            "email": user["email"],
             "token": token,  # shown once
         }
+
+    @router.post("/admin/users/{handle}/email", tags=["admin"])
+    def admin_set_user_email(
+        handle: str,
+        payload: UserEmail,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """Set (or, with a blank email, clear) the user's Google sign-in address.
+
+        This is what makes a *new* user reachable by Google sign-in: the callback
+        resolves the verified email to a user from the DB, so no
+        ``GOOGLE_OAUTH_ALLOWED`` env edit + restart is needed. The email must be
+        unique across users (a 409 otherwise).
+        """
+        store = request.app.state.store
+        try:
+            changed = store.set_user_email(handle, payload.email)
+        except ValueError as exc:  # email already claimed by another user
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from None
+        if not changed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="user not found"
+            )
+        return {"handle": handle, "email": store.get_user(handle)["email"]}
 
     @router.get("/admin/users", tags=["admin"])
     def admin_list_users(

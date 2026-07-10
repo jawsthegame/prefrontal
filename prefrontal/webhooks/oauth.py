@@ -314,14 +314,22 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing authorization code.")
 
         email = _exchange_code_for_email(code, settings)
-        handle = settings.oauth_allowed_emails.get(email or "")
-        if not handle:
+        # Resolve the verified email to a user. Prefer the address stored on the
+        # user row (set in the admin UI / CLI — the durable, self-serve path), and
+        # fall back to the legacy ``GOOGLE_OAUTH_ALLOWED`` env mapping so existing
+        # deployments keep working.
+        store = request.app.state.store
+        user = store.get_user_by_email(email) if email else None
+        if user is None:
+            handle = settings.oauth_allowed_emails.get(email or "")
+            user = store.get_user(handle) if handle else None
+        if user is None:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "That Google account isn't allowed to sign in here.",
             )
-        user = request.app.state.store.get_user(handle)
-        if user is None or user["status"] != "active":
+        handle = user["handle"]
+        if user["status"] != "active":
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"User '{handle}' is not active.")
 
         resp = RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
