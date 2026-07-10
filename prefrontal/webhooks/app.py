@@ -137,6 +137,11 @@ def create_app(
         app.state.store = active_store
         app.state.settings = resolved_settings
         app.state.n8n = n8n
+        # Delegation prep can be slow (a full-transcript model call), so the router
+        # runs it on a background thread — but only when we own the *threaded* store
+        # (each thread gets its own connection). A caller-injected store (tests) is
+        # single-connection and unsafe across threads, so prep runs inline there.
+        app.state.delegation_async = owns_store
         try:
             yield
         finally:

@@ -496,6 +496,7 @@ class TodosRepo(Repo):
         status: str = "forwarded",
         brief: str | None = None,
         drafts: list[dict[str, Any]] | None = None,
+        actions: list[dict[str, Any]] | None = None,
         detail: str | None = None,
         context: str | None = None,
         prepped: bool = False,
@@ -503,19 +504,19 @@ class TodosRepo(Repo):
         """Store (or replace) a todo's delegation. Returns ``True`` if a row was written.
 
         Mirrors :meth:`set_decomposition` — one row per todo, so re-delegating
-        overwrites the prior handoff (and its brief/drafts). ``drafts`` is
-        JSON-encoded. ``context`` is any free-text the user pasted at delegation
-        time (kept so a re-delegation can reuse it). ``prepped=True`` stamps
-        ``prepped_at`` (call it when the handler has finished producing the brief).
-        No-ops if the todo isn't this user's.
+        overwrites the prior handoff (and its brief/drafts). ``drafts`` and
+        ``actions`` are JSON-encoded. ``context`` is any free-text the user pasted at
+        delegation time (kept so a re-delegation can reuse it). ``prepped=True``
+        stamps ``prepped_at`` (call it when the handler has finished producing the
+        brief). No-ops if the todo isn't this user's.
         """
         if not self._owns_todo(todo_id):
             return False
         prepped_at = "CURRENT_TIMESTAMP" if prepped else "NULL"
         self.conn.execute(
             f"INSERT OR REPLACE INTO todo_delegations "
-            f"(todo_id, handler, destination, status, brief, drafts, detail, "
-            f"context, prepped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {prepped_at})",
+            f"(todo_id, handler, destination, status, brief, drafts, actions, detail, "
+            f"context, prepped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {prepped_at})",
             (
                 todo_id,
                 handler,
@@ -523,6 +524,7 @@ class TodosRepo(Repo):
                 status,
                 brief,
                 json.dumps(drafts) if drafts is not None else None,
+                json.dumps(actions) if actions is not None else None,
                 detail,
                 context,
             ),
@@ -533,13 +535,13 @@ class TodosRepo(Repo):
     def get_delegation(self, todo_id: int) -> dict[str, Any] | None:
         """Return a todo's delegation, or ``None``.
 
-        ``drafts`` is decoded to a list of dicts. Returns ``None`` if the todo has
-        no delegation or isn't this user's.
+        ``drafts`` and ``actions`` are decoded to lists of dicts. Returns ``None`` if
+        the todo has no delegation or isn't this user's.
         """
         if not self._owns_todo(todo_id):
             return None
         row = self.conn.execute(
-            "SELECT handler, destination, status, brief, drafts, detail, context, "
+            "SELECT handler, destination, status, brief, drafts, actions, detail, context, "
             "created_at, updated_at, prepped_at "
             "FROM todo_delegations WHERE todo_id = ?",
             (todo_id,),
@@ -547,10 +549,11 @@ class TodosRepo(Repo):
         if row is None:
             return None
         d = dict(row)
-        try:
-            d["drafts"] = json.loads(d["drafts"]) if d["drafts"] else []
-        except (ValueError, TypeError):
-            d["drafts"] = []
+        for key in ("drafts", "actions"):
+            try:
+                d[key] = json.loads(d[key]) if d[key] else []
+            except (ValueError, TypeError):
+                d[key] = []
         return d
 
     def update_delegation_status(

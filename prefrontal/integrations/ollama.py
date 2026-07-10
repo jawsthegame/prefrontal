@@ -52,10 +52,12 @@ class OllamaClient:
         resolved = settings or get_settings()
         return cls(base_url=resolved.ollama_url, model=resolved.ollama_model)
 
-    def _client(self) -> httpx.Client:
+    def _client(self, timeout: float | None = None) -> httpx.Client:
         """Construct an ``httpx.Client`` bound to the configured base URL."""
         return httpx.Client(
-            base_url=self.base_url, timeout=self.timeout, transport=self._transport
+            base_url=self.base_url,
+            timeout=self.timeout if timeout is None else timeout,
+            transport=self._transport,
         )
 
     def available(self) -> bool:
@@ -70,12 +72,25 @@ class OllamaClient:
         except httpx.HTTPError:
             return False
 
-    def generate(self, prompt: str, *, system: str | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        num_ctx: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         """Generate a single non-streamed completion.
 
         Args:
             prompt: The user prompt.
             system: Optional system prompt.
+            num_ctx: Optional context-window size (tokens) for this call. Ollama's
+                default (~2048) silently truncates a long prompt from the front, so
+                a caller feeding a big transcript must raise this to fit it —
+                otherwise the model only ever sees a sliver.
+            timeout: Optional per-call timeout override (seconds); a large ``num_ctx``
+                makes prompt evaluation much slower, so bump this alongside it.
 
         Returns:
             The model's response text (stripped).
@@ -91,8 +106,10 @@ class OllamaClient:
         }
         if system:
             payload["system"] = system
+        if num_ctx is not None:
+            payload["options"] = {"num_ctx": num_ctx}
         try:
-            with self._client() as client:
+            with self._client(timeout) as client:
                 resp = client.post("/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()

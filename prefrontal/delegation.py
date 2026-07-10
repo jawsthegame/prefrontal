@@ -58,15 +58,42 @@ STATUS_FAILED = "failed"
 #: Draft channels a prep brief can produce.
 _DRAFT_CHANNELS = ("email", "message", "call")
 
+#: Cap on the context window (tokens) we ask Ollama for on a prep call. Ollama's
+#: default (~2048) silently truncates a long pasted transcript from the front, so
+#: we size ``num_ctx`` to fit the prompt — but bound it here, since a bigger window
+#: means much slower prompt evaluation on a local model. ~16k comfortably holds a
+#: long meeting transcript; beyond that we truncate the context instead.
+_PREP_MAX_NUM_CTX = 16384
+
+#: Per-call timeout (seconds) for the prep generation. A full-transcript prompt at
+#: a large ``num_ctx`` can take a couple of minutes to evaluate on an 8B model, far
+#: past the client default — so prep runs in the background (see the router) and we
+#: give the call room to finish rather than time out into the heuristic.
+_PREP_TIMEOUT = 240.0
+
+#: Rough chars-per-token used only to size ``num_ctx`` (order-of-magnitude is fine).
+_CHARS_PER_TOKEN = 4
+
+#: Most of the context we ever echo in the *heuristic* fallback — so a model-down
+#: fallback surfaces a short excerpt of what you pasted, never the whole thing.
+_HEURISTIC_CONTEXT_EXCERPT = 500
+
 _PREP_SYSTEM = (
     "You are an executive assistant preparing to take a task off someone's plate. "
-    "Given a task, produce the prep work that makes it ready to act on. Reply with "
-    "ONLY a JSON object of the form "
+    "Given a task (and often pasted context such as a meeting transcript, thread, or "
+    "notes), produce the prep work that makes it ready to act on. Reply with ONLY a "
+    "JSON object of the form "
     '{"brief": "<2-5 sentence write-up: what needs deciding, the realistic '
     'options, and any open questions or info to gather first>", '
     '"drafts": [{"channel": "email|message|call", "to": "<who, or empty>", '
     '"subject": "<for email; else empty>", "body": "<the drafted message or, for '
-    'a call, a short call script>"}]}. '
+    'a call, a short call script>"}], '
+    '"actions": [{"text": "<a concrete action item, imperative>", "mine": true}]}. '
+    "For actions: when the context contains a transcript/notes, pull out the concrete "
+    "action items or commitments. Set \"mine\": true for an item assigned to or owned "
+    "by the user (you'll be told their name), false for anyone else; if unclear, false. "
+    'Return "actions": [] when there are no clear action items (a simple chore has '
+    "none). "
     "Include a draft only when the task plainly needs one outbound message; an "
     "internal chore (tidy the garage) needs a brief but no drafts, so return "
     '"drafts": []. Never invent facts you were not given — where a real detail '
@@ -84,6 +111,9 @@ class DelegationResult:
         status: The lifecycle status the delegation ended at.
         brief: The prep write-up (may be a heuristic stub when the model is down).
         drafts: Drafted communications, each ``{channel, to, subject, body}``.
+        actions: Extracted action items, each ``{text, mine}`` (``mine`` flags the
+            ones the model attributes to the user — the dashboard offers to turn
+            those into todos).
         detail: A human-readable note (transport response, failure reason, …).
     """
 
@@ -91,6 +121,7 @@ class DelegationResult:
     status: str
     brief: str
     drafts: list[dict[str, str]] = field(default_factory=list)
+    actions: list[dict[str, Any]] = field(default_factory=list)
     detail: str = ""
 
 
@@ -119,6 +150,26 @@ def _coerce_drafts(raw: Any) -> list[dict[str, str]]:
     return out
 
 
+def _coerce_actions(raw: Any) -> list[dict[str, Any]]:
+    """Keep only well-formed action items from a model reply (defensive).
+
+    Each survivor is ``{"text": <non-empty str>, "mine": <bool>}``. Anything without
+    text is dropped; ``mine`` defaults to ``False`` (only surface a "make this a
+    todo" prompt for items the model clearly attributes to the user).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        out.append({"text": text, "mine": bool(item.get("mine", False))})
+    return out
+
+
 def _heuristic_brief(
     title: str,
     notes: str | None,
@@ -139,7 +190,13 @@ def _heuristic_brief(
     if notes:
         lines.append(f"Context on file: {notes}")
     if context:
-        lines.append(f"Additional context provided:\n{context}")
+        # Only ever a short excerpt here — the heuristic is the model-down path, so
+        # echoing the whole pasted blob back would just be parroting it verbatim.
+        excerpt = context.strip()
+        if len(excerpt) > _HEURISTIC_CONTEXT_EXCERPT:
+            trimmed = len(excerpt) - _HEURISTIC_CONTEXT_EXCERPT
+            excerpt = excerpt[:_HEURISTIC_CONTEXT_EXCERPT].rstrip() + f"… [+{trimmed} more characters — not yet processed]"
+        lines.append(f"Context you provided (awaiting the model):\n{excerpt}")
     steps = []
     if decomposition:
         first = decomposition.get("first_step")
@@ -152,20 +209,45 @@ def _heuristic_brief(
     return "\n".join(lines)
 
 
+def _fit_num_ctx(prompt_chars: int) -> int | None:
+    """Pick a ``num_ctx`` that holds ``prompt_chars`` (plus room to answer), or None.
+
+    Returns ``None`` when the prompt is small enough for Ollama's default window
+    (no need to pay for a bigger, slower context). Otherwise sizes up to
+    :data:`_PREP_MAX_NUM_CTX`; a prompt past that gets a truncated *context* upstream
+    rather than a window we won't grant.
+    """
+    est_tokens = prompt_chars // _CHARS_PER_TOKEN + 512  # headroom for the reply
+    if est_tokens <= 2048:
+        return None
+    # Round up to the next power-ish step Ollama likes, capped.
+    return min(_PREP_MAX_NUM_CTX, 1 << (est_tokens - 1).bit_length())
+
+
 def generate_prep(
     title: str,
     notes: str | None = None,
     decomposition: dict | None = None,
     *,
     context: str | None = None,
+    owner_name: str | None = None,
     client: Generator | None = None,
-) -> tuple[str, list[dict[str, str]]]:
-    """Produce a ``(brief, drafts)`` prep package for a task.
+) -> tuple[str, list[dict[str, str]], list[dict[str, Any]]]:
+    """Produce a ``(brief, drafts, actions)`` prep package for a task.
 
     One JSON call to the injected local model (house style: catch
-    :class:`OllamaError`, tolerant JSON extraction, coerce, fall back). When the
-    model is absent or unusable, returns a heuristic brief and no drafts — the
-    delegation still records *something* actionable rather than nothing.
+    :class:`OllamaError`, tolerant JSON extraction, coerce, fall back). Two things
+    make this robust to a big pasted transcript:
+
+    - **The whole context reaches the model.** Ollama's default context window
+      (~2048 tokens) silently truncates a long prompt from the front, so we size
+      ``num_ctx`` to fit (capped at :data:`_PREP_MAX_NUM_CTX`) and give the call a
+      long timeout — a large window evaluates slowly on a local model.
+    - **A prose reply is never thrown away.** If the model answers with a useful
+      summary that isn't the requested JSON (small local models often do on long,
+      messy input), that prose *is* the brief — far better than discarding it and
+      echoing the pasted context back. The heuristic (which only excerpts the
+      context) fires solely when the model returns nothing at all.
 
     Args:
         title: The task text.
@@ -174,10 +256,14 @@ def generate_prep(
         context: Optional free-text context supplied at delegation time (e.g. output
             pasted from another AI agent with access to work email) — real facts the
             model may rely on, so it's given more weight than the [placeholder] rule.
+        owner_name: The user's display name, so the model can flag which action items
+            are theirs (``mine``) versus someone else's.
         client: An Ollama-like client; ``None`` uses the heuristic.
     """
     if client is not None:
         prompt = f"Task: {title}"
+        if owner_name:
+            prompt += f"\nThe user (whose action items to flag as \"mine\") is: {owner_name}"
         if notes:
             prompt += f"\nNotes: {notes}"
         if decomposition and decomposition.get("first_step"):
@@ -187,15 +273,28 @@ def generate_prep(
             # Real, user-supplied facts — the model may use these directly rather
             # than leaving [placeholders] for them.
             prompt += f"\nAdditional context provided by the user:\n{context}"
+        num_ctx = _fit_num_ctx(len(prompt) + len(_PREP_SYSTEM))
+        # Only the (slow) large-context calls need the extended timeout.
+        timeout = _PREP_TIMEOUT if num_ctx else None
         try:
-            reply = client.generate(prompt, system=_PREP_SYSTEM)
+            reply = client.generate(
+                prompt, system=_PREP_SYSTEM, num_ctx=num_ctx, timeout=timeout
+            )
         except OllamaError:
             reply = ""
         raw = extract_json_object(reply)
         brief = raw.get("brief")
         if isinstance(brief, str) and brief.strip():
-            return brief.strip(), _coerce_drafts(raw.get("drafts"))
-    return _heuristic_brief(title, notes, decomposition, context), []
+            return (
+                brief.strip(),
+                _coerce_drafts(raw.get("drafts")),
+                _coerce_actions(raw.get("actions")),
+            )
+        # Salvage: the model said something usable, just not as JSON. Use it as the
+        # brief rather than falling through to the parrot-the-context heuristic.
+        if reply and reply.strip():
+            return reply.strip(), [], []
+    return _heuristic_brief(title, notes, decomposition, context), [], []
 
 
 def compose_va_email(
@@ -203,13 +302,15 @@ def compose_va_email(
     brief: str,
     drafts: list[dict[str, str]],
     note: str | None = None,
+    actions: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Compose the ``(subject, body)`` of the email sent to a human VA.
 
-    Pure and unit-testable: leads with the task, includes the brief, and appends
-    any drafted communications verbatim so the VA can send them with minimal edits.
-    ``note`` is an optional personal message from the user, shown *first* (before
-    the standard preamble) so the assistant reads it as the opening line.
+    Pure and unit-testable: leads with the task, includes the brief, lists any
+    extracted action items, and appends any drafted communications verbatim so the
+    VA can send them with minimal edits. ``note`` is an optional personal message
+    from the user, shown *first* (before the standard preamble) so the assistant
+    reads it as the opening line.
     """
     subject = f"[Prefrontal] Please help with: {title}"
     parts = []
@@ -219,6 +320,10 @@ def compose_va_email(
         f"Hi — could you take this off my plate?\n\nTask: {title}\n",
         f"Prep notes:\n{brief}\n",
     ]
+    if actions:
+        parts.append("Action items:")
+        parts.extend(f"  - {a['text']}" for a in actions)
+        parts.append("")
     for i, d in enumerate(drafts, 1):
         header = f"Draft {i} ({d['channel']})"
         if d.get("to"):
@@ -240,6 +345,7 @@ class DelegationRequest:
     decomposition: dict | None = None
     context: str | None = None  # optional free-text context pasted at delegation time
     va_note: str | None = None  # optional cover note shown atop the email to a human VA
+    owner_name: str | None = None  # user's display name (to flag their action items)
     destination: str | None = None
     client: Generator | None = None  # local LLM for prep
     smtp: SmtpSource | None = None  # resolved SMTP source (email handler)
@@ -261,8 +367,9 @@ class AgentHandler:
     kind = HANDLER_AGENT
 
     def run(self, req: DelegationRequest) -> DelegationResult:
-        brief, drafts = generate_prep(
-            req.title, req.notes, req.decomposition, context=req.context, client=req.client
+        brief, drafts, actions = generate_prep(
+            req.title, req.notes, req.decomposition,
+            context=req.context, owner_name=req.owner_name, client=req.client,
         )
         # generate_prep's offline fallback stamps this marker into the brief.
         offline = "Generated offline" in brief
@@ -274,6 +381,7 @@ class AgentHandler:
             status=STATUS_PREPPED,
             brief=brief,
             drafts=drafts,
+            actions=actions,
             detail=detail,
         )
 
@@ -284,23 +392,26 @@ class EmailHandler:
     kind = HANDLER_EMAIL
 
     def run(self, req: DelegationRequest) -> DelegationResult:
-        brief, drafts = generate_prep(
-            req.title, req.notes, req.decomposition, context=req.context, client=req.client
+        brief, drafts, actions = generate_prep(
+            req.title, req.notes, req.decomposition,
+            context=req.context, owner_name=req.owner_name, client=req.client,
         )
         to = (req.destination or "").strip()
         # No SMTP configured (or no recipient): keep the brief so it can be sent by
         # hand, and land in `failed` with a clear, non-alarming reason. Nothing is lost.
         if not to:
             return DelegationResult(
-                self.kind, STATUS_FAILED, brief, drafts,
+                self.kind, STATUS_FAILED, brief, drafts, actions,
                 "no assistant email address given — brief stored for manual sending",
             )
         if req.smtp is None or not req.smtp.configured:
             return DelegationResult(
-                self.kind, STATUS_FAILED, brief, drafts,
+                self.kind, STATUS_FAILED, brief, drafts, actions,
                 "SMTP not configured — brief stored; configure email in Settings to send",
             )
-        subject, body = compose_va_email(req.title, brief, drafts, note=req.va_note)
+        subject, body = compose_va_email(
+            req.title, brief, drafts, note=req.va_note, actions=actions
+        )
         client = req.smtp_client or SmtpClient()
         result = client.send(
             req.smtp.host,
@@ -315,11 +426,12 @@ class EmailHandler:
         )
         if not result.delivered:
             return DelegationResult(
-                self.kind, STATUS_FAILED, brief, drafts,
+                self.kind, STATUS_FAILED, brief, drafts, actions,
                 f"send failed ({result.detail}) — brief stored for manual sending",
             )
         return DelegationResult(
-            self.kind, STATUS_FORWARDED, brief, drafts, f"emailed {to} ({result.detail})"
+            self.kind, STATUS_FORWARDED, brief, drafts, actions,
+            f"emailed {to} ({result.detail})",
         )
 
 
@@ -343,6 +455,7 @@ def run_delegation(
     destination: str | None = None,
     context: str | None = None,
     va_note: str | None = None,
+    owner_name: str | None = None,
     client: Generator | None = None,
     smtp: SmtpSource | None = None,
     smtp_client: SmtpClient | None = None,
@@ -351,9 +464,10 @@ def run_delegation(
 
     Writes a ``todo_delegations`` row on the (scoped) ``store`` and returns the
     :class:`DelegationResult`. Raises :class:`ValueError` for an unknown handler
-    (the caller — router/CLI — turns that into a 4xx). The prep is synchronous:
-    the local model call is sub-second-ish and the whole point is to hand back a
-    ready result, so there's no background queue.
+    (the caller — router/CLI — turns that into a 4xx). This call is *synchronous and
+    can be slow* (a full-transcript prep evaluates a large context window on the
+    local model), so the HTTP router runs it on a background thread after writing an
+    ``in_prep`` row; the CLI just waits.
 
     ``smtp`` is only used by the ``email`` handler; resolve it via
     :func:`prefrontal.sources.resolve_smtp` before calling (kept out of here so
@@ -369,6 +483,7 @@ def run_delegation(
         decomposition=decomposition,
         context=context,
         va_note=va_note,
+        owner_name=owner_name,
         destination=destination,
         client=client,
         smtp=smtp,
@@ -382,6 +497,7 @@ def run_delegation(
         status=result.status,
         brief=result.brief,
         drafts=result.drafts,
+        actions=result.actions,
         detail=result.detail,
         context=context,
         prepped=result.status in (STATUS_PREPPED, STATUS_FORWARDED),
@@ -397,9 +513,15 @@ def delegation_notice(todo_title: str, result: DelegationResult) -> str | None:
     ``None`` for non-terminal states (no push worth sending).
     """
     if result.status == STATUS_PREPPED:
-        n = len(result.drafts)
-        drafts = f" ({n} draft{'s' if n != 1 else ''})" if n else ""
-        return f'Prep ready for "{todo_title}"{drafts} — review it when you have a sec.'
+        bits = []
+        nd = len(result.drafts)
+        if nd:
+            bits.append(f"{nd} draft{'s' if nd != 1 else ''}")
+        na = sum(1 for a in result.actions if a.get("mine"))
+        if na:
+            bits.append(f"{na} action item{'s' if na != 1 else ''} for you")
+        extra = f" ({', '.join(bits)})" if bits else ""
+        return f'Prep ready for "{todo_title}"{extra} — review it when you have a sec.'
     if result.status == STATUS_FORWARDED:
         return f'Sent "{todo_title}" to your assistant — {result.detail}.'
     if result.status == STATUS_FAILED:

@@ -34,7 +34,14 @@ class Generator(Protocol):
     client (the classifier, the todo augmenter, the trip/impulse/anchor inferers).
     """
 
-    def generate(self, prompt: str, *, system: str | None = None) -> str: ...
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        num_ctx: int | None = None,
+        timeout: float | None = None,
+    ) -> str: ...
 
 
 __all__ = [
