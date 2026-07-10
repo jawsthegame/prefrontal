@@ -195,6 +195,24 @@ def test_admin_disable_blocks_access(client):
     assert blocked.status_code == 401
 
 
+def test_admin_enable_restores_access(client):
+    """Re-enabling a disabled user makes their token resolve again."""
+    client.post("/admin/users/sam/disable", headers={"X-Prefrontal-Token": OP_TOKEN})
+    assert client.get("/todos", headers={"X-Prefrontal-Token": USER_TOKEN}).status_code == 401
+    resp = client.post(
+        "/admin/users/sam/enable", headers={"X-Prefrontal-Token": OP_TOKEN}
+    )
+    assert resp.status_code == 200 and resp.json()["status"] == "active"
+    assert client.get("/todos", headers={"X-Prefrontal-Token": USER_TOKEN}).status_code == 200
+    # Non-operator and unknown-handle guards.
+    assert client.post(
+        "/admin/users/sam/enable", headers={"X-Prefrontal-Token": USER_TOKEN}
+    ).status_code == 403
+    assert client.post(
+        "/admin/users/ghost/enable", headers={"X-Prefrontal-Token": OP_TOKEN}
+    ).status_code == 404
+
+
 def test_request_is_scoped_to_resolved_user(client, store):
     """A todo created under one token is invisible to another user's token."""
     client.post(
@@ -238,6 +256,19 @@ def test_admin_page_is_served_unauthenticated(client):
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "Admin" in resp.text
+
+
+@pytest.mark.parametrize("page", ["/dashboard", "/household", "/settings", "/stats", "/calendar"])
+def test_shared_nav_carries_hidden_admin_link(client, page):
+    """Every shared-nav page ships a hidden Admin link + the operator-reveal script.
+
+    The link starts hidden (``display:none``) and the injected ``/admin/whoami``
+    reveal script shows it only for an operator — so a non-operator never sees it,
+    and the operator doesn't have to remember the /admin URL.
+    """
+    html = client.get(page).text
+    assert 'href="/admin" data-nav-admin style="display:none"' in html
+    assert "/admin/whoami" in html  # the shared reveal script is injected
 
 
 def test_bootstrap_secret_maps_to_operator(store):

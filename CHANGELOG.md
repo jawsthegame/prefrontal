@@ -20,6 +20,26 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   link. New `chore_ids_scheduled_on` helper backs the endpoint; covered by
   `tests/test_chores.py`.
 
+- **Admin UI hides disabled users by default (+ re-enable)** ✅ — a disabled user
+  is clutter in the operator's list, so the Users card now shows only **active**
+  users, with a **“Show N disabled”** toggle to reveal the rest. Because hiding
+  them would otherwise strand a mistaken disable at the CLI, disabling is now
+  reversible from the UI: shown-disabled users get a **Re-enable** button backed by
+  a new `POST /admin/users/{handle}/enable` (the inverse of `…/disable`,
+  operator-only, idempotent). The status line reads `N active · M disabled`.
+  Verified in a real browser (hidden by default → reveal → re-enable → toggle
+  disappears). Covered by `tests/test_admin.py`.
+
+- **Operator-only Admin link in the top nav** ✅ — reaching `/admin` meant knowing
+  the URL. Every shared-nav page now carries an **Admin** link that's hidden by
+  default and revealed only for operators: a small shared script (one file,
+  injected into each shell — dashboard, calendar, household, kids/pets, insights,
+  review, settings) calls `GET /admin/whoami` and shows the link when
+  `is_operator` is true. A non-operator never sees it, and `/admin` stays
+  operator-gated server-side regardless, so the link is convenience, not a
+  security boundary. Verified in a real browser across operator / non-operator /
+  signed-out.
+
 - **Google sign-in email lives on the user record (self-serve, no env edit)** ✅
   — Google sign-in used to map a verified email → user only through the
   `GOOGLE_OAUTH_ALLOWED` **environment variable**, so letting a newly-provisioned

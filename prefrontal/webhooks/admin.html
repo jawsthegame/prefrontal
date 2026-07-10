@@ -84,6 +84,9 @@
   .emailrow { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .emailrow .emlabel { color: var(--muted); font-size: 13px; }
   .emailrow input[type=text] { flex: 1 1 200px; font-size: 14px; padding: 7px 10px; }
+  .toggle-disabled { display: block; margin-top: 14px; background: none; border: none;
+    color: var(--muted); font-size: 13px; padding: 4px 0; cursor: pointer; text-decoration: underline; font-weight: 500; }
+  .toggle-disabled:hover { color: var(--fg); }
 
   /* Token reveal */
   .token-out { margin-top: 14px; padding: 14px; border: 1px solid var(--accent); border-radius: 12px;
@@ -154,8 +157,9 @@
 
   <section class="card">
     <h2>Users</h2>
-    <p class="sub">Everyone provisioned on this deployment. Rotate re-issues a
-      token (old devices stop working); disable stops a token resolving.</p>
+    <p class="sub">Active users on this deployment. Rotate re-issues a token (old
+      devices stop working); disable stops a token resolving. Disabled users are
+      hidden — use “Show disabled” below to see and re-enable them.</p>
     <div id="users"><div class="empty">loading…</div></div>
   </section>
 
@@ -236,36 +240,53 @@ async function api(path, method, body) {
 }
 
 let households = [];
+let allUsers = [];        // every user from the last load (active + disabled)
+let hhByHandle = {};      // handle -> household name, for the per-user badge
+let showDisabled = false; // disabled users are hidden until the operator opts in
 
-function renderUsers(users, hhByHandle) {
-  if (!users.length) { $("#users").innerHTML = `<div class="empty">No users yet.</div>`; return; }
-  $("#users").innerHTML = users.map((u) => {
-    const opBadge = u.is_operator ? `<span class="badge op">operator</span>` : "";
-    const offBadge = u.status !== "active" ? `<span class="badge off">${esc(u.status)}</span>` : "";
-    const hh = hhByHandle[u.handle];
-    const hhBadge = hh ? `<span class="badge hh">🏠 ${esc(hh)}</span>` : "";
-    const opts = households.map((h) =>
-      `<option value="${h.id}"${hh === h.name ? " selected" : ""}>${esc(h.name)}</option>`).join("");
-    const hhPicker = households.length
-      ? `<select data-hh-for="${esc(u.handle)}" aria-label="household">${opts}</select>
-         <button class="sm" data-join="${esc(u.handle)}">Add to household</button>`
-      : `<span class="members">create a household first</span>`;
-    return `<div class="u">
-      <div class="who"><b>${esc(u.display_name || u.handle)}</b> ${opBadge}${offBadge}${hhBadge}
-        <div class="h">@${esc(u.handle)}</div></div>
-      <div class="actions">
-        ${hhPicker}
-        <button class="sm" data-rotate="${esc(u.handle)}">Rotate token</button>
-        ${u.status === "active" ? `<button class="sm danger" data-disable="${esc(u.handle)}">Disable</button>` : ""}
-      </div>
-      <div class="emailrow">
-        <span class="emlabel">✉ Google sign-in</span>
-        <input type="text" data-email-for="${esc(u.handle)}" value="${esc(u.email || "")}"
-          placeholder="email (blank to clear)" autocomplete="off" inputmode="email" />
-        <button class="sm" data-email-save="${esc(u.handle)}">Save</button>
-      </div>
-    </div>`;
-  }).join("");
+function userRow(u) {
+  const opBadge = u.is_operator ? `<span class="badge op">operator</span>` : "";
+  const offBadge = u.status !== "active" ? `<span class="badge off">${esc(u.status)}</span>` : "";
+  const hh = hhByHandle[u.handle];
+  const hhBadge = hh ? `<span class="badge hh">🏠 ${esc(hh)}</span>` : "";
+  const opts = households.map((h) =>
+    `<option value="${h.id}"${hh === h.name ? " selected" : ""}>${esc(h.name)}</option>`).join("");
+  const hhPicker = households.length
+    ? `<select data-hh-for="${esc(u.handle)}" aria-label="household">${opts}</select>
+       <button class="sm" data-join="${esc(u.handle)}">Add to household</button>`
+    : `<span class="members">create a household first</span>`;
+  return `<div class="u">
+    <div class="who"><b>${esc(u.display_name || u.handle)}</b> ${opBadge}${offBadge}${hhBadge}
+      <div class="h">@${esc(u.handle)}</div></div>
+    <div class="actions">
+      ${hhPicker}
+      <button class="sm" data-rotate="${esc(u.handle)}">Rotate token</button>
+      ${u.status === "active"
+        ? `<button class="sm danger" data-disable="${esc(u.handle)}">Disable</button>`
+        : `<button class="sm" data-enable="${esc(u.handle)}">Re-enable</button>`}
+    </div>
+    <div class="emailrow">
+      <span class="emlabel">✉ Google sign-in</span>
+      <input type="text" data-email-for="${esc(u.handle)}" value="${esc(u.email || "")}"
+        placeholder="email (blank to clear)" autocomplete="off" inputmode="email" />
+      <button class="sm" data-email-save="${esc(u.handle)}">Save</button>
+    </div>
+  </div>`;
+}
+
+function renderUsers() {
+  const box = $("#users");
+  if (!allUsers.length) { box.innerHTML = `<div class="empty">No users yet.</div>`; return; }
+  const disabled = allUsers.filter((u) => u.status !== "active");
+  const shown = showDisabled ? allUsers : allUsers.filter((u) => u.status === "active");
+  const rows = shown.length
+    ? shown.map(userRow).join("")
+    : `<div class="empty">No active users.</div>`;
+  const toggle = disabled.length
+    ? `<button type="button" class="toggle-disabled" data-toggle-disabled>${
+        showDisabled ? "Hide" : "Show"} ${disabled.length} disabled</button>`
+    : "";
+  box.innerHTML = rows + toggle;
 }
 
 function renderHouseholds() {
@@ -295,12 +316,15 @@ async function load() {
   $("#status").textContent = "loading…";
   const [uResp, hResp] = await Promise.all([api("/admin/users"), api("/admin/households")]);
   households = hResp.households || [];
-  const hhByHandle = {};
+  hhByHandle = {};
   for (const h of households) for (const m of (h.members || [])) hhByHandle[m.handle] = h.name;
-  const users = uResp.users || [];
-  renderUsers(users, hhByHandle);
+  allUsers = uResp.users || [];
+  renderUsers();
   renderHouseholds();
-  $("#status").textContent = `${users.length} user(s) · ${households.length} household(s)`;
+  const active = allUsers.filter((u) => u.status === "active").length;
+  const off = allUsers.length - active;
+  $("#status").textContent =
+    `${active} active user(s)${off ? ` · ${off} disabled` : ""} · ${households.length} household(s)`;
   $("#wrap").style.display = "";
   $("#gate").style.display = "none";
 }
@@ -333,8 +357,10 @@ $("#add-hh").addEventListener("click", async () => {
 });
 
 $("#users").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-toggle-disabled]")) { showDisabled = !showDisabled; renderUsers(); return; }
   const rotate = e.target.getAttribute("data-rotate");
   const disable = e.target.getAttribute("data-disable");
+  const enable = e.target.getAttribute("data-enable");
   const join = e.target.getAttribute("data-join");
   const emailSave = e.target.getAttribute("data-email-save");
   try {
@@ -346,6 +372,9 @@ $("#users").addEventListener("click", async (e) => {
     } else if (disable) {
       if (!confirm(`Disable @${disable}? Their access code stops resolving.`)) return;
       await api(`/admin/users/${encodeURIComponent(disable)}/disable`, "POST", {});
+      await load();
+    } else if (enable) {
+      await api(`/admin/users/${encodeURIComponent(enable)}/enable`, "POST", {});
       await load();
     } else if (join) {
       const sel = document.querySelector(`select[data-hh-for="${CSS.escape(join)}"]`);
