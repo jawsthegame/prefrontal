@@ -334,7 +334,8 @@ def test_task_paralysis_evaluator_prefers_the_decomposition_first_step():
 
 
 def test_location_anchor_evaluator_emits_escalation_cue():
-    """An outing over its window yields a firm→urgent cue and advances last_level."""
+    """An outing over its window yields a firm→urgent cue; the one-fire level
+    advance is applied in after_fire (evaluate stays a pure read)."""
     store = scoped_default(MemoryStore(init_db(":memory:")))
     oid = store.start_outing("coffee", 20.0, home_lat=0.0, home_lon=0.0)
     # Backdate departure so ~22 min have elapsed (past 100% → "firm").
@@ -342,15 +343,20 @@ def test_location_anchor_evaluator_emits_escalation_cue():
     store.conn.execute("UPDATE outings SET departure_at = ? WHERE id = ?", (old, oid))
     store.conn.commit()
 
-    cues = get("location_anchor").evaluate(store, _ctx(now=utcnow()))
+    module = get("location_anchor")
+    ctx = _ctx(now=utcnow())
+    cues = module.evaluate(store, ctx)
     assert len(cues) == 1
     cue = cues[0]
     assert cue.intervention == "firm_nudge" and cue.urgency == "urgent"
     assert cue.ref == {"outing_id": oid}
     assert cue.dedup_key == f"outing_escalation:{oid}:firm"
-    # The shared side-effect advanced the one-fire level, so a second tick is quiet.
+    # evaluate is a pure read now — it hasn't advanced the level yet.
+    assert store.get_outing(oid)["last_level"] == "none"
+    # after_fire applies the one-fire advance, so a second tick is quiet.
+    module.after_fire(store, [], ctx)
     assert store.get_outing(oid)["last_level"] == "firm"
-    assert get("location_anchor").evaluate(store, _ctx(now=utcnow())) == []
+    assert module.evaluate(store, _ctx(now=utcnow())) == []
 
 
 # -- POST /webhooks/coach/check ----------------------------------------------
@@ -423,6 +429,64 @@ def test_run_coaching_tick_service_fires_records_and_debounces():
         # record_fired ran inside the service → a second tick debounces it.
         second = run_coaching_tick(store, settings=settings, ollama=ollama)
         assert second.decisions == []
+    finally:
+        conn.close()
+
+
+def _tick_store_with_outing(elapsed_minutes: float, window: float = 20.0):
+    """An unscoped store whose one user has one active outing, backdated so
+    ``elapsed_minutes`` have elapsed. Returns ``(conn, unscoped, outing_id)``."""
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "tester", display_name="T", token=SECRET, is_operator=True)
+    scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+    scoped.set_state("responsive_hours_start", "0", source="explicit")
+    scoped.set_state("responsive_hours_end", "0", source="explicit")
+    oid = scoped.start_outing("coffee", window, home_lat=0.0, home_lon=0.0)
+    old = (utcnow() - timedelta(minutes=elapsed_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    scoped.conn.execute("UPDATE outings SET departure_at = ? WHERE id = ?", (old, oid))
+    scoped.conn.commit()
+    return conn, unscoped, oid
+
+
+def _offline_ollama(settings):
+    """A client that can't reach a model (so the tick's sweeps degrade to heuristics)."""
+    from prefrontal.integrations.ollama import OllamaClient
+
+    return OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+
+
+def test_run_coaching_tick_applies_outing_level_advance():
+    """A full tick fires the escalation cue AND applies the one-fire level advance
+    (the write moved from evaluate to after_fire — this proves the tick still does it)."""
+    from prefrontal.coaching import run_coaching_tick
+
+    conn, unscoped, oid = _tick_store_with_outing(22.0)  # 110% of a 20-min window → firm
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        settings = Settings(timezone="UTC")
+        result = run_coaching_tick(store, settings=settings, ollama=_offline_ollama(settings))
+        outing = [d for d in result.decisions if d.cue.context_key == "outing"]
+        assert outing and outing[0].cue.intervention == "firm_nudge"
+        assert store.get_outing(oid)["last_level"] == "firm"  # after_fire applied it
+    finally:
+        conn.close()
+
+
+def test_run_coaching_tick_auto_abandons_outing_without_a_cue():
+    """The crux of the pure-evaluate fix: a **cue-less** transition (auto-abandon)
+    still applies via after_fire — the tick closes the outing even though evaluate
+    emits no cue for it, so the state change isn't silently dropped."""
+    from prefrontal.coaching import run_coaching_tick
+
+    conn, unscoped, oid = _tick_store_with_outing(120.0)  # 6× the window → abandoned
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        settings = Settings(timezone="UTC")
+        result = run_coaching_tick(store, settings=settings, ollama=_offline_ollama(settings))
+        assert [d for d in result.decisions if d.cue.context_key == "outing"] == []
+        assert store.get_outing(oid)["status"] == "abandoned"
+        assert store.active_outings() == []
     finally:
         conn.close()
 

@@ -36,8 +36,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from prefrontal.coaching import CoachContext, Cue, Decision
     from prefrontal.memory.store import MemoryStore
 
@@ -122,15 +120,19 @@ class Module(ABC):
         """
 
     def after_fire(  # noqa: B027
-        self, store: MemoryStore, decisions: list[Decision], now: datetime
+        self, store: MemoryStore, decisions: list[Decision], ctx: CoachContext
     ) -> None:
         """Run once per tick, *after* the fired decisions are recorded. Default no-op.
 
-        The place for a module's post-fire housekeeping — e.g. stamping a
-        delivery time so a later one-tap response can be timed. ``decisions`` is
-        the full fired list for the tick; a module filters to its own cues
-        (``d.cue.module == self.key``). Like :meth:`before_collect`, the engine
-        calls this on every enabled module.
+        The place for a module's post-fire housekeeping — e.g. stamping a delivery
+        time so a later one-tap response can be timed, or applying the store writes
+        a side-effect-free :meth:`evaluate` deliberately held back (so ``evaluate``
+        stays a pure read; see ``location_anchor``). ``decisions`` is the full fired
+        list for the tick; a module filters to its own cues
+        (``d.cue.module == self.key``). ``ctx`` is the same per-tick context passed
+        to :meth:`evaluate` / :meth:`before_collect` (carrying ``ctx.now`` and the
+        current location), so a module can recompute exactly what it decided. Like
+        :meth:`before_collect`, the engine calls this on every enabled module.
         """
 
     def seed(self, store: MemoryStore) -> None:
