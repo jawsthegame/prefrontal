@@ -133,8 +133,10 @@ def build_router(services: RouterServices) -> APIRouter:
         """Sync a batch of upcoming calendar events into ``commitments``.
 
         n8n posts the current window of events on a schedule; this upserts them
-        (by ``external_id``) and prunes calendar events that disappeared. A bad
-        timestamp rejects the whole batch with 422 (never partially applies).
+        (by ``external_id``) and prunes calendar events that disappeared. An event
+        that fails validation (bad timestamp, missing field) is skipped — the good
+        events still sync, and the response's ``skipped`` / ``skipped_titles`` name
+        what was dropped, so one malformed event can't silently kill the feed.
         """
         memory = ctx.store
         # Consult Ollama only when reachable — one liveness check up front avoids a
@@ -181,6 +183,8 @@ def build_router(services: RouterServices) -> APIRouter:
             "possible_conflicts": summary.possible_conflicts,
             "new_possible_conflict": summary.new_possible_conflict,
             "geocoded": geocoded["resolved"],
+            "skipped": summary.skipped,
+            "skipped_titles": list(summary.skipped_titles),
         }
 
     @router.post("/webhooks/departure/check", tags=["schedule"])

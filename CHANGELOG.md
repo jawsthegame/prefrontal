@@ -7,6 +7,16 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Calendar sync tolerates a single bad event** ✅ — `sync_calendar` used to
+  validate the whole batch up front and reject *all* of it if any one event failed
+  (`normalize_event` raising), so a single malformed VEVENT — an unparseable time,
+  a missing field — silently killed the user's entire feed until it aged out. Now
+  each event is validated independently: a bad one is **skipped and logged**, the
+  good ones sync, and `SyncSummary.skipped` / `skipped_titles` report what was
+  dropped (surfaced by `prefrontal calendar sync` and the `/webhooks/calendar/sync`
+  response). Document-level parse failures still fail loudly upstream in
+  `parse_ics`. Closes the hardening issue that followed the titleless-VEVENT fix.
+
 - **Delegation on the dashboard todo cards** ✅ — the delegate hand-off is now a
   first-class control on each todo, not just an API/CLI/assistant-box action. A
   **Delegate** button opens a small popover — *🤖 Prep with AI* (one-tap agent

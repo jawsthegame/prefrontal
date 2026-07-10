@@ -28,7 +28,10 @@ from dateutil.rrule import rrulestr
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.clock import parse_ts_strict as _parse_utc
 from prefrontal.focus_balance import normalize_focus_domain
+from prefrontal.log import get_logger
 from prefrontal.memory.store import MemoryStore
+
+logger = get_logger(__name__)
 
 #: Assumed duration for a commitment with no ``end_at`` (overlap detection).
 DEFAULT_EVENT_MINUTES = 30.0
@@ -289,6 +292,11 @@ class SyncSummary:
     new_conflict: bool
     possible_conflicts: int
     new_possible_conflict: bool
+    #: Events dropped because they failed validation (a malformed VEVENT no longer
+    #: rejects the whole feed — see :func:`sync_calendar`). ``skipped`` is the
+    #: count; ``skipped_titles`` names them (for the CLI/webhook to surface).
+    skipped: int = 0
+    skipped_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -658,11 +666,11 @@ def sync_calendar(
             unaffected — they carry no horizon.
 
     Returns:
-        A :class:`SyncSummary`.
-
-    Raises:
-        ValueError: If any event fails validation (the whole batch is rejected
-            before any write, so a bad payload never partially applies).
+        A :class:`SyncSummary`. An event that fails validation (missing title,
+        unparseable time) is **skipped**, not fatal — the good events still sync
+        and ``SyncSummary.skipped`` / ``skipped_titles`` report what was dropped,
+        so one malformed VEVENT can't silently kill a whole feed. (A document-level
+        parse failure is caught upstream in :func:`prefrontal.ics.parse_ics`.)
     """
     # Turn recurring masters into concrete near-term occurrences before anything
     # else — a weekly event ships as one long-past-dated master, so this is what
@@ -671,9 +679,19 @@ def sync_calendar(
         events, now=now or utcnow(), default_tz=default_tz,
         horizon_hours=recur_horizon_hours,
     )
-    normalized = [  # validate all up front
-        normalize_event(e, default_tz=default_tz) for e in events
-    ]
+    # Validate each event independently: a single malformed VEVENT (missing
+    # title, unparseable time) is skipped and logged rather than rejecting the
+    # whole feed — one bad event must not stop every other event from syncing.
+    # (A document-level parse failure is caught earlier, in parse_ics.)
+    normalized = []
+    skipped_titles: list[str] = []
+    for e in events:
+        try:
+            normalized.append(normalize_event(e, default_tz=default_tz))
+        except ValueError as exc:
+            label = str(e.get("title") or e.get("external_id") or "untitled event")
+            skipped_titles.append(label)
+            logger.warning("sync_calendar skipped an invalid event (%s): %s", label, exc)
     # Collapse the same real event mirrored across feeds (outlook + work) so it's
     # stored once, shown once, and never conflicts with itself.
     normalized = dedupe_events(normalized)
@@ -736,6 +754,8 @@ def sync_calendar(
         new_conflict=new_conflict,
         possible_conflicts=len(possible),
         new_possible_conflict=new_possible_conflict,
+        skipped=len(skipped_titles),
+        skipped_titles=tuple(skipped_titles),
     )
 
 
