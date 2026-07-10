@@ -556,6 +556,23 @@ class TodosRepo(Repo):
                 d[key] = []
         return d
 
+    def delegation_recipients(self, limit: int = 10) -> list[str]:
+        """The user's previously-used VA email addresses, most-recently-used first.
+
+        Powers the "pick an assistant" list in the delegate popover so a recurring
+        VA doesn't have to be retyped each time. Distinct, non-blank ``destination``
+        values from this user's ``email`` hand-offs, newest first.
+        """
+        rows = self.conn.execute(
+            "SELECT d.destination, MAX(d.updated_at) AS last_used "
+            "FROM todo_delegations d JOIN todos t ON t.id = d.todo_id "
+            "WHERE t.user_id = ? AND d.destination IS NOT NULL "
+            "AND TRIM(d.destination) != '' "
+            "GROUP BY d.destination ORDER BY last_used DESC LIMIT ?",
+            (self._uid(), limit),
+        ).fetchall()
+        return [r["destination"] for r in rows]
+
     def update_delegation_status(
         self, todo_id: int, status: str, *, detail: str | None = None, prepped: bool = False
     ) -> bool:
