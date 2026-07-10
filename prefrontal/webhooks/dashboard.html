@@ -423,38 +423,43 @@
     width: 100%; padding: 9px 11px; border-radius: 8px; min-height: 38px;
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
   }
-  /* global (cross-entity) search bar + results panel */
-  .gsearch { max-width: 1200px; margin: 2px auto 16px; display: flex; align-items: center; gap: 12px; }
-  .gsearch-field { position: relative; flex: 1; display: flex; }
+  /* global (cross-entity) search — the field lives in the top nav (see .topnav
+     .gsearch-field below); results render under the header in .gsearch-results,
+     width-matched to the card columns so they line up. */
+  .gsearch-field { position: relative; display: flex; flex: 0 1 300px; min-width: 150px; max-width: 340px; }
   .gsearch-icon {
-    position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
-    width: 18px; height: 18px; pointer-events: none; background: var(--muted); opacity: .8;
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; pointer-events: none; background: var(--muted); opacity: .8;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center / contain no-repeat;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center / contain no-repeat;
   }
-  .gsearch input {
-    flex: 1; width: 100%; padding: 12px 44px 12px 44px; min-height: 46px;
-    border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
-    font-size: 15px; transition: border-color .12s, box-shadow .12s;
+  .gsearch-field input {
+    flex: 1; width: 100%; padding: 8px 38px 8px 36px; min-height: 38px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+    font-size: 14px; transition: border-color .12s, box-shadow .12s;
   }
-  .gsearch input::placeholder { color: var(--muted); }
-  .gsearch input:focus {
+  .gsearch-field input::placeholder { color: var(--muted); }
+  .gsearch-field input:focus {
     outline: none; border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
   }
-  .gsearch input:focus ~ .gsearch-icon { opacity: 1; background: var(--accent); }
+  .gsearch-field input:focus ~ .gsearch-icon { opacity: 1; background: var(--accent); }
   /* Native clear "x" (WebKit) — hide it; Escape already clears the field. */
-  .gsearch input::-webkit-search-cancel-button { -webkit-appearance: none; }
+  .gsearch-field input::-webkit-search-cancel-button { -webkit-appearance: none; }
   .gsearch-kbd {
-    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
     font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
     background: var(--chip); border: 1px solid var(--line); border-radius: 6px;
     padding: 3px 7px; pointer-events: none; transition: opacity .12s;
   }
-  .gsearch input:focus ~ .gsearch-kbd,
-  .gsearch input:not(:placeholder-shown) ~ .gsearch-kbd { opacity: 0; }
-  .gsearch-hint { color: var(--muted); font-size: 13px; white-space: nowrap; min-width: 74px; text-align: right; }
-  #c-search { max-width: 1200px; margin: 0 auto 16px; }
+  .gsearch-field input:focus ~ .gsearch-kbd,
+  .gsearch-field input:not(:placeholder-shown) ~ .gsearch-kbd { opacity: 0; }
+  /* Results wrapper: same max-width + horizontal padding as .banners/.masonry so
+     the results card lines up with the columns below it. */
+  .gsearch-results { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+  .gsearch-hint { display: block; color: var(--muted); font-size: 13px; }
+  .gsearch-hint:not(:empty) { margin: 14px 2px 8px; }
+  #c-search { margin: 0 0 16px; }
   #c-search .sgroup { margin-top: 16px; }
   #c-search .sgroup:first-child { margin-top: 0; }
   #c-search .sgroup > h3 {
@@ -671,6 +676,7 @@
   @media (max-width: 520px) {
     .banners { padding: 12px 12px 0; }
     .masonry { padding: 12px 12px 24px; }  /* single column enforced by renderColumns */
+    .gsearch-results { padding: 0 12px; }  /* match the tighter phone gutter */
     .col-picker { display: none; }  /* one column only at this width — nothing to pick */
     header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); }
     .addrow { flex-wrap: wrap; }
@@ -694,11 +700,15 @@
        than the viewport and scrolled the whole page sideways. Let the strip
        scroll within itself instead (min-width:0 lets it shrink below its
        content), so the page never gains horizontal scroll. */
-    .topnav { gap: 8px; }
+    .topnav { gap: 8px; flex-wrap: wrap; }
     .topnav .links { overflow-x: auto; min-width: 0; -webkit-overflow-scrolling: touch;
       scrollbar-width: none; }
     .topnav .links::-webkit-scrollbar { display: none; }
     .topnav .links a { flex: none; white-space: nowrap; }
+    /* Too little room for brand + scrolling links + field + toggle on one line;
+       drop the search onto its own full-width second row (order:3 puts it after
+       the toggle) so it's a comfortable full-width bar, not a crushed sliver. */
+    .gsearch-field { order: 3; flex: 1 1 100%; max-width: none; }
   }
 </style>
 </head>
@@ -715,6 +725,12 @@
     <a href="/review">Review</a>
     <a href="/settings">Settings</a>
     <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <div class="gsearch-field">
+    <span class="gsearch-icon" aria-hidden="true"></span>
+    <input id="global-search" type="search" autocomplete="off" aria-label="Search everything"
+      placeholder="Search everything…" />
+    <kbd class="gsearch-kbd" aria-hidden="true">/</kbd>
   </div>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
 </nav>
@@ -737,16 +753,10 @@
   </div>
 </header>
 
-<div class="gsearch">
-  <div class="gsearch-field">
-    <span class="gsearch-icon" aria-hidden="true"></span>
-    <input id="global-search" type="search" autocomplete="off" aria-label="Search everything"
-      placeholder="Search todos, commitments, focus sessions, projects…" />
-    <kbd class="gsearch-kbd" aria-hidden="true">/</kbd>
-  </div>
+<div class="gsearch-results">
   <span class="gsearch-hint" id="gsearch-hint" aria-live="polite"></span>
+  <section class="card" id="c-search" style="display:none"><div class="body"></div></section>
 </div>
-<section class="card" id="c-search" style="display:none"><div class="body"></div></section>
 
 <div class="banners">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
