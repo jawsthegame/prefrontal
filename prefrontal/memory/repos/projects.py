@@ -72,6 +72,35 @@ class ProjectsRepo(Repo):
             (self._uid(),),
         )
 
+    def list_projects_with_rollup(
+        self, *, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
+        """Like :meth:`list_projects`, but each row carries dashboard rollup counts.
+
+        Adds ``open_todos`` (open todos in the project), ``next_commitment_at``
+        (soonest upcoming active, non-hidden commitment, or ``None``), and
+        ``focus_minutes_7d`` (heads-down minutes on the project in the last 7 days,
+        from focus-session start→end, using ``now`` for a still-open session). All
+        computed in one query via correlated subqueries — personal-scale, so the
+        subqueries are cheap and keep the rollup consistent with a single read.
+        """
+        status_clause = "" if include_archived else " AND status = 'active'"
+        return self._query_all(
+            "SELECT p.*, "
+            "(SELECT COUNT(*) FROM todos t WHERE t.project_id = p.id "
+            "  AND t.user_id = p.user_id AND t.status = 'open') AS open_todos, "
+            "(SELECT MIN(c.start_at) FROM commitments c WHERE c.project_id = p.id "
+            "  AND c.user_id = p.user_id AND c.status = 'active' AND c.hidden = 0 "
+            "  AND c.start_at >= datetime('now')) AS next_commitment_at, "
+            "(SELECT COALESCE(SUM((julianday(COALESCE(f.ended_at, 'now')) "
+            "  - julianday(f.started_at)) * 1440.0), 0) FROM focus_sessions f "
+            "  WHERE f.project_id = p.id AND f.user_id = p.user_id "
+            "  AND f.started_at >= datetime('now', '-7 days')) AS focus_minutes_7d "
+            f"FROM projects p WHERE p.user_id = ?{status_clause} "
+            "ORDER BY p.domain ASC, p.id DESC",
+            (self._uid(),),
+        )
+
     def active_projects(self) -> list[dict[str, Any]]:
         """Active projects as ``id``/``name``/``description``/``domain`` rows.
 

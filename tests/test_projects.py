@@ -174,6 +174,24 @@ def test_focus_session_carries_project(store):
     assert store.get_focus_session(sid)["project_id"] == pid
 
 
+def test_list_projects_with_rollup(store):
+    pid = store.add_project("Kitchen Remodel", "home")
+    t1 = store.add_todo("Call contractor")
+    store.add_todo("Buy tile")
+    store.set_todo_project(t1, pid)
+    store.set_todo_project(store.add_todo("Pick paint"), pid)
+    cid, _ = store.upsert_commitment(title="Site visit", start_at="2099-01-01 10:00:00")
+    store.set_commitment_project(cid, pid)
+    sid = store.start_focus_session("measure", project_id=pid)
+    store.close_focus_session(session_id=sid, status="ended")
+
+    rows = {r["id"]: r for r in store.list_projects_with_rollup()}
+    r = rows[pid]
+    assert r["open_todos"] == 2  # two assigned, both open
+    assert r["next_commitment_at"] == "2099-01-01 10:00:00"
+    assert r["focus_minutes_7d"] >= 0  # a closed session contributes non-negative minutes
+
+
 def test_archive_frees_the_name(store):
     pid = store.add_project("Kitchen Remodel", "home")
     assert store.archive_project(pid) is True
@@ -265,6 +283,31 @@ def test_api_assign_missing_todo_404(client):
     ).json()["id"]
     r = client.post("/todos/999/project", json={"project_id": pid}, headers=_auth())
     assert r.status_code == 404
+
+
+def test_dashboard_serves_projects_ui(client):
+    """The dashboard page ships the projects card + pill/detail wiring."""
+    html = client.get("/dashboard").text
+    assert 'id="c-projects"' in html
+    assert 'id="project-detail"' in html
+    for action in ('data-action="todo-project"', 'data-action="commitment-project"',
+                   'data-action="project-open"'):
+        assert action in html
+    for fn in ("function renderProjects", "async function openProjectMenu",
+               "async function openProjectDetail"):
+        assert fn in html
+
+
+def test_api_projects_list_has_rollup_for_ui(client):
+    """GET /projects carries the rollup fields renderProjects reads."""
+    pid = client.post(
+        "/projects", json={"name": "K", "domain": "home"}, headers=_auth()
+    ).json()["id"]
+    tid = client.post("/todos", json={"title": "x"}, headers=_auth()).json()["todo_id"]
+    client.post(f"/todos/{tid}/project", json={"project_id": pid}, headers=_auth())
+    row = client.get("/projects", headers=_auth()).json()["projects"][0]
+    assert row["open_todos"] == 1
+    assert "next_commitment_at" in row and "focus_minutes_7d" in row
 
 
 def test_api_archive(client):
