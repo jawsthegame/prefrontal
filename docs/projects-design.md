@@ -63,8 +63,9 @@ CREATE TABLE IF NOT EXISTS projects (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id),
     name        TEXT    NOT NULL,
+    description TEXT,                                -- short user blurb; matched (with name) to auto-suggest a project for triaged items
     domain      TEXT    NOT NULL,                    -- the life sphere this project sits under
-    notes       TEXT,
+    notes       TEXT,                                -- longer free-text detail (not used for matching)
     color       TEXT,                                -- optional UI accent (hex/token)
     status      TEXT    NOT NULL DEFAULT 'active',   -- active | archived
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -157,6 +158,52 @@ Phase-appropriate, minimal:
 3. A **project detail view**: the project's open todos, upcoming commitments, and
    recent focus sessions on one page (this is the payoff of the container).
 
+## Auto-suggesting a project for triaged items
+
+When triage turns an email/signal into a todo (or commitment), it should suggest the
+best-matching project, matched against each project's **name + `description`**. This
+mirrors the existing category inference exactly.
+
+**Where.** `prefrontal/triage.py::_route_signal` (`triage.py:380`) already calls
+`augment_todo(...)` then `store.add_todo(...)` on the `todo` route (and
+`upsert_commitment` on the `commitment` route). The suggestion slots in right there;
+`mail/ingest.py` has the two parallel todo-creation sites (`ingest.py:136`, `:348`)
+that reuse the same helper.
+
+**How — mirror category inference.** A new pure function in a `projects` helper:
+
+```python
+def suggest_project(title, notes, projects, *, client) -> tuple[int | None, float]:
+    """Best-matching project id for a triaged item, plus confidence in [0,1].
+
+    Two layers, exactly like todos.augment_todo / triage's classifier:
+      1. LLM (one generate_json call): the item text + a compact list of
+         `- id: name — description` lines → {"project_id": <id|null>, "confidence": <0..1>}.
+      2. Keyword-overlap heuristic over name+description tokens as the fallback
+         when the model is unavailable (mirrors todos.heuristic_category).
+    Returns (None, 0.0) when nothing clears the threshold — projects are opt-in,
+    an unmatched item stays unassigned.
+    """
+```
+
+- Reuses `generate_json()` (`prefrontal/llm_json.py:44`) — the same
+  tolerate-a-provider-failure helper the rest of the system uses. `description` is
+  the field that carries the matching signal ("permits, contractor quotes, tile" →
+  *Kitchen Remodel*); `notes` is not fed to the matcher.
+- Only **active** projects are candidates, and (given projects are nested under a
+  domain) candidates can be pre-filtered to the item's inferred domain, or left
+  domain-open and let the model choose — recommend domain-open with domain shown in
+  the list, since a triaged item's domain is itself inferred and may be wrong.
+
+**Propose vs apply.** The triaged todo is *created regardless* (the `todo` route
+already applies). On a **confident** match (≥ threshold) set the new todo's
+`project_id` directly — it's a suggestion the user sees on the dashboard and can
+clear/reassign in one tap via `POST /todos/{id}/project`. Below threshold, leave it
+unassigned. This keeps a single `project_id` column (no pending-suggestion column)
+while honoring "easily overridable." If we later want an explicit
+review-before-apply step, add a nullable `suggested_project_id` — noted as a
+follow-up, not built in v1.
+
 ## Behavior / integration notes
 
 - **Scheduler:** unchanged. Because assignment writes the project's `domain` through
@@ -173,20 +220,29 @@ Phase-appropriate, minimal:
 
 ## Suggested phasing
 
-- **Phase 1 — data + API:** `projects` table, three nullable FKs, `projects` repo,
-  CRUD + assignment endpoints, schemas. Fully usable via CLI/API. (Migration is free
-  — just the `schema.sql` edit.)
+- **Phase 1 — data + API + suggestion:** `projects` table (with `description`),
+  three nullable FKs, `projects` repo, CRUD + assignment endpoints, schemas, and the
+  `suggest_project()` helper wired into triage's `todo` route. Fully usable via
+  CLI/API. (Migration is free — just the `schema.sql` edit.)
 - **Phase 2 — dashboard:** projects list, pickers on todo/commitment rows, detail
-  view.
+  view, and surfacing the triage-suggested project inline.
 - **Phase 3 — rollups & insight:** per-project focus-minutes and follow-through
   stats; "you haven't touched *Kitchen Remodel* in 3 weeks" style nudges.
 
-## Open questions
+## Decisions
 
-1. Can a single todo/commitment belong to **more than one** project? This design
-   says **no** (a single nullable `project_id`). Many-to-many would need a join
-   table and complicates the domain-inheritance rule — recommend deferring.
-2. Should archiving a project also close/drop its open todos, or leave them
-   (just unlabeled/kept)? Recommend **leave them assigned** (archive is not delete).
-3. Do we want a project `deadline`/target date to drive its own nudges? Deferred to
-   Phase 3.
+1. **Single membership.** A todo/commitment/session belongs to at most one project
+   (a single nullable `project_id`) — no many-to-many join table. *(confirmed)*
+2. **Nested under one domain.** Each project has a required `domain`; assignment
+   writes that domain through to the entity so the scheduler stays project-unaware.
+   *(confirmed)*
+3. **Archive, not delete.** Archiving preserves FKs and leaves assigned todos in
+   place; the unique-name index only covers active rows, so a name frees up.
+
+## Open questions / follow-ups (tracked as issues)
+
+- Explicit review-before-apply for triage suggestions (a `suggested_project_id`
+  pending column) vs. the v1 confident-auto-assign. → Phase 2 follow-up.
+- Project `deadline`/target date driving its own nudges. → Phase 3.
+- Shared / household (co-parent) projects. → later, mirrors `household_*`.
+- Per-project focus-minutes & follow-through rollups. → Phase 3.
