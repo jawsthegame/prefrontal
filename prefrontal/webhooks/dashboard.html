@@ -424,20 +424,55 @@
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
   }
   /* global (cross-entity) search bar + results panel */
-  .gsearch { max-width: 1200px; margin: 0 auto 14px; display: flex; align-items: center; gap: 10px; }
-  .gsearch input {
-    flex: 1; padding: 11px 14px; border-radius: 10px; min-height: 42px;
-    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 15px;
+  .gsearch { max-width: 1200px; margin: 2px auto 16px; display: flex; align-items: center; gap: 12px; }
+  .gsearch-field { position: relative; flex: 1; display: flex; }
+  .gsearch-icon {
+    position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+    width: 18px; height: 18px; pointer-events: none; background: var(--muted); opacity: .8;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center / contain no-repeat;
   }
-  .gsearch input:focus { outline: none; border-color: var(--accent); }
-  .gsearch-hint { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .gsearch input {
+    flex: 1; width: 100%; padding: 12px 44px 12px 44px; min-height: 46px;
+    border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    font-size: 15px; transition: border-color .12s, box-shadow .12s;
+  }
+  .gsearch input::placeholder { color: var(--muted); }
+  .gsearch input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .gsearch input:focus ~ .gsearch-icon { opacity: 1; background: var(--accent); }
+  /* Native clear "x" (WebKit) — hide it; Escape already clears the field. */
+  .gsearch input::-webkit-search-cancel-button { -webkit-appearance: none; }
+  .gsearch-kbd {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    background: var(--chip); border: 1px solid var(--line); border-radius: 6px;
+    padding: 3px 7px; pointer-events: none; transition: opacity .12s;
+  }
+  .gsearch input:focus ~ .gsearch-kbd,
+  .gsearch input:not(:placeholder-shown) ~ .gsearch-kbd { opacity: 0; }
+  .gsearch-hint { color: var(--muted); font-size: 13px; white-space: nowrap; min-width: 74px; text-align: right; }
   #c-search { max-width: 1200px; margin: 0 auto 16px; }
-  #c-search .sgroup { margin-top: 14px; }
+  #c-search .sgroup { margin-top: 16px; }
   #c-search .sgroup:first-child { margin-top: 0; }
   #c-search .sgroup > h3 {
-    margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    margin: 0 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
     color: var(--muted); font-weight: 700;
   }
+  /* result rows: hover/focus affordance + a jump hint on the deep-linkable ones */
+  .srow { border-radius: 8px; transition: background .12s; }
+  .srow.clickable { cursor: pointer; }
+  .srow.clickable:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .srow.clickable:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .srow.clickable::after { content: "↗"; margin-left: auto; align-self: center; padding-left: 10px; color: var(--accent); opacity: 0; transition: opacity .12s; }
+  .srow.clickable:hover::after, .srow.clickable:focus::after { opacity: .75; }
+  @keyframes searchflash {
+    0% { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+    100% { background: transparent; }
+  }
+  .flash { animation: searchflash 1.5s ease-out; border-radius: 8px; }
   /* shopping list rows */
   .shop-line { display: flex; gap: 9px; padding: 5px 0; align-items: baseline; }
   .shop-line .box { color: var(--muted); cursor: pointer; background: none; border: none;
@@ -692,9 +727,13 @@
 </header>
 
 <div class="gsearch">
-  <input id="global-search" type="search" autocomplete="off" aria-label="Search everything"
-    placeholder="Search everything — todos, commitments, focus, projects…  (press /)" />
-  <span class="gsearch-hint" id="gsearch-hint"></span>
+  <div class="gsearch-field">
+    <span class="gsearch-icon" aria-hidden="true"></span>
+    <input id="global-search" type="search" autocomplete="off" aria-label="Search everything"
+      placeholder="Search todos, commitments, focus sessions, projects…" />
+    <kbd class="gsearch-kbd" aria-hidden="true">/</kbd>
+  </div>
+  <span class="gsearch-hint" id="gsearch-hint" aria-live="polite"></span>
 </div>
 <section class="card" id="c-search" style="display:none"><div class="body"></div></section>
 
@@ -1601,7 +1640,7 @@ function renderTodos(d) {
     // off your plate (it's already suppressed from the active suggestion surfaces).
     const parked = deleg && ["forwarded", "in_prep", "prepped"].includes(deleg.status);
     const delegBtn = `<button class="btn-sm" data-action="delegate" data-id="${x.id}" title="Hand this off to an assistant to prep">${deleg ? "Assistant ▾" : "Delegate"}</button>`;
-    return `<div class="row${started ? " started" : ""}${parked ? " deleg-parked" : ""}">
+    return `<div class="row${started ? " started" : ""}${parked ? " deleg-parked" : ""}" data-search-id="todo-${x.id}">
       <div class="main">
         <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${startedBadge}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}${deleg ? delegationPill(deleg) : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
@@ -1786,7 +1825,7 @@ function renderCommitments(list, conflicts, cascade) {
     const cdom = x.domain || "";
     const cdomStyle = cdom ? ` style="color:${catColor(cdom)};border-color:${catColor(cdom)}"` : "";
     const cdomPill = ` <button class="${cdom ? "pill dom" : "pill dom none"}"${cdomStyle} data-action="commitment-domain" data-id="${x.id}" data-domain="${esc(cdom)}" title="Set life sphere (work/home/kids/…)">${esc(cdom || "+ domain")}<span class="caret">▾</span></button>`;
-    return `<div class="row"><div class="main">
+    return `<div class="row" data-search-id="commit-${x.id}"><div class="main">
       <div><span class="title">${esc(x.title)}</span>${src}${cal}${kindBadge}${dbl}${cdomPill}</div>
       <div class="sub">${fmt(x.start_at)}${x.location ? " · " + esc(x.location) : ""} · ${esc(x.hardness)}</div>
     </div>
@@ -2973,10 +3012,16 @@ $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") doc
 
 // ── Global search (cross-entity) ────────────────────────────────────────────
 const SEARCH_PRI = { 0: "low", 1: "normal", 2: "high", 3: "urgent" };
-function searchRow(title, subParts) {
+// A result row optionally deep-links to where the item lives on the board:
+// `jump` is {type, id} for entities that have a card (todos/commitments, and a
+// *live* focus session → the "now" card). Projects and off-board items (a done
+// todo, a past commitment) have no landing spot, so they render as plain rows.
+function searchRow(title, subParts, jump) {
   const sub = (subParts || []).filter((x) => x !== null && x !== undefined && x !== "")
     .map(esc).join(" · ");
-  return `<div class="row"><div class="main"><div class="title">${esc(title)}</div>`
+  const j = jump ? ` data-jump-type="${jump.type}" data-jump-id="${jump.id}" role="button" tabindex="0"` : "";
+  const cls = "row srow" + (jump ? " clickable" : "");
+  return `<div class="${cls}"${j}><div class="main"><div class="title">${esc(title)}</div>`
     + (sub ? `<div class="sub">${sub}</div>` : "") + `</div></div>`;
 }
 function searchGroup(label, rows) {
@@ -2993,22 +3038,52 @@ function renderSearchResults(data) {
     t.priority >= 2 ? SEARCH_PRI[t.priority] : null,
     t.category, t.domain,
     t.deadline ? "due " + fmtDeadline(t.deadline) : null,
-  ])));
+  ], { type: "todo", id: t.id })));
   const comm = r.commitments || [];
   if (comm.length) html += searchGroup("Commitments", comm.map((c) => searchRow(c.title, [
     c.start_at ? fmt(c.start_at) : null, c.location, c.domain,
     c.status && c.status !== "active" ? c.status : null,
-  ])));
+  ], { type: "commit", id: c.id })));
   const focus = r.focus_sessions || [];
   if (focus.length) html += searchGroup("Focus sessions", focus.map((f) => searchRow(f.intended_task, [
     f.started_at ? fmt(f.started_at) : null, f.status, f.outcome, f.breadcrumb,
-  ])));
+  ], f.status === "active" ? { type: "focus", id: f.id } : null)));
   const proj = r.projects || [];
   if (proj.length) html += searchGroup("Projects", proj.map((p) => searchRow(p.name, [
     p.domain, p.status && p.status !== "active" ? p.status : null, p.description,
   ])));
   return html;
 }
+// Deep-link: scroll to (and flash) the card/row that owns a result. When the
+// item isn't currently on the board (a done todo, a commitment outside the
+// week's horizon), there's no row to land on — flash the card and say so.
+const JUMP_CARD = { todo: "#c-todos", commit: "#c-commitments", focus: "#c-now" };
+function flashEl(el) {
+  el.classList.remove("flash");
+  void el.offsetWidth;  // reflow so the animation restarts on repeat clicks
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 1500);
+}
+function jumpToResult(type, id) {
+  const card = $(JUMP_CARD[type]);
+  if (!card) return;
+  const row = type === "focus" ? null : card.querySelector(`[data-search-id="${type}-${id}"]`);
+  const target = row || card;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  flashEl(target);
+  if (!row && type !== "focus") $("#gsearch-hint").textContent = "not on the board right now";
+}
+$("#c-search").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-jump-type]");
+  if (row) jumpToResult(row.dataset.jumpType, Number(row.dataset.jumpId));
+});
+$("#c-search").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest("[data-jump-type]");
+  if (!row) return;
+  e.preventDefault();
+  jumpToResult(row.dataset.jumpType, Number(row.dataset.jumpId));
+});
 let searchTimer = null;
 let searchSeq = 0;
 function runGlobalSearch() {

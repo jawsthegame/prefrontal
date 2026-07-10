@@ -110,6 +110,29 @@ def test_hidden_commitments_are_excluded(store):
     assert store.search("Secret")["commitments"] == []
 
 
+def test_ranking_title_beats_notes(store):
+    store.add_todo("Unrelated errand", notes="pick up the tile order")  # match in notes
+    store.add_todo("Order bathroom tile")                              # match in title
+    ranked = [t["title"] for t in store.search("tile")["todos"]]
+    assert ranked == ["Order bathroom tile", "Unrelated errand"]
+
+
+def test_ranking_prefix_beats_midword(store):
+    store.add_todo("Reptile terrarium cleanup")  # "tile" buried mid-word
+    store.add_todo("Tile the backsplash")        # title starts with the term
+    ranked = [t["title"] for t in store.search("tile")["todos"]]
+    assert ranked == ["Tile the backsplash", "Reptile terrarium cleanup"]
+
+
+def test_ranking_live_item_beats_stale(store):
+    open_id = store.add_todo("Renew passport")
+    done_id = store.add_todo("Renew passport")
+    store.close_todo(done_id, status="done")
+    ranked = [t["id"] for t in store.search("passport")["todos"]]
+    # Equal text relevance → the still-open todo sorts ahead of the done one.
+    assert ranked == [open_id, done_id]
+
+
 def test_search_is_user_scoped():
     conn = init_db(":memory:")
     try:
