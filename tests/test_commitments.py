@@ -129,6 +129,27 @@ def test_sync_converts_tzid_to_utc(store):
     assert got["start_at"] == "2027-06-28 19:00:00"  # 15:00 EDT → 19:00 UTC
 
 
+def test_sync_skips_invalid_events_without_rejecting_the_batch(store):
+    """One malformed event is skipped and reported; the good ones still sync.
+
+    Guards the whole-feed-fails regression: before, a single event missing a
+    title/start raised and rejected the entire batch, silently killing the feed.
+    """
+    events = [
+        {"title": "Real meeting", "start_at": _iso(60), "external_id": "work:a"},
+        {"title": "No start", "external_id": "work:b"},            # missing start_at
+        {"start_at": _iso(120), "external_id": "work:c"},          # missing title
+        {"title": "Another good", "start_at": _iso(180), "external_id": "work:d"},
+    ]
+    summary = sync_calendar(store, events)
+    assert summary.added == 2
+    assert summary.skipped == 2
+    assert set(summary.skipped_titles) == {"No start", "work:c"}
+    assert sorted(c["title"] for c in store.upcoming_commitments()) == [
+        "Another good", "Real meeting",
+    ]
+
+
 # -- recurrence expansion ----------------------------------------------------
 
 # A weekly Wednesday 07:30 America/New_York master, dated long before the window
@@ -1133,17 +1154,19 @@ def test_sync_new_conflict_only_fires_on_change(store):
     assert (again.conflicts, again.new_conflict) == (1, True)
 
 
-def test_sync_rejects_bad_batch_atomically(store):
-    """A bad timestamp rejects the whole batch before any write."""
-    with pytest.raises(ValueError):
-        sync_calendar(
-            store,
-            [
-                {"title": "Good", "start_at": _iso(60), "external_id": "personal:g"},
-                {"title": "Bad", "start_at": "not-a-date", "external_id": "personal:x"},
-            ],
-        )
-    assert store.upcoming_commitments() == []  # nothing partially applied
+def test_sync_skips_bad_timestamp_keeps_good(store):
+    """A bad timestamp skips just that event; the good one still syncs (not fatal)."""
+    summary = sync_calendar(
+        store,
+        [
+            {"title": "Good", "start_at": _iso(60), "external_id": "personal:g"},
+            {"title": "Bad", "start_at": "not-a-date", "external_id": "personal:x"},
+        ],
+    )
+    assert summary.added == 1
+    assert summary.skipped == 1
+    assert summary.skipped_titles == ("Bad",)
+    assert [c["title"] for c in store.upcoming_commitments()] == ["Good"]
 
 
 # -- endpoints ---------------------------------------------------------------
@@ -1183,14 +1206,18 @@ def test_calendar_sync_endpoint(client, store_open):
     assert store_open.upcoming_commitments()[0]["hardness"] == "hard"
 
 
-def test_calendar_sync_bad_timestamp_is_422(client):
-    """An unparseable timestamp returns 422."""
+def test_calendar_sync_bad_timestamp_skips_and_reports(client):
+    """An unparseable event is skipped (not fatal); the response reports the skip."""
     resp = client.post(
         "/webhooks/calendar/sync",
         json={"events": [{"title": "X", "start_at": "nope"}]},
         headers=_auth(),
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["added"] == 0
+    assert body["skipped"] == 1
+    assert body["skipped_titles"] == ["X"]
 
 
 def test_manual_commitment_and_list(client, store_open):

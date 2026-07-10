@@ -2411,10 +2411,15 @@ def _cmd_calendar(args: argparse.Namespace) -> int:
                 else None
             )
             geo = enrich_commitments(store, geocoder=geocoder)
+            skipped = (
+                f" — skipped {summary.skipped} invalid "
+                f"({', '.join(summary.skipped_titles[:5])})"
+                if summary.skipped else ""
+            )
             print(
                 f"[{handle}] calendar: +{summary.added} ~{summary.updated} "
                 f"-{summary.cancelled} cancelled, {summary.upcoming} upcoming, "
-                f"{summary.conflicts} conflict(s) (geocoded {geo['resolved']})."
+                f"{summary.conflicts} conflict(s) (geocoded {geo['resolved']}){skipped}."
             )
     return status
 

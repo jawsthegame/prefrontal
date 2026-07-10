@@ -181,6 +181,8 @@ def build_router(services: RouterServices) -> APIRouter:
             "possible_conflicts": summary.possible_conflicts,
             "new_possible_conflict": summary.new_possible_conflict,
             "geocoded": geocoded["resolved"],
+            "skipped": summary.skipped,
+            "skipped_titles": list(summary.skipped_titles),
         }
 
     @router.post("/webhooks/departure/check", tags=["schedule"])
