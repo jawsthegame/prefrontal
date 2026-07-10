@@ -500,6 +500,7 @@ CREATE TABLE IF NOT EXISTS todo_delegations (
     status       TEXT    NOT NULL DEFAULT 'forwarded', -- forwarded | in_prep | prepped | returned | failed
     brief        TEXT,               -- the prep write-up (LLM or heuristic)
     drafts       TEXT,               -- JSON array of drafted comms {channel, to, subject, body}
+    actions      TEXT,               -- JSON array of extracted action items {text, mine}
     detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
     context      TEXT,               -- optional free-text context supplied at delegation time (e.g. pasted work-AI output)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

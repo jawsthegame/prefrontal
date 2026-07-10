@@ -28,8 +28,11 @@ from prefrontal.crypto import generate_key
 from prefrontal.delegation import (
     STATUS_FAILED,
     STATUS_FORWARDED,
+    STATUS_IN_PREP,
     STATUS_PREPPED,
     STATUS_RETURNED,
+    DelegationResult,
+    _fit_num_ctx,
     compose_va_email,
     delegation_notice,
     generate_prep,
@@ -47,6 +50,13 @@ SECRET = "delegate-secret"
 def _ollama_json(payload: dict) -> OllamaClient:
     """An OllamaClient whose generate() returns ``payload`` as the model's JSON reply."""
     text = json.dumps(payload)
+    return OllamaClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"response": text})
+    ))
+
+
+def _ollama_text(text: str) -> OllamaClient:
+    """An OllamaClient whose generate() returns ``text`` verbatim (non-JSON prose)."""
     return OllamaClient(transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json={"response": text})
     ))
@@ -100,7 +110,7 @@ def secret_env(monkeypatch):
 
 def test_generate_prep_offline_is_honest_and_uses_structure(store):
     """No model → a heuristic brief that says so and leans on notes/steps, no drafts."""
-    brief, drafts = generate_prep(
+    brief, drafts, actions = generate_prep(
         "Plan Mia's birthday",
         notes="15 kids, backyard",
         decomposition={"first_step": "Pick a date", "steps": ["Book venue"]},
@@ -110,6 +120,7 @@ def test_generate_prep_offline_is_honest_and_uses_structure(store):
     assert "15 kids" in brief
     assert "Pick a date" in brief and "Book venue" in brief
     assert drafts == []
+    assert actions == []
 
 
 def test_generate_prep_with_model_returns_brief_and_drafts():
@@ -123,7 +134,7 @@ def test_generate_prep_with_model_returns_brief_and_drafts():
             ],
         }
     )
-    brief, drafts = generate_prep("Book dentist", client=client)
+    brief, drafts, _ = generate_prep("Book dentist", client=client)
     assert brief == "Confirm coverage, then book the earliest slot."
     assert len(drafts) == 1
     assert drafts[0]["channel"] == "call"
@@ -149,7 +160,7 @@ def test_generate_prep_context_reaches_the_prompt():
 
 def test_generate_prep_offline_includes_context(store):
     """The heuristic (offline) brief surfaces any supplied context, too."""
-    brief, _ = generate_prep(
+    brief, _, _ = generate_prep(
         "Reply to the vendor",
         context="PO is #4821; ships Tuesdays.",
         client=None,
@@ -163,11 +174,86 @@ def test_generate_prep_model_down_falls_back(store):
     def refuse(request):
         raise httpx.ConnectError("down")
 
-    brief, drafts = generate_prep(
+    brief, drafts, _ = generate_prep(
         "Renew passport", client=OllamaClient(transport=httpx.MockTransport(refuse))
     )
     assert "Generated offline" in brief
     assert drafts == []
+
+
+def test_generate_prep_salvages_prose_reply_instead_of_parroting():
+    """A non-JSON prose reply becomes the brief — not thrown away to echo the context.
+
+    This is the bug the user hit: a long transcript made the local model answer with
+    a plain-prose summary (not the requested JSON), and the old code discarded it and
+    fell back to dumping the whole pasted context back. Now the prose *is* the brief.
+    """
+    transcript = "Alice: we should ship Friday.\nBob: agreed.\n" * 50
+    client = _ollama_text("The team agreed to ship on Friday; Bob will handle the release.")
+    brief, drafts, actions = generate_prep(
+        "Summarize the standup", context=transcript, client=client
+    )
+    assert brief == "The team agreed to ship on Friday; Bob will handle the release."
+    assert "Generated offline" not in brief
+    assert transcript not in brief  # the context is NOT parroted back
+    assert drafts == [] and actions == []
+
+
+def test_generate_prep_offline_excerpts_long_context_not_the_whole_thing():
+    """When the model is down, the heuristic shows only a short context excerpt."""
+    big = "SECRET-MARKER " + ("blah " * 2000)  # ~10k chars
+    brief, _, _ = generate_prep("Digest the doc", context=big, client=None)
+    assert "SECRET-MARKER" in brief          # the opening is shown
+    assert len(brief) < 1500                  # but not the whole 10k blob
+    assert "more characters" in brief         # and it says it was trimmed
+
+
+def test_generate_prep_extracts_actions_with_mine_flag():
+    """A JSON reply with actions is parsed; mine-flags survive coercion."""
+    client = _ollama_json({
+        "brief": "Two owners have follow-ups.",
+        "drafts": [],
+        "actions": [
+            {"text": "Draft the roadmap doc", "mine": True},
+            {"text": "Review the CDK deploy", "mine": False},
+            {"text": "", "mine": True},  # dropped: no text
+        ],
+    })
+    _, _, actions = generate_prep("Parse notes", owner_name="Tom", client=client)
+    assert len(actions) == 2
+    assert actions[0] == {"text": "Draft the roadmap doc", "mine": True}
+    assert actions[1]["mine"] is False
+
+
+def test_generate_prep_owner_name_reaches_the_prompt():
+    """The owner's name is passed so the model can attribute action items."""
+    seen = {}
+
+    def capture(request):
+        seen["prompt"] = json.loads(request.content)["prompt"]
+        return httpx.Response(200, json={"response": json.dumps({"brief": "ok"})})
+
+    client = OllamaClient(transport=httpx.MockTransport(capture))
+    generate_prep("Parse notes", owner_name="Tom Fleischer", client=client)
+    assert "Tom Fleischer" in seen["prompt"]
+
+
+def test_generate_prep_sizes_num_ctx_for_a_big_context():
+    """A large context makes the call request a bigger context window (num_ctx)."""
+    seen = {}
+
+    def capture(request):
+        seen["options"] = json.loads(request.content).get("options")
+        return httpx.Response(200, json={"response": json.dumps({"brief": "ok"})})
+
+    client = OllamaClient(transport=httpx.MockTransport(capture))
+    generate_prep("Digest", context="x" * 40000, client=client)  # ~10k tokens
+    assert seen["options"] and seen["options"]["num_ctx"] >= 8192
+
+
+def test_fit_num_ctx_none_when_small_and_capped_when_huge():
+    assert _fit_num_ctx(1000) is None          # fits the default window
+    assert _fit_num_ctx(10_000_000) == 16384   # capped at the max
 
 
 # -- handlers + orchestration ------------------------------------------------
@@ -184,6 +270,20 @@ def test_agent_handler_prepped(store):
     assert stored["status"] == STATUS_PREPPED
     assert stored["brief"] == "Call and book."
     assert stored["prepped_at"] is not None
+
+
+def test_run_delegation_persists_action_items(store):
+    """Extracted action items round-trip through the delegation row."""
+    tid = store.add_todo("Parse the sync notes")
+    client = _ollama_json({
+        "brief": "Follow-ups captured.",
+        "actions": [{"text": "Write the doc", "mine": True}],
+    })
+    result = run_delegation(
+        store, store.get_todo(tid), handler="agent", owner_name="Tom", client=client
+    )
+    assert result.actions == [{"text": "Write the doc", "mine": True}]
+    assert store.get_delegation(tid)["actions"] == [{"text": "Write the doc", "mine": True}]
 
 
 def test_email_handler_sends_and_forwards(store):
@@ -245,8 +345,29 @@ def test_delegation_notice_by_status():
     R = delegation.DelegationResult
     draft = {"channel": "call", "to": "", "subject": "", "body": "hi"}
     assert delegation_notice("X", R("agent", STATUS_PREPPED, "b", [draft])).startswith("Prep ready")
-    assert "assistant" in delegation_notice("X", R("email", STATUS_FORWARDED, "b", [], "emailed"))
+    assert "assistant" in delegation_notice(
+        "X", R("email", STATUS_FORWARDED, "b", [], detail="emailed")
+    )
     assert delegation_notice("X", R("agent", STATUS_RETURNED, "b")) is None
+
+
+def test_delegation_notice_counts_your_action_items():
+    """The prep-ready push mentions how many action items are the user's."""
+    R = delegation.DelegationResult
+    result = R("agent", STATUS_PREPPED, "b", [], actions=[
+        {"text": "a", "mine": True}, {"text": "b", "mine": True}, {"text": "c", "mine": False},
+    ])
+    assert "2 action items for you" in delegation_notice("Sync", result)
+
+
+def test_compose_va_email_lists_action_items():
+    """Extracted action items appear as a section in the VA email."""
+    _, body = compose_va_email(
+        "Parse notes", "Prep.", [],
+        actions=[{"text": "Send the recap", "mine": True}],
+    )
+    assert "Action items:" in body
+    assert "Send the recap" in body
 
 
 def test_compose_va_email_leads_with_note():
@@ -364,6 +485,61 @@ def test_http_delegate_agent(http):
     # GET /todos now carries the delegation
     listed = http.get("/todos", headers=_headers()).json()["todos"]
     assert listed[0]["delegation"]["status"] == STATUS_PREPPED
+
+
+def test_http_delegate_returns_and_persists_actions(secret_env):
+    """The HTTP surface returns extracted actions and stores them on the row."""
+    from prefrontal.webhooks.app import create_app
+
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "me", display_name="Me", token=SECRET, is_operator=True)
+    ollama = _ollama_json({
+        "brief": "Two follow-ups.",
+        "actions": [{"text": "Draft the doc", "mine": True},
+                    {"text": "Someone else's task", "mine": False}],
+    })
+    app = create_app(store=unscoped, settings=Settings(), ollama=ollama)
+    with TestClient(app) as c:
+        tid = c.post("/todos", json={"title": "Parse notes"}, headers=_headers()).json()["todo_id"]
+        body = c.post(
+            f"/todos/{tid}/delegate",
+            json={"handler": "agent", "context": "a transcript"}, headers=_headers(),
+        ).json()
+        assert body["status"] == STATUS_PREPPED
+        assert {"text": "Draft the doc", "mine": True} in body["actions"]
+        stored = c.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+        assert len(stored["actions"]) == 2
+        assert stored["actions"][0]["mine"] is True
+    conn.close()
+
+
+def test_http_delegate_runs_async_and_completes(secret_env, tmp_path):
+    """With an owned (threaded) store, prep runs in the background: the POST returns
+    ``in_prep`` immediately and the row reaches ``prepped`` once the thread finishes."""
+    import time
+
+    from prefrontal.webhooks.app import create_app
+
+    settings = Settings(db_path=str(tmp_path / "async.db"))
+    ollama = _ollama_json({"brief": "Done in the background.", "drafts": []})
+    app = create_app(settings=settings, ollama=ollama)  # store=None → threaded → async
+    with TestClient(app) as c:
+        provision_user(app.state.store, "me", display_name="Me", token=SECRET, is_operator=True)
+        tid = c.post("/todos", json={"title": "Book dentist"}, headers=_headers()).json()["todo_id"]
+        immediate = c.post(f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers()).json()
+        assert immediate["status"] == STATUS_IN_PREP  # returns before prep finishes
+        # The daemon thread completes near-instantly with the mock client; poll briefly.
+        deadline = time.monotonic() + 5.0
+        status_seen = None
+        while time.monotonic() < deadline:
+            deleg = c.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+            status_seen = deleg["status"]
+            if status_seen == STATUS_PREPPED:
+                break
+            time.sleep(0.05)
+        assert status_seen == STATUS_PREPPED
+        assert deleg["brief"] == "Done in the background."
 
 
 def test_http_delegate_agent_persists_context(http):

@@ -358,6 +358,24 @@
     letter-spacing: .4px; margin-bottom: 3px; }
   .deleg-panel .draft .db { white-space: pre-wrap; }
   .deleg-panel .deleg-actions { margin-top: 8px; }
+  /* Extracted action items: a list, with "add as todo" on the ones that are yours. */
+  .deleg-panel .actions-list { margin-top: 10px; }
+  .deleg-panel .actions-list .dh { font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+  .deleg-action { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0;
+    border-top: 1px solid var(--line); }
+  .deleg-action .atext { flex: 1; }
+  .deleg-action.mine .atext { font-weight: 600; }
+  .deleg-action.other .atext { color: var(--muted); }
+  .deleg-action .btn-sm { flex: 0 0 auto; white-space: nowrap; }
+  .deleg-action .added { flex: 0 0 auto; color: var(--good); font-size: 12px; white-space: nowrap; }
+  /* The pasted context, tucked behind a show-more so it never floods the card. */
+  .deleg-context-view { margin-top: 10px; }
+  .deleg-context-view > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .deleg-context-view .ctx-text { white-space: pre-wrap; margin-top: 6px; max-height: 340px;
+    overflow: auto; font-size: 12px; color: var(--muted);
+    border-left: 2px solid var(--line); padding-left: 8px; }
+  .deleg-prepping .brief-text { color: var(--muted); font-style: italic; }
   /* Delegate popover (reuses the .cat-menu shell): AI vs. email hand-off. */
   .cat-menu .deleg-mail { display: flex; gap: 6px; margin-top: 6px; }
   .cat-menu .deleg-mail input { flex: 1; }
@@ -1335,24 +1353,66 @@ function delegationPill(g) {
   const [label, cls] = DELEG_LABEL[g.status] || [g.status, ""];
   return ` <span class="pill deleg ${cls}" title="${esc(g.detail || "")}">${label}</span>`;
 }
+// The pasted context, behind a show-more so a long transcript never floods the
+// card — this is the "at least give me a show-more" fix.
+function contextBlock(g) {
+  if (!g.context) return "";
+  const len = g.context.length;
+  const size = len > 1200 ? ` (${(len / 1000).toFixed(1)}k chars)` : "";
+  return `<details class="deleg-context-view"><summary>Context you gave the assistant${size}</summary>`
+    + `<div class="ctx-text">${esc(g.context)}</div></details>`;
+}
+
+// One extracted action item. The user's own items get a one-click "add as todo"
+// (which links the new todo back to this hand-off); others are shown for context.
+function actionRow(a, parentTitle) {
+  const cls = a.mine ? "mine" : "other";
+  const btn = a.mine
+    ? `<button class="btn-sm" data-action="deleg-add-todo" data-atext="${esc(a.text)}" data-asrc="${esc(parentTitle)}">＋ Add as todo</button>`
+    : "";
+  return `<div class="deleg-action ${cls}"><span class="atext">${esc(a.text)}</span>${btn}</div>`;
+}
+
 function delegationPanel(x) {
   const g = x.delegation;
   if (!g) return "";
+  // Still working (async prep of a long transcript): say so, and let them peek at
+  // what they pasted while they wait.
+  if (g.status === "in_prep") {
+    return `<div class="deleg-panel deleg-prepping">
+      <div class="brief-text">🤖 Reading your context and prepping… you'll get a heads-up when it's ready.</div>
+      ${contextBlock(g)}
+    </div>`;
+  }
   const drafts = g.drafts || [];
+  const actions = g.actions || [];
   const draftHtml = drafts.map((dr) =>
     `<div class="draft"><div class="dh">${esc(dr.channel)}${dr.to ? " → " + esc(dr.to) : ""}${dr.subject ? " · " + esc(dr.subject) : ""}</div>`
     + `<div class="db">${esc(dr.body)}</div></div>`).join("");
+  // Your action items first (the ones you can turn into todos), then everyone else's.
+  const mine = actions.filter((a) => a.mine);
+  const others = actions.filter((a) => !a.mine);
+  const actionHtml = actions.length
+    ? `<div class="actions-list"><div class="dh">Action items</div>`
+      + mine.map((a) => actionRow(a, x.title)).join("")
+      + others.map((a) => actionRow(a, x.title)).join("")
+      + `</div>`
+    : "";
   // A returned/failed hand-off is closed out; prepped/sent can be marked returned.
   const canReturn = g.status === "prepped" || g.status === "forwarded";
   const ret = canReturn
     ? `<div class="deleg-actions"><button class="btn-sm" data-action="delegate-return" data-id="${x.id}">Mark returned</button></div>`
     : "";
-  const n = drafts.length;
-  const dcount = n ? ` · ${n} draft${n > 1 ? "s" : ""}` : "";
+  const bits = [];
+  if (drafts.length) bits.push(`${drafts.length} draft${drafts.length > 1 ? "s" : ""}`);
+  if (mine.length) bits.push(`${mine.length} action${mine.length > 1 ? "s" : ""} for you`);
+  const counts = bits.length ? ` · ${bits.join(" · ")}` : "";
   return `<details class="deleg-panel"${g.status === "prepped" ? " open" : ""}>
-    <summary>Assistant prep${dcount}</summary>
+    <summary>Assistant prep${counts}</summary>
     ${g.brief ? `<div class="brief-text">${esc(g.brief)}</div>` : ""}
+    ${actionHtml}
     ${draftHtml}
+    ${contextBlock(g)}
     ${ret}
   </details>`;
 }
@@ -2731,6 +2791,19 @@ document.addEventListener("click", async (e) => {
       return;
     }
     else if (act === "delegate-return") { await post(`/todos/${id}/delegate/return`, {}); }
+    else if (act === "deleg-add-todo") {
+      // Turn an extracted action item into a real todo, linked back to the meeting
+      // it came from. Mark the button done rather than reloading, so the panel stays
+      // open and you can add several; the new todos appear on the next refresh.
+      const title = el.dataset.atext;
+      const src = el.dataset.asrc;
+      await post("/todos", { title, notes: src ? `From assistant prep of: ${src}` : undefined });
+      const done = document.createElement("span");
+      done.className = "added";
+      done.textContent = "✓ added";
+      el.replaceWith(done);
+      return;
+    }
     else if (act === "clarify-answer") {
       const res = await post(`/clarifications/${id}/resolve`, { option_index: Number(el.dataset.index) });
       if (res && res.playbook) openGuide(res.playbook);  // a recognized task → walk it through

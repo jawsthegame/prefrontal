@@ -13,10 +13,13 @@ from typing import (
     Literal,
 )
 
+import threading
+
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     status,
 )
 
@@ -27,10 +30,13 @@ from prefrontal.commitments import (
 )
 from prefrontal.delegation import (
     HANDLER_EMAIL,
+    STATUS_FAILED,
+    STATUS_IN_PREP,
     STATUS_RETURNED,
     delegation_notice,
     run_delegation,
 )
+from prefrontal.log import get_logger
 from prefrontal.impact import (
     utcnow,
 )
@@ -115,6 +121,9 @@ def _validated_window(spec: str | None) -> str | None:
             detail=f'Bad time_window: {spec!r} — expected "HH:MM-HH:MM".',
         )
     return format_window(*parsed)
+
+
+logger = get_logger(__name__)
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -734,21 +743,66 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
 
+    def _run_prep_and_notify(store, todo, *, handler, destination, context, va_note,
+                             owner_name, smtp, handle):
+        """Run the (possibly slow) prep, persist it, and push the heads-up.
+
+        Shared by the inline and background paths. ``store`` must be usable on the
+        calling thread — the request's scoped store inline, a fresh thread-scoped
+        store in the background.
+        """
+        result = run_delegation(
+            store,
+            todo,
+            handler=handler,
+            destination=destination,
+            context=context,
+            va_note=va_note,
+            owner_name=owner_name,
+            client=summarizer_client,
+            smtp=smtp,
+        )
+        # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
+        # import keeps the delivery module (and its coaching cycle) off the hot path,
+        # matching how the household surfaces reach it.
+        message = delegation_notice(todo["title"], result)
+        if message:
+            from prefrontal.integrations.delivery import (
+                deliver_to_member,
+                household_notice,
+            )
+
+            deliver_to_member(
+                store,
+                household_notice(message),
+                handle=handle,
+                settings=resolved_settings,
+            )
+        return result
+
     @router.post("/todos/{todo_id}/delegate", tags=["todos"])
     def todo_delegate(
         todo_id: int,
         payload: DelegateTodo,
+        request: Request,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
         """Hand an open todo to an assistant to do the prep / follow-up.
 
         ``handler='agent'`` runs the in-app AI assistant: the local model writes a
-        research brief and any draft communications straight back onto the todo
-        (status → ``prepped``), so you get it back ready to act on. ``handler='email'``
-        mails that same brief to a human VA at ``destination`` over your SMTP source
-        (status → ``forwarded``); if SMTP isn't configured or the send fails, the
-        brief is still stored and the status is ``failed`` with the reason — nothing
-        is lost. Either way you're pushed a heads-up when it lands.
+        research brief, any draft communications, and the meeting's action items
+        (flagging the ones assigned to you) straight back onto the todo, so you get
+        it back ready to act on. ``handler='email'`` mails that same brief to a human
+        VA at ``destination`` over your SMTP source; if SMTP isn't configured or the
+        send fails, the brief is still stored and the status is ``failed`` with the
+        reason — nothing is lost.
+
+        Prep can be slow when you paste a long transcript (the model reads the whole
+        thing), so it runs on a **background thread**: this returns immediately with
+        status ``in_prep`` and you're pushed a heads-up when it lands (``prepped`` /
+        ``forwarded`` / ``failed``). Poll ``GET /todos`` to pick up the result. (When
+        the app runs against an injected single-connection store — tests — prep runs
+        inline and this returns the finished result directly.)
 
         404 if the todo isn't open; 422 if ``handler='email'`` without a
         ``destination``. Declared before the ``{action}`` route so "delegate" isn't
@@ -768,46 +822,68 @@ def build_router(services: RouterServices) -> APIRouter:
                 detail="handler='email' needs a 'destination' (the assistant's email).",
             )
         # Auto-pick the outbox: the todo's own mail account (a work-mailbox todo →
-        # the "work" SMTP), else its domain, else the default source.
+        # the "work" SMTP), else its domain, else the default source. Resolved here
+        # on the request thread (touches the encrypted store) and passed as a plain
+        # dataclass into the background prep.
         smtp = None
         if payload.handler == HANDLER_EMAIL:
             src = memory.mail_sources_for_todos([todo_id]).get(todo_id) or {}
             smtp = resolve_smtp_for(
                 memory, account=src.get("account"), domain=todo.get("domain")
             )
-        result = run_delegation(
-            memory,
-            todo,
-            handler=payload.handler,
-            destination=destination,
-            context=(payload.context or "").strip() or None,
-            va_note=(payload.note or "").strip() or None,
-            client=summarizer_client,
-            smtp=smtp,
-        )
-        # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
-        # import keeps the delivery module (and its coaching cycle) off the hot path,
-        # matching how the household surfaces reach it.
-        message = delegation_notice(todo["title"], result)
-        if message:
-            from prefrontal.integrations.delivery import (
-                deliver_to_member,
-                household_notice,
-            )
+        context = (payload.context or "").strip() or None
+        va_note = (payload.note or "").strip() or None
+        owner_name = ctx.user.get("display_name") or ctx.user.get("handle")
+        handle = ctx.user["handle"]
 
-            deliver_to_member(
-                memory,
-                household_notice(message),
-                handle=ctx.user["handle"],
-                settings=resolved_settings,
-            )
+        kwargs = dict(
+            handler=payload.handler, destination=destination, context=context,
+            va_note=va_note, owner_name=owner_name, smtp=smtp, handle=handle,
+        )
+
+        if not getattr(request.app.state, "delegation_async", False):
+            # Inline (tests / injected single-connection store): finish now and
+            # return the completed result.
+            result = _run_prep_and_notify(memory, todo, **kwargs)
+            return {
+                "todo_id": todo_id,
+                "handler": result.handler,
+                "status": result.status,
+                "brief": result.brief,
+                "drafts": result.drafts,
+                "actions": result.actions,
+                "detail": result.detail,
+            }
+
+        # Background: stamp an `in_prep` row now (keeping the pasted context so the
+        # UI can already show it), then run the slow prep off the request thread.
+        memory.set_delegation(
+            todo_id, handler=payload.handler, destination=destination,
+            status=STATUS_IN_PREP, context=context, detail="prepping…", prepped=False,
+        )
+        uid = ctx.user["id"]
+        root_store = request.app.state.store
+
+        def _bg() -> None:
+            scoped = root_store.scoped(uid)  # own connection on this thread
+            try:
+                _run_prep_and_notify(scoped, todo, **kwargs)
+            except Exception:  # never let a prep thread die silently
+                logger.exception("delegation prep failed for todo %s", todo_id)
+                scoped.update_delegation_status(
+                    todo_id, STATUS_FAILED,
+                    detail="prep failed unexpectedly — see server logs",
+                )
+
+        threading.Thread(target=_bg, name=f"delegate-{todo_id}", daemon=True).start()
         return {
             "todo_id": todo_id,
-            "handler": result.handler,
-            "status": result.status,
-            "brief": result.brief,
-            "drafts": result.drafts,
-            "detail": result.detail,
+            "handler": payload.handler,
+            "status": STATUS_IN_PREP,
+            "brief": None,
+            "drafts": [],
+            "actions": [],
+            "detail": "prepping… you'll get a heads-up when it's ready",
         }
 
     @router.post("/todos/{todo_id}/delegate/return", tags=["todos"])

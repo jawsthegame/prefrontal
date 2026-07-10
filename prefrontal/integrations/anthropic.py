@@ -79,12 +79,24 @@ class AnthropicClient:
             return False
         return True
 
-    def generate(self, prompt: str, *, system: str | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        num_ctx: int | None = None,
+        timeout: float | None = None,
+    ) -> str:
         """Generate a single completion, returning the concatenated text blocks.
 
         Args:
             prompt: The user prompt.
             system: Optional system prompt.
+            num_ctx: Ignored — an Ollama-specific context-window hint, accepted only
+                to satisfy the shared :class:`~prefrontal.integrations.Generator`
+                protocol (hosted models size their own context).
+            timeout: Ignored here for the same reason (transport timeout is fixed
+                at construction).
 
         Returns:
             The model's response text (stripped). A safety refusal yields an
