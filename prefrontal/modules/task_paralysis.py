@@ -208,7 +208,7 @@ class TaskParalysisModule(Module):
         (:func:`~prefrontal.coaching.note_hint`), so the context they left rides
         along. Quiet hours + debounce are applied downstream by the coaching engine.
         """
-        open_todos = store.open_todos()
+        open_todos = store.open_todos(exclude_delegated=True)
         conflict = focus_conflict(open_todos, ctx.now)
         if conflict is not None:
             working = conflict["working_on"]

@@ -295,7 +295,7 @@ def build_recovery(
     # Local day + local available-hours band (see build_briefing): a UTC-anchored
     # band would re-fit todos into the wrong hours for a non-UTC user.
     day_start, day_end = local_day_bounds(now, tz)
-    todos = store.open_todos()
+    todos = store.open_todos(exclude_delegated=True)
 
     # 1. Re-fit the rest of the day (now → the day's available-hours end).
     refit: list[dict[str, Any]] = []

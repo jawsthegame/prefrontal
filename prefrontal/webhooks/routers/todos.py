@@ -280,7 +280,7 @@ def build_router(services: RouterServices) -> APIRouter:
         over age/priority/size/deadline — no extra tracking.
         """
         memory = ctx.store
-        items = avoided_todos(memory.open_todos(), utcnow())
+        items = avoided_todos(memory.open_todos(exclude_delegated=True), utcnow())
         return {
             "avoided": [
                 {
@@ -993,7 +993,7 @@ def build_router(services: RouterServices) -> APIRouter:
         now_local = local_datetime(utcnow(), resolved_settings.timezone)
         fits = fit_todos(
             minutes,
-            memory.open_todos(),
+            memory.open_todos(exclude_delegated=True),
             bias_fn=task_bias_resolver(memory, local_hour=now_local.hour),
         )
         return {
@@ -1064,7 +1064,9 @@ def build_router(services: RouterServices) -> APIRouter:
 
         # Only todos whose window includes now (off-zone already excluded above).
         now_local = local_datetime(now, resolved_settings.timezone)
-        open_todos = filter_suggestible(memory.open_todos(), now_local, window_config)
+        open_todos = filter_suggestible(
+            memory.open_todos(exclude_delegated=True), now_local, window_config
+        )
         # Context-conditioned (§5): calibrate each todo with *this hour's* band and
         # its own energy/category, falling back through to the global bias.
         fits = fit_todos(

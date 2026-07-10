@@ -248,7 +248,7 @@ def _todo_pressures(
     Returns the pressures and a ``{todo_id: account}`` map (todos that came from
     mail) so the caller can label each with its originating inbox.
     """
-    todos = store.open_todos()
+    todos = store.open_todos(exclude_delegated=True)
     ids = [t["id"] for t in todos if t.get("id") is not None]
     accounts = store.mail_accounts_for_todos(ids)
 

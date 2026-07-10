@@ -79,18 +79,55 @@ class TodosRepo(Repo):
         ).fetchone()
         return _row_to_dict(row)
 
-    def open_todos(self) -> list[dict[str, Any]]:
+    def open_todos(self, *, exclude_delegated: bool = False) -> list[dict[str, Any]]:
         """Return open todos, highest priority then soonest deadline first.
+
+        With ``exclude_delegated=True``, todos that are actively delegated (a
+        ``todo_delegations`` row in ``forwarded``/``in_prep``/``prepped`` — see
+        :data:`prefrontal.delegation.PARKED_STATUSES`) are omitted. That's the choke
+        point the *suggestion/nudge* surfaces use so a hand-off drops off your active
+        plate; the plain list keeps them (shown as "taken care of"). Statuses are
+        inlined here to avoid importing the delegation layer into the repo.
 
         Returns:
             A list of todo dicts with ``status = 'open'``.
         """
+        if exclude_delegated:
+            rows = self.conn.execute(
+                "SELECT t.* FROM todos t WHERE t.user_id = ? AND t.status = 'open' "
+                "AND NOT EXISTS (SELECT 1 FROM todo_delegations d WHERE d.todo_id = t.id "
+                "AND d.status IN ('forwarded', 'in_prep', 'prepped')) "
+                "ORDER BY t.priority DESC, (t.deadline IS NULL), t.deadline ASC, t.id ASC",
+                (self._uid(),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM todos WHERE user_id = ? AND status = 'open' "
+                "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC",
+                (self._uid(),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def actively_delegated_todos(self) -> list[dict[str, Any]]:
+        """Open todos that are currently parked with an assistant, delegation attached.
+
+        Each dict is the todo with a ``delegation`` key (the decoded row). Powers the
+        slower delegation *check-in* re-surfacing (the counterpart to
+        ``open_todos(exclude_delegated=True)`` hiding them from the active grind).
+        """
         rows = self.conn.execute(
-            "SELECT * FROM todos WHERE user_id = ? AND status = 'open' "
-            "ORDER BY priority DESC, (deadline IS NULL), deadline ASC, id ASC",
+            "SELECT t.* FROM todos t JOIN todo_delegations d ON d.todo_id = t.id "
+            "WHERE t.user_id = ? AND t.status = 'open' "
+            "AND d.status IN ('forwarded', 'in_prep', 'prepped') "
+            "ORDER BY t.priority DESC, t.id ASC",
             (self._uid(),),
         ).fetchall()
-        return [dict(r) for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            todo = dict(r)
+            todo["delegation"] = self.get_delegation(todo["id"])
+            out.append(todo)
+        return out
 
     def _update_todo_field(
         self, todo_id: int, column: str, value: Any, *, open_only: bool = True

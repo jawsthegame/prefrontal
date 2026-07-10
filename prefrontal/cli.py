@@ -2234,7 +2234,8 @@ def _cmd_fit(args: argparse.Namespace) -> int:
         # category, then the task-type bias, else global (§5).
         now_hour = local_datetime(utcnow(), settings.timezone).hour
         fits = fit_todos(
-            args.minutes, store.open_todos(), bias_fn=task_bias_resolver(store, local_hour=now_hour)
+            args.minutes, store.open_todos(exclude_delegated=True),
+            bias_fn=task_bias_resolver(store, local_hour=now_hour),
         )
     print(f"With {args.minutes:g} minutes free, you could knock out:")
     if not fits:
