@@ -26,6 +26,7 @@ and import it here so it loads.
 
 # Import built-in modules for their registration side effects.
 from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after registry)
+    delegation_checkin,
     hyperfocus,
     impulsivity,
     location_anchor,

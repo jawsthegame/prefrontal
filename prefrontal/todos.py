@@ -687,7 +687,7 @@ def sweep_avoided_decompositions(
         return 0  # off by default — opt in via Settings; manual "Break it down" still works
     if auto_decompose_suppressed(store):
         return 0
-    avoided = avoided_todos(store.open_todos(), now)
+    avoided = avoided_todos(store.open_todos(exclude_delegated=True), now)
     if not avoided:
         return 0
     max_first = store.get_float("max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES)

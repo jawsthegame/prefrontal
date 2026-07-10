@@ -376,6 +376,11 @@
     overflow: auto; font-size: 12px; color: var(--muted);
     border-left: 2px solid var(--line); padding-left: 8px; }
   .deleg-prepping .brief-text { color: var(--muted); font-style: italic; }
+  /* A todo actively with an assistant reads as "taken care of": dimmed title/meta,
+     but its delegation pill + panel stay full-strength so status is still legible. */
+  .row.deleg-parked .main > div:first-child .title,
+  .row.deleg-parked .sub { opacity: 0.6; }
+  .row.deleg-parked { background: color-mix(in srgb, var(--raise) 55%, transparent); }
   /* Delegate popover (reuses the .cat-menu shell): AI vs. email hand-off. */
   .cat-menu .deleg-mail { display: flex; gap: 6px; margin-top: 6px; }
   .cat-menu .deleg-mail input { flex: 1; }
@@ -1535,8 +1540,11 @@ function renderTodos(d) {
       ? `<button class="btn-sm btn-started" data-action="todo-unstart" data-id="${x.id}" title="Started — click to undo">▶ Started</button>`
       : `<button class="btn-sm" data-action="todo-start" data-id="${x.id}" title="I've started this">Start</button>`;
     const deleg = x.delegation;
+    // A todo actively with an assistant is "taken care of" — dim it so it reads as
+    // off your plate (it's already suppressed from the active suggestion surfaces).
+    const parked = deleg && ["forwarded", "in_prep", "prepped"].includes(deleg.status);
     const delegBtn = `<button class="btn-sm" data-action="delegate" data-id="${x.id}" title="Hand this off to an assistant to prep">${deleg ? "Assistant ▾" : "Delegate"}</button>`;
-    return `<div class="row${started ? " started" : ""}">
+    return `<div class="row${started ? " started" : ""}${parked ? " deleg-parked" : ""}">
       <div class="main">
         <div><span class="title">${esc(x.title)}</span>${src} <span class="pill pri-${x.priority}">${names[x.priority] || x.priority}</span>${catPill(x.id, x.category)}${domPill(x.id, x.domain)}${acctPill(x.account)}${startedBadge}${x.avoidance ? ` <span class="badge avoiding">avoiding ${Math.round(x.avoidance.days_open)}d</span>` : ""}${deleg ? delegationPill(deleg) : ""}</div>
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>

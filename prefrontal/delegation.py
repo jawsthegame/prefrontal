@@ -30,8 +30,10 @@ assistant's ``ALLOWED_OPS``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.integrations.smtp import SmtpClient
@@ -54,6 +56,78 @@ STATUS_IN_PREP = "in_prep"
 STATUS_PREPPED = "prepped"
 STATUS_RETURNED = "returned"
 STATUS_FAILED = "failed"
+
+#: Statuses that mean the todo is actively "off your plate" — with a human VA
+#: (``forwarded``), the agent still working (``in_prep``), or an agent brief
+#: waiting for you (``prepped``). A todo in one of these is *parked*: pulled out of
+#: the active do-it-now surfaces (avoidance, one-thing-now, panic, briefing) and
+#: re-surfaced only by the slower :func:`checkin_interval_hours` cadence. A
+#: ``returned`` or ``failed`` delegation is NOT parked — the work is back with you.
+PARKED_STATUSES = frozenset({STATUS_FORWARDED, STATUS_IN_PREP, STATUS_PREPPED})
+
+
+def checkin_interval_hours(
+    todo: dict[str, Any], delegation: dict[str, Any], now: datetime
+) -> float:
+    """How long to wait before re-surfacing a parked delegation as a check-in.
+
+    Item-dependent (the whole point of delegation is to get it off your plate, so
+    it should only resurface on a *slower* cadence that reflects how time-sensitive
+    it is):
+
+    - ``prepped`` (an agent brief is sitting ready for you) → soon (12h).
+    - ``forwarded`` (with a human VA): near a deadline → daily; high priority →
+      ~2 days; otherwise with a deadline → ~3 days; no deadline / low priority →
+      ~weekly.
+    - ``in_prep`` (still being prepped) → only a long safety fallback.
+    """
+    status = (delegation or {}).get("status")
+    if status == STATUS_PREPPED:
+        return 12.0
+    if status == STATUS_IN_PREP:
+        return 24.0 * 7  # transient; a long fallback only
+    # forwarded — scale by urgency.
+    from prefrontal.todos import _parse_deadline  # lazy: todos imports the reverse way
+
+    deadline = _parse_deadline(todo.get("deadline"))
+    if deadline is not None and (deadline - now).total_seconds() / 86400.0 <= 2:
+        return 24.0
+    priority = todo.get("priority")
+    priority = 1 if priority is None else int(priority)
+    if priority >= 2:
+        return 48.0
+    if deadline is not None:
+        return 72.0
+    return 24.0 * 7
+
+
+def checkin_message(
+    todo: dict[str, Any], delegation: dict[str, Any], now: datetime
+) -> str | None:
+    """The gentle "still handled?" check-in text for a parked delegation, or ``None``.
+
+    ``forwarded`` → "heard back from your assistant?"; ``prepped`` → "your prep is
+    ready to review"; ``in_prep`` → nothing (it's mid-flight, not worth a nudge).
+    """
+    status = (delegation or {}).get("status")
+    title = todo.get("title", "this")
+    if status == STATUS_PREPPED:
+        actions = [a for a in (delegation.get("actions") or []) if a.get("mine")]
+        extra = f" ({len(actions)} action item{'s' if len(actions) != 1 else ''} for you)" if actions else ""
+        return f'Your assistant prep for “{title}” is ready to review{extra}.'
+    if status == STATUS_FORWARDED:
+        stamp = _parse_ts(delegation.get("prepped_at") or delegation.get("updated_at"))
+        ago = ""
+        if stamp is not None:
+            days = int((now - stamp).total_seconds() // 86400)
+            ago = f" {days}d ago" if days >= 1 else " today"
+        dest = delegation.get("destination")
+        who = f" to {dest}" if dest else ""
+        return (
+            f'You handed “{title}” off{who}{ago}. Heard back? Mark it returned once '
+            f"it's done, or nudge them."
+        )
+    return None
 
 #: Draft channels a prep brief can produce.
 _DRAFT_CHANNELS = ("email", "message", "call")

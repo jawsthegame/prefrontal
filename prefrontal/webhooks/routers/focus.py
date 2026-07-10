@@ -70,7 +70,7 @@ from prefrontal.webhooks.services import RouterServices
 
 def _top_todo_guess(memory: Any, now: datetime):
     """Infer a focus task from open todos (most-avoided first). See infer_focus_start."""
-    open_todos = memory.open_todos()
+    open_todos = memory.open_todos(exclude_delegated=True)
     avoided = [a["todo"] for a in avoided_todos(open_todos, now)]
     seen = {t["id"] for t in avoided}
     return infer_focus_start(avoided + [t for t in open_todos if t["id"] not in seen])

@@ -310,6 +310,74 @@ def test_http_delegate_recipients_endpoint(http):
     assert r.json()["recipients"] == ["va@x.com"]
 
 
+# -- parking: delegated todos drop off the active plate + slow check-in ---------
+
+from datetime import datetime
+
+from prefrontal.coaching import CoachContext, _fired_key
+from prefrontal.delegation import checkin_interval_hours, checkin_message
+
+_NOW = datetime(2026, 7, 10, 12, 0, 0)
+
+
+def test_checkin_interval_scales_with_status_and_urgency():
+    fwd = {"status": "forwarded"}
+    assert checkin_interval_hours({}, {"status": "prepped"}, _NOW) == 12.0
+    assert checkin_interval_hours({}, {"status": "in_prep"}, _NOW) == 168.0
+    assert checkin_interval_hours({"deadline": "2026-07-11"}, fwd, _NOW) == 24.0  # near deadline
+    assert checkin_interval_hours({"priority": 2}, fwd, _NOW) == 48.0             # high priority
+    assert checkin_interval_hours({"priority": 1, "deadline": "2026-12-01"}, fwd, _NOW) == 72.0
+    assert checkin_interval_hours({"priority": 1}, fwd, _NOW) == 168.0            # no deadline / low
+
+
+def test_checkin_message_variants():
+    fwd = {"status": "forwarded", "destination": "va@x.com", "prepped_at": "2026-07-07 10:00:00"}
+    m = checkin_message({"title": "Taxes"}, fwd, _NOW)
+    assert "Taxes" in m and "va@x.com" in m and "Heard back" in m
+    prepped = {"status": "prepped", "actions": [{"text": "a", "mine": True}]}
+    m2 = checkin_message({"title": "Roadmap"}, prepped, _NOW)
+    assert "ready to review" in m2 and "1 action item" in m2
+    assert checkin_message({"title": "x"}, {"status": "in_prep"}, _NOW) is None
+
+
+def test_open_todos_excludes_actively_delegated_but_list_keeps_them(store):
+    a = store.add_todo("normal")
+    b = store.add_todo("with a VA")
+    c = store.add_todo("came back")
+    store.set_delegation(b, handler="email", destination="v@x.com", status="forwarded")
+    store.set_delegation(c, handler="agent", status="returned")  # not parked — back with you
+    assert {t["id"] for t in store.open_todos()} == {a, b, c}          # list keeps all
+    assert {t["id"] for t in store.open_todos(exclude_delegated=True)} == {a, c}  # b parked out
+    parked = store.actively_delegated_todos()
+    assert {t["id"] for t in parked} == {b}
+    assert parked[0]["delegation"]["status"] == "forwarded"
+
+
+def test_delegation_checkin_module_emits_then_self_gates(store):
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+
+    tid = store.add_todo("Taxes")
+    store.set_delegation(tid, handler="email", destination="va@x.com",
+                         status="forwarded", prepped=True)
+    mod = DelegationCheckinModule()
+    ctx = CoachContext(now=_NOW)
+    cues = mod.evaluate(store, ctx)
+    assert len(cues) == 1
+    assert "va@x.com" in cues[0].text
+    assert cues[0].dedup_key == f"delegation_checkin:{tid}"
+    # Simulate it having just fired → within the interval → self-gated silent.
+    store.set_state(_fired_key(cues[0].dedup_key), _NOW.strftime("%Y-%m-%d %H:%M:%S"))
+    assert mod.evaluate(store, ctx) == []
+
+
+def test_delegation_checkin_module_silent_for_in_prep(store):
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+
+    tid = store.add_todo("still cooking")
+    store.set_delegation(tid, handler="agent", status="in_prep")
+    assert DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW)) == []
+
+
 def test_email_handler_sends_and_forwards(store):
     tid = store.add_todo("Book dentist")
     todo = store.get_todo(tid)
