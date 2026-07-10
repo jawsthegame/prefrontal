@@ -93,6 +93,37 @@ def test_user_resolution_is_case_insensitive(tmp_path, capsys):
         main(["learn", "--db-path", str(db), "--user", "nobody"])
 
 
+def test_user_email_set_clear_and_add(tmp_path, capsys):
+    """`user add --email` and `user email` manage the Google sign-in address."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+
+    # Provision with an email up front (normalized to lowercase).
+    assert main([
+        "user", "--db-path", str(db), "add", "jamie", "--email", "Jamie@Gmail.com",
+    ]) == 0
+    with MemoryStore.open(str(db)) as store:
+        assert store.get_user("jamie")["email"] == "jamie@gmail.com"
+        assert store.get_user_by_email("jamie@gmail.com")["handle"] == "jamie"
+
+    # `user list` shows the email.
+    capsys.readouterr()
+    assert main(["user", "--db-path", str(db), "list"]) == 0
+    assert "jamie@gmail.com" in capsys.readouterr().out
+
+    # Change then clear it (omitting the arg clears).
+    assert main(["user", "--db-path", str(db), "email", "jamie", "new@x.com"]) == 0
+    with MemoryStore.open(str(db)) as store:
+        assert store.get_user("jamie")["email"] == "new@x.com"
+    assert main(["user", "--db-path", str(db), "email", "jamie"]) == 0
+    with MemoryStore.open(str(db)) as store:
+        assert store.get_user("jamie")["email"] is None
+
+    # A duplicate email is refused (non-zero exit).
+    assert main(["user", "--db-path", str(db), "add", "sam", "--email", "sam@x.com"]) == 0
+    assert main(["user", "--db-path", str(db), "email", "jamie", "sam@x.com"]) == 1
+
+
 def test_user_route_sets_and_clears_per_user_ntfy_topic(tmp_path, capsys):
     """`user route` writes a user's own ntfy topic to their coaching-state, so a
     co-parent's nudges reach *their* phone rather than falling back to the

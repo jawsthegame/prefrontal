@@ -25,6 +25,7 @@ class UsersRepo(Repo):
         display_name: str | None = None,
         token: str | None = None,
         is_operator: bool = False,
+        email: str | None = None,
     ) -> tuple[dict[str, Any], str]:
         """Create a user, returning ``(user_row, raw_token)``.
 
@@ -33,14 +34,23 @@ class UsersRepo(Repo):
         an operator-only method and runs on the unscoped store — it does not
         seed coaching state (see :func:`provision_user`, which wraps it).
 
+        ``email`` (optional) is the verified Google address that signs in as this
+        user; it's normalized (lowercased/stripped) and must be unique.
+
         Raises:
-            sqlite3.IntegrityError: If ``handle`` is already taken.
+            sqlite3.IntegrityError: If ``handle`` or ``email`` is already taken.
         """
         raw_token = token or generate_token()
         cur = self.conn.execute(
-            "INSERT INTO users (handle, display_name, token_hash, is_operator) "
-            "VALUES (?, ?, ?, ?)",
-            (handle, display_name, sha256_hex(raw_token), 1 if is_operator else 0),
+            "INSERT INTO users (handle, display_name, token_hash, is_operator, email) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                handle,
+                display_name,
+                sha256_hex(raw_token),
+                1 if is_operator else 0,
+                _normalize_email(email),
+            ),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -52,6 +62,22 @@ class UsersRepo(Repo):
         """Return a user row by ``handle``, or ``None``."""
         row = self.conn.execute(
             "SELECT * FROM users WHERE handle = ?", (handle,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        """Return the (active or not) user whose ``email`` matches, or ``None``.
+
+        The email is normalized (lowercased/stripped) before lookup, matching how
+        it's stored, so the Google callback can map a verified address to a user
+        without a ``GOOGLE_OAUTH_ALLOWED`` env mapping. A blank email is never a
+        match (the many email-less users all store ``NULL``).
+        """
+        normalized = _normalize_email(email)
+        if not normalized:
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM users WHERE email = ?", (normalized,)
         ).fetchone()
         return _row_to_dict(row)
 
@@ -71,7 +97,7 @@ class UsersRepo(Repo):
     def list_users(self) -> list[dict[str, Any]]:
         """Return all users (never their tokens), oldest first."""
         rows = self.conn.execute(
-            "SELECT id, handle, display_name, status, is_operator, created_at "
+            "SELECT id, handle, display_name, status, is_operator, email, created_at "
             "FROM users ORDER BY id ASC"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -99,6 +125,29 @@ class UsersRepo(Repo):
         self.conn.commit()
         return cur.rowcount > 0
 
+    def set_user_email(self, handle: str, email: str | None) -> bool:
+        """Set (or, with a blank ``email``, clear) a user's Google sign-in email.
+
+        The email is normalized (lowercased/stripped) and must be unique across
+        users, so a Google address maps to exactly one account. Returns ``True``
+        if the user exists (and was updated), ``False`` if no such handle.
+
+        Raises:
+            ValueError: If ``email`` is already claimed by a different user.
+        """
+        if self.get_user(handle) is None:
+            return False
+        normalized = _normalize_email(email)
+        if normalized:
+            clash = self.get_user_by_email(normalized)
+            if clash is not None and clash["handle"] != handle:
+                raise ValueError(f"Email is already used by '{clash['handle']}'.")
+        self.conn.execute(
+            "UPDATE users SET email = ? WHERE handle = ?", (normalized, handle)
+        )
+        self.conn.commit()
+        return True
+
     def rotate_user_token(self, handle: str) -> str | None:
         """Generate and store a new token for ``handle``; return it once.
 
@@ -114,3 +163,17 @@ class UsersRepo(Repo):
         )
         self.conn.commit()
         return raw_token
+
+
+def _normalize_email(email: str | None) -> str | None:
+    """Lowercase/strip an email for storage & lookup; blank/``None`` -> ``None``.
+
+    Kept in one place so the write path (``create_user``/``set_user_email``) and
+    the read path (``get_user_by_email``) can't drift on casing or whitespace —
+    Google returns addresses verbatim, so ``Jamie@Gmail.com`` and ``jamie@gmail.com``
+    must resolve to the same user.
+    """
+    if email is None:
+        return None
+    normalized = email.strip().lower()
+    return normalized or None

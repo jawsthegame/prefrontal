@@ -530,6 +530,19 @@ class UserCreate(BaseModel):
     is_operator: bool = Field(
         default=False, description="Whether the user may call the admin surface."
     )
+    email: str | None = Field(
+        default=None,
+        description="Verified Google email that signs this user in (optional).",
+    )
+
+
+class UserEmail(BaseModel):
+    """Body of ``POST /admin/users/{handle}/email`` — set/clear a sign-in email."""
+
+    email: str | None = Field(
+        default=None,
+        description="Google email for sign-in; blank/null clears it.",
+    )
 
 
 class HouseholdCreate(BaseModel):
