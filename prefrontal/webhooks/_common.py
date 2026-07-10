@@ -45,6 +45,63 @@ def _with_card_layout(html: str) -> str:
 #: lives in one file, not copied into each shell.
 _ADMIN_NAV_JS = (Path(__file__).with_name("_admin_nav.js")).read_text(encoding="utf-8")
 
+#: The shared keyboard-shortcut engine (global shortcuts on every tab + a
+#: registry pages push context bindings to) plus its styling, read once and
+#: folded into every page by :func:`_with_shortcuts`. Same rationale as the card
+#: layout: authored as standalone .js/.css for tooling, inlined so the served
+#: page stays self-contained.
+_SHORTCUTS_CSS = (Path(__file__).with_name("_shortcuts.css")).read_text(encoding="utf-8")
+_SHORTCUTS_JS = (Path(__file__).with_name("_shortcuts.js")).read_text(encoding="utf-8")
+
+#: The overlays the engine drives — the "?" cheatsheet, the quick-add-todo modal,
+#: and the toast — injected verbatim so every page offers the same DOM to bind to
+#: (ids namespaced ``kbd-*`` to avoid clashing with a page's own elements).
+_SHORTCUTS_MARKUP = """
+<div id="kbd-help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="kbd-box">
+    <div class="kbd-head"><h2>⌨︎ Keyboard shortcuts</h2><span class="kbd-spacer"></span>
+      <button class="ghost" id="kbd-help-close">Close</button></div>
+    <div id="kbd-help-body"></div>
+  </div>
+</div>
+<div id="kbd-quickadd" role="dialog" aria-modal="true" aria-label="Add a todo">
+  <div class="kbd-box">
+    <div class="kbd-head"><h2>+ Add a todo</h2><span class="kbd-spacer"></span>
+      <button class="ghost" id="kbd-qa-cancel">Cancel</button></div>
+    <div class="kbd-qa-row">
+      <input id="kbd-qa-title" type="text" autocomplete="off" placeholder="What needs doing?" />
+      <select id="kbd-qa-pri" aria-label="priority">
+        <option value="auto" selected>auto</option>
+        <option value="1">normal</option>
+        <option value="3">urgent</option>
+        <option value="2">high</option>
+        <option value="0">low</option>
+      </select>
+      <button id="kbd-qa-add">Add</button>
+    </div>
+    <div class="kbd-qa-err" id="kbd-qa-err"></div>
+    <div class="kbd-qa-hint">Enter to add · Esc to close</div>
+  </div>
+</div>
+<div id="kbd-toast" role="status" aria-live="polite"></div>
+"""
+
+
+def _with_shortcuts(html: str) -> str:
+    """Fold the shared keyboard-shortcut engine (CSS + overlays + JS) into a page.
+
+    Injected right before ``</body>`` so the engine's ``<script>`` runs after the
+    page's own inline script — a page declares context bindings by pushing to
+    ``window.PF_SHORTCUTS`` before this loads. A page without a ``</body>`` is
+    returned unchanged.
+    """
+    block = (
+        f"<style>\n{_SHORTCUTS_CSS}\n</style>\n"
+        f"{_SHORTCUTS_MARKUP}\n"
+        f"<script>\n{_SHORTCUTS_JS}\n</script>\n"
+    )
+    return html.replace("</body>", f"{block}</body>", 1)
+
 
 def _shell(name: str) -> str:
     """Read a self-contained page shell and reveal its operator-only Admin link.
@@ -58,16 +115,16 @@ def _shell(name: str) -> str:
 
 
 #: The self-contained monitoring page, read once at import (like ``schema.sql``).
-DASHBOARD_HTML = _shell("dashboard.html")
+DASHBOARD_HTML = _with_shortcuts(_shell("dashboard.html"))
 #: The read-only visual household calendar (week-ahead agenda + slot finder);
 #: reads GET /commitments and GET /calendar/slots.
-CALENDAR_HTML = _shell("calendar.html")
+CALENDAR_HTML = _with_shortcuts(_shell("calendar.html"))
 #: The editable household hub — the one writable surface for the shared sheet
 #: (kids, pets, facts, agreements, shopping, routines).
-HOUSEHOLD_HTML = _with_card_layout(_shell("household.html"))
+HOUSEHOLD_HTML = _with_shortcuts(_with_card_layout(_shell("household.html")))
 #: The read-only lens shell, parameterized per focus by replacing ``__LENS__``
 #: with ``kids`` / ``pets`` (see :func:`lens_html`). One file backs both lenses.
-LENS_HTML = _with_card_layout(_shell("lens.html"))
+LENS_HTML = _with_shortcuts(_with_card_layout(_shell("lens.html")))
 
 
 def lens_html(lens: str) -> str:
@@ -83,19 +140,19 @@ def lens_html(lens: str) -> str:
 #: (list grouped by domain + per-project contents & rollup stats). Reads GET
 #: /projects and GET /projects/{id}; served at /projects/board (the bare
 #: /projects path belongs to the JSON API).
-PROJECTS_HTML = _shell("projects.html")
+PROJECTS_HTML = _with_shortcuts(_shell("projects.html"))
 #: The behavioral Insights page (charts over episodes; reads GET /stats/data).
-STATS_HTML = _with_card_layout(_shell("stats.html"))
+STATS_HTML = _with_shortcuts(_with_card_layout(_shell("stats.html")))
 #: The LLM-sensor review page (jot a note → confirm proposals; reads/writes
 #: GET /proposals + POST /observe + POST /proposals/{id}/accept|reject).
-REVIEW_HTML = _with_card_layout(_shell("review.html"))
+REVIEW_HTML = _with_shortcuts(_with_card_layout(_shell("review.html")))
 #: The Settings page — config that adjusts behavior (currently the self-care
 #: master switch + per-check knobs), reading/writing GET + POST /self-care.
-SETTINGS_HTML = _with_card_layout(_shell("settings.html"))
+SETTINGS_HTML = _with_shortcuts(_with_card_layout(_shell("settings.html")))
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.
-ADMIN_HTML = (Path(__file__).with_name("admin.html")).read_text(encoding="utf-8")
+ADMIN_HTML = _with_shortcuts((Path(__file__).with_name("admin.html")).read_text(encoding="utf-8"))
 
 #: The PREFRONTAL app icon (PNG bytes), read once at import and served
 #: unauthenticated at ``GET /brand/app-icon.png`` so an ntfy push can reference
