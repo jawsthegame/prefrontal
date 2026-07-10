@@ -30,6 +30,7 @@ from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after
     hyperfocus,
     impulsivity,
     location_anchor,
+    projects,
     self_care,
     task_paralysis,
     time_blindness,

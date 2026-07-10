@@ -114,6 +114,60 @@ class ProjectsRepo(Repo):
             (self._uid(),),
         )
 
+    def stale_project_candidates(self) -> list[dict[str, Any]]:
+        """Active projects that have open work but have gone quiet.
+
+        Returns one row per active project with ≥1 open todo, carrying
+        ``open_todos`` and ``last_activity_at`` — the most recent of any assigned
+        focus session (start), todo (update), or commitment (update), falling back
+        to the project's own ``created_at`` so a brand-new project is never "stale"
+        from birth. The staleness threshold itself lives in the coaching module
+        (:class:`prefrontal.modules.projects.ProjectStalenessModule`), which reads
+        this and applies the cutoff; the repo just surfaces the raw signal.
+        """
+        return self._query_all(
+            "SELECT p.id, p.name, p.domain, p.notes, "
+            "(SELECT COUNT(*) FROM todos t WHERE t.project_id = p.id "
+            "  AND t.user_id = p.user_id AND t.status = 'open') AS open_todos, "
+            "MAX(p.created_at, "
+            "  COALESCE((SELECT MAX(f.started_at) FROM focus_sessions f "
+            "    WHERE f.project_id = p.id AND f.user_id = p.user_id), p.created_at), "
+            "  COALESCE((SELECT MAX(t.updated_at) FROM todos t "
+            "    WHERE t.project_id = p.id AND t.user_id = p.user_id), p.created_at), "
+            "  COALESCE((SELECT MAX(c.updated_at) FROM commitments c "
+            "    WHERE c.project_id = p.id AND c.user_id = p.user_id), p.created_at) "
+            ") AS last_activity_at "
+            "FROM projects p WHERE p.user_id = ? AND p.status = 'active' "
+            "AND EXISTS (SELECT 1 FROM todos t WHERE t.project_id = p.id "
+            "  AND t.user_id = p.user_id AND t.status = 'open') "
+            "ORDER BY last_activity_at ASC",
+            (self._uid(),),
+        )
+
+    def project_stats(self, project_id: int) -> dict[str, Any]:
+        """Follow-through + focus rollup for one project (for the detail view).
+
+        ``open_todos``/``done_todos`` and a ``follow_through`` ratio (done / done+open,
+        or ``None`` when there's nothing closed-or-open to rate), plus total
+        ``focus_minutes`` across the project's focus sessions (start→end, ``now`` for
+        a still-open one). Scoped to the user; a project with no todos rates ``None``.
+        """
+        row = self.conn.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM todos t WHERE t.project_id = ? AND t.user_id = ? "
+            "  AND t.status = 'open') AS open_todos, "
+            "(SELECT COUNT(*) FROM todos t WHERE t.project_id = ? AND t.user_id = ? "
+            "  AND t.status = 'done') AS done_todos, "
+            "(SELECT COALESCE(SUM((julianday(COALESCE(f.ended_at, 'now')) "
+            "  - julianday(f.started_at)) * 1440.0), 0) FROM focus_sessions f "
+            "  WHERE f.project_id = ? AND f.user_id = ?) AS focus_minutes",
+            (project_id, self._uid(), project_id, self._uid(), project_id, self._uid()),
+        ).fetchone()
+        stats = dict(row)
+        rated = stats["open_todos"] + stats["done_todos"]
+        stats["follow_through"] = (stats["done_todos"] / rated) if rated else None
+        return stats
+
     def project_name_in_use(self, name: str, *, exclude_id: int | None = None) -> bool:
         """Whether an *active* project already has ``name`` (case-insensitive).
 
