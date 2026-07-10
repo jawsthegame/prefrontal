@@ -65,8 +65,14 @@ def build_router(services: RouterServices) -> APIRouter:
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
         include_archived: bool = False,
     ) -> dict[str, Any]:
-        """List the user's projects (active only unless ``include_archived=1``)."""
-        return {"projects": ctx.store.list_projects(include_archived=include_archived)}
+        """List the user's projects with dashboard rollups (open todos · next
+        commitment · focus minutes this week), active only unless
+        ``include_archived=1``, grouped-ready (ordered by domain)."""
+        return {
+            "projects": ctx.store.list_projects_with_rollup(
+                include_archived=include_archived
+            )
+        }
 
     @router.get("/projects/{project_id}", tags=["projects"])
     def project_get(
