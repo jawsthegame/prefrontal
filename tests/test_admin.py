@@ -121,6 +121,38 @@ def test_request_is_scoped_to_resolved_user(client, store):
     assert op_view["todos"] == []
 
 
+def test_admin_lists_households_with_members(client, store):
+    """The operator sees each household and who's wired into it."""
+    hid = store.create_household("The Kims")
+    store.set_user_household("sam", hid)
+    resp = client.get("/admin/households", headers={"X-Prefrontal-Token": OP_TOKEN})
+    assert resp.status_code == 200
+    households = resp.json()["households"]
+    assert len(households) == 1
+    hh = households[0]
+    assert hh["id"] == hid
+    assert hh["name"] == "The Kims"
+    assert [m["handle"] for m in hh["members"]] == ["sam"]
+
+
+def test_admin_households_requires_operator(client):
+    """A non-operator is forbidden (403); a bad code is unauthorized (401)."""
+    forbidden = client.get(
+        "/admin/households", headers={"X-Prefrontal-Token": USER_TOKEN}
+    )
+    assert forbidden.status_code == 403
+    unauth = client.get("/admin/households", headers={"X-Prefrontal-Token": "nope"})
+    assert unauth.status_code == 401
+
+
+def test_admin_page_is_served_unauthenticated(client):
+    """The /admin shell is a self-contained page (auth happens client-side)."""
+    resp = client.get("/admin")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Admin" in resp.text
+
+
 def test_bootstrap_secret_maps_to_operator(store):
     """The legacy webhook secret resolves to the operator user as a bootstrap."""
     app = create_app(store=store, settings=Settings(webhook_secret="boot-secret"))

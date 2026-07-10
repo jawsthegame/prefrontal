@@ -40,6 +40,7 @@ from prefrontal.sources import (
 )
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
+    ADMIN_HTML,
     APP_ICON_PNG,
     APP_VERSION,
     CALENDAR_HTML,
@@ -202,6 +203,19 @@ def build_router(services: RouterServices) -> APIRouter:
         card is purely "mark what I did today." Shares the unified theme + nav.
         """
         return _page(SETTINGS_HTML)
+
+    @router.get("/admin", response_class=HTMLResponse, tags=["system"])
+    def admin_page() -> HTMLResponse:
+        """Serve the operator-only user-management page.
+
+        Self-contained shell (unauthenticated, carries no data); it signs in with
+        an **operator** access code, then drives the ``/admin/*`` endpoints —
+        provision a user (token shown once), rotate/disable, create a household,
+        and wire members in. Those endpoints are all guarded by
+        ``require_operator``, so a non-operator who reaches this page just can't
+        read or write anything. Shares the unified theme + nav.
+        """
+        return _page(ADMIN_HTML)
 
     @router.get("/stats/data", tags=["system"])
     def stats_data(
