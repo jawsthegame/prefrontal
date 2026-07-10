@@ -129,6 +129,35 @@ def test_generate_prep_with_model_returns_brief_and_drafts():
     assert drafts[0]["channel"] == "call"
 
 
+def test_generate_prep_context_reaches_the_prompt():
+    """User-supplied context is fed to the model as part of the prompt."""
+    seen = {}
+
+    def capture(request):
+        seen["prompt"] = json.loads(request.content)["prompt"]
+        return httpx.Response(200, json={"response": json.dumps({"brief": "ok", "drafts": []})})
+
+    client = OllamaClient(transport=httpx.MockTransport(capture))
+    generate_prep(
+        "Reply to the vendor",
+        context="Per the Vistar AI: the PO is #4821 and they ship Tuesdays.",
+        client=client,
+    )
+    assert "PO is #4821" in seen["prompt"]
+    assert "Additional context" in seen["prompt"]
+
+
+def test_generate_prep_offline_includes_context(store):
+    """The heuristic (offline) brief surfaces any supplied context, too."""
+    brief, _ = generate_prep(
+        "Reply to the vendor",
+        context="PO is #4821; ships Tuesdays.",
+        client=None,
+    )
+    assert "Generated offline" in brief
+    assert "PO is #4821" in brief
+
+
 def test_generate_prep_model_down_falls_back(store):
     """A model that errors falls back to the heuristic brief (never raises)."""
     def refuse(request):
@@ -220,6 +249,34 @@ def test_delegation_notice_by_status():
     assert delegation_notice("X", R("agent", STATUS_RETURNED, "b")) is None
 
 
+def test_compose_va_email_leads_with_note():
+    """A cover note appears first, before the standard preamble."""
+    subject, body = compose_va_email(
+        "Book venue", "Prep.", [], note="Hi Sam — this one's a bit urgent, thanks!"
+    )
+    assert body.startswith("Hi Sam — this one's a bit urgent, thanks!")
+    assert body.index("Hi Sam") < body.index("Task: Book venue")
+
+
+def test_email_handler_note_reaches_the_sent_body(store):
+    """The VA note is threaded from run_delegation into the actual email body."""
+    tid = store.add_todo("Book venue")
+    record: dict = {}
+    smtp = sources.SmtpSource(
+        account="default", host="smtp.test", port=587,
+        username="me@x.com", password="pw", sender="me@x.com",
+    )
+    result = run_delegation(
+        store, store.get_todo(tid), handler="email", destination="va@x.com",
+        va_note="Please prioritise this.",
+        client=_ollama_json({"brief": "Prep.", "drafts": []}),
+        smtp=smtp,
+        smtp_client=SmtpClient(connect=lambda h, p, t: _FakeConn(record)),
+    )
+    assert result.status == STATUS_FORWARDED
+    assert record["body"].startswith("Please prioritise this.")
+
+
 def test_compose_va_email_includes_brief_and_drafts():
     subject, body = compose_va_email(
         "Book dentist", "Confirm coverage.",
@@ -307,6 +364,30 @@ def test_http_delegate_agent(http):
     # GET /todos now carries the delegation
     listed = http.get("/todos", headers=_headers()).json()["todos"]
     assert listed[0]["delegation"]["status"] == STATUS_PREPPED
+
+
+def test_http_delegate_agent_persists_context(http):
+    """Optional context posted with the delegation is stored on the row."""
+    tid = http.post("/todos", json={"title": "Book dentist"}, headers=_headers()).json()["todo_id"]
+    r = http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "agent", "context": "Insurance is Delta; member #77."},
+        headers=_headers(),
+    )
+    assert r.status_code == 200
+    stored = http.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+    assert stored["context"] == "Insurance is Delta; member #77."
+
+
+def test_http_delegate_blank_context_is_normalized_to_none(http):
+    """A whitespace-only context is treated as no context (stored NULL)."""
+    tid = http.post("/todos", json={"title": "x"}, headers=_headers()).json()["todo_id"]
+    http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "agent", "context": "   "}, headers=_headers(),
+    )
+    stored = http.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+    assert stored["context"] is None
 
 
 def test_http_delegate_email_needs_destination(http):
@@ -413,6 +494,19 @@ def test_assistant_op_delegates_to_agent(store):
     )
     assert results[0]["ok"] is True
     assert store.get_delegation(tid)["status"] == STATUS_PREPPED
+
+
+def test_assistant_op_passes_context_through(store):
+    """A `context` on the op is validated into params and persisted on the row."""
+    tid = store.add_todo("Book dentist")
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid, "context": "Delta PPO, member #77."}],
+        build_snapshot(store),
+    )
+    assert errors == []
+    assert actions[0].params["context"] == "Delta PPO, member #77."
+    execute_actions(store, actions, client=_ollama_json({"brief": "b", "drafts": []}))
+    assert store.get_delegation(tid)["context"] == "Delta PPO, member #77."
 
 
 def test_assistant_op_defaults_handler_to_agent(store):

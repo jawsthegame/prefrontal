@@ -780,6 +780,8 @@ def build_router(services: RouterServices) -> APIRouter:
             todo,
             handler=payload.handler,
             destination=destination,
+            context=(payload.context or "").strip() or None,
+            va_note=(payload.note or "").strip() or None,
             client=summarizer_client,
             smtp=smtp,
         )

@@ -494,6 +494,7 @@ CREATE TABLE IF NOT EXISTS todo_delegations (
     brief        TEXT,               -- the prep write-up (LLM or heuristic)
     drafts       TEXT,               -- JSON array of drafted comms {channel, to, subject, body}
     detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
+    context      TEXT,               -- optional free-text context supplied at delegation time (e.g. pasted work-AI output)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     prepped_at   DATETIME            -- when prep completed (status reached prepped)

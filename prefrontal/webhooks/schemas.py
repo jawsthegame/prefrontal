@@ -1096,6 +1096,21 @@ class DelegateTodo(BaseModel):
         default=None,
         description="The VA's email address (required for handler='email'; ignored for 'agent').",
     )
+    context: str | None = Field(
+        default=None,
+        description=(
+            "Optional free-text context to give the assistant more to work with — "
+            "e.g. output pasted from another AI agent that has access to your work "
+            "email. Fed into the prep for both handlers."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description=(
+            "Optional personal cover note shown at the top of the email to a human "
+            "VA (handler='email' only; ignored for 'agent')."
+        ),
+    )
 
 
 class SmtpConfig(BaseModel):

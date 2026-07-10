@@ -138,7 +138,7 @@ ASSISTANT_SYSTEM = (
     '- {"op":"rename_todo","todo_id":int,"title":str}\n'
     '- {"op":"set_deadline","todo_id":int,"deadline":"YYYY-MM-DD" or null}\n'
     '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
-    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email","destination":str?}\n'
+    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email","destination":str?,"context":str?,"note":str?}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
     '- {"op":"cancel_commitment","commitment_id":int}\n'
@@ -760,11 +760,17 @@ def _v_delegate_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) 
     if handler not in HANDLERS:
         raise _ActionError('handler must be "agent" or "email"')
     params: dict[str, Any] = {"todo_id": tid, "handler": handler}
+    context = str(action.get("context") or "").strip()
+    if context:
+        params["context"] = context
     if handler == HANDLER_EMAIL:
         # An email hand-off has to know who to send to — reject it here rather than
         # letting it fall through to a "failed" delegation at execute time.
         dest = _nonblank(action.get("destination"), "destination")
         params["destination"] = dest
+        note = str(action.get("note") or "").strip()
+        if note:
+            params["note"] = note
         summary = f"Delegate “{title}” to your assistant ({dest})"
     else:
         summary = f"Delegate “{title}” to the AI assistant to prep"
@@ -1447,7 +1453,9 @@ def _execute_one(
                     )
                 outcome = run_delegation(
                     memory, todo, handler=handler,
-                    destination=p.get("destination"), client=client, smtp=smtp,
+                    destination=p.get("destination"), context=p.get("context"),
+                    va_note=p.get("note"),
+                    client=client, smtp=smtp,
                 )
                 # A failed hand-off (e.g. SMTP unconfigured) still stored the brief,
                 # but the delegation didn't land — report it as not-ok with the reason.

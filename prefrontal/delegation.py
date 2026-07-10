@@ -119,12 +119,17 @@ def _coerce_drafts(raw: Any) -> list[dict[str, str]]:
     return out
 
 
-def _heuristic_brief(title: str, notes: str | None, decomposition: dict | None) -> str:
+def _heuristic_brief(
+    title: str,
+    notes: str | None,
+    decomposition: dict | None,
+    context: str | None = None,
+) -> str:
     """A plain, honest brief when the local model is unavailable.
 
     No research is possible offline, so this says so plainly and leans on whatever
-    structure already exists (the notes and any decomposed steps) rather than
-    inventing content.
+    structure already exists (the notes, any user-supplied context, and any
+    decomposed steps) rather than inventing content.
     """
     lines = [
         f"Prep for: {title}.",
@@ -133,6 +138,8 @@ def _heuristic_brief(title: str, notes: str | None, decomposition: dict | None) 
     ]
     if notes:
         lines.append(f"Context on file: {notes}")
+    if context:
+        lines.append(f"Additional context provided:\n{context}")
     steps = []
     if decomposition:
         first = decomposition.get("first_step")
@@ -150,6 +157,7 @@ def generate_prep(
     notes: str | None = None,
     decomposition: dict | None = None,
     *,
+    context: str | None = None,
     client: Generator | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     """Produce a ``(brief, drafts)`` prep package for a task.
@@ -163,6 +171,9 @@ def generate_prep(
         title: The task text.
         notes: Any free-text notes already on the todo (context for the model).
         decomposition: The todo's decomposition dict, if any (reused as scaffolding).
+        context: Optional free-text context supplied at delegation time (e.g. output
+            pasted from another AI agent with access to work email) — real facts the
+            model may rely on, so it's given more weight than the [placeholder] rule.
         client: An Ollama-like client; ``None`` uses the heuristic.
     """
     if client is not None:
@@ -172,6 +183,10 @@ def generate_prep(
         if decomposition and decomposition.get("first_step"):
             steps = [decomposition["first_step"], *(decomposition.get("steps") or [])]
             prompt += "\nKnown steps: " + "; ".join(str(s) for s in steps)
+        if context:
+            # Real, user-supplied facts — the model may use these directly rather
+            # than leaving [placeholders] for them.
+            prompt += f"\nAdditional context provided by the user:\n{context}"
         try:
             reply = client.generate(prompt, system=_PREP_SYSTEM)
         except OllamaError:
@@ -180,17 +195,27 @@ def generate_prep(
         brief = raw.get("brief")
         if isinstance(brief, str) and brief.strip():
             return brief.strip(), _coerce_drafts(raw.get("drafts"))
-    return _heuristic_brief(title, notes, decomposition), []
+    return _heuristic_brief(title, notes, decomposition, context), []
 
 
-def compose_va_email(title: str, brief: str, drafts: list[dict[str, str]]) -> tuple[str, str]:
+def compose_va_email(
+    title: str,
+    brief: str,
+    drafts: list[dict[str, str]],
+    note: str | None = None,
+) -> tuple[str, str]:
     """Compose the ``(subject, body)`` of the email sent to a human VA.
 
     Pure and unit-testable: leads with the task, includes the brief, and appends
     any drafted communications verbatim so the VA can send them with minimal edits.
+    ``note`` is an optional personal message from the user, shown *first* (before
+    the standard preamble) so the assistant reads it as the opening line.
     """
     subject = f"[Prefrontal] Please help with: {title}"
-    parts = [
+    parts = []
+    if note and note.strip():
+        parts.append(note.strip() + "\n")
+    parts += [
         f"Hi — could you take this off my plate?\n\nTask: {title}\n",
         f"Prep notes:\n{brief}\n",
     ]
@@ -213,6 +238,8 @@ class DelegationRequest:
     title: str
     notes: str | None = None
     decomposition: dict | None = None
+    context: str | None = None  # optional free-text context pasted at delegation time
+    va_note: str | None = None  # optional cover note shown atop the email to a human VA
     destination: str | None = None
     client: Generator | None = None  # local LLM for prep
     smtp: SmtpSource | None = None  # resolved SMTP source (email handler)
@@ -235,7 +262,7 @@ class AgentHandler:
 
     def run(self, req: DelegationRequest) -> DelegationResult:
         brief, drafts = generate_prep(
-            req.title, req.notes, req.decomposition, client=req.client
+            req.title, req.notes, req.decomposition, context=req.context, client=req.client
         )
         # generate_prep's offline fallback stamps this marker into the brief.
         offline = "Generated offline" in brief
@@ -258,7 +285,7 @@ class EmailHandler:
 
     def run(self, req: DelegationRequest) -> DelegationResult:
         brief, drafts = generate_prep(
-            req.title, req.notes, req.decomposition, client=req.client
+            req.title, req.notes, req.decomposition, context=req.context, client=req.client
         )
         to = (req.destination or "").strip()
         # No SMTP configured (or no recipient): keep the brief so it can be sent by
@@ -273,7 +300,7 @@ class EmailHandler:
                 self.kind, STATUS_FAILED, brief, drafts,
                 "SMTP not configured — brief stored; configure email in Settings to send",
             )
-        subject, body = compose_va_email(req.title, brief, drafts)
+        subject, body = compose_va_email(req.title, brief, drafts, note=req.va_note)
         client = req.smtp_client or SmtpClient()
         result = client.send(
             req.smtp.host,
@@ -314,6 +341,8 @@ def run_delegation(
     *,
     handler: str,
     destination: str | None = None,
+    context: str | None = None,
+    va_note: str | None = None,
     client: Generator | None = None,
     smtp: SmtpSource | None = None,
     smtp_client: SmtpClient | None = None,
@@ -338,6 +367,8 @@ def run_delegation(
         title=todo["title"],
         notes=todo.get("notes"),
         decomposition=decomposition,
+        context=context,
+        va_note=va_note,
         destination=destination,
         client=client,
         smtp=smtp,
@@ -352,6 +383,7 @@ def run_delegation(
         brief=result.brief,
         drafts=result.drafts,
         detail=result.detail,
+        context=context,
         prepped=result.status in (STATUS_PREPPED, STATUS_FORWARDED),
     )
     return result
