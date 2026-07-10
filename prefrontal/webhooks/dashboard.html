@@ -114,6 +114,10 @@
     color: var(--muted); margin: 0 0 12px;
   }
   .empty { color: var(--muted); font-style: italic; }
+  /* The "go to sleep" nudge shown in the "one thing to do right now" card when
+     it's outside waking hours — warmer and more legible than the italic .empty. */
+  .bedtime { color: var(--fg); font-size: 15px; line-height: 1.55; text-align: center;
+    padding: 12px 6px; }
   /* Self-care card: log what you did today — one "mark done" row per check.
      Configuring targets/cadence lives on the Settings page. */
   /* Compact rows: label + count + button on one line, a slim progress bar
@@ -1217,6 +1221,30 @@ function renderRecent(d) {
     <div class="sub">window ${mins(o.time_window_minutes)} · left ${fmt(o.departure_at)} · back ${fmt(o.returned_at)}</div>
   </div></div>`).join("");
 }
+// A warm, playful "go to sleep" nudge for when there's nothing to suggest
+// because it's outside waking hours — the one honest thing to do right now is
+// rest. Tuned to how late it is, and keyed to the local hour (not random) so it
+// stays put across the 15s refresh but shifts as the night wears on.
+function bedtimeNudge() {
+  const h = new Date().getHours();
+  let pool;
+  if (h >= 22) pool = [           // winding down (late evening)
+    "🌙 Past your wind-down hour. Nothing on the list can't wait for morning-you — who'll be sharper for the rest.",
+    "🌙 The to-do list is closed for the night. The best thing on it right now is bed.",
+    "🌙 Screens down, pillow up. Whatever's next will keep until you've slept on it.",
+  ];
+  else if (h < 4) pool = [        // the small hours
+    "😴 It's the middle of the night. The single most important task right now is sleep — go get some.",
+    "🌌 It'll all still be here tomorrow, and you'll do it better rested. Lights out.",
+    "🛌 Nothing good gets decided at this hour. Tuck the day away and close your eyes.",
+  ];
+  else pool = [                   // pre-dawn
+    "🌅 Too early to start, still time to rest. Steal another hour before the day asks for you.",
+    "🌅 Dawn's not here yet — give tomorrow-you a head start and drift back off.",
+    "☕ The day can wait a little longer. Rest now; caffeine later.",
+  ];
+  return pool[h % pool.length];
+}
 // The single best thing to do right now: the top open todo that fits the gap
 // until your next commitment (GET /todos/now → pick_now, most-avoided first).
 // No pick → say why (outside waking hours / no free time / nothing fits). A
@@ -1225,6 +1253,11 @@ function renderRecent(d) {
 function renderNow(d) {
   const s = d && d.suggestion;
   if (!s) {
+    // Outside waking hours, the honest "one thing to do right now" is *sleep* —
+    // so nudge toward bed rather than reciting the raw reason.
+    if (d && d.reason === "outside waking hours") {
+      return `<div class="bedtime">${esc(bedtimeNudge())}</div>`;
+    }
     const why = d && d.reason ? d.reason : "nothing to suggest right now";
     return `<div class="empty">${esc(why.charAt(0).toUpperCase() + why.slice(1))}.</div>`;
   }
