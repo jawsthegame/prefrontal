@@ -423,6 +423,21 @@
     width: 100%; padding: 9px 11px; border-radius: 8px; min-height: 38px;
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px;
   }
+  /* global (cross-entity) search bar + results panel */
+  .gsearch { max-width: 1200px; margin: 0 auto 14px; display: flex; align-items: center; gap: 10px; }
+  .gsearch input {
+    flex: 1; padding: 11px 14px; border-radius: 10px; min-height: 42px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 15px;
+  }
+  .gsearch input:focus { outline: none; border-color: var(--accent); }
+  .gsearch-hint { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  #c-search { max-width: 1200px; margin: 0 auto 16px; }
+  #c-search .sgroup { margin-top: 14px; }
+  #c-search .sgroup:first-child { margin-top: 0; }
+  #c-search .sgroup > h3 {
+    margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); font-weight: 700;
+  }
   /* shopping list rows */
   .shop-line { display: flex; gap: 9px; padding: 5px 0; align-items: baseline; }
   .shop-line .box { color: var(--muted); cursor: pointer; background: none; border: none;
@@ -675,6 +690,13 @@
     <button class="ghost" id="signout" title="Forget the saved token">Sign out</button>
   </div>
 </header>
+
+<div class="gsearch">
+  <input id="global-search" type="search" autocomplete="off" aria-label="Search everything"
+    placeholder="Search everything — todos, commitments, focus, projects…  (press /)" />
+  <span class="gsearch-hint" id="gsearch-hint"></span>
+</div>
+<section class="card" id="c-search" style="display:none"><div class="body"></div></section>
 
 <div class="banners">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
@@ -2948,6 +2970,80 @@ $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") doc
 $("#shop-item").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="shop-add"]').click(); });
 $("#todo-search").addEventListener("input", paintTodos);
 $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
+
+// ── Global search (cross-entity) ────────────────────────────────────────────
+const SEARCH_PRI = { 0: "low", 1: "normal", 2: "high", 3: "urgent" };
+function searchRow(title, subParts) {
+  const sub = (subParts || []).filter((x) => x !== null && x !== undefined && x !== "")
+    .map(esc).join(" · ");
+  return `<div class="row"><div class="main"><div class="title">${esc(title)}</div>`
+    + (sub ? `<div class="sub">${sub}</div>` : "") + `</div></div>`;
+}
+function searchGroup(label, rows) {
+  return `<div class="sgroup"><h3>${esc(label)} (${rows.length})</h3>${rows.join("")}</div>`;
+}
+function renderSearchResults(data) {
+  const r = (data && data.results) || {};
+  const q = (data && data.query) || "";
+  if (!data || !data.total) return `<div class="empty">No matches for “${esc(q)}”.</div>`;
+  let html = "";
+  const todos = r.todos || [];
+  if (todos.length) html += searchGroup("Todos", todos.map((t) => searchRow(t.title, [
+    t.status && t.status !== "open" ? t.status : null,
+    t.priority >= 2 ? SEARCH_PRI[t.priority] : null,
+    t.category, t.domain,
+    t.deadline ? "due " + fmtDeadline(t.deadline) : null,
+  ])));
+  const comm = r.commitments || [];
+  if (comm.length) html += searchGroup("Commitments", comm.map((c) => searchRow(c.title, [
+    c.start_at ? fmt(c.start_at) : null, c.location, c.domain,
+    c.status && c.status !== "active" ? c.status : null,
+  ])));
+  const focus = r.focus_sessions || [];
+  if (focus.length) html += searchGroup("Focus sessions", focus.map((f) => searchRow(f.intended_task, [
+    f.started_at ? fmt(f.started_at) : null, f.status, f.outcome, f.breadcrumb,
+  ])));
+  const proj = r.projects || [];
+  if (proj.length) html += searchGroup("Projects", proj.map((p) => searchRow(p.name, [
+    p.domain, p.status && p.status !== "active" ? p.status : null, p.description,
+  ])));
+  return html;
+}
+let searchTimer = null;
+let searchSeq = 0;
+function runGlobalSearch() {
+  const q = ($("#global-search").value || "").trim();
+  const panel = $("#c-search");
+  const hint = $("#gsearch-hint");
+  if (!q) { panel.style.display = "none"; panel.querySelector(".body").innerHTML = ""; hint.textContent = ""; return; }
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    hint.textContent = "searching…";
+    try {
+      const data = await api("/search?q=" + encodeURIComponent(q));
+      if (seq !== searchSeq) return;  // a newer keystroke already superseded this fetch
+      panel.querySelector(".body").innerHTML = renderSearchResults(data);
+      panel.style.display = "";
+      hint.textContent = data.total ? `${data.total} result${data.total === 1 ? "" : "s"}` : "no results";
+    } catch (e) {
+      if (e && e.code === 401) { gate("That token was rejected."); return; }
+      hint.textContent = "search failed";
+    }
+  }, 200);
+}
+$("#global-search").addEventListener("input", runGlobalSearch);
+$("#global-search").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.target.value = ""; runGlobalSearch(); e.target.blur(); }
+});
+// "/" from anywhere jumps to the search box (unless you're already typing in a field).
+document.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement || {}).tagName;
+  if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) {
+    e.preventDefault();
+    $("#global-search").focus();
+  }
+});
 
 $("#refresh").onclick = load;
 $("#update-btn").onclick = doUpdate;
