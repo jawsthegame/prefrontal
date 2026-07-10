@@ -192,6 +192,82 @@ def test_list_projects_with_rollup(store):
     assert r["focus_minutes_7d"] >= 0  # a closed session contributes non-negative minutes
 
 
+def test_project_stats_follow_through(store):
+    pid = store.add_project("Kitchen Remodel", "home")
+    t_open = store.add_todo("Buy tile")
+    t_done = store.add_todo("Call contractor")
+    store.set_todo_project(t_open, pid)
+    store.set_todo_project(t_done, pid)
+    store.close_todo(t_done, "done")
+    s = store.project_stats(pid)
+    assert s["open_todos"] == 1 and s["done_todos"] == 1
+    assert s["follow_through"] == 0.5
+    assert s["focus_minutes"] == 0
+
+
+def test_project_stats_none_when_no_todos(store):
+    pid = store.add_project("Empty", "home")
+    assert store.project_stats(pid)["follow_through"] is None
+
+
+def test_stale_candidates_needs_open_work(store):
+    empty = store.add_project("Empty", "home")
+    active = store.add_project("Kitchen", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), active)
+    rows = {r["id"]: r for r in store.stale_project_candidates()}
+    assert active in rows and empty not in rows
+    assert rows[active]["open_todos"] == 1 and rows[active]["last_activity_at"]
+
+
+# --- staleness coaching module --------------------------------------------
+
+def _ctx(days_ahead: int):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import CoachContext
+    return CoachContext(now=utcnow() + timedelta(days=days_ahead))
+
+
+def test_staleness_module_fires_when_quiet(store):
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)
+    cues = ProjectStalenessModule().evaluate(store, _ctx(30))  # 30 days > 21 cutoff
+    assert len(cues) == 1
+    assert "Kitchen Remodel" in cues[0].text and cues[0].dedup_key == f"project_stale:{pid}"
+
+
+def test_staleness_module_quiet_when_fresh(store):
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)
+    assert ProjectStalenessModule().evaluate(store, _ctx(1)) == []  # 1 day < cutoff
+
+
+def test_staleness_module_respects_renudge_debounce(store):
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import _fired_key
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)
+    # Mark it nudged "just now" relative to a 30-days-ahead tick → within RENUDGE_DAYS.
+    from datetime import timedelta
+
+    from prefrontal.clock import TS_FMT
+    recent = (utcnow() + timedelta(days=28)).strftime(TS_FMT)
+    store.set_state(_fired_key(f"project_stale:{pid}"), recent)
+    assert ProjectStalenessModule().evaluate(store, _ctx(30)) == []
+
+
+def test_staleness_threshold_configurable(store):
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen", "home")
+    store.set_todo_project(store.add_todo("x"), pid)
+    store.set_state("project_stale_days", "5")
+    assert len(ProjectStalenessModule().evaluate(store, _ctx(7))) == 1  # 7 > 5
+
+
 def test_archive_frees_the_name(store):
     pid = store.add_project("Kitchen Remodel", "home")
     assert store.archive_project(pid) is True
@@ -308,6 +384,16 @@ def test_api_projects_list_has_rollup_for_ui(client):
     row = client.get("/projects", headers=_auth()).json()["projects"][0]
     assert row["open_todos"] == 1
     assert "next_commitment_at" in row and "focus_minutes_7d" in row
+
+
+def test_api_detail_includes_stats(client):
+    pid = client.post(
+        "/projects", json={"name": "K", "domain": "home"}, headers=_auth()
+    ).json()["id"]
+    tid = client.post("/todos", json={"title": "x"}, headers=_auth()).json()["todo_id"]
+    client.post(f"/todos/{tid}/project", json={"project_id": pid}, headers=_auth())
+    stats = client.get(f"/projects/{pid}", headers=_auth()).json()["stats"]
+    assert stats["open_todos"] == 1 and "follow_through" in stats and "focus_minutes" in stats
 
 
 def test_api_archive(client):

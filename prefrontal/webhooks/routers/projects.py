@@ -97,6 +97,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "todos": todos,
             "commitments": commitments,
             "focus_sessions": sessions,
+            "stats": memory.project_stats(project_id),
         }
 
     @router.patch("/projects/{project_id}", tags=["projects"])
