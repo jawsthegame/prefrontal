@@ -84,6 +84,16 @@
   .btn { margin-top: 14px; padding: 10px 16px; background: var(--accent); color: var(--accent-fg);
     border: none; border-radius: 10px; font-weight: 650; font-size: 15px; cursor: pointer; }
   .btn:hover { opacity: .92; }
+  .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .btn.ghost:hover { color: var(--danger); border-color: var(--danger); opacity: 1; }
+  .smtp-acct { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0 0; }
+  .smtp-acct.new { border-style: dashed; }
+  .smtp-acct .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .smtp-acct .head .name { font-weight: 660; font-size: 15px; }
+  .smtp-acct .head .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--line); color: var(--muted); }
+  .smtp-acct .head .pill.on { background: var(--good); color: var(--accent-fg); }
+  .smtp-acct .btnrow { display: flex; gap: 8px; align-items: center; }
 
   #gate { position: fixed; inset: 0; background: var(--bg); display: none;
     align-items: center; justify-content: center; padding: 18px; z-index: 40; }
@@ -148,27 +158,14 @@
   <section class="card" id="c-smtp">
     <h2>Email hand-off (SMTP)</h2>
     <p class="sub">When you delegate a todo to a human assistant, Prefrontal emails
-      them the prep brief from here. Use your provider's SMTP details — for Gmail,
-      an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">app
-      password</a>, not your login password. Leave the password blank to keep the
-      one already saved. The password is encrypted at rest and never shown again.</p>
-    <div class="form-grid">
-      <label class="field"><span>SMTP host</span>
-        <input type="text" id="smtp-host" placeholder="smtp.gmail.com" autocomplete="off" /></label>
-      <label class="field"><span>Port</span>
-        <input type="number" id="smtp-port" min="1" max="65535" value="587" /></label>
-      <label class="field"><span>Username</span>
-        <input type="text" id="smtp-username" placeholder="you@gmail.com" autocomplete="off" /></label>
-      <label class="field"><span>Password / app password</span>
-        <input type="password" id="smtp-password" placeholder="•••• (saved)" autocomplete="new-password" /></label>
-      <label class="field wide"><span>From address</span>
-        <input type="email" id="smtp-sender" placeholder="you@gmail.com (defaults to username)" autocomplete="off" /></label>
-    </div>
-    <label class="field-check" style="margin-top:12px"><input type="checkbox" id="smtp-tls" checked/>
-      <span>Use STARTTLS (recommended for port 587)</span></label>
-    <label class="field-check" style="margin-top:8px"><input type="checkbox" id="smtp-enabled" checked/>
-      <span>Allow the email hand-off to send</span></label>
-    <button class="btn" id="smtp-save" type="button">Save email settings</button>
+      them the prep brief from one of these accounts. A delegated todo auto-sends
+      from the account whose <b>name matches its mail account or domain</b> (a work
+      todo → a <code>work</code> account), falling back to <code>default</code>. For
+      Gmail use an <a href="https://myaccount.google.com/apppasswords" target="_blank"
+      rel="noopener">app password</a>, not your login password. Passwords are
+      encrypted at rest and never shown again.</p>
+    <div id="smtp-list"></div>
+    <datalist id="smtp-name-hints"></datalist>
     <div class="saved" id="smtp-saved"></div>
   </section>
 </div>
@@ -338,44 +335,111 @@ $("#autodecomp").addEventListener("change", async (e) => {
 });
 
 // ── SMTP (outbound email) config: a small form saved as a whole ──────────────
+// ── SMTP: several named outbox accounts, each its own inline form ────────────
+// A todo delegated by email sends from the account matching its mail account or
+// domain (else "default"), so accounts are named — one card per account plus a
+// dashed "add" form. An existing account's name is fixed (it's the key); the new
+// form lets you name it (with your mail-account names suggested).
+function smtpForm(e, isNew) {
+  const acct = e.account || "";
+  const nameField = isNew
+    ? `<label class="field"><span>Account name</span>`
+      + `<input type="text" data-f="account" list="smtp-name-hints" placeholder="default" `
+      + `value="${esc(acct)}" autocomplete="off" /></label>`
+    : "";
+  const pillOn = e.enabled && e.configured;
+  const pill = isNew ? "" :
+    `<span class="pill${pillOn ? " on" : ""}">${pillOn ? "active" : (e.enabled ? "incomplete" : "off")}</span>`;
+  const head = isNew
+    ? `<div class="head"><span class="name">Add an account</span></div>`
+    : `<div class="head"><span class="name">${esc(acct)}</span>${pill}</div>`;
+  const pwHint = (!isNew && e.password_set)
+    ? "•••• (saved — leave blank to keep)" : "app password";
+  return `<div class="smtp-acct${isNew ? " new" : ""}" data-account="${esc(acct)}" data-new="${isNew ? 1 : 0}">
+    ${head}
+    <div class="form-grid">
+      ${nameField}
+      <label class="field"><span>SMTP host</span>
+        <input type="text" data-f="host" placeholder="smtp.gmail.com" value="${esc(e.host || "")}" autocomplete="off"/></label>
+      <label class="field"><span>Port</span>
+        <input type="number" data-f="port" min="1" max="65535" value="${e.port || 587}"/></label>
+      <label class="field"><span>Username</span>
+        <input type="text" data-f="username" placeholder="you@gmail.com" value="${esc(e.username || "")}" autocomplete="off"/></label>
+      <label class="field"><span>Password / app password</span>
+        <input type="password" data-f="password" placeholder="${esc(pwHint)}" autocomplete="new-password"/></label>
+      <label class="field wide"><span>From address</span>
+        <input type="email" data-f="sender" placeholder="defaults to username" value="${esc(e.sender || "")}" autocomplete="off"/></label>
+    </div>
+    <label class="field-check" style="margin-top:12px"><input type="checkbox" data-f="use_tls" ${e.use_tls === false ? "" : "checked"}/>
+      <span>Use STARTTLS (recommended for port 587)</span></label>
+    <label class="field-check" style="margin-top:8px"><input type="checkbox" data-f="enabled" ${e.enabled === false ? "" : "checked"}/>
+      <span>Allow this account to send</span></label>
+    <div class="btnrow">
+      <button class="btn" data-act="save" type="button">${isNew ? "Add account" : "Save"}</button>
+      ${isNew ? "" : `<button class="btn ghost" data-act="remove" type="button">Remove</button>`}
+    </div>
+  </div>`;
+}
+
+function renderSmtp(d) {
+  const hints = [...(d.mail_accounts || []), d.default_account || "default"];
+  $("#smtp-name-hints").innerHTML = [...new Set(hints)].map((n) => `<option value="${esc(n)}">`).join("");
+  const accounts = d.accounts || [];
+  $("#smtp-list").innerHTML =
+    accounts.map((e) => smtpForm(e, false)).join("")
+    + smtpForm({ port: 587, use_tls: true, enabled: true }, true);
+}
+
 async function loadSmtp() {
   try {
-    const d = await api("/smtp");
-    // Don't clobber a field the user is mid-edit on (in case of a refocus reload).
-    const set = (sel, val) => { const el = $(sel); if (el !== document.activeElement) el.value = val; };
-    set("#smtp-host", d.host || "");
-    set("#smtp-port", d.port || 587);
-    set("#smtp-username", d.username || "");
-    set("#smtp-sender", d.sender || "");
-    if ($("#smtp-tls") !== document.activeElement) $("#smtp-tls").checked = !!d.use_tls;
-    if ($("#smtp-enabled") !== document.activeElement) $("#smtp-enabled").checked = !!d.enabled;
-    // A stored password is never returned; hint that one is saved via the placeholder.
-    $("#smtp-password").placeholder = d.password_set ? "•••• (saved — leave blank to keep)" : "app password";
+    // Don't clobber the whole list while the user is editing a field in it.
+    if ($("#smtp-list").contains(document.activeElement)) return;
+    renderSmtp(await api("/smtp"));
   } catch (err) {
     if (err.code === 401) gate("Session expired.");
   }
 }
-$("#smtp-save").addEventListener("click", async () => {
-  const body = {
-    host: $("#smtp-host").value.trim(),
-    port: Number($("#smtp-port").value) || 587,
-    username: $("#smtp-username").value.trim(),
-    sender: $("#smtp-sender").value.trim(),
-    use_tls: $("#smtp-tls").checked,
-    enabled: $("#smtp-enabled").checked,
-  };
-  // Only send the password when the user typed one, so a blank field keeps the stored secret.
-  const pw = $("#smtp-password").value;
-  if (pw) body.password = pw;
+
+function smtpFlash(msg) {
+  $("#smtp-saved").textContent = msg;
+  setTimeout(() => { $("#smtp-saved").textContent = ""; }, 1800);
+}
+
+// Save / Remove are delegated (forms are re-rendered on every reload).
+$("#smtp-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const block = btn.closest(".smtp-acct");
+  const isNew = block.dataset.new === "1";
+  const val = (f) => block.querySelector(`[data-f="${f}"]`);
   try {
+    if (btn.dataset.act === "remove") {
+      const acct = block.dataset.account;
+      if (!confirm(`Remove the "${acct}" email account?`)) return;
+      await api("/smtp/" + encodeURIComponent(acct), { method: "DELETE" });
+      smtpFlash("Removed ✓");
+      return loadSmtp();
+    }
+    const account = isNew ? (val("account").value.trim() || "default") : block.dataset.account;
+    const body = {
+      account,
+      host: val("host").value.trim(),
+      port: Number(val("port").value) || 587,
+      username: val("username").value.trim(),
+      sender: val("sender").value.trim(),
+      use_tls: val("use_tls").checked,
+      enabled: val("enabled").checked,
+    };
+    // Only send the password when one was typed, so a blank keeps the stored secret.
+    const pw = val("password").value;
+    if (pw) body.password = pw;
+    if (!body.host) { smtpFlash("host is required"); return; }
     await api("/smtp", { method: "POST", body: JSON.stringify(body) });
-    $("#smtp-password").value = "";  // never keep the secret in the DOM after saving
-    $("#smtp-saved").textContent = "Saved ✓";
-    setTimeout(() => { $("#smtp-saved").textContent = ""; }, 1600);
-    loadSmtp();
+    smtpFlash("Saved ✓");
+    loadSmtp();  // re-render (clears the typed password from the DOM)
   } catch (err) {
     if (err.code === 401) { gate("Session expired."); return; }
-    $("#smtp-saved").textContent = "couldn't save — retry";
+    smtpFlash("couldn't save — retry");
   }
 });
 

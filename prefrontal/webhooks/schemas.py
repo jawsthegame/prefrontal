@@ -1099,13 +1099,18 @@ class DelegateTodo(BaseModel):
 
 
 class SmtpConfig(BaseModel):
-    """Body of ``POST /smtp`` — the user's outbound-email (SMTP) source.
+    """Body of ``POST /smtp`` — one of the user's outbound-email (SMTP) accounts.
 
     A partial-update: an omitted/blank ``password`` leaves the stored one in place
     (so the operator can edit the host without retyping the secret). The password
     is sealed at rest and never returned by ``GET /smtp``.
     """
 
+    account: str = Field(
+        default="default",
+        description="Outbox name — 'default', or a mail account / domain "
+        "(work/personal) so a delegated todo auto-sends from the matching identity.",
+    )
     host: str = Field(description="SMTP server host, e.g. smtp.gmail.com.")
     port: int = Field(default=587, ge=1, le=65535, description="SMTP port (587 for STARTTLS).")
     username: str = Field(default="", description="SMTP login username (often the full email).")

@@ -60,7 +60,7 @@ from prefrontal.scheduling import (
     window_config_for,
     work_window_now,
 )
-from prefrontal.sources import resolve_smtp
+from prefrontal.sources import resolve_smtp_for
 from prefrontal.todos import (
     AUTO_DECOMPOSE_KEY,
     DEFAULT_MAX_FIRST_STEP_MINUTES,
@@ -762,7 +762,14 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="handler='email' needs a 'destination' (the assistant's email).",
             )
-        smtp = resolve_smtp(memory) if payload.handler == HANDLER_EMAIL else None
+        # Auto-pick the outbox: the todo's own mail account (a work-mailbox todo →
+        # the "work" SMTP), else its domain, else the default source.
+        smtp = None
+        if payload.handler == HANDLER_EMAIL:
+            src = memory.mail_sources_for_todos([todo_id]).get(todo_id) or {}
+            smtp = resolve_smtp_for(
+                memory, account=src.get("account"), domain=todo.get("domain")
+            )
         result = run_delegation(
             memory,
             todo,

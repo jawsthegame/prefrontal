@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import seal, unseal
@@ -179,8 +180,10 @@ def ics_sources(
 
 # -- outbound mail (SMTP relay for delegating a todo to a human assistant) -----
 
-#: The single logical SMTP account per user (one sending relay is enough — a
-#: person delegates from one outbox), so callers don't have to name it.
+#: The fallback SMTP account name, used when a todo matches no per-account/per-
+#: domain source. A user can keep just this one (a single outbox) or name sources
+#: after their mail accounts / domains (``work``, ``personal``) so a delegation
+#: sends from the matching identity — see :func:`resolve_smtp_for`.
 SMTP_ACCOUNT = "default"
 
 
@@ -188,6 +191,7 @@ SMTP_ACCOUNT = "default"
 class SmtpSource:
     """A resolved SMTP outbound source, with its password decrypted."""
 
+    account: str  # the logical account name (fallback ``default``, or work/personal…)
     host: str
     port: int
     username: str
@@ -214,7 +218,11 @@ def put_smtp_source(
     enabled: bool = True,
     account: str = SMTP_ACCOUNT,
 ) -> int:
-    """Create or update the user's SMTP source; return its row id.
+    """Create or update one of the user's SMTP sources; return its row id.
+
+    A user may keep several, keyed by ``account`` — name them after their mail
+    accounts / domains (``work``, ``personal``) so a delegated todo sends from the
+    matching outbox (:func:`resolve_smtp_for`), or keep a single ``default``.
 
     The sealed secret is the SMTP password (an app password, typically).
     ``password=None`` leaves an existing sealed password untouched — the
@@ -241,22 +249,13 @@ def put_smtp_source(
     )
 
 
-def resolve_smtp(
-    store: MemoryStore, *, account: str = SMTP_ACCOUNT
-) -> SmtpSource | None:
-    """Return the user's SMTP source (password decrypted), or ``None`` if unset.
-
-    Unlike IMAP there is no env fallback: outbound relay is configured per user
-    through the dashboard, so a user with no SMTP source simply can't send (the
-    delegation ``email`` handler then stores the brief for manual sending).
-    """
-    row = store.get_source(SMTP, account)
-    if row is None:
-        return None
+def _row_to_smtp(account: str, row: Any) -> SmtpSource:
+    """Build an :class:`SmtpSource` from a ``sources`` row (secret decrypted)."""
     cfg = json.loads(row["config"] or "{}")
     password = unseal(row["secret_enc"]) if row["secret_enc"] is not None else ""
     username = cfg.get("username", "")
     return SmtpSource(
+        account=account,
         host=cfg.get("host", ""),
         port=int(cfg.get("port", 587)),
         username=username,
@@ -265,6 +264,57 @@ def resolve_smtp(
         use_tls=bool(cfg.get("use_tls", True)),
         enabled=bool(row["enabled"]),
     )
+
+
+def resolve_smtp(
+    store: MemoryStore, *, account: str = SMTP_ACCOUNT
+) -> SmtpSource | None:
+    """Return the user's SMTP source named ``account`` (decrypted), or ``None``.
+
+    Unlike IMAP there is no env fallback: outbound relay is configured per user
+    through the dashboard, so a user with no matching SMTP source simply can't
+    send (the delegation ``email`` handler then stores the brief for manual
+    sending). For todo-aware selection use :func:`resolve_smtp_for`.
+    """
+    row = store.get_source(SMTP, account)
+    return _row_to_smtp(account, row) if row is not None else None
+
+
+def smtp_sources(store: MemoryStore, *, include_disabled: bool = True) -> list[SmtpSource]:
+    """Return all of the user's SMTP sources (passwords decrypted)."""
+    return [
+        _row_to_smtp(row["account"], row)
+        for row in store.list_sources(kind=SMTP, include_disabled=include_disabled)
+    ]
+
+
+def delete_smtp_source(store: MemoryStore, account: str) -> bool:
+    """Remove one of the user's SMTP sources. Returns ``True`` if a row was deleted."""
+    return store.delete_source(SMTP, account)
+
+
+def resolve_smtp_for(
+    store: MemoryStore, *, account: str | None = None, domain: str | None = None
+) -> SmtpSource | None:
+    """Pick the SMTP source to send a todo's delegation from (or ``None``).
+
+    Resolution order — the todo's own mail **account** (a work-mailbox todo →
+    the ``work`` outbox), then its **domain** (``work``/``home`` → a like-named
+    source), then the ``default`` source, and finally, as a convenience, the sole
+    configured source when there's exactly one. Only *configured* (enabled, with a
+    host + from address) sources count, so a half-filled row never wins. This is
+    what lets a user set SMTP "per email account" or "per domain" just by naming
+    their sources to match — with a single ``default`` still working for everyone
+    who doesn't care.
+    """
+    for key in (account, domain, SMTP_ACCOUNT):
+        if not key:
+            continue
+        src = resolve_smtp(store, account=key)
+        if src is not None and src.configured:
+            return src
+    configured = [s for s in smtp_sources(store, include_disabled=False) if s.configured]
+    return configured[0] if len(configured) == 1 else None
 
 
 # -- mail fetch bridge: registry source -> ImapAccount + retention policy ------
