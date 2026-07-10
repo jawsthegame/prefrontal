@@ -30,7 +30,14 @@ from prefrontal.modules.self_care import (
     self_care_status,
 )
 from prefrontal.scheduling import local_datetime
-from prefrontal.sources import put_smtp_source, resolve_smtp
+from prefrontal.sources import (
+    SMTP_ACCOUNT,
+    delete_smtp_source,
+    imap_accounts,
+    put_smtp_source,
+    resolve_smtp,
+    smtp_sources,
+)
 from prefrontal.stats import build_stats
 from prefrontal.webhooks._common import (
     APP_ICON_PNG,
@@ -264,38 +271,41 @@ def build_router(services: RouterServices) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
         return {"headline": headline, **self_care_status(ctx.store, now, tz)}
 
-    @router.get("/smtp", tags=["system"])
-    def smtp_data(
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
-    ) -> dict[str, Any]:
-        """The signed-in user's outbound-email (SMTP) config, for the Settings card.
+    def _smtp_entry(src: Any) -> dict[str, Any]:
+        """Serialize one SMTP source for the client — the password is NEVER included.
 
-        Powers the email-handoff destination for delegated todos. The password is
-        sealed at rest and **never** returned — instead ``password_set`` says
-        whether one is stored, so the form can show "•••• (saved)" without ever
-        exposing the secret to the browser.
+        ``password_set`` says whether a secret is stored, so the form can show
+        "•••• (saved)" without the browser ever seeing the sealed value.
         """
-        src = resolve_smtp(ctx.store)
-        if src is None:
-            return {
-                "configured": False,
-                "host": "",
-                "port": 587,
-                "username": "",
-                "sender": "",
-                "use_tls": True,
-                "enabled": True,
-                "password_set": False,
-            }
         return {
-            "configured": src.configured,
+            "account": src.account,
             "host": src.host,
             "port": src.port,
             "username": src.username,
             "sender": src.sender,
             "use_tls": src.use_tls,
             "enabled": src.enabled,
+            "configured": src.configured,
             "password_set": bool(src.password),
+        }
+
+    @router.get("/smtp", tags=["system"])
+    def smtp_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's outbound-email (SMTP) accounts, for the Settings card.
+
+        Powers the email hand-off for delegated todos. A user may keep several
+        accounts keyed by name — a delegated todo sends from the one matching its
+        mail account or domain (else ``default``). ``mail_accounts`` lists the
+        user's IMAP account names so the UI can suggest matching outbox names, and
+        every password is sealed at rest and **never** returned (see
+        :func:`_smtp_entry`).
+        """
+        return {
+            "accounts": [_smtp_entry(s) for s in smtp_sources(ctx.store)],
+            "mail_accounts": imap_accounts(ctx.store, include_disabled=True),
+            "default_account": SMTP_ACCOUNT,
         }
 
     @router.post("/smtp", tags=["system"])
@@ -303,17 +313,20 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: SmtpConfig,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Save the signed-in user's SMTP source (used to email delegated todos to a VA).
+        """Create or update one SMTP account (used to email delegated todos to a VA).
 
-        A partial update: a blank/omitted ``password`` keeps the stored one
-        (``None`` into :func:`~prefrontal.sources.put_smtp_source` preserves the
-        sealed secret), so editing the host doesn't require retyping the app
-        password. The secret is sealed at rest. Returns the fresh (password-free)
-        status so the card re-renders from the response.
+        ``account`` names the outbox (defaults to ``default``; name it after a mail
+        account or domain — ``work``/``personal`` — for auto-matched sending). A
+        partial update: a blank/omitted ``password`` keeps the stored one (``None``
+        into :func:`~prefrontal.sources.put_smtp_source` preserves the sealed
+        secret), so editing the host doesn't require retyping the app password.
+        Returns the fresh (password-free) entry so the card re-renders from it.
         """
+        account = (payload.account or SMTP_ACCOUNT).strip() or SMTP_ACCOUNT
         password = payload.password if (payload.password or "").strip() else None
         put_smtp_source(
             ctx.store,
+            account=account,
             host=payload.host.strip(),
             port=payload.port,
             username=payload.username.strip(),
@@ -322,16 +335,17 @@ def build_router(services: RouterServices) -> APIRouter:
             use_tls=payload.use_tls,
             enabled=payload.enabled,
         )
-        src = resolve_smtp(ctx.store)
-        return {
-            "configured": bool(src and src.configured),
-            "host": src.host if src else "",
-            "port": src.port if src else payload.port,
-            "username": src.username if src else "",
-            "sender": src.sender if src else "",
-            "use_tls": src.use_tls if src else payload.use_tls,
-            "enabled": src.enabled if src else payload.enabled,
-            "password_set": bool(src and src.password),
-        }
+        src = resolve_smtp(ctx.store, account=account)
+        return _smtp_entry(src) if src else {"account": account, "configured": False}
+
+    @router.delete("/smtp/{account}", tags=["system"])
+    def delete_smtp(
+        account: str,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Remove one of the user's SMTP accounts. 404 if there's no such account."""
+        if not delete_smtp_source(ctx.store, account):
+            raise HTTPException(status_code=404, detail=f"No SMTP account '{account}'.")
+        return {"account": account, "deleted": True}
 
     return router

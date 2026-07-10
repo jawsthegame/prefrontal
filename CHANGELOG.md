@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Per-account SMTP for the email hand-off** ✅ — the delegation email route now
+  supports **several named SMTP outboxes** instead of one. A delegated todo
+  auto-sends from the account whose name matches its **mail account**, then its
+  **domain** (a work-mailbox / work-domain todo → a `work` outbox), falling back to
+  `default` — or the sole account when only one is configured
+  (`sources.resolve_smtp_for`). The Settings page manages the list (add / edit /
+  remove, with the user's mail-account names suggested for matching); `GET /smtp`
+  returns all accounts (passwords never echoed), `POST /smtp` upserts one by
+  `account`, and `DELETE /smtp/{account}` removes it. Sources stay Fernet-sealed
+  per user.
+
 - **Delegate a todo to an assistant (prep / follow-up hand-off)** ✅ — some open
   loops are less "do a tiny first step" and more "someone should go dig up the
   options, draft the email, and hand it back ready to send." `prefrontal/delegation.py`

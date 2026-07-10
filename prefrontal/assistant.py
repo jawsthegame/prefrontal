@@ -56,7 +56,7 @@ from prefrontal.memory.repos.household import (
     normalize_fact_item,
 )
 from prefrontal.scheduling import local_datetime
-from prefrontal.sources import resolve_smtp
+from prefrontal.sources import resolve_smtp_for
 from prefrontal.todos import (
     ENERGY_LEVELS,
     MAX_ESTIMATE_MINUTES,
@@ -1439,7 +1439,12 @@ def _execute_one(
                 result["detail"] = "todo is no longer open"
             else:
                 handler = p["handler"]
-                smtp = resolve_smtp(memory) if handler == HANDLER_EMAIL else None
+                smtp = None
+                if handler == HANDLER_EMAIL:
+                    src = memory.mail_sources_for_todos([todo["id"]]).get(todo["id"]) or {}
+                    smtp = resolve_smtp_for(
+                        memory, account=src.get("account"), domain=todo.get("domain")
+                    )
                 outcome = run_delegation(
                     memory, todo, handler=handler,
                     destination=p.get("destination"), client=client, smtp=smtp,

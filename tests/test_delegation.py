@@ -162,7 +162,8 @@ def test_email_handler_sends_and_forwards(store):
     todo = store.get_todo(tid)
     record: dict = {}
     smtp = sources.SmtpSource(
-        host="smtp.test", port=587, username="me@x.com", password="pw", sender="me@x.com"
+        account="default", host="smtp.test", port=587,
+        username="me@x.com", password="pw", sender="me@x.com",
     )
     smtp_client = SmtpClient(connect=lambda h, p, t: _FakeConn(record))
     result = run_delegation(
@@ -193,7 +194,9 @@ def test_email_handler_no_smtp_stores_brief_and_fails(store):
 def test_email_handler_send_error_is_caught(store):
     tid = store.add_todo("Book dentist")
     todo = store.get_todo(tid)
-    smtp = sources.SmtpSource(host="smtp.test", port=587, username="u", password="p", sender="u@x")
+    smtp = sources.SmtpSource(
+        account="default", host="smtp.test", port=587, username="u", password="p", sender="u@x"
+    )
     smtp_client = SmtpClient(connect=lambda h, p, t: _FakeConn({}, fail_on="starttls"))
     result = run_delegation(
         store, todo, handler="email", destination="va@x.com",
@@ -338,7 +341,7 @@ def test_http_delegate_return_404_without_delegation(http):
 
 
 def test_http_smtp_get_post_never_echoes_password(http):
-    assert http.get("/smtp", headers=_headers()).json()["configured"] is False
+    assert http.get("/smtp", headers=_headers()).json()["accounts"] == []
     r = http.post(
         "/smtp",
         json={
@@ -348,13 +351,31 @@ def test_http_smtp_get_post_never_echoes_password(http):
         headers=_headers(),
     )
     body = r.json()
+    assert body["account"] == "default"  # defaulted
     assert body["configured"] is True
     assert body["password_set"] is True
     assert "password" not in body  # never returned
-    got = http.get("/smtp", headers=_headers()).json()
-    assert got["host"] == "smtp.gmail.com"
-    assert got["password_set"] is True
-    assert "password" not in got
+    accounts = http.get("/smtp", headers=_headers()).json()["accounts"]
+    assert len(accounts) == 1
+    assert accounts[0]["host"] == "smtp.gmail.com"
+    assert accounts[0]["password_set"] is True
+    assert "password" not in accounts[0]
+
+
+def test_http_smtp_multiple_named_accounts_and_delete(http):
+    """Several named outboxes coexist; one can be removed without touching the rest."""
+    for acct in ("default", "work"):
+        http.post(
+            "/smtp",
+            json={"account": acct, "host": f"smtp.{acct}", "password": "p", "sender": f"{acct}@x"},
+            headers=_headers(),
+        )
+    accounts = {a["account"] for a in http.get("/smtp", headers=_headers()).json()["accounts"]}
+    assert accounts == {"default", "work"}
+    assert http.delete("/smtp/work", headers=_headers()).status_code == 200
+    assert http.delete("/smtp/work", headers=_headers()).status_code == 404  # gone
+    left = {a["account"] for a in http.get("/smtp", headers=_headers()).json()["accounts"]}
+    assert left == {"default"}
 
 
 def test_http_smtp_partial_update_keeps_password(http):
@@ -368,6 +389,7 @@ def test_http_smtp_partial_update_keeps_password(http):
         "/smtp", json={"host": "b", "username": "me@x", "sender": "me@x"}, headers=_headers()
     )
     assert r.json()["password_set"] is True
+    assert r.json()["host"] == "b"
     assert r.json()["host"] == "b"
 
 
@@ -420,3 +442,56 @@ def test_assistant_op_rejects_unknown_todo(store):
     )
     assert actions == []
     assert errors
+
+
+# -- per-account SMTP selection ----------------------------------------------
+
+
+def test_resolve_smtp_for_account_then_domain_then_default(store, secret_env):
+    """A todo's mail account wins, then its domain, then the 'default' outbox."""
+    for acct, host in [("default", "d"), ("work", "w"), ("home", "h")]:
+        sources.put_smtp_source(store, account=acct, host=host, password="p", sender=f"{acct}@x")
+    # account match beats domain
+    assert sources.resolve_smtp_for(store, account="work", domain="home").account == "work"
+    # no account match → domain match
+    assert sources.resolve_smtp_for(store, account="personal", domain="home").account == "home"
+    # neither matches → default
+    assert sources.resolve_smtp_for(store, account="personal", domain="school").account == "default"
+
+
+def test_resolve_smtp_for_single_source_convenience(store, secret_env):
+    """With exactly one configured outbox, an unmatched todo still uses it."""
+    sources.put_smtp_source(store, account="personal", host="p", password="p", sender="me@x")
+    assert sources.resolve_smtp_for(store, account="work", domain="work").account == "personal"
+
+
+def test_resolve_smtp_for_none_when_ambiguous(store, secret_env):
+    """Two outboxes and no match/default → None (don't guess which identity)."""
+    sources.put_smtp_source(store, account="work", host="w", password="p", sender="me@w")
+    sources.put_smtp_source(store, account="personal", host="p", password="p", sender="me@p")
+    assert sources.resolve_smtp_for(store, account="school", domain="school") is None
+
+
+def test_http_delegate_email_auto_matches_domain(http):
+    """A work-domain todo with only a 'work' outbox routes to it (tries to send)."""
+    http.post(
+        "/smtp",
+        json={"account": "work", "host": "smtp.invalid.test", "password": "p", "sender": "me@w"},
+        headers=_headers(),
+    )
+    # a second outbox so the single-source convenience can't mask the domain match
+    http.post(
+        "/smtp",
+        json={"account": "other", "host": "smtp.other.test", "password": "p", "sender": "me@o"},
+        headers=_headers(),
+    )
+    tid = http.post("/todos", json={"title": "Q3 report"}, headers=_headers()).json()["todo_id"]
+    http.post(f"/todos/{tid}/domain", json={"domain": "work"}, headers=_headers())
+    r = http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "email", "destination": "va@x.com"}, headers=_headers(),
+    ).json()
+    # Selection found the 'work' outbox and attempted a send (fake host → send failed),
+    # rather than reporting "SMTP not configured" (which is the no-match outcome).
+    assert r["status"] == STATUS_FAILED
+    assert "send failed" in r["detail"]
