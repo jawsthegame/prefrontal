@@ -7,6 +7,23 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Coaching engine: `location_anchor.evaluate` is side-effect-free (audit #407 H2)** ✅
+  — the last leak from the coaching-abstraction audit. `Module.evaluate` is
+  contracted to *return cues, never write*, but `LocationAnchorModule.evaluate`
+  called `apply_outing_evaluation` inline (closing outings, logging episodes,
+  recording nudges) — non-substitutable and unsafe for a dry-run, unlike its
+  siblings. Fixed by moving the writes into the `after_fire` lifecycle hook (added
+  in #407 H1): a shared `_active_outing_evals` does the pure per-outing decision,
+  `evaluate` turns firing ones into cues, and `after_fire` re-runs the identical
+  (deterministic) evaluation and applies the writes. Because `after_fire` runs
+  every tick regardless of cues, the **cue-less** transitions the deferral worried
+  about — passive home-return, auto-abandon — still apply (this is why it couldn't
+  key off `decisions`). The `after_fire` hook now receives `ctx` (symmetric with
+  `before_collect`), giving it `ctx.now` + location. The `/webhooks/outing/check`
+  endpoint is unchanged and stays in parity via the shared `evaluate_outing` /
+  `apply_outing_evaluation`. New tests cover a tick applying the level advance and,
+  crucially, a cue-less auto-abandon still closing the outing. Closes #407.
+
 - **Calendar sync tolerates a single bad event** ✅ — `sync_calendar` used to
   validate the whole batch up front and reject *all* of it if any one event failed
   (`normalize_event` raising), so a single malformed VEVENT — an unparseable time,

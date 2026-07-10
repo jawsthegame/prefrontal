@@ -104,7 +104,7 @@ class ModuleLike(Protocol):
 
     def before_collect(self, store: Any, ctx: CoachContext) -> None: ...
 
-    def after_fire(self, store: Any, decisions: list[Decision], now: datetime) -> None: ...
+    def after_fire(self, store: Any, decisions: list[Decision], ctx: CoachContext) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -579,7 +579,7 @@ def run_coaching_tick(
     # outing/check advances last_level when it decides to fire.
     record_fired(store, decisions, now)
     note_delivered(store, decisions, now)
-    _run_module_hooks(modules, lambda m: m.after_fire(store, decisions, now), "after_fire")
+    _run_module_hooks(modules, lambda m: m.after_fire(store, decisions, ctx), "after_fire")
     return TickResult(
         decisions=decisions,
         cues=cues,

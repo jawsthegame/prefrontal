@@ -26,7 +26,7 @@ import math
 import re
 
 from prefrontal.clock import TS_FMT, utcnow
-from prefrontal.coaching import CoachContext, Cue
+from prefrontal.coaching import CoachContext, Cue, Decision
 from prefrontal.commitments import is_attendable
 from prefrontal.impact import (
     cascade_at_risk,
@@ -606,16 +606,17 @@ class LocationAnchorModule(Module):
             ),
         ]
 
-    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
-        """Emit an escalation cue for each active outing that just crossed a level.
+    def _active_outing_evals(
+        self, store: MemoryStore, ctx: CoachContext
+    ) -> list[tuple[dict[str, Any], OutingEvaluation]]:
+        """Evaluate every active outing — the shared, **pure** read for this tick.
 
-        The coaching-agent form of ``/webhooks/outing/check``: it runs the same
-        shared decision (:func:`evaluate_outing`) and side effects
-        (:func:`apply_outing_evaluation` — passive return, auto-abandon, one-fire
-        level advance) per active outing, then turns a newly-fired escalation into
-        a :class:`~prefrontal.coaching.Cue` (level → urgency: soft→nudge,
-        firm→urgent, call→critical). Passive returns / abandons are silent state
-        changes and produce no cue.
+        Runs the same decision (:func:`evaluate_outing`) the endpoint runs, per
+        active outing, and returns ``(outing, evaluation)`` pairs. No writes: both
+        :meth:`evaluate` (which turns firing evals into cues) and :meth:`after_fire`
+        (which applies the implied writes) call this, so the decision is made once
+        per outing and the two phases can't drift. Pinned to ``ctx.now`` so the
+        re-evaluation in ``after_fire`` is identical to the one ``evaluate`` saw.
         """
         home_radius = store.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
         abandon_ratio = store.get_float("abandon_after_ratio", DEFAULT_ABANDON_RATIO)
@@ -638,21 +639,42 @@ class LocationAnchorModule(Module):
             bias=dep["bias"], speed_kmh=dep["speed_kmh"],
             road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
         )
-        cues: list[Cue] = []
-        for outing in store.active_outings():
-            ev = evaluate_outing(
+        return [
+            (
                 outing,
-                cur_lat=ctx.current_lat,
-                cur_lon=ctx.current_lon,
-                home_radius=home_radius,
-                abandon_ratio=abandon_ratio,
-                bias=bias,
-                commitments=commitments,
-                name=ctx.display_name,
-                lead_override=leads,
-                home_grace_minutes=grace,
+                evaluate_outing(
+                    outing,
+                    cur_lat=ctx.current_lat,
+                    cur_lon=ctx.current_lon,
+                    home_radius=home_radius,
+                    abandon_ratio=abandon_ratio,
+                    bias=bias,
+                    commitments=commitments,
+                    name=ctx.display_name,
+                    lead_override=leads,
+                    now=ctx.now,
+                    home_grace_minutes=grace,
+                ),
             )
-            apply_outing_evaluation(store, outing, ev)
+            for outing in store.active_outings()
+        ]
+
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """Emit an escalation cue for each active outing that just crossed a level.
+
+        The coaching-agent form of ``/webhooks/outing/check``, but **read-only** —
+        honoring the :meth:`~prefrontal.modules.base.Module.evaluate` contract
+        (return cues, never write). It runs the shared decision
+        (:func:`evaluate_outing`, via :meth:`_active_outing_evals`) per active
+        outing and turns a newly-fired escalation into a
+        :class:`~prefrontal.coaching.Cue` (level → urgency: soft→nudge, firm→urgent,
+        call→critical). The store writes those evaluations imply — passive return,
+        auto-abandon, one-fire level advance, arrival stamping — are applied in
+        :meth:`after_fire`, which re-runs the identical evaluation. Passive returns
+        / abandons are silent state changes and produce no cue.
+        """
+        cues: list[Cue] = []
+        for outing, ev in self._active_outing_evals(store, ctx):
             if ev.action == "active" and ev.fire:
                 cues.append(
                     Cue(
@@ -686,6 +708,25 @@ class LocationAnchorModule(Module):
                     )
                 )
         return cues
+
+    def after_fire(
+        self, store: MemoryStore, decisions: list[Decision], ctx: CoachContext
+    ) -> None:
+        """Apply the store writes each active outing's evaluation implies.
+
+        Held back from :meth:`evaluate` so that stays a pure read (the base
+        contract). Re-runs the identical per-outing decision
+        (:meth:`_active_outing_evals` — deterministic, since nothing between
+        collect and here mutates an outing or its commitments) and performs the
+        writes via :func:`apply_outing_evaluation`: passive home-return and
+        auto-abandon (both **cue-less** — they must run whether or not a nudge
+        fired, which is why this can't key off ``decisions``), plus the one-fire
+        level advance / arrival stamp for a firing outing. This is the same
+        evaluate-then-apply the ``/webhooks/outing/check`` endpoint runs inline;
+        the shared functions keep the two in parity.
+        """
+        for outing, ev in self._active_outing_evals(store, ctx):
+            apply_outing_evaluation(store, outing, ev)
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Summarize recent errand punctuality from closed outings."""

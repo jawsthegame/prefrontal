@@ -1150,12 +1150,12 @@ class SelfCareModule(Module):
         sweep_unanswered_self_care(store, ctx.now)
 
     def after_fire(
-        self, store: MemoryStore, decisions: list[Any], now: datetime
+        self, store: MemoryStore, decisions: list[Any], ctx: CoachContext
     ) -> None:
         """Stamp the delivery time of any self-care cue that just fired, so a later
         Ate / Drank / Snooze tap can be timed — the honesty-check latency signal
         for adaptive cadence. Filters ``decisions`` to self-care cues itself."""
-        mark_self_care_prompted(store, decisions, now)
+        mark_self_care_prompted(store, decisions, ctx.now)
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Report which basic-needs checks are on."""
