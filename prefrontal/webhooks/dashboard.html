@@ -379,6 +379,12 @@
   /* Delegate popover (reuses the .cat-menu shell): AI vs. email hand-off. */
   .cat-menu .deleg-mail { display: flex; gap: 6px; margin-top: 6px; }
   .cat-menu .deleg-mail input { flex: 1; }
+  /* One-tap chips of previously-used assistant addresses. */
+  .cat-menu .deleg-recips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .cat-menu .deleg-recips .recip-chip { font-size: 11px; padding: 2px 7px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--chip); color: inherit; cursor: pointer; }
+  .cat-menu .deleg-recips .recip-chip:hover { background: var(--raise); }
   .cat-menu .deleg-context { width: 100%; margin: 6px 0; resize: vertical;
     min-height: 48px; font: inherit; font-size: 12px; box-sizing: border-box;
     border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px;
@@ -1087,6 +1093,17 @@ function openDeadlineMenu(anchor, id, current) {
 // assistant" reveals an address field and mails the brief (the SMTP outbox is
 // auto-picked from the todo's account/domain — configure it in Settings). Reuses
 // the pill-menu shell + POST-and-reload pattern, like the deadline/domain menus.
+// Cache the user's past VA addresses so re-opening the menu doesn't refetch.
+let _delegRecipients = null;
+async function loadDelegRecipients() {
+  if (_delegRecipients) return _delegRecipients;
+  try {
+    const d = await api("/todos/delegate-recipients");
+    _delegRecipients = d.recipients || [];
+  } catch (_) { _delegRecipients = []; }
+  return _delegRecipients;
+}
+
 function openDelegateMenu(anchor, id) {
   closePillMenu();
   const menu = document.createElement("div");
@@ -1125,20 +1142,49 @@ function openDelegateMenu(anchor, id) {
     const inp = document.createElement("input");
     inp.type = "email";
     inp.placeholder = "assistant@example.com";
+    inp.setAttribute("list", "deleg-recip-list");  // native autocomplete of past VAs
     const send = document.createElement("button");
     send.className = "cat-act";
     send.textContent = "Send";
     const submit = () => {
       const to = inp.value.trim();
-      if (to) go({ handler: "email", destination: to, context: context(), note: noteBox.value.trim() || undefined });
+      if (!to) return;
+      _delegRecipients = null;  // a possibly-new address → refresh the pick-list next open
+      go({ handler: "email", destination: to, context: context(), note: noteBox.value.trim() || undefined });
     };
     send.onclick = submit;
     inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
-    wrap.appendChild(inp);
-    wrap.appendChild(send);
+    // A row of one-tap chips for assistants you've emailed before, so a recurring
+    // VA doesn't have to be retyped — plus a <datalist> for type-ahead on the input.
+    const recipRow = document.createElement("div");
+    recipRow.className = "deleg-recips";
+    col.appendChild(recipRow);
     col.appendChild(noteBox);
     col.appendChild(wrap);
+    wrap.appendChild(inp);
+    wrap.appendChild(send);
     mail.replaceWith(col);
+    loadDelegRecipients().then((recips) => {
+      if (!recips.length) return;
+      const dl = document.createElement("datalist");
+      dl.id = "deleg-recip-list";
+      recipRow.appendChild(document.createTextNode("Recent: "));
+      recips.forEach((addr) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "recip-chip";
+        chip.textContent = addr;
+        chip.title = `Email this hand-off to ${addr}`;
+        chip.onclick = () => { inp.value = addr; inp.focus(); };
+        recipRow.appendChild(chip);
+        const opt = document.createElement("option");
+        opt.value = addr;
+        dl.appendChild(opt);
+      });
+      col.appendChild(dl);
+      // One recurring assistant → prefill it (still editable before you hit Send).
+      if (recips.length === 1) inp.value = recips[0];
+    });
     inp.focus();
   };
   menu.appendChild(mail);

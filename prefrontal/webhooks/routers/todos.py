@@ -780,6 +780,18 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         return result
 
+    @router.get("/todos/delegate-recipients", tags=["todos"])
+    def todo_delegate_recipients(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """VA email addresses you've delegated to before, newest first.
+
+        Lets the delegate popover offer a pick-list so a recurring assistant isn't
+        retyped each time. Static path declared before ``/todos/{todo_id}/...`` so
+        "delegate-recipients" isn't read as a todo id.
+        """
+        return {"recipients": ctx.store.delegation_recipients()}
+
     @router.post("/todos/{todo_id}/delegate", tags=["todos"])
     def todo_delegate(
         todo_id: int,

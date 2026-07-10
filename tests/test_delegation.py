@@ -286,6 +286,30 @@ def test_run_delegation_persists_action_items(store):
     assert store.get_delegation(tid)["actions"] == [{"text": "Write the doc", "mine": True}]
 
 
+def test_delegation_recipients_are_distinct_and_exclude_agent(store):
+    """Past VA addresses are listed distinctly; agent hand-offs (no dest) excluded."""
+    t1, t2, t3, t4 = (store.add_todo(x) for x in ("a", "b", "c", "d"))
+    store.set_delegation(t1, handler="email", destination="va1@x.com", status="forwarded")
+    store.set_delegation(t2, handler="email", destination="va2@x.com", status="forwarded")
+    store.set_delegation(t3, handler="email", destination="va1@x.com", status="forwarded")  # dup
+    store.set_delegation(t4, handler="agent", status="prepped")  # no destination
+    recips = store.delegation_recipients()
+    assert sorted(recips) == ["va1@x.com", "va2@x.com"]  # distinct, agent excluded
+
+
+def test_http_delegate_recipients_endpoint(http):
+    """GET /todos/delegate-recipients returns the user's prior VA addresses."""
+    tid = http.post("/todos", json={"title": "x"}, headers=_headers()).json()["todo_id"]
+    # An email hand-off (fails without SMTP, but the destination is still recorded).
+    http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "email", "destination": "va@x.com"}, headers=_headers(),
+    )
+    r = http.get("/todos/delegate-recipients", headers=_headers())
+    assert r.status_code == 200
+    assert r.json()["recipients"] == ["va@x.com"]
+
+
 def test_email_handler_sends_and_forwards(store):
     tid = store.add_todo("Book dentist")
     todo = store.get_todo(tid)
