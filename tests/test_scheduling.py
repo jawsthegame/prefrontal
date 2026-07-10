@@ -13,9 +13,62 @@ from datetime import datetime
 from prefrontal.scheduling import (
     end_of_local_day_utc,
     find_slots,
+    fit_todos,
     local_day_bounds,
     local_time_utc,
 )
+
+
+def _todo(tid, *, minutes=15, priority=1, deadline=None, project_rank=None):
+    """Minimal open-todo dict for the fit ranker."""
+    return {
+        "id": tid, "title": f"todo {tid}", "estimate_minutes": minutes,
+        "priority": priority, "deadline": deadline, "project_rank": project_rank,
+    }
+
+
+def _order(fits):
+    return [f["todo"]["id"] for f in fits]
+
+
+def test_fit_project_rank_breaks_ties_after_priority():
+    # Same deadline (none) and same priority: the todo in the higher-priority
+    # project (lower rank) comes first.
+    fits = fit_todos(60, [
+        _todo(1, project_rank=3),
+        _todo(2, project_rank=1),
+        _todo(3, project_rank=2),
+    ])
+    assert _order(fits) == [2, 3, 1]
+
+
+def test_fit_todo_priority_still_outranks_project_rank():
+    # A higher todo priority wins even from a lower-priority project — rank is only
+    # a tiebreak *after* priority (soft influence).
+    fits = fit_todos(60, [
+        _todo(1, priority=1, project_rank=1),  # top project, normal priority
+        _todo(2, priority=3, project_rank=9),  # bottom project, urgent
+    ])
+    assert _order(fits) == [2, 1]
+
+
+def test_fit_deadline_still_wins_over_project_rank():
+    # A near deadline in a low-priority project still surfaces first.
+    fits = fit_todos(60, [
+        _todo(1, project_rank=1, deadline=None),
+        _todo(2, project_rank=9, deadline="2026-07-11 09:00:00"),
+    ])
+    assert _order(fits) == [2, 1]
+
+
+def test_fit_orphan_only_loses_on_exact_tie():
+    # A project-less todo (rank None) is judged purely on deadline+priority; it only
+    # yields to a ranked-project todo on an exact deadline+priority tie.
+    tie = fit_todos(60, [_todo(1, project_rank=None), _todo(2, project_rank=5)])
+    assert _order(tie) == [2, 1]  # exact tie → ranked project edges out the orphan
+    # But a higher-priority orphan still beats a top-project todo.
+    win = fit_todos(60, [_todo(1, priority=2, project_rank=None), _todo(2, priority=1, project_rank=1)])
+    assert _order(win) == [1, 2]
 
 
 def _commit(start_at, end_at=None):

@@ -238,6 +238,21 @@ follow-up, not built in v1.
    *(confirmed)*
 3. **Archive, not delete.** Archiving preserves FKs and leaves assigned todos in
    place; the unique-name index only covers active rows, so a name frees up.
+4. **Forced priority rank.** Active projects carry a contiguous `rank` (1..N, no
+   ties) — a single stack-rank *across* domains, set by dragging on the board.
+   Forcing distinct ranks makes the priority objective: you can't mark everything
+   "high". New projects append at the bottom; archiving compacts the rest.
+   *(confirmed)*
+   - **Feeds "what to fit in" softly.** `fit_todos` sorts by deadline → todo
+     priority → **project rank** → shortest. A deadline still wins and a todo's own
+     priority still outranks its project's rank, so a project-less todo is judged
+     purely on deadline+priority (only ranked-project todos get the boost, and only
+     as a tiebreak). Rank isn't denormalized onto todos (it changes on every
+     reorder); the fit/now/briefing surfaces opt into an `open_todos(...,
+     with_project_rank=True)` left-join instead, keeping the scheduler otherwise
+     project-unaware. A *hard* rank-first order (project rank ahead of todo
+     priority) was rejected — it can't coexist with "orphans judged by priority"
+     without either sinking orphans or creating a non-transitive sort.
 
 ## Open questions / follow-ups (tracked as issues)
 

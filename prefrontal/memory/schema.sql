@@ -215,11 +215,13 @@ CREATE TABLE IF NOT EXISTS projects (
     notes       TEXT,                                -- longer free-text detail (not used for matching)
     color       TEXT,                                -- optional UI accent (hex/token)
     status      TEXT    NOT NULL DEFAULT 'active',   -- active | archived
+    rank        INTEGER,                             -- forced 1..N priority order among the user's ACTIVE projects (1 = top); NULL while archived
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_projects_user_rank ON projects (user_id, rank);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_user_name
     ON projects (user_id, name) WHERE status = 'active';
 

@@ -653,6 +653,7 @@
   .proj-row { display: flex; align-items: baseline; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); cursor: pointer; }
   .proj-row:first-of-type { border-top: none; }
   .proj-row .proj-name { font-weight: 600; }
+  .proj-row .proj-rank { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 12px; color: var(--muted); }
   .proj-row .proj-roll { font-size: 12px; color: var(--muted); margin-left: auto; white-space: nowrap; }
   .proj-domhdr { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 2px; }
   .proj-domhdr:first-child { margin-top: 0; }
@@ -1224,8 +1225,11 @@ function renderProjects(d) {
       if (p.open_todos) roll.push(`${p.open_todos} open`);
       if (p.next_commitment_at) roll.push(`next ${esc(fmt(p.next_commitment_at))}`);
       if (p.focus_minutes_7d >= 1) roll.push(`${Math.round(p.focus_minutes_7d)}m/7d`);
+      const rankBadge = p.rank != null
+        ? `<span class="proj-rank" title="Priority rank — set on the Projects page">#${p.rank}</span> `
+        : "";
       html += `<div class="proj-row" data-action="project-open" data-id="${p.id}" title="Open project">`
-        + `<span class="proj-name" style="color:${projColor(p)}">${esc(p.name)}</span>`
+        + `<span class="proj-name" style="color:${projColor(p)}">${rankBadge}${esc(p.name)}</span>`
         + (p.description ? `<span class="sub">${esc(p.description)}</span>` : "")
         + `<span class="proj-roll">${roll.join(" · ") || "empty"}</span></div>`;
     }

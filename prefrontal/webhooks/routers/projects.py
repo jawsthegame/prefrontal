@@ -19,6 +19,7 @@ from prefrontal.webhooks.deps import ScopedRequest, resolve_user
 from prefrontal.webhooks.schemas import (
     EntityProjectUpdate,
     ProjectCreate,
+    ProjectReorder,
     ProjectUpdate,
 )
 from prefrontal.webhooks.services import RouterServices
@@ -67,12 +68,30 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """List the user's projects with dashboard rollups (open todos · next
         commitment · focus minutes this week), active only unless
-        ``include_archived=1``, grouped-ready (ordered by domain)."""
+        ``include_archived=1``, in forced priority order (``rank`` 1 first)."""
         return {
             "projects": ctx.store.list_projects_with_rollup(
                 include_archived=include_archived
             )
         }
+
+    @router.post("/projects/reorder", tags=["projects"])
+    def projects_reorder(
+        payload: ProjectReorder,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the forced priority order of the user's active projects.
+
+        The body lists every active project id exactly once, top priority first.
+        A stale or partial list (ids that don't match the current active set) is a
+        422. Returns the reordered projects with rollups. Declared before
+        ``/projects/{project_id}`` so "reorder" isn't read as an id.
+        """
+        try:
+            projects = ctx.store.reorder_projects(payload.order)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        return {"projects": projects}
 
     @router.get("/projects/{project_id}", tags=["projects"])
     def project_get(

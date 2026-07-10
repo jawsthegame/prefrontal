@@ -1008,6 +1008,22 @@ class ProjectUpdate(BaseModel):
     color: str | None = None
 
 
+class ProjectReorder(BaseModel):
+    """Body of ``POST /projects/reorder`` — the full forced priority order.
+
+    Must list every one of the user's *active* project ids exactly once, top
+    priority first. That distinctness is what forces an objective priority: no
+    two projects can share a rank.
+    """
+
+    order: list[int] = Field(
+        description=(
+            "Active project ids in priority order, top first. Every active project "
+            "must appear exactly once (a stale/partial list is rejected 422)."
+        )
+    )
+
+
 class EntityProjectUpdate(BaseModel):
     """Body of the ``POST /{entity}/{id}/project`` assignment endpoints."""
 
