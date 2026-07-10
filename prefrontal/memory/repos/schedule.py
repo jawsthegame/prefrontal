@@ -318,6 +318,36 @@ class ScheduleRepo(Repo):
         self.conn.commit()
         return self.get_commitment(commitment_id)
 
+    def set_commitment_project(
+        self, commitment_id: int, project_id: int | None
+    ) -> dict[str, Any] | None:
+        """Assign (or clear) a commitment's ``project_id``; return the updated row.
+
+        Like ``domain``/``notes``/``hidden``, ``project_id`` is a user field: it is
+        deliberately not touched by :meth:`upsert_commitment`'s re-sync path, so a
+        calendar poll never clobbers it. On assignment the project's ``domain`` is
+        written through (a project is nested under one life sphere, so its members
+        inherit it); clearing keeps the current domain. Returns ``None`` if the
+        commitment doesn't exist, or the project doesn't belong to this user.
+        """
+        if project_id is not None:
+            project = self.get_project(project_id)  # type: ignore[attr-defined]
+            if project is None:
+                return None
+            self.conn.execute(
+                "UPDATE commitments SET project_id = ?, domain = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+                (project_id, project.get("domain"), commitment_id, self._uid()),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE commitments SET project_id = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+                (commitment_id, self._uid()),
+            )
+        self.conn.commit()
+        return self.get_commitment(commitment_id)
+
     def commitments_between(self, start: str, end: str) -> list[dict[str, Any]]:
         """Return active, non-hidden commitments starting in ``[start, end)``, soonest first.
 

@@ -973,6 +973,50 @@ class TodoDomainUpdate(BaseModel):
     )
 
 
+class ProjectCreate(BaseModel):
+    """Body of ``POST /projects`` — create a project."""
+
+    name: str = Field(description="Project name (unique among your active projects).")
+    domain: str = Field(
+        description=(
+            "Life sphere the project sits under (work / home / kids / …). A project "
+            "is nested under one domain; its members inherit it."
+        )
+    )
+    description: str | None = Field(
+        default=None,
+        description=(
+            "Short blurb, matched together with the name to auto-suggest this "
+            "project for triaged items."
+        ),
+    )
+    notes: str | None = Field(default=None, description="Longer detail (not used for matching).")
+    color: str | None = Field(default=None, description="Optional UI accent (hex/token).")
+
+
+class ProjectUpdate(BaseModel):
+    """Body of ``PATCH /projects/{id}`` — edit any subset of a project's fields.
+
+    Every field is optional; only those supplied are changed. Changing ``domain``
+    cascades to the project's assigned todos/commitments.
+    """
+
+    name: str | None = None
+    domain: str | None = None
+    description: str | None = None
+    notes: str | None = None
+    color: str | None = None
+
+
+class EntityProjectUpdate(BaseModel):
+    """Body of the ``POST /{entity}/{id}/project`` assignment endpoints."""
+
+    project_id: int | None = Field(
+        default=None,
+        description="Project to assign the item to, or null to clear the assignment.",
+    )
+
+
 class TodoSchedule(BaseModel):
     """Body of ``POST /todos/{id}/schedule`` — block time for a todo as a commitment.
 

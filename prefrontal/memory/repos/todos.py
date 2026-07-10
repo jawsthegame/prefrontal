@@ -28,6 +28,7 @@ class TodosRepo(Repo):
         category: str | None = None,
         time_window: str | None = None,
         domain: str | None = None,
+        project_id: int | None = None,
         source: str = "manual",
     ) -> int:
         """Insert an open todo and return its id.
@@ -49,6 +50,10 @@ class TodosRepo(Repo):
                 guardrail. Outranks ``category`` when resolving the time band, so
                 a work-mailbox todo is held to work hours whatever its category.
                 Mail ingestion stamps it from the account's configured domain.
+            project_id: Optional grouping (see :class:`ProjectsRepo`). Editable
+                later via :meth:`set_todo_project`, which also writes the project's
+                domain through; on the triage path it's the suggested project (see
+                :func:`prefrontal.projects.suggest_project`).
             source: Where the todo came from — ``manual`` or ``impulse`` (a
                 captured-and-deferred impulse). Lets surfaces distinguish the
                 impulse inbox from deliberately-added loops.
@@ -58,10 +63,10 @@ class TodosRepo(Repo):
         """
         cur = self.conn.execute(
             "INSERT INTO todos (user_id, title, notes, estimate_minutes, priority, "
-            "deadline, energy, category, time_window, domain, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "deadline, energy, category, time_window, domain, project_id, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._uid(), title, notes, estimate_minutes, priority, deadline, energy,
-             category, time_window, domain, source),
+             category, time_window, domain, project_id, source),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -243,6 +248,28 @@ class TodosRepo(Repo):
         at any status so a misfiled item can be corrected.
         """
         return self._update_todo_field(todo_id, "domain", domain, open_only=False)
+
+    def set_todo_project(self, todo_id: int, project_id: int | None) -> bool:
+        """Assign (or clear) a todo's project. Returns ``True`` if a row changed.
+
+        On assignment the project's ``domain`` is written through to the todo (a
+        project is nested under one life sphere, so its members inherit it and the
+        scheduler's guardrail stays consistent). ``None`` clears the link but keeps
+        the todo's current domain. Editable at any status so a misfiled item can be
+        corrected. Returns ``False`` if the project doesn't belong to this user.
+        """
+        if project_id is not None:
+            project = self.get_project(project_id)  # type: ignore[attr-defined]
+            if project is None:
+                return False
+            cur = self.conn.execute(
+                "UPDATE todos SET project_id = ?, domain = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+                (project_id, project.get("domain"), todo_id, self._uid()),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+        return self._update_todo_field(todo_id, "project_id", None, open_only=False)
 
     def todo_categories(self) -> list[str]:
         """Distinct categories in use, most-common first (drives cap + hints).

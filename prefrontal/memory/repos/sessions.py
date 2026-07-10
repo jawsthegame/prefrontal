@@ -365,6 +365,7 @@ class SessionsRepo(Repo):
         aligned: bool = True,
         started_at: str | None = None,
         todo_id: int | None = None,
+        project_id: int | None = None,
     ) -> int:
         """Record a declared focus session and return its id.
 
@@ -380,17 +381,35 @@ class SessionsRepo(Repo):
                 DB's ``CURRENT_TIMESTAMP``. Mainly useful for tests.
             todo_id: Optional link to the todo being worked. Its energy/category
                 tag the close episode so the bias can condition on them (§5).
+            project_id: Optional grouping (see
+                :class:`~prefrontal.memory.repos.projects.ProjectsRepo`), stored
+                explicitly so the session keeps its project even if the linked
+                todo is later reassigned.
 
         Returns:
             The new session's ``id``.
         """
         return self._session_start(
             table="focus_sessions",
-            columns=["intended_task", "planned_minutes", "aligned", "todo_id"],
-            values=[intended_task, planned_minutes, 1 if aligned else 0, todo_id],
+            columns=["intended_task", "planned_minutes", "aligned", "todo_id", "project_id"],
+            values=[intended_task, planned_minutes, 1 if aligned else 0, todo_id, project_id],
             ts_col="started_at",
             ts_value=started_at,
         )
+
+    def set_focus_session_project(self, session_id: int, project_id: int | None) -> bool:
+        """Assign (or clear) a focus session's ``project_id``. Returns ``True`` if changed.
+
+        Focus sessions carry no ``domain`` of their own, so there is nothing to
+        write through — this is a plain link. Returns ``False`` if there is no such
+        session for this user.
+        """
+        cur = self.conn.execute(
+            "UPDATE focus_sessions SET project_id = ? WHERE id = ? AND user_id = ?",
+            (project_id, session_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def get_focus_session(self, session_id: int) -> dict[str, Any] | None:
         """Return a single focus session by id, or ``None`` if it does not exist."""
