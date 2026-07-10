@@ -1557,11 +1557,20 @@ function renderCommitments(list, conflicts, cascade) {
   };
   const ids = new Set();
   (conflicts.conflicts || []).forEach((p) => { ids.add(p.a.id); ids.add(p.b.id); });
+  // When the clash actually happens = the later of the two starts (the moment
+  // both events are live). Fall back to whichever side has a parseable start.
+  const conflictWhen = (p) => {
+    const a = startMs(p.a.start_at), b = startMs(p.b.start_at);
+    if (a == null) return p.b.start_at;
+    if (b == null) return p.a.start_at;
+    return a >= b ? p.a.start_at : p.b.start_at;
+  };
   let html = renderScrubber(c.length) + `<div id="cascade-strip" class="nocap">${renderCascade(cascade)}</div>`;
   (conflicts.conflicts || []).forEach((p) => {
     html += `<div class="row">
       <div class="main"><span class="badge conflict">conflict</span>
-        <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div>
+        <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span>
+        <div class="sub">${fmt(conflictWhen(p))}</div></div>
       <div class="acts"><button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}"
         title="I know these overlap — stop flagging it (resurfaces if either event moves)">Dismiss</button></div>
     </div>`;
@@ -1569,7 +1578,8 @@ function renderCommitments(list, conflicts, cascade) {
   (conflicts.possible_conflicts || []).forEach((p) => {
     html += `<div class="row">
       <div class="main"><span class="badge possible">possible</span>
-        <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span></div>
+        <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span>
+        <div class="sub">${fmt(conflictWhen(p))}</div></div>
       <div class="acts"><button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}">Dismiss</button></div>
     </div>`;
   });
