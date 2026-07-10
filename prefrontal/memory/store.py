@@ -340,6 +340,7 @@ def provision_user(
     display_name: str | None = None,
     token: str | None = None,
     is_operator: bool = False,
+    email: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Create a user and seed their coaching state, returning ``(user_row, token)``.
 
@@ -355,6 +356,7 @@ def provision_user(
         display_name: Optional display name shown in nudges/briefings.
         token: Optional pre-chosen token (a random one is generated otherwise).
         is_operator: Whether the user may call the admin surface.
+        email: Optional verified Google email that signs in as this user.
 
     Returns:
         ``(user_row, raw_token)`` — the token is shown once and never stored.
@@ -364,6 +366,7 @@ def provision_user(
         display_name=display_name,
         token=token,
         is_operator=is_operator,
+        email=email,
     )
     seed_user_state(store.scoped(user["id"]))
     return user, raw_token

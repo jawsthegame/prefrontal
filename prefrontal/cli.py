@@ -233,11 +233,15 @@ def _cmd_user(args: argparse.Namespace) -> int:
             if store.get_user(args.handle) is not None:
                 print(f"User '{args.handle}' already exists.", file=sys.stderr)
                 return 1
+            if args.email and store.get_user_by_email(args.email) is not None:
+                print(f"Email '{args.email}' is already used.", file=sys.stderr)
+                return 1
             user, token = provision_user(
                 store,
                 args.handle,
                 display_name=args.display_name or args.handle,
                 is_operator=args.operator,
+                email=args.email,
             )
             role = "operator" if user["is_operator"] else "user"
             print(f"Created {role} '{user['handle']}'. Token (shown once):")
@@ -248,7 +252,25 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 print("No users provisioned.")
             for u in users:
                 op = " [operator]" if u["is_operator"] else ""
-                print(f"{u['handle']} ({u['status']}){op} — {u['display_name'] or ''}")
+                email = f" <{u['email']}>" if u.get("email") else ""
+                print(
+                    f"{u['handle']} ({u['status']}){op}{email} — {u['display_name'] or ''}"
+                )
+        elif args.user_action == "email":
+            try:
+                changed = store.set_user_email(args.handle, args.email)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            if not changed:
+                print(f"No such user '{args.handle}'.", file=sys.stderr)
+                return 1
+            current = store.get_user(args.handle)["email"]
+            print(
+                f"Set '{args.handle}' email to {current}."
+                if current
+                else f"Cleared '{args.handle}' email."
+            )
         elif args.user_action == "rotate":
             token = store.rotate_user_token(args.handle)
             if token is None:
@@ -2173,6 +2195,8 @@ def _cmd_todo(args: argparse.Namespace) -> int:
                 todo,
                 handler=args.handler,
                 destination=destination,
+                context=(args.context or "").strip() or None,
+                va_note=(args.note or "").strip() or None,
                 client=client,
                 smtp=smtp,
             )
@@ -2854,7 +2878,19 @@ def build_parser() -> argparse.ArgumentParser:
     u_add.add_argument(
         "--operator", action="store_true", help="Grant admin (operator) rights."
     )
+    u_add.add_argument(
+        "--email",
+        default=None,
+        help="Verified Google email that signs this user in (for browser login).",
+    )
     user_sub.add_parser("list", help="List users (never their tokens).")
+    u_email = user_sub.add_parser(
+        "email", help="Set/clear a user's Google sign-in email."
+    )
+    u_email.add_argument("handle", help="The user's handle.")
+    u_email.add_argument(
+        "email", nargs="?", default="", help="Google email (omit/pass '' to clear)."
+    )
     u_rotate = user_sub.add_parser("rotate", help="Mint a new token for a user.")
     u_rotate.add_argument("handle", help="The user's handle.")
     u_disable = user_sub.add_parser("disable", help="Disable a user's access.")
@@ -3424,6 +3460,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t_delegate.add_argument(
         "--to", default=None, help="The assistant's email address (required for --handler email)."
+    )
+    t_delegate.add_argument(
+        "--context", default=None,
+        help="Optional free-text context to feed the prep (e.g. pasted work-AI output).",
+    )
+    t_delegate.add_argument(
+        "--note", default=None,
+        help="Optional cover note shown atop the email to a human VA (--handler email).",
     )
     p_todo.set_defaults(func=_cmd_todo)
 

@@ -72,6 +72,93 @@ def test_admin_create_user_returns_token_once(client, store):
     assert ok.status_code == 201
 
 
+def test_admin_create_user_with_email(client, store):
+    """A user can be provisioned with a Google sign-in email (normalized, listed)."""
+    resp = client.post(
+        "/admin/users",
+        json={"handle": "jamie", "display_name": "Jamie", "email": "Jamie@Gmail.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["email"] == "jamie@gmail.com"  # normalized
+    assert store.get_user_by_email("jamie@gmail.com")["handle"] == "jamie"
+    listed = client.get("/admin/users", headers={"X-Prefrontal-Token": OP_TOKEN}).json()
+    jamie = next(u for u in listed["users"] if u["handle"] == "jamie")
+    assert jamie["email"] == "jamie@gmail.com"
+
+
+def test_admin_set_and_clear_user_email(client, store):
+    """The email endpoint sets, then clears, a user's sign-in address."""
+    set_resp = client.post(
+        "/admin/users/sam/email",
+        json={"email": "sam@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert set_resp.status_code == 200
+    assert set_resp.json()["email"] == "sam@example.com"
+    assert store.get_user_by_email("sam@example.com")["handle"] == "sam"
+    # Blank clears it.
+    clear = client.post(
+        "/admin/users/sam/email",
+        json={"email": ""},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert clear.status_code == 200 and clear.json()["email"] is None
+    assert store.get_user("sam")["email"] is None
+
+
+def test_admin_set_email_conflict_and_missing(client):
+    """A duplicate email is a 409; an unknown handle is a 404."""
+    client.post(
+        "/admin/users/op/email",
+        json={"email": "shared@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    dup = client.post(
+        "/admin/users/sam/email",
+        json={"email": "shared@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert dup.status_code == 409
+    missing = client.post(
+        "/admin/users/ghost/email",
+        json={"email": "ghost@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert missing.status_code == 404
+
+
+def test_admin_set_email_requires_operator(client):
+    """A non-operator can't set emails (403); a bad code is unauthorized (401)."""
+    forbidden = client.post(
+        "/admin/users/sam/email",
+        json={"email": "x@example.com"},
+        headers={"X-Prefrontal-Token": USER_TOKEN},
+    )
+    assert forbidden.status_code == 403
+    unauth = client.post(
+        "/admin/users/sam/email",
+        json={"email": "x@example.com"},
+        headers={"X-Prefrontal-Token": "nope"},
+    )
+    assert unauth.status_code == 401
+
+
+def test_admin_create_duplicate_email_conflicts(client):
+    """Creating a user whose email is already taken is a 409."""
+    client.post(
+        "/admin/users/op/email",
+        json={"email": "taken@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    resp = client.post(
+        "/admin/users",
+        json={"handle": "newbie", "email": "taken@example.com"},
+        headers={"X-Prefrontal-Token": OP_TOKEN},
+    )
+    assert resp.status_code == 409
+
+
 def test_admin_create_duplicate_handle_conflicts(client):
     """Re-creating an existing handle is a 409."""
     resp = client.post(

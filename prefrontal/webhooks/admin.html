@@ -81,6 +81,9 @@
   .badge.off { background: color-mix(in srgb, var(--danger) 20%, var(--card)); color: var(--danger); }
   .badge.hh { background: color-mix(in srgb, var(--warn) 20%, var(--card)); color: var(--warn); }
   .u .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .emailrow { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .emailrow .emlabel { color: var(--muted); font-size: 13px; }
+  .emailrow input[type=text] { flex: 1 1 200px; font-size: 14px; padding: 7px 10px; }
 
   /* Token reveal */
   .token-out { margin-top: 14px; padding: 14px; border: 1px solid var(--accent); border-radius: 12px;
@@ -135,11 +138,13 @@
     <h2>Add a user</h2>
     <p class="sub">Provisions a person and mints their access code (token). The
       token is shown <b>once</b> — copy it and give it to them; it's their access
-      code for the web pages and their per-user token for the app. Add them to a
-      household below so they share the co-parent sheet.</p>
+      code for the web pages and their per-user token for the app. Add a Google
+      email to let them <b>Sign in with Google</b>, and add them to a household
+      below so they share the co-parent sheet.</p>
     <div class="row">
       <input type="text" id="new-handle" placeholder="Handle, e.g. sam" autocomplete="off" />
       <input type="text" id="new-name" placeholder="Display name (optional)" autocomplete="off" />
+      <input type="text" id="new-email" placeholder="Google email (optional)" autocomplete="off" inputmode="email" />
       <label class="chk"><input type="checkbox" id="new-op" /> operator</label>
       <button class="primary" id="add-user">Add user</button>
     </div>
@@ -253,6 +258,12 @@ function renderUsers(users, hhByHandle) {
         <button class="sm" data-rotate="${esc(u.handle)}">Rotate token</button>
         ${u.status === "active" ? `<button class="sm danger" data-disable="${esc(u.handle)}">Disable</button>` : ""}
       </div>
+      <div class="emailrow">
+        <span class="emlabel">✉ Google sign-in</span>
+        <input type="text" data-email-for="${esc(u.handle)}" value="${esc(u.email || "")}"
+          placeholder="email (blank to clear)" autocomplete="off" inputmode="email" />
+        <button class="sm" data-email-save="${esc(u.handle)}">Save</button>
+      </div>
     </div>`;
   }).join("");
 }
@@ -304,9 +315,11 @@ $("#add-user").addEventListener("click", async () => {
     const body = { handle, is_operator: $("#new-op").checked };
     const name = $("#new-name").value.trim();
     if (name) body.display_name = name;
+    const email = $("#new-email").value.trim();
+    if (email) body.email = email;
     const r = await api("/admin/users", "POST", body);
     showToken(r.handle, r.token, "new user");
-    $("#new-handle").value = ""; $("#new-name").value = ""; $("#new-op").checked = false;
+    $("#new-handle").value = ""; $("#new-name").value = ""; $("#new-email").value = ""; $("#new-op").checked = false;
     await load();
   } catch (e) { if (e.detail) $("#add-err").textContent = e.detail; }
 });
@@ -323,6 +336,7 @@ $("#users").addEventListener("click", async (e) => {
   const rotate = e.target.getAttribute("data-rotate");
   const disable = e.target.getAttribute("data-disable");
   const join = e.target.getAttribute("data-join");
+  const emailSave = e.target.getAttribute("data-email-save");
   try {
     if (rotate) {
       if (!confirm(`Rotate @${rotate}'s token? Their current code stops working.`)) return;
@@ -337,6 +351,11 @@ $("#users").addEventListener("click", async (e) => {
       const sel = document.querySelector(`select[data-hh-for="${CSS.escape(join)}"]`);
       if (!sel) return;
       await api(`/admin/households/${encodeURIComponent(sel.value)}/members`, "POST", { handle: join });
+      await load();
+    } else if (emailSave) {
+      const inp = document.querySelector(`input[data-email-for="${CSS.escape(emailSave)}"]`);
+      if (!inp) return;
+      await api(`/admin/users/${encodeURIComponent(emailSave)}/email`, "POST", { email: inp.value.trim() });
       await load();
     }
   } catch (err) { if (err.detail) alert(err.detail); }

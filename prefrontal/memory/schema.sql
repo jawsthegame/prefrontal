@@ -83,10 +83,17 @@ CREATE TABLE IF NOT EXISTS users (
     -- column, so it rides the migrate.py back-fill (nullable, no data migration);
     -- the household tables key on it. See docs/household-sheet.md.
     household_id INTEGER REFERENCES households(id),
+    -- The verified Google email that signs in as this user, or NULL. Lets Google
+    -- sign-in resolve email -> user from the DB instead of a GOOGLE_OAUTH_ALLOWED
+    -- env-var mapping. Another later-added nullable column (rides the back-fill);
+    -- kept lowercased and uniquely indexed so an email maps to exactly one user.
+    email        TEXT,
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_token ON users (token_hash);
+-- One user per email (partial, so the many NULL-email users don't collide).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email) WHERE email IS NOT NULL;
 
 -- Raw outcome records. One row per agent interaction cycle.
 CREATE TABLE IF NOT EXISTS episodes (
@@ -494,6 +501,7 @@ CREATE TABLE IF NOT EXISTS todo_delegations (
     brief        TEXT,               -- the prep write-up (LLM or heuristic)
     drafts       TEXT,               -- JSON array of drafted comms {channel, to, subject, body}
     detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
+    context      TEXT,               -- optional free-text context supplied at delegation time (e.g. pasted work-AI output)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     prepped_at   DATETIME            -- when prep completed (status reached prepped)

@@ -530,6 +530,19 @@ class UserCreate(BaseModel):
     is_operator: bool = Field(
         default=False, description="Whether the user may call the admin surface."
     )
+    email: str | None = Field(
+        default=None,
+        description="Verified Google email that signs this user in (optional).",
+    )
+
+
+class UserEmail(BaseModel):
+    """Body of ``POST /admin/users/{handle}/email`` — set/clear a sign-in email."""
+
+    email: str | None = Field(
+        default=None,
+        description="Google email for sign-in; blank/null clears it.",
+    )
 
 
 class HouseholdCreate(BaseModel):
@@ -1095,6 +1108,21 @@ class DelegateTodo(BaseModel):
     destination: str | None = Field(
         default=None,
         description="The VA's email address (required for handler='email'; ignored for 'agent').",
+    )
+    context: str | None = Field(
+        default=None,
+        description=(
+            "Optional free-text context to give the assistant more to work with — "
+            "e.g. output pasted from another AI agent that has access to your work "
+            "email. Fed into the prep for both handlers."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description=(
+            "Optional personal cover note shown at the top of the email to a human "
+            "VA (handler='email' only; ignored for 'agent')."
+        ),
     )
 
 

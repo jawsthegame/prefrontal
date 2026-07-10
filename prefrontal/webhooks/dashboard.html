@@ -357,6 +357,10 @@
   /* Delegate popover (reuses the .cat-menu shell): AI vs. email hand-off. */
   .cat-menu .deleg-mail { display: flex; gap: 6px; margin-top: 6px; }
   .cat-menu .deleg-mail input { flex: 1; }
+  .cat-menu .deleg-context { width: 100%; margin: 6px 0; resize: vertical;
+    min-height: 48px; font: inherit; font-size: 12px; box-sizing: border-box;
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px;
+    background: var(--raise); color: inherit; }
 
   .bar { height: 6px; border-radius: 4px; background: var(--chip); margin-top: 8px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }
@@ -1067,19 +1071,31 @@ function openDelegateMenu(anchor, id) {
   lead.className = "lead";
   lead.textContent = "Hand this off to prep — you get it back ready to act on.";
   menu.appendChild(lead);
+  // Optional context, fed to whichever handler runs — e.g. paste output from a
+  // work AI agent that can see your work email to give the prep more to go on.
+  const ctx = document.createElement("textarea");
+  ctx.className = "deleg-context";
+  ctx.placeholder = "Optional context (e.g. paste output from a work AI agent)…";
+  menu.appendChild(ctx);
+  const context = () => ctx.value.trim() || undefined;
   const go = async (body) => { closePillMenu(); await post(`/todos/${id}/delegate`, body); load(); };
   const ai = document.createElement("button");
   ai.className = "cat-act";
   ai.textContent = "🤖 Prep with AI";
   ai.title = "The in-app assistant researches and drafts, on-device";
-  ai.onclick = () => go({ handler: "agent" });
+  ai.onclick = () => go({ handler: "agent", context: context() });
   menu.appendChild(ai);
   const mail = document.createElement("button");
   mail.className = "cat-act";
   mail.textContent = "✉ Email an assistant…";
   mail.title = "Email the prep brief to a person (needs SMTP set up in Settings)";
   mail.onclick = () => {
-    // Inline field instead of prompt() (suppressed in a standalone web app).
+    // Inline fields instead of prompt() (suppressed in a standalone web app).
+    const col = document.createElement("div");
+    // Optional cover note shown at the very top of the email to the human VA.
+    const noteBox = document.createElement("textarea");
+    noteBox.className = "deleg-context";
+    noteBox.placeholder = "Optional note to your assistant (shown atop the email)…";
     const wrap = document.createElement("div");
     wrap.className = "deleg-mail";
     const inp = document.createElement("input");
@@ -1088,12 +1104,17 @@ function openDelegateMenu(anchor, id) {
     const send = document.createElement("button");
     send.className = "cat-act";
     send.textContent = "Send";
-    const submit = () => { const to = inp.value.trim(); if (to) go({ handler: "email", destination: to }); };
+    const submit = () => {
+      const to = inp.value.trim();
+      if (to) go({ handler: "email", destination: to, context: context(), note: noteBox.value.trim() || undefined });
+    };
     send.onclick = submit;
     inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
     wrap.appendChild(inp);
     wrap.appendChild(send);
-    mail.replaceWith(wrap);
+    col.appendChild(noteBox);
+    col.appendChild(wrap);
+    mail.replaceWith(col);
     inp.focus();
   };
   menu.appendChild(mail);

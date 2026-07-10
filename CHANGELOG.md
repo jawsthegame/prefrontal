@@ -20,6 +20,23 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   link. New `chore_ids_scheduled_on` helper backs the endpoint; covered by
   `tests/test_chores.py`.
 
+- **Google sign-in email lives on the user record (self-serve, no env edit)** ✅
+  — Google sign-in used to map a verified email → user only through the
+  `GOOGLE_OAUTH_ALLOWED` **environment variable**, so letting a newly-provisioned
+  co-parent sign in with Google meant editing env + restarting the box —
+  completely disconnected from the admin UI that created them. The email now lives
+  **on the user row** (a new nullable `users.email`, uniquely indexed, riding the
+  same `backfill_added_columns` migration `household_id` used). The Google callback
+  resolves the verified address against the DB first (`get_user_by_email`), falling
+  back to the env allowlist so existing deployments keep working. Managed from the
+  `/admin` UI — an email field on "Add a user" and an inline **✉ Google sign-in**
+  editor per user — plus `POST /admin/users/{handle}/email` and the CLI
+  (`prefrontal user add --email`, `prefrontal user email <handle> [email]`). Emails
+  are normalized (lowercased/stripped) on one shared path so write and lookup can't
+  drift, and are unique across users (a 409 / non-zero exit otherwise). Covered by
+  `tests/test_admin.py`, `tests/test_oauth.py` (DB-email sign-in, disabled-user
+  refusal), and `tests/test_cli.py`.
+
 - **Operator user-management UI (`/admin`)** ✅ — provisioning a co-parent used
   to be CLI-only (`prefrontal user add` on the box), which is a real onboarding
   wall: the Household sheet's access-code gate wants each person's *own* user

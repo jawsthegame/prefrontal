@@ -95,6 +95,36 @@ def test_callback_allowed_email_signs_in(client, monkeypatch):
     assert client.get("/todos").status_code == 401
 
 
+def test_callback_resolves_email_from_user_record(client, store, monkeypatch):
+    """A user's stored email signs them in — no GOOGLE_OAUTH_ALLOWED entry needed."""
+    # 'jamie@example.com' is NOT in the env allowlist ("tom@example.com=tom");
+    # it resolves purely because it's stored on the jamie user row.
+    provision_user(store, "jamie", display_name="Jamie", token="tok-jamie",
+                   email="Jamie@Example.com")
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "jamie@example.com")
+    state = _login_state(client)
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 303
+    assert "prefrontal_session" in cb.headers.get("set-cookie", "")
+    # The cookie authenticates as jamie (her todo is isolated to her scope).
+    client.post("/todos", json={"title": "jamie todo", "estimate_minutes": 5})
+    mine = client.get("/todos").json()["todos"]
+    assert [t["title"] for t in mine] == ["jamie todo"]
+
+
+def test_callback_rejects_disabled_email_user(client, store, monkeypatch):
+    """A disabled user with a matching email is refused (403), no cookie set."""
+    provision_user(store, "gone", token="tok-gone", email="gone@example.com")
+    store.set_user_status("gone", "disabled")
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "gone@example.com")
+    state = _login_state(client)
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 403
+    assert "prefrontal_session" not in cb.headers.get("set-cookie", "")
+
+
 def test_callback_rejects_disallowed_email(client, monkeypatch):
     monkeypatch.setattr(oauth, "_exchange_code_for_email",
                         lambda code, settings, client=None: "stranger@example.com")

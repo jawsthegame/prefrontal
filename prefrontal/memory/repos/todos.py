@@ -497,15 +497,17 @@ class TodosRepo(Repo):
         brief: str | None = None,
         drafts: list[dict[str, Any]] | None = None,
         detail: str | None = None,
+        context: str | None = None,
         prepped: bool = False,
     ) -> bool:
         """Store (or replace) a todo's delegation. Returns ``True`` if a row was written.
 
         Mirrors :meth:`set_decomposition` — one row per todo, so re-delegating
         overwrites the prior handoff (and its brief/drafts). ``drafts`` is
-        JSON-encoded. ``prepped=True`` stamps ``prepped_at`` (call it when the
-        handler has finished producing the brief). No-ops if the todo isn't this
-        user's.
+        JSON-encoded. ``context`` is any free-text the user pasted at delegation
+        time (kept so a re-delegation can reuse it). ``prepped=True`` stamps
+        ``prepped_at`` (call it when the handler has finished producing the brief).
+        No-ops if the todo isn't this user's.
         """
         if not self._owns_todo(todo_id):
             return False
@@ -513,7 +515,7 @@ class TodosRepo(Repo):
         self.conn.execute(
             f"INSERT OR REPLACE INTO todo_delegations "
             f"(todo_id, handler, destination, status, brief, drafts, detail, "
-            f"prepped_at) VALUES (?, ?, ?, ?, ?, ?, ?, {prepped_at})",
+            f"context, prepped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {prepped_at})",
             (
                 todo_id,
                 handler,
@@ -522,6 +524,7 @@ class TodosRepo(Repo):
                 brief,
                 json.dumps(drafts) if drafts is not None else None,
                 detail,
+                context,
             ),
         )
         self.conn.commit()
@@ -536,7 +539,7 @@ class TodosRepo(Repo):
         if not self._owns_todo(todo_id):
             return None
         row = self.conn.execute(
-            "SELECT handler, destination, status, brief, drafts, detail, "
+            "SELECT handler, destination, status, brief, drafts, detail, context, "
             "created_at, updated_at, prepped_at "
             "FROM todo_delegations WHERE todo_id = ?",
             (todo_id,),
