@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Bio-break chip goes green once you confirm — until the next reminder** ✅ —
+  the self-care card's bio-break check is *open-ended* (a recurring reminder, not
+  a daily quota), so it never reached the "done" green state the other checks show
+  — tapping **Went** left it looking the same as before. It now has a `satisfied`
+  state: confirming greens the chip (with a ✓) and clears the amber "due" pulse
+  until the next reminder comes due, at which point it reverts. `satisfied` is the
+  open-ended analog of a quota check's `done` — set only by a confirm (a *snooze*
+  deliberately doesn't green it, since snoozing isn't going), tracked via a new
+  `biobreak_confirmed_until` cursor, and mutually exclusive with `overdue`. Removing
+  the only logged Went (a mis-tap correction) un-greens it. Verified in a real
+  browser (amber-due → tap Went → green ✓) and covered by `tests/test_self_care.py`.
+
 - **Shared chores card shows today's chores by default** ✅ — the Household
   sheet's Shared chores card used to list *every* chore regardless of whether it
   ran that day, so a card with a dozen weekly/monthly chores buried the handful

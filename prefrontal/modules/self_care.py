@@ -281,6 +281,11 @@ class BasicCheck:
     #: defers the next reminder, and it's never "done for the day". The ``target``
     #: is ignored for gating; the count is kept as an informational tally only.
     open_ended: bool = False
+    #: Open-ended checks only: the state key holding the UTC timestamp a *confirm*
+    #: keeps the check "satisfied" until — set on Went (not on Snooze), so a surface
+    #: can show the check green after you've been and clear it the moment the next
+    #: reminder comes due. ``None`` for quota checks, whose green state is ``done``.
+    confirmed_key: str | None = None
 
 
 CHECKS: tuple[BasicCheck, ...] = (
@@ -368,6 +373,7 @@ CHECKS: tuple[BasicCheck, ...] = (
         end_hour_key="biobreak_end_hour",
         end_hour_default=DEFAULT_BIOBREAK_END_HOUR,
         open_ended=True,
+        confirmed_key="biobreak_confirmed_until",
     ),
     BasicCheck(
         key="winddown",
@@ -522,6 +528,7 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
         start_hour = store.get_hour(check.start_hour_key, check.start_hour_default)
         end_hour = _end_hour(store, check)
         interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
+        satisfied = False
         if check.open_ended:
             # "Behind" doesn't mean off-pace-vs-quota here; it means a reminder is
             # due right now — within the window, past the start hour, and not
@@ -531,6 +538,15 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
             snoozed_until = _parse_ts(store.get_state(check.snooze_key))
             within = local.hour >= start_hour and (end_hour is None or local.hour < end_hour)
             overdue = enabled and within and (snoozed_until is None or now >= snoozed_until)
+            # "Satisfied" is the open-ended analog of a quota check's ``done``: you
+            # confirmed (Went) and the next reminder isn't due yet, so a surface shows
+            # it green until that interval elapses. Set only by a confirm, so a snooze
+            # doesn't green it. Mutually exclusive with overdue (a confirm pushes
+            # ``snoozed_until`` to the same instant, so it can't be "due" while green).
+            confirmed_until = (
+                _parse_ts(store.get_state(check.confirmed_key)) if check.confirmed_key else None
+            )
+            satisfied = confirmed_until is not None and now < confirmed_until
         else:
             overdue = _is_overdue(
                 enabled=enabled, done=done, target=target, count=count,
@@ -547,6 +563,10 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 # A reminder, not a quota: surfaces render count without a "/target"
                 # goal and never show a "done ✓" for it.
                 "open_ended": check.open_ended,
+                # Open-ended only: you've confirmed (Went) and aren't due again yet,
+                # so a surface shows it green. Always false for a quota check (its
+                # green is ``done``). Clears when the next reminder comes due.
+                "satisfied": satisfied,
                 "start_hour": start_hour,
                 # Local hour the check stops for the day, or None when it's bounded
                 # only by its target + responsive hours (a surface renders the window
@@ -661,6 +681,11 @@ def apply_self_care_action(
             return check.done_headline.format(count=count, target=target)
         interval = max(1, int(store.get_float(check.interval_key, check.interval_default)))
         store.set_state(check.snooze_key, _stamp(now, interval), source="explicit")
+        # For an open-ended check, a confirm also marks it "satisfied" until the
+        # next reminder is due, so the dashboard shows it green after you've been
+        # (a Snooze, below, deliberately doesn't set this — snoozing isn't going).
+        if check.confirmed_key:
+            store.set_state(check.confirmed_key, _stamp(now, interval), source="explicit")
         return check.progress_headline.format(count=count, target=target)
     # snooze
     mins = int(store.get_float(check.snooze_minutes_key, check.snooze_minutes_default))
@@ -710,6 +735,11 @@ def apply_self_care_unmark(store: MemoryStore, key: str, *, today: str) -> str |
         return None
     count = max(0, day_count(store, check, today) - 1)
     store.set_state(check.count_key, f"{today}|{count}", source="explicit")
+    # Removing the last open-ended log clears its "satisfied" (green) marker too, so
+    # a mis-tap correction un-greens the chip rather than leaving it green on a zero
+    # tally. (A quota check un-greens via its count/target readout instead.)
+    if check.open_ended and check.confirmed_key and count == 0:
+        store.set_state(check.confirmed_key, "", source="explicit")
     return f"Removed one — {count}/{_target(store, check)} today."
 
 

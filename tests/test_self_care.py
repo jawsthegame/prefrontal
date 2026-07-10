@@ -325,6 +325,66 @@ def test_biobreak_went_defers_an_interval_but_is_never_done(store):
     assert _by_kind(SelfCareModule().evaluate(store, _ctx(later)), "biobreak")
 
 
+def _biobreak(store, now):
+    """The biobreak check dict from status at ``now`` (UTC)."""
+    return {c["key"]: c for c in self_care_status(store, now, "UTC")["checks"]}["biobreak"]
+
+
+def test_biobreak_satisfied_green_after_went_until_next_reminder(store):
+    """A confirm shows the bio-break as 'satisfied' (green) until the next reminder.
+
+    The open-ended analog of a quota check's ``done``: after 'Went' the dashboard
+    shows it green, and that clears the instant the interval elapses and a reminder
+    is due again. A snooze must *not* green it (snoozing isn't going).
+    """
+    _biobreak_only(store)
+    now = datetime(2026, 7, 2, 12, 0, 0)  # inside the 8–19 window
+    today = now.strftime("%Y-%m-%d")
+
+    # Before going: due now, not satisfied.
+    b = _biobreak(store, now)
+    assert b["satisfied"] is False and b["overdue"] is True
+
+    # After 'Went': satisfied (green), not overdue, still never "done".
+    apply_self_care_action(store, "biobreak_went", now=now, today=today)
+    b = _biobreak(store, now)
+    assert b["satisfied"] is True and b["overdue"] is False and b["done"] is False
+
+    # Stays green partway through the interval …
+    assert _biobreak(store, now + timedelta(minutes=90))["satisfied"] is True
+    # … and clears once the interval elapses (a reminder is due again).
+    b = _biobreak(store, now + timedelta(minutes=121))
+    assert b["satisfied"] is False and b["overdue"] is True
+
+
+def test_biobreak_snooze_does_not_satisfy(store):
+    """Snoozing defers the reminder but never greens the chip (you didn't go)."""
+    _biobreak_only(store)
+    now = datetime(2026, 7, 2, 12, 0, 0)
+    apply_self_care_action(store, "biobreak_snooze", now=now, today=now.strftime("%Y-%m-%d"))
+    b = _biobreak(store, now)
+    assert b["satisfied"] is False and b["overdue"] is False  # deferred, but not green
+
+
+def test_biobreak_unmark_last_log_clears_satisfied(store):
+    """Removing the only 'Went' un-greens the chip (mis-tap correction)."""
+    _biobreak_only(store)
+    now = datetime(2026, 7, 2, 12, 0, 0)
+    today = now.strftime("%Y-%m-%d")
+    apply_self_care_action(store, "biobreak_went", now=now, today=today)
+    assert _biobreak(store, now)["satisfied"] is True
+    apply_self_care_unmark(store, "biobreak", today=today)
+    b = _biobreak(store, now)
+    assert b["satisfied"] is False and b["count"] == 0
+
+
+def test_quota_check_never_reports_satisfied(store):
+    """A quota check (meal) always reports satisfied=False — its green is ``done``."""
+    now = datetime(2026, 7, 2, 15, 0, 0)
+    meal = {c["key"]: c for c in self_care_status(store, now, "UTC")["checks"]}["meal"]
+    assert meal["satisfied"] is False
+
+
 # -- wind-down: an evening once-a-day check, off by default (like meds) ------
 
 
