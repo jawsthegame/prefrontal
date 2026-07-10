@@ -2173,6 +2173,8 @@ def _cmd_todo(args: argparse.Namespace) -> int:
                 todo,
                 handler=args.handler,
                 destination=destination,
+                context=(args.context or "").strip() or None,
+                va_note=(args.note or "").strip() or None,
                 client=client,
                 smtp=smtp,
             )
@@ -3424,6 +3426,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     t_delegate.add_argument(
         "--to", default=None, help="The assistant's email address (required for --handler email)."
+    )
+    t_delegate.add_argument(
+        "--context", default=None,
+        help="Optional free-text context to feed the prep (e.g. pasted work-AI output).",
+    )
+    t_delegate.add_argument(
+        "--note", default=None,
+        help="Optional cover note shown atop the email to a human VA (--handler email).",
     )
     p_todo.set_defaults(func=_cmd_todo)
 
