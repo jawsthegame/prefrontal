@@ -1,0 +1,74 @@
+/* Styles for the shared keyboard-shortcut engine (cheatsheet + quick-add modal +
+   toast), inlined into every page by _with_shortcuts. Uses the app's theme vars
+   with fallbacks so it reads correctly on any surface, light or dark. */
+#kbd-help, #kbd-quickadd {
+  position: fixed; inset: 0; z-index: 40; display: none; overflow-y: auto;
+  background: rgba(0, 0, 0, .55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  align-items: flex-start; justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) 16px 32px;
+}
+#kbd-help .kbd-box, #kbd-quickadd .kbd-box {
+  background: var(--card, #fff); color: var(--fg, #111);
+  border: 1px solid var(--line, #e2e2e2); border-radius: 14px;
+  padding: 18px 20px 20px; box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+}
+#kbd-help .kbd-box { width: min(460px, 100%); }
+#kbd-quickadd .kbd-box { width: min(480px, 100%); }
+.kbd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.kbd-head h2 { margin: 0; font-size: 18px; }
+.kbd-head .kbd-spacer { flex: 1; }
+
+/* cheatsheet rows */
+.kbd-group { margin-top: 16px; }
+.kbd-group:first-child { margin-top: 6px; }
+.kbd-group > h3 {
+  margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted, #6b7280); font-weight: 700;
+}
+.kbd-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.kbd-row span { color: var(--fg, #111); font-size: 14px; }
+kbd {
+  flex: none; min-width: 24px; text-align: center;
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg, #111);
+  background: var(--chip, #f1f1f4); border: 1px solid var(--line, #e2e2e2);
+  border-bottom-width: 2px; border-radius: 6px; padding: 4px 7px;
+}
+
+/* quick-add form */
+.kbd-qa-row { display: flex; gap: 8px; margin-top: 12px; }
+#kbd-qa-title {
+  flex: 1; min-width: 0; padding: 10px 12px; border-radius: 9px; min-height: 42px;
+  border: 1px solid var(--line, #e2e2e2); background: var(--bg, #fff); color: var(--fg, #111); font-size: 15px;
+}
+#kbd-qa-title:focus { outline: none; border-color: var(--accent, #6366f1); }
+#kbd-qa-pri {
+  padding: 0 8px; border-radius: 9px; border: 1px solid var(--line, #e2e2e2);
+  background: var(--bg, #fff); color: var(--fg, #111); font-size: 14px;
+}
+#kbd-qa-add {
+  padding: 0 16px; border-radius: 9px; border: 1px solid var(--accent, #6366f1);
+  background: var(--accent, #6366f1); color: #fff; font-weight: 600; cursor: pointer; min-height: 42px;
+}
+#kbd-qa-add:disabled { opacity: .6; cursor: default; }
+#kbd-qa-cancel {
+  padding: 0 14px; border-radius: 9px; border: 1px solid var(--line, #e2e2e2);
+  background: transparent; color: var(--muted, #6b7280); cursor: pointer; min-height: 42px;
+}
+.kbd-qa-err { color: var(--call, #dc2626); font-size: 13px; min-height: 16px; margin-top: 8px; }
+.kbd-qa-hint { color: var(--muted, #6b7280); font-size: 12px; margin-top: 10px; }
+
+/* toast confirmation */
+#kbd-toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 20px); z-index: 60;
+  background: var(--fg, #111); color: var(--bg, #fff); font-size: 14px; font-weight: 600;
+  padding: 10px 16px; border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .4);
+  opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
+}
+#kbd-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* card-jump flash (j/k) */
+@keyframes kbdflash {
+  0% { background: color-mix(in srgb, var(--accent, #6366f1) 30%, transparent); }
+  100% { background: transparent; }
+}
+.kbd-flash { animation: kbdflash 1.4s ease-out; border-radius: 8px; }
