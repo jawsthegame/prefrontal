@@ -1331,29 +1331,58 @@ function renderNow(d) {
     const why = d && d.reason ? d.reason : "nothing to suggest right now";
     return `<div class="empty">${esc(why.charAt(0).toUpperCase() + why.slice(1))}.</div>`;
   }
-  const focus = s.energy === "high";  // deep-work task → offer a focus session
+  const isDeep = s.energy === "high";  // deep-work task → also flag it "focus"
   const tags = [];
   if (s.priority === 3) tags.push(`<span class="badge lvl-call">urgent</span>`);
   else if (s.priority === 2) tags.push(`<span class="badge lvl-firm">high</span>`);
   if (s.reason === "avoided") tags.push(`<span class="badge lvl-soft">avoided</span>`);
-  if (focus) tags.push(`<span class="badge lvl-firm">focus</span>`);
+  if (isDeep) tags.push(`<span class="badge lvl-firm">focus</span>`);
   const bits = [];
   if (s.estimate_minutes != null) bits.push(`~${mins(s.estimate_minutes)}`);
   bits.push(s.reason === "avoided" ? "you've been putting it off" : "fits your free time");
   if (d.free_minutes) bits.push(`${mins(d.free_minutes)} free`);
   if (d.next_commitment) bits.push(`before ${esc(d.next_commitment.title)} at ${fmt(d.next_commitment.start_at)}`);
-  // Pre-fill the focus session with this exact task (and its estimate/link), so
-  // "start focus session" is one tap, not a form.
+  // Offer a one-tap focus start on *any* suggestion, not just deep-work: starting
+  // a session protects your time while you do this exact task, and the card flips
+  // to a live status. Pre-filled with the task/estimate/link, so it's one tap, not
+  // a form.
   const plannedAttr = s.estimate_minutes != null ? ` data-planned="${s.estimate_minutes}"` : "";
-  const startBtn = focus
-    ? `<div class="acts" style="margin-top:10px"><button class="btn-sm btn-go"
-        data-action="focus-start" data-todo-id="${s.todo_id}" data-task="${esc(s.title)}"${plannedAttr}
-        >▶ Start focus session</button></div>`
-    : "";
+  const startBtn = `<div class="acts" style="margin-top:10px"><button class="btn-sm btn-go"
+      data-action="focus-start" data-todo-id="${s.todo_id}" data-task="${esc(s.title)}"${plannedAttr}
+      >▶ Focus on this</button></div>`;
   return `<div class="row"><div class="main">
     <div><span class="title">${esc(s.title)}</span> ${tags.join(" ")}</div>
     <div class="sub">${bits.join(" · ")}</div>
     ${startBtn}
+  </div></div>`;
+}
+// While a focus session is live, *that* is the one thing to do right now — so the
+// card becomes a calm status instead of a suggestion (GET /focus → active[0]).
+// Deliberately not a countdown/pomodoro: it shows time *elapsed*, not remaining
+// (see hyperfocus.py — this is hyperfocus support, not a timer). Surfaces the
+// interrupt level and the protect/DND state, plus one tap to wrap up.
+function renderFocusActive(f) {
+  const level = f.level || "none";
+  let badge, note;
+  if (level === "break") {
+    badge = `<span class="badge lvl-call">break</span>`;
+    note = "you've been heads-down a long time — worth a stretch";
+  } else if (level === "check") {
+    badge = `<span class="badge lvl-firm">long session</span>`;
+    note = "still on this? all good if so";
+  } else {
+    badge = `<span class="badge lvl-soft">in focus</span>`;
+    note = "protecting your time";
+  }
+  const bits = [`${mins(f.elapsed_minutes)} in`];
+  if (f.planned_minutes != null) bits.push(`~${mins(f.planned_minutes)} planned`);
+  if (f.protect) bits.push("🔕 nudges paused");
+  bits.push(note);
+  return `<div class="row"><div class="main">
+    <div><span class="title">🎯 ${esc(f.intended_task)}</span> ${badge}</div>
+    <div class="sub">${bits.join(" · ")}</div>
+    <div class="acts" style="margin-top:10px"><button class="btn-sm btn-go"
+      data-action="focus-end" data-session-id="${f.session_id}">✓ Wrap up</button></div>
   </div></div>`;
 }
 // Paint the todos card from the cached response, applying the search filter.
@@ -2070,12 +2099,12 @@ async function load() {
     api("/commitments/conflicts"), api("/briefing"), apiProfile(),
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
     api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
-    api("/self-care"), api("/todos/now"),
+    api("/self-care"), api("/todos/now"), api("/focus"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now, focus] = results;
   // Self-care card: shown whenever the endpoint answers — including when the
   // checks are off, so a silently-disabled switch (the common "why no nudges?"
   // cause) is visible rather than absent. Hidden only if the fetch itself fails.
@@ -2100,7 +2129,11 @@ async function load() {
   }
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
-  put("#c-now", now, renderNow);
+  // A live focus session takes over the "right now" card — that session *is* the
+  // one thing to do now. No session → the next-action suggestion.
+  const activeFocus = focus.status === "fulfilled" && focus.value.active && focus.value.active[0];
+  if (activeFocus) $("#c-now .body").innerHTML = renderFocusActive(activeFocus);
+  else put("#c-now", now, renderNow);
   put("#c-recent", outings, renderRecent);
   lastTodos = todos.status === "fulfilled" ? todos.value : null;
   paintTodos();
@@ -2786,11 +2819,18 @@ document.addEventListener("click", async (e) => {
     else if (act === "todo-unstart") { await post(`/todos/${id}/unstart`); }
     else if (act === "focus-start") {
       // Open a focus session pre-filled with the "one thing to do right now".
+      // No alert() — the fall-through load() flips the card to its live focus
+      // state, which is the confirmation (and one fewer tap to dismiss).
       const body = { intended_task: el.dataset.task || "" };
       if (el.dataset.todoId) body.todo_id = Number(el.dataset.todoId);
       if (el.dataset.planned) body.planned_minutes = Number(el.dataset.planned);
-      const r = await post("/webhooks/focus/start", body);
-      if (r && r.confirmation) alert(r.confirmation);
+      await post("/webhooks/focus/start", body);
+    }
+    else if (act === "focus-end") {
+      // Wrap up the live session; the card flips back to the next-action suggestion.
+      const body = { status: "ended" };
+      if (el.dataset.sessionId) body.session_id = Number(el.dataset.sessionId);
+      await post("/webhooks/focus/end", body);
     }
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
