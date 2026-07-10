@@ -69,6 +69,10 @@ REVIEW_HTML = _with_card_layout((Path(__file__).with_name("review.html")).read_t
 #: The Settings page — config that adjusts behavior (currently the self-care
 #: master switch + per-check knobs), reading/writing GET + POST /self-care.
 SETTINGS_HTML = _with_card_layout((Path(__file__).with_name("settings.html")).read_text(encoding="utf-8"))
+#: The operator-only user-management page — provision users (token shown once),
+#: rotate/disable them, create households, and wire members in. Reads/writes the
+#: ``/admin/*`` endpoints, all guarded by ``require_operator``.
+ADMIN_HTML = (Path(__file__).with_name("admin.html")).read_text(encoding="utf-8")
 
 #: The PREFRONTAL app icon (PNG bytes), read once at import and served
 #: unauthenticated at ``GET /brand/app-icon.png`` so an ntfy push can reference

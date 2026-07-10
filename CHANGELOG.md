@@ -7,6 +7,24 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Operator user-management UI (`/admin`)** ✅ — provisioning a co-parent used
+  to be CLI-only (`prefrontal user add` on the box), which is a real onboarding
+  wall: the Household sheet's access-code gate wants each person's *own* user
+  token, so a partner with no provisioned user just sees "That code didn't work."
+  no matter what code they type. `/admin` closes that gap with a self-contained
+  operator page (same theme/nav shell as `/settings`), driving the existing
+  `require_operator`-guarded `/admin/*` endpoints: add a user (token shown
+  **once**, with a Copy button), rotate/disable, create a household, and wire each
+  user into it so both co-parents share the sheet. It reads `GET /admin/users`
+  and a new `GET /admin/households` (households + their members, via
+  `HouseholdRepo.list_households`) and renders per-user household badges + a
+  picker. Auth is the same client-side pattern as every other surface — Google
+  session or an operator access code — and the page distinguishes a bad code
+  (401) from a valid-but-non-operator account (403) at the gate. A non-operator
+  who reaches the page can't read or write anything (the endpoints are all
+  operator-gated). Covered by `tests/test_admin.py` (list-households view,
+  operator/401/403 gating, and the page serves unauthenticated).
+
 - **Coaching engine: `location_anchor.evaluate` is side-effect-free (audit #407 H2)** ✅
   — the last leak from the coaching-abstraction audit. `Module.evaluate` is
   contracted to *return cues, never write*, but `LocationAnchorModule.evaluate`

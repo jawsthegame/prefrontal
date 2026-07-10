@@ -143,6 +143,14 @@ def build_router(services: RouterServices) -> APIRouter:
             "members": store.household_members(household_id),
         }
 
+    @router.get("/admin/households", tags=["admin"])
+    def admin_list_households(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
+    ) -> dict[str, Any]:
+        """List households and their members (operator view), for the admin UI."""
+        return {"households": request.app.state.store.list_households()}
+
     @router.get("/admin/whoami", tags=["admin"])
     def admin_whoami(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],

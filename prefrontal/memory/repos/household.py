@@ -1538,6 +1538,20 @@ class HouseholdRepo(Repo):
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def list_households(self) -> list[dict[str, Any]]:
+        """All households with their active members (operator view, unscoped store).
+
+        Each row carries ``members`` (handle + display name) so the admin surface
+        can show who's wired into which household without a query per row —
+        membership is the whole point of a household here, so it rides along.
+        """
+        rows = self.conn.execute(
+            "SELECT id, name FROM households ORDER BY id ASC"
+        ).fetchall()
+        return [
+            {**dict(r), "members": self.household_members(r["id"])} for r in rows
+        ]
+
     def set_user_household(self, handle: str, household_id: int | None) -> bool:
         """Put a user into (or, with ``None``, out of) a household. ``True`` if changed.
 

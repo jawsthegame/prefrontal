@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Admin</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /dashboard, /household, /settings) ────── */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  header { max-width: 760px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .card h2 { font-size: 17px; margin: 0 0 2px; font-weight: 660; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .empty { color: var(--muted); font-style: italic; }
+
+  /* Forms */
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input[type=text], select { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--fg); font: inherit; min-width: 0; }
+  input[type=text] { flex: 1 1 160px; }
+  label.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); cursor: pointer; }
+  button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+    color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+  button.sm { padding: 6px 10px; font-size: 13px; }
+  .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+
+  /* User rows */
+  .u { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+    padding: 12px 0; border-top: 1px solid var(--line); }
+  .u:first-child { border-top: none; }
+  .u .who { flex: 1 1 180px; min-width: 0; }
+  .u .who b { font-weight: 660; }
+  .u .who .h { color: var(--muted); font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--line); color: var(--muted); }
+  .badge.op { background: color-mix(in srgb, var(--accent) 22%, var(--card)); color: var(--accent); }
+  .badge.off { background: color-mix(in srgb, var(--danger) 20%, var(--card)); color: var(--danger); }
+  .badge.hh { background: color-mix(in srgb, var(--warn) 20%, var(--card)); color: var(--warn); }
+  .u .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+  /* Token reveal */
+  .token-out { margin-top: 14px; padding: 14px; border: 1px solid var(--accent); border-radius: 12px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+  .token-out .warn { color: var(--warn); font-size: 13px; font-weight: 600; }
+  .token-out .code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700;
+    font-size: 17px; word-break: break-all; margin: 6px 0; user-select: all; }
+  .hhname { color: var(--muted); font-size: 13px; }
+  .members { color: var(--muted); font-size: 13px; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate p { color: var(--muted); font-size: 14px; margin: 0 0 6px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; margin-top: 10px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .err { text-align: left; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/settings">Settings</a>
+    <a href="/admin" aria-current="page">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>🔑 Admin</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card">
+    <h2>Add a user</h2>
+    <p class="sub">Provisions a person and mints their access code (token). The
+      token is shown <b>once</b> — copy it and give it to them; it's their access
+      code for the web pages and their per-user token for the app. Add them to a
+      household below so they share the co-parent sheet.</p>
+    <div class="row">
+      <input type="text" id="new-handle" placeholder="Handle, e.g. sam" autocomplete="off" />
+      <input type="text" id="new-name" placeholder="Display name (optional)" autocomplete="off" />
+      <label class="chk"><input type="checkbox" id="new-op" /> operator</label>
+      <button class="primary" id="add-user">Add user</button>
+    </div>
+    <div class="err" id="add-err"></div>
+    <div id="token-out"></div>
+  </section>
+
+  <section class="card">
+    <h2>Users</h2>
+    <p class="sub">Everyone provisioned on this deployment. Rotate re-issues a
+      token (old devices stop working); disable stops a token resolving.</p>
+    <div id="users"><div class="empty">loading…</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Households</h2>
+    <p class="sub">Two co-parents in one household share its sheet, star charts,
+      chores, and balance. Create one, then add each user to it.</p>
+    <div class="row">
+      <input type="text" id="new-hh" placeholder="Household name, e.g. The Kims" autocomplete="off" />
+      <button class="primary" id="add-hh">Create household</button>
+    </div>
+    <div class="err" id="hh-err"></div>
+    <div id="households" style="margin-top:12px"><div class="empty">loading…</div></div>
+  </section>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Operator sign-in</h2>
+    <p>User management needs an operator's access code.</p>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Operator access code" autocomplete="off" />
+      <button id="token-save" type="button">Sign in</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Theme toggle (shared across pages)
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+function gate(msg) {
+  token = null; try { localStorage.removeItem(KEY); } catch (e) {}
+  $("#wrap").style.display = "none";
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+  $("#status").textContent = "sign in to continue";
+}
+
+function headers(extra) {
+  return token ? { "X-Prefrontal-Token": token, ...(extra || {}) } : { ...(extra || {}) };
+}
+
+// One request helper for every /admin/* call. Distinguishes a bad code (401)
+// from a valid-but-not-operator account (403) so the gate can say which.
+async function api(path, method, body) {
+  const opts = { method: method || "GET", headers: headers(body ? { "Content-Type": "application/json" } : undefined) };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (r.status === 401) { gate("That access code didn't work."); throw new Error("401"); }
+  if (r.status === 403) { gate("That account isn't an operator — use an operator's access code."); throw new Error("403"); }
+  if (!r.ok) {
+    let detail = "HTTP " + r.status;
+    try { detail = (await r.json()).detail || detail; } catch (e) {}
+    const err = new Error(detail); err.detail = detail; throw err;
+  }
+  return r.json().catch(() => ({}));
+}
+
+let households = [];
+
+function renderUsers(users, hhByHandle) {
+  if (!users.length) { $("#users").innerHTML = `<div class="empty">No users yet.</div>`; return; }
+  $("#users").innerHTML = users.map((u) => {
+    const opBadge = u.is_operator ? `<span class="badge op">operator</span>` : "";
+    const offBadge = u.status !== "active" ? `<span class="badge off">${esc(u.status)}</span>` : "";
+    const hh = hhByHandle[u.handle];
+    const hhBadge = hh ? `<span class="badge hh">🏠 ${esc(hh)}</span>` : "";
+    const opts = households.map((h) =>
+      `<option value="${h.id}"${hh === h.name ? " selected" : ""}>${esc(h.name)}</option>`).join("");
+    const hhPicker = households.length
+      ? `<select data-hh-for="${esc(u.handle)}" aria-label="household">${opts}</select>
+         <button class="sm" data-join="${esc(u.handle)}">Add to household</button>`
+      : `<span class="members">create a household first</span>`;
+    return `<div class="u">
+      <div class="who"><b>${esc(u.display_name || u.handle)}</b> ${opBadge}${offBadge}${hhBadge}
+        <div class="h">@${esc(u.handle)}</div></div>
+      <div class="actions">
+        ${hhPicker}
+        <button class="sm" data-rotate="${esc(u.handle)}">Rotate token</button>
+        ${u.status === "active" ? `<button class="sm danger" data-disable="${esc(u.handle)}">Disable</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderHouseholds() {
+  if (!households.length) { $("#households").innerHTML = `<div class="empty">No households yet.</div>`; return; }
+  $("#households").innerHTML = households.map((h) => {
+    const members = (h.members || []).map((m) => esc(m.display_name || m.handle)).join(", ");
+    return `<div class="u"><div class="who"><b>${esc(h.name)}</b>
+      <span class="hhname">#${h.id}</span>
+      <div class="members">${members ? "Members: " + members : "No members yet."}</div></div></div>`;
+  }).join("");
+}
+
+function showToken(handle, tokenVal, note) {
+  $("#token-out").innerHTML = `<div class="token-out">
+    <div class="warn">⚠️ Save this now — it's shown only once.</div>
+    <div>Access code for <b>@${esc(handle)}</b>${note ? " (" + esc(note) + ")" : ""}:</div>
+    <div class="code" id="token-code">${esc(tokenVal)}</div>
+    <button class="sm" id="token-copy">Copy</button></div>`;
+  const c = $("#token-copy");
+  if (c) c.onclick = async () => {
+    try { await navigator.clipboard.writeText(tokenVal); c.textContent = "Copied ✓"; }
+    catch (e) { c.textContent = "Select the code above to copy"; }
+  };
+}
+
+async function load() {
+  $("#status").textContent = "loading…";
+  const [uResp, hResp] = await Promise.all([api("/admin/users"), api("/admin/households")]);
+  households = hResp.households || [];
+  const hhByHandle = {};
+  for (const h of households) for (const m of (h.members || [])) hhByHandle[m.handle] = h.name;
+  const users = uResp.users || [];
+  renderUsers(users, hhByHandle);
+  renderHouseholds();
+  $("#status").textContent = `${users.length} user(s) · ${households.length} household(s)`;
+  $("#wrap").style.display = "";
+  $("#gate").style.display = "none";
+}
+
+// -- actions -----------------------------------------------------------------
+
+$("#add-user").addEventListener("click", async () => {
+  $("#add-err").textContent = "";
+  const handle = $("#new-handle").value.trim();
+  if (!handle) { $("#add-err").textContent = "A handle is required."; return; }
+  try {
+    const body = { handle, is_operator: $("#new-op").checked };
+    const name = $("#new-name").value.trim();
+    if (name) body.display_name = name;
+    const r = await api("/admin/users", "POST", body);
+    showToken(r.handle, r.token, "new user");
+    $("#new-handle").value = ""; $("#new-name").value = ""; $("#new-op").checked = false;
+    await load();
+  } catch (e) { if (e.detail) $("#add-err").textContent = e.detail; }
+});
+
+$("#add-hh").addEventListener("click", async () => {
+  $("#hh-err").textContent = "";
+  const name = $("#new-hh").value.trim();
+  if (!name) { $("#hh-err").textContent = "A name is required."; return; }
+  try { await api("/admin/households", "POST", { name }); $("#new-hh").value = ""; await load(); }
+  catch (e) { if (e.detail) $("#hh-err").textContent = e.detail; }
+});
+
+$("#users").addEventListener("click", async (e) => {
+  const rotate = e.target.getAttribute("data-rotate");
+  const disable = e.target.getAttribute("data-disable");
+  const join = e.target.getAttribute("data-join");
+  try {
+    if (rotate) {
+      if (!confirm(`Rotate @${rotate}'s token? Their current code stops working.`)) return;
+      const r = await api(`/admin/users/${encodeURIComponent(rotate)}/rotate`, "POST", {});
+      showToken(r.handle, r.token, "rotated");
+      await load();
+    } else if (disable) {
+      if (!confirm(`Disable @${disable}? Their access code stops resolving.`)) return;
+      await api(`/admin/users/${encodeURIComponent(disable)}/disable`, "POST", {});
+      await load();
+    } else if (join) {
+      const sel = document.querySelector(`select[data-hh-for="${CSS.escape(join)}"]`);
+      if (!sel) return;
+      await api(`/admin/households/${encodeURIComponent(sel.value)}/members`, "POST", { handle: join });
+      await load();
+    }
+  } catch (err) { if (err.detail) alert(err.detail); }
+});
+
+// -- gate --------------------------------------------------------------------
+
+$("#token-save").addEventListener("click", () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; try { localStorage.setItem(KEY, v); } catch (e) {}
+  load().catch(() => {});
+});
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+if (token) load().catch(() => {}); else gate("");
+</script>
+</body>
+</html>
