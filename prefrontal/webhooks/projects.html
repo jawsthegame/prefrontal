@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Projects</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /family, /kids, /dashboard, /stats) ─── */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  header { max-width: 1040px; margin: 0 auto; padding: 22px 18px 4px;
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header .arch { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
+  header .arch input { accent-color: var(--accent); width: 15px; height: 15px; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 8px 16px 48px;
+    display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 720px) { .wrap { grid-template-columns: 1fr; } }
+  .empty { color: var(--muted); font-style: italic; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  /* Master list */
+  .list { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 10px; box-shadow: var(--shadow); position: sticky; top: 68px; }
+  @media (max-width: 720px) { .list { position: static; } }
+  .proj-domhdr { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; font-weight: 700;
+    color: var(--muted); padding: 12px 10px 4px; }
+  .proj-domhdr:first-child { padding-top: 4px; }
+  .proj-row { display: block; width: 100%; text-align: left; border: none; background: transparent;
+    color: var(--fg); font: inherit; cursor: pointer; border-radius: 10px; padding: 9px 10px; }
+  .proj-row:hover { background: var(--bg); }
+  .proj-row.sel { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .proj-row .proj-name { font-weight: 650; display: block; }
+  .proj-row .proj-roll { color: var(--muted); font-size: 12px; }
+
+  /* Detail pane */
+  .detail { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px 22px; box-shadow: var(--shadow); min-height: 200px; }
+  .detail h2 { margin: 0 0 2px; font-size: 21px; font-weight: 680; }
+  .detail .dom { color: var(--muted); font-size: 13px; }
+  .detail .intro { margin: 12px 0 0; }
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 4px; }
+  .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 14px; min-width: 92px; }
+  .stat .n { font-size: 20px; font-weight: 700; }
+  .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+  .detail h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+    margin: 22px 0 6px; font-weight: 700; }
+  .pd-item { padding: 8px 0; border-top: 1px solid var(--line); }
+  .pd-item:first-of-type { border-top: none; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin: 24px auto 0; max-width: 1040px; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/projects/board" aria-current="page">Projects</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+    <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>🗂 Projects</h1>
+  <div class="meta" id="status">loading…</div>
+  <label class="arch"><input type="checkbox" id="show-archived" /> Show archived</label>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <aside class="list" id="list"></aside>
+  <section class="detail" id="detail">
+    <div class="empty">Select a project to see its todos, commitments, and focus.</div>
+  </section>
+</div>
+<footer id="foot" style="display:none">A project groups todos, commitments &amp; focus sessions. Edit membership from the ＋ project pill on the dashboard.</footer>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let projects = [];      // last /projects payload
+let selectedId = null;  // currently open project id
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+// ── Formatting helpers (mirror the dashboard) ─────────────────────────────
+function fmt(ts) {
+  if (!ts) return "—";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d) ? ts : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function catColor(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h} 45% 42%)`;
+}
+function projColor(p) { return (p && p.color) || catColor((p && p.name) || ""); }
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path, opts) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { ...(opts || {}), headers });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// ── Master list: projects grouped by domain (mirrors the dashboard card) ───
+function renderList() {
+  const el = $("#list");
+  if (!projects.length) {
+    el.innerHTML = `<div class="empty" style="padding:10px">No projects yet. Assign one from a todo or commitment's ＋ project pill on the dashboard.</div>`;
+    return;
+  }
+  const groups = {};
+  for (const p of projects) (groups[p.domain || "—"] ||= []).push(p);
+  let html = "";
+  for (const dom of Object.keys(groups)) {
+    html += `<div class="proj-domhdr">${esc(dom)}</div>`;
+    for (const p of groups[dom]) {
+      const roll = [];
+      if (p.open_todos) roll.push(`${p.open_todos} open`);
+      if (p.next_commitment_at) roll.push(`next ${esc(fmt(p.next_commitment_at))}`);
+      if (p.focus_minutes_7d >= 1) roll.push(`${Math.round(p.focus_minutes_7d)}m/7d`);
+      const archived = p.status && p.status !== "active";
+      html += `<button class="proj-row${String(p.id) === String(selectedId) ? " sel" : ""}" data-id="${p.id}">`
+        + `<span class="proj-name" style="color:${projColor(p)}">${esc(p.name)}${archived ? " · archived" : ""}</span>`
+        + `<span class="proj-roll">${roll.join(" · ") || "empty"}</span></button>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+// ── Detail pane: the project's contents + rollup stats (GET /projects/{id}) ─
+function pct(x) { return x == null ? "—" : Math.round(x * 100) + "%"; }
+function renderDetail(d) {
+  const p = d.project || {};
+  const st = d.stats || {};
+  const section = (title, items, line) =>
+    `<h3>${esc(title)} (${items.length})</h3>` + (items.length
+      ? items.map((x) => `<div class="pd-item">${line(x)}</div>`).join("")
+      : `<div class="pd-item empty">none</div>`);
+  const stat = (n, k) => `<div class="stat"><div class="n">${n}</div><div class="k">${esc(k)}</div></div>`;
+  $("#detail").innerHTML =
+      `<h2 style="color:${projColor(p)}">${esc(p.name || "Project")}</h2>`
+    + `<div class="dom">domain: ${esc(p.domain || "—")}</div>`
+    + (p.description ? `<div class="intro">${esc(p.description)}</div>` : "")
+    + `<div class="stats">`
+      + stat(st.open_todos != null ? st.open_todos : (d.todos || []).length, "open todos")
+      + stat(st.done_todos != null ? st.done_todos : "—", "done")
+      + stat(pct(st.follow_through), "follow-through")
+      + stat(st.focus_minutes != null ? Math.round(st.focus_minutes) + "m" : "—", "focus total")
+    + `</div>`
+    + section("Open todos", d.todos || [], (x) => esc(x.title))
+    + section("Upcoming commitments", d.commitments || [], (x) => `${esc(x.title)} <span class="sub">${esc(fmt(x.start_at))}</span>`)
+    + section("Recent focus sessions", d.focus_sessions || [], (x) => `${esc(x.intended_task || "focus")} <span class="sub">${esc(fmt(x.started_at))}</span>`);
+}
+
+async function select(id, { push = true } = {}) {
+  selectedId = id != null ? String(id) : null;
+  renderList();
+  if (selectedId == null) {
+    $("#detail").innerHTML = `<div class="empty">Select a project to see its todos, commitments, and focus.</div>`;
+    if (push) history.replaceState(null, "", "/projects/board");
+    return;
+  }
+  if (push && location.hash !== "#p" + selectedId) history.replaceState(null, "", "#p" + selectedId);
+  $("#detail").innerHTML = `<div class="empty">loading…</div>`;
+  let d;
+  try {
+    d = await api(`/projects/${selectedId}`);
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    $("#detail").innerHTML = `<div class="err">Couldn't load that project.</div>`;
+    return;
+  }
+  renderDetail(d);
+}
+
+async function load() {
+  $("#status").textContent = "updating…";
+  const inclArchived = $("#show-archived").checked;
+  let data;
+  try {
+    data = await api("/projects" + (inclArchived ? "?include_archived=1" : ""));
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  $("#gate").style.display = "none";
+  $("#wrap").style.display = "grid";
+  $("#foot").style.display = "block";
+  projects = data.projects || [];
+  $("#status").textContent = projects.length
+    ? `${projects.length} project${projects.length === 1 ? "" : "s"}`
+    : "no projects yet";
+
+  // Honour a deep link (#p<id>) on first load; otherwise keep any current selection.
+  if (selectedId == null) {
+    const m = location.hash.match(/^#p(\d+)$/);
+    if (m) selectedId = m[1];
+  }
+  // Drop a selection that vanished (e.g. archived and now hidden).
+  if (selectedId != null && !projects.some((p) => String(p.id) === selectedId)) {
+    selectedId = null;
+  }
+  renderList();
+  if (selectedId != null) select(selectedId, { push: false });
+}
+
+$("#list").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-id]");
+  if (b) select(b.dataset.id);
+});
+$("#show-archived").addEventListener("change", load);
+window.addEventListener("hashchange", () => {
+  const m = location.hash.match(/^#p(\d+)$/);
+  select(m ? m[1] : null, { push: false });
+});
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  $("#gate").style.display = "none"; $("#gate-err").textContent = "";
+  load();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
+
+load();  // try the session cookie / saved code; the gate appears only on 401
+</script>
+</body>
+</html>
