@@ -1142,7 +1142,9 @@ const SC_META = {
 // extra taps push the count past 1 (e.g. "3/1"). An open-ended check (bio breaks)
 // is a reminder, not a quota, so it shows only a bare informational tally.
 function scReadout(c) {
-  if (c.open_ended) return c.count > 0 ? `<b>${c.count}</b>` : "";
+  // An open-ended check (bio breaks) shows a ✓ while it's satisfied (you went and
+  // aren't due again yet), else a bare informational tally of today's count.
+  if (c.open_ended) return c.satisfied ? "<b>✓</b>" : (c.count > 0 ? `<b>${c.count}</b>` : "");
   if (c.target > 1) return `<b>${c.count}/${c.target}</b>`;
   return c.done ? "<b>✓</b>" : "";
 }
@@ -1168,12 +1170,16 @@ function scRow(c) {
   const acts = [(!c.open_ended && atMax) ? "tap to reset" : "tap to log one",
     c.count > 0 ? "shift-click to remove one" : null].filter(Boolean).join(", ");
   const state = c.open_ended
-    ? `${m.label}: reminder every ${c.interval_minutes || "?"} min${c.count ? ` · ${c.count} today` : ""}${overdue ? " — a reminder's due" : ""}`
+    ? (c.satisfied
+        ? `${m.label}: just went — next reminder in a bit`
+        : `${m.label}: reminder every ${c.interval_minutes || "?"} min${c.count ? ` · ${c.count} today` : ""}${overdue ? " — a reminder's due" : ""}`)
     : recurring
       ? `${m.label}: ${c.count} of ${c.target} today${overdue ? " — behind" : ""}`
       : (c.done ? `${m.label}: done today` : (overdue ? `${m.label}: not done yet — overdue` : m.label));
   const label = acts ? `${state} — ${acts}` : state;
-  const doneClass = (!c.open_ended && c.done) ? " done" : "";
+  // Green (the "done" border) when a quota check is met, or an open-ended check is
+  // satisfied — you've confirmed and aren't due again until the next reminder.
+  const doneClass = ((!c.open_ended && c.done) || c.satisfied) ? " done" : "";
   return `<button class="sc-chip${doneClass}${overdue ? " sc-overdue" : ""}" data-sc-mark="${c.key}"`
     + ` data-sc-count="${c.count}" data-sc-target="${c.target}"${c.open_ended ? ' data-sc-open="1"' : ""}`
     + ` style="--p:${fill.toFixed(0)}%" aria-label="${esc(label)}" title="${esc(label)}">`
