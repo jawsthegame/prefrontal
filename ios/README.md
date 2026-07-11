@@ -65,30 +65,28 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
 ```
 
-## Run on your iPhone (free personal signing)
+## Run on your iPhone
 
-1. `cd ios && xcodegen generate && open Prefrontal.xcodeproj`
-2. In Xcode: select the **Prefrontal** target → **Signing & Capabilities**.
-   - Check **Automatically manage signing**.
-   - **Team:** add your Apple ID (Xcode ▸ Settings ▸ Accounts ▸ +) and pick the
-     personal team. Free tier is fine.
-   - The bundle id is `com.morningstatic.prefrontal`; if signing complains it's
-     taken, change it to something unique (e.g. add your initials). Do the same
-     for the **PrefrontalWidgets** target (`…prefrontal.widgets`) — select it and
-     set the same team; automatic signing registers the App Group capability.
-   - If Xcode flags the **App Group**, make sure both targets list
-     `group.com.morningstatic.prefrontal` under Signing & Capabilities ▸ App
-     Groups (it's in the checked-in entitlements; automatic signing usually adds
-     it for you).
-3. Plug in your iPhone (`iphone171-1` is already on the tailnet). Trust the Mac
-   when prompted. Enable **Developer Mode** on the phone if asked
-   (Settings ▸ Privacy & Security ▸ Developer Mode).
-4. Pick your phone as the run destination and hit **⌘R**.
-5. First launch on device: Settings ▸ General ▸ VPN & Device Management → trust
-   your developer profile.
+The widget uses an **App Group**, which requires a **paid Apple Developer
+account** (App Groups aren't available to free "Personal Team" signing). The
+app alone runs under free signing, but the full app + widget needs the paid tier.
 
-> Free personal provisioning profiles expire after **7 days** — re-run from
-> Xcode to refresh. A paid Apple Developer account removes that limit.
+1. **Set your team once, locally** (survives `xcodegen generate`, never committed):
+   ```sh
+   git update-index --skip-worktree ios/Signing.xcconfig   # ignore local edits
+   # then edit ios/Signing.xcconfig → DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
+   ```
+   Find the Team ID in Xcode ▸ Settings ▸ Accounts ▸ (your team), or at
+   developer.apple.com ▸ Membership.
+2. `cd ios && xcodegen generate && open Prefrontal.xcodeproj`
+3. Both targets use **Automatically manage signing**; with the team set, Xcode
+   registers the App Group (`group.com.morningstatic.prefrontal`) on the portal
+   automatically. Bundle ids: app `com.morningstatic.prefrontal`, widget
+   `…prefrontal.widgets`.
+4. Plug in your iPhone (`iphone171-1` is on the tailnet). Enable **Developer
+   Mode** if asked (Settings ▸ Privacy & Security ▸ Developer Mode → on → reboot).
+5. Pick your phone as the run destination and hit **⌘R**. Then add the widget
+   from the Home/Lock Screen gallery.
 
 ## Connecting the app to your server
 

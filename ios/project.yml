@@ -6,12 +6,17 @@ options:
   createIntermediateGroups: true
   xcodeVersion: "26.0"
 
+# Signing team comes from Signing.xcconfig (kept local; see ios/README.md),
+# so it survives regeneration and isn't committed to this public repo.
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
+
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: "" # ← set to your personal team in Xcode (Signing & Capabilities)
 
 targets:
   Prefrontal:
