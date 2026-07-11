@@ -151,7 +151,12 @@ struct Commitment: Codable, Identifiable, Hashable {
     }
 }
 
-struct CommitmentList: Codable { let commitments: [Commitment] }
+struct CommitmentList: Codable {
+    let commitments: [Commitment]
+    /// Recently-elapsed commitments still awaiting a made/missed answer (the
+    /// server surfaces these for about a day). Drives the outcome affordance.
+    let previous: [Commitment]?
+}
 
 struct Slots: Codable {
     let minutes: Int
@@ -262,10 +267,20 @@ struct SelfCare: Codable {
 
 struct Briefing: Codable {
     let date: String?
-    let today: [Commitment]?
     let format: String?
-    // The briefing carries additional prose the server assembles; a headline
-    // is derived client-side from `today` when present.
+    let today: [Commitment]?
+    /// Clean, ready-to-show prose the server renders (`render_briefing`); the
+    /// same text plain-text channels receive, with no footer baked in.
+    let text: String?
+    /// Optional closing encouragement line, when the recovery layer is on.
+    let encouragement: String?
+    /// On a wide-open day, the recorded "take it easy" / "get things done" pick.
+    let openDayChoice: String?
+
+    enum CodingKeys: String, CodingKey {
+        case date, format, today, text, encouragement
+        case openDayChoice = "open_day_choice"
+    }
 }
 
 // MARK: - Panic

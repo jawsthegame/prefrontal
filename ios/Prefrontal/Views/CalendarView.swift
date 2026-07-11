@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CalendarView: View {
     @State private var commitments: [Commitment] = []
+    @State private var previous: [Commitment] = []
     @State private var slots: Slots?
     @State private var slotMinutes = 30
     @State private var error: String?
@@ -13,6 +14,7 @@ struct CalendarView: View {
         ScrollView {
             VStack(spacing: 16) {
                 if let error { ErrorBanner(message: error) }
+                if !previous.isEmpty { outcomeCard }
                 slotFinder
                 ForEach(groupedByDay, id: \.day) { group in
                     Card {
@@ -30,6 +32,58 @@ struct CalendarView: View {
         .navigationTitle("Calendar")
         .refreshable { await load() }
         .task { if !loaded { await load() } }
+    }
+
+    // MARK: - Recently elapsed → made it / missed it
+
+    private var outcomeCard: some View {
+        Card {
+            CardLabel(text: "Did you make it?")
+            Text("A quick, honest check on what just passed — it teaches Prefrontal your real follow-through.")
+                .font(.caption).foregroundStyle(Brand.muted)
+            ForEach(previous) { c in outcomeRow(c) }
+        }
+    }
+
+    @ViewBuilder
+    private func outcomeRow(_ c: Commitment) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(c.title.replacingOccurrences(of: "\\", with: ""))
+                .font(.subheadline).foregroundStyle(Brand.nearWhite)
+            Text(PFDate.dayTime(c.startAt)).font(.caption2).foregroundStyle(Brand.muted)
+
+            if let outcome = c.outcome {
+                HStack(spacing: 10) {
+                    Chip(text: outcome == "made" ? "✓ Made it" : "✗ Missed",
+                         color: outcome == "made" ? Brand.good : Brand.danger)
+                    AsyncButton {
+                        try await withAPI { try await $0.setCommitmentOutcome(c.id, outcome: nil) }
+                        await load()
+                    } label: { Text("Change").font(.caption) } onError: { error = $0 }
+                    .buttonStyle(.borderless).tint(Brand.muted)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    AsyncButton {
+                        try await withAPI { try await $0.setCommitmentOutcome(c.id, outcome: "made") }
+                        await load()
+                    } label: {
+                        Label("Made it", systemImage: "checkmark").frame(maxWidth: .infinity)
+                    } onError: { error = $0 }
+                    .buttonStyle(.bordered).tint(Brand.good)
+
+                    AsyncButton {
+                        try await withAPI { try await $0.setCommitmentOutcome(c.id, outcome: "missed") }
+                        await load()
+                    } label: {
+                        Label("Missed it", systemImage: "xmark").frame(maxWidth: .infinity)
+                    } onError: { error = $0 }
+                    .buttonStyle(.bordered).tint(Brand.danger)
+                }
+            }
+            if c.id != previous.last?.id { Divider().overlay(Brand.line) }
+        }
     }
 
     private var slotFinder: some View {
@@ -91,7 +145,9 @@ struct CalendarView: View {
 
     private func load() async {
         do {
-            commitments = try await withAPI { try await $0.commitments(limit: 60) }
+            let payload = try await withAPI { try await $0.commitmentList(limit: 60) }
+            commitments = payload.commitments
+            previous = payload.previous ?? []
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
