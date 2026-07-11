@@ -76,6 +76,7 @@ from prefrontal.webhooks.schemas.ingestion import (
     TripDomain,
     TripLabel,
     TripReflect,
+    TripRetro,
 )
 from prefrontal.webhooks.schemas.projects import (
     EntityProjectUpdate,
@@ -208,6 +209,7 @@ __all__ = [
     "TripDomain",
     "TripLabel",
     "TripReflect",
+    "TripRetro",
     "UserCreate",
     "UserEmail",
 ]

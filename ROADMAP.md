@@ -109,10 +109,14 @@ domain buttons on the trip-label ask). Open threads:
   never touched the shared bias in the first place; the activity bucket is there for
   them the moment a trip ever carries a prediction, but there's no current pollution
   left to separate. Covered by `tests/test_patterns.py`.
-- **Fuller one-tap label/reflect Shortcut** — beyond the three domain buttons on
-  the ambient ask, a proper iOS Shortcut recipe to label + set a domain + drop a
-  one-line reflection in a single interaction, so the whole retrospective closes
-  from the notification without opening the dashboard.
+- **Fuller one-tap label/reflect Shortcut** ✅ — `POST /webhooks/trip/retro` is the
+  combined endpoint: label + category + domain + reflection in one call (each
+  optional; `trip_id` defaults to the newest trip awaiting a label, so a bare-tap
+  Shortcut needn't carry it), reusing the exact `label_trip`/`set_trip_domain` +
+  `apply_reflection` logic the three single endpoints do and returning one speakable
+  `confirmation`. The **Trip retro** iOS Shortcut recipe (`deploy/ios-shortcut.md`)
+  closes the whole retrospective from the notification without opening the
+  dashboard. Covered by `tests/test_trips.py`.
 - **Configurable quick-file domains** — the one-tap trio is fixed to the three
   "protect" spheres (home/kids/personal) because ntfy caps action buttons at 3.
   Let the user pick which ≤3 domains those buttons file (e.g. surface `shop` for a
@@ -171,8 +175,9 @@ ordered by leverage; each is independent but builds on denser capture.
    `/webhooks/outing/start`), via `POST /webhooks/outing/domain`, or inferred from
    its intention text. And the trip-label ask carries **one-tap 🏠/🧒/🙋 buttons**
    (`trip_domain_*` through `/nudge/act`) so a sphere can be filed straight from the
-   notification. *(Next: a per-trip `context_key` bucket so trips calibrate
-   separately from other tasks, and a fuller one-tap label/reflect Shortcut.)*
+   notification — and the **Trip retro** Shortcut (`POST /webhooks/trip/retro`)
+   now closes label + domain + reflection in a single interaction. *(Next: a
+   per-trip `context_key` bucket so trips calibrate separately from other tasks.)*
 2. **LLM-as-sensor, not LLM-as-author.** ✅ (v1) — `prefrontal/sensor.py` turns a
    free-text note ("I always blow off admin on Mondays") into *candidate*
    structured updates: a `coaching_state` key/value or an episode. Crucially the

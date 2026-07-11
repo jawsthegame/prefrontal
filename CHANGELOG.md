@@ -7,6 +7,27 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **One-tap trip retro — close label + domain + reflection in a single call** ✅ —
+  a completed trip's retrospective used to need three separate posts
+  (`/webhooks/trip/label`, `/webhooks/trip/domain`, `/webhooks/trip/reflect`). The
+  new `POST /webhooks/trip/retro` bundles them: send any of label / category /
+  domain / reflection in one request and it labels, files the life-domain, and runs
+  the full reflection path (classify → resolve the trip's episode into drift signal
+  → hand the note to the LLM-as-sensor for pending proposals), returning one
+  speakable `confirmation`. `trip_id` is optional — it defaults to the most recent
+  trip still awaiting a label, so a bare-tap Shortcut needn't carry the id. The
+  **Trip retro** iOS Shortcut recipe (`deploy/ios-shortcut.md`) closes the whole
+  retrospective from the notification without opening the dashboard. Each part
+  reuses the exact `label_trip`/`set_trip_domain` + `apply_reflection` logic the
+  single endpoints do (no behavior fork); the three endpoints stay for the one-tap
+  domain buttons and partial edits. Covered by `tests/test_trips.py`.
+  - Also fixes a latent import cycle (`delegation → sources → mail.imap →
+    mail/__init__ → ingest → delegation`) that surfaced when `test_trips.py` was
+    collected in isolation: `prefrontal/mail/ingest.py` now imports `delegation`
+    and `triage` lazily (inside the functions that use them) instead of at module
+    top, so the mail package no longer re-enters a partially-initialized
+    `delegation` regardless of import order.
+
 - **One triage, not two — the mail path is absorbed into the shared pipeline** ✅ —
   mail ingestion used to run its own classify→route→log as a parallel triage: it
   created the todo with `add_todo` and separately *mirrored* an audit row into

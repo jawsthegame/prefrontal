@@ -90,6 +90,38 @@ class TripReflect(BaseModel):
         description="Optional explicit outcome; omit to let it be classified from the note.",
     )
 
+class TripRetro(BaseModel):
+    """Body of ``POST /webhooks/trip/retro`` — close a trip's whole retrospective.
+
+    The one-interaction form of label + domain + reflection: an iOS Shortcut can
+    gather all three and post once, instead of chaining ``/trip/label``,
+    ``/trip/domain``, and ``/trip/reflect``. Every field is optional (send only
+    what you captured), but at least one of ``label``/``domain``/``reflection`` is
+    required. ``trip_id`` defaults to the most recent completed trip still awaiting
+    a label, so a bare-tap Shortcut needn't know the id.
+    """
+
+    trip_id: int | None = Field(
+        default=None,
+        description="The trip to close out; omit to use the newest unlabeled trip.",
+    )
+    label: str | None = Field(default=None, description="What the trip was, e.g. 'Target run'.")
+    category: str | None = Field(
+        default=None,
+        description="Optional category (errand/social/work/health/family/leisure/other).",
+    )
+    domain: str | None = Field(
+        default=None,
+        description="Optional life-domain for focus balance (shop/work/home/kids/personal).",
+    )
+    reflection: str | None = Field(
+        default=None, description="Optional plain-English 'how it went' note."
+    )
+    outcome: Literal["success", "partial", "miss"] | None = Field(
+        default=None,
+        description="Optional explicit outcome; omit to classify it from the note.",
+    )
+
 class MailSync(BaseModel):
     """Body of ``POST /webhooks/mail/sync`` — a batch of messages for one account.
 
