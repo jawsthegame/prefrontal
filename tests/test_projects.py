@@ -268,6 +268,92 @@ def test_staleness_threshold_configurable(store):
     assert len(ProjectStalenessModule().evaluate(store, _ctx(7))) == 1  # 7 > 5
 
 
+# --- engagement outcomes (after_fire / before_collect) ----------------------
+
+
+def _fire_staleness(store, pid, fired):
+    """Run after_fire for a staleness nudge on `pid`, stamped at datetime `fired`."""
+    from prefrontal.coaching import CoachContext, Cue, Decision
+    from prefrontal.modules.projects import ProjectStalenessModule
+    cue = Cue(
+        module="projects", intervention="staleness", urgency="nudge", text="x",
+        context_key="project", dedup_key=f"project_stale:{pid}", ref={"project_id": pid},
+    )
+    ProjectStalenessModule().after_fire(
+        store, [Decision(cue=cue, channel="push", text="x")], CoachContext(now=fired)
+    )
+
+
+def test_engagement_success_when_project_touched_after_nudge(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import CoachContext
+    from prefrontal.modules.projects import ProjectStalenessModule
+    now = utcnow()
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)  # activity ~ now
+    _fire_staleness(store, pid, now - timedelta(days=8))  # nudged before that activity
+    ProjectStalenessModule().before_collect(store, CoachContext(now=now))
+    eps = store.episodes_by_type("project")
+    assert [e["outcome"] for e in eps] == ["success"]
+    assert not store.get_state(f"coach_engage:projects:{pid}")  # marker cleared
+
+
+def test_engagement_ignored_when_untouched(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import CoachContext
+    from prefrontal.modules.projects import ProjectStalenessModule
+    now = utcnow()
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)  # activity ~ now
+    _fire_staleness(store, pid, now + timedelta(minutes=1))  # nudged *after* the activity
+    ProjectStalenessModule().before_collect(store, CoachContext(now=now + timedelta(days=8)))
+    eps = store.episodes_by_type("project")
+    assert [e["outcome"] for e in eps] == ["ignored"]
+
+
+def test_engagement_pending_before_renudge_window(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import CoachContext
+    from prefrontal.modules.projects import ProjectStalenessModule
+    now = utcnow()
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)
+    _fire_staleness(store, pid, now)
+    ProjectStalenessModule().before_collect(store, CoachContext(now=now + timedelta(days=3)))
+    assert store.episodes_by_type("project") == []  # < RENUDGE_DAYS → not judged yet
+    assert store.get_state(f"coach_engage:projects:{pid}")  # marker still pending
+
+
+def test_engagement_success_when_project_left_stale_set(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.coaching import CoachContext
+    from prefrontal.modules.projects import ProjectStalenessModule
+    now = utcnow()
+    pid = store.add_project("Done Thing", "home")  # no open todos → not a stale candidate
+    _fire_staleness(store, pid, now - timedelta(days=8))
+    ProjectStalenessModule().before_collect(store, CoachContext(now=now))
+    eps = store.episodes_by_type("project")
+    assert [e["outcome"] for e in eps] == ["success"]  # gone from the stale set = acted
+
+
+def test_profile_reflects_engagement(store):
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    store.set_todo_project(store.add_todo("Buy tile"), pid)  # keeps profile non-None
+    store.log_episode("project", acknowledged=True, outcome="success", context="projects nudge: x")
+    store.log_episode("project", acknowledged=False, outcome="ignored", context="projects nudge: y")
+    section = ProjectStalenessModule().profile_section(store)
+    assert "land 1/2 of the time" in section
+
+
 # --- forced priority rank --------------------------------------------------
 
 def test_new_projects_get_contiguous_ranks(store):

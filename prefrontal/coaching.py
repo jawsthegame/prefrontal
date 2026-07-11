@@ -543,6 +543,90 @@ def sweep_stale_nudges(
     return swept
 
 
+# --- Engagement outcomes: did a nudge move the thing it nudged? --------------
+#
+# The channel-outcome loop above only covers cues with a tappable ack
+# (:data:`_TRACKABLE_TARGET`). A module whose nudge has no button — "still on
+# this project?", "heard back from your assistant?" — has no observable answer to
+# a *tap*, so a self-care-style "no tap = ignored" sweep would mark every one of
+# them ignored (the very bias :data:`_TRACKABLE_TARGET` guards against). But those
+# nudges do have an observable *engagement*: the thing they point at either
+# advances afterward or it doesn't. These two helpers let a module stamp a fired
+# nudge (``after_fire``) and later mature it into a ``success``/``ignored`` episode
+# once it can tell whether the item moved (``before_collect``), with the module
+# supplying its own "did it move / is it time to judge yet" verdict.
+
+
+def _engage_key(module: str, target: Any) -> str:
+    """Coaching-state key tracking a fired nudge awaiting an engagement verdict."""
+    return f"coach_engage:{module}:{target}"
+
+
+def stamp_pending_engagement(
+    store: Any, decisions: list[Decision], now: datetime, *, module: str, target_key: str
+) -> None:
+    """Mark each fired cue of ``module`` as awaiting an engagement outcome.
+
+    An ``after_fire`` helper. Keyed by the target id read from ``cue.ref[target_key]``;
+    the first nudge in a cycle owns the window (a re-nudge on the same target before
+    the verdict lands doesn't reset the clock), mirroring how ``note_delivered``
+    stamps once per ``(context, target)``.
+    """
+    stamp = now.strftime(TS_FMT)
+    for d in decisions:
+        if d.cue.module != module:
+            continue
+        target = (d.cue.ref or {}).get(target_key)
+        if target is None:
+            continue
+        key = _engage_key(module, target)
+        if store.get_state(key) is None:
+            store.set_state(key, stamp, source="inferred")
+
+
+def sweep_engagement(
+    store: Any,
+    now: datetime,
+    *,
+    module: str,
+    episode_type: str,
+    verdict: Any,
+) -> int:
+    """Mature pending engagement markers for ``module`` into outcome episodes.
+
+    A ``before_collect`` helper. For each marker, calls
+    ``verdict(target: str, fired: datetime) -> "engaged" | "ignored" | None``; a
+    ``None`` verdict means "not yet — give it more time" and leaves the marker. A
+    decided marker is logged as an ``episode_type`` episode (``success`` +
+    ``acknowledged`` when engaged, ``ignored`` otherwise) and cleared. Returns how
+    many were resolved. Mirrors :func:`sweep_stale_nudges`' shape.
+    """
+    swept = 0
+    prefix = f"coach_engage:{module}:"
+    for key, row in list(store.all_state().items()):
+        if not key.startswith(prefix):
+            continue
+        raw = (row.get("value") if isinstance(row, dict) else row) or ""
+        fired = _parse_ts(str(raw))
+        if fired is None:
+            store.delete_state(key)  # malformed marker — drop it
+            continue
+        target = key[len(prefix) :]
+        decided = verdict(target, fired)
+        if decided is None:
+            continue  # too soon to judge — leave the marker for a later tick
+        engaged = decided == "engaged"
+        store.log_episode(
+            episode_type,
+            acknowledged=engaged,
+            context=f"{module} nudge: {target}",
+            outcome="success" if engaged else "ignored",
+        )
+        store.delete_state(key)
+        swept += 1
+    return swept
+
+
 @dataclass(frozen=True)
 class TickResult:
     """The outcome of one coaching tick (see :func:`run_coaching_tick`).

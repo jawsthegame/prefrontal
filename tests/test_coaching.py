@@ -23,7 +23,9 @@ from prefrontal.coaching import (
     phrase,
     record_fired,
     resolve_ack,
+    stamp_pending_engagement,
     suppressed,
+    sweep_engagement,
     sweep_stale_nudges,
 )
 from prefrontal.config import Settings
@@ -205,6 +207,75 @@ def test_sweep_logs_unacked_as_miss_after_window_but_leaves_fresh_ones():
     }]
     assert "coach_ack:outing:2" not in store._state   # swept marker cleared
     assert "coach_ack:outing:1" in store._state        # fresh one still pending
+
+
+# -- engagement outcomes (stamp_pending_engagement / sweep_engagement) --------
+
+
+def _project_cue(pid):
+    return Cue(
+        module="projects", intervention="staleness", urgency="nudge", text="x",
+        context_key="project", dedup_key=f"project_stale:{pid}", ref={"project_id": pid},
+    )
+
+
+def test_stamp_pending_engagement_marks_once_per_target():
+    store = _FakeStore()
+    d = Decision(cue=_project_cue(7), channel="push", text="x")
+    stamp_pending_engagement(store, [d], NOON, module="projects", target_key="project_id")
+    stamp = NOON.strftime("%Y-%m-%d %H:%M:%S")
+    assert store._state["coach_engage:projects:7"] == stamp
+    # A re-nudge on the same target doesn't reset the window (first fire owns it).
+    stamp_pending_engagement(
+        store, [d], NOON + timedelta(days=1), module="projects", target_key="project_id"
+    )
+    assert store._state["coach_engage:projects:7"] == stamp
+    # A cue from another module is left alone.
+    other = Decision(cue=_cue("nudge"), channel="push", text="x")  # module="m"
+    stamp_pending_engagement(store, [other], NOON, module="projects", target_key="project_id")
+    assert list(store._state) == ["coach_engage:projects:7"]
+
+
+def test_sweep_engagement_logs_decided_and_leaves_pending():
+    store = _FakeStore(state={
+        "coach_engage:projects:1": "2026-07-01 09:00:00",  # engaged → success
+        "coach_engage:projects:2": "2026-07-01 09:00:00",  # verdict None → left
+        "coach_engage:projects:3": "not-a-timestamp",       # malformed → dropped
+    })
+
+    def verdict(target, fired):
+        return {"1": "engaged", "2": None}.get(target, "ignored")
+
+    swept = sweep_engagement(
+        store, NOON, module="projects", episode_type="project", verdict=verdict
+    )
+    assert swept == 1
+    assert store.episodes == [{
+        "episode_type": "project", "acknowledged": True,
+        "context": "projects nudge: 1", "outcome": "success",
+    }]
+    assert "coach_engage:projects:1" not in store._state   # decided → cleared
+    assert "coach_engage:projects:2" in store._state        # pending → left
+    assert "coach_engage:projects:3" not in store._state    # malformed → dropped
+
+
+def test_sweep_engagement_logs_ignored_and_scopes_to_module():
+    store = _FakeStore(state={"coach_engage:projects:5": "2026-07-01 09:00:00"})
+    # A different module's sweep never touches this marker.
+    assert sweep_engagement(
+        store, NOON, module="delegation_checkin", episode_type="delegation",
+        verdict=lambda t, f: "ignored",
+    ) == 0
+    assert store.episodes == [] and "coach_engage:projects:5" in store._state
+    # Its own module's sweep logs the ignored outcome and clears it.
+    sweep_engagement(
+        store, NOON, module="projects", episode_type="project", verdict=lambda t, f: "ignored"
+    )
+    assert store.episodes == [{
+        "episode_type": "project", "acknowledged": False,
+        "context": "projects nudge: 5", "outcome": "ignored",
+    }]
+    assert store._state == {}
 
 
 def test_loop_closes_ignored_channel_bumps_after_learn():

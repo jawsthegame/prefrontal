@@ -15,8 +15,17 @@ every module, it only returns cues; the engine decides channel/quiet-hours.
 
 from __future__ import annotations
 
+from typing import Any
+
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.coaching import CoachContext, Cue, _fired_key, note_hint
+from prefrontal.coaching import (
+    CoachContext,
+    Cue,
+    _fired_key,
+    note_hint,
+    stamp_pending_engagement,
+    sweep_engagement,
+)
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -26,6 +35,8 @@ STALE_DAYS_KEY = "project_stale_days"
 DEFAULT_STALE_DAYS = 21
 #: Don't re-nudge the same project more than once per this many days.
 RENUDGE_DAYS = 7
+#: episode_type for a staleness nudge's engagement outcome (see :meth:`before_collect`).
+ENGAGE_EPISODE = "project"
 
 
 def _stale_days(store: MemoryStore) -> int:
@@ -99,6 +110,38 @@ class ProjectStalenessModule(Module):
             ]
         return []
 
+    def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
+        """Mature prior staleness nudges into engagement outcomes.
+
+        A staleness nudge has no tappable answer, so its honest signal is whether
+        the project got *touched* afterward. Once the re-nudge window
+        (:data:`RENUDGE_DAYS`) has passed, log the outcome — ``success`` if the
+        project saw activity after we nudged (or dropped out of the stale set by
+        being worked, completed, or archived), ``ignored`` if it's still sitting
+        untouched — via the engine's ``before_collect`` hook. This is the learning
+        signal a bare ``evaluate`` never fed back.
+        """
+        candidates = {c["id"]: c for c in store.stale_project_candidates()}
+
+        def verdict(target: str, fired: Any) -> str | None:
+            if (ctx.now - fired).days < RENUDGE_DAYS:
+                return None  # still inside the window we'd wait before re-nudging
+            project = candidates.get(int(target))
+            if project is None:
+                return "engaged"  # worked / completed / archived out of the stale set
+            last = _parse_ts(project.get("last_activity_at"))
+            return "engaged" if (last is not None and last > fired) else "ignored"
+
+        sweep_engagement(
+            store, ctx.now, module=self.key, episode_type=ENGAGE_EPISODE, verdict=verdict
+        )
+
+    def after_fire(self, store: MemoryStore, decisions: list[Any], ctx: CoachContext) -> None:
+        """Mark each fired staleness nudge as awaiting an engagement verdict."""
+        stamp_pending_engagement(
+            store, decisions, ctx.now, module=self.key, target_key="project_id"
+        )
+
     def profile_section(self, store: MemoryStore) -> str | None:
         """Note how many active projects carry open work (light context).
 
@@ -110,10 +153,20 @@ class ProjectStalenessModule(Module):
         candidates = store.stale_project_candidates()
         if not candidates:
             return None
-        return (
+        lines = [
             f"- {len(candidates)} active project(s) with open todos "
             f"(staleness nudges fire past {_stale_days(store)} days quiet)."
-        )
+        ]
+        # Fold in how those nudges have landed (from before_collect's outcomes) so
+        # the profile reflects whether re-surfacing a stale project actually moves it.
+        outcomes = store.episodes_by_type(ENGAGE_EPISODE, limit=50)
+        if outcomes:
+            engaged = sum(1 for e in outcomes if e.get("outcome") == "success")
+            lines.append(
+                f"- Staleness nudges land {engaged}/{len(outcomes)} of the time "
+                "(project touched afterward)."
+            )
+        return "\n".join(lines)
 
 
 register(ProjectStalenessModule())

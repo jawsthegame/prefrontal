@@ -379,6 +379,97 @@ def test_delegation_checkin_module_silent_for_in_prep(store):
     assert DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW)) == []
 
 
+# --- engagement outcomes (after_fire / before_collect) ----------------------
+
+
+def _fire_checkin(store, tid, fired):
+    """Run after_fire for a check-in nudge on `tid`, stamped at datetime `fired`."""
+    from prefrontal.coaching import Cue, Decision
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    cue = Cue(
+        module="delegation_checkin", intervention="delegation_checkin", urgency="nudge",
+        text="x", context_key="todo", dedup_key=f"delegation_checkin:{tid}",
+        ref={"todo_id": tid},
+    )
+    DelegationCheckinModule().after_fire(
+        store, [Decision(cue=cue, channel="push", text="x")], CoachContext(now=fired)
+    )
+
+
+def _park(store, title="Taxes"):
+    tid = store.add_todo(title)
+    store.set_delegation(
+        tid, handler="email", destination="va@x.com", status="forwarded", prepped=True
+    )
+    return tid
+
+
+def test_engagement_success_when_delegation_touched_after_nudge(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    now = utcnow()
+    tid = _park(store)  # delegation write ~ now
+    _fire_checkin(store, tid, now - timedelta(days=8))  # nudged before that write
+    DelegationCheckinModule().before_collect(store, CoachContext(now=now))
+    assert [e["outcome"] for e in store.episodes_by_type("delegation")] == ["success"]
+    assert not store.get_state(f"coach_engage:delegation_checkin:{tid}")  # cleared
+
+
+def test_engagement_ignored_when_delegation_untouched(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    now = utcnow()
+    tid = _park(store)  # write ~ now
+    _fire_checkin(store, tid, now + timedelta(minutes=1))  # nudged *after* the write
+    DelegationCheckinModule().before_collect(store, CoachContext(now=now + timedelta(days=8)))
+    assert [e["outcome"] for e in store.episodes_by_type("delegation")] == ["ignored"]
+
+
+def test_engagement_pending_before_checkin_interval(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    now = utcnow()
+    tid = _park(store)
+    _fire_checkin(store, tid, now)
+    # 2h in — far short of the 168h forwarded/low-priority interval.
+    DelegationCheckinModule().before_collect(store, CoachContext(now=now + timedelta(hours=2)))
+    assert store.episodes_by_type("delegation") == []
+    assert store.get_state(f"coach_engage:delegation_checkin:{tid}")  # still pending
+
+
+def test_engagement_success_when_handoff_leaves_parked_set(store):
+    from datetime import timedelta
+
+    from prefrontal.clock import utcnow
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    now = utcnow()
+    tid = _park(store)
+    _fire_checkin(store, tid, now)
+    # Came back — advances out of the parked set.
+    store.set_delegation(tid, handler="email", destination="va@x.com", status="returned")
+    # No window wait needed — leaving the parked set is itself engagement.
+    DelegationCheckinModule().before_collect(store, CoachContext(now=now + timedelta(minutes=5)))
+    assert [e["outcome"] for e in store.episodes_by_type("delegation")] == ["success"]
+
+
+def test_delegation_profile_reflects_engagement(store):
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+    tid = store.add_todo("Taxes")
+    store.set_delegation(tid, handler="email", destination="va@x.com", status="forwarded")
+    store.log_episode(
+        "delegation", acknowledged=True, outcome="success",
+        context="delegation_checkin nudge: x",
+    )
+    section = DelegationCheckinModule().profile_section(store)
+    assert "land 1/1 of the time" in section
+
+
 def test_email_handler_sends_and_forwards(store):
     tid = store.add_todo("Book dentist")
     todo = store.get_todo(tid)
