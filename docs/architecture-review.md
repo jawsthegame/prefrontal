@@ -135,6 +135,14 @@ a `Module.pierces_protection` flag, a `Module.tracks_channel_outcome` declaratio
 Then the engine's suppression/learning logic becomes genuinely module-agnostic and the private
 imports disappear.
 
+> **Update — addressed.** Implemented in *coaching: close the engine↔module boundary*. Modules now
+> read a public `coaching.last_fired(store, dedup_key)` (the `_fired_key` imports are gone) and
+> declare `pierces_protection` / `provides_protection(store)` / `channel_targets()`; the engine
+> collects these into `CoachContext.pierce_keys` + `focus_protected` and `channel_targets_for`, so
+> it names no module. The pre-collection sweeps and the protection computation are now
+> failure-isolated. The remaining `sweep_avoided_decompositions` / `sweep_ambiguous_items` calls are
+> generic input-refresh functions (not module methods) and were left in place, now isolated.
+
 ### 4.2 God-objects with clear decomposition seams — **Medium**
 
 - **`MemoryStore` — 17 repo mixins (`store.py:78`).** Decomposed into files but one class exposing
@@ -224,6 +232,9 @@ malformed int/bool raises an unfriendly `ValueError` at load with no validation 
 - **No CI for tests or lint.** The only GitHub Actions workflow is `desktop-dmg.yml` (Electron DMG
   build). 66 test files and a configured `ruff` exist but nothing runs them on push/PR — for a
   project "running in daily use," a green suite is currently a local-only guarantee.
+  > **Update — addressed.** Added `.github/workflows/ci.yml` running `ruff check .` + `pytest` on
+  > push/PR across Python 3.10 and 3.12. Greening the lint gate first surfaced 26 pre-existing
+  > `ruff` violations, cleaned up in *chore: green the ruff gate*.
 - **Migrations are additive-only.** Exactly one versioned step (single-tenant → multi-tenant,
   `MULTI_TENANT_VERSION = 1`); everything after is an idempotent "diff `schema.sql` vs. live DB and
   `ADD COLUMN`" backfill (`migrate.py:112`). There is no forward path for a non-additive change
@@ -256,14 +267,14 @@ malformed int/bool raises an unfriendly `ValueError` at load with no validation 
 
 ## 6. Prioritized recommendations
 
-**Tier 1 — structural leverage**
+**Tier 1 — structural leverage** ✅ *both done*
 
-1. **Close the engine↔module boundary (4.1).** Public `store.last_fired()`, module-declared
-   `pierces_protection` / `tracks_channel_outcome`, and route remaining sweeps through
-   `before_collect`; wrap sweeps in the same per-module try/except. Removes the private-import leak
-   *and* the engine's hardcoded module names in one move.
-2. **Stand up CI (4.9).** A GitHub Actions job running `pytest` + `ruff` on push/PR. Cheapest
-   high-value change; the suite is already strong — make it a gate.
+1. ~~**Close the engine↔module boundary (4.1).**~~ ✅ Done — public `coaching.last_fired()`,
+   module-declared `pierces_protection` / `provides_protection` / `channel_targets`, and
+   failure-isolated sweeps. Removed the private-import leak *and* the engine's hardcoded module
+   names.
+2. ~~**Stand up CI (4.9).**~~ ✅ Done — `.github/workflows/ci.yml` runs `pytest` + `ruff check .` on
+   push/PR (3.10 + 3.12); pre-existing lint debt cleaned to green the gate.
 
 **Tier 2 — contract & decomposition**
 
