@@ -47,8 +47,29 @@ SOFT_THRESHOLD = 0.5
 FIRM_THRESHOLD = 1.0
 CALL_THRESHOLD = 1.5
 
+#: Escalation/abandon timing floors the stated window to at least this many
+#: minutes. A very short window ("back in a couple minutes") would otherwise
+#: collapse soft→firm→call into a burst — a 2-minute window hits 50% at ~1 min,
+#: 150% at ~3 min — so the three levels can stack almost immediately. Flooring the
+#: window for the *timing math* spaces them out; the percentage thresholds still
+#: apply, and any window at or above this floor is unaffected.
+MIN_ESCALATION_WINDOW_MINUTES = 10.0
+
 #: Escalation levels in increasing severity. Index is the rank.
 LEVELS = ("none", "soft", "firm", "call")
+
+
+def _effective_window(window_minutes: float) -> float:
+    """The window used for escalation/abandon timing, floored to
+    :data:`MIN_ESCALATION_WINDOW_MINUTES`.
+
+    A non-positive window is returned unchanged (there's nothing to escalate
+    against). This is why a "couple minutes" outing doesn't get all three nudges
+    within a few minutes — see :func:`escalation_level` / :func:`is_abandoned`.
+    """
+    if window_minutes <= 0:
+        return window_minutes
+    return max(window_minutes, MIN_ESCALATION_WINDOW_MINUTES)
 
 #: Default radius (metres) within which the user counts as "home" — used to
 #: suppress nudges and passively confirm a return when location is available.
@@ -93,9 +114,11 @@ def is_abandoned(
         ratio: Multiple of the window beyond which it's abandoned.
 
     Returns:
-        ``True`` if elapsed has reached ``window_minutes * ratio``.
+        ``True`` if elapsed has reached ``window_minutes * ratio`` (the window
+        floored to :data:`MIN_ESCALATION_WINDOW_MINUTES` for the timing, so a very
+        short window doesn't auto-abandon before its escalations can even fire).
     """
-    return window_minutes > 0 and elapsed_minutes >= window_minutes * ratio
+    return window_minutes > 0 and elapsed_minutes >= _effective_window(window_minutes) * ratio
 
 
 def escalation_level(elapsed_minutes: float, window_minutes: float) -> str:
@@ -107,11 +130,13 @@ def escalation_level(elapsed_minutes: float, window_minutes: float) -> str:
 
     Returns:
         One of ``none``/``soft``/``firm``/``call``. ``none`` if the window is
-        not positive (nothing to escalate against).
+        not positive (nothing to escalate against). The window is floored to
+        :data:`MIN_ESCALATION_WINDOW_MINUTES` for the ratio, so a very short window
+        can't cross all three thresholds within a few minutes.
     """
     if window_minutes <= 0:
         return "none"
-    ratio = elapsed_minutes / window_minutes
+    ratio = elapsed_minutes / _effective_window(window_minutes)
     if ratio >= CALL_THRESHOLD:
         return "call"
     if ratio >= FIRM_THRESHOLD:
@@ -499,8 +524,13 @@ def evaluate_outing(
         ]
     message = ""
     if fire:
+        # Use the floored window so the firm message ("it's been N minutes") lines
+        # up with when the level actually fires on a short, floored window.
         message = build_message(
-            level, elapsed_minutes=elapsed, window_minutes=window, name=name
+            level,
+            elapsed_minutes=elapsed,
+            window_minutes=_effective_window(window),
+            name=name,
         ) + cascade_phrase(risky)
     return OutingEvaluation(
         "active", level, fire, message, impacts, at_home, distance_m,
