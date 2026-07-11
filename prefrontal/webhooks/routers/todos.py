@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime, local_hour_of
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import (
     to_utc,
@@ -58,8 +58,6 @@ from prefrontal.scheduling import (
     fit_todos,
     format_window,
     free_windows,
-    local_datetime,
-    local_hour_of,
     parse_window,
     pick_now,
     window_config_for,

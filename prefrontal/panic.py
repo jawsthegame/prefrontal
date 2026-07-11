@@ -37,13 +37,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, end_of_local_day_utc, local_day_bounds
 from prefrontal.clock import parse_ts as _parse_dt
 from prefrontal.commitments import is_attendable
 from prefrontal.config import get_settings
 from prefrontal.impact import cascade_at_risk, cascade_impact, utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import end_of_local_day_utc, local_day_bounds
 from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, avoided_todos, decompose_task
 
 if TYPE_CHECKING:

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.clock import parse_ts as _parse_dt
 from prefrontal.commitments import KIND_CHILD
 from prefrontal.household._util import _fact_what, _parse_hhmm, _star_grant_what
@@ -237,7 +237,6 @@ from prefrontal.memory.repos.household import (
     HOUSEHOLD_WIDE,
 )
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import local_datetime
 
 #: How many recent changes to surface — kept short so the load-balancing signal
 #: (what the other parent hasn't seen) stays legible, not a full changelog.

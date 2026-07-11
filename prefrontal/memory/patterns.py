@@ -42,10 +42,10 @@ from datetime import datetime
 from statistics import fmean
 from typing import Any
 
+from prefrontal.clock import local_datetime, local_hour_of
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import local_datetime, local_hour_of
 
 #: Smoothing constant for the confidence estimator ``n / (n + k)``. With k=5,
 #: 5 samples ⇒ 0.5, 15 ⇒ 0.75, 45 ⇒ 0.9 — "low until the sample is meaningful".

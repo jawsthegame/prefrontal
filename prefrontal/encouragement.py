@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.briefing import DEFAULT_DAY_END_HOUR, DEFAULT_DAY_START_HOUR
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime, local_day_bounds, local_time_utc
 from prefrontal.clock import parse_ts as _parse_or_none
 from prefrontal.commitments import find_conflicts, undismissed_conflicts
 from prefrontal.config import get_settings
@@ -41,9 +41,6 @@ from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.scheduling import (
     free_windows,
-    local_datetime,
-    local_day_bounds,
-    local_time_utc,
     suggest_for_windows,
     window_config_for,
 )

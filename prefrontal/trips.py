@@ -24,9 +24,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from prefrontal.geo import DEFAULT_HOME_RADIUS_M, haversine_m
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
-from prefrontal.modules.location_anchor import DEFAULT_HOME_RADIUS_M, haversine_m
 
 __all__ = [
     "TRIP_CATEGORIES",

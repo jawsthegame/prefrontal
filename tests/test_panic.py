@@ -469,7 +469,7 @@ def test_panic_check_defers_overwhelm_during_quiet_hours(store, noon):
     """Outside responsive hours an overwhelm spike is deferred, not dropped: it
     doesn't fire now, but the edge is preserved so the first poll back inside
     responsive hours still nudges (a 3am pile-up can't wake you, but isn't lost)."""
-    from prefrontal.scheduling import local_hour_of
+    from prefrontal.clock import local_hour_of
 
     for t in ("A", "B", "C"):
         store.add_todo(t, deadline=(noon - timedelta(days=1)).strftime("%Y-%m-%d"))

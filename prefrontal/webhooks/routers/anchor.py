@@ -32,6 +32,7 @@ from prefrontal.focus_balance import (
     infer_domain_from_text,
     normalize_focus_domain,
 )
+from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.memory.patterns import (
     resolve_bias,
 )
@@ -41,7 +42,6 @@ from prefrontal.memory.store import (
 from prefrontal.modules.location_anchor import (
     DEFAULT_ABANDON_RATIO,
     DEFAULT_HOME_ARRIVE_GRACE_MINUTES,
-    DEFAULT_HOME_RADIUS_M,
     LEVELS,
     apply_outing_evaluation,
     escalation_level,

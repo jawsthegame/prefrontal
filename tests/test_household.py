@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.assistant import build_snapshot, execute_actions, validate_actions
 from prefrontal.classify import classify_kind
+from prefrontal.clock import local_datetime
 from prefrontal.commitments import sync_calendar
 from prefrontal.config import Settings
 from prefrontal.household import (
@@ -51,7 +52,6 @@ from prefrontal.integrations.delivery import (
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore, provision_user
-from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action, verify_action
 

@@ -24,7 +24,7 @@ from fastapi import (
     status,
 )
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.commitments import KIND_CHILD, to_utc
 from prefrontal.household import (
     BALANCE_WINDOW_DAYS,
@@ -56,9 +56,6 @@ from prefrontal.memory.repos.household import (
     FACT_CATEGORIES,
     normalize_fact_category,
     normalize_fact_item,
-)
-from prefrontal.scheduling import (
-    local_datetime,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,

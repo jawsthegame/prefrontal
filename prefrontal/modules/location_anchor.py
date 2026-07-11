@@ -22,12 +22,13 @@ the nudges. AI interpretation of whether drift is acceptable is out of scope.
 
 from __future__ import annotations
 
-import math
 import re
 
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.coaching import CoachContext, Cue, Decision
 from prefrontal.commitments import is_attendable
+from prefrontal.departure import departure_kwargs, travel_leads
+from prefrontal.geo import DEFAULT_HOME_RADIUS_M, haversine_m
 from prefrontal.impact import (
     cascade_at_risk,
     cascade_impact,
@@ -70,10 +71,6 @@ def _effective_window(window_minutes: float) -> float:
     if window_minutes <= 0:
         return window_minutes
     return max(window_minutes, MIN_ESCALATION_WINDOW_MINUTES)
-
-#: Default radius (metres) within which the user counts as "home" — used to
-#: suppress nudges and passively confirm a return when location is available.
-DEFAULT_HOME_RADIUS_M = 150.0
 
 #: Default multiple of the stated window after which an unreturned outing is
 #: auto-closed as abandoned (stops it lingering active forever).
@@ -352,32 +349,6 @@ def infer_time_window(
     if heuristic is not None:
         return (heuristic, "heuristic")
     return (DEFAULT_INFERRED_WINDOW_MINUTES, "default")
-
-
-def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Return the great-circle distance between two points in metres.
-
-    Used to annotate check responses with how far the user is from home; it does
-    not affect escalation in v1.
-
-    Args:
-        lat1: Latitude of the first point (degrees).
-        lon1: Longitude of the first point (degrees).
-        lat2: Latitude of the second point (degrees).
-        lon2: Longitude of the second point (degrees).
-
-    Returns:
-        Distance in metres.
-    """
-    radius = 6371000.0  # Earth radius in metres
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    )
-    return 2 * radius * math.asin(math.sqrt(a))
 
 
 # --- Shared per-outing decision (used by both /outing/check and the agent) ---
@@ -663,10 +634,6 @@ class LocationAnchorModule(Module):
         bias = resolve_bias(store, activity="outing")
         commitments = store.upcoming_commitments()
         # Travel-aware leads from the current location, matching the endpoint.
-        # Lazy import: departure imports haversine_m from this module, so a
-        # top-level import back would cycle.
-        from prefrontal.departure import departure_kwargs, travel_leads
-
         dep = departure_kwargs(store)
         leads = travel_leads(
             commitments, ctx.current_lat, ctx.current_lon,

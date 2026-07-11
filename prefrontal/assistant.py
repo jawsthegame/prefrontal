@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from prefrontal.clock import utcnow
+from prefrontal.clock import local_datetime, utcnow
 from prefrontal.commitments import to_utc
 from prefrontal.delegation import (
     HANDLER_AGENT,
@@ -55,7 +55,6 @@ from prefrontal.memory.repos.household import (
     normalize_fact_category,
     normalize_fact_item,
 )
-from prefrontal.scheduling import local_datetime
 from prefrontal.sources import resolve_smtp_for
 from prefrontal.todos import (
     ENERGY_LEVELS,

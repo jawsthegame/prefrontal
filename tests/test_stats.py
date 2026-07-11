@@ -70,8 +70,7 @@ def test_chores_view_tallies_completions_per_person_and_day():
     """Completions roll up into totals, a per-person split, and today/yesterday counts."""
     import datetime as _dt
 
-    from prefrontal.clock import utcnow
-    from prefrontal.scheduling import local_datetime
+    from prefrontal.clock import local_datetime, utcnow
 
     conn = init_db(":memory:")
     s = MemoryStore(conn)

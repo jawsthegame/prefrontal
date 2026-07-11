@@ -28,7 +28,7 @@ from prefrontal.briefing import (
 from prefrontal.classify import (
     classify_kind,
 )
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime, local_day_bounds
 from prefrontal.clock import (
     parse_ts as _parse_dt_or_none,
 )
@@ -86,8 +86,6 @@ from prefrontal.panic import (
 from prefrontal.scheduling import (
     DEFAULT_SLOT_DAYS,
     find_slots,
-    local_datetime,
-    local_day_bounds,
     window_config_for,
 )
 from prefrontal.webhooks.deps import (

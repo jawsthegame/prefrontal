@@ -18,6 +18,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from prefrontal.coaching import CoachContext, Cue
+from prefrontal.departure import (
+    build_departure_message,
+    next_departure,
+    plan_upcoming_departures,
+)
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -120,8 +125,7 @@ def early_morning_plans(
     """
     from datetime import timedelta
 
-    from prefrontal.clock import parse_ts_strict
-    from prefrontal.scheduling import local_datetime, local_time_utc
+    from prefrontal.clock import local_datetime, local_time_utc, parse_ts_strict
 
     tomorrow = (local_datetime(now, tz) + timedelta(days=1)).date()
     cutoff = local_time_utc(now + timedelta(days=1), tz, threshold_hour, threshold_minute)
@@ -250,14 +254,6 @@ class TimeBlindnessModule(Module):
         # per-dedup_key debounce (the key carries the level, so each
         # heads_up→soon→go transition is a fresh fire); `go` is critical, so the
         # final "head out now" bypasses quiet hours like the endpoint does.
-        # Lazy import: departure imports haversine_m from location_anchor, so a
-        # top-level import back into a module would risk a cycle.
-        from prefrontal.departure import (
-            build_departure_message,
-            next_departure,
-            plan_upcoming_departures,
-        )
-
         plans = plan_upcoming_departures(
             store, current_lat=ctx.current_lat, current_lon=ctx.current_lon
         )
@@ -324,8 +320,7 @@ class TimeBlindnessModule(Module):
         """
         from datetime import timedelta
 
-        from prefrontal.clock import parse_hour, parse_ts_strict
-        from prefrontal.scheduling import local_datetime, local_hour_of
+        from prefrontal.clock import local_datetime, local_hour_of, parse_hour, parse_ts_strict
 
         prep_hour = parse_hour(store.get_state("morning_prep_hour"), DEFAULT_MORNING_PREP_HOUR)
         # This heads-up is a non-critical ``nudge``, so the coaching engine's quiet

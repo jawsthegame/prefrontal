@@ -16,6 +16,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from prefrontal.clock import local_datetime
 from prefrontal.config import Settings
 from prefrontal.household import (
     apply_service_shift,
@@ -56,7 +57,6 @@ from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import DeliveryClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
-from prefrontal.scheduling import local_datetime
 from prefrontal.webhooks.app import create_app
 from prefrontal.webhooks.oauth import sign_action
 

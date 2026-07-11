@@ -73,13 +73,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.coaching import CoachContext, Cue, last_fired
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
-from prefrontal.scheduling import local_datetime
 
 #: Meal-check defaults (target 1: one "Ate" and it's done for the day).
 DEFAULT_MEAL_START_HOUR = 11

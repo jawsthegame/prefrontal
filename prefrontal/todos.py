@@ -769,8 +769,8 @@ def _parse_deadline(value: object) -> datetime | None:
         return None
     # Lazy imports: prefrontal.scheduling imports from this module, so importing
     # it (and config) at module top would be circular.
+    from prefrontal.clock import end_of_local_day_utc
     from prefrontal.config import get_settings
-    from prefrontal.scheduling import end_of_local_day_utc
 
     return end_of_local_day_utc(day, get_settings().timezone)
 
