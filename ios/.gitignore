@@ -1,0 +1,8 @@
+# XcodeGen generates the project from project.yml — don't track it.
+Prefrontal.xcodeproj/
+# Build output
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
