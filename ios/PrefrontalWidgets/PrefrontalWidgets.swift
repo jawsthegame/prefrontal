@@ -87,6 +87,10 @@ struct PrefrontalWidgetView: View {
     let entry: GlanceEntry
     var g: Glance { entry.glance }
 
+    private var isSystem: Bool {
+        family == .systemSmall || family == .systemMedium || family == .systemLarge
+    }
+
     var body: some View {
         Group {
             switch family {
@@ -98,8 +102,13 @@ struct PrefrontalWidgetView: View {
             default: small
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .widgetURL(URL(string: "prefrontal://today"))
-        .modifier(GlanceBackground(family: family))
+        // iOS 17 requires a container background; system widgets get the paper
+        // surface, Lock Screen accessories stay transparent.
+        .containerBackground(for: .widget) {
+            isSystem ? Brand.bg : Color.clear
+        }
     }
 
     // System small: the single most important thing + a self-care line.
@@ -217,19 +226,6 @@ struct PrefrontalWidgetView: View {
             } else {
                 Label("Prefrontal: all clear", systemImage: "checkmark")
             }
-        }
-    }
-}
-
-/// System widgets get the paper background; Lock Screen accessories stay clear.
-struct GlanceBackground: ViewModifier {
-    let family: WidgetFamily
-    func body(content: Content) -> some View {
-        switch family {
-        case .systemSmall, .systemMedium, .systemLarge:
-            content.containerBackground(Brand.bg, for: .widget)
-        default:
-            content.containerBackground(.clear, for: .widget)
         }
     }
 }
