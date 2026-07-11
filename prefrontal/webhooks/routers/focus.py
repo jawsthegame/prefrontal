@@ -26,7 +26,8 @@ from prefrontal.modules.hyperfocus import (
     DEFAULT_FOCUS_ABANDON_RATIO,
     DEFAULT_HARD_INTERRUPT_MINUTES,
     DEFAULT_SOFT_BLOCK_MINUTES,
-    build_focus_message,
+    apply_focus_evaluation,
+    evaluate_focus_session,
     focus_level,
     focus_task_from_title,
     infer_focus_start,
@@ -34,12 +35,6 @@ from prefrontal.modules.hyperfocus import (
     record_focus_abandoned,
     record_focus_end,
     should_protect,
-)
-from prefrontal.modules.hyperfocus import (
-    is_abandoned as focus_is_abandoned,
-)
-from prefrontal.modules.hyperfocus import (
-    level_rank as focus_level_rank,
 )
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
@@ -275,47 +270,31 @@ def build_router(services: RouterServices) -> APIRouter:
         results: list[dict[str, Any]] = []
         for session in memory.active_focus_sessions():
             elapsed = session["elapsed_minutes"] or 0.0
-            planned = session["planned_minutes"]
-            aligned = bool(session["aligned"])
-
-            level, fire, message, outcome, protect = "none", False, "", None, False
-            if focus_is_abandoned(elapsed, hard, abandon_ratio):
-                closed = memory.close_focus_session(session["id"], status="abandoned")
-                outcome = record_focus_abandoned(memory, closed)["outcome"]
-                session_status = "abandoned"
-            else:
-                level = focus_level(
-                    elapsed,
-                    planned_minutes=planned,
-                    soft_block_minutes=soft,
-                    hard_interrupt_minutes=hard,
-                )
-                fire = focus_level_rank(level) > focus_level_rank(session["last_level"])
-                protect = should_protect(
-                    level, aligned=aligned, protect_enabled=protect_enabled
-                )
-                if fire:
-                    memory.set_focus_session_level(session["id"], level)
-                    message = build_focus_message(
-                        level,
-                        task=session["intended_task"],
-                        elapsed_minutes=elapsed,
-                        aligned=aligned,
-                        name=name,
-                    )
-                session_status = "active"
+            # One shared decision (also driven by the coaching tick), then apply its
+            # writes — auto-close an abandoned session or advance a fired level.
+            ev = evaluate_focus_session(
+                session,
+                soft_block_minutes=soft,
+                hard_interrupt_minutes=hard,
+                abandon_ratio=abandon_ratio,
+                protect_enabled=protect_enabled,
+                name=name,
+            )
+            record = apply_focus_evaluation(memory, session, ev)
+            outcome = record["outcome"] if record is not None else None
+            session_status = "abandoned" if ev.abandoned else "active"
 
             results.append(
                 {
                     "session_id": session["id"],
                     "intended_task": session["intended_task"],
                     "elapsed_minutes": round(elapsed, 1),
-                    "planned_minutes": planned,
-                    "aligned": aligned,
-                    "level": level,
-                    "fire": fire,
-                    "message": message,
-                    "protect": protect,
+                    "planned_minutes": session["planned_minutes"],
+                    "aligned": bool(session["aligned"]),
+                    "level": ev.level,
+                    "fire": ev.fire,
+                    "message": ev.message,
+                    "protect": ev.protect,
                     "status": session_status,
                     "outcome": outcome,
                     # One-tap ntfy button: Wrap up (empty if unconfigured / closed).

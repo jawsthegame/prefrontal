@@ -465,6 +465,94 @@ def record_focus_abandoned(store: MemoryStore, closed: dict) -> dict:
     return {"episode_id": episode_id, "outcome": "miss"}
 
 
+@dataclass(frozen=True)
+class FocusEval:
+    """The interrupt decision for one active focus session.
+
+    The single shared verdict behind both the ``/webhooks/focus/check`` endpoint
+    (polled by n8n) and the in-process coaching tick — computed by
+    :func:`evaluate_focus_session` (pure) and applied by
+    :func:`apply_focus_evaluation` (writes) — so the two never drift.
+
+    Attributes:
+        level: The current :func:`focus_level` (``none``/``check``/``break``).
+        fire: Whether ``level`` is a *new* rung since the session's ``last_level``
+            (so the interrupt fires once per level).
+        message: The user-facing interrupt text, built only when ``fire``.
+        abandoned: Whether the session has run past the abandon ratio and should
+            be auto-closed.
+        protect: Whether an aligned, healthy block should currently shield the
+            user from other modules' non-critical nudges.
+    """
+
+    level: str
+    fire: bool
+    message: str
+    abandoned: bool
+    protect: bool
+
+
+def evaluate_focus_session(
+    session: dict,
+    *,
+    soft_block_minutes: float,
+    hard_interrupt_minutes: float,
+    abandon_ratio: float,
+    protect_enabled: bool,
+    name: str = "",
+) -> FocusEval:
+    """Compute the interrupt decision for one active focus session (pure, no writes).
+
+    An abandoned session short-circuits to ``abandoned=True`` (nothing else is
+    meaningful — it's about to be closed). Otherwise the level, the fire-once
+    transition, the protect bit, and the message (only when firing) are computed
+    from the same pure helpers the endpoint has always used.
+    """
+    elapsed = session.get("elapsed_minutes") or 0.0
+    if is_abandoned(elapsed, hard_interrupt_minutes, abandon_ratio):
+        return FocusEval(level="none", fire=False, message="", abandoned=True, protect=False)
+    planned = session.get("planned_minutes")
+    aligned = bool(session.get("aligned"))
+    level = focus_level(
+        elapsed,
+        planned_minutes=planned,
+        soft_block_minutes=soft_block_minutes,
+        hard_interrupt_minutes=hard_interrupt_minutes,
+    )
+    fire = level_rank(level) > level_rank(session.get("last_level") or "none")
+    protect = should_protect(level, aligned=aligned, protect_enabled=protect_enabled)
+    message = (
+        build_focus_message(
+            level,
+            task=session.get("intended_task") or "",
+            elapsed_minutes=elapsed,
+            aligned=aligned,
+            name=name,
+        )
+        if fire
+        else ""
+    )
+    return FocusEval(level=level, fire=fire, message=message, abandoned=False, protect=protect)
+
+
+def apply_focus_evaluation(store: MemoryStore, session: dict, ev: FocusEval) -> dict | None:
+    """Apply the writes a :class:`FocusEval` implies; return the abandon record, else ``None``.
+
+    An abandoned session is auto-closed and logged as a drift miss (the record is
+    returned so a caller can report its outcome); a firing level advances
+    ``last_level`` so the interrupt fires once. Idempotent across callers: whichever
+    of the endpoint or the coaching tick runs first advances ``last_level`` (or
+    closes the session, dropping it from ``active_focus_sessions``), so the other
+    sees no new level and does nothing — no double-fire when both are wired.
+    """
+    if ev.abandoned:
+        closed = store.close_focus_session(session["id"], status="abandoned")
+        return record_focus_abandoned(store, closed)
+    if ev.fire:
+        store.set_focus_session_level(session["id"], ev.level)
+    return None
+
+
 def record_focus_switched(store: MemoryStore, closed: dict) -> dict:
     """Log a focus block the user deliberately switched away from (Impulsivity).
 
@@ -568,6 +656,15 @@ def is_focus_protected(store: MemoryStore) -> bool:
     return False
 
 
+#: Interrupt level → the declared intervention it delivers.
+_INTERRUPT_INTERVENTION = {"check": "alignment_check", "break": "biological_break"}
+#: Interrupt level → coaching urgency. A soft check is a gentle ``nudge``; a
+#: biological ``break`` is ``urgent`` (pushes, may bump to sound if ignored) but
+#: not ``critical`` — a break doesn't warrant a phone call. Both pierce protected
+#: hyperfocus (they're the sanctioned interrupts) via ``suppressed``'s exception.
+_INTERRUPT_URGENCY = {"check": "nudge", "break": "urgent"}
+
+
 class HyperfocusModule(Module):
     """Protects productive hyperfocus and interrupts misdirected hyperfocus."""
 
@@ -636,16 +733,67 @@ class HyperfocusModule(Module):
             ),
         ]
 
-    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
-        """Offer a focus start (morning) or a forgot-to-log recap (evening) — both opt-in.
+    def _session_evals(
+        self, store: MemoryStore, ctx: CoachContext
+    ) -> list[tuple[dict, FocusEval]]:
+        """The shared per-active-session interrupt decision, read from live config.
 
-        Interrupts stay on ``/webhooks/focus/check``; this emits only the gentle
-        *start* suggestion (``suggest_focus_start``) and the end-of-day *recap*
-        (``suggest_focus_recap``). Both stay silent while a session is running or
-        once a block has happened today; their day-part windows don't overlap.
+        The tick-side twin of ``/webhooks/focus/check``'s per-session loop: same
+        :func:`evaluate_focus_session`, same preference keys, so the endpoint and
+        the coaching tick reach the same verdict. Read-only; :meth:`after_fire`
+        applies the writes.
         """
-        if store.active_focus_sessions():
-            return []
+        soft = store.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
+        hard = store.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
+        abandon_ratio = store.get_float("focus_abandon_after_ratio", DEFAULT_FOCUS_ABANDON_RATIO)
+        protect_enabled = store.get_bool("protect_aligned_hyperfocus", True)
+        return [
+            (
+                session,
+                evaluate_focus_session(
+                    session,
+                    soft_block_minutes=soft,
+                    hard_interrupt_minutes=hard,
+                    abandon_ratio=abandon_ratio,
+                    protect_enabled=protect_enabled,
+                    name=ctx.display_name,
+                ),
+            )
+            for session in store.active_focus_sessions()
+        ]
+
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """Fire focus-session interrupts, or offer a start / recap — all on the tick.
+
+        When a block is running this emits its interrupts — the soft
+        ``alignment_check`` once it overruns, the hard ``biological_break`` past the
+        ceiling — as **read-only** cues (level advance / auto-close happen in
+        :meth:`after_fire`, per the base contract). This is the in-process twin of
+        ``/webhooks/focus/check`` (still polled by n8n): the shared decision
+        (:func:`evaluate_focus_session`) keeps the two in parity, and the shared
+        ``last_level`` guard means whichever runs first wins, so wiring both never
+        double-fires — but the tick alone now suffices when n8n isn't running.
+
+        When nothing is running it instead emits the opt-in *start* suggestion
+        (``suggest_focus_start``) or end-of-day *recap* (``suggest_focus_recap``);
+        those are mutually exclusive with a live block, so the two paths never
+        overlap.
+        """
+        evals = self._session_evals(store, ctx)
+        if evals:
+            return [
+                Cue(
+                    module=self.key,
+                    intervention=_INTERRUPT_INTERVENTION[ev.level],
+                    urgency=_INTERRUPT_URGENCY[ev.level],
+                    text=ev.message,
+                    context_key="focus",
+                    dedup_key=f"focus_interrupt:{session['id']}:{ev.level}",
+                    ref={"session_id": session["id"], "level": ev.level},
+                )
+                for session, ev in evals
+                if ev.fire and not ev.abandoned
+            ]
         local = local_datetime(ctx.now, ctx.timezone)
         focused_today = self._focused_today(store, local.date(), ctx.timezone)
         day = local.date().isoformat()
@@ -691,6 +839,23 @@ class HyperfocusModule(Module):
                 )
             ]
         return []
+
+    def after_fire(
+        self, store: MemoryStore, decisions: list[Any], ctx: CoachContext
+    ) -> None:
+        """Apply the writes each active session's interrupt decision implies.
+
+        Held back from :meth:`evaluate` so that stays a pure read (base contract).
+        Re-runs the identical per-session decision and performs the writes via
+        :func:`apply_focus_evaluation`: the one-fire ``last_level`` advance for a
+        firing session, and the cue-less auto-close of an abandoned one (which must
+        run whether or not a nudge fired — the backstop that stops a forgotten
+        session lingering active when n8n isn't polling ``/webhooks/focus/check``).
+        Same evaluate-then-apply the endpoint runs inline; the shared functions keep
+        them in parity.
+        """
+        for session, ev in self._session_evals(store, ctx):
+            apply_focus_evaluation(store, session, ev)
 
     @staticmethod
     def _focused_today(store: MemoryStore, today, tz: str) -> bool:
