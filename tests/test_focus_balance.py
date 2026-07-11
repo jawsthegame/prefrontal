@@ -469,12 +469,52 @@ def signed_client(store):
         yield c
 
 
-def test_trip_label_cue_carries_domain_buttons():
-    """The trip context maps to the trip_label button kind (home/kids/personal)."""
-    from prefrontal.webhooks.notify import nudge_actions
+def test_trip_label_buttons_default_to_the_protect_trio():
+    """With no config, the quick-file buttons are the default home/kids/personal."""
+    from prefrontal.webhooks.notify import trip_label_actions
 
-    actions = nudge_actions("trip_label", 7, base_url="https://x.ts.net", secret="k", handle="me")
+    actions = trip_label_actions(None, 7, base_url="https://x.ts.net", secret="k", handle="me")
     assert [a["label"] for a in actions] == ["🏠 Home", "🧒 Kids", "🙋 Me"]
+
+
+def test_trip_label_buttons_follow_configured_domains():
+    """A user's chosen ≤3 domains drive the buttons (e.g. a shopkeeper wants Shop)."""
+    from prefrontal.webhooks.notify import trip_label_actions
+
+    actions = trip_label_actions(
+        ["shop", "work", "personal"], 7, base_url="https://x.ts.net", secret="k", handle="me"
+    )
+    assert [a["label"] for a in actions] == ["🛒 Shop", "💼 Work", "🙋 Me"]
+    # Each button files the matching domain via a signed /nudge/act URL.
+    assert "trip_domain_shop" not in actions[0]["url"]  # action is signed, not in the querystring
+    assert all(a["url"].startswith("https://x.ts.net/nudge/act?t=") for a in actions)
+
+
+def test_resolve_quick_domains_validates_caps_and_defaults(store):
+    from prefrontal.focus_balance import DEFAULT_QUICK_DOMAINS, resolve_quick_domains
+
+    # Unset → the default trio.
+    assert resolve_quick_domains(store) == list(DEFAULT_QUICK_DOMAINS)
+    # A configured set: synonyms snap, order preserved, deduped, capped at 3.
+    store.set_state("trip_quick_domains", "store, office, health, health, kids", source="explicit")
+    assert resolve_quick_domains(store) == ["shop", "work", "personal"]
+    # All-garbage → falls back to the default rather than dropping the buttons.
+    store.set_state("trip_quick_domains", "banana, ???", source="explicit")
+    assert resolve_quick_domains(store) == list(DEFAULT_QUICK_DOMAINS)
+
+
+def test_trip_cue_ref_carries_configured_quick_domains(store):
+    """The module stamps the resolved quick-file domains on the cue so both delivery
+    paths build the same per-user buttons off the cue."""
+    from prefrontal.coaching import CoachContext
+    from prefrontal.impact import utcnow
+    from prefrontal.modules import get
+
+    store.set_state("trip_quick_domains", "shop work personal", source="explicit")
+    store.close_trip(store.open_trip(departed_at=_minutes_ago(25)))  # completed, unlabeled
+    cues = get("trip_tracking").evaluate(store, CoachContext(now=utcnow()))
+    label_cues = [c for c in cues if c.intervention == "label_prompt"]
+    assert label_cues and label_cues[0].ref["quick_domains"] == ["shop", "work", "personal"]
 
 
 def test_one_tap_files_trip_domain(signed_client, store):

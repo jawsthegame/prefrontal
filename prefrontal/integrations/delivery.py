@@ -59,7 +59,11 @@ from prefrontal.config import Settings, get_settings
 from prefrontal.integrations.sms import _API_ROOT as _TWILIO_API_ROOT
 from prefrontal.integrations.sms import normalize_phone
 from prefrontal.log import get_logger
-from prefrontal.webhooks.notify import alarm_actions_for_cue, nudge_actions
+from prefrontal.webhooks.notify import (
+    alarm_actions_for_cue,
+    nudge_actions,
+    trip_label_actions,
+)
 
 if TYPE_CHECKING:  # only a type annotation — importing it at runtime cycles via
     # coaching → scheduling → todos → integrations (this package).
@@ -100,7 +104,7 @@ _CONTEXT_KIND = {
     "checkin": "load",
     "digest": "digest",
     "chore": "chore",
-    "trip": "trip_label",
+    # "trip" is handled separately (per-user quick-file domains) — see _actions_for_cue.
 }
 _KIND_TARGET = {
     "outing": "outing_id",
@@ -116,7 +120,6 @@ _KIND_TARGET = {
     "load": "target",
     "digest": "target",
     "chore": "chore_id",
-    "trip_label": "trip_id",
 }
 
 
@@ -465,10 +468,17 @@ def _actions_for_cue(
     # button, so it takes a separate path from the _CONTEXT_KIND kinds.
     if cue.context_key == "morning_prep":
         return alarm_actions_for_cue(cue)
+    ref = cue.ref or {}
+    # The trip-label ask files into the user's ≤3 configured quick-file domains
+    # (stamped on the cue ref by the trip_tracking module), not a fixed trio.
+    if cue.context_key == "trip":
+        return trip_label_actions(
+            ref.get("quick_domains"), ref.get("trip_id"),
+            base_url=base_url, secret=secret, handle=handle,
+        )
     kind = _CONTEXT_KIND.get(cue.context_key)
     if not kind:
         return []
-    ref = cue.ref or {}
     target_id = ref.get(_KIND_TARGET[kind])
     if target_id is None and kind == "departure":
         target_id = ref.get("outing_id")  # departure cues may carry the outing id

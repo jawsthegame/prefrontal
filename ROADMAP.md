@@ -117,10 +117,14 @@ domain buttons on the trip-label ask). Open threads:
   `confirmation`. The **Trip retro** iOS Shortcut recipe (`deploy/ios-shortcut.md`)
   closes the whole retrospective from the notification without opening the
   dashboard. Covered by `tests/test_trips.py`.
-- **Configurable quick-file domains** — the one-tap trio is fixed to the three
-  "protect" spheres (home/kids/personal) because ntfy caps action buttons at 3.
-  Let the user pick which ≤3 domains those buttons file (e.g. surface `shop` for a
-  shopkeeper) via a coaching-state key, instead of a hard-coded set.
+- **Configurable quick-file domains** ✅ — the one-tap trio is no longer hard-coded
+  to home/kids/personal. The `trip_quick_domains` coaching key picks which ≤3 of
+  shop/work/home/kids/personal the ambient trip-label ask's buttons file (a
+  shopkeeper can surface `shop`); `resolve_quick_domains` validates/caps/defaults it,
+  the `trip_tracking` module stamps the resolved set on the cue, and both delivery
+  paths build the buttons from it via `notify.trip_label_actions`
+  (`DOMAIN_BUTTON_LABELS` covers all five spheres). Unset/invalid falls back to the
+  default trio. Covered by `tests/test_focus_balance.py`.
 - **Declared-outing domain at the point of declaration** — the outing-start flow
   accepts a `domain`, but the iOS Shortcut / n8n recipes don't yet prompt for it;
   wire the sphere into the "coffee, back in 15" capture so more outings arrive

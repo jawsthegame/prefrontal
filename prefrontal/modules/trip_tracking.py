@@ -95,8 +95,14 @@ class ClosedLoopTripModule(Module):
         """
         # Imported lazily: prefrontal.trips depends on this module's package, so a
         # top-level import here would be a cycle at package-init time.
+        from prefrontal.focus_balance import resolve_quick_domains
         from prefrontal.trips import trip_label_prompt
 
+        # Resolve the user's one-tap quick-file domains once per tick and stamp them
+        # on each cue's ref, so both delivery paths (the coach/check fan-out and the
+        # native client) build the same per-user buttons off the cue without a
+        # second store read (ntfy caps them at 3 — see notify.trip_label_actions).
+        quick_domains = resolve_quick_domains(store)
         cues: list[Cue] = []
         for trip in store.unlabeled_trips(limit=MAX_LABEL_ASKS):
             # recent/unlabeled rows don't carry a computed actual_minutes; derive
@@ -114,7 +120,7 @@ class ClosedLoopTripModule(Module):
                     text=trip_label_prompt(enriched),
                     context_key="trip",
                     dedup_key=f"trip_label:{trip['id']}",
-                    ref={"trip_id": trip["id"]},
+                    ref={"trip_id": trip["id"], "quick_domains": quick_domains},
                 )
             )
 

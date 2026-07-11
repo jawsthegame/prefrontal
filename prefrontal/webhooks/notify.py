@@ -73,16 +73,20 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Multi-day-absence proposal — one tap marks the member away, so their chores
     # reassign to the present co-parent for the trip (target rides the trip id).
     "away": (("away_confirm", "✅ Mark me away"),),
-    # Closed-loop trip label ask — one-tap file into a life-sphere for focus
-    # balance. ntfy caps buttons at 3, so these are the three spheres the balance
-    # feature exists to *protect* (home/kids/personal) — the ones you most want to
-    # log so they aren't undercounted. shop/work (the spheres that tend to dominate)
-    # stay filable via /webhooks/trip/domain or the label form.
-    "trip_label": (
-        ("trip_domain_home", "🏠 Home"),
-        ("trip_domain_kids", "🧒 Kids"),
-        ("trip_domain_personal", "🙋 Me"),
-    ),
+    # Closed-loop trip label ask — the one-tap "file into a life-sphere" buttons
+    # are built per-user from the configured quick-file domains (ntfy caps at 3),
+    # not from this static map. See :func:`trip_label_actions`.
+}
+
+#: Life-domain → one-tap button label (emoji + short word) for the trip-label ask.
+#: Every canonical domain has one, so a user can surface any ≤3 of them (a
+#: shopkeeper wants 🛒 Shop) — not just the default home/kids/personal trio.
+DOMAIN_BUTTON_LABELS: dict[str, str] = {
+    "shop": "🛒 Shop",
+    "work": "💼 Work",
+    "home": "🏠 Home",
+    "kids": "🧒 Kids",
+    "personal": "🙋 Me",
 }
 
 
@@ -208,6 +212,35 @@ def nudge_actions(
     buttons: list[dict[str, Any]] = []
     for action, label in _NUDGE_BUTTONS.get(kind, ()):  # unknown kind → no buttons
         url = act_url(base_url, handle, action, target_id, secret)
+        if url:
+            buttons.append(_http_button(label, url))
+    return buttons
+
+
+def trip_label_actions(
+    domains: list[str] | None,
+    trip_id: int | None,
+    *,
+    base_url: str,
+    secret: str,
+    handle: str,
+) -> list[dict[str, Any]]:
+    """One-tap "file this trip" buttons for the label ask — one per configured domain.
+
+    The per-user analog of :func:`nudge_actions` for the trip-label ask: instead of
+    a hard-coded home/kids/personal trio, it builds a ``trip_domain_<d>`` button for
+    each domain in ``domains`` (the user's :func:`~prefrontal.focus_balance.resolve_quick_domains`
+    choice, ntfy-capped at 3), labeled from :data:`DOMAIN_BUTTON_LABELS`. Falls back
+    to the default trio when ``domains`` is empty, and returns ``[]`` when the target
+    or signing/origin is missing (so a caller can attach it unconditionally).
+    """
+    if trip_id is None or not base_url or not secret:
+        return []
+    picks = domains or ["home", "kids", "personal"]
+    buttons: list[dict[str, Any]] = []
+    for domain in picks[:3]:  # ntfy caps action buttons at 3
+        label = DOMAIN_BUTTON_LABELS.get(domain, domain.title())
+        url = act_url(base_url, handle, f"trip_domain_{domain}", trip_id, secret)
         if url:
             buttons.append(_http_button(label, url))
     return buttons
