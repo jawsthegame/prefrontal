@@ -46,6 +46,13 @@ class OutingStarted(BaseModel):
             "the text), 'llm'/'heuristic'/'default' (inferred when none stated)."
         ),
     )
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "The life-domain the outing was pre-filed under (given, or inferred "
+            "from the intention); null when neither was decisive."
+        ),
+    )
     confirmation: str = Field(
         default="",
         description=(

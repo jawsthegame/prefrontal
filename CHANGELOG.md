@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Outings pre-file their life-sphere at declaration** ✅ — `/webhooks/outing/start`
+  already accepted a `domain`, but nothing set one unless the caller passed it. It
+  now resolves the sphere at declaration — an explicit `domain` wins, else it's
+  inferred from the intention text (`infer_domain_from_text`: "swim with the kids" →
+  kids; a domain-less "grab a coffee" stays unassigned rather than force-fit) —
+  persists it on the outing, echoes it in the new `OutingStarted.domain` field, and
+  names it in the confirmation ("Filed under kids."). So more outings arrive
+  pre-filed for the focus-balance rollup instead of needing a retrospective tag; the
+  "Going out" iOS Shortcut recipe gains a domain **Choose from Menu**. Correct a
+  wrong guess via `/webhooks/outing/domain`. Covered by `tests/test_location_anchor.py`.
+
 - **Configurable trip quick-file domains** ✅ — the trip-label ask's one-tap
   file-into-a-sphere buttons were hard-coded to 🏠 Home / 🧒 Kids / 🙋 Me (ntfy
   caps action buttons at 3). They're now driven by a `trip_quick_domains` coaching

@@ -403,6 +403,42 @@ def test_start_confirmation_flags_a_guessed_window(client):
     assert "estimated" in conf and "~15 min" in conf
 
 
+def test_start_files_explicit_domain(client, store):
+    """An explicit domain is stored on the outing and read back in the confirmation."""
+    body = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "lunch", "time_window_minutes": 45, "domain": "home"},
+        headers=_auth(),
+    ).json()
+    assert body["domain"] == "home"
+    assert "Filed under home." in body["confirmation"]
+    assert store.active_outings()[0]["domain"] == "home"
+
+
+def test_start_infers_domain_from_intention(client, store):
+    """A clear sphere in the intention pre-files the outing without an explicit domain."""
+    body = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "swim with the kids", "time_window_minutes": 60},
+        headers=_auth(),
+    ).json()
+    assert body["domain"] == "kids"
+    assert "Filed under kids." in body["confirmation"]
+    assert store.active_outings()[0]["domain"] == "kids"
+
+
+def test_start_leaves_domain_unassigned_when_ambiguous(client, store):
+    """A domain-less intention isn't force-fit — it stays unassigned for later."""
+    body = client.post(
+        "/webhooks/outing/start",
+        json={"intention": "grabbing a coffee", "time_window_minutes": 15},
+        headers=_auth(),
+    ).json()
+    assert body["domain"] is None
+    assert "Filed under" not in body["confirmation"]
+    assert store.active_outings()[0]["domain"] is None
+
+
 def test_check_fires_each_level_once(client, store):
     """Crossing a threshold fires once; the next poll at the same level does not."""
     # 8 minutes into a 15-minute window -> soft (53%).

@@ -92,17 +92,28 @@ Declares an intention so Prefrontal can nudge you back. Pairs with the
      Replace the `"intention"` value with the **Provided Input** variable. If you
      phrase it like "getting coffee, back in 15 minutes", Prefrontal parses the
      window automatically; otherwise add `"time_window_minutes": 15`.
-4. (Optional) include your home coordinates once so distance can be logged:
+4. **(Optional) pre-file the life-sphere.** Add a **Choose from Menu** —
+   "Home / Kids / Personal / Shop / Work / Skip" — and send the pick as `domain`
+   in the body: `{ "intention": "Provided Input", "domain": "kids" }`. This files
+   the outing into the focus-balance rollup *at declaration*, so it arrives
+   pre-filed instead of needing a retrospective tag. You can skip it: the server
+   also **infers** the sphere from a clear intention ("swim with the kids" → kids),
+   leaving genuinely ambiguous ones ("grab a coffee") unassigned. Either way you can
+   correct it later via `/webhooks/outing/domain`.
+5. (Optional) include your home coordinates once so distance can be logged:
    `"home_lat": 37.77, "home_lon": -122.41`.
-5. **Confirm back (recommended).** Add **Get Dictionary Value** → key
+6. **Confirm back (recommended).** Add **Get Dictionary Value** → key
    `confirmation` from the URL response, then **Show Notification** with that
    value. The server returns a ready-made, speakable line — e.g.
    *"Tracking “grabbing a coffee” for ~15 min (estimated — say “back in N min” to
-   set it exactly). I'll nudge you to head back."* You don't assemble the
-   sentence in Shortcuts; you just show what came back. Crucially, when the
-   window was **guessed** it says so (`~` + "estimated"), so a wrong inference is
-   visible at the tap instead of surfacing later as a mistimed nudge — the exact
-   failure that let a 9:30 "going out" slip by silently before.
+   set it exactly). I'll nudge you to head back."* — and, when a sphere was set or
+   inferred, it appends *"Filed under kids."* so the pre-filing is visible at the
+   tap. You don't assemble the sentence in Shortcuts; you just show what came back.
+   Crucially, when the window was **guessed** it says so (`~` + "estimated"), so a
+   wrong inference is visible at the tap instead of surfacing later as a mistimed
+   nudge — the exact failure that let a 9:30 "going out" slip by silently before.
+   (The response also carries a `domain` field if you'd rather branch on it than
+   read the sentence.)
 
 > **Why this matters when you're never at the mini:** every tap crosses
 > Tailscale from a roaming phone. Showing the server's `confirmation` turns a
