@@ -17,7 +17,7 @@ from fastapi import (
     status,
 )
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_day_bounds
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.impact import (
     utcnow,
@@ -38,9 +38,6 @@ from prefrontal.modules.hyperfocus import (
 )
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
-)
-from prefrontal.scheduling import (
-    local_day_bounds,
 )
 from prefrontal.todos import (
     avoided_todos,

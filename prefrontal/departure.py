@@ -52,8 +52,8 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.clock import TS_FMT, parse_ts
 from prefrontal.clock import parse_ts_strict as _parse
 from prefrontal.commitments import is_attendable
+from prefrontal.geo import haversine_m
 from prefrontal.impact import utcnow
-from prefrontal.modules.location_anchor import haversine_m
 
 if TYPE_CHECKING:
     from prefrontal.memory.store import MemoryStore
@@ -541,7 +541,7 @@ def record_departure_outcome(
     Returns:
         ``{"episode_id", "outcome", "lateness_minutes", "commitment_id"}``.
     """
-    from prefrontal.scheduling import local_datetime
+    from prefrontal.clock import local_datetime
 
     outcome, lateness = classify_departure(plan, departed_at, grace_minutes=grace_minutes)
     start = _parse(plan.commitment["start_at"])

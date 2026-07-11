@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from prefrontal.clock import local_datetime
 from prefrontal.household._util import _parse_hhmm
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.scheduling import local_datetime
 
 # --- recurring shared chores (pure) ------------------------------------------
 #

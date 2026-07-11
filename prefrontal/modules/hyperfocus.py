@@ -33,12 +33,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
-from prefrontal.scheduling import local_datetime, minutes_between
+from prefrontal.scheduling import minutes_between
 
 #: Interrupt levels in ascending severity. ``none`` is rank 0; an interrupt fires
 #: only when a *new* (higher-ranked) level is crossed since the last poll.

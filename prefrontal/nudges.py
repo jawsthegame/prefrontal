@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from prefrontal.briefing import record_briefing_feedback
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.coaching import resolve_ack
 from prefrontal.config import Settings
 from prefrontal.focus_balance import FOCUS_DOMAINS
@@ -42,7 +42,6 @@ from prefrontal.modules.location_anchor import (
 )
 from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
 from prefrontal.panic import resolve_panic_step
-from prefrontal.scheduling import local_datetime
 
 #: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
 #: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).

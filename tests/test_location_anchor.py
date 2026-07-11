@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
+from prefrontal.geo import haversine_m
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
@@ -24,7 +25,6 @@ from prefrontal.modules.location_anchor import (
     build_message,
     escalation_level,
     evaluate_outing,
-    haversine_m,
     heuristic_time_window,
     infer_time_window,
     is_abandoned,

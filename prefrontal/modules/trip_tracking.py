@@ -139,8 +139,8 @@ class ClosedLoopTripModule(Module):
         household (nobody to hand off to otherwise), silent once already away, and
         deduped to the trip so it proposes once per absence — never a repeat nag.
         """
+        from prefrontal.clock import local_datetime
         from prefrontal.household import AWAY_AUTODETECT_MIN_DAYS, away_covers
-        from prefrontal.scheduling import local_datetime
 
         if store.household_id_or_none() is None:
             return []

@@ -3,7 +3,7 @@ timestamp as a wall clock without converting to the local zone.
 
 Prefrontal stores every timestamp as naive UTC (see :mod:`prefrontal.clock`).
 Showing one to the user as ``HH:MM`` therefore requires
-:func:`prefrontal.scheduling.local_datetime` first — skipping it prints times in
+:func:`prefrontal.clock.local_datetime` first — skipping it prints times in
 UTC (e.g. 4h ahead for an Eastern user). This has bitten the morning briefing,
 the rough-day recovery plan, and the household sheet (PR #307), each time by one
 of two code shapes. These two AST checks catch a fresh occurrence in CI instead

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.clock import TS_FMT
+from prefrontal.clock import TS_FMT, local_datetime, local_day_bounds, local_time_utc
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import find_conflicts, is_attendable, undismissed_conflicts
 from prefrontal.config import get_settings
@@ -39,9 +39,6 @@ from prefrontal.modules.impulsivity import switch_rate_feedback
 from prefrontal.modules.registry import is_enabled as module_enabled
 from prefrontal.scheduling import (
     free_windows,
-    local_datetime,
-    local_day_bounds,
-    local_time_utc,
     suggest_for_windows,
     window_config_for,
 )

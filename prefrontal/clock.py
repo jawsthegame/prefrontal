@@ -12,14 +12,20 @@ truncate-to-19-chars parse (both of which had drifted into ~13 private copies).
 - :func:`parse_ts_strict` — the same parse for trusted stored values, raising on
   malformed input rather than masking corruption as ``None``.
 
-Timezone conversion (naive-UTC → a local wall clock) lives in
-:mod:`prefrontal.scheduling` (``local_datetime`` / ``local_hour_of``), which is
-its natural home alongside the day-window logic that consumes it.
+Timezone conversion (naive-UTC → a local wall clock) also lives here — the
+``local_*`` family (:func:`local_datetime`, :func:`local_hour_of`,
+:func:`local_day_bounds`, :func:`local_time_utc`, :func:`end_of_local_day_utc`) —
+so the single source of truth for the time contract owns *both* halves: the
+stored-UTC representation and its projection onto a user's local wall clock.
+(These lived in :mod:`prefrontal.scheduling` until that made the memory layer
+import a domain module just to read a local hour; ``clock`` is the leaf they
+belong in.)
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 #: The one on-disk timestamp format: naive UTC, second precision.
 TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -82,3 +88,83 @@ def parse_hour(raw: object, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return hour if 0 <= hour <= 23 else default
+
+
+# --- Local wall-clock projection (naive UTC → the user's zone) ----------------
+
+
+def local_datetime(now: datetime, tz: str) -> datetime:
+    """A naive-UTC instant as a tz-aware local datetime (falls back to UTC)."""
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    return now.replace(tzinfo=timezone.utc).astimezone(zone)
+
+
+def local_hour_of(now: datetime, tz: str) -> int:
+    """The local hour (0–23) for a naive-UTC instant, in timezone ``tz``."""
+    return local_datetime(now, tz).hour
+
+
+def local_day_bounds(now: datetime, tz: str) -> tuple[datetime, datetime]:
+    """Naive-UTC ``[start, end)`` of the *local* calendar day containing ``now``.
+
+    "Today" is a local notion: for an Eastern user at 9pm, midnight-to-midnight is
+    01:00–01:00 UTC spanning two UTC dates — not ``00:00`` UTC. Every surface that
+    scopes to "today" (the briefing, panic, the rough-day assessment, the cascade)
+    should bound its query with this rather than ``now.replace(hour=0, …)`` on the
+    naive-UTC instant, which silently rolls the day over hours early or late.
+
+    Args:
+        now: The current instant as naive UTC.
+        tz: IANA timezone name for the local day (falls back to UTC if unknown).
+
+    Returns:
+        ``(day_start, day_end)`` as naive UTC — the ``end`` is the next local
+        midnight (exclusive), ready to pass to ``commitments_between`` /
+        ``episodes_since``. DST-correct: each bound carries the offset in force at
+        that wall-clock instant.
+    """
+    local = local_datetime(now, tz)
+    start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+
+    def _to_naive_utc(dt: datetime) -> datetime:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+    return _to_naive_utc(start_local), _to_naive_utc(end_local)
+
+
+def local_time_utc(now: datetime, tz: str, hour: int, minute: int = 0) -> datetime:
+    """Naive-UTC instant of local ``hour:minute`` on the local day containing ``now``.
+
+    The building block for a *local* working-hours band (e.g. "8am–8pm your
+    time"): ``day_start.replace(hour=8)`` on a naive-UTC instant yields 8am **UTC**,
+    which for an Eastern user is 3am local — so the briefing's spare-time band and
+    the rough-day re-fit anchor their hours in the local zone and convert back.
+    DST-correct via :func:`local_datetime`.
+    """
+    local = local_datetime(now, tz).replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    return local.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
+def end_of_local_day_utc(day: datetime, tz: str) -> datetime:
+    """Naive-UTC instant of 23:59:59 *local* on the calendar date of ``day``.
+
+    A date-only deadline ("due 2026-07-07") means "by the end of that day in
+    *your* zone". Anchoring it to 23:59:59 UTC flags a western-hemisphere user's
+    "due today" todo as overdue hours early — at 8pm Eastern the clock is already
+    past a 23:59 UTC cutoff. Only ``day``'s Y-M-D (the local date) is read; its
+    time component is ignored. Falls back to UTC when ``tz`` is unknown.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    local = day.replace(
+        hour=23, minute=59, second=59, microsecond=0, tzinfo=zone
+    )
+    return local.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)

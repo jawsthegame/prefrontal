@@ -35,12 +35,11 @@ from statistics import fmean, median
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from prefrontal.clock import utcnow
+from prefrontal.clock import local_datetime, utcnow
 from prefrontal.commitments import resolve_zone
 from prefrontal.config import get_settings
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.self_care import CHECKS, SELF_CARE_EPISODE
-from prefrontal.scheduling import local_datetime
 
 #: Outcome values we treat as terminal for the follow-through view, in display order.
 OUTCOMES: tuple[str, ...] = ("success", "partial", "miss")

@@ -21,7 +21,7 @@ from fastapi.responses import (
     Response,
 )
 
-from prefrontal.clock import utcnow
+from prefrontal.clock import local_datetime, utcnow
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
@@ -29,7 +29,6 @@ from prefrontal.modules.self_care import (
     apply_self_care_unmark,
     self_care_status,
 )
-from prefrontal.scheduling import local_datetime
 from prefrontal.sources import (
     SMTP_ACCOUNT,
     delete_smtp_source,

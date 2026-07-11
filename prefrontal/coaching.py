@@ -31,10 +31,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from prefrontal.clock import TS_FMT, parse_hour
+from prefrontal.clock import TS_FMT, local_hour_of, parse_hour
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.log import get_logger
-from prefrontal.scheduling import local_hour_of
 
 logger = get_logger(__name__)
 

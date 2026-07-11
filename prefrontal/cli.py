@@ -583,13 +583,13 @@ def _chores_cli(store, args, settings) -> int:
     ``--due`` required), ``--done`` marks it complete for today, ``--remove``
     deletes it, and ``--enable``/``--disable`` pause or resume its reminders.
     """
+    from prefrontal.clock import local_datetime
     from prefrontal.household import (
         describe_schedule,
         fmt_time_12h,
         normalize_chore,
         with_effective_schedule,
     )
-    from prefrontal.scheduling import local_datetime
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
@@ -807,9 +807,9 @@ def _away_cli(store, args, settings) -> int:
     """
     from datetime import datetime
 
+    from prefrontal.clock import local_datetime
     from prefrontal.household import away_covers
     from prefrontal.impact import utcnow
-    from prefrontal.scheduling import local_datetime
 
     scoped = _resolve_user_store(store, args.user)
     if scoped.household_id_or_none() is None:
@@ -862,8 +862,8 @@ def _service_shift_cli(store, args, settings) -> int:
     stored shifts. This is the manual twin of the (deferred) weekly scrape — same
     store path — so a shift can be entered by hand today.
     """
+    from prefrontal.clock import local_datetime
     from prefrontal.household import service_week
-    from prefrontal.scheduling import local_datetime
     from prefrontal.service_shifts import monday_of
 
     scoped = _resolve_user_store(store, args.user)
@@ -2334,8 +2334,8 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     Returns:
         Process exit code (0 on success).
     """
+    from prefrontal.clock import local_datetime
     from prefrontal.memory.patterns import task_bias_resolver
-    from prefrontal.scheduling import local_datetime
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path

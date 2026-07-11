@@ -10,12 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from prefrontal.clock import end_of_local_day_utc, local_day_bounds, local_time_utc
 from prefrontal.scheduling import (
-    end_of_local_day_utc,
     find_slots,
     fit_todos,
-    local_day_bounds,
-    local_time_utc,
 )
 
 
