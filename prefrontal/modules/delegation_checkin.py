@@ -18,11 +18,21 @@ from __future__ import annotations
 from typing import Any
 
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.coaching import CoachContext, Cue, _fired_key, note_hint
+from prefrontal.coaching import (
+    CoachContext,
+    Cue,
+    _fired_key,
+    note_hint,
+    stamp_pending_engagement,
+    sweep_engagement,
+)
 from prefrontal.delegation import checkin_interval_hours, checkin_message
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
+
+#: episode_type for a check-in nudge's engagement outcome (see :meth:`before_collect`).
+ENGAGE_EPISODE = "delegation"
 
 
 class DelegationCheckinModule(Module):
@@ -89,6 +99,40 @@ class DelegationCheckinModule(Module):
                 best = (overdue, cue)
         return [best[1]] if best is not None else []
 
+    def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
+        """Mature prior check-ins into engagement outcomes.
+
+        A check-in has no tappable answer; its honest signal is whether the
+        delegation *moved* afterward — the todo advanced (its status stepped
+        forward or a reply matched), closed, or left the parked set entirely. Once
+        the item's own check-in interval has passed with no such movement, log an
+        ``ignored`` outcome; movement logs ``success``. Runs via the engine's
+        ``before_collect`` hook — the learning signal a bare ``evaluate`` never fed
+        back.
+        """
+        parked = {t["id"]: t for t in store.actively_delegated_todos()}
+
+        def verdict(target: str, fired: Any) -> str | None:
+            todo = parked.get(int(target))
+            if todo is None:
+                return "engaged"  # closed or advanced out of the parked-delegated set
+            delegation = todo.get("delegation") or {}
+            interval = checkin_interval_hours(todo, delegation, ctx.now)
+            if (ctx.now - fired).total_seconds() / 3600.0 < interval:
+                return None  # give this item its own check-in cadence before judging
+            updated = _parse_ts(todo.get("updated_at"))
+            return "engaged" if (updated is not None and updated > fired) else "ignored"
+
+        sweep_engagement(
+            store, ctx.now, module=self.key, episode_type=ENGAGE_EPISODE, verdict=verdict
+        )
+
+    def after_fire(self, store: MemoryStore, decisions: list[Any], ctx: CoachContext) -> None:
+        """Mark each fired check-in as awaiting an engagement verdict."""
+        stamp_pending_engagement(
+            store, decisions, ctx.now, module=self.key, target_key="todo_id"
+        )
+
     def profile_section(self, store: MemoryStore) -> str | None:
         """Note how many hand-offs are currently in flight (light context)."""
         parked = store.actively_delegated_todos()
@@ -98,7 +142,17 @@ class DelegationCheckinModule(Module):
         bits = [f"{len(parked)} delegated todo(s) currently parked"]
         if waiting:
             bits.append(f"{waiting} awaiting a human assistant")
-        return "- " + "; ".join(bits) + "."
+        lines = ["- " + "; ".join(bits) + "."]
+        # Fold in how check-ins have landed (from before_collect's outcomes) so the
+        # profile reflects whether re-surfacing a parked hand-off actually moves it.
+        outcomes = store.episodes_by_type(ENGAGE_EPISODE, limit=50)
+        if outcomes:
+            engaged = sum(1 for e in outcomes if e.get("outcome") == "success")
+            lines.append(
+                f"- Delegation check-ins land {engaged}/{len(outcomes)} of the time "
+                "(hand-off moved afterward)."
+            )
+        return "\n".join(lines)
 
 
 register(DelegationCheckinModule())
