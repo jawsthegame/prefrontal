@@ -83,12 +83,22 @@ struct Provider: TimelineProvider {
 // Uses system colors/materials only — custom dynamic-color providers don't
 // always survive the widget's out-of-process view archiving.
 
+// Brand palette via asset color sets (archive-safe, unlike code-defined
+// dynamic colors). Used on the Home Screen widgets; Lock Screen accessories
+// keep the system's tinted rendering.
+private extension Color {
+    static let wPaper = Color("WidgetPaper")
+    static let wInk = Color("WidgetInk")
+    static let wMuted = Color("WidgetMuted")
+    static let wGreen = Color("WidgetGreen")
+}
+
 private func levelColor(_ level: String?) -> Color {
     switch level {
-    case "go", "urgent", "call": return .red
-    case "soon", "firm": return .orange
-    case "heads_up", "soft": return .yellow
-    default: return .primary
+    case "go", "urgent", "call": return Color(red: 0.75, green: 0.20, blue: 0.29)
+    case "soon", "firm": return Color(red: 0.76, green: 0.34, blue: 0.12)
+    case "heads_up", "soft": return Color(red: 0.73, green: 0.46, blue: 0.18)
+    default: return .wInk
     }
 }
 
@@ -108,7 +118,7 @@ struct PrefrontalWidgetView: View {
             // Plain Color (both branches) — do NOT type-erase with AnyView, or
             // WidgetKit fails to detect the container background and renders blank.
             .containerBackground(for: .widget) {
-                isSystem ? Color(.systemBackground) : Color.clear
+                isSystem ? Color.wPaper : Color.clear
             }
     }
 
@@ -125,10 +135,9 @@ struct PrefrontalWidgetView: View {
 
     private var header: some View {
         HStack(spacing: 5) {
-            Image(systemName: "brain.head.profile").font(.caption2)
-            Text("Prefrontal").font(.caption2.weight(.bold))
+            Image(systemName: "brain.head.profile").font(.caption2).foregroundStyle(Color.wGreen)
+            Text("Prefrontal").font(.caption2.weight(.bold)).foregroundStyle(Color.wMuted)
         }
-        .foregroundStyle(.secondary)
     }
 
     private var small: some View {
@@ -136,17 +145,17 @@ struct PrefrontalWidgetView: View {
             header
             Spacer(minLength: 2)
             if g.notConfigured {
-                Text("Tap to connect").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                Text("Tap to connect").font(.callout.weight(.semibold)).foregroundStyle(Color.wMuted)
             } else if let leave = g.depLeaveBy {
-                Text("Leave").font(.caption).foregroundStyle(.secondary)
+                Text("Leave").font(.caption).foregroundStyle(Color.wMuted)
                 Text(leave, style: .time).font(.title3.weight(.bold)).foregroundStyle(levelColor(g.depLevel))
-                Text(g.depTitle ?? "").font(.caption).lineLimit(2)
+                Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(2)
             } else if g.freeMinutes > 0 {
-                Text("\(g.fits) todo\(g.fits == 1 ? "" : "s")").font(.title2.weight(.bold))
-                Text("fit \(g.freeMinutes) min free").font(.caption).foregroundStyle(.secondary)
+                Text("\(g.fits) todo\(g.fits == 1 ? "" : "s")").font(.title2.weight(.bold)).foregroundStyle(Color.wInk)
+                Text("fit \(g.freeMinutes) min free").font(.caption).foregroundStyle(Color.wMuted)
             } else {
-                Text("All clear").font(.title3.weight(.bold))
-                if let t = g.nextTitle { Text("next: \(t)").font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                Text("All clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
+                if let t = g.nextTitle { Text("next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(2) }
             }
             Spacer(minLength: 2)
             selfCareLine
@@ -157,28 +166,28 @@ struct PrefrontalWidgetView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if g.notConfigured {
-                Text("Open Prefrontal to connect this widget.").font(.footnote).foregroundStyle(.secondary)
+                Text("Open Prefrontal to connect this widget.").font(.footnote).foregroundStyle(Color.wMuted)
                 Spacer(minLength: 0)
             } else {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("LEAVE BY").font(.caption2).foregroundStyle(.secondary)
+                        Text("LEAVE BY").font(.caption2).foregroundStyle(Color.wMuted)
                         if let leave = g.depLeaveBy {
                             Text(leave, style: .time).font(.title3.weight(.bold)).foregroundStyle(levelColor(g.depLevel))
-                            Text(g.depTitle ?? "").font(.caption).lineLimit(1)
+                            Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(1)
                         } else {
-                            Text("—").font(.title3.weight(.bold)).foregroundStyle(.secondary)
+                            Text("—").font(.title3.weight(.bold)).foregroundStyle(Color.wMuted)
                         }
                     }
                     Divider()
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("RIGHT NOW").font(.caption2).foregroundStyle(.secondary)
+                        Text("RIGHT NOW").font(.caption2).foregroundStyle(Color.wMuted)
                         if g.freeMinutes > 0 {
-                            Text("\(g.fits) fit \(g.freeMinutes)m").font(.title3.weight(.bold))
+                            Text("\(g.fits) fit \(g.freeMinutes)m").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
                         } else if let t = g.nextTitle {
-                            Text(t).font(.subheadline.weight(.semibold)).lineLimit(2)
+                            Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
                         } else {
-                            Text("clear").font(.title3.weight(.bold))
+                            Text("clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
                         }
                     }
                     Spacer(minLength: 0)
@@ -195,7 +204,7 @@ struct PrefrontalWidgetView: View {
                 if let m = g.meal { Label("\(m.0)/\(m.1)", systemImage: "fork.knife") }
                 if let w = g.water { Label("\(w.0)/\(w.1)", systemImage: "drop.fill") }
             }
-            .font(.caption2).foregroundStyle(.secondary)
+            .font(.caption2).foregroundStyle(Color.wGreen)
         }
     }
 
