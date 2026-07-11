@@ -62,15 +62,19 @@ struct GlanceEntry: TimelineEntry {
 }
 
 struct Provider: TimelineProvider {
-    // DIAGNOSTIC: fully synchronous, no network/App Group — isolate rendering.
     func placeholder(in context: Context) -> GlanceEntry {
         GlanceEntry(date: Date(), glance: .sample)
     }
     func getSnapshot(in context: Context, completion: @escaping (GlanceEntry) -> Void) {
-        completion(GlanceEntry(date: Date(), glance: .sample))
+        if context.isPreview { completion(GlanceEntry(date: Date(), glance: .sample)); return }
+        Task { completion(GlanceEntry(date: Date(), glance: await Glance.fetch())) }
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<GlanceEntry>) -> Void) {
-        completion(Timeline(entries: [GlanceEntry(date: Date(), glance: .sample)], policy: .never))
+        Task {
+            let g = await Glance.fetch()
+            let next = Date().addingTimeInterval(20 * 60)
+            completion(Timeline(entries: [GlanceEntry(date: Date(), glance: g)], policy: .after(next)))
+        }
     }
 }
 
@@ -98,14 +102,14 @@ struct PrefrontalWidgetView: View {
     }
 
     var body: some View {
-        // DIAGNOSTIC PROBE: if this bright card + text doesn't show, the
-        // extension isn't rendering (build/embedding), not the view code.
-        VStack(spacing: 4) {
-            Text("PREFRONTAL").font(.caption.weight(.black)).foregroundStyle(.white)
-            Text("widget OK").font(.footnote).foregroundStyle(.white)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .containerBackground(for: .widget) { Color.orange }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .widgetURL(URL(string: "prefrontal://today"))
+            // Plain Color (both branches) — do NOT type-erase with AnyView, or
+            // WidgetKit fails to detect the container background and renders blank.
+            .containerBackground(for: .widget) {
+                isSystem ? Color(.systemBackground) : Color.clear
+            }
     }
 
     @ViewBuilder private var content: some View {
