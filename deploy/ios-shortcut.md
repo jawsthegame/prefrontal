@@ -248,6 +248,44 @@ focus block (declare one with the Hyperfocus "Start focus" shortcut →
 > dropped mid-pause can't strand the block, and the honor-vs-defer ratio it
 > records is what later teaches Prefrontal your switching pattern.
 
+## Shortcut: "Trip retro" (close a trip's whole retrospective in one tap)
+
+When Prefrontal auto-detects a round trip it later asks you to label it — and the
+ambient ask carries one-tap 🏠/🧒/🙋 domain buttons for a quick file. This
+Shortcut is the *fuller* version: it labels the trip, files a life-domain, **and**
+captures a one-line "how it went" reflection in a single interaction, so the whole
+retrospective closes from the notification without opening the dashboard. It posts
+once to `/webhooks/trip/retro` (the combined endpoint) instead of chaining three
+calls.
+
+1. New shortcut named **Trip retro**.
+2. **Ask for Input** (Text): "What was that trip?" → the **label**.
+3. **Choose from Menu** — "Home / Kids / Personal / Shop / Work / Skip" → the
+   **domain** (set a `Domain` variable per branch; leave it unset on **Skip**).
+4. **Ask for Input** (Text): "How did it go? (optional)" → the **reflection**.
+5. **Get Contents of URL**
+   - **URL:** `http://<your-mac>:8000/webhooks/trip/retro`
+   - **Method:** `POST`, headers as above (token + `Content-Type: application/json`)
+   - **Request Body (JSON):**
+     ```json
+     { "label": "Provided Input", "domain": "Domain", "reflection": "Provided Input" }
+     ```
+     Replace each value with the matching variable. **Omit `trip_id`** and the
+     server targets the most recent trip still awaiting a label — so you don't have
+     to carry the id from the notification. (Every field is optional; send only what
+     you captured. To act on a *specific* trip, include `"trip_id": <id>`.)
+6. **Confirm back.** **Get Dictionary Value** `confirmation` → **Show Notification**
+   (or **Speak Text**) — e.g. *"Filed “Target run” under home. Logged that it
+   didn't go well."* The reflection is classified into an outcome that resolves the
+   trip's episode (so honest self-report becomes learning signal); pass an explicit
+   `"outcome"` (`success`/`partial`/`miss`) if you'd rather set it yourself.
+
+> The three underlying endpoints (`/webhooks/trip/label`, `/webhooks/trip/domain`,
+> `/webhooks/trip/reflect`) still exist for the one-tap domain buttons and partial
+> updates; `/webhooks/trip/retro` just bundles them so a single Shortcut closes
+> everything. Roaming caveat as above — wrap **Get Contents of URL** in an **If**
+> and show a "couldn't reach Prefrontal" note on failure.
+
 ## Shortcut: "Panic" (overwhelmed → one first step)
 
 The one-tap "I'm buried and don't know where to start" gesture. It asks

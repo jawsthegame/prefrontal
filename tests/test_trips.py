@@ -455,3 +455,80 @@ def test_reflect_missing_trip_404(client):
         headers=_auth(),
     )
     assert resp.status_code == 404
+
+
+# -- combined retrospective (label + domain + reflection in one call) --------
+
+
+def _make_trip(client) -> int:
+    """Drive a home→away→home loop and return the completed trip's id."""
+    client.post("/webhooks/home", json={"lat": HOME[0], "lon": HOME[1]}, headers=_auth())
+    client.post("/webhooks/location", json={"lat": FAR[0], "lon": FAR[1]}, headers=_auth())
+    return client.post(
+        "/webhooks/location", json={"lat": NEAR[0], "lon": NEAR[1]}, headers=_auth()
+    ).json()["trip"]["trip_id"]
+
+
+def test_retro_closes_label_domain_and_reflection_at_once(client):
+    """One POST labels, files a domain, and reflects — the whole retrospective."""
+    trip_id = _make_trip(client)
+    resp = client.post(
+        "/webhooks/trip/retro",
+        json={
+            "trip_id": trip_id,
+            "label": "Costco run",
+            "category": "Errands",
+            "domain": "home",
+            "reflection": "way longer than I meant, got distracted",
+        },
+        headers=_auth(),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "Costco run"
+    assert body["category"] == "errand"  # normalized
+    assert body["domain"] == "home"
+    assert body["outcome"] == "miss" and body["episode_resolved"] is True
+    assert "Costco run" in body["confirmation"]
+
+
+def test_retro_defaults_to_newest_unlabeled_trip(client, store):
+    """With no trip_id, the retro targets the most recent trip awaiting a label."""
+    trip_id = _make_trip(client)
+    resp = client.post(
+        "/webhooks/trip/retro",
+        json={"label": "Pharmacy", "domain": "personal"},
+        headers=_auth(),
+    )
+    assert resp.status_code == 200 and resp.json()["trip_id"] == trip_id
+    assert store.get_trip(trip_id)["label"] == "Pharmacy"
+
+
+def test_retro_domain_only_files_without_a_label(client, store):
+    """A domain-only retro files the sphere and leaves the trip unlabeled."""
+    trip_id = _make_trip(client)
+    resp = client.post(
+        "/webhooks/trip/retro", json={"trip_id": trip_id, "domain": "kids"}, headers=_auth()
+    )
+    assert resp.status_code == 200
+    assert resp.json()["domain"] == "kids" and resp.json()["label"] is None
+
+
+def test_retro_requires_at_least_one_field(client):
+    trip_id = _make_trip(client)
+    resp = client.post(
+        "/webhooks/trip/retro", json={"trip_id": trip_id}, headers=_auth()
+    )
+    assert resp.status_code == 422
+
+
+def test_retro_explicit_missing_trip_404(client):
+    resp = client.post(
+        "/webhooks/trip/retro", json={"trip_id": 999, "label": "x"}, headers=_auth()
+    )
+    assert resp.status_code == 404
+
+
+def test_retro_no_unlabeled_trip_404(client):
+    resp = client.post("/webhooks/trip/retro", json={"label": "x"}, headers=_auth())
+    assert resp.status_code == 404

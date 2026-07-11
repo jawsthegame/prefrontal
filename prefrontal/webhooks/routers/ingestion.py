@@ -66,8 +66,40 @@ from prefrontal.webhooks.schemas import (
     TripDomain,
     TripLabel,
     TripReflect,
+    TripRetro,
 )
 from prefrontal.webhooks.services import RouterServices
+
+#: Speakable words for the trip-retro read-back (see :func:`_trip_retro_confirmation`).
+_RETRO_DOMAIN_WORDS = {
+    "shop": "shopping", "work": "work", "home": "home", "kids": "kids", "personal": "personal",
+}
+_RETRO_OUTCOME_WORDS = {
+    "success": "went well", "partial": "was a mixed bag", "miss": "didn't go well",
+}
+
+
+def _trip_retro_confirmation(trip: dict[str, Any], outcome: str | None, *, reflected: bool) -> str:
+    """A single speakable line summarizing what the retro recorded.
+
+    Read back at the tap so closing a trip from the notification confirms it landed
+    (mirrors the ``confirmation`` other Shortcut-facing endpoints return).
+    """
+    label = trip.get("label")
+    domain = trip.get("domain")
+    dom = _RETRO_DOMAIN_WORDS.get(domain, domain) if domain else None
+    if label:
+        head = f"Filed “{label}”" + (f" under {dom}" if dom else "")
+    elif dom:
+        head = f"Filed under {dom}"
+    else:
+        head = "Trip updated"
+    line = head + "."
+    if reflected and outcome:
+        line += f" Logged that it {_RETRO_OUTCOME_WORDS.get(outcome, 'is noted')}."
+    elif reflected:
+        line += " Reflection saved."
+    return line
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -406,6 +438,98 @@ def build_router(services: RouterServices) -> APIRouter:
             "outcome_source": result["outcome_source"],
             "episode_resolved": result["episode_resolved"],
             "proposals": result["proposals"],
+        }
+
+    @router.post("/webhooks/trip/retro", tags=["ingestion"])
+    def trip_retro(
+        payload: TripRetro,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Close a trip's whole retrospective — label + domain + reflection — at once.
+
+        The one-interaction form of the three trip endpoints, so an iOS Shortcut can
+        gather everything and post a single time instead of chaining ``/trip/label``,
+        ``/trip/domain``, and ``/trip/reflect``. Every field is optional (send only
+        what you captured), but at least one of ``label``/``domain``/``reflection``
+        must be present. ``trip_id`` defaults to the most recent completed trip still
+        awaiting a label, so a bare-tap Shortcut needn't carry the id.
+
+        Each part reuses the exact same store/logic the single endpoints do —
+        ``label_trip`` / ``set_trip_domain`` and :func:`apply_reflection` (which
+        classifies the note, resolves the trip's episode into drift signal, and hands
+        the raw note to the LLM-as-sensor for pending proposals). Returns the trip's
+        final label/category/domain, the reflection outcome (if any), and a single
+        speakable ``confirmation`` line to read back at the tap.
+        """
+        memory = ctx.store
+        label = (payload.label or "").strip()
+        reflection = (payload.reflection or "").strip()
+        domain = normalize_focus_domain(payload.domain)
+        if not label and not reflection and domain is None and not payload.domain:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provide at least one of label, domain, or reflection.",
+            )
+
+        # Resolve the trip once: an explicit id, else the newest unlabeled trip (so
+        # the Shortcut works without knowing which trip the ask was about).
+        if payload.trip_id is not None:
+            trip = memory.get_trip(payload.trip_id)
+            if trip is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No trip with id {payload.trip_id}.",
+                )
+        else:
+            pending = memory.unlabeled_trips(limit=1)
+            if not pending:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No trip is awaiting a retrospective.",
+                )
+            trip = pending[0]
+        trip_id = trip["id"]
+
+        # 1. Label (+category, +domain) when a label is given; otherwise a
+        #    domain-only (re)file when just a domain was passed. Mirrors the split
+        #    between /trip/label and /trip/domain — label_trip needs a label.
+        if label:
+            memory.label_trip(
+                trip_id,
+                label=label,
+                category=normalize_trip_category(payload.category),
+                domain=domain,
+            )
+        elif payload.domain is not None:
+            memory.set_trip_domain(trip_id, domain)
+
+        # 2. Reflection — reuse the full apply_reflection path (classify → resolve
+        #    the episode → sensor proposals), identical to /trip/reflect.
+        reflection_result: dict[str, Any] | None = None
+        if reflection:
+            reflection_result = apply_reflection(
+                memory,
+                trip,
+                reflection,
+                outcome=payload.outcome,
+                client=ollama_client,
+                sensor_client=sensor_client,
+            )
+
+        final = memory.get_trip(trip_id) or trip
+        outcome = reflection_result["outcome"] if reflection_result else None
+        return {
+            "trip_id": trip_id,
+            "label": final.get("label"),
+            "category": final.get("category"),
+            "domain": final.get("domain"),
+            "outcome": outcome,
+            "outcome_source": reflection_result["outcome_source"] if reflection_result else None,
+            "episode_resolved": (
+                reflection_result["episode_resolved"] if reflection_result else False
+            ),
+            "proposals": reflection_result["proposals"] if reflection_result else [],
+            "confirmation": _trip_retro_confirmation(final, outcome, reflected=bool(reflection)),
         }
 
     # -- Mail ingestion ------------------------------------------------------

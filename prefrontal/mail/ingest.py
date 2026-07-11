@@ -21,16 +21,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.delegation import STATUS_RETURNED, match_delegated_reply
 from prefrontal.mail.models import MailItem, normalize_message
 from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_message
 from prefrontal.memory.store import MemoryStore
 from prefrontal.projects import suggest_project
-from prefrontal.triage import Signal, TriageDecision
-from prefrontal.triage import apply as triage_apply
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
+    from prefrontal.triage import Signal, TriageDecision
 
 
 # --- Bridge into the one shared triage pipeline ------------------------------
@@ -56,6 +54,11 @@ def _mail_signal(item: MailItem, verdict: MailTriage, account: str) -> Signal:
     ``triage_log`` unique index dedups a re-delivered email exactly as the mail
     dedup already does upstream.
     """
+    # Imported lazily: prefrontal.delegation (imported at module top) reaches
+    # prefrontal.mail via sources→imap, so an eager triage import here re-enters a
+    # partially-initialized mail package when delegation is imported first.
+    from prefrontal.triage import Signal
+
     return Signal(
         source="mail",
         title=item.subject or verdict.summary or "(no subject)",
@@ -85,6 +88,8 @@ def _mail_decision(
     fresh todo, or ``routed_ref`` (an existing ``todo:<id>``) when mail has already
     linked the row — e.g. closing a delegation loop.
     """
+    from prefrontal.triage import TriageDecision  # lazy — see _mail_signal
+
     reason = (
         f"mail: {verdict.category}"
         + (" · delegation returned" if matched else "")
@@ -228,6 +233,11 @@ def ingest_messages(
     Returns:
         An :class:`IngestSummary`.
     """
+    # Lazy: prefrontal.delegation imports prefrontal.sources → prefrontal.mail.imap,
+    # so importing delegation at this module's top re-enters a partially-initialized
+    # mail package when delegation is imported before mail (a collection-order cycle).
+    from prefrontal.delegation import STATUS_RETURNED, match_delegated_reply
+
     seen = store.seen_mail_ids(account)
     summary = IngestSummary(account=account, policy=policy, received=len(raw_messages))
 
@@ -319,6 +329,8 @@ def ingest_messages(
         # `drop`, exactly as before. n8n is intentionally omitted (no mail-urgent
         # nudge yet).
         if verdict.needs_action or matched is not None:
+            from prefrontal.triage import apply as triage_apply  # lazy — see _mail_signal
+
             result = triage_apply(
                 _mail_signal(item, verdict, account),
                 _mail_decision(
