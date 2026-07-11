@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS Control Center controls — Panic / I'm Back / Wrap Up Focus** ✅ (#471) —
+  the widget extension now ships iOS 18 **Control Center controls**
+  (`ios/PrefrontalWidgets/PrefrontalControls.swift`) for the no-input actions,
+  each firing the matching App Intent without opening the app; add them in
+  Settings ▸ Control Center or assign one to the Action Button. To share the
+  intents with the extension, the action intents were split out of the app-only
+  `AppShortcutsProvider` (now `Intents/AppShortcuts.swift`) into
+  `Intents/PrefrontalIntents.swift`, compiled into both targets. Input actions
+  (Add Todo / Going Out / Start Focus) stay in Siri/Shortcuts, which can prompt.
+  Builds on #470.
+
 - **iOS interactive widget — tap-to-log self-care** ✅ (#465) — the Home Screen
   widget's meal/water chips are now **interactive** (iOS 17 `Button(intent:)`):
   tapping logs a meal or a glass of water in place via a new `MarkSelfCareIntent`
