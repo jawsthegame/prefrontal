@@ -497,16 +497,19 @@ def _auth():
 def test_schedule_todo_at_explicit_time(client, store_open):
     """Scheduling with an explicit `at` blocks the bias-adjusted estimate as a commitment."""
     store_open.set_state("time_estimation_bias", "1.0")  # keep the math simple
+    # A *future* slot (tomorrow 14:00), computed relative to now — a hardcoded date
+    # ages into the past and drops out of the upcoming-only /commitments list.
+    start = (utcnow() + timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
+    at = start.strftime("%Y-%m-%d %H:%M:%S")
+    end = (start + timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
     tid = client.post(
         "/todos", json={"title": "Write report", "estimate_minutes": 45}, headers=_auth()
     ).json()["todo_id"]
-    r = client.post(
-        f"/todos/{tid}/schedule", json={"at": "2026-07-10 14:00:00"}, headers=_auth()
-    )
+    r = client.post(f"/todos/{tid}/schedule", json={"at": at}, headers=_auth())
     assert r.status_code == 200
     body = r.json()
-    assert body["start_at"] == "2026-07-10 14:00:00"
-    assert body["end_at"] == "2026-07-10 14:45:00"  # 45m estimate × 1.0 bias
+    assert body["start_at"] == at
+    assert body["end_at"] == end  # 45m estimate × 1.0 bias
     # A real commitment now exists, and the todo is still open (blocked, not done).
     commits = client.get("/commitments", headers=_auth()).json()["commitments"]
     assert any(c["title"] == "Write report" for c in commits)
