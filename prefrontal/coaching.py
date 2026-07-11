@@ -82,6 +82,12 @@ NOTE_HINT_MAX_CHARS = 160
 #: open question §13).
 PHRASING_URGENCIES = frozenset({"ambient"})
 
+#: Modules whose cues pierce protected hyperfocus — the sanctioned interrupts:
+#: self-care basic-needs checks (meant to break flow) and hyperfocus's own soft
+#: alignment check, which is allowed *during* an aligned overrun. See
+#: :func:`suppressed`.
+_PROTECTION_PIERCING = frozenset({"self_care", "hyperfocus"})
+
 #: Coaching-state key gating the LLM phrasing pass. Off by default — the
 #: deterministic ``cue.text`` is always a valid message, so phrasing is an opt-in
 #: warmth upgrade, not a dependency.
@@ -292,11 +298,13 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
         if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
             return True
         # Protected hyperfocus: an aligned, healthy deep-work block shields the
-        # user from *other* modules' noise. Self-care (eat / drink / meds) is the
-        # deliberate exception — it's meant to pierce flow — and hyperfocus's own
-        # interrupt cues only arise once the block is no longer protected. This is
-        # the one central gate, so a module never has to re-check it (spec §6).
-        if ctx.focus_protected and cue.module != "self_care":
+        # user from *other* modules' noise. Two deliberate exceptions pierce it:
+        # self-care (eat / drink / meds — meant to break flow) and hyperfocus's own
+        # interrupt cues (the soft alignment check is itself the one sanctioned
+        # interrupt allowed *during* an aligned overrun, when the block is still
+        # protected — so the owning module must not be gated by its own protection).
+        # This is the one central gate, so a module never has to re-check it (§6).
+        if ctx.focus_protected and cue.module not in _PROTECTION_PIERCING:
             return True
     last = _parse_ts(store.get_state(_fired_key(cue.dedup_key)))
     if last is not None:

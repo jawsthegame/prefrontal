@@ -333,6 +333,87 @@ def test_evaluate_recap_silent_after_a_logged_block(store):
     assert HyperfocusModule().evaluate(store, _ctx(19)) == []
 
 
+# -- tick-driven interrupts (the n8n backstop) -------------------------------
+
+
+def test_evaluate_fires_alignment_check_on_overrun(store):
+    """A block past its planned span emits the soft alignment check on the tick."""
+    sid = store.start_focus_session(
+        "the refactor", planned_minutes=30, started_at=_utc_minutes_ago(45)
+    )
+    cues = HyperfocusModule().evaluate(store, _ctx(11))
+    assert len(cues) == 1
+    c = cues[0]
+    assert c.intervention == "alignment_check" and c.urgency == "nudge"
+    assert c.context_key == "focus" and c.ref["session_id"] == sid
+    assert c.dedup_key == f"focus_interrupt:{sid}:check"
+
+
+def test_evaluate_fires_biological_break_past_ceiling(store):
+    """Past the hard ceiling the tick emits the urgent biological break."""
+    sid = store.start_focus_session("deep work", started_at=_utc_minutes_ago(200))
+    cues = HyperfocusModule().evaluate(store, _ctx(11))
+    assert [c.intervention for c in cues] == ["biological_break"]
+    assert cues[0].urgency == "urgent"
+    assert cues[0].dedup_key == f"focus_interrupt:{sid}:break"
+
+
+def test_evaluate_silent_when_level_already_recorded(store):
+    """A level already recorded on the session doesn't re-fire (once per level)."""
+    sid = store.start_focus_session(
+        "the refactor", planned_minutes=30, started_at=_utc_minutes_ago(45)
+    )
+    store.set_focus_session_level(sid, "check")
+    assert HyperfocusModule().evaluate(store, _ctx(11)) == []
+
+
+def test_after_fire_advances_level_and_silences_next_tick(store):
+    """after_fire records the fired level so the interrupt fires exactly once."""
+    sid = store.start_focus_session(
+        "the refactor", planned_minutes=30, started_at=_utc_minutes_ago(45)
+    )
+    mod = HyperfocusModule()
+    ctx = _ctx(11)
+    assert len(mod.evaluate(store, ctx)) == 1  # fires this tick
+    mod.after_fire(store, [], ctx)             # engine's post-fire hook applies the write
+    assert store.get_focus_session(sid)["last_level"] == "check"
+    assert mod.evaluate(store, ctx) == []       # no new level → silent next tick
+
+
+def test_after_fire_auto_closes_abandoned_session(store):
+    """A session left open far past the ceiling is auto-closed by the tick — the
+    backstop that no longer depends on n8n polling /webhooks/focus/check."""
+    sid = store.start_focus_session("forgotten", started_at=_utc_minutes_ago(400))
+    mod = HyperfocusModule()
+    ctx = _ctx(11)
+    assert mod.evaluate(store, ctx) == []  # abandoned → no interrupt cue
+    mod.after_fire(store, [], ctx)
+    assert store.get_focus_session(sid)["status"] == "abandoned"
+    assert any(
+        "abandoned" in (e.get("context") or "") for e in store.episodes_by_type("task")
+    )
+
+
+def test_alignment_check_pierces_protected_hyperfocus(store):
+    """The soft check is the one interrupt allowed *during* an aligned overrun, so
+    the engine must not suppress hyperfocus's own cue even though the block is
+    protected — the whole reason for the suppressed() pierce exception."""
+    from prefrontal.coaching import build_context, collect_cues, decide
+    from prefrontal.modules import enabled_modules
+
+    store.start_focus_session(
+        "the refactor", planned_minutes=30, aligned=True, started_at=_utc_minutes_ago(45)
+    )
+    assert is_focus_protected(store) is True  # aligned overrun still shields *others*
+    ctx = build_context(
+        store, now=datetime(2026, 6, 15, 11, 0, 0), focus_protected=is_focus_protected(store)
+    )
+    cues = collect_cues(store, enabled_modules(), ctx)
+    decisions = decide(store, cues, ctx, profile=None)
+    fired = [d for d in decisions if d.cue.intervention == "alignment_check"]
+    assert len(fired) == 1  # pierced protection instead of being held
+
+
 # -- retroactive capture (log a block you forgot) ----------------------------
 
 
