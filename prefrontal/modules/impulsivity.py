@@ -12,6 +12,7 @@ short ``task`` episodes that end without an ``outcome``.
 
 from __future__ import annotations
 
+from prefrontal.coaching import CoachContext, Cue, _fired_key
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
@@ -23,6 +24,12 @@ DEFAULT_PAUSE_SECONDS = 20.0
 
 #: Valid resolutions of a switch-impulse, in the order the Shortcut menu shows them.
 SWITCH_ACTIONS = ("return", "defer", "switch")
+
+#: coaching_state key holding how many *un-parked* switch-impulses in one focus
+#: block trip the proactive drift nudge (see :func:`switch_drift`).
+SWITCH_DRIFT_THRESHOLD_KEY = "switch_drift_threshold"
+#: Default for :data:`SWITCH_DRIFT_THRESHOLD_KEY`.
+DEFAULT_DRIFT_THRESHOLD = 3
 
 #: Words past this many in the raw impulse get dropped from the heuristic title.
 _CAPTURE_TITLE_MAX_WORDS = 8
@@ -129,6 +136,57 @@ def switch_rate_feedback(
     return line
 
 
+def _drift_threshold(store: MemoryStore) -> int:
+    """The configured un-parked-pull cutoff (default, and on a bad value too)."""
+    try:
+        return int(store.get_state(SWITCH_DRIFT_THRESHOLD_KEY) or DEFAULT_DRIFT_THRESHOLD)
+    except (TypeError, ValueError):
+        return DEFAULT_DRIFT_THRESHOLD
+
+
+def switch_drift(session: dict, threshold: int = DEFAULT_DRIFT_THRESHOLD) -> bool:
+    """Whether an active focus block shows a proactive-nudge-worthy drift streak.
+
+    The signal is *un-parked* pulls: ``switch_impulses - switches_deferred``. A
+    deferral means the idea was captured (the healthy move the module wants), so
+    parking impulses never grows this count — only repeatedly feeling the pull
+    *without* capturing does. Once that reaches ``threshold``, the block has drifted
+    enough to be worth one gentle "park it instead" nudge.
+
+    Args:
+        session: An active focus-session dict (carrying ``switch_impulses`` /
+            ``switches_deferred``).
+        threshold: Un-parked pulls that trip the nudge (>= 1; treated as 1 below).
+
+    Returns:
+        ``True`` when the block has drifted past the threshold.
+    """
+    acted = int(session.get("switch_impulses") or 0) - int(
+        session.get("switches_deferred") or 0
+    )
+    return acted >= max(threshold, 1)
+
+
+def build_drift_message(intended_task: str, acted: int, *, name: str = "") -> str:
+    """The proactive drift nudge — names the pattern and points at capture-and-defer.
+
+    Args:
+        intended_task: What the block is for, quoted back.
+        acted: Un-parked switch-impulses so far in the block (rendered whole).
+        name: Optional first name; included when set.
+
+    Returns:
+        A short, gentle one-liner that reframes repeated resisting as capturing.
+    """
+    who = f" {name}" if name else ""
+    times = f"{acted}×" if acted != 1 else "once"
+    return (
+        f"Hey{who} — you've felt the pull away from “{intended_task}” {times} this "
+        "block. The ideas are safe if you jot them down; try parking the next one "
+        "instead of chasing or white-knuckling it."
+    )
+
+
 #: System prompt for LLM-titling a captured impulse. Kept tight so a local model
 #: returns a clean label, never a paragraph; the heuristic covers it if it doesn't.
 CAPTURE_TITLE_SYSTEM_PROMPT = (
@@ -205,6 +263,7 @@ class ImpulsivityModule(Module):
     default_state = {
         "pause_seconds": "20",
         "capture_then_defer": "true",
+        SWITCH_DRIFT_THRESHOLD_KEY: str(DEFAULT_DRIFT_THRESHOLD),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -223,11 +282,68 @@ class ImpulsivityModule(Module):
                 status="active",
             ),
             Intervention(
+                name="drift_check",
+                description=(
+                    "Proactively notice a run of un-parked switch-impulses in a block "
+                    "and suggest capturing rather than chasing — fires once per block."
+                ),
+                trigger="un-parked switch-impulses in an active block pass the threshold",
+                status="active",
+            ),
+            Intervention(
                 name="switch_rate_feedback",
                 description="Surface how often switches happened today vs the baseline.",
                 trigger="the end-of-day check-in",
                 status="active",
             ),
+        ]
+
+    def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """Proactively catch a drifting focus block — the ``drift_check`` cue.
+
+        The reflective-pause loop is reactive (it waits for the user to tap
+        "switch"); this closes the loop the module's docstring names — a *rising*
+        switch rate — by watching the active block itself. When un-parked
+        switch-impulses cross the threshold (:func:`switch_drift`), emit one gentle
+        ``nudge`` pointing at capture-and-defer.
+
+        Pure read, per the base contract. Fired once per block: it self-gates on the
+        engine's ``coach_fired:`` stamp (like ``delegation_checkin`` / ``projects``)
+        so a churny block gets a single heads-up, not one every tick. Quiet hours and
+        protected-hyperfocus holding are applied downstream by the engine — an
+        aligned, shielded block is deep work, not drift, so it's held there.
+        """
+        # This nudge reinforces capture-and-defer; honor that opt-out.
+        if not store.get_bool("capture_then_defer", True):
+            return []
+        session = store.most_recent_active_focus_session()
+        if not session:
+            return []
+        threshold = _drift_threshold(store)
+        if not switch_drift(session, threshold):
+            return []
+        dedup_key = f"switch_drift:{session['id']}"
+        if store.get_state(_fired_key(dedup_key)) is not None:
+            return []  # already nudged about this block
+        impulses = int(session.get("switch_impulses") or 0)
+        deferred = int(session.get("switches_deferred") or 0)
+        text = build_drift_message(
+            session.get("intended_task") or "this", impulses - deferred, name=ctx.display_name
+        )
+        return [
+            Cue(
+                module=self.key,
+                intervention="drift_check",
+                urgency="nudge",
+                text=text,
+                context_key="focus",
+                dedup_key=dedup_key,
+                ref={
+                    "session_id": session["id"],
+                    "switch_impulses": impulses,
+                    "switches_deferred": deferred,
+                },
+            )
         ]
 
     def profile_section(self, store: MemoryStore) -> str | None:

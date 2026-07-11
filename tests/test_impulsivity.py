@@ -13,16 +13,22 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from prefrontal.coaching import CoachContext, _fired_key
 from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import (
+    DEFAULT_DRIFT_THRESHOLD,
     DEFAULT_PAUSE_SECONDS,
+    SWITCH_DRIFT_THRESHOLD_KEY,
+    ImpulsivityModule,
+    build_drift_message,
     build_pause_message,
     heuristic_capture_title,
     infer_capture_title,
     pause_seconds,
+    switch_drift,
     switch_rate_feedback,
     switch_response,
 )
@@ -351,3 +357,97 @@ def test_resolve_bad_action_is_422(client, store):
         "/webhooks/focus/resolve", json={"action": "teleport"}, headers=_auth()
     )
     assert resp.status_code == 422
+
+
+# -- Proactive drift detection (evaluate / switch_drift) ---------------------
+
+
+@pytest.mark.parametrize(
+    "impulses, deferred, threshold, expected",
+    [
+        (0, 0, 3, False),   # a calm block
+        (2, 0, 3, False),   # under the threshold
+        (3, 0, 3, True),    # exactly the threshold, none parked
+        (5, 2, 3, True),    # 3 un-parked → trips
+        (5, 3, 3, False),   # only 2 un-parked → healthy enough
+        (9, 9, 3, False),   # parked every one → the desired behavior, never nudged
+        (1, 0, 1, True),    # a floor of 1 (threshold clamps up from 0)
+        (1, 0, 0, True),    # bad threshold is clamped to 1
+    ],
+)
+def test_switch_drift_counts_only_unparked_pulls(impulses, deferred, threshold, expected):
+    session = {"switch_impulses": impulses, "switches_deferred": deferred}
+    assert switch_drift(session, threshold) is expected
+
+
+def test_build_drift_message_names_task_and_points_at_capture():
+    msg = build_drift_message("the API refactor", 3, name="Tom")
+    assert "Tom" in msg
+    assert "the API refactor" in msg
+    assert "3×" in msg
+    assert "park" in msg.lower()  # steers toward capture-and-defer
+    # Singular reads naturally, and the name is optional.
+    assert "once" in build_drift_message("emails", 1)
+
+
+def _drifting_session(store, impulses=3, deferred=0, task="the API refactor"):
+    """Start a block and drive its switch counters like the /switch loop would."""
+    sid = store.start_focus_session(task, started_at=_utc_minutes_ago(20))
+    for _ in range(impulses):
+        store.record_switch_impulse(sid)
+    for _ in range(deferred):
+        store.mark_switch_deferred(sid)
+    return sid
+
+
+def test_evaluate_fires_one_drift_cue_past_threshold(store):
+    sid = _drifting_session(store, impulses=3)
+    ctx = CoachContext(now=datetime.utcnow(), display_name="Tom")
+    cues = ImpulsivityModule().evaluate(store, ctx)
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.module == "impulsivity"
+    assert cue.intervention == "drift_check"
+    assert cue.urgency == "nudge"
+    assert cue.dedup_key == f"switch_drift:{sid}"
+    assert cue.ref == {"session_id": sid, "switch_impulses": 3, "switches_deferred": 0}
+    assert "the API refactor" in cue.text
+
+
+def test_evaluate_silent_below_threshold(store):
+    _drifting_session(store, impulses=2)
+    assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
+
+
+def test_evaluate_silent_when_impulses_were_parked(store):
+    """Deferring the impulses is the healthy move — it must never draw a nudge."""
+    _drifting_session(store, impulses=4, deferred=4)
+    assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
+
+
+def test_evaluate_self_gates_after_firing_once(store):
+    sid = _drifting_session(store, impulses=3)
+    ctx = CoachContext(now=datetime.utcnow())
+    assert ImpulsivityModule().evaluate(store, ctx)  # first tick fires
+    # Engine stamps coach_fired on the dedup_key when it fires; simulate that.
+    store.set_state(_fired_key(f"switch_drift:{sid}"), _utc_minutes_ago(1))
+    store.record_switch_impulse(sid)  # even more churn this block
+    assert ImpulsivityModule().evaluate(store, ctx) == []  # one heads-up per block
+
+
+def test_evaluate_silent_when_no_active_session(store):
+    assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
+
+
+def test_evaluate_respects_capture_then_defer_optout(store):
+    _drifting_session(store, impulses=5)
+    store.set_state("capture_then_defer", "false", source="explicit")
+    assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
+
+
+def test_evaluate_threshold_is_configurable(store):
+    _drifting_session(store, impulses=3)
+    store.set_state(SWITCH_DRIFT_THRESHOLD_KEY, "5", source="explicit")
+    assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
+    # Default remains 3 without configuration.
+    assert DEFAULT_DRIFT_THRESHOLD == 3
