@@ -8,6 +8,9 @@ struct TodayView: View {
     @State private var activeOuting: Outings.Outing?
     @State private var activeFocus: FocusState.Session?
     @State private var nudges: [Nudges.Nudge] = []
+    @State private var briefing: Briefing?
+    @State private var briefingExpanded = false
+    @State private var briefingVote: Bool?
     @State private var error: String?
     @State private var loaded = false
     @State private var showAdd = false
@@ -18,6 +21,8 @@ struct TodayView: View {
                 if let error { ErrorBanner(message: error) }
 
                 quickActions
+
+                if let b = briefing, let text = b.text, !text.isEmpty { briefingCard(b, text) }
 
                 nowCard
                 if departure != nil { departureCard }
@@ -52,6 +57,48 @@ struct TodayView: View {
             }
             .background(Brand.danger.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
             .foregroundStyle(.white)
+        }
+    }
+
+    private func briefingCard(_ b: Briefing, _ text: String) -> some View {
+        let long = text.count > 240
+        return Card {
+            HStack {
+                CardLabel(text: "Morning briefing")
+                Spacer()
+                if let d = b.date { Text(d).font(.caption2).foregroundStyle(Brand.muted) }
+            }
+            Text(text)
+                .font(.subheadline).foregroundStyle(Brand.nearWhite)
+                .lineLimit(briefingExpanded ? nil : 6)
+                .fixedSize(horizontal: false, vertical: true)
+            if long {
+                Button(briefingExpanded ? "Show less" : "Show more") {
+                    withAnimation { briefingExpanded.toggle() }
+                }
+                .font(.caption.weight(.medium)).tint(Brand.teal)
+            }
+            Divider().overlay(Brand.line)
+            if let vote = briefingVote {
+                Label(vote ? "Thanks — glad it helped." : "Thanks — noted.",
+                      systemImage: "checkmark.circle")
+                    .font(.caption).foregroundStyle(Brand.muted)
+            } else {
+                HStack(spacing: 12) {
+                    Text("Was this helpful?").font(.caption).foregroundStyle(Brand.muted)
+                    Spacer()
+                    AsyncButton {
+                        try await withAPI { try await $0.briefingFeedback(helpful: true) }
+                        briefingVote = true
+                    } label: { Image(systemName: "hand.thumbsup") } onError: { error = $0 }
+                    .buttonStyle(.borderless).tint(Brand.good)
+                    AsyncButton {
+                        try await withAPI { try await $0.briefingFeedback(helpful: false) }
+                        briefingVote = false
+                    } label: { Image(systemName: "hand.thumbsdown") } onError: { error = $0 }
+                    .buttonStyle(.borderless).tint(Brand.muted)
+                }
+            }
         }
     }
 
@@ -161,6 +208,7 @@ struct TodayView: View {
             async let out = client.outings()
             async let foc = client.focus()
             async let nud = client.nudges(limit: 8)
+            async let brief = client.briefing()
 
             self.now = try? await now
             let d = try? await dep
@@ -168,6 +216,7 @@ struct TodayView: View {
             self.activeOuting = (try? await out)?.active.first
             self.activeFocus = (try? await foc)?.active.first
             self.nudges = (try? await nud) ?? []
+            self.briefing = try? await brief
             self.error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

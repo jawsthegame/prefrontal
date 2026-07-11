@@ -14,6 +14,11 @@ extension APIClient {
     func commitments(limit: Int = 50) async throws -> [Commitment] {
         try await get("commitments", query: ["limit": "\(limit)"], as: CommitmentList.self).commitments
     }
+    /// The full commitments payload — upcoming plus the recently-elapsed
+    /// `previous` list that awaits a made/missed answer.
+    func commitmentList(limit: Int = 60) async throws -> CommitmentList {
+        try await get("commitments", query: ["limit": "\(limit)"], as: CommitmentList.self)
+    }
     func slots(minutes: Int = 30) async throws -> Slots {
         try await get("calendar/slots", query: ["minutes": "\(minutes)"], as: Slots.self)
     }
@@ -38,6 +43,17 @@ extension APIClient {
     // Self-care
     func markSelfCare(key: String, undo: Bool = false) async throws {
         try await post("self-care/mark", json: ["key": key, "undo": undo])
+    }
+
+    // Commitment outcome (honest made/missed self-report on an elapsed event).
+    // Pass nil to clear the answer, resurfacing it if still in-window.
+    func setCommitmentOutcome(_ id: Int, outcome: String?) async throws {
+        try await post("commitments/\(id)/outcome", json: ["outcome": outcome ?? NSNull()])
+    }
+
+    // Briefing 👍/👎 — steers the LLM briefing voice over time.
+    func briefingFeedback(helpful: Bool) async throws {
+        try await post("briefing/feedback", json: ["helpful": helpful])
     }
 
     // Focus / outing lifecycle (webhook routes)

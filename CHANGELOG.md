@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS in-app depth — morning briefing + commitment outcomes** ✅ (#477) — the
+  native app surfaced only a slice of what the API returns. Today now shows the
+  **morning briefing** (`GET /briefing`): the server-rendered digest in a
+  collapsible card with a 👍/👎 control (`POST /briefing/feedback`) that steers the
+  briefing voice. Calendar now closes the behavioral-learning loop with
+  **commitment outcome logging** — the `/commitments` payload's `previous` list
+  (recently-elapsed events awaiting an answer) renders a "Did you make it?" card
+  with one-tap **Made it / Missed it** (`POST /commitments/{id}/outcome`), and a
+  recorded answer shows with a Change affordance that clears it. Client-only, no
+  server changes. See `ios/README.md`.
+
 - **Caregiver Context Pack — the second life-context pack** ✅ — after Parent,
   `PREFRONTAL_PACKS=caregiver` (`prefrontal/packs/caregiver.py`) installs the
   caregiving life-context for someone looking after an aging parent, ill partner, or
