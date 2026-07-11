@@ -11,28 +11,29 @@ A digest of the open threads detailed in the sections below, roughly in priority
 order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
-1. **Finish the coaching agent** (see "Beyond v1 › Coaching agent"). Three
-   closeout items on the architectural spine: the optional **LLM phrasing pass**
-   on ambient/digest cues (spec step 5); folding the **encouragement layer's
-   `assess_day` in as a cue producer** (§9) so recovery routes through the shared
-   engine; and **deprecating `/webhooks/outing/check`** now that `coach/check`
-   shares `evaluate_outing` and has run clean.
-2. **Unify triage** (see "Beyond v1 › Triage agent" and "Ingestion"). Absorb the
+1. **Unify triage** (see "Beyond v1 › Triage agent" and "Ingestion"). Absorb the
    standalone mail path into a `Signal` adapter so there's *one* triage, not two,
    before more sources land on it. The Google Apps Script work-email digest is the
    related open ingestion source.
-3. **Focus-balance follow-ups** (see "Focus balance — follow-ups"). Small,
+2. **Focus-balance follow-ups** (see "Focus balance — follow-ups"). Small,
    self-contained polish: a fuller one-tap **label + domain + reflection**
    Shortcut, **configurable quick-file domains** (the ntfy 3-button trio is
    hard-coded to home/kids/personal), and **prompting for domain at outing
    declaration** so outings arrive pre-filed.
-4. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
+3. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
    natural next after Parent, plus pack-specific situation-tool registries and
    surface tailoring beyond `/kids`. Highest-leverage *new* capability, most work.
-5. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
+4. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
    §4). The sensor's causal check (did an accepted proposal actually improve
    downstream calibration?) and an auto-act on a non-predictive channel signal.
    Genuinely valuable but design-blocked, so last.
+
+**Recently closed out:** the **coaching agent** is now complete — the optional
+**LLM phrasing pass** on ambient cues (`coach_llm_phrasing`, profile-grounded,
+heuristic fallback), the **encouragement layer** folded in as a cue producer
+(`encouragement_cues`) so recovery routes through the shared engine, and
+**`/webhooks/outing/check` deprecated** now that `coach/check` runs the identical
+anchor decision. See "Beyond v1 › Coaching agent".
 
 **Deferred by choice:** a native **WidgetKit + ActivityKit Live Activity** for a
 true live outing timer (needs a Swift app / Xcode / Apple Developer account) — the
@@ -377,9 +378,15 @@ ordered by leverage; each is independent but builds on denser capture.
   `learn` makes `choose_channel`'s "bump the channel you ignore" real instead of
   floor-only. `POST /webhooks/coach/ack` is the explicit hook for delivery layers
   that report their own outcomes; covered end-to-end by `tests/test_coaching.py`.
-  Still open (spec §12 rollout): the optional LLM phrasing pass on ambient/digest
-  cues (step 5); and folding in the encouragement layer below (§9). *(Next:
-  deprecate `outing/check` once `coach/check` has run clean for a while — §13.)*
+  **The three closeout items have now shipped** (spec §12 step 5 + §13): the
+  optional **LLM phrasing pass** — `phrase` warms `ambient` cues through the model
+  on the opt-in `coach_llm_phrasing` key, profile-grounded, with a heuristic
+  fallback (nudge/urgent/critical stay deterministic); the **encouragement layer**
+  folded in as one more cue producer (`encouragement_cues`, collected by
+  `run_coaching_tick`) so recovery routes through the shared channel/debounce/quiet-hours
+  gate; and **`/webhooks/outing/check` deprecated** now that `coach/check` runs the
+  byte-identical anchor decision (kept for existing n8n workflows, removed once the
+  tick has run clean in the field). The coaching agent is now feature-complete.
 - **Delivery layer + interactive nudges (ntfy)** — **the action-button core has
   shipped** (see `CHANGELOG.md`: signed `/nudge/act` + the `actions` fields
   on the outing/focus/departure nudges). Unlike Pushover — whose only
@@ -485,9 +492,13 @@ ordered by leverage; each is independent but builds on denser capture.
   a day-shaped line — reassurance on a packed/rough or recently-rough stretch, and
   a relax-vs-accomplish choice on a wide-open day (`open_day_choice`,
   `POST /briefing/open-day`, `prefrontal open-day`) — in place of the usual bias
-  nag. One follow-on remains: once the assessment is trusted, wrapping `assess_day`
-  as a **coaching-agent cue producer** so its delivery routes through the shared
-  engine (coaching-agent spec §9 — one `assess_day`).
+  nag. The final follow-on has now shipped: `assess_day` is wrapped as a
+  **coaching-agent cue producer** (`encouragement_cues`, collected by
+  `run_coaching_tick`), so the recovery message's delivery routes through the
+  shared channel/debounce/quiet-hours engine — one `assess_day` feeding both the
+  `GET /encouragement` read and the coaching tick (coaching-agent spec §9). The
+  tick advances the once-per-day cursor only when the cue actually fires, so a cue
+  held by quiet hours re-offers when the window opens.
 - **Native Lock Screen Live Activity (live outing timer)** — the shipped
   Scriptable widget renders the Lock Screen accessory slots but refreshes only on
   iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale

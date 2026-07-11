@@ -15,9 +15,13 @@ escalation's poll → decide-``fire`` → return-``message`` loop.
 The engine, the :class:`Cue`/:class:`CoachContext`/:class:`Decision` types,
 channel selection, and suppression (quiet hours + debounce) are implemented here;
 the ``POST /webhooks/coach/check`` tick endpoint (and its CLI twin ``prefrontal
-coach``) fan every enabled module through this core. The one piece still
-deterministic-only is :func:`phrase`: the optional profile-grounded LLM rewrite
-(spec §5) has not landed, so it returns the module's own ``cue.text`` verbatim.
+coach``) fan every enabled module through this core. :func:`phrase` now carries
+the optional profile-grounded LLM rewrite (spec §5): on the opt-in
+``coach_llm_phrasing`` key it warms ``ambient`` cues through the model in
+Prefrontal's coaching voice, falling back to the deterministic ``cue.text`` on any
+failure (time-critical nudge/urgent/critical cues stay deterministic). The
+encouragement/recovery layer folds in as one more cue producer (spec §9) via
+:func:`run_coaching_tick`, so its delivery routes through the same engine.
 """
 
 from __future__ import annotations
@@ -70,6 +74,37 @@ DEFAULT_RESPONSIVE_END = 22
 #: Longest note we fold into a nudge before truncating — a note is a quick "don't
 #: forget" hint, not a document, and an over-long one would bury the nudge itself.
 NOTE_HINT_MAX_CHARS = 160
+
+#: Urgencies whose text the optional LLM phrasing pass may rewrite. Deliberately
+#: only ``ambient`` (the digest-floored, never-interrupting cues): a synchronous
+#: model call on a ``nudge``/``urgent``/``critical`` path adds latency to a
+#: time-critical delivery, so those keep their deterministic templates (spec §5,
+#: open question §13).
+PHRASING_URGENCIES = frozenset({"ambient"})
+
+#: Coaching-state key gating the LLM phrasing pass. Off by default — the
+#: deterministic ``cue.text`` is always a valid message, so phrasing is an opt-in
+#: warmth upgrade, not a dependency.
+PHRASING_STATE_KEY = "coach_llm_phrasing"
+
+#: The agent name the phrasing rewrite resolves its provider under. Not a
+#: :data:`~prefrontal.integrations.provider.KNOWN_AGENTS` member, so it stays on
+#: the local model unless the operator opts *every* agent into Anthropic — the
+#: same local-first default the encouragement prose pass uses.
+PHRASING_AGENT = "coach"
+
+#: The voice the phrasing rewrite speaks in — the shared Prefrontal register (cf.
+#: the briefing/summarizer prompts), told to preserve the message's facts and only
+#: warm the phrasing. The user's structured profile is appended as grounding when
+#: available so the tone is calibrated to them and the numbers stay honest.
+COACH_PHRASING_SYSTEM_PROMPT = (
+    "You are Prefrontal's coaching voice for someone with ADHD: warm, plain, "
+    "second-person, never patronizing. You are given one already-correct nudge. "
+    "Rewrite it as a single short, encouraging line that keeps every fact, number, "
+    "time, and name exactly as given — do not add events, tasks, or advice, and do "
+    "not drop the concrete ask. One or two sentences. No preamble, headings, or "
+    "emoji."
+)
 
 
 def note_hint(notes: str | None, *, max_chars: int = NOTE_HINT_MAX_CHARS) -> str:
@@ -301,24 +336,77 @@ def choose_channel(store: Any, cue: Cue, ctx: CoachContext) -> str:
     return floor
 
 
-def phrase(store: Any, cue: Cue, ctx: CoachContext) -> str:
-    """Return the message to deliver.
+def llm_phrasing_enabled(store: Any) -> bool:
+    """Whether the opt-in LLM phrasing pass is on (:data:`PHRASING_STATE_KEY`)."""
+    return (store.get_state(PHRASING_STATE_KEY, "off") or "off").strip().lower() == "on"
 
-    The deterministic core: the module's own ``cue.text``. The optional
-    profile-grounded Ollama rewrite (spec §5, off for time-critical cues, with a
-    heuristic fallback) is a follow-up slice and plugs in here.
+
+def phrase(
+    store: Any,
+    cue: Cue,
+    ctx: CoachContext,
+    *,
+    client: Any | None = None,
+    profile: str | None = None,
+) -> str:
+    """Return the message to deliver — deterministic by default, LLM-warmed opt-in.
+
+    The deterministic core is the module's own ``cue.text``, always a valid
+    message. When the ``coach_llm_phrasing`` key is on *and* the cue is ``ambient``
+    (:data:`PHRASING_URGENCIES` — the never-interrupting, non-time-critical class),
+    it's rewritten through the model in Prefrontal's coaching voice, grounded in the
+    user's structured ``profile`` when one is supplied (spec §5). Any provider
+    failure or empty reply falls back to ``cue.text`` — mirroring the briefing /
+    encouragement prose passes — so a down model degrades quietly. Nudge/urgent/
+    critical cues are never rewritten (latency on a time-critical path is bad —
+    §13), so this is safe to call on every cue.
+
+    Args:
+        client: A pre-resolved model client (tests inject an offline/fake one).
+            When ``None`` the provider is resolved for :data:`PHRASING_AGENT`.
+        profile: The user's structured behavioral profile, appended to the system
+            prompt as grounding. Built once per tick by the caller and shared
+            across cues; ``None`` phrases without it.
     """
-    return cue.text
+    if cue.urgency not in PHRASING_URGENCIES or not llm_phrasing_enabled(store):
+        return cue.text
+    from prefrontal.integrations.summarize import summarize_or_fallback
+
+    system = COACH_PHRASING_SYSTEM_PROMPT
+    if profile:
+        system = (
+            f"{system}\n\nThe user's behavioral profile "
+            f"(for tone; obey its numbers):\n{profile}"
+        )
+    return summarize_or_fallback(
+        cue.text, system=system, agent=PHRASING_AGENT, client=client
+    ).text
 
 
-def decide(store: Any, cues: list[Cue], ctx: CoachContext) -> list[Decision]:
-    """Turn cues into fire-worthy decisions, dropping suppressed ones (spec §4)."""
+def decide(
+    store: Any,
+    cues: list[Cue],
+    ctx: CoachContext,
+    *,
+    client: Any | None = None,
+    profile: str | None = None,
+) -> list[Decision]:
+    """Turn cues into fire-worthy decisions, dropping suppressed ones (spec §4).
+
+    ``client``/``profile`` are threaded into :func:`phrase` for the optional LLM
+    rewrite of ``ambient`` cues; both default to off so the deterministic path is
+    unchanged.
+    """
     decisions: list[Decision] = []
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
         decisions.append(
-            Decision(cue=cue, channel=choose_channel(store, cue, ctx), text=phrase(store, cue, ctx))
+            Decision(
+                cue=cue,
+                channel=choose_channel(store, cue, ctx),
+                text=phrase(store, cue, ctx, client=client, profile=profile),
+            )
         )
     return decisions
 
@@ -466,6 +554,7 @@ class TickResult:
         swept_stale: Unanswered nudges logged as channel misses this tick.
         decomposed: Avoided tasks broken down into a first step this tick.
         clarified: Newly-ambiguous items filed as clarifying questions this tick.
+        encouraged: Whether a rough-day recovery cue fired this tick (§9).
     """
 
     decisions: list[Decision]
@@ -473,6 +562,7 @@ class TickResult:
     swept_stale: int
     decomposed: int
     clarified: int
+    encouraged: bool = False
 
 
 def _run_module_hooks(
@@ -574,11 +664,21 @@ def run_coaching_tick(
     )
     _run_module_hooks(modules, lambda m: m.before_collect(store, ctx), "before_collect")
     cues = collect_cues(store, modules, ctx)
-    decisions = decide(store, cues, ctx)
+    # The encouragement/recovery layer is one more cue producer (spec §9), not a
+    # separate system: assess the day and, when it's rough, emit a single recovery
+    # cue that routes through the *same* channel choice, debounce, and quiet-hours
+    # gate as everything else. Isolated like a module evaluator so a bad assessment
+    # never sinks the tick.
+    cues.extend(_encouragement_cues(store, ctx))
+    # Build the structured profile once (not per cue) only when the opt-in phrasing
+    # pass could actually use it — on, and something ambient to warm.
+    profile = _phrasing_profile(store, cues)
+    decisions = decide(store, cues, ctx, profile=profile)
     # Recorded at decision time (not on confirmed delivery), matching how
     # outing/check advances last_level when it decides to fire.
     record_fired(store, decisions, now)
     note_delivered(store, decisions, now)
+    encouraged = _mark_encouragement_if_fired(store, decisions, now)
     _run_module_hooks(modules, lambda m: m.after_fire(store, decisions, ctx), "after_fire")
     return TickResult(
         decisions=decisions,
@@ -586,4 +686,54 @@ def run_coaching_tick(
         swept_stale=swept_stale,
         decomposed=decomposed,
         clarified=clarified,
+        encouraged=encouraged,
     )
+
+
+def _phrasing_profile(store: Any, cues: list[Cue]) -> str | None:
+    """The structured profile to ground LLM phrasing, or ``None`` when it can't help.
+
+    Built once per tick and shared across cues (see :func:`phrase`). Skipped
+    entirely — no profile read — unless the phrasing pass is on and at least one
+    cue is in :data:`PHRASING_URGENCIES`, so the deterministic path pays nothing.
+    """
+    if not llm_phrasing_enabled(store):
+        return None
+    if not any(c.urgency in PHRASING_URGENCIES for c in cues):
+        return None
+    from prefrontal.memory.summarizer import build_profile
+
+    try:
+        return build_profile(store)
+    except Exception:  # noqa: BLE001 — grounding is best-effort; phrase without it
+        logger.warning(
+            "build_profile for coach phrasing raised; phrasing ungrounded", exc_info=True
+        )
+        return None
+
+
+def _encouragement_cues(store: Any, ctx: CoachContext) -> list[Cue]:
+    """Collect the encouragement layer's recovery cue, isolating any failure."""
+    try:
+        from prefrontal.encouragement import encouragement_cues
+
+        return encouragement_cues(store, ctx)
+    except Exception:  # noqa: BLE001 — a bad assessment must not sink the tick
+        logger.warning("encouragement_cues raised; skipping it this tick", exc_info=True)
+        return []
+
+
+def _mark_encouragement_if_fired(store: Any, decisions: list[Decision], now: datetime) -> bool:
+    """Advance the once-per-day cursor iff a recovery cue actually fired this tick.
+
+    Marked on *fire* (past suppression), not on production — a recovery cue held by
+    quiet hours should re-offer once the window opens, exactly as the old
+    ``/encouragement`` → ``/encouragement/sent`` contract only stamped after a real
+    delivery. Returns whether it fired.
+    """
+    from prefrontal.encouragement import ENCOURAGEMENT_MODULE, mark_sent_today
+
+    if not any(d.cue.module == ENCOURAGEMENT_MODULE for d in decisions):
+        return False
+    mark_sent_today(store, now=now)
+    return True

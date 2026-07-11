@@ -363,6 +363,14 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
 "I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
 ```
 
+> **`outing/check` is deprecated** in favor of the unified coaching tick
+> (`POST /webhooks/coach/check`, §16). `LocationAnchorModule.evaluate` runs the
+> identical per-outing decision and side effects (passive home-return close,
+> abandon auto-close, escalation level) inside that tick, so a box on the native
+> launchd `coach --deliver` schedule already delivers the coffee-shop escalation
+> — no separate outing poll needed. The endpoint stays for existing n8n
+> workflows and will be removed once the coaching tick has run clean in the field.
+
 > **Impact analysis** rides along automatically: if you've synced commitments
 > (§10), the check projects your realistic return from the learned bias and names
 > any at-risk commitment in the nudge ("…'Team sync' is now at risk"), with a

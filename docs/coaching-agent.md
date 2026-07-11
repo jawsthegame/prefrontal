@@ -1,6 +1,6 @@
 # Coaching agent — design spec
 
-Status: **partially built** (rollout §12 steps 1 + 2 + 3 + both v1 evaluators).
+Status: **built** (rollout §12 steps 1–5 complete).
 Shipped: the pure engine (`prefrontal/coaching.py` — `Cue`, `CoachContext`,
 `Decision`, `collect_cues`, `choose_channel`, `suppressed`/debounce+quiet-hours,
 `decide`), the per-module `evaluate()` hook (`modules/base.py`, default `[]`), the
@@ -10,9 +10,14 @@ shared `evaluate_outing` / `apply_outing_evaluation` that both the endpoint and
 the evaluator call — the legacy endpoint is byte-identical), a `prefrontal coach
 [--dry-run]` CLI, and the **`POST /webhooks/coach/check`** tick endpoint (§7) with
 its `deploy/n8n/coach-check.workflow.json` delivery workflow, and **outcome
-logging that closes the learning loop (§8)**. **Not yet built:** the optional LLM
-phrasing pass (§5), the encouragement layer (§9), and deprecating `outing/check`
-(§13) — those remain intended design. This is the implementation spec
+logging that closes the learning loop (§8)**. The three closeout items have now
+landed: the optional **LLM phrasing pass** (§5) — `phrase` warms `ambient` cues
+through the model on the opt-in `coach_llm_phrasing` key, grounded in the profile,
+with a heuristic fallback (nudge/urgent/critical stay deterministic); the
+**encouragement layer** (§9) folded in as one more cue producer
+(`encouragement.encouragement_cues`, collected by `run_coaching_tick`); and
+**`outing/check` deprecated** (§13) now that `coach/check` runs the identical
+anchor decision. This is the implementation spec
 for the **Coaching Agent** —
 the component in the README architecture that sits between the memory layer and
 the delivery layer and turns *what Prefrontal knows* into *the right message, on
@@ -225,18 +230,23 @@ def decide(store, cues, ctx) -> list[Decision]:
    [`docs/multi-tenant.md`](multi-tenant.md) §6.5) — the agent emits the *channel
    class*; the delivery fields say *where*.
 
-**Phrasing — deterministic core + optional LLM, with fallback.** Exactly the
-briefing/summarizer pattern (`summarize_briefing`, `briefing.py:244`):
+**Phrasing — deterministic core + optional LLM, with fallback.** ✅ *(shipped —
+`prefrontal.coaching.phrase`)* Exactly the briefing/summarizer pattern
+(`summarize_briefing`, `briefing.py:244`):
 
 - `cue.text` is the deterministic, testable message (per-intervention templates,
   e.g. `build_message` for the anchor — reused as-is).
-- An optional `phrase_llm(cue, profile)` rewrites it through Ollama using the
-  **behavioral profile as system context** (`build_profile` /
-  `summarize_profile`, `memory/summarizer.py`) so the tone is calibrated to the
-  user and grounded in real numbers — falling back to `cue.text` on any
-  `OllamaError` or empty reply. Off by default for `nudge`/`urgent` (latency on a
-  time-critical path is bad); on for `ambient`/digest. Controlled by a
-  `coach_llm_phrasing` coaching-state key.
+- `phrase(store, cue, ctx, *, client, profile)` rewrites it through the shared
+  `summarize_or_fallback` helper using the **behavioral profile as system
+  context** (`build_profile`, built once per tick and passed in) so the tone is
+  calibrated to the user and grounded in real numbers — falling back to `cue.text`
+  on any `ProviderError` or empty reply. Applied only to `ambient` cues
+  (`PHRASING_URGENCIES`); `nudge`/`urgent`/`critical` keep their deterministic
+  templates (latency on a time-critical path is bad — §13). Off by default,
+  gated by the `coach_llm_phrasing` coaching-state key, and resolved under the
+  non-`KNOWN_AGENTS` agent name `coach`, so it stays local unless the operator
+  opts every agent into Anthropic. The profile is only read when phrasing is on
+  and an ambient cue is present, so the deterministic path pays nothing.
 
 The system prompt reuses the existing voice ("Prefrontal's … voice for someone
 with ADHD … warm, second-person … use the numbers as given; do not invent
@@ -322,7 +332,7 @@ folds it into `channel_response` and `drift`:
 
 ---
 
-## 9. The encouragement / recovery layer (folds in here)
+## 9. The encouragement / recovery layer (folds in here) ✅ *(shipped)*
 
 The roadmap's "Encouragement & recovery layer" is **a special cue source**, not a
 separate system. A detector reads signals the agent already has in `CoachContext`
@@ -332,6 +342,22 @@ shifts tone from nudging to reassurance + one concrete next step (re-fit todos
 via the existing `fit_todos`). Opt-in via a coaching key, tone-calibrated through
 the same LLM phrasing path (§5) with a heuristic fallback. It is literally
 another `evaluate`-style producer; no new plumbing.
+
+> **Status:** shipped. `prefrontal.encouragement.encouragement_cues(store, ctx)`
+> is the `evaluate`-style producer: it runs the **same** `assess_day` /
+> `build_recovery` / `render_encouragement` core the standalone `GET
+> /encouragement` endpoint uses (one implementation, not two), and — when the day
+> is rough and one hasn't already gone out today (the `last_encouragement_date`
+> cursor) — returns a single `nudge` recovery `Cue`. `run_coaching_tick` collects
+> it alongside the module cues, so it flows through the shared `choose_channel`,
+> `suppressed` (quiet hours + debounce), and delivery path. The once-per-day
+> cursor is advanced (`mark_sent_today`) only when the cue actually *fires* — held
+> by quiet hours it re-offers when the window opens, exactly as the old
+> `/encouragement` → `/encouragement/sent` contract behaved. Tone-calibrated prose
+> rides the `coach_llm_phrasing` key via `summarize_encouragement`; off, the
+> deterministic render is delivered. The standalone endpoint stays (a pure read
+> for dashboards, sharing the same cursor so there's no double delivery). Covered
+> by `tests/test_coaching.py`.
 
 > **Reconciliation with [`docs/encouragement.md`](encouragement.md).** That spec
 > details the same feature but proposes shipping it **standalone first** — a pure
@@ -404,7 +430,8 @@ outing endpoint's response is preserved.
 4. **Avoidance evaluator** + debounce/quiet-hours. First *new* coaching capability
    ships (the success-test cue).
 5. **LLM phrasing on ambient/digest**, then encouragement layer as another
-   evaluator.
+   evaluator. ✅ *(shipped — §5 `phrase`, §9 `encouragement_cues`)*, alongside
+   deprecating `outing/check` (§13).
 
 Steps 1–2 are invisible; 3 swaps the transport without changing behavior; 4–5
 are where the user feels new coaching.
@@ -413,10 +440,13 @@ are where the user feels new coaching.
 
 ## 13. Open questions
 
-- **One tick endpoint vs. keep `outing/check` forever.** Recommend folding into
-  `coach/check` after step 4 and deprecating `outing/check`, but the location
-  workflow is the one live feature — keep the old endpoint until the new path has
-  run clean for a while. Flag, don't rush.
+- **One tick endpoint vs. keep `outing/check` forever.** ✅ *(resolved — deprecated)*
+  `outing/check` is now marked `deprecated=True`: `coach/check` runs the identical
+  anchor decision (`LocationAnchorModule.evaluate` → `evaluate_outing` /
+  `apply_outing_evaluation`, with parity tests), and the native launchd `coach
+  --deliver` tick already delivers the escalation. The old endpoint stays for
+  existing n8n workflows and will be removed once the coaching tick has run clean
+  in the field — flagged, not rushed.
 - **Where debounce state lives.** A dedicated `coaching_log` table (queryable,
   good for a future "what did you tell me today?" view) vs. reusing
   `coaching_state` last-fired keys (no schema change). Lean `coaching_log` if we

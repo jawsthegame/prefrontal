@@ -158,12 +158,23 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         return {"outing_id": updated["id"], "domain": updated["domain"]}
 
-    @router.post("/webhooks/outing/check", tags=["anchor"])
+    @router.post("/webhooks/outing/check", tags=["anchor"], deprecated=True)
     async def outing_check(
         request: Request,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Evaluate active outings and report which nudges are due.
+        """Evaluate active outings and report which nudges are due. **Deprecated.**
+
+        .. deprecated::
+            Superseded by ``POST /webhooks/coach/check`` (spec §13). That tick fans
+            over *every* enabled module, and ``LocationAnchorModule.evaluate`` runs
+            the byte-identical per-outing decision (:func:`evaluate_outing` +
+            :func:`apply_outing_evaluation`) this endpoint runs — including the
+            passive home-return close and the abandon auto-close — with parity
+            covered by ``tests/test_coaching.py``. New deployments should poll
+            ``coach/check`` (the native launchd ``coach --deliver`` tick already
+            does); this anchor-only endpoint stays for existing n8n workflows and
+            will be removed once the coaching tick has run clean in the field.
 
         n8n polls this on a schedule. For each active outing:
 
