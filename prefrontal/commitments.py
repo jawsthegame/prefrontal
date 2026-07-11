@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from dateutil.parser import isoparse
 from dateutil.rrule import rrulestr
 
 from prefrontal.clock import TS_FMT, utcnow
@@ -338,8 +339,11 @@ def to_utc(value: str, tzid: str | None = None, default_tz: str = "UTC") -> str:
         ValueError: If ``value`` is not a parseable ISO-8601 timestamp.
     """
     text = value.strip()
-    # datetime.fromisoformat handles 'Z' as of Python 3.11.
-    dt = datetime.fromisoformat(text)
+    # dateutil.isoparse (not datetime.fromisoformat) so the parse is uniform
+    # across Python versions: 3.10's fromisoformat rejects both a 'Z' suffix and
+    # the separator-less basic form (2026…Z / 20260628T073000Z) that ICS feeds
+    # emit; isoparse accepts them on every version.
+    dt = isoparse(text)
     if dt.tzinfo is not None:
         # An explicit offset wins outright; any tzid is redundant/ignored.
         return dt.astimezone(timezone.utc).replace(tzinfo=None).strftime(TS_FMT)
@@ -498,7 +502,9 @@ def _aware(value: str, tzid: str | None, default_tz: str) -> datetime | None:
     keeping a 7:30 local event at 7:30 across DST rather than drifting an hour.
     """
     try:
-        dt = datetime.fromisoformat(value.strip())
+        # isoparse (not fromisoformat) to accept 'Z' and separator-less basic ICS
+        # timestamps on Python 3.10 too (see to_utc).
+        dt = isoparse(value.strip())
     except ValueError:
         return None
     if dt.tzinfo is not None:
