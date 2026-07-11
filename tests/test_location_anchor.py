@@ -80,6 +80,30 @@ def test_escalation_level(elapsed, window, expected):
     assert escalation_level(elapsed, window) == expected
 
 
+def test_escalation_floors_a_very_short_window():
+    """A 2-minute window doesn't collapse soft→firm→call into a few minutes: the
+    timing math floors the window to MIN_ESCALATION_WINDOW_MINUTES (10)."""
+    from prefrontal.modules.location_anchor import MIN_ESCALATION_WINDOW_MINUTES
+
+    assert MIN_ESCALATION_WINDOW_MINUTES == 10.0
+    # Raw percentages would make 3 min into a 2-min window a "call"; floored it's
+    # still "none" (3 / 10 = 30%).
+    assert escalation_level(3, 2) == "none"
+    assert escalation_level(1, 2) == "none"     # 50% raw → floored 10%
+    assert escalation_level(5, 2) == "soft"     # 50% of the 10-min floor
+    assert escalation_level(10, 2) == "firm"    # 100% of the floor
+    assert escalation_level(15, 2) == "call"    # 150% of the floor
+    # A window at/above the floor is unaffected — the raw thresholds still apply.
+    assert escalation_level(5, 12) == "none" and escalation_level(6, 12) == "soft"
+
+
+def test_is_abandoned_floors_a_very_short_window():
+    """A short window doesn't auto-abandon before its escalations can fire."""
+    assert is_abandoned(20, 5, 3.0) is False   # raw 20>=15 would abandon; floored 20<30
+    assert is_abandoned(30, 5, 3.0) is True     # 300% of the 10-min floor
+    assert is_abandoned(45, 15, 3.0) is True     # window >= floor → unchanged
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -549,8 +573,9 @@ def test_check_home_return_backdates_actual_minutes(client, store):
 
 def test_check_abandoned_auto_closes(client, store):
     """Far past the abandon ratio closes the outing as abandoned, no nudge."""
-    # 20 min into a 5 min window = 400% > 300% abandon ratio.
-    store.start_outing("getting coffee", 5.0, departure_at=_utc_minutes_ago(20))
+    # 60 min into a 15 min window = 400% > 300% abandon ratio (window >= the
+    # escalation floor, so the raw ratio applies).
+    store.start_outing("getting coffee", 15.0, departure_at=_utc_minutes_ago(60))
     resp = client.post("/webhooks/outing/check", json={}, headers=_auth()).json()
     item = resp["active"][0]
     assert item["status"] == "abandoned"
