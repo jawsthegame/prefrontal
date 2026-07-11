@@ -320,21 +320,25 @@ def seed_user_state(store: MemoryStore) -> None:
     for key, value, source in DEFAULT_COACHING_STATE:
         if key not in existing:
             store.set_state(key, value, source=source)
-    # Each enabled module seeds its own coaching-state defaults (it calls
-    # set_state on the scoped store, so the keys land under this user). Imported
-    # lazily to keep the memory layer free of a hard dependency on the modules
-    # package and to avoid an import cycle.
+    # Precedence among seeded defaults is first-writer-wins (all seeding is
+    # absent-only), so the order below encodes **pack > module > base default**. A
+    # Context Pack is a deliberately-chosen life-context, so its default is more
+    # specific than a generic module default and must win where they overlap — e.g.
+    # the Caregiver pack seeds `self_care=on` to arm the basic-needs checks, over
+    # the self_care module's own `self_care=off` default. Packs therefore seed
+    # *before* modules. (A user's explicit value always wins regardless: it's set
+    # after provisioning and preserved by the absent-only guard on any re-seed.)
+    # Both imports are lazy to keep the memory layer free of a hard dependency on
+    # those packages and to avoid an import cycle.
+    from prefrontal.packs import enabled_packs
+
+    # Iterated in configured order so an earlier pack wins a key conflict.
+    for pack in enabled_packs():
+        pack.seed(store)
     from prefrontal.modules import enabled_modules
 
     for module in enabled_modules():
         module.seed(store)
-    # Then each enabled Context Pack seeds its coaching defaults (e.g. parent
-    # time windows). Iterated in configured order so an earlier pack wins a key
-    # conflict; absent-only, so it never clobbers a module or user value above.
-    from prefrontal.packs import enabled_packs
-
-    for pack in enabled_packs():
-        pack.seed(store)
 
 
 def provision_user(

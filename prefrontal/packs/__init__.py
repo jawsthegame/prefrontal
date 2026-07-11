@@ -15,7 +15,10 @@ To add a pack: build a :class:`~prefrontal.packs.base.Pack`, call
 """
 
 # Import built-in packs for their registration side effects.
-from prefrontal.packs import parent  # noqa: F401  (side-effect import)
+from prefrontal.packs import (
+    caregiver,  # noqa: F401  (side-effect import)
+    parent,  # noqa: F401  (side-effect import)
+)
 from prefrontal.packs.base import Pack, PackVocabulary
 from prefrontal.packs.registry import (
     available,

@@ -11,9 +11,11 @@ A digest of the open threads detailed in the sections below, roughly in priority
 order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
-1. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
-   natural next after Parent, plus pack-specific situation-tool registries and
-   surface tailoring beyond `/kids`. Highest-leverage *new* capability, most work.
+1. **Context Pack surface tailoring** (see "Beyond v1 › Context Packs"). The
+   **Caregiver** pack now exists (the second pack instance), so what remains is the
+   deeper pack infrastructure it and Parent share: pack-specific **situation-tool
+   registries** and **surface tailoring beyond `/kids`** (a caregiver surface + a
+   dedicated `care` commitment kind). Highest-leverage *new* capability, most work.
 2. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
    §4). The sensor's causal check (did an accepted proposal actually improve
    downstream calibration?) and an auto-act on a non-predictive channel signal.
@@ -569,11 +571,18 @@ ordered by leverage; each is independent but builds on denser capture.
   via `PREFRONTAL_PACKS` (opt-in, none by default), `prefrontal packs -v`, and the
   **`Parent`** pack as the first instance (turns on `time_blindness` +
   `task_paralysis`; declares `school`/`childcare`/`household` + the `child` kind;
-  seeds parent time windows). **Overlap precedence is defined**:
+  seeds parent time windows), **plus the `Caregiver` pack as the second**
+  (`prefrontal/packs/caregiver.py`: aging parent / ill partner / disabled family
+  member — turns on `time_blindness` + `task_paralysis` + `self_care`; declares
+  `medical`/`admin`/`caregiving` categories; seeds daytime medical/admin windows,
+  **arms the meal/water checks** with `self_care=on` since caregiver self-neglect
+  is the signature risk, and protects `focus_target:personal`; sandwich generation
+  can stack `parent,caregiver`). **Overlap precedence is defined**:
   `resolve_pack_vocabulary` unions categories/kinds and merges coaching defaults
   earlier-pack-wins in `PREFRONTAL_PACKS` order (seeding is absent-only, preserving
-  that winner). Still open: more packs (Caregiver / Grad student / New job) and
-  pack-specific situation-tool registries + surface tailoring beyond `/kids`.)*
+  that winner). Still open: more packs (Grad student / New job), a dedicated `care`
+  commitment kind, and pack-specific situation-tool registries + surface tailoring
+  beyond `/kids` (a caregiver surface — the counterpart to the household sheet).)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
   ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; `prefrontal household …`) — kept here for the
