@@ -32,15 +32,27 @@ surfaces what needs action"), but triage is source-agnostic: anything that can
 be normalized into a `Signal` flows through the same path.
 
 > **Reality note.** The general `Signal` / `TriageDecision` / `triage_log` core
-> described here is now **built** (`prefrontal/triage.py`): `/webhooks/n8n`
+> described here is **built** (`prefrontal/triage.py`): `/webhooks/n8n`
 > classifies + routes, `POST /triage` takes a normalized signal directly, and
-> `GET /triage/recent` explains what it did. The older **mail** path
-> (`prefrontal/mail/`: `normalize_message` → Ollama+heuristic triage → a `todos`
-> row in `mail_messages`) still runs as its own slice — in effect this spec's
-> `route=todo` hard-wired to one source. The two now coexist; a remaining
-> follow-up is to **absorb** the mail path into a `Signal` adapter feeding the
-> shared `classify`/`apply` (its `mail_messages.todo_id` already mirrors
-> `routed_ref`), rather than running two parallel triages.
+> `GET /triage/recent` explains what it did. The **mail** path
+> (`prefrontal/mail/`) has now been **absorbed into the shared pipeline**: mail
+> keeps its own specialized *classifier* (`triage_message` — retention,
+> categories, `waiting_on`, learned denylist/corrections), but it no longer
+> routes or audits on its own. `ingest_messages` expresses an actionable verdict
+> as a `Signal` + `TriageDecision` (adapters in `prefrontal/mail/ingest.py`) and
+> hands it to the one shared `triage.apply`, so there is a **single** place that
+> creates the todo and a **single** `triage_log`. This is the "one triage, not
+> two" unification: a source may bring its own classifier, but every source rides
+> the same routing/audit pipeline. Two seams make this work without re-inferring a
+> mail verdict: `apply` honors a caller-supplied `routed_ref` (mail linking an
+> existing todo when it closes a delegation loop), and the `todo` route creates a
+> caller-supplied pre-built payload verbatim (mail's specialized title / notes /
+> priority / domain / project) instead of running `augment_todo` again. The
+> `triage.urgent` nudge is deliberately left out of the mail path for now (mail
+> passes no n8n client), so this is a routing/audit unification, not a change to
+> what mail notifies. *(Not yet folded in: `retriage_messages`, an in-place
+> re-classification of already-ingested mail that deliberately emits no new
+> `triage_log`/nudge — it still calls `add_todo`/`close_todo` directly.)*
 
 **Non-goals (v1).**
 

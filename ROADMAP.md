@@ -11,29 +11,33 @@ A digest of the open threads detailed in the sections below, roughly in priority
 order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
-1. **Unify triage** (see "Beyond v1 › Triage agent" and "Ingestion"). Absorb the
-   standalone mail path into a `Signal` adapter so there's *one* triage, not two,
-   before more sources land on it. The Google Apps Script work-email digest is the
-   related open ingestion source.
-2. **Focus-balance follow-ups** (see "Focus balance — follow-ups"). Small,
+1. **Focus-balance follow-ups** (see "Focus balance — follow-ups"). Small,
    self-contained polish: a fuller one-tap **label + domain + reflection**
    Shortcut, **configurable quick-file domains** (the ntfy 3-button trio is
    hard-coded to home/kids/personal), and **prompting for domain at outing
    declaration** so outings arrive pre-filed.
-3. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
+2. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
    natural next after Parent, plus pack-specific situation-tool registries and
    surface tailoring beyond `/kids`. Highest-leverage *new* capability, most work.
-4. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
+3. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
    §4). The sensor's causal check (did an accepted proposal actually improve
    downstream calibration?) and an auto-act on a non-predictive channel signal.
    Genuinely valuable but design-blocked, so last.
 
-**Recently closed out:** the **coaching agent** is now complete — the optional
-**LLM phrasing pass** on ambient cues (`coach_llm_phrasing`, profile-grounded,
-heuristic fallback), the **encouragement layer** folded in as a cue producer
-(`encouragement_cues`) so recovery routes through the shared engine, and
-**`/webhooks/outing/check` deprecated** now that `coach/check` runs the identical
-anchor decision. See "Beyond v1 › Coaching agent".
+**Recently closed out:**
+
+- **Unified triage** — the standalone mail path now feeds the *one* shared triage
+  pipeline. Mail keeps its specialized classifier but routes/audits through
+  `triage.apply` via a `Signal`/`TriageDecision` adapter, so there's a single place
+  that creates the todo and a single `triage_log`. The related **Google Apps Script
+  work-email digest** remains the open ingestion *source* (it can post normalized
+  `Signal`s to `POST /triage` today). See "Beyond v1 › Triage agent".
+- **Coaching agent** — complete: the optional **LLM phrasing pass** on ambient
+  cues (`coach_llm_phrasing`, profile-grounded, heuristic fallback), the
+  **encouragement layer** folded in as a cue producer (`encouragement_cues`) so
+  recovery routes through the shared engine, and **`/webhooks/outing/check`
+  deprecated** now that `coach/check` runs the identical anchor decision. See
+  "Beyond v1 › Coaching agent".
 
 **Deferred by choice:** a native **WidgetKit + ActivityKit Live Activity** for a
 true live outing timer (needs a Swift app / Xcode / Apple Developer account) — the
@@ -359,8 +363,18 @@ ordered by leverage; each is independent but builds on denser capture.
   `POST /webhooks/n8n`, `POST /triage`, and `GET /triage/recent`; surfaced in the
   briefing ("worth a look") and a dashboard panel; n8n templates in
   `deploy/n8n/triage-{ingest,urgent}.workflow.json`. Design of record:
-  [`docs/triage-agent.md`](docs/triage-agent.md). *(Next: absorb the standalone
-  mail path into a `Signal` adapter so there's one triage, not two.)*
+  [`docs/triage-agent.md`](docs/triage-agent.md). **The mail path is now absorbed
+  into the one shared pipeline** ✅ — mail keeps its specialized classifier
+  (`triage_message`: retention, categories, `waiting_on`, denylist/corrections)
+  but routes/audits through `triage.apply` via a `Signal`/`TriageDecision` adapter
+  (`prefrontal/mail/ingest.py`), so there's a single place that creates the todo
+  and a single `triage_log` — one triage, not two. Two seams enable it without
+  re-inferring the mail verdict: `apply` honors a caller-supplied `routed_ref`
+  (linking an existing todo when a delegation loop closes) and the `todo` route
+  creates a pre-built payload verbatim (skipping a second `augment_todo`).
+  *(Next: fold `retriage_messages` in too — today it re-classifies in place and
+  deliberately emits no `triage_log`; and land the Google Apps Script work-email
+  digest as another `Signal` source into `POST /triage`.)*
 - **Coaching agent** — **the engine, tick endpoint, and both v1 evaluators have
   shipped** (see `CHANGELOG.md`: `prefrontal/coaching.py` + `Module.evaluate`
   + Task Paralysis & Location Anchor evaluators + `prefrontal coach` +
@@ -469,9 +483,10 @@ ordered by leverage; each is independent but builds on denser capture.
   Local-first stays the default (ntfy is self-hostable). Pairs with the
   coaching-agent delivery routing and per-user delivery (multi-tenant) below.
 - **Ingestion** — core mail monitoring has **shipped** (see `CHANGELOG.md`:
-  `prefrontal/mail/` with IMAP fetch + n8n/Apps-Script batch sync). Still open:
-  the Google Apps Script work-email digest as an alternative source, and folding
-  ingestion under the general Triage agent (`docs/triage-agent.md`).
+  `prefrontal/mail/` with IMAP fetch + n8n/Apps-Script batch sync), and mail
+  ingestion is now **folded under the shared Triage agent** ✅ — `ingest_messages`
+  routes/audits through `triage.apply` (`docs/triage-agent.md`). Still open: the
+  Google Apps Script work-email digest as an alternative `Signal` source.
 - **Optional Anthropic provider** ✅ — inference stays local by default, with an
   opt-in Anthropic API path selectable **per agent** via `ANTHROPIC_AGENTS`
   (`prefrontal/integrations/provider.py`: `ProviderResolver`). The reasoning-heavy
