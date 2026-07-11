@@ -9,7 +9,12 @@ It talks to the same FastAPI service as everything else, over Tailscale, using
 the `X-Prefrontal-Token` header. It does **not** replace ntfy or the iOS
 Shortcuts — those still handle push and one-tap logging. This app is the
 foreground client. See `../ROADMAP.md` (and the GitHub project) for the native
-features planned next (widgets, background refresh, native notification actions).
+features planned next (background refresh, native notification actions).
+
+It ships a **WidgetKit extension** (`PrefrontalWidgets`) — Home Screen
+(small/medium) and Lock Screen (rectangular/circular/inline) glances showing
+your next departure, what-fits-now, and self-care progress. The app and widget
+share the base URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
 
 ## Layout
 
@@ -18,13 +23,21 @@ ios/
   project.yml              # XcodeGen spec — source of truth for the Xcode project
   Prefrontal/
     PrefrontalApp.swift    # @main
-    Config/                # AppConfig (base URL + token), Keychain
+    Prefrontal.entitlements# App Group (shared with the widget)
+    Config/                # AppConfig + SharedStore (App Group base URL + token)
     Networking/            # APIClient (async URLSession) + typed Endpoints
     Models/                # Codable structs mirroring the JSON API
     Theme/                 # Brand palette + Card
     Views/                 # RootView, Today, Todos, Calendar, Me, Panic, Settings
     Assets.xcassets/       # app icon (brand mark) + accent color
+  PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
+    PrefrontalWidgets.swift
+    PrefrontalWidgets.entitlements  # same App Group
 ```
+
+The widget target re-uses the app's `Config/`, `Networking/`, `Models/`,
+`Theme/` sources (compiled into the extension too) and reads config from the
+shared App Group, so it authenticates without you entering the token twice.
 
 The `.xcodeproj` is **generated** and git-ignored. Regenerate any time with:
 
@@ -60,7 +73,13 @@ find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64
    - **Team:** add your Apple ID (Xcode ▸ Settings ▸ Accounts ▸ +) and pick the
      personal team. Free tier is fine.
    - The bundle id is `com.morningstatic.prefrontal`; if signing complains it's
-     taken, change it to something unique (e.g. add your initials).
+     taken, change it to something unique (e.g. add your initials). Do the same
+     for the **PrefrontalWidgets** target (`…prefrontal.widgets`) — select it and
+     set the same team; automatic signing registers the App Group capability.
+   - If Xcode flags the **App Group**, make sure both targets list
+     `group.com.morningstatic.prefrontal` under Signing & Capabilities ▸ App
+     Groups (it's in the checked-in entitlements; automatic signing usually adds
+     it for you).
 3. Plug in your iPhone (`iphone171-1` is already on the tailnet). Trust the Mac
    when prompted. Enable **Developer Mode** on the phone if asked
    (Settings ▸ Privacy & Security ▸ Developer Mode).

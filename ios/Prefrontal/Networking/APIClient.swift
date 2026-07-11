@@ -35,6 +35,16 @@ struct APIClient {
         self.token = cfg.token
     }
 
+    /// Build a client from the shared App Group store, off the main actor —
+    /// used by the widget extension, which has no `AppConfig` lifecycle.
+    init(shared: Void = ()) throws {
+        let token = SharedStore.token
+        guard !token.isEmpty else { throw APIError.notConfigured }
+        guard let url = URL(string: SharedStore.baseURL) else { throw APIError.badURL }
+        self.baseURL = url
+        self.token = token
+    }
+
     private static let decoder = JSONDecoder()
 
     private func request(_ method: String, _ path: String, query: [String: String] = [:], body: Data? = nil) throws -> URLRequest {
