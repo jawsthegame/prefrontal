@@ -29,6 +29,7 @@ ios/
     Models/                # Codable structs mirroring the JSON API
     Theme/                 # Brand palette + Card
     Onboarding/            # ConnectPayload, OnboardingModel, QRScannerView
+    Intents/               # App Intents (Siri/Shortcuts/Spotlight/Action Button)
     Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
@@ -131,3 +132,23 @@ defaults to `OAUTH_BASE_URL`; ntfy hints come from the user's delivery route.
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
 | Me | `/self-care` + `/self-care/mark`; `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Panic | `/panic` |
+
+## Siri / Shortcuts / Action Button (App Intents)
+
+`Intents/PrefrontalIntents.swift` exposes the core one-tap actions as **App
+Intents**, so they work from Siri, the Shortcuts app, Spotlight, and the Action
+Button without hand-building "Get Contents of URL" shortcuts or pasting tokens:
+
+- **Add Todo** (takes a title) → `POST /todos`
+- **Panic** → `GET /panic` (speaks the headline + first step)
+- **Going Out** (intention + optional window) → `POST /webhooks/outing/start`
+- **I'm Back** → `POST /webhooks/outing/return`
+- **Start Focus** (task + optional length) / **Wrap Up Focus** → `/webhooks/focus/start` · `/end`
+- **Made It / Missed It** → `POST /webhooks/shortcut`
+
+Each intent authenticates like the widget does — `APIClient(shared:)` reads the
+base URL + token from the App Group — so it runs in the background
+(`openAppWhenRun == false`) even when the app isn't open, and reloads the widget
+timeline after a state change. Siri phrases are registered in
+`PrefrontalShortcuts` (`AppShortcutsProvider`); assign any of them to the Action
+Button in **Settings ▸ Action Button ▸ Shortcut**.
