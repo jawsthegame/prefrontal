@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Configurable trip quick-file domains** ✅ — the trip-label ask's one-tap
+  file-into-a-sphere buttons were hard-coded to 🏠 Home / 🧒 Kids / 🙋 Me (ntfy
+  caps action buttons at 3). They're now driven by a `trip_quick_domains` coaching
+  key: pick any ≤3 of shop/work/home/kids/personal and the buttons follow (a
+  shopkeeper can surface 🛒 Shop / 💼 Work / 🙋 Me). `resolve_quick_domains`
+  snaps synonyms onto the canonical vocabulary, de-dupes, caps at 3, and falls back
+  to the default trio when unset/invalid; the `trip_tracking` module resolves it once
+  per tick and stamps the set on the cue's `ref`, so both delivery paths (the
+  `coach/check` fan-out and the native client) build the same per-user buttons via
+  the new `notify.trip_label_actions` (with `DOMAIN_BUTTON_LABELS` covering all five
+  spheres). Covered by `tests/test_focus_balance.py`.
+
 - **One-tap trip retro — close label + domain + reflection in a single call** ✅ —
   a completed trip's retrospective used to need three separate posts
   (`/webhooks/trip/label`, `/webhooks/trip/domain`, `/webhooks/trip/reflect`). The

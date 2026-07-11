@@ -36,7 +36,11 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.notify import alarm_actions_for_cue, nudge_actions
+from prefrontal.webhooks.notify import (
+    alarm_actions_for_cue,
+    nudge_actions,
+    trip_label_actions,
+)
 from prefrontal.webhooks.services import RouterServices
 
 #: Coaching ``context_key`` → (ntfy button ``kind``, ``cue.ref`` key holding the
@@ -50,7 +54,7 @@ _CUE_ACTION_KIND = {
     "biobreak": ("biobreak", "target"),
     "winddown": ("winddown", "target"),
     "movement": ("movement", "target"),
-    "trip": ("trip_label", "trip_id"),
+    # "trip" is handled separately (per-user quick-file domains) — see _actions.
     "away_proposal": ("away", "trip_id"),
 }
 
@@ -107,13 +111,24 @@ def build_router(services: RouterServices) -> APIRouter:
             # from the cue's ref — no signing/handle needed (see notify.py).
             if d.cue.context_key == "morning_prep":
                 return alarm_actions_for_cue(d.cue)
+            ref = d.cue.ref or {}
+            # The trip-label ask's file-into-sphere buttons are per-user (the ≤3
+            # configured quick-file domains, stamped on the cue ref), not a fixed set.
+            if d.cue.context_key == "trip" and handle:
+                return trip_label_actions(
+                    ref.get("quick_domains"),
+                    ref.get("trip_id"),
+                    base_url=resolved_settings.oauth_base_url,
+                    secret=resolved_settings.session_secret,
+                    handle=handle,
+                )
             kind_ref = _CUE_ACTION_KIND.get(d.cue.context_key)
             if not kind_ref or not handle:
                 return []
             kind, ref_key = kind_ref
             return nudge_actions(
                 kind,
-                (d.cue.ref or {}).get(ref_key),
+                ref.get(ref_key),
                 base_url=resolved_settings.oauth_base_url,
                 secret=resolved_settings.session_secret,
                 handle=handle,

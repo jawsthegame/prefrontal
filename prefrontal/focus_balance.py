@@ -62,6 +62,39 @@ __all__ = [
 #: folds in health, social, and leisure — everything that's time for *you*.
 FOCUS_DOMAINS: tuple[str, ...] = ("shop", "work", "home", "kids", "personal")
 
+#: Coaching-state key holding the ≤3 domains the trip-label ask's one-tap buttons
+#: file into. ntfy caps action buttons at 3, so this lets a user surface the
+#: spheres *they* most want to log (a shopkeeper wants ``shop``; a parent the
+#: default trio) instead of a hard-coded set. Comma/space-separated; see
+#: :func:`resolve_quick_domains`.
+QUICK_DOMAINS_KEY = "trip_quick_domains"
+
+#: The default quick-file trio when the key is unset/invalid — the three "protect"
+#: spheres the balance feature exists to keep from being undercounted.
+DEFAULT_QUICK_DOMAINS: tuple[str, ...] = ("home", "kids", "personal")
+
+
+def resolve_quick_domains(store: Any) -> list[str]:
+    """The ≤3 canonical domains the trip-label quick-file buttons should offer.
+
+    Reads :data:`QUICK_DOMAINS_KEY` (comma/space-separated), snapping each token
+    onto the canonical vocabulary (:func:`normalize_focus_domain`), keeping only
+    real :data:`FOCUS_DOMAINS`, de-duplicating, and capping at 3 (ntfy's button
+    limit). Falls back to :data:`DEFAULT_QUICK_DOMAINS` when the key is unset or
+    yields nothing usable, so a bad value degrades to the old behavior rather than
+    dropping the buttons.
+    """
+    raw = store.get_state(QUICK_DOMAINS_KEY, "") or ""
+    picks: list[str] = []
+    for token in raw.replace(",", " ").split():
+        domain = normalize_focus_domain(token)
+        if domain in FOCUS_DOMAINS and domain not in picks:
+            picks.append(domain)
+        if len(picks) == 3:
+            break
+    return picks or list(DEFAULT_QUICK_DOMAINS)
+
+
 #: Default look-back for the rollup — a week is the smallest window over which
 #: "am I spreading my focus right?" is a fair question (a single day is too noisy).
 DEFAULT_BALANCE_DAYS = 7

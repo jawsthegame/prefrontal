@@ -251,8 +251,13 @@ focus block (declare one with the Hyperfocus "Start focus" shortcut →
 ## Shortcut: "Trip retro" (close a trip's whole retrospective in one tap)
 
 When Prefrontal auto-detects a round trip it later asks you to label it — and the
-ambient ask carries one-tap 🏠/🧒/🙋 domain buttons for a quick file. This
-Shortcut is the *fuller* version: it labels the trip, files a life-domain, **and**
+ambient ask carries one-tap domain buttons for a quick file. Those default to
+🏠 Home / 🧒 Kids / 🙋 Me (ntfy caps action buttons at 3), but they're
+**configurable**: set the `trip_quick_domains` coaching key to any ≤3 of
+`shop`/`work`/`home`/`kids`/`personal` to surface the spheres *you* most want to log
+— e.g. a shopkeeper wanting `shop,work,personal` gets 🛒 Shop / 💼 Work / 🙋 Me
+instead. (An unset or invalid value falls back to the default trio.) This Shortcut
+is the *fuller* version: it labels the trip, files a life-domain, **and**
 captures a one-line "how it went" reflection in a single interaction, so the whole
 retrospective closes from the notification without opening the dashboard. It posts
 once to `/webhooks/trip/retro` (the combined endpoint) instead of chaining three
