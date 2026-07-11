@@ -56,6 +56,14 @@ extension APIClient {
         try await post("briefing/feedback", json: ["helpful": helpful])
     }
 
+    // One-tap outcome log (the /webhooks/shortcut path). `action` is made_it /
+    // missed_it / partial; `episodeType` defaults to a departure.
+    func logShortcut(action: String, episodeType: String = "departure",
+                     channel: String = "notification") async throws {
+        try await post("webhooks/shortcut",
+                       json: ["action": action, "episode_type": episodeType, "channel": channel])
+    }
+
     // Focus / outing lifecycle (webhook routes)
     func startFocus(task: String, minutes: Int?) async throws {
         var body: [String: Any] = ["intended_task": task, "aligned": true]

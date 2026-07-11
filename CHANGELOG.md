@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS App Intents — Siri / Shortcuts / Spotlight / Action Button** ✅ (#470) —
+  the native app's core actions are now first-class **App Intents**
+  (`ios/Prefrontal/Intents/PrefrontalIntents.swift`), retiring the hand-built
+  "Get Contents of URL" shortcuts and their pasted tokens: **Add Todo**, **Panic**,
+  **Going Out** / **I'm Back**, **Start Focus** / **Wrap Up Focus**, and **Made It** /
+  **Missed It**. Each authenticates like the widget (`APIClient(shared:)` off the App
+  Group), so it runs in the background without launching the UI and reloads the
+  widget timeline after a state change; parameterized intents (todo title, outing
+  intention + window, focus task + length) prompt for their values. Siri phrases
+  are registered via an `AppShortcutsProvider`, and any action is assignable to the
+  Action Button. See `ios/README.md`.
+
 - **iOS in-app depth — morning briefing + commitment outcomes** ✅ (#477) — the
   native app surfaced only a slice of what the API returns. Today now shows the
   **morning briefing** (`GET /briefing`): the server-rendered digest in a
