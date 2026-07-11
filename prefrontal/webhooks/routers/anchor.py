@@ -29,6 +29,7 @@ from prefrontal.departure import (
     travel_leads,
 )
 from prefrontal.focus_balance import (
+    infer_domain_from_text,
     normalize_focus_domain,
 )
 from prefrontal.memory.patterns import (
@@ -102,6 +103,13 @@ def build_router(services: RouterServices) -> APIRouter:
         ('parsed'), else **inferred** from the intention — the local model first,
         then a keyword heuristic, then a default ('llm'/'heuristic'/'default').
         Only a blank intention (nothing to reason from) responds 422.
+
+        The **life-domain** is resolved at declaration too, so the outing arrives
+        pre-filed for the focus-balance rollup instead of needing a retrospective
+        tag: an explicit ``domain`` wins, else a conservative keyword scan of the
+        intention (:func:`infer_domain_from_text` — "swim with the kids" → kids,
+        but a domain-less "grab a coffee" stays unassigned). Correct a wrong guess
+        with ``/webhooks/outing/domain``.
         """
         memory = ctx.store
         window = payload.time_window_minutes
@@ -122,19 +130,27 @@ def build_router(services: RouterServices) -> APIRouter:
                     "Send a non-empty intention, or include 'time_window_minutes'."
                 ),
             )
+        # Pre-file the sphere: the user's explicit domain, else inferred from the
+        # intention text (the same conservative scan the rollup would apply later).
+        domain = normalize_focus_domain(payload.domain) or infer_domain_from_text(
+            payload.intention
+        )
         outing_id = memory.start_outing(
             payload.intention,
             window,
             home_lat=payload.home_lat,
             home_lon=payload.home_lon,
-            domain=normalize_focus_domain(payload.domain),
+            domain=domain,
         )
         return OutingStarted(
             outing_id=outing_id,
             intention=payload.intention,
             time_window_minutes=window,
             time_window_source=source,
-            confirmation=_outing_started_confirmation(payload.intention, window, source),
+            domain=domain,
+            confirmation=_outing_started_confirmation(
+                payload.intention, window, source, domain
+            ),
         )
 
     @router.post("/webhooks/outing/domain", tags=["anchor"])

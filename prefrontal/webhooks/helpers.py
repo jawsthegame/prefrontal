@@ -36,14 +36,22 @@ def _fmt_minutes(value: float | None) -> str:
 _EXACT_WINDOW_SOURCES = {"explicit", "parsed"}
 
 
-def _outing_started_confirmation(intention: str, minutes: float, source: str) -> str:
-    """One-line, speakable read-back for a started outing — flags a guessed window."""
+def _outing_started_confirmation(
+    intention: str, minutes: float, source: str, domain: str | None = None
+) -> str:
+    """One-line, speakable read-back for a started outing — flags a guessed window.
+
+    When a life-domain is known at declaration (given, or inferred from the
+    intention), it's named so the user sees the outing arrived pre-filed — and can
+    correct it with ``/webhooks/outing/domain`` if the guess is off.
+    """
     mins = _fmt_minutes(minutes)
+    filed = f" Filed under {domain}." if domain else ""
     if source in _EXACT_WINDOW_SOURCES:
-        return f"Tracking “{intention}” for {mins} min — I'll nudge you to head back."
+        return f"Tracking “{intention}” for {mins} min — I'll nudge you to head back.{filed}"
     return (
         f"Tracking “{intention}” for ~{mins} min (estimated — say “back in N min” "
-        "to set it exactly). I'll nudge you to head back."
+        f"to set it exactly). I'll nudge you to head back.{filed}"
     )
 
 

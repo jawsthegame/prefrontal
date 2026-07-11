@@ -11,21 +11,20 @@ A digest of the open threads detailed in the sections below, roughly in priority
 order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
-1. **Focus-balance follow-ups** (see "Focus balance — follow-ups"). Small,
-   self-contained polish: a fuller one-tap **label + domain + reflection**
-   Shortcut, **configurable quick-file domains** (the ntfy 3-button trio is
-   hard-coded to home/kids/personal), and **prompting for domain at outing
-   declaration** so outings arrive pre-filed.
-2. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
+1. **A second Context Pack** (see "Beyond v1 › Context Packs"). Caregiver is the
    natural next after Parent, plus pack-specific situation-tool registries and
    surface tailoring beyond `/kids`. Highest-leverage *new* capability, most work.
-3. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
+2. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
    §4). The sensor's causal check (did an accepted proposal actually improve
    downstream calibration?) and an auto-act on a non-predictive channel signal.
    Genuinely valuable but design-blocked, so last.
 
 **Recently closed out:**
 
+- **Focus-balance follow-ups** — all three shipped: the **Trip retro** combined
+  endpoint + Shortcut (`POST /webhooks/trip/retro`), **configurable quick-file
+  domains** (`trip_quick_domains`), and **domain-at-declaration** for outings
+  (`/webhooks/outing/start` pre-files the sphere). See "Focus balance — follow-ups".
 - **Unified triage** — the standalone mail path now feeds the *one* shared triage
   pipeline. Mail keeps its specialized classifier but routes/audits through
   `triage.apply` via a `Signal`/`TriageDecision` adapter, so there's a single place
@@ -125,10 +124,14 @@ domain buttons on the trip-label ask). Open threads:
   paths build the buttons from it via `notify.trip_label_actions`
   (`DOMAIN_BUTTON_LABELS` covers all five spheres). Unset/invalid falls back to the
   default trio. Covered by `tests/test_focus_balance.py`.
-- **Declared-outing domain at the point of declaration** — the outing-start flow
-  accepts a `domain`, but the iOS Shortcut / n8n recipes don't yet prompt for it;
-  wire the sphere into the "coffee, back in 15" capture so more outings arrive
-  pre-filed rather than needing a retrospective tag.
+- **Declared-outing domain at the point of declaration** ✅ — `/webhooks/outing/start`
+  now resolves the life-sphere *at declaration*: an explicit `domain` wins, else it's
+  inferred from the intention text (`infer_domain_from_text` — "swim with the kids" →
+  kids, ambiguous ones left unassigned), persisted on the outing, echoed in the
+  `OutingStarted.domain` field, and named in the confirmation ("Filed under kids.").
+  The "Going out" iOS Shortcut recipe gains a domain **Choose from Menu**. So more
+  outings arrive pre-filed for the focus-balance rollup rather than needing a
+  retrospective tag. Covered by `tests/test_location_anchor.py`.
 
 ## Learning & adaptation — the road past v1
 
