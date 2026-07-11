@@ -113,7 +113,11 @@ def checkin_message(
     title = todo.get("title", "this")
     if status == STATUS_PREPPED:
         actions = [a for a in (delegation.get("actions") or []) if a.get("mine")]
-        extra = f" ({len(actions)} action item{'s' if len(actions) != 1 else ''} for you)" if actions else ""
+        extra = (
+            f" ({len(actions)} action item{'s' if len(actions) != 1 else ''} for you)"
+            if actions
+            else ""
+        )
         return f'Your assistant prep for “{title}” is ready to review{extra}.'
     if status == STATUS_FORWARDED:
         stamp = _parse_ts(delegation.get("prepped_at") or delegation.get("updated_at"))
@@ -372,7 +376,10 @@ def _heuristic_brief(
         excerpt = context.strip()
         if len(excerpt) > _HEURISTIC_CONTEXT_EXCERPT:
             trimmed = len(excerpt) - _HEURISTIC_CONTEXT_EXCERPT
-            excerpt = excerpt[:_HEURISTIC_CONTEXT_EXCERPT].rstrip() + f"… [+{trimmed} more characters — not yet processed]"
+            excerpt = (
+                excerpt[:_HEURISTIC_CONTEXT_EXCERPT].rstrip()
+                + f"… [+{trimmed} more characters — not yet processed]"
+            )
         lines.append(f"Context you provided (awaiting the model):\n{excerpt}")
     steps = []
     if decomposition:

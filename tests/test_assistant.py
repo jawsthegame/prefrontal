@@ -845,7 +845,8 @@ def test_assistant_assigns_owner_and_accountable(hh_memory):
             {"op": "set_chore", "title": "Trash", "due_time": "21:00", "owner_id": alex},
         ],
     )
-    assert next(r for r in hh_memory.routines() if r["title"] == "Bedtime")["accountable_id"] == alex
+    bedtime = next(r for r in hh_memory.routines() if r["title"] == "Bedtime")
+    assert bedtime["accountable_id"] == alex
     assert next(c for c in hh_memory.chores() if c["title"] == "Trash")["owner_id"] == alex
 
     # Re-assign the chore's owner to the other parent, then clear it (either parent).

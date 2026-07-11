@@ -67,7 +67,8 @@ def normalize_checkin_config(raw: Any) -> tuple[dict[str, Any] | None, str | Non
     return {
         "enabled": enabled,
         "day": day,
-        "time": parsed_time.strftime("%H:%M") if parsed_time else None,  # tz-ok: local wall-clock schedule from user input
+        # tz-ok: local wall-clock schedule from user input
+        "time": parsed_time.strftime("%H:%M") if parsed_time else None,
     }, None
 
 

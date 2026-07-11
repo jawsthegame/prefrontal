@@ -499,7 +499,9 @@ def test_set_commitment_hardness_is_sticky_across_resync(store):
     assert store.get_commitment(cid)["hardness"] == "hard"  # feed didn't reset it
 
     # A feed-sourced hardness, by contrast, stays refreshable from the feed.
-    sync_calendar(store, [{"title": "Board", "start_at": _iso(60), "external_id": "work:b", "hard": True}])
+    sync_calendar(
+        store, [{"title": "Board", "start_at": _iso(60), "external_id": "work:b", "hard": True}]
+    )
     bid = next(c["id"] for c in store.upcoming_commitments() if c["external_id"] == "work:b")
     assert store.get_commitment(bid)["hardness_source"] == "feed"
     sync_calendar(store, [{"title": "Board", "start_at": _iso(60), "external_id": "work:b"}])
@@ -1035,7 +1037,8 @@ def test_set_commitment_hardness_endpoint(client):
         ]},
     )
     cid = client.get("/commitments", headers=_auth()).json()["commitments"][0]["id"]
-    assert client.get("/commitments", headers=_auth()).json()["commitments"][0]["hardness"] == "soft"
+    body = client.get("/commitments", headers=_auth()).json()
+    assert body["commitments"][0]["hardness"] == "soft"
 
     r = client.post(f"/commitments/{cid}/hardness", headers=_auth(), json={"hardness": "hard"})
     assert r.status_code == 200

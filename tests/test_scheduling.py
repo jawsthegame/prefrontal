@@ -67,7 +67,9 @@ def test_fit_orphan_only_loses_on_exact_tie():
     tie = fit_todos(60, [_todo(1, project_rank=None), _todo(2, project_rank=5)])
     assert _order(tie) == [2, 1]  # exact tie → ranked project edges out the orphan
     # But a higher-priority orphan still beats a top-project todo.
-    win = fit_todos(60, [_todo(1, priority=2, project_rank=None), _todo(2, priority=1, project_rank=1)])
+    win = fit_todos(
+        60, [_todo(1, priority=2, project_rank=None), _todo(2, priority=1, project_rank=1)]
+    )
     assert _order(win) == [1, 2]
 
 

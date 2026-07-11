@@ -90,7 +90,7 @@ def build_router(services: RouterServices) -> APIRouter:
         try:
             projects = ctx.store.reorder_projects(payload.order)
         except ValueError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         return {"projects": projects}
 
     @router.get("/projects/{project_id}", tags=["projects"])

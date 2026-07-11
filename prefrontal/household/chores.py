@@ -167,7 +167,8 @@ def fmt_time_12h(hhmm: Any) -> str:
     t = _parse_hhmm(hhmm)
     if t is None:
         return str(hhmm or "")
-    return datetime(2000, 1, 1, t.hour, t.minute).strftime("%-I:%M%p").lower()  # tz-ok: renders a stored local "HH:MM" schedule
+    # tz-ok: renders a stored local "HH:MM" schedule
+    return datetime(2000, 1, 1, t.hour, t.minute).strftime("%-I:%M%p").lower()
 
 
 def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:

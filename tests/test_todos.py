@@ -1315,7 +1315,8 @@ def test_todo_start_endpoint_marks_started_and_is_idempotent(client, store_open)
     assert next(t for t in listed if t["id"] == tid)["started_at"] is not None
     assert client.post(f"/todos/{tid}/start", headers=_auth()).status_code == 200
     # Unstart clears it; starting a non-existent todo 404s.
-    assert client.post(f"/todos/{tid}/unstart", headers=_auth()).json()["todo"]["started_at"] is None
+    body = client.post(f"/todos/{tid}/unstart", headers=_auth()).json()
+    assert body["todo"]["started_at"] is None
     assert client.post("/todos/99999/start", headers=_auth()).status_code == 404
 
 

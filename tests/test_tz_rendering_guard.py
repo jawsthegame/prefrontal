@@ -99,7 +99,9 @@ def test_no_utc_timestamp_slices() -> None:
     for path in _py_files():
         src = path.read_text()
         offenders += _slice_offenders(path, src, ast.parse(src))
-    assert not offenders, "Timestamp string slices found (render via local_datetime):\n" + "\n".join(offenders)
+    assert not offenders, (
+        "Timestamp string slices found (render via local_datetime):\n" + "\n".join(offenders)
+    )
 
 
 def test_clock_strftime_is_local_or_marked() -> None:
