@@ -129,6 +129,109 @@ def checkin_message(
         )
     return None
 
+
+#: System prompt for the inbound loop-closer: is this email the VA handing work back?
+_MATCH_SYSTEM = (
+    "You decide whether an incoming email is a virtual assistant returning the "
+    "COMPLETED work on a task that was handed to them. You are given the email "
+    "(already known to come from an assistant's address) and a short list of the "
+    "tasks currently delegated to that assistant. Pick the ONE task the email is "
+    "the finished return of — the assistant did the work and is handing it back "
+    "(a reply with the answer, the draft, the booking, the result) — or none if "
+    "the email is merely an acknowledgement (\"on it\", \"will do\"), a question "
+    "back, an out-of-office, or unrelated. When unsure, choose none.\n"
+    'Reply with ONLY a JSON object: {"todo_id": <an id from the list, or null>, '
+    '"reason": "<a few words>"}.'
+)
+
+
+def match_delegated_reply(
+    *,
+    sender_email: str | None,
+    subject: str | None,
+    body: str | None,
+    candidates: list[dict[str, Any]],
+    client: Generator | None = None,
+) -> dict[str, Any] | None:
+    """Infer whether an incoming mail item is a human VA returning a delegated todo.
+
+    Closes the delegation loop from the *inbound* side (issue #448): when a message
+    arrives from the address a todo was handed to, and the model confirms it's the
+    finished work coming back, the caller advances that delegation to
+    :data:`STATUS_RETURNED` and links the mail to the existing todo — instead of
+    spawning an unrelated new todo that buries the returned work.
+
+    Two gates, cheapest first, so this is a no-op on ordinary mail:
+
+    1. **Sender gate (deterministic).** The message must come from the
+       ``destination`` of an open ``email``-handler delegation. No match → ``None``
+       with no model call. This bounds the model to the rare VA-reply case, and to
+       the (usually one) task handed to *that* assistant.
+    2. **Content confirmation (model).** Among that sender's delegated todos, the
+       model picks the one this message is the completed return of, or none — so a
+       VA's "on it!" acknowledgement or an unrelated note doesn't wrongly close a
+       loop. Never raises: with no ``client``, or on any model failure, the loop is
+       simply not closed automatically (the caller falls back to normal handling).
+       Safe by construction — no delegation state is ever mutated on a guess.
+
+    Args:
+        sender_email: The incoming message's sender address.
+        subject: The incoming subject line.
+        body: The incoming body or snippet (``None`` under the ``signals`` policy —
+            the sender gate + subject still work).
+        candidates: ``store.actively_delegated_todos()`` — todo dicts each carrying
+            a decoded ``delegation`` dict.
+        client: A model client; ``None`` disables content confirmation (and so
+            never auto-advances a delegation).
+
+    Returns:
+        The matched todo dict (an element of ``candidates``), or ``None``.
+    """
+    sender = (sender_email or "").strip().lower()
+    if not sender:
+        return None
+    matches = [
+        c
+        for c in candidates
+        if (c.get("delegation") or {}).get("handler") == HANDLER_EMAIL
+        and (c["delegation"].get("destination") or "").strip().lower() == sender
+    ]
+    if not matches or client is None:
+        return None
+    chosen_id = _llm_pick_delegation(subject, body, matches, client)
+    if chosen_id is None:
+        return None
+    return next((c for c in matches if c["id"] == chosen_id), None)
+
+
+def _llm_pick_delegation(
+    subject: str | None,
+    body: str | None,
+    candidates: list[dict[str, Any]],
+    client: Generator,
+) -> int | None:
+    """Ask the model which delegated todo an incoming message returns, or ``None``.
+
+    House style: one JSON call, tolerant extraction, restricted to the ids in
+    ``candidates``; any failure or an out-of-set id → ``None`` (no auto-advance).
+    """
+    from prefrontal.integrations.base import ProviderError
+
+    lines = [f"Email subject: {subject or '(no subject)'}"]
+    text = (body or "").strip()
+    if text:
+        lines += ["Email body:", text[:2000]]
+    lines += ["", "Tasks delegated to this assistant:"]
+    lines += [f"- id={c['id']}: {(c.get('title') or '').strip()}" for c in candidates]
+    try:
+        reply = client.generate("\n".join(lines), system=_MATCH_SYSTEM)
+    except ProviderError:
+        return None
+    chosen = extract_json_object(reply).get("todo_id")
+    if not isinstance(chosen, int) or isinstance(chosen, bool):
+        return None
+    return chosen if chosen in {c["id"] for c in candidates} else None
+
 #: Draft channels a prep brief can produce.
 _DRAFT_CHANNELS = ("email", "message", "call")
 

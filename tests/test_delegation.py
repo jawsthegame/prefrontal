@@ -36,6 +36,7 @@ from prefrontal.delegation import (
     compose_va_email,
     delegation_notice,
     generate_prep,
+    match_delegated_reply,
     run_delegation,
 )
 from prefrontal.integrations.ollama import OllamaClient
@@ -857,3 +858,88 @@ def test_http_delegate_email_auto_matches_domain(http):
     # rather than reporting "SMTP not configured" (which is the no-match outcome).
     assert r["status"] == STATUS_FAILED
     assert "send failed" in r["detail"]
+
+
+# -- match_delegated_reply: inbound loop-closer (#448) -----------------------
+
+
+def _candidate(todo_id: int, title: str, *, handler: str, destination: str | None):
+    """A candidate as ``actively_delegated_todos()`` shapes it (todo + delegation)."""
+    return {
+        "id": todo_id,
+        "title": title,
+        "delegation": {"handler": handler, "destination": destination,
+                       "status": STATUS_FORWARDED},
+    }
+
+
+def test_match_needs_a_sender():
+    """No sender address → no match, and (a fortiori) no model call."""
+    cands = [_candidate(1, "Book venue", handler="email", destination="va@x.com")]
+    assert match_delegated_reply(
+        sender_email=None, subject="hi", body="", candidates=cands,
+        client=_ollama_json({"todo_id": 1}),
+    ) is None
+
+
+def test_match_sender_gate_blocks_strangers():
+    """A sender that isn't a VA destination never reaches the model."""
+    def boom(request):  # the model must not be consulted
+        raise AssertionError("model should not be called without a sender match")
+
+    client = OllamaClient(transport=httpx.MockTransport(boom))
+    cands = [_candidate(1, "Book venue", handler="email", destination="va@x.com")]
+    assert match_delegated_reply(
+        sender_email="stranger@elsewhere.com", subject="hi", body="", candidates=cands,
+        client=client,
+    ) is None
+
+
+def test_match_ignores_agent_handler():
+    """In-app agent delegations have no inbound email to match."""
+    cands = [_candidate(1, "Book venue", handler="agent", destination=None)]
+    assert match_delegated_reply(
+        sender_email="va@x.com", subject="hi", body="", candidates=cands,
+        client=_ollama_json({"todo_id": 1}),
+    ) is None
+
+
+def test_match_without_client_never_advances():
+    """No model → the sender gate alone must not close a loop (no guessing)."""
+    cands = [_candidate(1, "Book venue", handler="email", destination="va@x.com")]
+    assert match_delegated_reply(
+        sender_email="va@x.com", subject="Re: venue", body="done", candidates=cands,
+        client=None,
+    ) is None
+
+
+def test_match_returns_the_model_choice():
+    cands = [
+        _candidate(1, "Book venue", handler="email", destination="va@x.com"),
+        _candidate(2, "Order catering", handler="email", destination="va@x.com"),
+    ]
+    got = match_delegated_reply(
+        sender_email="VA@x.com", subject="Re: catering", body="ordered",
+        candidates=cands, client=_ollama_json({"todo_id": 2}),
+    )
+    assert got is not None and got["id"] == 2
+
+
+def test_match_rejects_out_of_set_id():
+    """A model id that isn't a candidate is discarded (no cross-loop bleed)."""
+    cands = [_candidate(1, "Book venue", handler="email", destination="va@x.com")]
+    assert match_delegated_reply(
+        sender_email="va@x.com", subject="hi", body="", candidates=cands,
+        client=_ollama_json({"todo_id": 99}),
+    ) is None
+
+
+def test_match_model_failure_declines():
+    """A model error degrades to no match rather than raising into ingest."""
+    cands = [_candidate(1, "Book venue", handler="email", destination="va@x.com")]
+    client = OllamaClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(500, json={"error": "down"})
+    ))
+    assert match_delegated_reply(
+        sender_email="va@x.com", subject="hi", body="", candidates=cands, client=client,
+    ) is None

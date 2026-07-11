@@ -874,3 +874,161 @@ def test_learned_denylist_needs_repeat_drops(store):
     deny = learned_denylist(store, repeat_threshold=2)
     assert "repeat@vendor.com" in deny
     assert "solo@vendor.com" not in deny
+
+
+# -- inbound delegation loop-closer (#448) -----------------------------------
+
+
+def _ollama_router(*, verdict: dict, match: dict | None) -> OllamaClient:
+    """A client that answers triage calls with ``verdict`` and the delegation
+    loop-closer's call with ``match`` (branch on the system prompt). ``match=None``
+    stands in for a model that declines to link (no ``todo_id``)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if "virtual assistant returning" in payload.get("system", ""):
+            body = json.dumps(match if match is not None else {"todo_id": None})
+        else:
+            body = json.dumps(verdict)
+        return httpx.Response(200, json={"response": body})
+
+    return OllamaClient(transport=httpx.MockTransport(handler))
+
+
+def _delegate(store, title: str, *, to: str) -> int:
+    """Create a todo handed off to a human VA at ``to`` (status ``forwarded``)."""
+    todo_id = store.add_todo(title)
+    store.set_delegation(todo_id, handler="email", destination=to, status="forwarded")
+    return todo_id
+
+
+_VERDICT = {"needs_action": True, "urgency": "normal", "category": "reply"}
+
+
+def test_ingest_advances_delegation_on_va_reply(store):
+    """A reply from the VA we handed a todo to closes that loop — no new todo."""
+    todo_id = _delegate(store, "Book the venue for the offsite", to="va@help.com")
+    client = _ollama_router(verdict=_VERDICT, match={"todo_id": todo_id})
+
+    summary = ingest_messages(
+        store,
+        [_msg(**{
+            "message_id": "<reply-1@help.com>",
+            "from": "Val Assistant <va@help.com>",
+            "subject": "Re: Book the venue",
+            "body": "All booked — confirmation attached. Room for 30 on the 14th.",
+        })],
+        account="personal",
+        client=client,
+    )
+
+    assert summary.delegations_advanced == 1
+    assert summary.todos_created == 0
+    assert store.get_delegation(todo_id)["status"] == "returned"
+    # The mail is linked to the existing todo, not a fresh one.
+    (linked,) = store.mail_needing_action()
+    assert linked["todo_id"] == todo_id
+    # A returned delegation is back on the plate (no longer parked).
+    assert [t["id"] for t in store.open_todos()] == [todo_id]
+
+
+def test_ingest_delegation_ignores_unrelated_sender(store):
+    """A needs-action message from someone else never touches the delegation."""
+    todo_id = _delegate(store, "Book the venue", to="va@help.com")
+    client = _ollama_router(verdict=_VERDICT, match={"todo_id": todo_id})
+
+    summary = ingest_messages(
+        store, [_msg()], account="personal", client=client  # from sarah@example.com
+    )
+
+    assert summary.delegations_advanced == 0
+    assert summary.todos_created == 1
+    assert store.get_delegation(todo_id)["status"] == "forwarded"
+
+
+def test_ingest_delegation_not_advanced_when_model_declines(store):
+    """Sender matches, but the model says it's not the returned work → normal todo."""
+    todo_id = _delegate(store, "Book the venue", to="va@help.com")
+    client = _ollama_router(verdict=_VERDICT, match={"todo_id": None})
+
+    summary = ingest_messages(
+        store,
+        [_msg(**{
+            "message_id": "<ooo-1@help.com>",
+            "from": "Val Assistant <va@help.com>",
+            "subject": "Out of office",
+            "body": "I'm away until Monday.",
+        })],
+        account="personal",
+        client=client,
+    )
+
+    assert summary.delegations_advanced == 0
+    assert summary.todos_created == 1
+    assert store.get_delegation(todo_id)["status"] == "forwarded"
+
+
+def test_ingest_delegation_not_advanced_when_model_down(store):
+    """No model to confirm the match → the loop is never closed on a guess."""
+    todo_id = _delegate(store, "Book the venue", to="va@help.com")
+
+    summary = ingest_messages(
+        store,
+        [_msg(**{
+            "message_id": "<reply-2@help.com>",
+            "from": "Val Assistant <va@help.com>",
+            "subject": "Re: Book the venue",
+            "body": "Done!",
+        })],
+        account="personal",
+        client=_ollama_down(),
+    )
+
+    assert summary.delegations_advanced == 0
+    assert store.get_delegation(todo_id)["status"] == "forwarded"
+
+
+def test_ingest_delegation_picks_among_todos_for_same_va(store):
+    """Two todos with the same VA: the model's id picks which loop closes."""
+    a = _delegate(store, "Book the venue", to="va@help.com")
+    b = _delegate(store, "Order the catering", to="va@help.com")
+    client = _ollama_router(verdict=_VERDICT, match={"todo_id": b})
+
+    summary = ingest_messages(
+        store,
+        [_msg(**{
+            "message_id": "<reply-3@help.com>",
+            "from": "Val Assistant <va@help.com>",
+            "subject": "Re: catering",
+            "body": "Catering ordered for 30.",
+        })],
+        account="personal",
+        client=client,
+    )
+
+    assert summary.delegations_advanced == 1
+    assert store.get_delegation(b)["status"] == "returned"
+    assert store.get_delegation(a)["status"] == "forwarded"
+
+
+def test_ingest_delegation_mirrors_return_into_triage_log(store):
+    """A closed loop shows in the unified feed, routed to the existing todo."""
+    todo_id = _delegate(store, "Book the venue", to="va@help.com")
+    client = _ollama_router(verdict=_VERDICT, match={"todo_id": todo_id})
+
+    ingest_messages(
+        store,
+        [_msg(**{
+            "message_id": "<reply-4@help.com>",
+            "from": "Val Assistant <va@help.com>",
+            "subject": "Re: Book the venue",
+            "body": "Booked.",
+        })],
+        account="personal",
+        client=client,
+    )
+
+    (row,) = store.recent_triage()
+    assert row["route"] == "todo"
+    assert row["routed_ref"] == f"todo:{todo_id}"
+    assert "delegation returned" in row["reason"]
