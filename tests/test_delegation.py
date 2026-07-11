@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import smtplib
+from datetime import datetime
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ from prefrontal.assistant import (
     execute_actions,
     validate_actions,
 )
+from prefrontal.coaching import CoachContext, _fired_key
 from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import generate_key
 from prefrontal.delegation import (
@@ -31,8 +33,9 @@ from prefrontal.delegation import (
     STATUS_IN_PREP,
     STATUS_PREPPED,
     STATUS_RETURNED,
-    DelegationResult,
     _fit_num_ctx,
+    checkin_interval_hours,
+    checkin_message,
     compose_va_email,
     delegation_notice,
     generate_prep,
@@ -313,11 +316,6 @@ def test_http_delegate_recipients_endpoint(http):
 
 # -- parking: delegated todos drop off the active plate + slow check-in ---------
 
-from datetime import datetime
-
-from prefrontal.coaching import CoachContext, _fired_key
-from prefrontal.delegation import checkin_interval_hours, checkin_message
-
 _NOW = datetime(2026, 7, 10, 12, 0, 0)
 
 
@@ -328,7 +326,7 @@ def test_checkin_interval_scales_with_status_and_urgency():
     assert checkin_interval_hours({"deadline": "2026-07-11"}, fwd, _NOW) == 24.0  # near deadline
     assert checkin_interval_hours({"priority": 2}, fwd, _NOW) == 48.0             # high priority
     assert checkin_interval_hours({"priority": 1, "deadline": "2026-12-01"}, fwd, _NOW) == 72.0
-    assert checkin_interval_hours({"priority": 1}, fwd, _NOW) == 168.0            # no deadline / low
+    assert checkin_interval_hours({"priority": 1}, fwd, _NOW) == 168.0  # no deadline / low
 
 
 def test_checkin_message_variants():
@@ -711,7 +709,9 @@ def test_http_delegate_runs_async_and_completes(secret_env, tmp_path):
     with TestClient(app) as c:
         provision_user(app.state.store, "me", display_name="Me", token=SECRET, is_operator=True)
         tid = c.post("/todos", json={"title": "Book dentist"}, headers=_headers()).json()["todo_id"]
-        immediate = c.post(f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers()).json()
+        immediate = c.post(
+            f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers()
+        ).json()
         assert immediate["status"] == STATUS_IN_PREP  # returns before prep finishes
         # The daemon thread completes near-instantly with the mock client; poll briefly.
         deadline = time.monotonic() + 5.0

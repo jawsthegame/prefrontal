@@ -189,6 +189,10 @@ class TimeBlindnessModule(Module):
         "morning_routine_minutes": str(DEFAULT_MORNING_ROUTINE_MINUTES),
     }
 
+    def channel_targets(self) -> dict[str, str]:
+        """Departure nudges carry one-tap buttons, keyed by ``commitment_id``."""
+        return {"departure": "commitment_id"}
+
     def interventions(self) -> list[Intervention]:
         """Declare time-awareness interventions."""
         return [

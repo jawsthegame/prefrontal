@@ -405,10 +405,16 @@ def test_alignment_check_pierces_protected_hyperfocus(store):
         "the refactor", planned_minutes=30, aligned=True, started_at=_utc_minutes_ago(45)
     )
     assert is_focus_protected(store) is True  # aligned overrun still shields *others*
+    mods = enabled_modules()
     ctx = build_context(
-        store, now=datetime(2026, 6, 15, 11, 0, 0), focus_protected=is_focus_protected(store)
+        store,
+        now=datetime(2026, 6, 15, 11, 0, 0),
+        focus_protected=is_focus_protected(store),
+        # As the tick does: hyperfocus declares pierces_protection, so its own
+        # alignment_check is exempt from the protection it provides.
+        pierce_keys=frozenset(m.key for m in mods if m.pierces_protection),
     )
-    cues = collect_cues(store, enabled_modules(), ctx)
+    cues = collect_cues(store, mods, ctx)
     decisions = decide(store, cues, ctx, profile=None)
     fired = [d for d in decisions if d.cue.intervention == "alignment_check"]
     assert len(fired) == 1  # pierced protection instead of being held

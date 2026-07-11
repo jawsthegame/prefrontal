@@ -12,7 +12,7 @@ short ``task`` episodes that end without an ``outcome``.
 
 from __future__ import annotations
 
-from prefrontal.coaching import CoachContext, Cue, _fired_key
+from prefrontal.coaching import CoachContext, Cue, last_fired
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.store import MemoryStore
@@ -323,7 +323,7 @@ class ImpulsivityModule(Module):
         if not switch_drift(session, threshold):
             return []
         dedup_key = f"switch_drift:{session['id']}"
-        if store.get_state(_fired_key(dedup_key)) is not None:
+        if last_fired(store, dedup_key) is not None:
             return []  # already nudged about this block
         impulses = int(session.get("switch_impulses") or 0)
         deferred = int(session.get("switches_deferred") or 0)

@@ -59,7 +59,9 @@ def test_classify_kind_roster_pass_wins_offline_and_over_model():
     assert classify_kind("Sam dentist", client=client, child_names=["Sam"]) == ("child", "roster")
     assert client.calls == []
     # No roster match → the model is still consulted as before.
-    assert classify_kind("Standup", client=_StubClient("SELF"), child_names=["Sam"]) == ("self", "llm")
+    assert classify_kind(
+        "Standup", client=_StubClient("SELF"), child_names=["Sam"]
+    ) == ("self", "llm")
 
 
 def test_classify_kind_model_can_return_child():

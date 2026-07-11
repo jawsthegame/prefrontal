@@ -628,7 +628,8 @@ def _expand_master(
         else:
             ev["end_at"] = None
         if base_id:
-            stamp = occ.strftime("%Y%m%dT%H%M%S")  # tz-ok: iCal occurrence UID, intentional UTC wire format (not display)
+            # tz-ok: iCal occurrence UID, intentional UTC wire format (not display)
+            stamp = occ.strftime("%Y%m%dT%H%M%S")
             ev["external_id"] = f"{base_id}{RECUR_OCCURRENCE_SEP}{stamp}"
         results.append(ev)
     return results

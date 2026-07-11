@@ -15,6 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.assistant import build_snapshot, execute_actions, validate_actions
+from prefrontal.classify import classify_kind
+from prefrontal.commitments import sync_calendar
 from prefrontal.config import Settings
 from prefrontal.household import (
     balance_view,
@@ -36,8 +38,6 @@ from prefrontal.household import (
     unseen_changes,
     week_key,
 )
-from prefrontal.classify import classify_kind
-from prefrontal.commitments import sync_calendar
 from prefrontal.impact import utcnow
 from prefrontal.integrations.delivery import (
     DeliveryClient,

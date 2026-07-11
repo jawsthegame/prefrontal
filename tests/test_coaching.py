@@ -40,6 +40,11 @@ SECRET = "coach-secret"
 
 NOON = datetime(2026, 7, 2, 12, 0, 0)  # inside the default 8–22 responsive window
 
+# The combined channel-ack target map the engine builds from the enabled modules
+# (see coaching.channel_targets_for); passed to note_delivered in these unit
+# tests, which exercise it directly rather than through run_coaching_tick.
+_TRACKED = {"outing": "outing_id", "departure": "commitment_id", "focus": "session_id"}
+
 
 class _FakeStore:
     """Minimal store stub for the pure channel/suppression tests."""
@@ -174,7 +179,7 @@ def test_note_delivered_tracks_only_button_bearing_interrupting_nudges():
         Decision(cue=_cue(dedup="t"), channel="push", text="y"),         # todo: no buttons
         Decision(cue=_outing_cue(9), channel="digest", text="z"),        # digest: no interrupt
     ]
-    note_delivered(store, decisions, NOON)
+    note_delivered(store, decisions, NOON, targets=_TRACKED)
     keys = sorted(k for k in store._state if k.startswith("coach_ack:"))
     assert keys == ["coach_ack:outing:7"]  # only the interactive, non-digest cue
     assert store._state["coach_ack:outing:7"].split("|")[1] == "push"
@@ -182,7 +187,9 @@ def test_note_delivered_tracks_only_button_bearing_interrupting_nudges():
 
 def test_resolve_ack_logs_acknowledged_and_clears_marker():
     store = _FakeStore()
-    note_delivered(store, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON)
+    note_delivered(
+        store, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON, targets=_TRACKED
+    )
     assert resolve_ack(store, "outing", 7) is True
     assert store.episodes == [{
         "episode_type": "reminder", "channel": "sound", "acknowledged": True,
@@ -194,10 +201,13 @@ def test_resolve_ack_logs_acknowledged_and_clears_marker():
 
 def test_sweep_logs_unacked_as_miss_after_window_but_leaves_fresh_ones():
     store = _FakeStore()
-    note_delivered(store, [Decision(cue=_outing_cue(1), channel="push", text="x")], NOON)
+    note_delivered(
+        store, [Decision(cue=_outing_cue(1), channel="push", text="x")], NOON, targets=_TRACKED
+    )
     note_delivered(
         store, [Decision(cue=_outing_cue(2), channel="push", text="y")],
         NOON - timedelta(minutes=90),  # delivered long ago → past the ack window
+        targets=_TRACKED,
     )
     swept = sweep_stale_nudges(store, NOON, ack_window_minutes=60.0)
     assert swept == 1  # only the stale one
@@ -563,6 +573,56 @@ def test_run_coaching_tick_auto_abandons_outing_without_a_cue():
         conn.close()
 
 
+def test_last_fired_reads_the_stamp_record_fired_writes():
+    """The public debounce accessor a self-pacing module reads instead of the
+    engine-private state-key layout: None before a fire, the stamped time after."""
+    from prefrontal.coaching import last_fired, record_fired
+
+    store = _FakeStore()
+    cue = _cue(dedup="proj:7")
+    assert last_fired(store, "proj:7") is None
+    record_fired(store, [Decision(cue=cue, channel="push", text="x")], NOON)
+    assert last_fired(store, "proj:7") == NOON
+
+
+def test_channel_targets_combine_from_enabled_modules():
+    """The trackable context→ref map is assembled from the modules that emit those
+    cues (replacing the engine's old hardcoded table), so each declared pair shows
+    up in the combined map."""
+    from prefrontal.coaching import channel_targets_for
+    from prefrontal.modules import enabled_modules
+
+    combined = channel_targets_for(enabled_modules())
+    assert combined["outing"] == "outing_id"        # location_anchor
+    assert combined["departure"] == "commitment_id"  # time_blindness
+    assert combined["focus"] == "session_id"         # hyperfocus
+
+
+def test_tick_survives_a_raising_precollection_sweep(monkeypatch):
+    """Failure isolation: a raise in the decomposition refresh (which runs *before*
+    the guarded cue collection) must not sink the tick — it degrades to 0 and the
+    rest of the tick still runs."""
+    import prefrontal.todos as todos_mod
+    from prefrontal.coaching import TickResult, run_coaching_tick
+
+    def _boom(*a, **k):
+        raise RuntimeError("decomposition backend down")
+
+    monkeypatch.setattr(todos_mod, "sweep_avoided_decompositions", _boom)
+
+    conn, unscoped, oid = _tick_store_with_outing(22.0)  # firm outing cue still due
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        settings = Settings(timezone="UTC")
+        result = run_coaching_tick(store, settings=settings, ollama=_offline_ollama(settings))
+        assert isinstance(result, TickResult)
+        assert result.decomposed == 0  # the raising sweep degraded to 0
+        # …and the tick still produced the outing escalation cue.
+        assert any(d.cue.context_key == "outing" for d in result.decisions)
+    finally:
+        conn.close()
+
+
 def test_coach_check_surfaces_morning_prep_alarm_button():
     """The evening morning-prep nudge comes back from the tick with a client-side
     Set-alarm view button (built from the cue's ref, no signing)."""
@@ -629,7 +689,8 @@ def test_coach_ack_resolves_a_tracked_nudge_by_context_and_target():
         scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
         # Simulate a nudge the engine delivered on 'sound' for outing 7.
         note_delivered(
-            scoped, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON
+            scoped, [Decision(cue=_outing_cue(7), channel="sound", text="x")], NOON,
+            targets=_TRACKED,
         )
         app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET))
         with TestClient(app) as c:
@@ -661,7 +722,8 @@ def test_nudge_act_tap_records_the_delivered_channel():
         scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
         oid = scoped.start_outing(intention="Coffee", time_window_minutes=30)
         note_delivered(
-            scoped, [Decision(cue=_outing_cue(oid), channel="sound", text="x")], NOON
+            scoped, [Decision(cue=_outing_cue(oid), channel="sound", text="x")], NOON,
+            targets=_TRACKED,
         )
         settings = Settings(webhook_secret=SECRET, session_secret=signing,
                             oauth_base_url="https://x.ts.net")

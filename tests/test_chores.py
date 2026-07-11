@@ -978,7 +978,9 @@ def test_effective_schedule_inherit_override_untimed():
     # No own time → inherit the routine's schedule (days, month_days, due_time).
     assert effective_chore_schedule({"due_time": "", "days": ""}, routine) == ("0,1", "", "08:00")
     # Own time → full override (own days + time win).
-    assert effective_chore_schedule({"due_time": "09:15", "days": "2"}, routine) == ("2", "", "09:15")
+    assert effective_chore_schedule(
+        {"due_time": "09:15", "days": "2"}, routine
+    ) == ("2", "", "09:15")
     # Standalone with no time → untimed.
     assert effective_chore_schedule({"due_time": "", "days": "3"}, None) == ("3", "", "")
     # with_effective_schedule copies the row with the resolved fields.
@@ -996,7 +998,9 @@ def test_effective_schedule_inherits_and_overrides_month_days():
     assert effective_chore_schedule(
         {"due_time": "09:00", "days": "", "month_days": "5"}, routine
     ) == ("", "5", "09:00")
-    merged = with_effective_schedule({"id": 1, "due_time": "", "days": "", "month_days": ""}, routine)
+    merged = with_effective_schedule(
+        {"id": 1, "due_time": "", "days": "", "month_days": ""}, routine
+    )
     assert merged["month_days"] == "1,15"
 
 
@@ -1225,7 +1229,8 @@ def test_celebrate_ignores_disabled_chores_and_missing_household(store, dana):
     assert r["routine_completed"]["title"] == "Tidy"          # disabled chore didn't block
     # A chore not in this household → None (so the caller 404s), no crash.
     assert log_chore_done_and_celebrate(
-        dana, chore_id=9999, done_on="2026-07-02", done_by=dana_id, settings=UTC, client=client) is None
+        dana, chore_id=9999, done_on="2026-07-02", done_by=dana_id, settings=UTC, client=client
+    ) is None
 
 
 def test_standalone_chore_never_celebrates(store, dana):

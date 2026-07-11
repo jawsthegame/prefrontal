@@ -21,7 +21,7 @@ from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.coaching import (
     CoachContext,
     Cue,
-    _fired_key,
+    last_fired,
     note_hint,
     stamp_pending_engagement,
     sweep_engagement,
@@ -78,7 +78,7 @@ class DelegationCheckinModule(Module):
                 continue  # in_prep etc. — nothing worth a nudge yet
             interval = checkin_interval_hours(todo, delegation, ctx.now)
             dedup_key = f"delegation_checkin:{todo['id']}"
-            last = _parse_ts(store.get_state(_fired_key(dedup_key)))
+            last = last_fired(store, dedup_key)
             elapsed = (
                 (ctx.now - last).total_seconds() / 3600.0 if last is not None else None
             )

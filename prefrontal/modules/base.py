@@ -87,6 +87,15 @@ class Module(ABC):
     #: subclass overrides it with its own plain-dict literal (any ``Mapping``
     #: satisfies the annotation and :meth:`seed` only ever reads it).
     default_state: Mapping[str, str] = MappingProxyType({})
+    #: Whether this module's cues may pierce protected hyperfocus. Almost every
+    #: module stays silent while an aligned deep-work block shields the user; the
+    #: sanctioned interrupts set this ``True`` — self-care basic-needs checks
+    #: (meant to break flow) and hyperfocus's own alignment check (the one
+    #: interrupt allowed *during* an aligned overrun, so the protecting module
+    #: must not be gated by its own protection). The coaching engine reads this
+    #: into its central suppression gate, so no module re-checks protection and
+    #: the engine names none of them.
+    pierces_protection: bool = False
 
     def interventions(self) -> list[Intervention]:
         """Return the interventions this module provides.
@@ -95,6 +104,32 @@ class Module(ABC):
             A list of :class:`Intervention` declarations. Defaults to empty.
         """
         return []
+
+    def provides_protection(self, store: MemoryStore) -> bool:
+        """Whether this module is currently shielding the user from other cues.
+
+        The coaching engine OR-s this across every enabled module once per tick
+        into :attr:`~prefrontal.coaching.CoachContext.focus_protected`, so the
+        central suppression gate can hold other modules' non-critical cues without
+        the engine naming a specific module. Today only Hyperfocus returns ``True``
+        (during an aligned deep-work block); every other module inherits this
+        ``False`` default.
+        """
+        return False
+
+    def channel_targets(self) -> Mapping[str, str]:
+        """Declare this module's channel-outcome-trackable contexts.
+
+        Maps a ``context_key`` this module's cues carry → the
+        :attr:`~prefrontal.coaching.Cue.ref` key holding the acknowledgement
+        target id (e.g. ``{"outing": "outing_id"}``). A cue whose ``context_key``
+        is in the combined map — and that goes out on an interrupting channel — is
+        tracked for channel learning: a one-tap ack logs a *success*, silence past
+        the window a *miss* (feeding ``channel_response``). Default ``{}`` — a
+        module with no tappable ack is never tracked, since counting it would bias
+        its channel toward "always ignored".
+        """
+        return {}
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Return the coaching cues due right now, given memory + context.

@@ -441,7 +441,9 @@ def test_winddown_silent_before_its_evening_start(store):
     """Nothing in the afternoon — the wind-down window is the evening (default 21:00)."""
     _winddown_only(store)
     assert SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0))) == []
-    assert _by_kind(SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 21, 30, 0))), "winddown")
+    assert _by_kind(
+        SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 21, 30, 0))), "winddown"
+    )
 
 
 def test_winddown_silent_once_confirmed(store):

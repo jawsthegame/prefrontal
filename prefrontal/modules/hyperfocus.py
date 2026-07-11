@@ -675,6 +675,11 @@ class HyperfocusModule(Module):
         "but a liability when misdirected or when it overruns basic needs and "
         "commitments."
     )
+    # Hyperfocus is the module that *provides* the protection (see
+    # :meth:`provides_protection`), so its own alignment-check cue must not be
+    # gated by that protection — the soft check is the one sanctioned interrupt
+    # allowed during an aligned overrun.
+    pierces_protection = True
     default_state = {
         "hyperfocus_block_minutes": str(int(DEFAULT_SOFT_BLOCK_MINUTES)),
         "protect_aligned_hyperfocus": "true",
@@ -691,6 +696,19 @@ class HyperfocusModule(Module):
         "focus_recap_start_hour": str(DEFAULT_RECAP_START_HOUR),
         "focus_recap_until_hour": str(DEFAULT_RECAP_UNTIL_HOUR),
     }
+
+    def provides_protection(self, store: MemoryStore) -> bool:
+        """Report an aligned deep-work block shielding the user (spec §6).
+
+        The engine OR-s this into ``CoachContext.focus_protected`` so the central
+        suppression gate can hold other modules' non-critical cues — the module
+        that owns focus is the one that says when it's protected.
+        """
+        return is_focus_protected(store)
+
+    def channel_targets(self) -> dict[str, str]:
+        """Focus-session nudges carry one-tap buttons, keyed by ``session_id``."""
+        return {"focus": "session_id"}
 
     def interventions(self) -> list[Intervention]:
         """Declare the asymmetric protect-vs-interrupt interventions."""

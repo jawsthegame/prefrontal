@@ -765,7 +765,8 @@ def _routines_cli(store, args, settings) -> int:
         n = r.get("chore_count") or 0
         print(
             f"  #{r['id']} {r['title']} "
-            f"(accountable: {holder} · {describe_schedule(r['days'], r.get('month_days'))} · {when} · "
+            f"(accountable: {holder} · "
+            f"{describe_schedule(r['days'], r.get('month_days'))} · {when} · "
             f"{n} chore{'' if n == 1 else 's'}){paused}{impact}"
         )
     return 0

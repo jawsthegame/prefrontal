@@ -26,6 +26,7 @@ encouragement/recovery layer folds in as one more cue producer (spec §9) via
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -82,12 +83,6 @@ NOTE_HINT_MAX_CHARS = 160
 #: open question §13).
 PHRASING_URGENCIES = frozenset({"ambient"})
 
-#: Modules whose cues pierce protected hyperfocus — the sanctioned interrupts:
-#: self-care basic-needs checks (meant to break flow) and hyperfocus's own soft
-#: alignment check, which is allowed *during* an aligned overrun. See
-#: :func:`suppressed`.
-_PROTECTION_PIERCING = frozenset({"self_care", "hyperfocus"})
-
 #: Coaching-state key gating the LLM phrasing pass. Off by default — the
 #: deterministic ``cue.text`` is always a valid message, so phrasing is an opt-in
 #: warmth upgrade, not a dependency.
@@ -137,15 +132,22 @@ def note_hint(notes: str | None, *, max_chars: int = NOTE_HINT_MAX_CHARS) -> str
 
 
 class ModuleLike(Protocol):
-    """The slice of a module the engine uses — its key, evaluator, and hooks."""
+    """The slice of a module the engine uses — its key, evaluator, hooks, and the
+    two declarations the engine's suppression/learning logic reads instead of
+    naming any module (``pierces_protection`` / ``channel_targets``)."""
 
     key: str
+    pierces_protection: bool
 
     def evaluate(self, store: Any, ctx: CoachContext) -> list[Cue]: ...
 
     def before_collect(self, store: Any, ctx: CoachContext) -> None: ...
 
     def after_fire(self, store: Any, decisions: list[Decision], ctx: CoachContext) -> None: ...
+
+    def provides_protection(self, store: Any) -> bool: ...
+
+    def channel_targets(self) -> Mapping[str, str]: ...
 
 
 @dataclass(frozen=True)
@@ -180,11 +182,16 @@ class CoachContext:
     min_channel_samples: int = DEFAULT_MIN_CHANNEL_SAMPLES
     current_lat: float | None = None
     current_lon: float | None = None
-    # Whether an aligned hyperfocus block is currently shielding the user. Set
-    # once per tick (from hyperfocus.is_focus_protected) so the suppression gate
-    # can hold non-critical, non-self-care cues centrally, rather than each module
-    # re-checking it — see :func:`suppressed`.
+    # Whether a module is currently shielding the user with a protective state
+    # (today: an aligned hyperfocus block). Set once per tick by OR-ing every
+    # enabled module's ``provides_protection`` so the suppression gate can hold
+    # non-critical cues centrally rather than each module re-checking it — see
+    # :func:`suppressed`.
     focus_protected: bool = False
+    # The keys of enabled modules whose cues may pierce ``focus_protected`` (each
+    # module declares this via ``pierces_protection``); computed once per tick so
+    # the suppression gate never names a module. Empty means nothing pierces.
+    pierce_keys: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,7 @@ def build_context(
     current_lat: float | None = None,
     current_lon: float | None = None,
     focus_protected: bool = False,
+    pierce_keys: frozenset[str] = frozenset(),
 ) -> CoachContext:
     """Load the shared per-tick context from coaching state (spec §3)."""
     return CoachContext(
@@ -229,6 +237,7 @@ def build_context(
         current_lat=current_lat,
         current_lon=current_lon,
         focus_protected=focus_protected,
+        pierce_keys=pierce_keys,
     )
 
 
@@ -283,6 +292,20 @@ def _fired_key(dedup_key: str) -> str:
     return f"coach_fired:{dedup_key}"
 
 
+def last_fired(store: Any, dedup_key: str) -> datetime | None:
+    """When the cue with this ``dedup_key`` last fired, or ``None`` if never.
+
+    The public read over the engine's debounce stamp (written by
+    :func:`record_fired`). A module that paces itself on a *different* cadence than
+    the engine's uniform ``debounce_minutes`` — a weekly project re-nudge, an
+    item-specific check-in interval, a fire-once impulse guard — asks the engine
+    "when did I last fire this?" through this accessor, rather than reaching into
+    the engine's private state-key layout. Returns a naive-UTC ``datetime`` (as
+    stamped) or ``None``.
+    """
+    return _parse_ts(store.get_state(_fired_key(dedup_key)))
+
+
 def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     """Whether a cue should be held back right now (spec §6).
 
@@ -298,13 +321,14 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
         if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
             return True
         # Protected hyperfocus: an aligned, healthy deep-work block shields the
-        # user from *other* modules' noise. Two deliberate exceptions pierce it:
-        # self-care (eat / drink / meds — meant to break flow) and hyperfocus's own
-        # interrupt cues (the soft alignment check is itself the one sanctioned
-        # interrupt allowed *during* an aligned overrun, when the block is still
-        # protected — so the owning module must not be gated by its own protection).
-        # This is the one central gate, so a module never has to re-check it (§6).
-        if ctx.focus_protected and cue.module not in _PROTECTION_PIERCING:
+        # user from *other* modules' noise. The modules that pierce it declare so
+        # via ``pierces_protection`` (collected into ``ctx.pierce_keys`` once per
+        # tick) — today self-care (eat / drink / meds — meant to break flow) and
+        # hyperfocus's own interrupt cues (the soft alignment check is the one
+        # sanctioned interrupt allowed *during* an aligned overrun, so the module
+        # providing the protection must not be gated by it). This is the one
+        # central gate, so a module never has to re-check it (§6).
+        if ctx.focus_protected and cue.module not in ctx.pierce_keys:
             return True
     last = _parse_ts(store.get_state(_fired_key(cue.dedup_key)))
     if last is not None:
@@ -445,11 +469,22 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
 #: Minutes a delivered nudge waits for a tap before it's counted as ignored.
 DEFAULT_ACK_WINDOW_MINUTES = 60.0
 
-#: Contexts whose nudges carry tappable action buttons (so an acknowledgement is
-#: observable), mapped to the ``cue.ref`` key holding the target id. A cue whose
-#: context isn't here has no reliable ack signal, so it's never tracked — counting
-#: it would bias ``channel_response`` toward "always ignored".
-_TRACKABLE_TARGET = {"outing": "outing_id", "departure": "commitment_id", "focus": "session_id"}
+def channel_targets_for(modules: list[ModuleLike]) -> dict[str, str]:
+    """Combine every enabled module's declared channel-ack targets.
+
+    Each module declares, via
+    :meth:`~prefrontal.modules.base.Module.channel_targets`, the ``context_key`` →
+    ``cue.ref`` target-id key pairs whose nudges carry a tappable action button (so
+    an acknowledgement is observable) — e.g. ``{"outing": "outing_id"}``. A cue
+    whose context isn't in the combined map has no reliable ack signal, so it's
+    never tracked; counting it would bias ``channel_response`` toward "always
+    ignored". This replaces a map the engine used to hardcode, so which contexts
+    are trackable now travels with the modules that emit them.
+    """
+    targets: dict[str, str] = {}
+    for module in modules:
+        targets.update(module.channel_targets())
+    return targets
 
 
 def _ack_key(context: str, target: Any) -> str:
@@ -476,19 +511,22 @@ def record_channel_outcome(
     )
 
 
-def note_delivered(store: Any, decisions: list[Decision], now: datetime) -> None:
+def note_delivered(
+    store: Any, decisions: list[Decision], now: datetime, *, targets: Mapping[str, str]
+) -> None:
     """Track each interactive nudge just fired, so its outcome can be learned.
 
-    Only cues that carry action buttons (:data:`_TRACKABLE_TARGET`) and go out on
-    an interrupting channel (not ``digest``) are tracked — a buttonless or ambient
-    cue has no observable ack. Keyed by ``(context, target)``, the coordinates a
+    Only cues that carry action buttons (a ``context_key`` present in ``targets``,
+    the combined per-module map from :func:`channel_targets_for`) and go out on an
+    interrupting channel (not ``digest``) are tracked — a buttonless or ambient cue
+    has no observable ack. Keyed by ``(context, target)``, the coordinates a
     one-tap ack arrives on (see :func:`resolve_ack`).
     """
     stamp = now.strftime(TS_FMT)
     for d in decisions:
         if d.channel == "digest":
             continue
-        target = (d.cue.ref or {}).get(_TRACKABLE_TARGET.get(d.cue.context_key, ""))
+        target = (d.cue.ref or {}).get(targets.get(d.cue.context_key, ""))
         if target is None:
             continue
         store.set_state(
@@ -553,11 +591,12 @@ def sweep_stale_nudges(
 
 # --- Engagement outcomes: did a nudge move the thing it nudged? --------------
 #
-# The channel-outcome loop above only covers cues with a tappable ack
-# (:data:`_TRACKABLE_TARGET`). A module whose nudge has no button — "still on
-# this project?", "heard back from your assistant?" — has no observable answer to
-# a *tap*, so a self-care-style "no tap = ignored" sweep would mark every one of
-# them ignored (the very bias :data:`_TRACKABLE_TARGET` guards against). But those
+# The channel-outcome loop above only covers cues with a tappable ack (a
+# ``context_key`` a module declares in ``channel_targets``). A module whose nudge
+# has no button — "still on this project?", "heard back from your assistant?" —
+# has no observable answer to a *tap*, so a self-care-style "no tap = ignored"
+# sweep would mark every one of them ignored (the very bias the declared targets
+# guard against). But those
 # nudges do have an observable *engagement*: the thing they point at either
 # advances afterward or it doesn't. These two helpers let a module stamp a fired
 # nudge (``after_fire``) and later mature it into a ``success``/``ignored`` episode
@@ -677,6 +716,40 @@ def _run_module_hooks(
             )
 
 
+def _any_protection(modules: list[ModuleLike], store: Any) -> bool:
+    """Whether any enabled module is currently shielding the user (isolated).
+
+    OR-s each module's ``provides_protection``; a module that raises is skipped
+    (as in :func:`collect_cues`) so a broken protector can't sink the tick — it
+    just fails open, dropping *its* shield rather than silencing every cue.
+    """
+    for module in modules:
+        try:
+            if module.provides_protection(store):
+                return True
+        except Exception:  # noqa: BLE001 — isolate a bad protector, keep the tick alive
+            logger.warning(
+                "module %r provides_protection() raised; ignoring its shield this tick",
+                getattr(module, "key", "?"),
+                exc_info=True,
+            )
+    return False
+
+
+def _safe_sweep(label: str, run: Any) -> int:
+    """Run a pre-collection input-refresh sweep, isolating a failure to 0.
+
+    The decomposition / clarification refreshes run *before* the guarded
+    :func:`collect_cues`, so without this a raise in either would sink the whole
+    tick — the very outcome the per-module isolation elsewhere prevents.
+    """
+    try:
+        return int(run())
+    except Exception:  # noqa: BLE001 — a bad refresh sweep must not sink the tick
+        logger.warning("%s sweep raised; skipping it this tick", label, exc_info=True)
+        return 0
+
+
 def run_coaching_tick(
     store: Any,
     *,
@@ -704,8 +777,15 @@ def run_coaching_tick(
        unanswered nudges into "ignored" episodes), collect every module's cues,
        decide channel + suppression, record the fires, then run each module's
        :meth:`~prefrontal.modules.base.Module.after_fire` hook (e.g. self-care
-       stamps its delivery time). The engine never names a module here — the two
-       hooks replaced the old hard-coded self-care sweep/stamp.
+       stamps its delivery time).
+
+    The engine never names a specific module: protection (which module is
+    shielding the user), which cues may pierce it, and which contexts get
+    channel-ack tracking are all read off the modules themselves
+    (``provides_protection`` / ``pierces_protection`` / ``channel_targets``), and
+    every module-facing step is failure-isolated so one bad module never sinks the
+    tick. (The step-2 refreshes are generic input functions, not module methods,
+    and are isolated by :func:`_safe_sweep`.)
 
     This owns *which steps constitute a tick* and their order, so the endpoint and
     CLI callers can't drift. The callers only format or deliver the returned
@@ -726,7 +806,6 @@ def run_coaching_tick(
     from prefrontal.clarify import sweep_ambiguous_items
     from prefrontal.impact import utcnow
     from prefrontal.modules import enabled_modules
-    from prefrontal.modules.hyperfocus import is_focus_protected
     from prefrontal.todos import sweep_avoided_decompositions
 
     now = now or utcnow()
@@ -742,9 +821,14 @@ def run_coaching_tick(
         ),
     )
     # Refresh model-derived inputs *before* collecting cues so tiny_first_step and
-    # the clarify queue see fresh state.
-    decomposed = sweep_avoided_decompositions(store, ollama, now=now)
-    clarified = len(sweep_ambiguous_items(store, ollama))
+    # the clarify queue see fresh state. Isolated: these run ahead of the guarded
+    # collect, so a raise here must not sink the tick.
+    decomposed = _safe_sweep(
+        "decomposition", lambda: sweep_avoided_decompositions(store, ollama, now=now)
+    )
+    clarified = _safe_sweep(
+        "clarification", lambda: len(sweep_ambiguous_items(store, ollama))
+    )
     ctx = build_context(
         store,
         now=now,
@@ -752,7 +836,10 @@ def run_coaching_tick(
         display_name=display_name,
         current_lat=current_lat,
         current_lon=current_lon,
-        focus_protected=is_focus_protected(store),
+        # Protection and its piercers are read off the modules themselves, so the
+        # engine names none of them (both isolated against a raising module).
+        focus_protected=_any_protection(modules, store),
+        pierce_keys=frozenset(m.key for m in modules if m.pierces_protection),
     )
     _run_module_hooks(modules, lambda m: m.before_collect(store, ctx), "before_collect")
     cues = collect_cues(store, modules, ctx)
@@ -769,7 +856,7 @@ def run_coaching_tick(
     # Recorded at decision time (not on confirmed delivery), matching how
     # outing/check advances last_level when it decides to fire.
     record_fired(store, decisions, now)
-    note_delivered(store, decisions, now)
+    note_delivered(store, decisions, now, targets=channel_targets_for(modules))
     encouraged = _mark_encouragement_if_fired(store, decisions, now)
     _run_module_hooks(modules, lambda m: m.after_fire(store, decisions, ctx), "after_fire")
     return TickResult(
