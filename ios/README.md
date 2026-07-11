@@ -22,13 +22,14 @@ share the base URL + token via the **App Group** `group.com.morningstatic.prefro
 ios/
   project.yml              # XcodeGen spec — source of truth for the Xcode project
   Prefrontal/
-    PrefrontalApp.swift    # @main
+    PrefrontalApp.swift    # @main; routes prefrontal:// connect deep links
     Prefrontal.entitlements# App Group (shared with the widget)
     Config/                # AppConfig + SharedStore (App Group base URL + token)
     Networking/            # APIClient (async URLSession) + typed Endpoints
     Models/                # Codable structs mirroring the JSON API
     Theme/                 # Brand palette + Card
-    Views/                 # RootView, Today, Todos, Calendar, Me, Panic, Settings
+    Onboarding/            # ConnectPayload, OnboardingModel, QRScannerView
+    Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
     PrefrontalWidgets.swift
@@ -90,18 +91,36 @@ app alone runs under free signing, but the full app + widget needs the paid tier
 
 ## Connecting the app to your server
 
-On first launch the app shows a **Connect** screen. It prefills the tailnet
-HTTPS origin this deployment already serves:
+On first launch the app runs a short **onboarding flow** — welcome → connect →
+notifications → done (design: `../docs/design/ios-onboarding.md`). Connect is
+**QR-first**:
 
-- **Server URL:** `https://agent-1.tail8b0a.ts.net` (from `tailscale serve`;
-  valid TLS, so no plaintext-HTTP exception is needed). The plain
-  `http://<mac>:8000` tailnet URL also works but would need an ATS exception.
-- **Token:** your personal `X-Prefrontal-Token` (from your setup sheet, or
-  `prefrontal user token <handle>`).
+- **Scan to connect (recommended):** the operator hands you a QR code (see
+  below). Point the camera at it in the connect step — or, if the sheet's on
+  another screen, scan it with the iOS **Camera** app and tap "Open in
+  Prefrontal". Either way the app fills in the server URL + token for you.
+- **By hand (fallback):** expand *Enter details manually* and type:
+  - **Server URL:** `https://agent-1.tail8b0a.ts.net` (from `tailscale serve`;
+    valid TLS, so no plaintext-HTTP exception is needed). The plain
+    `http://<mac>:8000` tailnet URL also works but would need an ATS exception.
+  - **Token:** your personal `X-Prefrontal-Token` (from your setup sheet, or
+    `prefrontal user connect-link <handle> --rotate`).
 
-The token is stored in the **Keychain**; the URL in UserDefaults. Tap
-**Connect** to verify against `/self-care` before saving. Change either later in
+Tap **Connect** to verify against `/self-care` before advancing. The URL + token
+live in the App Group so the widget authenticates too; change either later in
 **Me ▸ Settings** (gear icon).
+
+### Producing the QR (operator)
+
+```sh
+prefrontal user connect-link <handle> --qr            # prints link + scannable QR
+prefrontal user connect-link <handle> --qr --rotate   # also mint & embed a token
+pip install 'prefrontal[qr]'                          # once, to render the QR
+```
+
+The QR encodes a `prefrontal://connect?url=…&token=…&ntfy_topic=…` deep link.
+Treat it like the token itself — it *is* the token, just denser. The base URL
+defaults to `OAUTH_BASE_URL`; ntfy hints come from the user's delivery route.
 
 ## What maps to what
 

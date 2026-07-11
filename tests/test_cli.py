@@ -164,6 +164,67 @@ def test_user_route_sets_and_clears_per_user_ntfy_topic(tmp_path, capsys):
         main(["user", "--db-path", str(db), "route", "nobody"])
 
 
+def test_user_connect_link_builds_deep_link_with_route(tmp_path, capsys):
+    """`user connect-link` emits a prefrontal://connect URL carrying the base URL
+    and the user's ntfy route, so a new phone can onboard by scanning a QR."""
+    from urllib.parse import parse_qs, urlsplit
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "sam", "--display-name", "Sam"]) == 0
+    assert main([
+        "user", "--db-path", str(db), "route", "sam", "--ntfy-topic", "prefrontal-sam-9f2q",
+    ]) == 0
+    capsys.readouterr()
+
+    # No token by default (it's shown once at provisioning, not re-readable):
+    # the link still carries URL + ntfy topic + handle, and flags the omission.
+    assert main([
+        "user", "--db-path", str(db), "connect-link", "sam",
+        "--base-url", "https://agent-1.tail8b0a.ts.net/",
+    ]) == 0
+    out = capsys.readouterr().out
+    link = next(w for w in out.split() if w.startswith("prefrontal://connect?"))
+    parts = urlsplit(link)
+    assert parts.scheme == "prefrontal" and parts.netloc == "connect"
+    q = parse_qs(parts.query)
+    assert q["url"] == ["https://agent-1.tail8b0a.ts.net"]  # trailing slash trimmed
+    assert q["ntfy_topic"] == ["prefrontal-sam-9f2q"]
+    assert q["handle"] == ["sam"] and q["name"] == ["Sam"]
+    assert "token" not in q
+    assert "no token embedded" in out
+
+
+def test_user_connect_link_rotate_embeds_token_and_needs_base_url(tmp_path, capsys):
+    """`--rotate` mints and embeds a fresh token; with no OAUTH_BASE_URL and no
+    --base-url the command refuses rather than emitting a useless link."""
+    from urllib.parse import parse_qs, urlsplit
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "sam"]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "user", "--db-path", str(db), "connect-link", "sam",
+        "--base-url", "https://x.ts.net", "--rotate",
+    ]) == 0
+    out = capsys.readouterr().out
+    link = next(w for w in out.split() if w.startswith("prefrontal://connect?"))
+    token = parse_qs(urlsplit(link).query)["token"][0]
+    # The embedded token is the live one: its hash resolves the user row.
+    from prefrontal.memory._helpers import sha256_hex
+
+    with MemoryStore.open(str(db)) as store:
+        row = store.get_user_by_token_hash(sha256_hex(token))
+        assert row is not None and row["handle"] == "sam"
+
+    # An unknown user fails clearly.
+    assert main([
+        "user", "--db-path", str(db), "connect-link", "nobody", "--base-url", "https://x.ts.net",
+    ]) == 1
+
+
 def test_place_add_then_list_roundtrip(tmp_path, capsys):
     """`place add` normalizes + stores an alias; `place list` prints it."""
     db = tmp_path / "prefrontal.db"

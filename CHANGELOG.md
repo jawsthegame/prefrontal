@@ -22,6 +22,20 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   situation tools, a caregiver surface, and a dedicated `care` commitment kind are
   the next slice. Covered by `tests/test_packs.py`.
 
+- **iOS onboarding — scan a QR to connect** ✅ — the native app's whole first run
+  was one screen where you hand-typed a tailnet URL and pasted a ~43-char token, and
+  nothing tied it to the ntfy / Shortcuts / widget setup the operator hands over
+  separately. It's now a four-step walkthrough — welcome → connect → notifications →
+  done — that's **QR-first**: point the camera at the code on your setup sheet (or
+  scan it with the iOS Camera app, which opens the new `prefrontal://connect` deep
+  link) and the base URL + token fill themselves in; manual entry stays as a
+  fallback. Connect validates against `/self-care` before advancing, so a bad token
+  fails there with the server's own error. The notifications step prefills the
+  user's ntfy topic (copyable) and requests native-alert permission. Operators
+  produce the QR with `prefrontal user connect-link <handle> --qr [--rotate]` (QR via
+  the optional `prefrontal[qr]`/segno extra; the plain link always prints). See
+  `docs/design/ios-onboarding.md`. Covered by `tests/test_cli.py`.
+
 - **Outings pre-file their life-sphere at declaration** ✅ — `/webhooks/outing/start`
   already accepted a `domain`, but nothing set one unless the caller passed it. It
   now resolves the sphere at declaration — an explicit `domain` wins, else it's

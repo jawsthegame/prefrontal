@@ -191,6 +191,20 @@ already substituted, then point to the full docs for depth. Fill the blanks:
 - `<token>`    → their token from Step 1 (or the shared secret on a solo deploy)
 - `<ntfy-server>` / `<ntfy-topic>` → from Step 3
 
+**If they're using the native iOS app**, lead with the QR — it fills in the base
+URL + token by scanning, so they never hand-type the token. Generate it (bundles
+their ntfy route automatically; `--rotate` mints a fresh token to embed since the
+original is shown only once):
+
+```sh
+prefrontal user connect-link <handle> --qr --rotate    # needs `pip install 'prefrontal[qr]'`
+```
+
+Put that QR (or the `prefrontal://connect?…` link) at the top of the sheet. It's
+as sensitive as the token — don't commit it or paste it anywhere shared. The
+Shortcuts + Scriptable steps below still apply for one-tap logging and the
+lock-screen glance.
+
 Deliver it as this template (replace the placeholders — don't leave them
 literal):
 
@@ -198,12 +212,16 @@ literal):
 
 **Prefrontal setup for `<handle>`**
 
-**1. ntfy (notifications)**
+**1. Connect the app** — open Prefrontal and scan the QR on this sheet (or scan
+it with the Camera app and tap "Open in Prefrontal"). No app yet? Enter
+`<base-url>` and your token by hand in the connect step.
+
+**2. ntfy (notifications)**
 1. Install the **ntfy** app (iOS/Android).
 2. Subscribe to topic **`<ntfy-topic>`** on server **`<ntfy-server>`**.
 3. You should already have gotten a test push — if not, tell the operator.
 
-**2. iOS Shortcuts (one-tap logging)**
+**3. iOS Shortcuts (one-tap logging)**
 Every shortcut is a **Get Contents of URL** → `POST <base-url>/…` with headers
 `X-Prefrontal-Token: <token>` and `Content-Type: application/json`. Start with
 these three, then add the rest from `deploy/ios-shortcut.md`:
@@ -214,7 +232,7 @@ these three, then add the rest from `deploy/ios-shortcut.md`:
 
 Full catalog (outings, focus, capture, location, departure): `deploy/ios-shortcut.md`.
 
-**3. Scriptable widget (home/lock screen glance)**
+**4. Scriptable widget (home/lock screen glance)**
 1. Install **Scriptable**, tap **+**, paste in `deploy/scriptable/prefrontal-widget.js`.
 2. Set `TOKEN = "<token>"` and `BASE_URL = "<base-url>"` at the top.
 3. Run once to preview, then add a **Scriptable** widget to the Home Screen
