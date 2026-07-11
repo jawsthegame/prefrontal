@@ -51,6 +51,8 @@ targets:
       path: PrefrontalWidgets/Info.plist
       properties:
         CFBundleDisplayName: Prefrontal
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
