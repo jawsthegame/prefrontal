@@ -4,7 +4,7 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
 ``pyproject.toml``:
 
 - ``prefrontal init-db`` — create the SQLite memory database.
-- ``prefrontal user`` — provision users (add/list/rotate/disable).
+- ``prefrontal user`` — provision users (add/list/rotate/disable/route/connect-link).
 - ``prefrontal migrate-multi-tenant`` — upgrade a single-tenant DB in place.
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
@@ -218,6 +218,53 @@ def _cmd_init_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_connect_link(
+    base_url: str,
+    *,
+    token: str | None = None,
+    ntfy_server: str | None = None,
+    ntfy_topic: str | None = None,
+    handle: str | None = None,
+    display_name: str | None = None,
+) -> str:
+    """Build the ``prefrontal://connect?…`` deep link the iOS app consumes.
+
+    This is the operator→phone handoff: rendered as a QR on the setup sheet, it
+    lets a new phone connect by pointing its camera (iOS Camera recognises the
+    custom scheme) rather than hand-typing a base URL and a long token. The iOS
+    parser (``ios/Prefrontal/Onboarding/ConnectPayload.swift``) reads the same
+    query keys; keep the two in sync.
+
+    Only ``base_url`` is required. ``token`` is omitted when unknown (the user
+    pastes it), and the ntfy hints just prefill the notifications step.
+
+    Args:
+        base_url: The deployment origin, e.g. ``https://agent-1.tail….ts.net``.
+        token: The user's ``X-Prefrontal-Token`` (embedded only when known).
+        ntfy_server: ntfy server the topic lives on.
+        ntfy_topic: The user's own ntfy topic.
+        handle: The user's handle (advisory).
+        display_name: Name shown on the app's "you're all set" screen.
+
+    Returns:
+        A ``prefrontal://connect?…`` URL with percent-encoded query values.
+    """
+    from urllib.parse import urlencode
+
+    params: list[tuple[str, str]] = [("url", base_url.rstrip("/"))]
+    if token:
+        params.append(("token", token))
+    if ntfy_server:
+        params.append(("ntfy_server", ntfy_server))
+    if ntfy_topic:
+        params.append(("ntfy_topic", ntfy_topic))
+    if handle:
+        params.append(("handle", handle))
+    if display_name:
+        params.append(("name", display_name))
+    return "prefrontal://connect?" + urlencode(params)
+
+
 def _cmd_user(args: argparse.Namespace) -> int:
     """Provision users: add, list, rotate a token, or disable.
 
@@ -317,7 +364,67 @@ def _cmd_user(args: argparse.Namespace) -> int:
                     f"Updated: {', '.join(sorted(changed))}. "
                     f"Verify with `prefrontal notify --user {args.handle}`."
                 )
+        elif args.user_action == "connect-link":
+            from prefrontal.integrations.delivery import resolve_route
+
+            user = store.get_user(args.handle)
+            if user is None:
+                print(f"No such user '{args.handle}'.", file=sys.stderr)
+                return 1
+            base_url = (args.base_url or settings.oauth_base_url or "").rstrip("/")
+            if not base_url:
+                print(
+                    "No base URL. Set OAUTH_BASE_URL in .env or pass --base-url "
+                    "https://<host>.ts.net.",
+                    file=sys.stderr,
+                )
+                return 1
+            # A token is shown once at provisioning, so we can't re-read it here.
+            # --rotate mints a fresh one to embed (invalidating the old); without
+            # it the link carries no token and the user pastes theirs in-app.
+            token = store.rotate_user_token(args.handle) if args.rotate else None
+            route = resolve_route(store.scoped(user["id"]), settings)
+            link = build_connect_link(
+                base_url,
+                token=token,
+                ntfy_server=route.ntfy_server or None,
+                ntfy_topic=route.ntfy_topic or None,
+                handle=user["handle"],
+                display_name=user["display_name"] or None,
+            )
+            if args.rotate:
+                print("Rotated the token (old one is now invalid).")
+            print(f"Connect link for '{args.handle}':")
+            print(f"  {link}")
+            if not token:
+                print(
+                    "  (no token embedded — add --rotate to mint & embed one, "
+                    "or have them paste their token in the app.)"
+                )
+            if args.qr:
+                _print_qr(link)
+            else:
+                print("Add --qr to render a scannable QR for the setup sheet.")
     return 0
+
+
+def _print_qr(data: str) -> None:
+    """Render ``data`` as a terminal QR via the optional ``segno`` extra.
+
+    QR rendering is opt-in (``pip install 'prefrontal[qr]'``) so the base install
+    stays dependency-light; without it we point at the extra and leave the plain
+    link (which is always printed) as the fallback.
+    """
+    try:
+        import segno
+    except ModuleNotFoundError:
+        print(
+            "  (install the QR extra to render a code here: "
+            "pip install 'prefrontal[qr]' — or paste the link into any QR maker.)"
+        )
+        return
+    print()
+    segno.make(data, error="m").terminal(compact=True)
 
 
 def _cmd_household(args: argparse.Namespace) -> int:
@@ -2923,6 +3030,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     u_route.add_argument(
         "--pushover-token", default=None, help="Pushover app token (pass '' to clear)."
+    )
+    u_link = user_sub.add_parser(
+        "connect-link",
+        help="Print a prefrontal://connect deep link (+QR) to onboard their phone.",
+    )
+    u_link.add_argument("handle", help="The user's handle.")
+    u_link.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Mint a fresh token and embed it (invalidates the old one).",
+    )
+    u_link.add_argument(
+        "--qr", action="store_true", help="Also render a scannable QR (needs the 'qr' extra)."
+    )
+    u_link.add_argument(
+        "--base-url",
+        default=None,
+        help="Override the deployment origin (defaults to OAUTH_BASE_URL).",
     )
     p_user.set_defaults(func=_cmd_user)
 

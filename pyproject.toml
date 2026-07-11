@@ -49,6 +49,12 @@ dev = [
 anthropic = [
     "anthropic>=0.40",
 ]
+# Render a scannable QR for `prefrontal user connect-link --qr` (the iOS
+# onboarding handoff). Pure-Python, no extra deps; opt-in so the base install
+# stays lean — without it the command still prints the plain connect link.
+qr = [
+    "segno>=1.6",
+]
 
 [project.scripts]
 prefrontal = "prefrontal.cli:main"

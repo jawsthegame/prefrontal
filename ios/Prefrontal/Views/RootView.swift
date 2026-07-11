@@ -2,12 +2,13 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var config: AppConfig
+    @EnvironmentObject var onboarding: OnboardingModel
 
     var body: some View {
-        if config.isConfigured {
-            MainTabs()
+        if onboarding.active {
+            OnboardingView()
         } else {
-            NavigationStack { SettingsView(isOnboarding: true) }
+            MainTabs()
         }
     }
 }
