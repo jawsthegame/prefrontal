@@ -7,6 +7,21 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Caregiver Context Pack — the second life-context pack** ✅ — after Parent,
+  `PREFRONTAL_PACKS=caregiver` (`prefrontal/packs/caregiver.py`) installs the
+  caregiving life-context for someone looking after an aging parent, ill partner, or
+  disabled family member. Declarative like Parent: it switches on `time_blindness`
+  (appointment/med timing) + `task_paralysis` (dreaded insurance/benefits admin) +
+  `self_care`; declares `medical`/`admin`/`caregiving` todo categories with daytime
+  windows; and — distinctively — **arms the meal/water checks** (`self_care=on`),
+  because the person most likely to skip meals is the one doing the caring. It also
+  protects the caregiver's own out-of-home time (`focus_target:personal` + the
+  focus-balance nudge). Sandwich generation can stack both: `PREFRONTAL_PACKS=parent,caregiver`
+  (overlap precedence is earlier-pack-wins, as before). No new machinery — it slots
+  into the existing `Pack` registry/vocabulary backbone; the pack-specific
+  situation tools, a caregiver surface, and a dedicated `care` commitment kind are
+  the next slice. Covered by `tests/test_packs.py`.
+
 - **Outings pre-file their life-sphere at declaration** ✅ — `/webhooks/outing/start`
   already accepted a `domain`, but nothing set one unless the caller passed it. It
   now resolves the sphere at declaration — an explicit `domain` wins, else it's

@@ -39,6 +39,31 @@ def test_parent_pack_is_registered_with_expected_composition():
     assert parent in available()
 
 
+def test_caregiver_pack_is_registered_with_expected_composition():
+    care = get_pack("caregiver")
+    assert care.title == "Caregiver"
+    # Leans on appointment timing, dreaded admin, and — distinctively — self-care.
+    assert set(care.modules) == {"time_blindness", "task_paralysis", "self_care"}
+    assert set(care.categories) == {"medical", "admin", "caregiving"}
+    assert care.commitment_kinds == ()  # a dedicated `care` kind is a later slice
+    # Arms the self-care checks and protects personal time; keeps admin in hours.
+    assert care.coaching_defaults["self_care"] == "on"
+    assert care.coaching_defaults["todo_window:admin"] == "09:00-17:00"
+    assert care.coaching_defaults["focus_target:personal"] == "180"
+    assert care in available()
+
+
+def test_caregiver_pack_switches_on_self_care_and_arms_it(monkeypatch):
+    """Enabling the pack turns the self_care module on *and* seeds self_care=on,
+    both of which the basic-needs checks need to fire."""
+    from prefrontal.modules.registry import is_enabled as module_is_enabled
+
+    s = Settings(modules=("impulsivity",), packs=("caregiver",))
+    keys = {m.key for m in enabled_modules(s)}
+    assert {"time_blindness", "task_paralysis", "self_care"} <= keys
+    assert module_is_enabled("self_care", s)
+
+
 def test_packs_default_to_none_and_enable_by_opt_in():
     # Unlike modules (empty = all), no pack is enabled unless listed.
     assert enabled_packs(Settings(packs=())) == []
@@ -136,6 +161,38 @@ def test_enabled_pack_seeds_coaching_defaults_absent_only(monkeypatch):
             scoped.set_state("focus_target:kids", "60", source="explicit")
             seed_user_state(scoped)
             assert scoped.get_state("focus_target:kids") == "60"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_caregiver_pack_arms_self_care_over_the_module_default(monkeypatch):
+    """A pack default beats a module default (pack > module): the Caregiver pack
+    seeds self_care=on even though the self_care module's own default is off."""
+    monkeypatch.setenv("PREFRONTAL_PACKS", "caregiver")
+    from prefrontal.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with MemoryStore.open(":memory:") as store:
+            user, _ = provision_user(store, "c", display_name="C", is_operator=True)
+            scoped = store.scoped(user["id"])
+            assert scoped.get_state("self_care") == "on"  # pack wins over module 'off'
+            assert scoped.get_state("todo_window:medical") == "08:00-17:00"
+            assert scoped.get_state("focus_target:personal") == "180"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_no_pack_leaves_self_care_at_the_module_default(monkeypatch):
+    """Without the pack, the self_care module's own default (off) stands."""
+    monkeypatch.delenv("PREFRONTAL_PACKS", raising=False)
+    from prefrontal.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with MemoryStore.open(":memory:") as store:
+            user, _ = provision_user(store, "n", display_name="N", is_operator=True)
+            assert store.scoped(user["id"]).get_state("self_care") == "off"
     finally:
         get_settings.cache_clear()
 
