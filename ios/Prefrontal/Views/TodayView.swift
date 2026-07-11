@@ -100,7 +100,7 @@ struct TodayView: View {
         Card {
             CardLabel(text: "Out now")
             Text(o.intention).font(.subheadline).foregroundStyle(Brand.nearWhite)
-            if let m = o.timeWindowMinutes { Chip(text: "~\(Int(m)) min window", color: Brand.teal.opacity(0.2), fg: Brand.teal) }
+            if let m = o.timeWindowMinutes { Chip(text: "~\(Int(m)) min window", color: Brand.accent) }
             AsyncButton {
                 try await withAPI { try await $0.returnOuting() }
                 await load()

@@ -32,56 +32,131 @@ struct AsyncButton<Label: View>: View {
 struct ErrorBanner: View {
     let message: String
     var body: some View {
-        Text(message)
-            .font(.footnote)
-            .foregroundStyle(Brand.nearWhite)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(Brand.danger.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.danger.opacity(0.5)))
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Brand.danger)
+            Text(message).font(.footnote).foregroundStyle(Brand.fg)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Brand.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.danger.opacity(0.35)))
     }
 }
 
-/// Section heading used across cards.
+/// Small-caps section heading used across cards.
 struct CardLabel: View {
     let text: String
     var body: some View {
         Text(text.uppercased())
-            .font(.caption.weight(.semibold))
-            .tracking(0.8)
+            .font(.caption2.weight(.bold))
+            .tracking(0.6)
             .foregroundStyle(Brand.muted)
     }
 }
 
-/// A pill chip.
+// MARK: - Pills (mirror the web dashboard's pill system)
+
+/// Neutral chip (default), or a filled semantic chip.
 struct Chip: View {
     let text: String
-    var color: Color = Brand.line
-    var fg: Color = Brand.muted
+    var color: Color? = nil          // when set → tinted bg + fg
     var body: some View {
         Text(text)
             .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(color, in: Capsule())
-            .foregroundStyle(fg)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background((color ?? Brand.chip).opacity(color == nil ? 1 : 0.16), in: Capsule())
+            .foregroundStyle(color ?? Brand.muted)
     }
 }
 
-/// Full-screen navy background used behind every tab.
-struct BrandBackground<Content: View>: View {
-    @ViewBuilder var content: Content
+/// Outlined domain/tag pill, colored from a hash of the label.
+struct DomainPill: View {
+    let text: String
     var body: some View {
-        ZStack {
-            Brand.navy.ignoresSafeArea()
-            content
+        let c = Brand.domain(text)
+        Text(text.lowercased())
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .overlay(Capsule().stroke(c, lineWidth: 1))
+            .foregroundStyle(c)
+    }
+}
+
+/// A small filled level dot (for nudges/departure).
+struct LevelDot: View {
+    let level: String?
+    var body: some View { Circle().fill(Brand.level(level)).frame(width: 7, height: 7) }
+}
+
+/// A self-care chip whose background fills left→right toward its target,
+/// echoing the web `.sc-chip` progress gradient.
+struct ProgressChip: View {
+    let icon: String
+    let label: String
+    let count: Int
+    let target: Int
+    let satisfied: Bool
+    let overdue: Bool
+
+    private var fraction: Double { target <= 0 ? (satisfied ? 1 : 0) : min(1, Double(count) / Double(target)) }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Brand.chip
+                Brand.good.opacity(0.28).frame(width: geo.size.width * fraction)
+                HStack(spacing: 6) {
+                    Text(icon)
+                    Text(label).font(.subheadline.weight(.medium)).foregroundStyle(Brand.fg)
+                    Spacer(minLength: 4)
+                    Text("\(count)/\(target)")
+                        .font(.subheadline.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(satisfied ? Brand.good : (overdue ? Brand.warn : Brand.muted))
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+        .frame(height: 42)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(satisfied ? Brand.good : Brand.line, lineWidth: 1))
+    }
+}
+
+/// A simple wrapping row — lays children left→right, wrapping to new lines.
+struct FlowRow: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > maxWidth, x > 0 { x = 0; y += lineH + lineSpacing; lineH = 0 }
+            x += s.width + spacing
+            lineH = max(lineH, s.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + lineH)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        var x = bounds.minX, y = bounds.minY, lineH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += lineH + lineSpacing; lineH = 0 }
+            v.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(s))
+            x += s.width + spacing
+            lineH = max(lineH, s.height)
         }
     }
 }
 
 extension View {
-    /// Standard scroll list on the brand background with pull-to-refresh.
+    /// Standard scroll screen on the paper background.
     func brandScreen() -> some View {
         self.scrollContentBackground(.hidden)
-            .background(Brand.navy.ignoresSafeArea())
+            .background(Brand.bg.ignoresSafeArea())
     }
 }

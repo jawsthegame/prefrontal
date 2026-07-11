@@ -33,22 +33,18 @@ struct MeView: View {
         Card {
             CardLabel(text: "Self-care today")
             if let sc = selfCare, sc.enabled {
+                Text("Tap to log").font(.caption2).foregroundStyle(Brand.muted)
                 ForEach(sc.checks.filter { $0.enabled }) { check in
-                    HStack {
-                        Image(systemName: check.satisfied ? "checkmark.circle.fill" : (check.overdue ? "exclamationmark.circle" : "circle"))
-                            .foregroundStyle(check.satisfied ? Brand.ok : (check.overdue ? Brand.warn : Brand.muted))
-                        Text(label(check.key)).foregroundStyle(Brand.nearWhite)
-                        Spacer()
-                        Text("\(check.count)/\(check.target)").font(.caption).foregroundStyle(Brand.muted)
-                        AsyncButton {
-                            try await withAPI { try await $0.markSelfCare(key: check.key) }
-                            await load()
-                        } label: {
-                            Text(logVerb(check.key)).font(.caption.weight(.semibold))
-                        } onError: { error = $0 }
-                        .buttonStyle(.bordered).tint(Brand.teal)
-                        .disabled(check.satisfied)
-                    }
+                    AsyncButton {
+                        try await withAPI { try await $0.markSelfCare(key: check.key) }
+                        await load()
+                    } label: {
+                        ProgressChip(icon: icon(check.key), label: label(check.key),
+                                     count: check.count, target: check.target,
+                                     satisfied: check.satisfied, overdue: check.overdue)
+                    } onError: { error = $0 }
+                    .buttonStyle(.plain)
+                    .disabled(check.satisfied)
                 }
             } else if selfCare != nil {
                 Text("Self-care checks are off. Enable them in the web settings.")
@@ -79,9 +75,9 @@ struct MeView: View {
         ["meal": "Meals", "water": "Water", "meds": "Meds", "biobreak": "Breaks",
          "winddown": "Wind-down", "movement": "Movement"][key] ?? key.capitalized
     }
-    private func logVerb(_ key: String) -> String {
-        ["meal": "Ate", "water": "Drank", "meds": "Took", "biobreak": "Done",
-         "winddown": "Done", "movement": "Moved"][key] ?? "Log"
+    private func icon(_ key: String) -> String {
+        ["meal": "🍽️", "water": "💧", "meds": "💊", "biobreak": "🚻",
+         "winddown": "🌙", "movement": "🚶"][key] ?? "•"
     }
 
     private func load() async {

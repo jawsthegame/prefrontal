@@ -9,7 +9,6 @@ struct PrefrontalApp: App {
             RootView()
                 .environmentObject(config)
                 .tint(Brand.accent)
-                .preferredColorScheme(.dark)
         }
     }
 }

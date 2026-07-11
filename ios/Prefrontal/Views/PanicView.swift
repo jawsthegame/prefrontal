@@ -39,7 +39,7 @@ struct PanicView: View {
     @ViewBuilder private func bucket(_ title: String, _ items: [Panic.Item], _ color: Color) -> some View {
         if !items.isEmpty {
             Card {
-                HStack { CardLabel(text: title); Spacer(); Chip(text: "\(items.count)", color: color.opacity(0.2), fg: color) }
+                HStack { CardLabel(text: title); Spacer(); Chip(text: "\(items.count)", color: color) }
                 ForEach(items) { item in
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: item.kind == "todo" ? "checklist" : "calendar")

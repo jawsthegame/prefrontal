@@ -61,14 +61,13 @@ struct TodoRow: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(todo.title).font(.subheadline.weight(.medium)).foregroundStyle(Brand.nearWhite)
-                    HStack(spacing: 6) {
+                    FlowRow(spacing: 6) {
+                        if todo.isStarted { Chip(text: "in progress", color: Brand.good) }
+                        if let p = todo.priority, p >= 2 { Chip(text: priorityLabel(p), color: priorityColor(p)) }
+                        if let d = todo.deadline, let short = deadlineShort(d) { Chip(text: short, color: Brand.warn) }
                         if let m = todo.estimateMinutes { Chip(text: "~\(Int(m))m") }
-                        if let p = todo.priority { Chip(text: priorityLabel(p), color: priorityColor(p).opacity(0.2), fg: priorityColor(p)) }
-                        if let d = todo.deadline, let short = deadlineShort(d) {
-                            Chip(text: short, color: Brand.warn.opacity(0.18), fg: Brand.warn)
-                        }
-                        if todo.isStarted { Chip(text: "in progress", color: Brand.blue.opacity(0.2), fg: Brand.blue) }
-                        if let c = todo.category { Chip(text: c) }
+                        if let dom = todo.domain, !dom.isEmpty { DomainPill(text: dom) }
+                        if let c = todo.category, c != todo.domain { Chip(text: c) }
                     }
                     if expanded { detail }
                 }
