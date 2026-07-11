@@ -1,0 +1,14 @@
+// Local code-signing config for the Prefrontal app + widget.
+//
+// Set your Apple Developer Team ID below, then keep the edit local so it is
+// never committed to this public repo:
+//
+//     git update-index --skip-worktree ios/Signing.xcconfig
+//
+// (undo with: git update-index --no-skip-worktree ios/Signing.xcconfig)
+//
+// Find your Team ID in Xcode ▸ Settings ▸ Accounts ▸ (your team), or at
+// developer.apple.com ▸ Membership.
+
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic

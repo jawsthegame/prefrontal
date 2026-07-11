@@ -1,0 +1,10 @@
+# XcodeGen generates the project from project.yml — don't track it.
+Prefrontal.xcodeproj/
+# XcodeGen also generates the widget extension's Info.plist.
+PrefrontalWidgets/Info.plist
+# Build output
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
