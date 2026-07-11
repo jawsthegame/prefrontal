@@ -426,6 +426,38 @@ def test_ingest_mirrors_actionable_mail_into_triage_log(store):
     assert row["decided_by"] == "heuristic" and row["reason"].startswith("mail:")
 
 
+def test_ingest_routes_todo_through_shared_pipeline_preserving_provenance(store):
+    """The mail-created todo now comes from the shared triage router, but its
+    mail-specific provenance (source "manual", the account domain, the todo/log
+    tie) is preserved — the unification is routing, not a behavior change."""
+    summary = ingest_messages(
+        store, [_msg()], account="personal", policy="full",
+        client=_ollama_down(), domain="home",
+    )
+    assert summary.todos_created == 1
+    (todo,) = store.open_todos()
+    assert todo["source"] == "manual"  # not overwritten to "triage"
+    assert todo["domain"] == "home"
+    (row,) = store.recent_triage()
+    assert row["route"] == "todo" and row["routed_ref"] == f"todo:{todo['id']}"
+
+
+def test_ingest_suppressed_needs_action_logs_a_drop_not_a_todo(store):
+    """A needs-action message gated out of todo creation still audits as a drop
+    through the shared pipeline (no todo), exactly as before unification."""
+    # The model flags a no-reply sender needs-action; suppress_todo_reason gates it.
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "normal", "category": "reply", "summary": "x"}
+    )
+    msg = _msg(message_id="<nr-1@example.com>", **{"from": "Acme <no-reply@acme.com>"})
+    summary = ingest_messages(store, [msg], account="personal", client=client)
+    assert summary.todos_created == 0 and summary.todos_suppressed == 1
+    assert store.open_todos() == []
+    (row,) = store.recent_triage()
+    assert row["route"] == "drop" and row["routed_ref"] is None
+    assert "todo suppressed" in row["reason"]
+
+
 def test_triage_log_count_matches_needs_action(store):
     """Only needs-action mail is mirrored — informational mail stays out of the feed."""
     msgs = [

@@ -153,6 +153,49 @@ def test_urgent_but_n8n_not_delivered_reports_not_fired(store):
     assert rep["fired"] is False   # ...but n8n reported it wasn't delivered
 
 
+# --- source-supplied routing (the mail-unification seam) --------------------
+
+
+def test_todo_route_uses_a_prebuilt_payload_verbatim(store):
+    """A source with its own classifier (mail) can hand the router a fully-built
+    todo in fields["todo"]; it's created as-is, not re-augmented."""
+    d = TriageDecision(
+        kind="action", urgency="today", route="todo", reason="mail: reply",
+        confidence=0.6, source="heuristic",
+        fields={"todo": {
+            "title": "Reply to Sam: contract", "notes": "[mail/work] from sam",
+            "priority": 3, "domain": "work", "source": "manual",
+        }},
+    )
+    rep = apply(_sig(title="Contract?"), d, store, today=TODAY)
+    (todo,) = store.open_todos()
+    assert rep["routed_ref"] == f"todo:{todo['id']}"
+    assert todo["title"] == "Reply to Sam: contract"
+    assert todo["notes"] == "[mail/work] from sam"
+    assert todo["priority"] == 3 and todo["domain"] == "work"
+    assert todo["source"] == "manual"  # provenance preserved, not overwritten to "triage"
+
+
+def test_apply_honors_a_prebuilt_routed_ref_without_re_routing(store):
+    """When the caller already linked the row (mail closing a delegation loop), the
+    supplied routed_ref is logged and no new row is created."""
+    rep = apply(
+        _sig(title="Re: the deck", external_id="mail:1"),
+        TriageDecision(
+            kind="action", urgency="today", route="todo",
+            reason="mail: reply · delegation returned", confidence=0.9,
+            source="llm", fields={"routed_ref": "todo:99"},
+        ),
+        store,
+        today=TODAY,
+    )
+    assert rep["routed_ref"] == "todo:99"
+    assert store.open_todos() == []  # nothing created — the todo already existed
+    (row,) = store.recent_triage()
+    assert row["routed_ref"] == "todo:99" and row["route"] == "todo"
+    assert "delegation returned" in row["reason"]
+
+
 # --- idempotency -------------------------------------------------------------
 
 

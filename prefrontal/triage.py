@@ -378,6 +378,26 @@ def _route_signal(
     route = decision.route
     when = decision.fields.get("when")
     if route == "todo":
+        # A source with its own classifier (e.g. mail — see
+        # prefrontal/mail/ingest.py) can pre-build the routed todo and hand it over
+        # in ``fields["todo"]``; we create it verbatim rather than re-inferring, so
+        # a specialized verdict (title/notes/priority/domain/project) isn't lost to
+        # a second augmentation pass. Absent that, the generic path augments below.
+        prebuilt = decision.fields.get("todo")
+        if prebuilt is not None:
+            tid = store.add_todo(
+                prebuilt["title"],
+                notes=prebuilt.get("notes"),
+                estimate_minutes=prebuilt.get("estimate_minutes"),
+                priority=prebuilt.get("priority", 1),
+                deadline=prebuilt.get("deadline"),
+                energy=prebuilt.get("energy"),
+                category=prebuilt.get("category"),
+                domain=prebuilt.get("domain"),
+                project_id=prebuilt.get("project_id"),
+                source=prebuilt.get("source", "triage"),
+            )
+            return f"todo:{tid}"
         aug = augment_todo(
             signal.title, client=client, today=today,
             existing_categories=store.todo_categories(),
@@ -457,7 +477,13 @@ def apply(
             "idempotent": True, "triage_id": prior["id"],
             "routed_ref": prior["routed_ref"], "route": prior["route"], "fired": False,
         }
-    routed_ref = _route_signal(signal, decision, store, client=client, today=today)
+    # A caller that has already created/linked the routed row (e.g. mail closing a
+    # delegation loop against an existing todo) supplies its ref in
+    # ``fields["routed_ref"]``; we log that ref rather than routing again. Absent it,
+    # the router performs the side effect.
+    routed_ref = decision.fields.get("routed_ref")
+    if routed_ref is None:
+        routed_ref = _route_signal(signal, decision, store, client=client, today=today)
     fired = False
     if decision.urgency == "now" and n8n is not None:
         result = n8n.trigger(

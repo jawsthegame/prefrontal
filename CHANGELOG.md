@@ -7,6 +7,29 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **One triage, not two — the mail path is absorbed into the shared pipeline** ✅ —
+  mail ingestion used to run its own classify→route→log as a parallel triage: it
+  created the todo with `add_todo` and separately *mirrored* an audit row into
+  `triage_log`. It now routes through the **one** shared `triage.apply`
+  (`docs/triage-agent.md` reality note). Mail keeps its specialized *classifier*
+  (`triage_message` — retention policies, categories, `waiting_on`, learned
+  denylist/corrections); what changed is that an actionable verdict is expressed as
+  a generic `Signal` + `TriageDecision` (adapters in `prefrontal/mail/ingest.py`)
+  and handed to `apply`, so there's a single place that creates the todo and a
+  single `triage_log`. Two small seams on the shared core make this lossless:
+  `apply` now honors a caller-supplied `routed_ref` (mail linking an existing todo
+  when it closes a delegation loop), and the `todo` route creates a caller-supplied
+  pre-built payload verbatim (mail's specialized title/notes/priority/domain/
+  project) instead of running `augment_todo` a second time. Behavior is preserved:
+  only needs-action/delegation-matched mail is audited (informational mail stays in
+  `/mail`), suppressed mail still logs a `drop`, the mail todo keeps its provenance
+  (`source="manual"`, `[mail/<account>]` notes), and no `triage.urgent` nudge is
+  introduced (mail passes no n8n client). The audit row's `received_at` now reflects
+  the mail's own receipt time (as the generic path already does), rather than
+  ingest time. `retriage_messages` (in-place re-classification that deliberately
+  emits no new audit row) is intentionally left on its direct path. Covered by
+  `tests/test_mail.py` + `tests/test_triage_apply.py`.
+
 - **Coaching agent — the three closeout items land, so it's feature-complete** ✅ —
   the last of the coaching-agent spine (`docs/coaching-agent.md`) is in:
   - **LLM phrasing pass (§5)** — `prefrontal.coaching.phrase` now warms `ambient`

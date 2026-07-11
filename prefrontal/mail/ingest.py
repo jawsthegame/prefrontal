@@ -26,9 +26,124 @@ from prefrontal.mail.models import MailItem, normalize_message
 from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_message
 from prefrontal.memory.store import MemoryStore
 from prefrontal.projects import suggest_project
+from prefrontal.triage import Signal, TriageDecision
+from prefrontal.triage import apply as triage_apply
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
+
+
+# --- Bridge into the one shared triage pipeline ------------------------------
+#
+# Mail keeps its own specialized *classifier* (``triage_message`` — retention,
+# categories, waiting-on, denylist/corrections), but it no longer routes or
+# audits on its own: an actionable verdict is expressed as a generic
+# :class:`~prefrontal.triage.Signal` + :class:`~prefrontal.triage.TriageDecision`
+# and handed to the shared :func:`prefrontal.triage.apply`, so there is *one* place
+# that creates the todo and *one* ``triage_log``. This is the "one triage, not two"
+# unification (docs/triage-agent.md reality note): a new ingestion source brings a
+# ``Signal`` and rides the same pipeline. Delivery (the ``triage.urgent`` nudge)
+# stays out of the mail path for now — mail passes no n8n client — so this is a
+# routing/audit unification, not a behavior change to what mail notifies.
+
+
+def _mail_signal(item: MailItem, verdict: MailTriage, account: str) -> Signal:
+    """Express a triaged message as the source-agnostic :class:`Signal`.
+
+    ``title`` mirrors what the mail audit row used before unification (subject,
+    then the model's summary, then a placeholder) so ``GET /triage/recent`` reads
+    the same. ``external_id`` is the account-scoped message id, so the shared
+    ``triage_log`` unique index dedups a re-delivered email exactly as the mail
+    dedup already does upstream.
+    """
+    return Signal(
+        source="mail",
+        title=item.subject or verdict.summary or "(no subject)",
+        body=item.body or item.snippet or "",
+        sender=item.sender or item.sender_email or "",
+        received_at=item.received_at or "",
+        external_id=f"{account}:{item.message_id}",
+        meta={"account": account, "category": verdict.category},
+    )
+
+
+def _mail_decision(
+    verdict: MailTriage,
+    *,
+    matched: bool,
+    route: str,
+    todo_payload: dict[str, Any] | None = None,
+    routed_ref: str | None = None,
+) -> TriageDecision:
+    """Map a :class:`MailTriage` verdict onto a generic :class:`TriageDecision`.
+
+    ``kind`` is always ``action`` (only actionable/matched mail reaches here);
+    ``urgency`` collapses the mail 0–3 priority to the shared ladder (``now`` for
+    urgent, else ``today``); ``reason`` reproduces the pre-unification mail audit
+    string. The specialized routed row is carried in ``fields``: ``todo`` (a
+    pre-built payload the shared router creates verbatim, no re-augmentation) for a
+    fresh todo, or ``routed_ref`` (an existing ``todo:<id>``) when mail has already
+    linked the row — e.g. closing a delegation loop.
+    """
+    reason = (
+        f"mail: {verdict.category}"
+        + (" · delegation returned" if matched else "")
+        + (f" · waiting on {verdict.waiting_on}" if verdict.waiting_on else "")
+        + ("" if route == "todo" else " · todo suppressed")
+    )
+    fields: dict[str, Any] = {}
+    if todo_payload is not None:
+        fields["todo"] = todo_payload
+    if routed_ref is not None:
+        fields["routed_ref"] = routed_ref
+    return TriageDecision(
+        kind="action",
+        urgency="now" if verdict.priority >= 3 else "today",
+        route=route,
+        reason=reason,
+        confidence=0.9 if verdict.source == "llm" else 0.6,
+        source=verdict.source,
+        fields=fields,
+    )
+
+
+def _mail_todo_payload(
+    store: MemoryStore,
+    item: MailItem,
+    verdict: MailTriage,
+    *,
+    client: Generator | None,
+    domain: str | None,
+) -> dict[str, Any]:
+    """Build the todo the shared router will create for a needs-action message.
+
+    The mail-specialized title/notes/priority/domain/project — the values mail
+    computed inline before unification — packaged so ``triage.apply`` creates the
+    row verbatim. ``source="manual"`` preserves the pre-unification provenance
+    (mail todos were indistinguishable from hand-added ones; the notes still carry
+    the ``[mail/<account>]`` origin).
+    """
+    title = _todo_title(item, verdict)
+    notes = _todo_notes(item, verdict)
+    project_id = suggest_project(title, notes, store.active_projects(), client=client)
+    return {
+        "title": title,
+        "notes": notes,
+        "priority": verdict.priority,
+        "domain": domain,
+        "project_id": project_id,
+        "source": "manual",
+    }
+
+
+def _todo_id_from_ref(routed_ref: str | None) -> int | None:
+    """Extract the integer id from a ``"todo:<id>"`` routed-ref, or ``None``."""
+    if isinstance(routed_ref, str) and routed_ref.startswith("todo:"):
+        try:
+            return int(routed_ref.split(":", 1)[1])
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -162,7 +277,16 @@ def ingest_messages(
             else None
         )
 
+        # Decide the routed outcome, then hand it to the *one* shared triage
+        # pipeline (prefrontal.triage.apply), which both creates the todo and writes
+        # the triage_log row. Mail no longer calls add_todo / log_triage itself —
+        # this is the "one triage, not two" unification. Only needs-action or
+        # delegation-matched mail is routed (ordinary informational mail stays in
+        # /mail so the feed and the briefing's "worth a look" aren't flooded).
         todo_id = None
+        route = "drop"
+        todo_payload: dict[str, Any] | None = None
+        routed_ref: str | None = None
         if matched is not None:
             store.update_delegation_status(
                 matched["id"],
@@ -177,25 +301,40 @@ def ingest_messages(
             delegation_candidates = [
                 c for c in delegation_candidates if c["id"] != matched["id"]
             ]
+            route = "todo"
+            routed_ref = f"todo:{todo_id}"  # link the existing todo; don't re-create
         elif create_todos and verdict.needs_action:
             if suppress_todo_reason(
                 item, verdict, denylisted_senders=denylisted_senders
             ) is None:
-                todo_title = _todo_title(item, verdict)
-                todo_notes = _todo_notes(item, verdict)
-                project_id = suggest_project(
-                    todo_title, todo_notes, store.active_projects(), client=client
+                todo_payload = _mail_todo_payload(
+                    store, item, verdict, client=client, domain=domain
                 )
-                todo_id = store.add_todo(
-                    todo_title,
-                    notes=todo_notes,
-                    priority=verdict.priority,
-                    domain=domain,
-                    project_id=project_id,
-                )
-                summary.todos_created += 1
+                route = "todo"
             else:
                 summary.todos_suppressed += 1
+
+        # Route + audit through the shared pipeline for anything actionable. A
+        # suppressed (or create_todos=False) needs-action message still logs as a
+        # `drop`, exactly as before. n8n is intentionally omitted (no mail-urgent
+        # nudge yet).
+        if verdict.needs_action or matched is not None:
+            result = triage_apply(
+                _mail_signal(item, verdict, account),
+                _mail_decision(
+                    verdict,
+                    matched=matched is not None,
+                    route=route,
+                    todo_payload=todo_payload,
+                    routed_ref=routed_ref,
+                ),
+                store,
+                n8n=None,
+                client=None,  # payload is pre-built, so no augmentation client needed
+            )
+            if todo_payload is not None:
+                todo_id = _todo_id_from_ref(result.get("routed_ref"))
+                summary.todos_created += 1
 
         store.record_mail(
             account=account,
@@ -218,32 +357,6 @@ def ingest_messages(
             todo_id=todo_id,
         )
 
-        # Bridge into the unified triage feed: mirror an *actionable* mail verdict
-        # into triage_log so it shows in GET /triage/recent, the dashboard Triage
-        # panel, and alongside other sources. Mail keeps its own specialized triage
-        # (corrections, denylist, retention, needs_action) — this is an audit
-        # mirror, not a second classifier. Only needs-action mail is mirrored (a
-        # todo, or a suppressed "drop"); ordinary informational mail stays in /mail
-        # so the feed and the briefing's "worth a look" aren't flooded. Runs once
-        # per message (dedup above), so the triage_log unique index is never hit.
-        if verdict.needs_action or matched is not None:
-            store.log_triage(
-                source="mail",
-                title=item.subject or verdict.summary or "(no subject)",
-                kind="action",
-                urgency="now" if verdict.priority >= 3 else "today",
-                route="todo" if todo_id is not None else "drop",
-                reason=(
-                    f"mail: {verdict.category}"
-                    + (" · delegation returned" if matched is not None else "")
-                    + (f" · waiting on {verdict.waiting_on}" if verdict.waiting_on else "")
-                    + ("" if todo_id is not None else " · todo suppressed")
-                ),
-                confidence=0.9 if verdict.source == "llm" else 0.6,
-                decided_by=verdict.source,
-                external_id=f"{account}:{item.message_id}",
-                routed_ref=f"todo:{todo_id}" if todo_id is not None else None,
-            )
         # An inert record of the message for history; no outcome/ack, so it
         # never pollutes the time-estimation or drift pattern passes.
         store.log_episode(
