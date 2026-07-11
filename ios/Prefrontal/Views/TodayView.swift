@@ -14,11 +14,13 @@ struct TodayView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var showAdd = false
+    @State private var queuedOffline = 0
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 if let error { ErrorBanner(message: error) }
+                if queuedOffline > 0 { offlineBanner }
 
                 quickActions
 
@@ -39,6 +41,19 @@ struct TodayView: View {
         .refreshable { await load() }
         .task { if !loaded { await load() } }
         .sheet(isPresented: $showAdd) { AddTodoSheet { await load() } }
+    }
+
+    private var offlineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Brand.warn)
+            Text("\(queuedOffline) \(queuedOffline == 1 ? "change" : "changes") waiting to sync — reconnect to your server.")
+                .font(.footnote).foregroundStyle(Brand.fg)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Brand.warn.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.warn.opacity(0.35)))
     }
 
     private var quickActions: some View {
@@ -221,6 +236,7 @@ struct TodayView: View {
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+        queuedOffline = OfflineQueue.count
         loaded = true
     }
 }

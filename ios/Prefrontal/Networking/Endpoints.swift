@@ -33,7 +33,7 @@ extension APIClient {
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
 
     // Todo writes
-    func addTodo(title: String) async throws { try await post("todos", json: ["title": title]) }
+    func addTodo(title: String) async throws { try await post("todos", json: ["title": title], queueable: true) }
     func startTodo(_ id: Int) async throws { try await post("todos/\(id)/start") }
     func unstartTodo(_ id: Int) async throws { try await post("todos/\(id)/unstart") }
     func closeTodo(_ id: Int, done: Bool) async throws { try await post("todos/\(id)/\(done ? "done" : "drop")") }
@@ -42,7 +42,7 @@ extension APIClient {
 
     // Self-care
     func markSelfCare(key: String, undo: Bool = false) async throws {
-        try await post("self-care/mark", json: ["key": key, "undo": undo])
+        try await post("self-care/mark", json: ["key": key, "undo": undo], queueable: true)
     }
 
     // Commitment outcome (honest made/missed self-report on an elapsed event).
@@ -61,7 +61,8 @@ extension APIClient {
     func logShortcut(action: String, episodeType: String = "departure",
                      channel: String = "notification") async throws {
         try await post("webhooks/shortcut",
-                       json: ["action": action, "episode_type": episodeType, "channel": channel])
+                       json: ["action": action, "episode_type": episodeType, "channel": channel],
+                       queueable: true)
     }
 
     // Focus / outing lifecycle (webhook routes)
