@@ -7,6 +7,42 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Coaching agent — the three closeout items land, so it's feature-complete** ✅ —
+  the last of the coaching-agent spine (`docs/coaching-agent.md`) is in:
+  - **LLM phrasing pass (§5)** — `prefrontal.coaching.phrase` now warms `ambient`
+    cues through the model in Prefrontal's coaching voice, grounded in the user's
+    structured profile (built once per tick and shared across cues), with a
+    heuristic fallback to the deterministic `cue.text` on any provider failure.
+    It's opt-in (the `coach_llm_phrasing` coaching key) and applies **only** to
+    `ambient` cues — `nudge`/`urgent`/`critical` keep their deterministic templates
+    so a synchronous model call never sits on a time-critical delivery path (§13).
+    Resolved under the non-`KNOWN_AGENTS` agent name `coach`, so it stays local
+    unless the operator opts every agent into Anthropic; the profile is only read
+    when phrasing is on and an ambient cue is present, so the default path pays
+    nothing. Covered by `tests/test_coaching.py`.
+  - **Encouragement folds in as a cue producer (§9)** — the rough-day recovery
+    layer is no longer a separate delivery path: `prefrontal.encouragement.encouragement_cues`
+    wraps the **same** `assess_day` / `build_recovery` / `render_encouragement`
+    core the standalone `GET /encouragement` endpoint uses (one implementation, not
+    two) as an `evaluate`-style producer. `run_coaching_tick` collects it alongside
+    the module cues, so the recovery message routes through the shared
+    `choose_channel`, `suppressed` (quiet hours + debounce), and delivery path. The
+    once-per-day cursor (`last_encouragement_date`) is advanced only when the cue
+    actually *fires* — held by quiet hours, it re-offers when the window opens,
+    exactly as the old `/encouragement` → `/encouragement/sent` contract behaved.
+    Tone-calibrated prose rides the same `coach_llm_phrasing` key via
+    `summarize_encouragement`; off, the deterministic render is delivered. The
+    standalone endpoint stays (a pure read for dashboards, sharing the cursor so
+    there's no double delivery). Covered by `tests/test_encouragement.py`.
+  - **`/webhooks/outing/check` deprecated (§13)** — the endpoint is now marked
+    `deprecated=True`: `coach/check` fans over every module and
+    `LocationAnchorModule.evaluate` runs the byte-identical per-outing decision
+    (`evaluate_outing` + `apply_outing_evaluation`, including the passive
+    home-return close and abandon auto-close), and the native launchd `coach
+    --deliver` tick already delivers the escalation. The old endpoint stays for
+    existing n8n workflows and will be removed once the coaching tick has run clean
+    in the field. Deployment note in `docs/deployment.md`.
+
 - **Bio-break chip goes green once you confirm — until the next reminder** ✅ —
   the self-care card's bio-break check is *open-ended* (a recurring reminder, not
   a daily quota), so it never reached the "done" green state the other checks show

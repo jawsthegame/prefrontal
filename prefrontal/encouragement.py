@@ -4,8 +4,10 @@ The counterweight to a system whose whole job is nudging: once a day crosses a
 "rough" threshold, stop nudging and *reassure* — acknowledge the rough day
 without judgment, then hand back a concrete get-back-on-track plan (re-fit what
 still fits, suggest a low-stakes deferral, and one tiny next step). Specced in
-``docs/encouragement.md``; this is the standalone core (the coaching agent can
-later wrap :func:`assess_day` as one more cue producer — one implementation).
+``docs/encouragement.md``; this is the standalone core, and the coaching agent now
+wraps :func:`assess_day` as one more cue producer via :func:`encouragement_cues`
+(spec §9) — one implementation feeding both the ``GET /encouragement`` read and the
+coaching tick's delivery.
 
 Two layers, like the briefing and the panic triage:
 
@@ -682,3 +684,62 @@ def mark_sent_today(store: MemoryStore, now: Any | None = None) -> None:
     """Stamp today as delivered so a later poll won't re-send (explicit write)."""
     now = now or utcnow()
     store.set_state(_SENT_KEY, _local_date(now), source="inferred")
+
+
+# --- Coaching-agent cue producer (spec §9) -----------------------------------
+#
+# The encouragement layer is not a separate delivery system: it's one more cue
+# source. :func:`encouragement_cues` wraps the same :func:`assess_day` /
+# :func:`build_recovery` core the standalone ``GET /encouragement`` endpoint uses
+# (one implementation, not two) as an ``evaluate``-style producer, so the coaching
+# tick routes the recovery message through the shared channel choice, debounce,
+# and quiet-hours gate. The once-per-day cursor above is the debounce; the tick
+# advances it (``mark_sent_today``) only when the cue actually fires.
+
+#: The ``Cue.module`` a recovery cue carries — not a real challenge module (the
+#: encouragement layer is orthogonal), just the owner tag the tick keys the
+#: once-per-day cursor off (see ``prefrontal.coaching.run_coaching_tick``).
+ENCOURAGEMENT_MODULE = "encouragement"
+
+
+def encouragement_cues(store: MemoryStore, ctx: Any) -> list[Any]:
+    """Return today's recovery cue as a one-item list, or ``[]`` (spec §9).
+
+    Emits a single ``nudge`` cue when the day is :func:`assess_day`-rough and one
+    hasn't already been delivered today (the ``last_encouragement_date`` cursor).
+    The message is the deterministic :func:`render_encouragement` by default, or
+    the tone-calibrated LLM prose (:func:`summarize_encouragement`, its own
+    heuristic-fallback path — the §5 phrasing shape) when the ``coach_llm_phrasing``
+    key is on. Inert when the ``encouragement`` layer is off (``assess_day``
+    returns ``rough=False``), so a box that never opted in produces nothing.
+
+    Takes the tick's :class:`~prefrontal.coaching.CoachContext` for ``ctx.now`` and
+    returns :class:`~prefrontal.coaching.Cue`\\s (imported lazily to avoid a
+    module import cycle with the engine that calls this).
+    """
+    from prefrontal.coaching import Cue, llm_phrasing_enabled
+
+    now = getattr(ctx, "now", None) or utcnow()
+    if already_sent_today(store, now=now):
+        return []
+    assessment = assess_day(store, now=now)
+    if not assessment.rough:
+        return []
+    if llm_phrasing_enabled(store):
+        text = summarize_encouragement(store, now=now).text
+    else:
+        plan = build_recovery(store, assessment, now=now)
+        text = render_encouragement(assessment, plan)
+    if not text.strip():
+        return []
+    return [
+        Cue(
+            module=ENCOURAGEMENT_MODULE,
+            intervention="recovery",
+            urgency="nudge",
+            text=text,
+            context_key="encouragement",
+            dedup_key="encouragement",
+            ref={"date": assessment.date, "rough_score": assessment.rough_score},
+        )
+    ]

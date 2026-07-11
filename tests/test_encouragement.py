@@ -361,3 +361,114 @@ def test_encouragement_endpoint_calm_day():
             assert body["rough"] is False and body["text"] == ""
     finally:
         conn.close()
+
+
+# -- coaching-agent cue producer (spec §9) -----------------------------------
+
+
+def _make_rough(store):
+    """Three miss episodes → score 3.0 ≥ the default threshold (a rough day)."""
+    for i in range(3):
+        store.log_episode("task", outcome="miss", context=f"dropped {i}")
+
+
+def _coach_ctx():
+    from prefrontal.coaching import CoachContext
+
+    return CoachContext(now=_NOW)
+
+
+def test_encouragement_cues_empty_on_a_calm_day(store):
+    from prefrontal.encouragement import encouragement_cues
+
+    assert encouragement_cues(store, _coach_ctx()) == []
+
+
+def test_encouragement_cues_emit_a_single_recovery_nudge_when_rough(store):
+    from prefrontal.encouragement import ENCOURAGEMENT_MODULE, encouragement_cues
+
+    _make_rough(store)
+    cues = encouragement_cues(store, _coach_ctx())
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.module == ENCOURAGEMENT_MODULE and cue.intervention == "recovery"
+    assert cue.urgency == "nudge" and cue.context_key == "encouragement"
+    # Deterministic render by default (phrasing off) — the same text the endpoint returns.
+    assert cue.text == render_encouragement(
+        assess_day(store, now=_NOW), build_recovery(store, assess_day(store, now=_NOW), now=_NOW)
+    )
+
+
+def test_encouragement_cues_respect_the_once_per_day_cursor(store):
+    from prefrontal.encouragement import encouragement_cues
+
+    _make_rough(store)
+    assert encouragement_cues(store, _coach_ctx())  # rough → one cue
+    mark_sent_today(store, now=_NOW)
+    assert encouragement_cues(store, _coach_ctx()) == []  # already sent today → silent
+
+
+def test_run_coaching_tick_fires_and_marks_encouragement(store):
+    """A rough day surfaces a recovery decision through the shared tick, which
+    advances the once-per-day cursor so the next tick is quiet."""
+    from prefrontal.coaching import run_coaching_tick
+    from prefrontal.encouragement import ENCOURAGEMENT_MODULE
+    from prefrontal.integrations.ollama import OllamaClient
+
+    settings = Settings(webhook_secret=SECRET)
+    offline = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+    _make_rough(store)
+
+    result = run_coaching_tick(store, settings=settings, ollama=offline, now=_NOW)
+    assert result.encouraged is True
+    assert [d.cue.module for d in result.decisions if d.cue.module == ENCOURAGEMENT_MODULE]
+    assert already_sent_today(store, now=_NOW) is True
+
+    # Second tick same day → the cursor holds it back.
+    again = run_coaching_tick(store, settings=settings, ollama=offline, now=_NOW)
+    assert again.encouraged is False
+    assert not [d for d in again.decisions if d.cue.module == ENCOURAGEMENT_MODULE]
+
+
+def test_coach_check_endpoint_surfaces_the_recovery_cue(monkeypatch):
+    """End-to-end: a rough day makes the recovery cue come back over HTTP with a
+    channel, then the once-per-day cursor debounces the next poll."""
+    # run_coaching_tick derives "now" from prefrontal.impact.utcnow (no now= over
+    # HTTP); pin it to _NOW so it lines up with the fixture-pinned episode clock.
+    monkeypatch.setattr("prefrontal.impact.utcnow", lambda: _NOW)
+    conn, unscoped, scoped = _http_store()
+    try:
+        scoped.set_state("responsive_hours_start", "0", source="explicit")  # always responsive
+        scoped.set_state("responsive_hours_end", "0", source="explicit")
+        _make_rough(scoped)
+        app = create_app(store=unscoped, settings=Settings(webhook_secret=SECRET))
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": SECRET}
+            cues = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
+            rec = [x for x in cues if x["module"] == "encouragement"]
+            assert len(rec) == 1
+            assert rec[0]["intervention"] == "recovery" and rec[0]["channel"] == "push"
+            assert rec[0]["text"]
+            # Marked sent this tick → the next poll no longer surfaces it.
+            again = c.post("/webhooks/coach/check", json={}, headers=hdr).json()["cues"]
+            assert not [x for x in again if x["module"] == "encouragement"]
+    finally:
+        conn.close()
+
+
+def test_run_coaching_tick_holds_encouragement_in_quiet_hours_without_marking(store):
+    """Held by quiet hours, the recovery cue is not delivered *and* the cursor is
+    not advanced — so it re-offers once the responsive window opens."""
+    from prefrontal.coaching import run_coaching_tick
+    from prefrontal.integrations.ollama import OllamaClient
+
+    settings = Settings(webhook_secret=SECRET)
+    offline = OllamaClient(base_url=settings.ollama_url, model=settings.ollama_model)
+    # A window that excludes noon (_NOW) → the nudge is suppressed.
+    store.set_state("responsive_hours_start", "20", source="explicit")
+    store.set_state("responsive_hours_end", "22", source="explicit")
+    _make_rough(store)
+
+    result = run_coaching_tick(store, settings=settings, ollama=offline, now=_NOW)
+    assert result.encouraged is False
+    assert already_sent_today(store, now=_NOW) is False  # not marked → will re-offer

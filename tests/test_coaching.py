@@ -20,6 +20,7 @@ from prefrontal.coaching import (
     decide,
     in_quiet_hours,
     note_delivered,
+    phrase,
     record_fired,
     resolve_ack,
     suppressed,
@@ -644,3 +645,86 @@ def test_get_hour_accessor_parses_both_forms_and_falls_back():
     store.set_state("meal_start_hour", "garbage", source="explicit")
     assert store.get_hour("meal_start_hour", 11) == 11  # unparseable → default
     assert store.get_hour("never_set_key", 9) == 9  # absent → default
+
+
+# -- LLM phrasing pass (spec §5) ---------------------------------------------
+
+
+class _FakeClient:
+    """Stub model client: capture the system prompt, return a canned reply."""
+
+    def __init__(self, reply="", model="fake-model", error=False):
+        self.reply = reply
+        self.model = model
+        self.error = error
+        self.system = None
+
+    def generate(self, prompt, *, system=None):
+        from prefrontal.integrations.ollama import OllamaError
+
+        if self.error:
+            raise OllamaError("model down")
+        self.system = system
+        return self.reply
+
+
+def _text_cue(urgency, text, dedup="k") -> Cue:
+    return Cue(
+        module="m", intervention="i", urgency=urgency, text=text,
+        context_key="todo", dedup_key=dedup,
+    )
+
+
+def test_phrase_returns_cue_text_when_phrasing_off():
+    """Off by default: even an ambient cue keeps its deterministic text."""
+    store = _FakeStore()
+    cue = _text_cue("ambient", "you've been out a while")
+    assert phrase(store, cue, _ctx(), client=_FakeClient(reply="warm")) == "you've been out a while"
+
+
+def test_phrase_leaves_time_critical_cues_deterministic_even_when_on():
+    """A nudge is never rewritten — latency on a time-critical path is bad (§13)."""
+    store = _FakeStore(state={"coach_llm_phrasing": "on"})
+    cue = _text_cue("nudge", "leave now for the dentist")
+    fake = _FakeClient(reply="Hey, time to head out!")
+    assert phrase(store, cue, _ctx(), client=fake) == "leave now for the dentist"
+    assert fake.system is None  # the model was never called
+
+
+def test_phrase_rewrites_ambient_when_on_and_grounds_in_profile():
+    store = _FakeStore(state={"coach_llm_phrasing": "on"})
+    cue = _text_cue("ambient", "you've been out a while")
+    fake = _FakeClient(reply="You've been out a bit — all good, just a heads up.")
+    out = phrase(store, cue, _ctx(), client=fake, profile="pads estimates 1.4x")
+    assert out == "You've been out a bit — all good, just a heads up."
+    assert "pads estimates 1.4x" in fake.system  # profile threaded into the system prompt
+
+
+def test_phrase_falls_back_to_cue_text_when_model_errors():
+    store = _FakeStore(state={"coach_llm_phrasing": "on"})
+    cue = _text_cue("ambient", "you've been out a while")
+    assert phrase(store, cue, _ctx(), client=_FakeClient(error=True)) == "you've been out a while"
+
+
+def test_decide_phrases_ambient_cue_through_the_client():
+    store = _FakeStore(state={"coach_llm_phrasing": "on"})
+    cue = _text_cue("ambient", "raw ambient text", dedup="amb")
+    fake = _FakeClient(reply="warmed ambient text")
+    decisions = decide(store, [cue], _ctx(), client=fake, profile="prof")
+    assert len(decisions) == 1
+    assert decisions[0].channel == "digest" and decisions[0].text == "warmed ambient text"
+
+
+# -- outing/check deprecation (spec §13) -------------------------------------
+
+
+def test_outing_check_is_marked_deprecated_in_the_schema():
+    """coach/check now runs the identical anchor decision, so outing/check is
+    flagged deprecated (kept for existing n8n workflows)."""
+    conn = init_db(":memory:")
+    try:
+        app = create_app(store=MemoryStore(conn), settings=Settings(webhook_secret=SECRET))
+        spec = app.openapi()["paths"]["/webhooks/outing/check"]["post"]
+        assert spec.get("deprecated") is True
+    finally:
+        conn.close()

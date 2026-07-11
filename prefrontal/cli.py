@@ -46,6 +46,7 @@ from prefrontal.config import get_settings
 from prefrontal.encouragement import (
     assess_day,
     build_recovery,
+    encouragement_cues,
     render_encouragement,
     summarize_encouragement,
 )
@@ -1469,6 +1470,9 @@ def _coach_tick(
         # (mutating) sweeps or recording anything.
         ctx = build_context(store, now=now, timezone=settings.timezone)
         cues = collect_cues(store, enabled_modules(settings), ctx)
+        # The encouragement/recovery layer is a non-module cue producer folded into
+        # the real tick (spec §9); show it here too so --dry-run matches what fires.
+        cues.extend(encouragement_cues(store, ctx))
         if not cues:
             print("No cues due.")
         for c in cues:
