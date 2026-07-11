@@ -16,6 +16,9 @@ struct Glance {
     var nextTitle: String?
     var meal: (Int, Int)?
     var water: (Int, Int)?
+    // Active lifecycle state — when set, the widget offers a one-tap end action.
+    var outingIntention: String?
+    var focusTask: String?
 
     static let sample = Glance(
         depTitle: "Dentist", depLeaveBy: Date().addingTimeInterval(45 * 60), depLevel: "soon",
@@ -32,9 +35,14 @@ struct Glance {
         async let depT = try? await client.departureNext()
         async let nowT = try? await client.todosNow(cap: 240)
         async let scT = try? await client.selfCare()
+        async let outT = try? await client.outings()
+        async let focT = try? await client.focus()
         let dep = await depT, now = await nowT, sc = await scT
+        let outing = await outT, focus = await focT
 
         var g = Glance()
+        g.outingIntention = outing?.active.first?.intention
+        g.focusTask = focus?.active.first.map { $0.intendedTask ?? "Focusing" }
         if let d = dep?.departure, d.title != nil {
             g.depTitle = d.title
             g.depLeaveBy = PFDate.parse(d.leaveBy)
@@ -141,25 +149,41 @@ struct PrefrontalWidgetView: View {
         }
     }
 
+    // An active outing/focus is the most actionable thing → offer its one-tap
+    // end action; self-care yields the space to it on the small widget.
+    private var hasActive: Bool { g.outingIntention != nil || g.focusTask != nil }
+
     private var small: some View {
         VStack(alignment: .leading, spacing: 4) {
             header
             Spacer(minLength: 2)
-            if g.notConfigured {
-                Text("Tap to connect").font(.callout.weight(.semibold)).foregroundStyle(Color.wMuted)
-            } else if let leave = g.depLeaveBy {
-                Text("Leave").font(.caption).foregroundStyle(Color.wMuted)
-                Text(leave, style: .time).font(.title3.weight(.bold)).foregroundStyle(levelColor(g.depLevel))
-                Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(2)
-            } else if g.freeMinutes > 0 {
-                Text("\(g.fits) todo\(g.fits == 1 ? "" : "s")").font(.title2.weight(.bold)).foregroundStyle(Color.wInk)
-                Text("fit \(g.freeMinutes) min free").font(.caption).foregroundStyle(Color.wMuted)
-            } else {
-                Text("All clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
-                if let t = g.nextTitle { Text("next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(2) }
-            }
+            smallBody
             Spacer(minLength: 2)
-            selfCareLine
+            if !hasActive { selfCareLine }
+        }
+    }
+
+    @ViewBuilder private var smallBody: some View {
+        if g.notConfigured {
+            Text("Tap to connect").font(.callout.weight(.semibold)).foregroundStyle(Color.wMuted)
+        } else if let intention = g.outingIntention {
+            Text("OUT").font(.caption2).foregroundStyle(Color.wMuted)
+            Text(intention).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+            actionButton("I'm back", systemImage: "house", intent: ImBackIntent())
+        } else if let task = g.focusTask {
+            Text("FOCUS").font(.caption2).foregroundStyle(Color.wMuted)
+            Text(task).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+            actionButton("Wrap up", systemImage: "flag.checkered", intent: EndFocusIntent())
+        } else if let leave = g.depLeaveBy {
+            Text("Leave").font(.caption).foregroundStyle(Color.wMuted)
+            Text(leave, style: .time).font(.title3.weight(.bold)).foregroundStyle(levelColor(g.depLevel))
+            Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(2)
+        } else if g.freeMinutes > 0 {
+            Text("\(g.fits) todo\(g.fits == 1 ? "" : "s")").font(.title2.weight(.bold)).foregroundStyle(Color.wInk)
+            Text("fit \(g.freeMinutes) min free").font(.caption).foregroundStyle(Color.wMuted)
+        } else {
+            Text("All clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
+            if let t = g.nextTitle { Text("next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(2) }
         }
     }
 
@@ -169,6 +193,10 @@ struct PrefrontalWidgetView: View {
             if g.notConfigured {
                 Text("Open Prefrontal to connect this widget.").font(.footnote).foregroundStyle(Color.wMuted)
                 Spacer(minLength: 0)
+            } else if hasActive {
+                activeLine
+                Spacer(minLength: 0)
+                selfCareLine
             } else {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -197,6 +225,35 @@ struct PrefrontalWidgetView: View {
                 selfCareLine
             }
         }
+    }
+
+    // Active outing / focus with its one-tap end action (medium layout).
+    @ViewBuilder private var activeLine: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(g.outingIntention != nil ? "OUT" : "FOCUS")
+                    .font(.caption2).foregroundStyle(Color.wMuted)
+                Text(g.outingIntention ?? g.focusTask ?? "")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            if g.outingIntention != nil {
+                actionButton("I'm back", systemImage: "house", intent: ImBackIntent())
+            } else {
+                actionButton("Wrap up", systemImage: "flag.checkered", intent: EndFocusIntent())
+            }
+        }
+    }
+
+    private func actionButton<I: AppIntent>(_ title: String, systemImage: String, intent: I) -> some View {
+        Button(intent: intent) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.wGreen)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Color.wGreen.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // Interactive self-care: tapping logs a meal / glass of water via

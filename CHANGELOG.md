@@ -7,6 +7,15 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS widget — one-tap end an active outing/focus** ✅ (#465) — completes the
+  interactive-widget scope: when an outing or focus session is running, the Home
+  Screen widget now shows a **I'm back** / **Wrap up** button that ends it in
+  place via `ImBackIntent` / `EndFocusIntent` (already compiled into the widget
+  target since #471) — no app launch. The glance fetch now also reads
+  `/outings` + `/focus`; an active session takes visual priority over the
+  departure/what-fits glance. Builds on the interactive self-care chips (#465)
+  and the App Intents (#470).
+
 - **iOS Control Center controls — Panic / I'm Back / Wrap Up Focus** ✅ (#471) —
   the widget extension now ships iOS 18 **Control Center controls**
   (`ios/PrefrontalWidgets/PrefrontalControls.swift`) for the no-input actions,
