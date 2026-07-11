@@ -75,7 +75,7 @@ from typing import Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.coaching import CoachContext, Cue
+from prefrontal.coaching import CoachContext, Cue, _fired_key
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -1119,11 +1119,19 @@ class SelfCareModule(Module):
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
-        """Fire whichever basic-needs checks are due right now.
+        """Fire the single most-overdue basic-needs check due right now.
 
         Opt-in (``self_care`` == ``on``); each check inert before its start hour,
-        while snoozed, or once the day's target is met. The engine adds
-        responsive-hours + debounce on top, so nothing nags overnight.
+        while snoozed, or once the day's target is met. **At most one cue per tick:**
+        several checks coming due together (e.g. meal + water + bio-break all landing
+        mid-afternoon) would otherwise fire as a burst of separate notifications —
+        the exact pile-up the per-check cadences are tuned to avoid — since debounce
+        is per ``dedup_key`` and can't see across checks. So the most-overdue one goes
+        now and the rest trickle out on the following ticks. A check already delivered
+        for its current window (its bucketed ``dedup_key`` carries a ``coach_fired``
+        stamp) is skipped, so capping never lets the just-fired check stay "most
+        overdue" and starve the others. The engine adds responsive-hours + debounce
+        on top, so nothing nags overnight.
         """
         if (store.get_state("self_care", "off") or "off") != "on":
             return []
@@ -1132,8 +1140,8 @@ class SelfCareModule(Module):
         today = local.strftime("%Y-%m-%d")
         minute_of_day = local.hour * 60 + local.minute
 
-        cues: list[Cue] = []
-        for check in CHECKS:
+        due: list[tuple[int, int, Cue]] = []
+        for index, check in enumerate(CHECKS):
             if (store.get_state(check.enabled_key, "on") or "on") == "off":
                 continue
             # An open-ended check (bio breaks) is a reminder, not a quota — no count
@@ -1153,24 +1161,36 @@ class SelfCareModule(Module):
             if end_hour is not None and local.hour >= end_hour:
                 continue  # past this check's window (e.g. no bio-break nudges after 7pm)
 
-            # A fresh bucket each `interval` minutes → a new dedup_key, so the
-            # engine fires each window once (the re-ask/repeat rhythm).
+            # A fresh bucket each `interval` minutes → a new dedup_key, so each
+            # window fires once (the re-ask/repeat rhythm).
             bucket = (minute_of_day - start_min) // interval
-            cues.append(
+            dedup_key = f"self_care:{check.key}:{today}:{bucket}"
+            # Already delivered for this window? Skip it — debounce would hold it
+            # anyway, and letting it stay "most overdue" would starve the others.
+            if store.get_state(_fired_key(dedup_key)) is not None:
+                continue
+            overdue = minute_of_day - (start_min + bucket * interval)
+            due.append((
+                overdue,
+                index,
                 Cue(
                     module=self.key,
                     intervention=check.intervention,
                     urgency="nudge",
                     text=check.message(ctx.display_name),
                     context_key=check.key,
-                    dedup_key=f"self_care:{check.key}:{today}:{bucket}",
+                    dedup_key=dedup_key,
                     # `target` is a synthetic int (the date) so the signed one-tap
                     # button has an id to carry; the tap acts on "now", not on it.
                     ref={"date": today, "target": int(today.replace("-", ""))},
                     suggested_channel="push",
-                )
-            )
-        return cues
+                ),
+            ))
+        if not due:
+            return []
+        # Most overdue first; ties fall to CHECKS order (a stable, meaningful priority).
+        due.sort(key=lambda t: (-t[0], t[1]))
+        return [due[0][2]]
 
     def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
         """Sweep self-care nudges left unanswered past their window into ``ignored``

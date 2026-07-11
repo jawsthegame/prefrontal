@@ -96,12 +96,38 @@ def test_off_by_default(store):
     assert SelfCareModule().evaluate(store, ctx) == []
 
 
-def test_default_checks_fire_when_enabled(store):
-    """With the master on, the default-on checks (meal, water, bio breaks) all fire
-    in their windows; meds stays off until opted in."""
+def test_default_checks_fire_one_per_tick_most_overdue(store):
+    """With the master on, the default-on checks (meal, water, bio breaks) can all be
+    due at once — but only one fires per tick, so they trickle out instead of
+    bursting. Stamping the fired one (as the engine does) lets the next surface on
+    the following tick; meds stays off until opted in."""
+    from prefrontal.coaching import _fired_key
     store.set_state("self_care", "on")
-    cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom"))
-    assert {c.context_key for c in cues} == {"meal", "water", "biobreak"}
+    ctx = _ctx(datetime(2026, 7, 2, 15, 0, 0), name="Tom")
+    mod = SelfCareModule()
+    surfaced = set()
+    for _ in range(3):
+        cues = mod.evaluate(store, ctx)
+        assert len(cues) == 1  # never a simultaneous burst
+        cue = cues[0]
+        assert cue.context_key not in surfaced  # a fresh check each tick, no starvation
+        surfaced.add(cue.context_key)
+        store.set_state(_fired_key(cue.dedup_key), "2026-07-02 15:00:00")  # engine stamps on fire
+    assert surfaced == {"meal", "water", "biobreak"}  # all three delivered over ticks
+    assert mod.evaluate(store, ctx) == []  # nothing left this window (meds off)
+
+
+def test_cap_picks_the_most_overdue_check(store):
+    """When several are due, the one furthest into its current window fires first."""
+    store.set_state("self_care", "on")
+    for k in ("biobreak", "meds", "winddown", "movement"):
+        store.set_state(f"{k}_enabled", "off")  # isolate to meal vs water
+    store.set_state("meal_start_hour", "0")
+    store.set_state("water_start_hour", "0")
+    store.set_state("meal_reask_minutes", "60")      # meal just rolled into a new bucket at 15:00
+    store.set_state("water_interval_minutes", "240")  # water is 180 min into its 4h bucket
+    cues = SelfCareModule().evaluate(store, _ctx(datetime(2026, 7, 2, 15, 0, 0)))
+    assert len(cues) == 1 and cues[0].context_key == "water"
 
 
 def test_meds_off_by_default_but_opt_in_fires(store):
@@ -619,7 +645,9 @@ def _always_on(store):
 def test_coach_check_surfaces_meal_cue_with_actions(client, store):
     """The tick returns the meal cue with one-tap Ate / Snooze buttons."""
     _always_on(store)
+    # Isolate meal so the one-per-tick cap surfaces it (not another due check).
     store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     cues = client.post("/webhooks/coach/check", json={}, headers=_auth()).json()["cues"]
     meal = next(c for c in cues if c["context_key"] == "meal")
     assert meal["module"] == "self_care"
@@ -631,7 +659,9 @@ def test_coach_check_surfaces_meal_cue_with_actions(client, store):
 def test_coach_check_surfaces_water_cue_with_actions(client, store):
     """The tick returns the water cue with one-tap Drank / Snooze buttons."""
     _always_on(store)
+    # Isolate water so the one-per-tick cap surfaces it (not another due check).
     store.set_state("meal_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
     cues = client.post("/webhooks/coach/check", json={}, headers=_auth()).json()["cues"]
     water = next(c for c in cues if c["context_key"] == "water")
     assert [a["label"] for a in water["actions"]] == ["✓ Drank", "Snooze"]
