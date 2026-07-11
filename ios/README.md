@@ -13,7 +13,9 @@ features planned next (background refresh, native notification actions).
 
 It ships a **WidgetKit extension** (`PrefrontalWidgets`) — Home Screen
 (small/medium) and Lock Screen (rectangular/circular/inline) glances showing
-your next departure, what-fits-now, and self-care progress. The app and widget
+your next departure, what-fits-now, and self-care progress. The Home Screen
+self-care chips are **interactive** (iOS 17): tapping logs a meal / glass of
+water in place (`MarkSelfCareIntent`), no app launch. The app and widget
 share the base URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
 
 ## Layout

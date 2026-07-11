@@ -1,5 +1,6 @@
 import WidgetKit
 import SwiftUI
+import AppIntents
 
 // MARK: - Snapshot
 
@@ -198,14 +199,32 @@ struct PrefrontalWidgetView: View {
         }
     }
 
+    // Interactive self-care: tapping logs a meal / glass of water via
+    // `MarkSelfCareIntent` and WidgetKit reloads the timeline (iOS 17+). Only
+    // the Home Screen families render these; the Lock Screen accessories don't
+    // call `selfCareLine`, and interactive buttons aren't supported there.
     @ViewBuilder private var selfCareLine: some View {
         if g.meal != nil || g.water != nil {
-            HStack(spacing: 12) {
-                if let m = g.meal { Label("\(m.0)/\(m.1)", systemImage: "fork.knife") }
-                if let w = g.water { Label("\(w.0)/\(w.1)", systemImage: "drop.fill") }
+            HStack(spacing: 8) {
+                if let m = g.meal { scButton(key: "meal", icon: "fork.knife", count: m.0, target: m.1) }
+                if let w = g.water { scButton(key: "water", icon: "drop.fill", count: w.0, target: w.1) }
             }
-            .font(.caption2).foregroundStyle(Color.wGreen)
         }
+    }
+
+    private func scButton(key: String, icon: String, count: Int, target: Int) -> some View {
+        let done = count >= target
+        return Button(intent: MarkSelfCareIntent(key: key)) {
+            HStack(spacing: 4) {
+                Image(systemName: done ? "checkmark" : icon)
+                Text("\(count)/\(target)").monospacedDigit()
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Color.wGreen)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Color.wGreen.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var accRect: some View {
@@ -257,7 +276,7 @@ struct PrefrontalWidget: Widget {
             PrefrontalWidgetView(entry: entry)
         }
         .configurationDisplayName("Prefrontal")
-        .description("Your next departure, what fits now, and self-care.")
+        .description("Your next departure, what fits now, and tap-to-log self-care.")
         .supportedFamilies([.systemSmall, .systemMedium,
                             .accessoryRectangular, .accessoryCircular, .accessoryInline])
     }

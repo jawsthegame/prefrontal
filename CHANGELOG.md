@@ -7,6 +7,15 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS interactive widget — tap-to-log self-care** ✅ (#465) — the Home Screen
+  widget's meal/water chips are now **interactive** (iOS 17 `Button(intent:)`):
+  tapping logs a meal or a glass of water in place via a new `MarkSelfCareIntent`
+  (`ios/Prefrontal/Intents/WidgetActionIntents.swift`) and WidgetKit reloads the
+  timeline, so the count updates without opening the app. The intent authenticates
+  off the App Group like every other widget read, and is compiled into *just* the
+  widget target (not the app-only `AppShortcutsProvider`). Builds on the App
+  Intents from #470.
+
 - **iOS App Intents — Siri / Shortcuts / Spotlight / Action Button** ✅ (#470) —
   the native app's core actions are now first-class **App Intents**
   (`ios/Prefrontal/Intents/PrefrontalIntents.swift`), retiring the hand-built
