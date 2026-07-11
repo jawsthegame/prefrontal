@@ -75,7 +75,7 @@ from typing import Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.coaching import CoachContext, Cue, _fired_key
+from prefrontal.coaching import CoachContext, Cue, last_fired
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -992,6 +992,10 @@ class SelfCareModule(Module):
         "executive-function challenge per se but a downstream casualty of one: "
         "the deeper the flow, the easier a meal or a glass of water is to skip."
     )
+    # Basic-needs checks are *meant* to break flow, so they pierce protected
+    # hyperfocus — the whole point is to interrupt a focus state that has skipped
+    # a meal or a glass of water.
+    pierces_protection = True
     default_state = {
         # Master switch — off by default, unlike the EF modules, because a
         # self-care nudge is a personal-preference behavior, not a default assist.
@@ -1167,7 +1171,7 @@ class SelfCareModule(Module):
             dedup_key = f"self_care:{check.key}:{today}:{bucket}"
             # Already delivered for this window? Skip it — debounce would hold it
             # anyway, and letting it stay "most overdue" would starve the others.
-            if store.get_state(_fired_key(dedup_key)) is not None:
+            if last_fired(store, dedup_key) is not None:
                 continue
             overdue = minute_of_day - (start_min + bucket * interval)
             due.append((

@@ -176,8 +176,12 @@ def test_protected_focus_gate_exempts_self_care_and_critical(store):
     self-care pierces flow (eat/drink) and critical always lands."""
     from prefrontal.coaching import Cue, suppressed
 
+    # The engine collects the piercing keys from each module's pierces_protection
+    # flag once per tick; self-care and hyperfocus declare it. Here we pass them
+    # directly since the test drives suppressed() rather than a full tick.
     ctx = CoachContext(
-        now=utcnow(), responsive_start=0, responsive_end=0, focus_protected=True
+        now=utcnow(), responsive_start=0, responsive_end=0, focus_protected=True,
+        pierce_keys=frozenset({"self_care", "hyperfocus"}),
     )
 
     def cue(module: str, urgency: str) -> Cue:

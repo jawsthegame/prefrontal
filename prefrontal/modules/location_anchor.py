@@ -597,6 +597,10 @@ class LocationAnchorModule(Module):
         "home_arrive_grace_minutes": str(DEFAULT_HOME_ARRIVE_GRACE_MINUTES),
     }
 
+    def channel_targets(self) -> dict[str, str]:
+        """Outing-escalation nudges carry one-tap buttons, keyed by ``outing_id``."""
+        return {"outing": "outing_id"}
+
     def interventions(self) -> list[Intervention]:
         """Declare the three-stage escalation; all are wired via n8n + Twilio."""
         return [

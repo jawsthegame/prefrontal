@@ -21,7 +21,7 @@ from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.coaching import (
     CoachContext,
     Cue,
-    _fired_key,
+    last_fired,
     note_hint,
     stamp_pending_engagement,
     sweep_engagement,
@@ -89,7 +89,7 @@ class ProjectStalenessModule(Module):
             if days < cutoff:
                 continue  # not stale enough (list is stalest-first; rest are fresher)
             dedup_key = f"project_stale:{project['id']}"
-            fired = _parse_ts(store.get_state(_fired_key(dedup_key)))
+            fired = last_fired(store, dedup_key)
             if fired is not None and (ctx.now - fired).days < RENUDGE_DAYS:
                 continue  # nudged about this project recently enough
             n = project["open_todos"]
