@@ -62,9 +62,11 @@ targets:
       - path: Prefrontal/Networking
       - path: Prefrontal/Models
       - path: Prefrontal/Theme
-      # Only the widget-button intent — NOT PrefrontalIntents.swift, whose
-      # AppShortcutsProvider must be registered by the app target alone.
+      # The shared action intents (widget-button + Control Center controls call
+      # these). NOT AppShortcuts.swift, whose AppShortcutsProvider must be
+      # registered by the app target alone.
       - path: Prefrontal/Intents/WidgetActionIntents.swift
+      - path: Prefrontal/Intents/PrefrontalIntents.swift
     info:
       path: PrefrontalWidgets/Info.plist
       properties:

@@ -152,5 +152,16 @@ Each intent authenticates like the widget does — `APIClient(shared:)` reads th
 base URL + token from the App Group — so it runs in the background
 (`openAppWhenRun == false`) even when the app isn't open, and reloads the widget
 timeline after a state change. Siri phrases are registered in
-`PrefrontalShortcuts` (`AppShortcutsProvider`); assign any of them to the Action
-Button in **Settings ▸ Action Button ▸ Shortcut**.
+`PrefrontalShortcuts` (`AppShortcutsProvider`, `Intents/AppShortcuts.swift`);
+assign any of them to the Action Button in **Settings ▸ Action Button ▸ Shortcut**.
+
+### Control Center controls (iOS 18)
+
+The widget extension also ships **Control Center controls**
+(`PrefrontalWidgets/PrefrontalControls.swift`) for the no-input actions —
+**Panic**, **I'm Back**, **Wrap Up Focus** — each firing the matching App Intent
+without opening the app. Add them in **Settings ▸ Control Center** (or assign one
+to the Action Button under **Controls**). Input actions (Add Todo, Going Out,
+Start Focus) stay in Siri/Shortcuts, which can prompt for their values. The
+action intents live in `Intents/PrefrontalIntents.swift`, compiled into both the
+app (for Siri) and the widget extension (for the controls).

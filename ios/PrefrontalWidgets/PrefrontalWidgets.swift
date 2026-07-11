@@ -284,5 +284,13 @@ struct PrefrontalWidget: Widget {
 
 @main
 struct PrefrontalWidgetBundle: WidgetBundle {
-    var body: some Widget { PrefrontalWidget() }
+    var body: some Widget {
+        PrefrontalWidget()
+        // Control Center controls (Panic / I'm Back / Wrap Up Focus) — iOS 18+.
+        if #available(iOS 18.0, *) {
+            PanicControl()
+            ImBackControl()
+            WrapUpFocusControl()
+        }
+    }
 }
