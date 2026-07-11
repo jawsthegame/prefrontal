@@ -35,6 +35,10 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: com.morningstatic.prefrontal
             CFBundleURLSchemes: [prefrontal]
+        # Background App Refresh: drains the offline capture queue + reloads the
+        # widget when the app isn't open. Identifier matches refreshTaskID.
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.morningstatic.prefrontal.refresh]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal

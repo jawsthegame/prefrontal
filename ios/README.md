@@ -127,6 +127,22 @@ The QR encodes a `prefrontal://connect?url=…&token=…&ntfy_topic=…` deep li
 Treat it like the token itself — it *is* the token, just denser. The base URL
 defaults to `OAUTH_BASE_URL`; ntfy hints come from the user's delivery route.
 
+## Offline capture queue + background refresh
+
+Off the tailnet, a write would otherwise just fail and the capture would be
+lost. Capture writes — **Add Todo**, **self-care** marks, **Made it / Missed
+it** — are marked `queueable`, so on a transport failure `APIClient` persists
+them to an App-Group-backed `OfflineQueue` (shared by the app, widget, and
+intents) instead of erroring. They replay oldest-first when the app next comes
+to the foreground, and opportunistically via a **Background App Refresh** task
+(`com.morningstatic.prefrontal.refresh`), which also reloads the widget. Today
+shows a small "N changes waiting to sync" banner while the queue is non-empty.
+
+Stateful lifecycle writes (focus/outing start/return) are deliberately **not**
+queued — replaying a "start focus" long after the fact would log a bogus
+session. Delivery is at-least-once (a replay can double-apply if the original
+actually landed), which is acceptable for todos/self-care.
+
 ## What maps to what
 
 | Screen | Endpoints |

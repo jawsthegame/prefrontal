@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS offline capture queue + background refresh** ✅ (#468) — off the tailnet,
+  a capture used to just fail and vanish. Capture writes — Add Todo, self-care
+  marks, Made it/Missed it — are now `queueable`: on a transport failure
+  `APIClient` persists them to an App-Group-backed `OfflineQueue`
+  (`ios/Prefrontal/Config/OfflineQueue.swift`, shared by app + widget + intents)
+  instead of erroring, and replays them oldest-first when the app next
+  foregrounds — plus opportunistically via a **Background App Refresh** task that
+  also reloads the widget. Today shows an "N changes waiting to sync" banner while
+  the queue is non-empty. Stateful lifecycle writes (focus/outing start/return)
+  are intentionally not queued (a deferred replay would log a bogus session);
+  delivery is at-least-once, acceptable for todos/self-care. Client-only.
+
 - **iOS widget — one-tap end an active outing/focus** ✅ (#465) — completes the
   interactive-widget scope: when an outing or focus session is running, the Home
   Screen widget now shows a **I'm back** / **Wrap up** button that ends it in

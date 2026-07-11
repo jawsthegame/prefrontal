@@ -100,8 +100,19 @@ struct APIClient {
     }
 
     /// POST when the response body doesn't matter.
-    func post(_ path: String, json: [String: Any] = [:]) async throws {
+    ///
+    /// `queueable` opts a *capture* write into the offline queue: if the server
+    /// is unreachable (a transport failure, i.e. off-tailnet) the write is
+    /// persisted via `OfflineQueue` and replayed on reconnect instead of being
+    /// lost. HTTP errors (4xx/5xx) always throw — those are real failures, not
+    /// connectivity. Leave it `false` for stateful lifecycle writes, where a
+    /// deferred replay would be wrong.
+    func post(_ path: String, json: [String: Any] = [:], queueable: Bool = false) async throws {
         let body = try JSONSerialization.data(withJSONObject: json)
-        _ = try await send(try request("POST", path, body: body))
+        do {
+            _ = try await send(try request("POST", path, body: body))
+        } catch APIError.transport where queueable {
+            OfflineQueue.enqueue(path: path, body: json)
+        }
     }
 }
