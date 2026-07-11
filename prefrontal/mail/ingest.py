@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.delegation import STATUS_RETURNED, match_delegated_reply
 from prefrontal.mail.models import MailItem, normalize_message
 from prefrontal.mail.triage import MailTriage, suppress_todo_reason, triage_message
 from prefrontal.memory.store import MemoryStore
@@ -48,6 +49,10 @@ class IngestSummary:
             learned repeat-dropped sender). They are still recorded and still
             read as ``needs_action`` in ``/mail`` — they just don't spawn a todo.
         triaged_by_llm: How many verdicts came from the model (vs the heuristic).
+        delegations_advanced: How many messages were inferred to be a human VA
+            returning a delegated todo, and so advanced that delegation to
+            ``returned`` and linked to the existing todo — instead of spawning an
+            unrelated new todo (see :func:`prefrontal.delegation.match_delegated_reply`).
         message_ids: The ids of the newly ingested messages, in order.
     """
 
@@ -61,6 +66,7 @@ class IngestSummary:
     todos_created: int = 0
     todos_suppressed: int = 0
     triaged_by_llm: int = 0
+    delegations_advanced: int = 0
     message_ids: list[str] = field(default_factory=list)
 
 
@@ -110,6 +116,19 @@ def ingest_messages(
     seen = store.seen_mail_ids(account)
     summary = IngestSummary(account=account, policy=policy, received=len(raw_messages))
 
+    # Resolve the model once so triage and the delegation loop-closer share it
+    # (mirrors triage_message's own default; unchanged behavior when None).
+    if use_model and client is None:
+        from prefrontal.integrations.ollama import OllamaClient
+
+        client = OllamaClient.from_settings()
+
+    # Inbound delegation loop-closer (#448): a message from a VA we handed a todo
+    # off to may be that work coming back. Fetch the open delegations once — the
+    # matcher gates cheaply on sender, so this stays inert without any email-handler
+    # delegation whose destination matches an incoming sender.
+    delegation_candidates = store.actively_delegated_todos() if create_todos else []
+
     for raw in raw_messages:
         try:
             item = normalize_message(raw, account=account, policy=policy)
@@ -129,8 +148,36 @@ def ingest_messages(
             corrections=corrections,
         )
 
+        # Is this the return of something we delegated? If so, close that loop and
+        # link the mail to the existing todo rather than spawning a new one.
+        matched = (
+            match_delegated_reply(
+                sender_email=item.sender_email,
+                subject=item.subject,
+                body=item.body or item.snippet,
+                candidates=delegation_candidates,
+                client=client if use_model else None,
+            )
+            if delegation_candidates
+            else None
+        )
+
         todo_id = None
-        if create_todos and verdict.needs_action:
+        if matched is not None:
+            store.update_delegation_status(
+                matched["id"],
+                STATUS_RETURNED,
+                detail=f"Reply from {item.sender_email} via {account}: "
+                f"{item.subject or '(no subject)'}",
+            )
+            todo_id = matched["id"]
+            summary.delegations_advanced += 1
+            # A single VA reply closes a single loop: drop it so a follow-up message
+            # in the same batch can't re-advance the same delegation.
+            delegation_candidates = [
+                c for c in delegation_candidates if c["id"] != matched["id"]
+            ]
+        elif create_todos and verdict.needs_action:
             if suppress_todo_reason(
                 item, verdict, denylisted_senders=denylisted_senders
             ) is None:
@@ -179,7 +226,7 @@ def ingest_messages(
         # todo, or a suppressed "drop"); ordinary informational mail stays in /mail
         # so the feed and the briefing's "worth a look" aren't flooded. Runs once
         # per message (dedup above), so the triage_log unique index is never hit.
-        if verdict.needs_action:
+        if verdict.needs_action or matched is not None:
             store.log_triage(
                 source="mail",
                 title=item.subject or verdict.summary or "(no subject)",
@@ -188,6 +235,7 @@ def ingest_messages(
                 route="todo" if todo_id is not None else "drop",
                 reason=(
                     f"mail: {verdict.category}"
+                    + (" · delegation returned" if matched is not None else "")
                     + (f" · waiting on {verdict.waiting_on}" if verdict.waiting_on else "")
                     + ("" if todo_id is not None else " · todo suppressed")
                 ),
