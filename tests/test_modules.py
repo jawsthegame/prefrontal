@@ -19,7 +19,11 @@ from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
 from prefrontal.modules.task_paralysis import repeat_stalled_tasks
-from prefrontal.modules.time_blindness import TimeBlindnessModule
+from prefrontal.modules.time_blindness import (
+    DEFAULT_MORNING_ROUTINE_MINUTES,
+    TimeBlindnessModule,
+    adapt_morning_routine,
+)
 from tests.conftest import scoped_default
 
 BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
@@ -440,3 +444,115 @@ def test_task_paralysis_profile_names_stuck_tasks(store):
     assert section is not None
     assert "Keeps bailing on" in section
     assert "Renew passport" in section
+
+
+# -- learned morning-routine lead --------------------------------------------
+
+
+def _log_departure(store, *, notes, outcome):
+    """Log a ``departure`` episode with a note in record_departure_outcome's format."""
+    store.log_episode(
+        "departure",
+        predicted_value=15.0,
+        actual_value=None,
+        acknowledged=True,
+        context="auto departure: School run",
+        outcome=outcome,
+        notes=notes,
+    )
+
+
+def test_morning_routine_widens_when_chronically_late(store):
+    """Repeatedly leaving late on early starts grows the suggested wake lead."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    # +15 min mean lateness pushes the 60-min default toward ~75.
+    assert result["routine"] == 75
+    assert int(store.get_float("morning_routine_minutes", 0)) == 75
+
+
+def test_morning_routine_eases_back_when_leaving_early(store):
+    """Consistently leaving with time to spare trims the lead so you sleep more."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left on time (~20 min to spare, leave-by 07:30)",
+                       outcome="success")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    assert result["routine"] == 40  # 60 − 20
+
+
+def test_morning_routine_ignores_midday_departures(store):
+    """Only early-start departures (leave-by before the threshold) count."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 14:00)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["samples"] == 0
+
+
+def test_morning_routine_holds_within_deadband(store):
+    """On-time early starts leave the lead alone (no churn)."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left right on time (leave-by 07:30)", outcome="success")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["routine"] == DEFAULT_MORNING_ROUTINE_MINUTES
+
+
+def test_morning_routine_respects_explicit_value(store):
+    """A lead the user set by hand is never overridden by the learner."""
+    get("time_blindness").seed(store)
+    store.set_state("morning_routine_minutes", "45", source="explicit")
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert int(store.get_float("morning_routine_minutes", 0)) == 45
+
+
+def test_morning_routine_needs_enough_samples(store):
+    """Below the sample floor it reports but doesn't move."""
+    get("time_blindness").seed(store)
+    _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["samples"] == 1
+
+
+def test_morning_routine_parses_real_departure_notes(store):
+    """The learner reads the exact note format record_departure_outcome emits."""
+    from datetime import timedelta
+
+    from prefrontal.departure import DeparturePlan, record_departure_outcome
+
+    get("time_blindness").seed(store)
+    now = utcnow()
+    # A 07:15 leave-by, left 15 min late — an early start that ran late.
+    start = now + timedelta(minutes=45)
+    leave_by = now + timedelta(minutes=15)
+    plan = DeparturePlan(
+        commitment={
+            "id": 1,
+            "title": "School run",
+            "start_at": start.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        leave_by=leave_by.strftime("%Y-%m-%d %H:%M:%S"),
+        minutes_until_leave=15.0,
+        travel_minutes=10.0,
+        basis="distance",
+        level="soon",
+    )
+    departed = leave_by + timedelta(minutes=15)
+    # Threshold high enough that this leave-by qualifies as an early start.
+    store.set_state("early_start_threshold", "23:59", source="explicit")
+    for _ in range(5):
+        record_departure_outcome(store, plan, departed, tz="UTC")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    assert result["routine"] > DEFAULT_MORNING_ROUTINE_MINUTES

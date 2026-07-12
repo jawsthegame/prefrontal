@@ -67,6 +67,7 @@ from prefrontal.modules import available, enabled_modules
 from prefrontal.modules.self_care import (
     adapt_self_care,
 )
+from prefrontal.modules.time_blindness import adapt_morning_routine
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
@@ -1292,6 +1293,13 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 print(
                     f"[{label}] self-care {c['check']} interval {arrow} "
                     f"{c['interval']}m ({c['reason']})"
+                )
+            routine = adapt_morning_routine(s)
+            if routine is not None and (routine["changed"] or routine["samples"]):
+                arrow = "->" if routine["changed"] else "="
+                print(
+                    f"[{label}] morning routine lead {arrow} {routine['routine']}m "
+                    f"({routine['reason']})"
                 )
     return 0
 
