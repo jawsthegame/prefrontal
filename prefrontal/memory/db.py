@@ -41,7 +41,14 @@ def connect(db_path: str) -> sqlite3.Connection:
         responsible for closing it (directly or via a ``with`` block).
     """
     if db_path != ":memory:":
-        Path(db_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        # Expand '~' once and use the *same* path for both the parent-dir mkdir
+        # and sqlite3.connect below. Previously mkdir expanded the path but
+        # connect got the raw db_path, so a '~/prefrontal.db' created the intended
+        # home directory yet opened './~/prefrontal.db' (a literal '~' directory
+        # under the CWD) — a different, silently-wrong database file.
+        expanded = Path(db_path).expanduser()
+        expanded.parent.mkdir(parents=True, exist_ok=True)
+        db_path = str(expanded)
     # check_same_thread=False is needed because the webhook server hands a
     # store's connection between threadpool tasks. It only disables sqlite3's
     # owning-thread *check* — it does not make a connection safe for concurrent
