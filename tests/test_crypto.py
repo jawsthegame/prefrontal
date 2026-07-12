@@ -91,3 +91,49 @@ def test_generate_key_is_usable():
     """A freshly generated key is a valid Fernet key."""
     settings = _settings(secret_key=generate_key())
     assert unseal(seal("ok", settings=settings), settings=settings) == "ok"
+
+
+def test_rotated_key_still_opens_old_secret():
+    """A secret sealed with the old key opens after it's rotated into secret_keys_old."""
+    old, new = generate_key(), generate_key()
+    old_token = seal("legacy", settings=_settings(secret_key=old))
+    # Operator rolls the primary to `new` and keeps `old` for decrypt-only.
+    rotated = _settings(secret_key=new, secret_keys_old=(old,))
+    assert unseal(old_token, settings=rotated) == "legacy"
+
+
+def test_new_seals_use_the_primary_not_the_old_key():
+    """After a roll, fresh seals use the primary — droppable once secrets re-seal."""
+    old, new = generate_key(), generate_key()
+    rotated = _settings(secret_key=new, secret_keys_old=(old,))
+    token = seal("fresh", settings=rotated)
+    # Opens under the primary alone (no retired key needed)...
+    assert unseal(token, settings=_settings(secret_key=new)) == "fresh"
+    # ...but not under the retired key alone.
+    with pytest.raises(SecretKeyError):
+        unseal(token, settings=_settings(secret_key=old))
+
+
+def test_rotated_out_key_cannot_open():
+    """Once a key is dropped entirely, its secrets no longer open (must re-enter)."""
+    old, new = generate_key(), generate_key()
+    old_token = seal("gone", settings=_settings(secret_key=old))
+    with pytest.raises(SecretKeyError):
+        unseal(old_token, settings=_settings(secret_key=new))
+
+
+def test_malformed_old_key_is_skipped_not_fatal():
+    """A bad entry in secret_keys_old is ignored; a good primary still seals/opens."""
+    good = generate_key()
+    settings = _settings(secret_key=good, secret_keys_old=("not-a-fernet-key",))
+    assert unseal(seal("ok", settings=settings), settings=settings) == "ok"
+
+
+def test_multiple_old_keys_each_open_their_secret():
+    """Several retired keys can coexist; each opens the secret it sealed."""
+    k1, k2, primary = generate_key(), generate_key(), generate_key()
+    t1 = seal("one", settings=_settings(secret_key=k1))
+    t2 = seal("two", settings=_settings(secret_key=k2))
+    rotated = _settings(secret_key=primary, secret_keys_old=(k1, k2))
+    assert unseal(t1, settings=rotated) == "one"
+    assert unseal(t2, settings=rotated) == "two"
