@@ -47,6 +47,12 @@ def scoped(store):
 # --- storage spine ----------------------------------------------------------
 
 
+def test_record_rejects_unknown_event(scoped):
+    with pytest.raises(ValueError):
+        scoped.record_feature_event("panic", "looked-at")
+    assert scoped.feature_usage_rollup(30) == []
+
+
 def test_record_and_rollup_counts_by_event(scoped):
     scoped.record_feature_event("panic", "invoked", source="cli")
     scoped.record_feature_event("panic", "invoked", source="http")
@@ -111,6 +117,13 @@ def test_one_tap_action_stamps_engaged(scoped):
     apply_nudge_action(scoped, "meal_ate", 0, user=user, settings=Settings())
     roll = {r["feature"]: r for r in scoped.feature_usage_rollup(30)}
     assert roll["self_care"]["engaged"] == 1
+
+
+def test_unknown_one_tap_action_is_not_recorded(scoped):
+    # An action the dispatcher doesn't recognize no-ops; it must not pollute stats.
+    user = scoped.get_user("tester")
+    apply_nudge_action(scoped, "not_a_real_action", 0, user=user, settings=Settings())
+    assert scoped.feature_usage_rollup(30) == []
 
 
 def test_http_middleware_stamps_invoked_for_pull_surface(store):

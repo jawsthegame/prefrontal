@@ -57,7 +57,17 @@ class FeatureUsageRepo(Repo):
 
         Returns:
             The auto-incremented ``id`` of the inserted event.
+
+        Raises:
+            ValueError: If ``event`` is not one of :data:`FEATURE_EVENTS`. The
+                rollup only sums those three, so an out-of-vocab event would bump
+                ``last_used`` while every count stayed 0 — an inconsistent row the
+                UI can't explain. Rejecting it keeps the table's vocabulary closed.
         """
+        if event not in FEATURE_EVENTS:
+            raise ValueError(
+                f"unknown feature event {event!r}; expected one of {FEATURE_EVENTS}"
+            )
         cur = self.conn.execute(
             "INSERT INTO feature_events (user_id, feature, intervention, event, source, ref) "
             "VALUES (?, ?, ?, ?, ?, ?)",

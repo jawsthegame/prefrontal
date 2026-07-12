@@ -35,7 +35,7 @@ from statistics import fmean, median
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from prefrontal.clock import local_datetime, utcnow
+from prefrontal.clock import local_datetime, parse_ts, utcnow
 from prefrontal.commitments import resolve_zone
 from prefrontal.config import get_settings
 from prefrontal.memory.store import MemoryStore
@@ -334,13 +334,11 @@ def _feature_usage(store: MemoryStore) -> dict[str, Any]:
         total = offered + engaged + invoked
         last_used = row.get("last_used")
         days_ago = None
-        if last_used:
-            try:
-                # SQLite CURRENT_TIMESTAMP and utcnow() are both naive UTC.
-                seen = datetime.strptime(last_used, "%Y-%m-%d %H:%M:%S")
-                days_ago = max(0, (now - seen).days)
-            except ValueError:
-                days_ago = None
+        # SQLite CURRENT_TIMESTAMP and utcnow() are both naive UTC; parse_ts is
+        # the project's canonical (None-tolerant) reader for stored timestamps.
+        seen = parse_ts(last_used)
+        if seen is not None:
+            days_ago = max(0, (now - seen).days)
         rate = round(engaged / offered, 2) if offered else None
         kind = "push" if name in push else "pull"
 

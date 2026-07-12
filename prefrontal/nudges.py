@@ -92,14 +92,19 @@ _ACT_FEATURE = {
 def _record_engaged(memory: MemoryStore, action: str, target_id: int) -> None:
     """Best-effort ``engaged`` stamp for a one-tap action (never raises).
 
-    A tap is the clearest signal a feature is *used*, so every action that flows
-    through :func:`apply_nudge_action` records one usage event. Telemetry must
-    never break the button, so a failure is logged and swallowed — the tap's real
-    work (below) is what matters.
+    A tap is the clearest signal a feature is *used*, so every *recognized* action
+    that flows through :func:`apply_nudge_action` records one usage event. An
+    unknown action (which the dispatcher below fails safe on) is deliberately
+    *not* recorded — counting it would pollute the stats with a bogus feature.
+    Telemetry must never break the button, so a failure is logged and swallowed —
+    the tap's real work (below) is what matters.
     """
+    feature = _ACT_FEATURE.get(action)
+    if feature is None:
+        return  # unrecognized action → no-op below, so nothing to attribute
     try:
         memory.record_feature_event(
-            _ACT_FEATURE.get(action, action),
+            feature,
             "engaged",
             intervention=action,
             source="ntfy",

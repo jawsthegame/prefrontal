@@ -67,7 +67,9 @@ async def usage_middleware(
     """
     response = await call_next(request)
     try:
-        if request.method != "GET" or response.status_code >= 400:
+        # Only a successful (2xx) GET counts as a view — a redirect (3xx, incl. a
+        # 304 Not Modified) or an error is not "opening the surface".
+        if request.method != "GET" or not 200 <= response.status_code < 300:
             return response
         feature = feature_for_path(request.url.path)
         if feature is None:
