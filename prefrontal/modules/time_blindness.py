@@ -15,6 +15,7 @@ of mind until you're rushing.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from prefrontal.coaching import CoachContext, Cue
@@ -57,8 +58,21 @@ DEFAULT_MORNING_PREP_HOUR = 21
 
 #: Minutes of morning routine (shower, breakfast, …) subtracted from the leave-by
 #: to suggest a wake time for the one-tap "Set alarm" button. Tunable via
-#: ``morning_routine_minutes``.
+#: ``morning_routine_minutes`` — and *learned* from real early-start departures by
+#: :func:`adapt_morning_routine`.
 DEFAULT_MORNING_ROUTINE_MINUTES = 60
+
+#: Bounds the learned morning-routine lead so a run of bad mornings (or a spell of
+#: leaving very early) can't drive the suggested wake time to something absurd.
+MIN_ROUTINE_MINUTES = 20
+MAX_ROUTINE_MINUTES = 180
+#: Fewest early-start departures we need before adapting the routine lead at all.
+MIN_ROUTINE_SAMPLES = 4
+#: A mean lateness inside ±this many minutes reads as "about right" — don't churn
+#: the lead over a rounding-scale wobble (mirrors the departure grace).
+ROUTINE_DEADBAND_MINUTES = 3.0
+#: How many recent ``departure`` episodes to consider when learning the lead.
+ROUTINE_LOOKBACK = 40
 
 #: Default iOS Shortcut name the "Set alarm" button runs. Mirrors
 #: :data:`prefrontal.webhooks.notify.DEFAULT_ALARM_SHORTCUT` (kept as a plain
@@ -166,6 +180,141 @@ def morning_prep_message(
         f"🌅 {greeting} early start tomorrow: {title}{where} at {start_hhmm}{out}{more}. "
         "Worth setting an alarm tonight."
     )
+
+
+# --- Learned morning-routine lead (learning loop) ----------------------------
+#
+# ``morning_prep``'s one-tap "Set alarm" backs a *static* ``morning_routine_minutes``
+# (default 60) off the leave-by to suggest a wake time. But departure-outcome
+# capture (``/webhooks/departure/left`` → :func:`prefrontal.departure.classify_departure`)
+# already knows whether you actually left on time. So on early-start mornings —
+# exactly the ones ``morning_prep`` fires for — feed that on-time/late signal back
+# into a *learned* per-person lead: if you're chronically leaving late off a
+# 60-minute lead your real get-ready span is longer (wake earlier); if you're
+# reliably out with time to spare it can ease back so you sleep a little more. Same
+# "it gets better the longer you use it" loop the time bias rides, run in the
+# nightly ``learn`` pass and never overriding a lead the user set by hand.
+
+#: Parses the "leave-by HH:MM" clock :func:`record_departure_outcome` writes into a
+#: departure episode's notes, so the learner can tell an *early-start* departure
+#: from a midday one without re-deriving the plan.
+_LEAVE_BY_RE = re.compile(r"leave-by (\d{1,2}):(\d{2})")
+#: The three lateness phrasings that same note uses, mapped to a signed minutes
+#: reading: "~N min late" → +N, "N min to spare" → −N, "right on time" → 0.
+_LATE_RE = re.compile(r"~(\d+) min late")
+_SPARE_RE = re.compile(r"(\d+) min to spare")
+
+
+def _departure_leave_by_minutes(notes: str | None) -> int | None:
+    """Local minute-of-day of the leave-by recorded in a departure note, or ``None``."""
+    m = _LEAVE_BY_RE.search(notes or "")
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour * 60 + minute
+
+
+def _departure_lateness(notes: str | None, outcome: str | None) -> float | None:
+    """Signed lateness (minutes) read from a departure note: + late, − early, 0 on time.
+
+    Reads the human phrasing :func:`record_departure_outcome` wrote rather than a
+    stored number (the episode keeps ``actual_value=None`` by design), so it's the
+    one honest signal available. Returns ``None`` when nothing parses.
+    """
+    if notes is None:
+        return None
+    late = _LATE_RE.search(notes)
+    if late:
+        return float(late.group(1))
+    spare = _SPARE_RE.search(notes)
+    if spare:
+        return -float(spare.group(1))
+    if "right on time" in notes:
+        return 0.0
+    # No phrase parsed, but the outcome still tells us the direction coarsely.
+    if outcome == "success":
+        return 0.0
+    return None
+
+
+def _bounded_routine(value: float) -> int:
+    """Clamp a proposed routine lead to ``[MIN, MAX]`` minutes, rounded to 5."""
+    clamped = min(max(value, MIN_ROUTINE_MINUTES), MAX_ROUTINE_MINUTES)
+    return int(round(clamped / 5.0) * 5)
+
+
+def adapt_morning_routine(store: MemoryStore, now: datetime | None = None) -> dict:
+    """Learn ``morning_routine_minutes`` from recent early-start departures.
+
+    Runs in the nightly ``learn`` pass. Looks at ``departure`` episodes whose
+    recorded leave-by falls at or before the ``early_start_threshold`` (the
+    mornings ``morning_prep`` cares about), averages how late/early you actually
+    left, and nudges the suggested wake lead by that mean — later leads make you
+    wake earlier, so a mean of "+12 min late" grows the lead ~12 min. Two-sided but
+    bounded (:data:`MIN_ROUTINE_MINUTES`/:data:`MAX_ROUTINE_MINUTES`), inside a
+    small deadband so it doesn't churn, and it never overrides a lead the user set
+    explicitly. Always returns a summary dict for the CLI — ``changed`` is ``False``
+    (with a ``reason``) when nothing moved, e.g. no early-start data yet or a
+    user-set lead.
+    """
+    default = DEFAULT_MORNING_ROUTINE_MINUTES
+    current = int(store.get_float("morning_routine_minutes", default))
+    user_set = (
+        (store.all_state().get("morning_routine_minutes", {}) or {}).get("source") == "explicit"
+    )
+    hour, minute = parse_clock_hm(
+        store.get_state("early_start_threshold"), DEFAULT_EARLY_START_HM
+    )
+    threshold_min = hour * 60 + minute
+
+    latenesses: list[float] = []
+    for ep in store.episodes_by_type("departure", limit=ROUTINE_LOOKBACK):
+        notes = ep.get("notes")
+        leave_by = _departure_leave_by_minutes(notes)
+        if leave_by is None or leave_by > threshold_min:
+            continue  # not an early-start morning — routine lead doesn't apply
+        signed = _departure_lateness(notes, ep.get("outcome"))
+        if signed is not None:
+            latenesses.append(signed)
+
+    if len(latenesses) < MIN_ROUTINE_SAMPLES:
+        return {
+            "routine": current,
+            "changed": False,
+            "samples": len(latenesses),
+            "reason": "not enough early-start departures yet",
+        }
+    mean_late = sum(latenesses) / len(latenesses)
+    if user_set:
+        return {
+            "routine": current,
+            "changed": False,
+            "samples": len(latenesses),
+            "reason": "held (you set this lead)",
+        }
+    if abs(mean_late) <= ROUTINE_DEADBAND_MINUTES:
+        return {
+            "routine": current,
+            "changed": False,
+            "samples": len(latenesses),
+            "reason": "early-start departures land on time — lead looks right",
+        }
+    suggested = _bounded_routine(current + mean_late)
+    if suggested == current:
+        return {
+            "routine": current,
+            "changed": False,
+            "samples": len(latenesses),
+            "reason": "already at the bound for that trend",
+        }
+    store.set_state("morning_routine_minutes", str(suggested), source="inferred")
+    if mean_late > 0:
+        reason = f"often leaving ~{round(mean_late)} min late on early starts — waking you earlier"
+    else:
+        reason = f"leaving with ~{round(-mean_late)} min to spare — easing the wake time back"
+    return {"routine": suggested, "changed": True, "samples": len(latenesses), "reason": reason}
 
 
 class TimeBlindnessModule(Module):
@@ -408,9 +557,13 @@ class TimeBlindnessModule(Module):
             lines.append(f"Send a gentle time check every **{callout} min** during a focus block.")
         threshold = store.get_state("early_start_threshold")
         if threshold:
+            routine = int(
+                store.get_float("morning_routine_minutes", DEFAULT_MORNING_ROUTINE_MINUTES)
+            )
             lines.append(
                 f"The evening before, nudge to set an alarm when tomorrow's earliest "
-                f"leave-by is before **{threshold}**."
+                f"leave-by is before **{threshold}** (suggest waking ~**{routine} min** "
+                f"before you must be up — learned from how early-start mornings go)."
             )
 
         patterns = store.get_patterns("time_estimation")

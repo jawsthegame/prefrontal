@@ -76,6 +76,57 @@ class TripsRepo(Repo):
         )
         self.conn.commit()
 
+    def set_trip_stop_candidate(
+        self, trip_id: int, lat: float, lon: float, since: str
+    ) -> None:
+        """Record the phone's current dwell candidate on an active trip (multi-stop).
+
+        The candidate is where the phone is currently lingering while out; if it
+        stays there past the dwell threshold the state machine promotes it to a
+        :meth:`add_trip_waypoint` stop. Setting a *new* candidate resets
+        ``cand_logged`` to 0 (this is a fresh spot, not yet a stop). No-ops on a
+        closed trip.
+        """
+        self.conn.execute(
+            "UPDATE trips SET cand_lat = ?, cand_lon = ?, cand_since = ?, cand_logged = 0 "
+            "WHERE id = ? AND user_id = ? AND status = 'active'",
+            (float(lat), float(lon), since, trip_id, self._uid()),
+        )
+        self.conn.commit()
+
+    def mark_trip_candidate_logged(self, trip_id: int) -> None:
+        """Flag the active trip's current stop candidate as already a waypoint.
+
+        Stops the same dwell from being recorded twice while the phone stays put;
+        it re-arms when :meth:`set_trip_stop_candidate` moves to a new spot.
+        """
+        self.conn.execute(
+            "UPDATE trips SET cand_logged = 1 WHERE id = ? AND user_id = ? AND status = 'active'",
+            (trip_id, self._uid()),
+        )
+        self.conn.commit()
+
+    def add_trip_waypoint(
+        self, trip_id: int, lat: float, lon: float, distance_m: float, arrived_at: str
+    ) -> int:
+        """Record an intermediate stop (leg boundary) within a trip; return its id."""
+        cur = self.conn.execute(
+            "INSERT INTO trip_waypoints (user_id, trip_id, lat, lon, distance_m, arrived_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (self._uid(), trip_id, float(lat), float(lon), float(distance_m), arrived_at),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def trip_waypoints(self, trip_id: int) -> list[dict[str, Any]]:
+        """Return a trip's intermediate stops, earliest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM trip_waypoints WHERE user_id = ? AND trip_id = ? "
+            "ORDER BY arrived_at ASC, id ASC",
+            (self._uid(), trip_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def close_trip(self, trip_id: int) -> dict[str, Any] | None:
         """Close an open trip as ``completed``; return it with ``actual_minutes``.
 

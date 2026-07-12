@@ -307,6 +307,96 @@ def _parse_minutes_reply(reply: str) -> float | None:
     return value
 
 
+# --- Learned per-errand default windows --------------------------------------
+#
+# ``infer_time_window`` re-asks the model/heuristic for *every* windowless outing
+# and ignores the user's own history for that same errand — even though returned
+# outings log a real duration keyed by intention. So learn a per-errand baseline:
+# a recurring "coffee" run should pre-fill with *your* typical ~N min, and the
+# escalation then rides your real pace from minute one instead of a generic guess.
+
+#: Fewest past returned outings sharing an errand before a learned window is
+#: trusted over the model/heuristic guess.
+DEFAULT_LEARNED_WINDOW_SAMPLES = 3
+#: Recent outing episodes to scan when learning per-errand windows.
+LEARNED_WINDOW_LOOKBACK = 200
+
+
+def outing_intention_bucket(intention: str) -> str:
+    """A stable key grouping outings that are "the same errand".
+
+    Prefers the heuristic keyword group (so "grab a coffee" and "espresso run"
+    share one learned window), falling back to the first few normalized words of
+    the intention text. The bucket is the unit a per-errand window is learned over.
+    """
+    lowered = (intention or "").lower()
+    for keywords, _ in _HEURISTIC_WINDOWS:
+        if any(keyword in lowered for keyword in keywords):
+            return f"kw:{keywords[0]}"
+    words = re.findall(r"[a-z0-9']+", lowered)
+    return "text:" + " ".join(words[:4])
+
+
+def learned_window(
+    store: MemoryStore,
+    intention: str,
+    *,
+    min_samples: int = DEFAULT_LEARNED_WINDOW_SAMPLES,
+) -> tuple[float, int] | None:
+    """The user's typical real duration (minutes) for this kind of errand, or ``None``.
+
+    Groups past *returned* outings (``task`` episodes ``"outing: <intention>"``
+    carrying a real ``actual_value``) by :func:`outing_intention_bucket` and returns
+    the mean actual for the new intention's bucket once there are at least
+    ``min_samples``. Abandoned outings (``"outing abandoned:"``, ``actual_value``
+    ``None``) never match, so a forgotten return can't drag the learned window down.
+
+    Returns ``(minutes, sample_count)`` — minutes bounded to the inference sanity
+    range and rounded to 5 — or ``None`` when there isn't enough history.
+    """
+    if not intention or not intention.strip():
+        return None
+    target = outing_intention_bucket(intention)
+    durations: list[float] = []
+    for ep in store.episodes_by_type("task", limit=LEARNED_WINDOW_LOOKBACK):
+        context = ep.get("context") or ""
+        if not context.startswith("outing: "):
+            continue
+        actual = ep.get("actual_value")
+        if actual is None:
+            continue
+        if outing_intention_bucket(context[len("outing: "):]) != target:
+            continue
+        durations.append(float(actual))
+    if len(durations) < min_samples:
+        return None
+    mean = sum(durations) / len(durations)
+    bounded = min(max(mean, 5.0), MAX_INFERRED_MINUTES)
+    return (float(round(bounded / 5.0) * 5), len(durations))
+
+
+def resolve_time_window(
+    store: MemoryStore,
+    intention: str,
+    *,
+    client: Generator | None = None,
+    min_samples: int = DEFAULT_LEARNED_WINDOW_SAMPLES,
+    fallback: bool = True,
+) -> tuple[float, str] | None:
+    """Resolve a windowless outing's window, the user's own history first.
+
+    Tries the learned per-errand window (:func:`learned_window`) before deferring
+    to :func:`infer_time_window` (LLM → heuristic → default). Returns
+    ``(minutes, source)`` where ``source`` is ``"history"`` / ``"llm"`` /
+    ``"heuristic"`` / ``"default"``, or ``None`` for a blank intention (or a
+    model-only miss with ``fallback=False``).
+    """
+    learned = learned_window(store, intention, min_samples=min_samples)
+    if learned is not None:
+        return (learned[0], "history")
+    return infer_time_window(intention, client=client, fallback=fallback)
+
+
 def infer_time_window(
     intention: str,
     *,

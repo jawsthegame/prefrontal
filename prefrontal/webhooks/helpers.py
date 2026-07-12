@@ -49,6 +49,11 @@ def _outing_started_confirmation(
     filed = f" Filed under {domain}." if domain else ""
     if source in _EXACT_WINDOW_SOURCES:
         return f"Tracking “{intention}” for {mins} min — I'll nudge you to head back.{filed}"
+    if source == "history":
+        return (
+            f"Tracking “{intention}” for ~{mins} min — your usual for this. Say "
+            f"“back in N min” to set it exactly. I'll nudge you to head back.{filed}"
+        )
     return (
         f"Tracking “{intention}” for ~{mins} min (estimated — say “back in N min” "
         f"to set it exactly). I'll nudge you to head back.{filed}"

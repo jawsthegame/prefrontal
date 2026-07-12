@@ -112,6 +112,9 @@ class ClosedLoopTripModule(Module):
                 "actual_minutes",
                 minutes_between(trip.get("departed_at"), trip.get("returned_at")),
             )
+            # How many intermediate stops the passive detector split out, so the ask
+            # can invite a per-leg label when it was a chained errand run.
+            enriched["stop_count"] = len(store.trip_waypoints(trip["id"]))
             cues.append(
                 Cue(
                     module=self.key,
@@ -212,6 +215,12 @@ class ClosedLoopTripModule(Module):
         if durations:
             avg = sum(durations) / len(durations)
             lines.append(f"Average time out: {round(avg)} min.")
+
+        multi = sum(1 for t in trips if len(store.trip_waypoints(t["id"])) >= 2)
+        if multi:
+            lines.append(
+                f"{multi} were multi-stop runs (chained errands) — worth labeling per leg."
+            )
 
         cats: dict[str, int] = {}
         for t in trips:

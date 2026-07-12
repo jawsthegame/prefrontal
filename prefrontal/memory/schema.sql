@@ -192,10 +192,34 @@ CREATE TABLE IF NOT EXISTS trips (
     reflection         TEXT,                           -- plain-English "how it went", set on reflect
     reflection_outcome TEXT,                           -- classified success | partial | miss
     episode_id         INTEGER,                        -- the task episode the return logged
+    -- Multi-stop detection: the current "stop candidate" the phone is dwelling at
+    -- while out. When it lingers past the dwell threshold it's promoted to a
+    -- trip_waypoints row (a stop / leg boundary) and cand_logged flips to 1.
+    cand_lat           REAL,                           -- candidate stop latitude (while out)
+    cand_lon           REAL,                           -- candidate stop longitude
+    cand_since         DATETIME,                       -- when the phone first reached the candidate
+    cand_logged        INTEGER NOT NULL DEFAULT 0,     -- 1 once this candidate became a waypoint
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_trips_user_status ON trips (user_id, status);
+
+-- Intermediate stops within a trip: a dwell of DWELL_MINUTES+ away from home
+-- (home -> store -> school -> home splits into legs). Detected passively from the
+-- location stream (see prefrontal.trips.process_location) so labeling, categories,
+-- and focus-balance attribution can reflect the real errands, not one blob.
+CREATE TABLE IF NOT EXISTS trip_waypoints (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    trip_id     INTEGER NOT NULL REFERENCES trips(id),
+    lat         REAL    NOT NULL,
+    lon         REAL    NOT NULL,
+    distance_m  REAL    NOT NULL DEFAULT 0,             -- from home (context for the leg)
+    arrived_at  DATETIME NOT NULL,                      -- when the dwell began
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trip_waypoints_trip ON trip_waypoints (user_id, trip_id);
 
 -- User-created grouping across todos/commitments/focus sessions ("Kitchen
 -- Remodel", "Q3 Launch"). A project is nested under exactly one `domain` (the

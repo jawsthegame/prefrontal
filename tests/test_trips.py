@@ -28,6 +28,7 @@ from prefrontal.trips import (
     parse_outcome_reply,
     process_location,
     record_trip_return,
+    trip_label_prompt,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -186,6 +187,66 @@ def test_full_closed_loop(store):
     assert episode["episode_type"] == "task"
     assert episode["context"] == "trip"
     assert episode["outcome"] is None  # pending until the user reflects
+
+
+# -- multi-stop trips --------------------------------------------------------
+
+
+def _at(minutes):
+    """A naive-UTC instant `minutes` from a fixed base (deterministic dwell math)."""
+    base = datetime(2026, 7, 12, 9, 0, 0)
+    return base + timedelta(minutes=minutes)
+
+
+def test_multi_stop_trip_records_a_waypoint_per_dwell(store):
+    """A home → stop A → stop B → home run lays down a waypoint at each dwell."""
+    store.set_home(*HOME)
+    # Depart: opens the trip at stop A's location (no candidate seeded yet).
+    trip_id = process_location(store, *FAR, now=_at(0))["trip_id"]
+    # Linger at A: candidate seeded, then promoted once dwell passes the threshold.
+    assert process_location(store, *FAR, now=_at(1))["waypoint_id"] is None
+    wp_a = process_location(store, *FAR, now=_at(10))["waypoint_id"]
+    assert wp_a is not None
+    # Still at A — already logged, so no duplicate.
+    assert process_location(store, *FAR, now=_at(12))["waypoint_id"] is None
+    # Move to B (well beyond the stop radius): a fresh candidate, then a 2nd stop.
+    assert process_location(store, *FARTHER, now=_at(20))["waypoint_id"] is None
+    wp_b = process_location(store, *FARTHER, now=_at(30))["waypoint_id"]
+    assert wp_b is not None and wp_b != wp_a
+    # Home closes the loop; both stops are on the trip.
+    process_location(store, *NEAR, now=_at(35))
+    stops = store.trip_waypoints(trip_id)
+    assert len(stops) == 2
+    assert stops[0]["distance_m"] > 0
+
+
+def test_passing_through_is_not_a_stop(store):
+    """Moving steadily (never lingering past the dwell threshold) records no stop."""
+    store.set_home(*HOME)
+    trip_id = process_location(store, *FAR, now=_at(0))["trip_id"]
+    # Each ping moves to a new spot within a couple minutes — never a real dwell.
+    process_location(store, *FARTHER, now=_at(2))
+    process_location(store, *FAR, now=_at(4))
+    process_location(store, *FARTHER, now=_at(6))
+    assert store.trip_waypoints(trip_id) == []
+
+
+def test_trip_return_note_counts_stops(store):
+    """The closed-trip episode note records how many stops the run had."""
+    store.set_home(*HOME)
+    process_location(store, *FAR, now=_at(0))
+    process_location(store, *FAR, now=_at(1))
+    process_location(store, *FAR, now=_at(10))          # stop A
+    ret = process_location(store, *NEAR, now=_at(20))
+    episode = store.get_episode(ret["episode_id"])
+    assert "1 stop" in episode["notes"]
+
+
+def test_label_prompt_mentions_multiple_stops():
+    """A multi-stop trip's label ask invites a per-leg answer."""
+    prompt = trip_label_prompt({"actual_minutes": 40, "max_distance_m": 8000, "stop_count": 2})
+    assert "2 stops" in prompt
+    assert "each" in prompt
 
 
 def test_no_passive_trip_while_outing_active(store):

@@ -65,6 +65,22 @@ class ProjectsRepo(Repo):
         ).fetchone()
         return _row_to_dict(row)
 
+    def project_open_todos(
+        self, project_id: int, *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return a project's open todos, oldest first.
+
+        Backs the Projects staleness → next-action nudge: the oldest open todo is
+        the concrete thing to pick back up, so the re-surface can pair "still on
+        it?" with a decomposed first step for it rather than a bare yes/no.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM todos WHERE project_id = ? AND user_id = ? AND status = 'open' "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (project_id, self._uid(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def list_projects(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
         """Return the user's projects in forced priority order (rank 1 first).
 

@@ -134,6 +134,36 @@ def checkin_message(
     return None
 
 
+#: Missed (ignored) check-ins on a *forwarded* hand-off before the gentle "heard
+#: back?" escalates to a "take it back / re-delegate / drop it?" decision prompt.
+#: Tunable via the ``delegation_stall_misses`` coaching key.
+DEFAULT_STALLED_CHECKIN_MISSES = 3
+
+
+def stalled_handoff_message(
+    todo: dict[str, Any], delegation: dict[str, Any], misses: int, now: datetime
+) -> str:
+    """The escalated decision prompt for a hand-off that keeps going nowhere.
+
+    Fired once a ``forwarded`` delegation has drawn ``misses`` ignored check-ins
+    with no movement: rather than nudge "heard back?" forever on the same slow
+    cadence, name the stall and ask for a decision — take it back, re-delegate, or
+    drop it — so a dead hand-off gets resolved instead of quietly rotting.
+    """
+    title = todo.get("title", "this")
+    stamp = _parse_ts(delegation.get("prepped_at") or delegation.get("updated_at"))
+    ago = ""
+    if stamp is not None:
+        days = int((now - stamp).total_seconds() // 86400)
+        ago = f" {days}d ago" if days >= 1 else " recently"
+    dest = delegation.get("destination")
+    who = f" to {dest}" if dest else ""
+    return (
+        f'“{title}” has been parked{who}{ago} and still hasn’t moved after {misses} '
+        "check-ins. Time to decide: take it back, re-delegate, or drop it?"
+    )
+
+
 #: System prompt for the inbound loop-closer: is this email the VA handing work back?
 _MATCH_SYSTEM = (
     "You decide whether an incoming email is a virtual assistant returning the "

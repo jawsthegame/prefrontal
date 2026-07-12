@@ -377,6 +377,63 @@ def test_delegation_checkin_module_silent_for_in_prep(store):
     assert DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW)) == []
 
 
+# --- stalled hand-off escalation --------------------------------------------
+
+
+def _log_checkin_outcome(store, tid, outcome):
+    """Log a matured delegation check-in engagement episode for `tid`."""
+    store.log_episode(
+        "delegation", acknowledged=(outcome == "success"),
+        context=f"delegation_checkin nudge: {tid}", outcome=outcome,
+    )
+
+
+def test_delegation_escalates_after_repeated_ignores(store):
+    """Three ignored check-ins on a forwarded hand-off flips to a decision prompt."""
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+
+    tid = store.add_todo("Book the venue")
+    store.set_delegation(tid, handler="email", destination="va@x.com",
+                         status="forwarded", prepped=True)
+    for _ in range(3):
+        _log_checkin_outcome(store, tid, "ignored")
+    cues = DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW))
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.intervention == "stalled_escalation"
+    assert cue.ref["stalled"] is True
+    assert "take it back" in cue.text.lower()
+    assert "3 check-ins" in cue.text
+
+
+def test_delegation_streak_resets_on_movement(store):
+    """A check-in that moved the hand-off resets the streak — no escalation."""
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+
+    tid = store.add_todo("Book the venue")
+    store.set_delegation(tid, handler="email", destination="va@x.com",
+                         status="forwarded", prepped=True)
+    for _ in range(3):
+        _log_checkin_outcome(store, tid, "ignored")
+    _log_checkin_outcome(store, tid, "success")  # newest — it moved
+    cues = DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW))
+    assert cues[0].intervention == "delegation_checkin"  # back to the gentle ask
+
+
+def test_delegation_stall_threshold_is_configurable(store):
+    """delegation_stall_misses tunes how many ignores trip the escalation."""
+    from prefrontal.modules.delegation_checkin import DelegationCheckinModule
+
+    store.set_state("delegation_stall_misses", "2")
+    tid = store.add_todo("Book the venue")
+    store.set_delegation(tid, handler="email", destination="va@x.com",
+                         status="forwarded", prepped=True)
+    for _ in range(2):
+        _log_checkin_outcome(store, tid, "ignored")
+    cues = DelegationCheckinModule().evaluate(store, CoachContext(now=_NOW))
+    assert cues[0].intervention == "stalled_escalation"
+
+
 # --- engagement outcomes (after_fire / before_collect) ----------------------
 
 

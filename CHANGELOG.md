@@ -7,6 +7,50 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Per-module next steps — one net-new capability per challenge module** ✅ — with
+  every module's declared interventions already wired, each challenge module gained
+  one honest next surface, all composing existing primitives:
+  - **Time Blindness — learned morning-routine lead.** `adapt_morning_routine`
+    (nightly `learn` pass) reads recent early-start `departure` episodes and nudges
+    the static `morning_routine_minutes` toward what would have made those mornings
+    on-time — bounded, deadbanded, never overriding a hand-set value. The
+    `morning_prep` "Set alarm" wake time now reflects how long you actually take.
+  - **Task Paralysis — a real body-double session.** `start_body_double` opens a
+    short, aligned focus session on the stalled task's tiny first step (composing
+    the focus primitive, so the focus check/end gives the end check-in), and in a
+    household invites a co-parent to start theirs too. `POST /todos/{id}/body-double`
+    and `prefrontal body-double`.
+  - **Hyperfocus — learned personal soft-block length.** `adapt_soft_block` learns
+    `hyperfocus_block_minutes` from rated focus sessions (mean of
+    `should_have_stopped` durations, else long `worth_it` blocks), so the soft
+    `alignment_check` lands at *your* diminishing-returns point, not a generic 90 —
+    bounded below the hard ceiling, never overriding a hand-set value.
+  - **Impulsivity — captured-impulse retro.** A weekly, ambient review of still-open
+    parked impulses (`parked_impulses` → `captured_impulse_retro_text`) closes the
+    capture-and-defer loop — keep the real ones, drop the noise. `GET /impulses/parked`.
+  - **Location-Aware Task Anchor — learned per-errand windows.** `learned_window` /
+    `resolve_time_window` pre-fill a windowless outing with your typical duration for
+    that errand (grouped by intention) before falling back to the LLM/heuristic, so a
+    recurring run escalates against your real pace from minute one (`history` source).
+  - **Closed-Loop Trip Tracking — multi-stop trips.** Passive dwell detection in
+    `process_location` records a `trip_waypoints` row each time the phone lingers away
+    from home past `trip_dwell_minutes`, so a chained errand run splits into its legs
+    (surfaced in the label ask, the trip episode note, and the profile). New
+    `trip_waypoints` table + dwell-candidate columns (auto-migrated).
+  - **Self-Care — auto-satisfy from other signals.** `auto_satisfy_from_signals`
+    (each tick) cross-references recent returned outings, completed trips, and past
+    commitments against per-check keywords: a lunch outing / calendar lunch satisfies
+    the meal check, a logged workout the movement floor — so the checks read as
+    attentive, not oblivious.
+  - **Delegation — stalled hand-off escalation.** After `delegation_stall_misses`
+    (default 3) ignored check-ins on a forwarded hand-off with no movement, the copy
+    escalates from "heard back?" to `stalled_handoff_message` — take it back,
+    re-delegate, or drop it.
+  - **Projects — staleness → next action.** A staleness nudge now pairs "still on
+    it?" with a tiny first step for the project's oldest open todo
+    (`project_open_todos` + a stored or heuristic `decompose_task`), so re-engaging
+    is one concrete action rather than a yes/no.
+
 - **iOS offline capture queue + background refresh** ✅ (#468) — off the tailnet,
   a capture used to just fail and vanish. Capture writes — Add Todo, self-care
   marks, Made it/Missed it — are now `queueable`: on a transport failure

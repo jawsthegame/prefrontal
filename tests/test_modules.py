@@ -18,8 +18,16 @@ from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
-from prefrontal.modules.task_paralysis import repeat_stalled_tasks
-from prefrontal.modules.time_blindness import TimeBlindnessModule
+from prefrontal.modules.task_paralysis import (
+    DEFAULT_BODY_DOUBLE_WINDOW_MINUTES,
+    repeat_stalled_tasks,
+    start_body_double,
+)
+from prefrontal.modules.time_blindness import (
+    DEFAULT_MORNING_ROUTINE_MINUTES,
+    TimeBlindnessModule,
+    adapt_morning_routine,
+)
 from tests.conftest import scoped_default
 
 BUILTIN_KEYS = {"time_blindness", "task_paralysis", "hyperfocus", "impulsivity"}
@@ -431,6 +439,45 @@ def test_repeat_stalled_tasks_respects_min_misses():
     assert repeat_stalled_tasks(episodes, min_misses=1)[0]["title"] == "Email Sam"
 
 
+def test_start_body_double_opens_a_real_focus_session(store):
+    """A body-double is a short aligned focus session on the stuck todo."""
+    tid = store.add_todo("Renew passport", estimate_minutes=90, priority=3)
+    result = start_body_double(store, todo=store.get_todo(tid), window_minutes=15)
+    assert result["todo_id"] == tid
+    assert result["planned_minutes"] == 15.0
+    # A real, active focus session now exists, linked to the todo and aligned.
+    active = store.active_focus_sessions()
+    assert len(active) == 1
+    session = active[0]
+    assert session["id"] == result["session_id"]
+    assert session["todo_id"] == tid
+    assert session["aligned"] == 1
+    assert session["planned_minutes"] == 15.0
+    assert "Renew passport" in result["message"]
+
+
+def test_start_body_double_uses_stored_first_step(store):
+    """The message leads with the decomposition's first step when there is one."""
+    tid = store.add_todo("File taxes", estimate_minutes=120)
+    store.set_decomposition(
+        tid,
+        first_step="Open the tax portal",
+        first_step_minutes=5.0,
+        steps=["gather docs"],
+        source="llm",
+    )
+    result = start_body_double(store, todo=store.get_todo(tid))
+    assert "Open the tax portal" in result["message"]
+    assert result["planned_minutes"] == float(DEFAULT_BODY_DOUBLE_WINDOW_MINUTES)
+
+
+def test_start_body_double_solo_has_no_partner_invite(store):
+    """Outside a household there's no co-parent to invite — just a timer."""
+    tid = store.add_todo("Clean the garage")
+    result = start_body_double(store, todo=store.get_todo(tid))
+    assert "Ask" not in result["message"]
+
+
 def test_task_paralysis_profile_names_stuck_tasks(store):
     """The profile section names a task the user keeps bailing on."""
     for _ in range(2):
@@ -440,3 +487,115 @@ def test_task_paralysis_profile_names_stuck_tasks(store):
     assert section is not None
     assert "Keeps bailing on" in section
     assert "Renew passport" in section
+
+
+# -- learned morning-routine lead --------------------------------------------
+
+
+def _log_departure(store, *, notes, outcome):
+    """Log a ``departure`` episode with a note in record_departure_outcome's format."""
+    store.log_episode(
+        "departure",
+        predicted_value=15.0,
+        actual_value=None,
+        acknowledged=True,
+        context="auto departure: School run",
+        outcome=outcome,
+        notes=notes,
+    )
+
+
+def test_morning_routine_widens_when_chronically_late(store):
+    """Repeatedly leaving late on early starts grows the suggested wake lead."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    # +15 min mean lateness pushes the 60-min default toward ~75.
+    assert result["routine"] == 75
+    assert int(store.get_float("morning_routine_minutes", 0)) == 75
+
+
+def test_morning_routine_eases_back_when_leaving_early(store):
+    """Consistently leaving with time to spare trims the lead so you sleep more."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left on time (~20 min to spare, leave-by 07:30)",
+                       outcome="success")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    assert result["routine"] == 40  # 60 − 20
+
+
+def test_morning_routine_ignores_midday_departures(store):
+    """Only early-start departures (leave-by before the threshold) count."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 14:00)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["samples"] == 0
+
+
+def test_morning_routine_holds_within_deadband(store):
+    """On-time early starts leave the lead alone (no churn)."""
+    get("time_blindness").seed(store)
+    for _ in range(5):
+        _log_departure(store, notes="left right on time (leave-by 07:30)", outcome="success")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["routine"] == DEFAULT_MORNING_ROUTINE_MINUTES
+
+
+def test_morning_routine_respects_explicit_value(store):
+    """A lead the user set by hand is never overridden by the learner."""
+    get("time_blindness").seed(store)
+    store.set_state("morning_routine_minutes", "45", source="explicit")
+    for _ in range(5):
+        _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert int(store.get_float("morning_routine_minutes", 0)) == 45
+
+
+def test_morning_routine_needs_enough_samples(store):
+    """Below the sample floor it reports but doesn't move."""
+    get("time_blindness").seed(store)
+    _log_departure(store, notes="left ~15 min late (leave-by 07:30)", outcome="miss")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is False
+    assert result["samples"] == 1
+
+
+def test_morning_routine_parses_real_departure_notes(store):
+    """The learner reads the exact note format record_departure_outcome emits."""
+    from datetime import timedelta
+
+    from prefrontal.departure import DeparturePlan, record_departure_outcome
+
+    get("time_blindness").seed(store)
+    now = utcnow()
+    # A 07:15 leave-by, left 15 min late — an early start that ran late.
+    start = now + timedelta(minutes=45)
+    leave_by = now + timedelta(minutes=15)
+    plan = DeparturePlan(
+        commitment={
+            "id": 1,
+            "title": "School run",
+            "start_at": start.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        leave_by=leave_by.strftime("%Y-%m-%d %H:%M:%S"),
+        minutes_until_leave=15.0,
+        travel_minutes=10.0,
+        basis="distance",
+        level="soon",
+    )
+    departed = leave_by + timedelta(minutes=15)
+    # Threshold high enough that this leave-by qualifies as an early start.
+    store.set_state("early_start_threshold", "23:59", source="explicit")
+    for _ in range(5):
+        record_departure_outcome(store, plan, departed, tz="UTC")
+    result = adapt_morning_routine(store)
+    assert result["changed"] is True
+    assert result["routine"] > DEFAULT_MORNING_ROUTINE_MINUTES

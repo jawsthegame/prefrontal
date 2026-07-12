@@ -64,9 +64,11 @@ from prefrontal.memory.summarizer import (
     summarize_profile,
 )
 from prefrontal.modules import available, enabled_modules
+from prefrontal.modules.hyperfocus import adapt_soft_block
 from prefrontal.modules.self_care import (
     adapt_self_care,
 )
+from prefrontal.modules.time_blindness import adapt_morning_routine
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 from prefrontal.scheduling import fit_todos
 from prefrontal.todos import (
@@ -1293,6 +1295,20 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"[{label}] self-care {c['check']} interval {arrow} "
                     f"{c['interval']}m ({c['reason']})"
                 )
+            routine = adapt_morning_routine(s)
+            if routine["changed"] or routine["samples"]:
+                arrow = "->" if routine["changed"] else "="
+                print(
+                    f"[{label}] morning routine lead {arrow} {routine['routine']}m "
+                    f"({routine['reason']})"
+                )
+            soft = adapt_soft_block(s)
+            if soft["changed"] or soft["samples"]:
+                arrow = "->" if soft["changed"] else "="
+                print(
+                    f"[{label}] hyperfocus soft block {arrow} {soft['soft_block']}m "
+                    f"({soft['reason']})"
+                )
     return 0
 
 
@@ -1355,6 +1371,62 @@ def _cmd_balance(args: argparse.Namespace) -> int:
             flag = "  ⚠ light" if d.underserved else ""
             target = f"  (aim {format_minutes(d.target_minutes or 0)}{flag})"
         print(f"  {d.domain:<12} {format_minutes(d.minutes):>6}  {share} {bar}{target}")
+    return 0
+
+
+def _cmd_body_double(args: argparse.Namespace) -> int:
+    """Start a timed start-together (body-double) sprint on a stalled todo.
+
+    The Task Paralysis ``body_double_nudge`` intervention made real from the
+    terminal: opens a short, aligned focus session on the task's tiny first step,
+    so the existing focus check/end machinery gives the end check-in. With
+    ``--todo`` it targets that todo; otherwise it picks your worst-avoided open
+    todo (the honest "what you keep skipping"). In a household the message invites
+    a co-parent to start theirs too.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``todo``, ``minutes``.
+
+    Returns:
+        Process exit code (0 on success, 1 when there's nothing to start on).
+    """
+    from prefrontal.modules.task_paralysis import (
+        DEFAULT_BODY_DOUBLE_WINDOW_MINUTES,
+        resolve_body_double_partner,
+        start_body_double,
+    )
+    from prefrontal.todos import avoided_todos
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        s = _resolve_user_store(store, args.user)
+        if args.todo is not None:
+            todo = s.get_todo(args.todo)
+            if todo is None or todo["status"] != "open":
+                print(f"Todo {args.todo} is not open.")
+                return 1
+        else:
+            avoided = avoided_todos(s.open_todos(exclude_delegated=True), utcnow())
+            if not avoided:
+                print("Nothing open to start on — no stalled todos.")
+                return 1
+            todo = avoided[0]["todo"]
+        window = args.minutes or int(
+            s.get_float("body_double_window_minutes", DEFAULT_BODY_DOUBLE_WINDOW_MINUTES)
+        )
+        result = start_body_double(
+            s,
+            todo=todo,
+            window_minutes=window,
+            partner=resolve_body_double_partner(s),
+            name=s.get_state("user_name", "") or "",
+        )
+    print(result["message"])
+    print(
+        f"(session {result['session_id']}, {result['planned_minutes']:g} min — "
+        "tap Wrap up to end)"
+    )
     return 0
 
 
@@ -3321,6 +3393,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=int, default=7, help="Look-back window in days (default 7)."
     )
     p_balance.set_defaults(func=_cmd_balance)
+
+    p_bd = sub.add_parser(
+        "body-double", help="Start a timed start-together sprint on a stalled todo."
+    )
+    p_bd.add_argument("--db-path", default=None, help="Override the database path.")
+    p_bd.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_bd.add_argument(
+        "--todo", type=int, default=None, help="Todo id to start on (default: worst-avoided)."
+    )
+    p_bd.add_argument(
+        "--minutes", type=int, default=None,
+        help="Sprint length (default: body_double_window_minutes).",
+    )
+    p_bd.set_defaults(func=_cmd_body_double)
 
     p_summarize = sub.add_parser(
         "summarize", help="LLM-summarize the profile (Ollama) to profile-<handle>.md."

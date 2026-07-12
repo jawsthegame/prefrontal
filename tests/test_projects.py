@@ -238,6 +238,30 @@ def test_staleness_module_fires_when_quiet(store):
     assert "Kitchen Remodel" in cues[0].text and cues[0].dedup_key == f"project_stale:{pid}"
 
 
+def test_staleness_pairs_with_a_next_action(store):
+    """The re-surface offers a concrete first step for the project's oldest open todo."""
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    tid = store.add_todo("Buy tile")
+    store.set_todo_project(tid, pid)
+    cue = ProjectStalenessModule().evaluate(store, _ctx(30))[0]
+    assert "Ease back in with one step:" in cue.text
+    assert cue.ref["todo_id"] == tid
+
+
+def test_staleness_next_action_prefers_stored_decomposition(store):
+    """A todo's saved first step is used verbatim over a fresh heuristic one."""
+    from prefrontal.modules.projects import ProjectStalenessModule
+    pid = store.add_project("Kitchen Remodel", "home")
+    tid = store.add_todo("Redo the backsplash")
+    store.set_todo_project(tid, pid)
+    store.set_decomposition(
+        tid, first_step="Measure the wall", first_step_minutes=5.0, steps=[], source="llm"
+    )
+    cue = ProjectStalenessModule().evaluate(store, _ctx(30))[0]
+    assert "Measure the wall" in cue.text
+
+
 def test_staleness_module_quiet_when_fresh(store):
     from prefrontal.modules.projects import ProjectStalenessModule
     pid = store.add_project("Kitchen Remodel", "home")
