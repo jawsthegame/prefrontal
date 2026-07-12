@@ -12,6 +12,7 @@ to force a fresh read of the environment.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -380,9 +381,12 @@ def _float_env(name: str, default: float) -> float:
     if raw is None or not raw.strip():
         return default
     try:
-        return float(raw.strip())
+        value = float(raw.strip())
     except ValueError:
         return default
+    # float() parses "nan"/"inf" — but a non-finite threshold silently breaks
+    # comparisons (every `x < nan` is False), so treat it as malformed too.
+    return value if math.isfinite(value) else default
 
 
 def load_settings(dotenv_path: str = ".env") -> Settings:

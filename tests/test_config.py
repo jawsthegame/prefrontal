@@ -23,6 +23,11 @@ def test_int_env_and_float_env_degrade_on_garbage(monkeypatch):
     monkeypatch.setenv("X_BLANK", "   ")
     assert _int_env("X_BLANK", 5) == 5
     assert _int_env("X_MISSING", 7) == 7
+    # Non-finite floats parse via float() but are treated as malformed: a NaN/Inf
+    # threshold would silently break every `<` comparison it feeds.
+    for bad in ("nan", "inf", "-inf", "Infinity"):
+        monkeypatch.setenv("X_FLOAT", bad)
+        assert _float_env("X_FLOAT", 30.0) == 30.0
     # Valid values still parse (whitespace-trimmed).
     monkeypatch.setenv("X_INT", " 9090 ")
     monkeypatch.setenv("X_FLOAT", "1.5")
