@@ -29,9 +29,11 @@ from prefrontal.modules.self_care import (
     apply_self_care_mark,
     apply_self_care_reset,
     apply_self_care_unmark,
+    auto_satisfy_from_signals,
     biobreak_message,
     mark_self_care_prompted,
     meal_message,
+    recently_satisfied,
     self_care_status,
     sweep_unanswered_self_care,
     water_message,
@@ -1075,3 +1077,77 @@ def test_self_care_mark_reset_takes_precedence_over_undo(client, store):
     )
     assert resp.status_code == 200
     assert store.get_state("meal_count") == f"{today}|0"
+
+
+# -- auto-satisfy from other signals -----------------------------------------
+
+
+def _returned_outing(store, intention, *, minutes_ago=10):
+    """Create an already-returned outing that ended `minutes_ago`."""
+    oid = store.start_outing(intention, 60)
+    ret = (utcnow() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    store.close_outing(oid, status="returned", returned_at=ret)
+
+
+def test_recently_satisfied_matches_food_outing(store):
+    """A just-returned lunch outing satisfies the meal check; coffee does not."""
+    _returned_outing(store, "lunch with Dana")
+    assert recently_satisfied(store, "meal", utcnow()) is not None
+    assert recently_satisfied(store, "water", utcnow()) is None  # no keywords for water
+
+
+def test_recently_satisfied_ignores_stale_signal(store):
+    """A meal outside the look-back window no longer counts."""
+    _returned_outing(store, "grabbing dinner", minutes_ago=300)
+    assert recently_satisfied(store, "meal", utcnow(), window_minutes=90) is None
+
+
+def test_recently_satisfied_ignores_non_food_outing(store):
+    """A coffee run isn't a meal — the meal check stays hungry."""
+    _returned_outing(store, "quick coffee run")
+    assert recently_satisfied(store, "meal", utcnow()) is None
+
+
+def test_auto_satisfy_marks_meal_met_and_silences_it(store):
+    """A recent lunch marks the meal check done and stops it nudging."""
+    store.set_state("self_care", "on")
+    store.set_state("water_enabled", "off")
+    store.set_state("biobreak_enabled", "off")
+    _returned_outing(store, "lunch out")
+    now = utcnow()
+    satisfied = auto_satisfy_from_signals(store, now, "UTC")
+    assert [s["check"] for s in satisfied] == ["meal"]
+    # An episode records the auto-satisfy for insights/learning.
+    eps = store.episodes_by_type(SELF_CARE_EPISODE)
+    assert any("auto-satisfied" in (e.get("notes") or "") for e in eps)
+    # And the meal check no longer fires during its window.
+    hungry_hour = now.replace(hour=15, minute=0, second=0, microsecond=0)
+    cues = SelfCareModule().evaluate(store, _ctx(hungry_hour))
+    assert not _by_kind(cues, "meal")
+
+
+def test_auto_satisfy_movement_from_trip(store):
+    """A completed trip labeled a workout satisfies the movement floor."""
+    store.set_state("self_care", "on")
+    store.set_state("movement_enabled", "on")
+    tid = store.open_trip()
+    store.close_trip(tid)
+    store.label_trip(tid, label="gym session", category="health")
+    satisfied = auto_satisfy_from_signals(store, utcnow(), "UTC")
+    assert "movement" in [s["check"] for s in satisfied]
+
+
+def test_auto_satisfy_noop_when_off(store):
+    """With self_care off, nothing is auto-satisfied."""
+    _returned_outing(store, "lunch out")
+    assert auto_satisfy_from_signals(store, utcnow(), "UTC") == []
+
+
+def test_before_collect_runs_auto_satisfy(store):
+    """The tick hook wires auto-satisfy in alongside the unanswered sweep."""
+    store.set_state("self_care", "on")
+    _returned_outing(store, "dinner out")
+    SelfCareModule().before_collect(store, _ctx(utcnow()))
+    # Meal count is now at target for today.
+    today = utcnow().strftime("%Y-%m-%d")
+    assert store.get_state("meal_count") == f"{today}|1"

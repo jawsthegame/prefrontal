@@ -827,6 +827,131 @@ def sweep_unanswered_self_care(
     return swept
 
 
+# -- auto-satisfy from other signals -----------------------------------------
+#
+# The checks are otherwise interval-driven and blind to what the rest of the
+# system already knows: a just-returned outing/trip that was a meal (or a calendar
+# lunch) means you've eaten; a logged workout means you moved. Cross-reference
+# those so a check quietly counts itself met instead of nagging "have you eaten?"
+# the minute you walk back in from lunch — the nudges read as attentive, not
+# oblivious.
+
+#: Default look-back (minutes) for a satisfying signal — a meal an hour ago still
+#: means you've eaten. Tunable via ``self_care_satisfy_window_minutes``.
+DEFAULT_SATISFY_WINDOW_MINUTES = 90.0
+
+#: Per-check keyword sets that mark an outing/trip/commitment as *evidence* the
+#: need is already met. Only checks with a clear external footprint get one — meal
+#: and the movement floor; water/meds/etc. have no such signal.
+_SATISFY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "meal": (
+        "lunch", "dinner", "breakfast", "brunch", "restaurant", "diner", "cafe",
+        "café", "meal", "food", "eat", "eating", "lunched", "dined", "takeout",
+    ),
+    "movement": (
+        "gym", "workout", "work out", "run", "running", "jog", "jogging", "walk",
+        "walking", "exercise", "yoga", "pilates", "swim", "swimming", "hike",
+        "hiking", "bike", "biking", "cycling", "spin class",
+    ),
+}
+_SATISFY_RES: dict[str, re.Pattern[str]] = {
+    key: re.compile(r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b")
+    for key, kws in _SATISFY_KEYWORDS.items()
+}
+
+
+def _signal_matches(text: str | None, check_key: str) -> bool:
+    """Whether ``text`` names an activity that satisfies ``check_key`` (word-boundary)."""
+    pattern = _SATISFY_RES.get(check_key)
+    if pattern is None or not text:
+        return False
+    return pattern.search(text.lower()) is not None
+
+
+def recently_satisfied(
+    store: MemoryStore,
+    check_key: str,
+    now: datetime,
+    *,
+    window_minutes: float = DEFAULT_SATISFY_WINDOW_MINUTES,
+) -> str | None:
+    """A human reason this check is already met by a recent signal, or ``None``.
+
+    Scans, within ``window_minutes``: returned **outings** (their intention),
+    completed **trips** (label/category), and past **commitments** (title). The
+    first keyword hit wins. Only ``meal``/``movement`` have keyword sets, so any
+    other check is never auto-satisfied.
+    """
+    if check_key not in _SATISFY_KEYWORDS:
+        return None
+    cutoff = now - timedelta(minutes=window_minutes)
+
+    for outing in store.recent_outings(limit=20):
+        if outing.get("status") != "returned":
+            continue
+        ret = _parse_ts(outing.get("returned_at"))
+        if ret is None or ret < cutoff or ret > now:
+            continue
+        if _signal_matches(outing.get("intention"), check_key):
+            return f"a “{outing.get('intention')}” outing"
+
+    for trip in store.recent_trips(limit=20):
+        if trip.get("status") != "completed":
+            continue
+        ret = _parse_ts(trip.get("returned_at"))
+        if ret is None or ret < cutoff or ret > now:
+            continue
+        text = f"{trip.get('label') or ''} {trip.get('category') or ''}"
+        if _signal_matches(text, check_key):
+            return f"a {(trip.get('label') or trip.get('category'))} trip"
+
+    start = cutoff.strftime(TS_FMT)
+    for commit in store.commitments_between(start, now.strftime(TS_FMT)):
+        if _signal_matches(commit.get("title"), check_key):
+            return f"“{commit.get('title')}” on your calendar"
+    return None
+
+
+def auto_satisfy_from_signals(
+    store: MemoryStore, now: datetime, tz: str
+) -> list[dict[str, Any]]:
+    """Mark a basic-needs check met when a recent signal already covers it.
+
+    Runs each tick (via :meth:`SelfCareModule.before_collect`, before cues are
+    collected) so a check that's genuinely handled — you just got back from lunch,
+    you logged a run — counts itself done for the day and stops nudging, logging a
+    ``confirmed`` ``self_care`` episode noting the evidence. Only meal/movement have
+    satisfying signals; a check already met, disabled, or off is skipped. Returns a
+    per-satisfied-check summary.
+    """
+    if (store.get_state("self_care", "off") or "off") != "on":
+        return []
+    window = store.get_float("self_care_satisfy_window_minutes", DEFAULT_SATISFY_WINDOW_MINUTES)
+    today = local_datetime(now, tz).strftime("%Y-%m-%d")
+    out: list[dict[str, Any]] = []
+    for check in CHECKS:
+        if check.key not in _SATISFY_KEYWORDS or check.open_ended:
+            continue
+        if (store.get_state(check.enabled_key, "on") or "on") == "off":
+            continue
+        if day_count(store, check, today) >= _target(store, check):
+            continue  # already met — nothing to auto-satisfy
+        reason = recently_satisfied(store, check.key, now, window_minutes=window)
+        if reason is None:
+            continue
+        target = _target(store, check)
+        store.set_state(check.count_key, f"{today}|{target}", source="explicit")
+        store.log_episode(
+            SELF_CARE_EPISODE,
+            acknowledged=True,
+            context=f"{check.key}: confirmed",
+            outcome="confirmed",
+            notes=f"auto-satisfied by {reason}; latency=?",
+        )
+        out.append({"check": check.key, "reason": reason})
+    return out
+
+
 def _latency_seconds(notes: str | None) -> float | None:
     """Parse ``latency=<n>s`` from an episode's notes, or ``None`` if absent."""
     if not notes:
@@ -1196,11 +1321,12 @@ class SelfCareModule(Module):
         return [due[0][2]]
 
     def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
-        """Sweep self-care nudges left unanswered past their window into ``ignored``
-        episodes — the "wrong time / too frequent" signal the cadence learner reads
-        alongside snoozes. Runs each tick via the engine's ``before_collect`` hook
-        (this was a self-care-specific step hard-coded into the tick loop)."""
+        """Per-tick housekeeping before cues are collected: sweep unanswered nudges
+        into ``ignored`` episodes (the "wrong time / too frequent" signal the cadence
+        learner reads alongside snoozes), then auto-satisfy any check a recent signal
+        already covers (a lunch outing, a logged run) so it doesn't nag redundantly."""
         sweep_unanswered_self_care(store, ctx.now)
+        auto_satisfy_from_signals(store, ctx.now, ctx.timezone)
 
     def after_fire(
         self, store: MemoryStore, decisions: list[Any], ctx: CoachContext
