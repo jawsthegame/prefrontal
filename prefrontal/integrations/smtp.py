@@ -38,9 +38,22 @@ SmtpConn = smtplib.SMTP
 #: Factory signature: ``(host, port, timeout) -> SmtpConn``. Injectable for tests.
 ConnectFn = Callable[[str, int, float], SmtpConn]
 
+#: SMTPS / implicit-TLS port: the socket is TLS from the first byte, so it uses
+#: ``SMTP_SSL`` and must NOT also issue STARTTLS. Every other port uses plain
+#: ``SMTP`` with an optional STARTTLS upgrade. Common for app-password relays
+#: (many hosts, and Gmail's SSL endpoint) that offer only 465, not 587.
+IMPLICIT_TLS_PORT = 465
+
 
 def _default_connect(host: str, port: int, timeout: float) -> SmtpConn:
-    """Open a real SMTP connection (the production ``connect`` factory)."""
+    """Open a real SMTP connection (the production ``connect`` factory).
+
+    Port 465 is implicit-TLS (SMTPS), so it connects with ``SMTP_SSL``; every
+    other port uses plain ``SMTP`` (STARTTLS is applied in :meth:`SmtpClient.send`
+    when requested).
+    """
+    if port == IMPLICIT_TLS_PORT:
+        return smtplib.SMTP_SSL(host, port, timeout=timeout)
     return smtplib.SMTP(host, port, timeout=timeout)
 
 
@@ -89,10 +102,11 @@ class SmtpClient:
 
         No-ops (nothing sent) unless a host, a from-address, and a recipient are
         all present — so a box with SMTP unconfigured simply reports "not
-        configured" instead of erroring. STARTTLS is attempted when ``use_tls``
-        (the norm for port 587); login is skipped when no username/password is
-        given (an open relay / local MTA). Any SMTP or socket error is caught and
-        returned, never raised.
+        configured" instead of erroring. Transport: port 465 is implicit TLS
+        (``SMTP_SSL``, no STARTTLS); on any other port STARTTLS is attempted when
+        ``use_tls`` (the norm for 587). Login is skipped when no username/password
+        is given (an open relay / local MTA). Any SMTP or socket error is caught
+        and returned, never raised.
         """
         if not (host and sender and to):
             return SmtpResult(detail="smtp: not configured")
@@ -103,7 +117,8 @@ class SmtpClient:
         message.set_content(body)
         try:
             with self._connect(host, port, self.timeout) as conn:
-                if use_tls:
+                # Port 465 is already TLS (SMTP_SSL); STARTTLS on it would error.
+                if use_tls and port != IMPLICIT_TLS_PORT:
                     conn.starttls()
                 if username and password:
                     conn.login(username, password)
