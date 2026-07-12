@@ -1,5 +1,23 @@
 import Foundation
 
+extension AppConfig {
+    /// Apply a scanned/opened connect payload. Only overwrites fields the
+    /// payload actually carries, so a QR that omits (say) the ntfy topic leaves
+    /// an existing one intact. The token/URL are validated separately by the
+    /// onboarding flow before this is trusted for real requests.
+    ///
+    /// Defined here (app target only) rather than on `AppConfig` in `Config/`,
+    /// which is also compiled into the widget extension where `ConnectPayload`
+    /// isn't available.
+    func apply(_ payload: ConnectPayload) {
+        baseURLString = payload.baseURL
+        if let t = payload.token, !t.isEmpty { token = t }
+        if let s = payload.ntfyServer, !s.isEmpty { ntfyServer = s }
+        if let topic = payload.ntfyTopic, !topic.isEmpty { ntfyTopic = topic }
+        if let name = payload.displayName, !name.isEmpty { displayName = name }
+    }
+}
+
 /// The connection details handed to a new phone during onboarding: everything
 /// the app needs to reach *this* deployment as *this* user, in one scannable
 /// blob. The operator produces it with `prefrontal user connect-link <handle>`
