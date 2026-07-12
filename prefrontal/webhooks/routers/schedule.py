@@ -78,6 +78,9 @@ from prefrontal.memory.store import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
+from prefrontal.modules.registry import (
+    is_muted as module_muted,
+)
 from prefrontal.panic import (
     build_panic,
     evaluate_panic_check,
@@ -212,6 +215,18 @@ def build_router(services: RouterServices) -> APIRouter:
                 "reminder": None,
                 "location_known": False,
                 "skipped": "module_disabled",
+            }
+        # A per-user mute (from the weekly usage nudge) silences the departure
+        # nudge here too, not just in the coaching tick — mute is authoritative.
+        # (Outcome logging at /departure/record and the read-only /departure/next
+        # are deliberately NOT muted: mute silences nudges, not learning or pulls.)
+        if module_muted(memory, "time_blindness"):
+            return {
+                "fire": False,
+                "message": None,
+                "reminder": None,
+                "location_known": False,
+                "skipped": "module_muted",
             }
         try:
             body = await request.json()

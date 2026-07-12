@@ -191,6 +191,35 @@ def test_cli_usage_check_all_users(tmp_path, capsys):
     assert out.count("Would nudge") == 2  # dry run (no --deliver) for both users
 
 
+@pytest.mark.parametrize(
+    "path, module",
+    [
+        ("/webhooks/focus/check", "hyperfocus"),
+        ("/webhooks/outing/check", "location_anchor"),
+        ("/webhooks/departure/check", "time_blindness"),
+    ],
+)
+def test_muted_module_skips_its_proactive_check_endpoint(store, path, module):
+    # Mute is authoritative beyond the coaching tick: a muted module's own
+    # escalation/check endpoint short-circuits with skipped="module_muted".
+    scoped = store.scoped(store.get_user("tom")["id"])
+    scoped.set_feature_muted(module, True)
+    app = create_app(store=store, settings=Settings())
+    with TestClient(app) as c:
+        r = c.post(path, headers={"X-Prefrontal-Token": SECRET}, json={})
+    assert r.status_code == 200
+    assert r.json().get("skipped") == "module_muted"
+
+
+def test_unmuted_module_check_endpoint_runs(store):
+    # Sanity: without a mute the departure check runs (no module_muted skip).
+    app = create_app(store=store, settings=Settings())
+    with TestClient(app) as c:
+        r = c.post("/webhooks/departure/check", headers={"X-Prefrontal-Token": SECRET}, json={})
+    assert r.status_code == 200
+    assert r.json().get("skipped") != "module_muted"
+
+
 def test_usage_check_endpoint(store):
     scoped = store.scoped(store.get_user("tom")["id"])
     _ignored(scoped, "location_anchor")
