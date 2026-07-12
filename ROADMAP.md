@@ -70,14 +70,14 @@ progress (✅) inline against what remains open.
   module intervention is `active`** — none remain `planned`. Run
   `prefrontal modules -v` for the live per-intervention status.
 
-## Per-module next steps
+## Per-module next steps — ✅ all nine shipped
 
-Every module's *declared* interventions are wired (see above), so what follows is
-one **net-new** capability per challenge module — the honest next surface for each,
-not a closeout of something half-built. Each composes existing primitives and is
-scoped small; they're listed by module, not priority.
+Every module's *declared* interventions were already wired, so this was one
+**net-new** capability per challenge module — the honest next surface for each,
+composing existing primitives. **All nine have now shipped** (see `CHANGELOG.md`
+for the release note); the descriptions below are kept as the design of record.
 
-- **Time Blindness — learn the morning-routine lead.** `morning_prep`'s one-tap
+- **Time Blindness — learn the morning-routine lead.** ✅ `morning_prep`'s one-tap
   "Set alarm" backs a *static* `morning_routine_minutes` (default 60) off the
   leave-by to suggest a wake time. But departure-outcome capture
   (`POST /webhooks/departure/left` → `classify_departure`) already scores whether
@@ -86,52 +86,52 @@ scoped small; they're listed by module, not priority.
   means your real get-ready span is longer — so the suggested wake time reflects how
   long you actually take, the same "it gets better the longer you use it" loop the
   time bias already rides.
-- **Task Paralysis — a real body-double session.** `body_double_nudge` only
+- **Task Paralysis — a real body-double session.** ✅ `body_double_nudge` only
   *suggests* scheduling a start-together window; nothing runs one. Add an actual
   timed start-together session — a short co-working timer that opens on the one
   tiny first step and checks in at the end — optionally paired with a household
   member (the co-parent scope already exists) so two people genuinely start
   together. Turns the suggestion into the scaffold it names.
-- **Hyperfocus — learn a personal soft-block length.** The soft check (90 min) and
+- **Hyperfocus — learn a personal soft-block length.** ✅ The soft check (90 min) and
   hard ceiling (180 min) are static defaults for everyone. Closed focus sessions
   already carry planned-vs-actual durations *and* the one-tap `worth_it` /
   `should_have_stopped` / `pulled_off` exit ratings — enough signal to learn where
   *this* person's productive focus tips into diminishing returns, so
   `alignment_check` lands at their real inflection point instead of a generic 90.
   Bounded and never below a floor, mirroring the self-care cadence learner's shape.
-- **Impulsivity — a captured-impulse retro.** `capture_and_defer` parks impulses to
+- **Impulsivity — a captured-impulse retro.** ✅ `capture_and_defer` parks impulses to
   the inbox but never closes the loop its own docstring promises ("the ideas are
   safe if you jot them down"). A periodic, ambient review that resurfaces what you
   parked during focus blocks — most were noise you can clear in one tap, a few were
   real and promote to todos — proves the capture worked and empties the inbox, so
   parking stays trustworthy enough to keep choosing over chasing.
-- **Location-Aware Task Anchor — learn per-errand default windows.**
+- **Location-Aware Task Anchor — learn per-errand default windows.** ✅
   `infer_time_window` re-asks the LLM/heuristic for *every* windowless outing and
   ignores your own history for that same errand, even though returned outings log
   real durations keyed by intention (and the `activity:outing` bias already
   calibrates the projection). Learn a per-intention baseline ("coffee" ≈ your
   historical ~N min) and pre-fill it as the stated window, so a recurring run
   escalates against your actual pace from minute one rather than a generic guess.
-- **Closed-Loop Trip Tracking — multi-stop trips.** The trip state machine is
+- **Closed-Loop Trip Tracking — multi-stop trips.** ✅ The trip state machine is
   strictly home → away → home, so a chained run (home → store → school → home)
   collapses into one undifferentiated blob. Detect an intermediate *dwell* (a stop
   of N+ minutes away from home) to split a trip into its legs, so the label ask,
   category, and focus-balance attribution reflect the real errands instead of a
   single lump — the passive-capture counterpart to declaring separate outings.
-- **Self-Care — auto-satisfy from other signals.** Every basic-needs check is
+- **Self-Care — auto-satisfy from other signals.** ✅ Every basic-needs check is
   purely interval-driven and blind to what the rest of the system already knows: a
   just-returned outing/trip categorized *food* (or a calendar lunch) should count
   toward or defer the meal check rather than asking "have you eaten?" the minute you
   walk back in; a logged workout trip could satisfy `movement`. Cross-reference
   trips / outings / commitments to suppress or pre-satisfy a check, so the nudges
   read as attentive rather than oblivious.
-- **Delegation follow-through — stalled hand-off escalation.** A human delegation
+- **Delegation follow-through — stalled hand-off escalation.** ✅ A human delegation
   stuck `forwarded` with no movement just re-surfaces on the same slow cadence
   forever; `before_collect` already logs the `ignored` outcomes but nothing acts on
   chronic non-movement. After K missed check-ins, escalate the copy from "heard
   back?" to a *decision* prompt — take it back, re-delegate, or drop it — so a dead
   hand-off gets resolved instead of quietly rotting on the parked list.
-- **Projects — staleness → next action.** A staleness nudge asks "still on it?",
+- **Projects — staleness → next action.** ✅ A staleness nudge asks "still on it?",
   but a project usually goes quiet because its next step is fuzzy (task paralysis at
   the project scale). Pair the re-surfacing with a decomposed tiny first step for
   the project's oldest open todo (reusing `decompose_task`), so re-engaging is one
