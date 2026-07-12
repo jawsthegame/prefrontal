@@ -79,6 +79,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 enum PushCategories {
     /// category id → button titles, in tap order. Titles double as the action
     /// identifiers, matched against the payload's action labels on tap.
+    ///
+    /// Keys are the server's **`context_key`** (what `DeliveryClient` sets as the
+    /// APNs `category`), NOT the nudge *kind*. They usually coincide, but the
+    /// weekly check-in's context_key is `"checkin"` even though its buttons come
+    /// from the `"load"` kind (`_CONTEXT_KIND["checkin"] == "load"`). Cues whose
+    /// context_key has no push buttons server-side (e.g. `away_proposal`, or the
+    /// per-user dynamic `trip` domains) aren't here and show as a plain banner.
     static let buttons: [String: [String]] = [
         "focus": ["Wrap up"],
         "outing": ["I'm back", "Abandon"],

@@ -177,7 +177,7 @@ def test_register_apns_token_endpoint_stores_and_clears():
             assert resolve_route(_scoped(s, "sam"), Settings()).apns_token == "deadbeefdevicetoken"
 
             r2 = c.post("/route/apns-token", json={"token": ""}, headers=hdr)
-            assert r2.json() == {"registered": False}
+            assert r2.status_code == 200 and r2.json() == {"registered": False}
             assert resolve_route(_scoped(s, "sam"), Settings()).apns_token == ""
     finally:
         conn.close()
