@@ -14,6 +14,17 @@ class AssistantMessage(BaseModel):
 
     message: str = Field(description="Free-text ask, e.g. 'bump the dentist call to urgent'.")
 
+class FindTimeMessage(BaseModel):
+    """Body of ``POST /assistant/find-time`` — a free-text "find me a slot" ask."""
+
+    message: str = Field(
+        description=(
+            "Free-text scheduling ask, e.g. 'find 45 min for coffee with Sam this "
+            "week' or 'when are my wife and I both free for dinner tomorrow evening?'."
+        )
+    )
+
+
 class AssistantApply(BaseModel):
     """Body of ``POST /assistant/apply`` — the proposed actions to execute.
 

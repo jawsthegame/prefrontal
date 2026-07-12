@@ -2511,6 +2511,52 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_find_time(args: argparse.Namespace) -> int:
+    """Find open calendar slots from a free-text ask (the calendar assistant).
+
+    "find 45 min for coffee with Sam this week", or "when are my wife and I both
+    free for dinner tomorrow evening?" — parses duration + timeframe + who's
+    involved, then lists open windows. A partner's FYI events block only when the
+    plan involves them; otherwise they're ignored. Prints a single clarifying
+    question when the ask is too vague (usually a missing duration). Read-only.
+
+    Args:
+        args: Parsed arguments; uses ``message``, ``db_path``, ``user``, ``llm``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.availability import plan_availability, render_plan
+    from prefrontal.integrations import ProviderResolver
+    from prefrontal.scheduling import window_config_for
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    message = " ".join(args.message).strip()
+    if not message:
+        print(
+            'Say what you want to schedule, e.g. `find-time "45 min for a call this week"`.',
+            file=sys.stderr,
+        )
+        return 2
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        # Claude when the ``assistant`` agent is opted into Anthropic, else local
+        # Ollama; the module falls back to an offline heuristic if neither replies.
+        client = ProviderResolver.from_settings(settings).client("assistant") if args.llm else None
+        awake = window_config_for(settings, store).awake_band()
+        plan = plan_availability(
+            message,
+            store,
+            client=client,
+            now=utcnow(),
+            tz=settings.timezone,
+            awake_band=awake,
+        )
+    print(render_plan(plan, settings.timezone))
+    return 0
+
+
 def _ingest_mail(store, messages, *, account, policy, client, use_model, settings):
     """Ingest a batch of messages for one account into a (scoped) store.
 
@@ -3810,6 +3856,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("--db-path", default=None, help="Override the database path.")
     p_fit.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_fit.set_defaults(func=_cmd_fit)
+
+    p_find_time = sub.add_parser(
+        "find-time",
+        help="Find open calendar slots from a free-text ask (the calendar assistant).",
+    )
+    p_find_time.add_argument(
+        "message",
+        nargs="+",
+        help='What to schedule, e.g. "45 min for coffee with Sam this week".',
+    )
+    p_find_time.add_argument(
+        "--llm",
+        action="store_true",
+        help="Use the configured model to parse the ask (else an offline heuristic).",
+    )
+    p_find_time.add_argument("--db-path", default=None, help="Override the database path.")
+    p_find_time.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_find_time.set_defaults(func=_cmd_find_time)
 
     p_mail = sub.add_parser("mail", help="Ingest/fetch/list triaged email.")
     p_mail.add_argument("--db-path", default=None, help="Override the database path.")
