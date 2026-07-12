@@ -176,6 +176,20 @@ unless notifications were authorized during onboarding.
 | Me | `/self-care` + `/self-care/mark`; `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Panic | `/panic` |
 
+## Native push (APNs)
+
+When the server is APNs-configured (`APNS_*` env + the `prefrontal[apns]` extra),
+the app opts this device into **native Apple Push** instead of ntfy: on
+notification authorization it registers for remote notifications, and
+`AppDelegate` posts the device token to `POST /route/apns-token`. Nudges then
+arrive as native notifications whose **action buttons** (registered as
+`UNNotificationCategory`s mirroring the server's nudge buttons — *I'm back*,
+*Ate*, *Wrap up*, …) fire the signed `/nudge/act` URL from the payload on tap —
+the native equivalent of ntfy's inline buttons. Needs the **Push Notifications**
+capability (the `aps-environment` entitlement); the server falls back to ntfy for
+any device that hasn't registered. See the server side in
+`prefrontal/integrations/delivery.py` + `docs/multi-tenant.md`.
+
 ## Siri / Shortcuts / Action Button (App Intents)
 
 `Intents/PrefrontalIntents.swift` exposes the core one-tap actions as **App

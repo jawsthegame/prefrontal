@@ -70,6 +70,11 @@ extension APIClient {
         try await post("briefing/feedback", json: ["helpful": helpful])
     }
 
+    // Register (or clear, with "") this device's APNs token for native push.
+    func registerApnsToken(_ token: String) async throws {
+        try await post("route/apns-token", json: ["token": token])
+    }
+
     // One-tap outcome log (the /webhooks/shortcut path). `action` is made_it /
     // missed_it / partial; `episodeType` defaults to a departure.
     func logShortcut(action: String, episodeType: String = "departure",

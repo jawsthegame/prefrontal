@@ -104,6 +104,7 @@ from prefrontal.webhooks.schemas.sensor import (
     ObserveRequest,
 )
 from prefrontal.webhooks.schemas.system import (
+    ApnsTokenRegistration,
     SelfCareCheckConfig,
     SelfCareConfig,
     SelfCareMark,
@@ -187,6 +188,7 @@ __all__ = [
     "RoutineSet",
     "SelfCareCheckConfig",
     "SelfCareConfig",
+    "ApnsTokenRegistration",
     "SelfCareMark",
     "ShoppingAdd",
     "ShoppingGot",

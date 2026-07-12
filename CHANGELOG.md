@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **APNs — native iOS push, client side** ✅ (#467, part 2) — the app now opts a
+  device into native Apple Push: on notification authorization it registers for
+  remote notifications and `AppDelegate` posts the token to the new
+  `POST /route/apns-token` (stored as the user's per-user `apns_token`). Nudges
+  arrive as native notifications whose action buttons — `UNNotificationCategory`s
+  mirroring `_NUDGE_BUTTONS` (I'm back / Ate / Wrap up / …) — fire the signed
+  `/nudge/act` URL from the payload on tap, the native equivalent of ntfy's inline
+  buttons. Adds the `aps-environment` entitlement; the server (part 1) falls back
+  to ntfy for any device that hasn't registered. Endpoint covered by
+  `tests/test_apns.py`; the client is Swift (build on a Mac).
+
 - **APNs delivery transport (server side of native iOS push)** ✅ (#467, part 1) —
   a native-push transport alongside ntfy/Pushover/Twilio in
   `prefrontal/integrations/delivery.py`. When a user has registered an

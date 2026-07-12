@@ -55,7 +55,12 @@ from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
 )
-from prefrontal.webhooks.schemas import SelfCareConfig, SelfCareMark, SmtpConfig
+from prefrontal.webhooks.schemas import (
+    ApnsTokenRegistration,
+    SelfCareConfig,
+    SelfCareMark,
+    SmtpConfig,
+)
 from prefrontal.webhooks.services import RouterServices
 
 #: The web-surface HTML shells are read into memory at import and change only on
@@ -302,6 +307,23 @@ def build_router(services: RouterServices) -> APIRouter:
         if headline is None:
             raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
         return {"headline": headline, **self_care_status(ctx.store, now, tz)}
+
+    @router.post("/route/apns-token", tags=["system"])
+    def register_apns_token(
+        payload: ApnsTokenRegistration,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Register (or clear) this device's APNs token for native iOS push.
+
+        The app posts the token from ``registerForRemoteNotifications``; it's
+        stored as the user's per-user ``apns_token`` route so nudges deliver via
+        Apple Push (falling back to ntfy when APNs isn't configured or the send
+        fails). An empty ``token`` clears it — unregister on sign-out. The token
+        itself is never echoed back.
+        """
+        token = payload.token.strip()
+        ctx.store.set_state("apns_token", token, source="explicit")
+        return {"registered": bool(token)}
 
     def _smtp_entry(src: Any) -> dict[str, Any]:
         """Serialize one SMTP source for the client — the password is NEVER included.
