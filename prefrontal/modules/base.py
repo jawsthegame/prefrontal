@@ -41,6 +41,24 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class TutorialStep:
+    """One card in a module's new-user walkthrough.
+
+    A tutorial is a short, ordered list of these — plain prose a first-time user
+    can read in the in-app Guide (``GET /guide``) to learn what a module does and
+    what to expect. Deliberately data-only (no HTML): the web page and the CLI
+    each render it their own way, and it stays easy to test.
+
+    Attributes:
+        title: The step's heading (e.g. "What Prefrontal will do").
+        body: The step's prose. Lines beginning with ``• `` render as bullets.
+    """
+
+    title: str
+    body: str
+
+
+@dataclass(frozen=True)
 class Intervention:
     """A single support behavior a module can perform.
 
@@ -104,6 +122,49 @@ class Module(ABC):
             A list of :class:`Intervention` declarations. Defaults to empty.
         """
         return []
+
+    def tutorial(self) -> list[TutorialStep]:
+        """Return a new-user walkthrough for this module.
+
+        Powers the in-app Guide (``GET /guide``) and ``prefrontal modules
+        --tutorial``: a first-time user reads it to understand what the module
+        is for, how it will show up, and that they don't have to do anything to
+        start. The guide is always available and can be re-read at any time.
+
+        The default builds the walkthrough straight from the module's own
+        metadata — :attr:`challenge` and its :meth:`interventions` — so every
+        module (including any future one) has a coherent guide for free, and the
+        guide can never drift out of sync with what the module actually does. A
+        module with unusual onboarding may override this, but most should not
+        need to.
+
+        Returns:
+            An ordered list of :class:`TutorialStep`\\s.
+        """
+        steps: list[TutorialStep] = []
+        if self.challenge:
+            steps.append(
+                TutorialStep(title=f"What {self.title} helps with", body=self.challenge)
+            )
+        active = [i for i in self.interventions() if i.status == "active"]
+        if active:
+            body = "\n".join(f"• {i.description}" for i in active)
+            steps.append(TutorialStep(title="What Prefrontal will do", body=body))
+        planned = [i for i in self.interventions() if i.status != "active"]
+        if planned:
+            body = "\n".join(f"• {i.description}" for i in planned)
+            steps.append(TutorialStep(title="Coming soon", body=body))
+        steps.append(
+            TutorialStep(
+                title="You're set",
+                body=(
+                    f"There's nothing to switch on — {self.title} runs quietly in the "
+                    "background and gets better the more you use Prefrontal. Come back to "
+                    "this guide whenever you want a refresher."
+                ),
+            )
+        )
+        return steps
 
     def provides_protection(self, store: MemoryStore) -> bool:
         """Whether this module is currently shielding the user from other cues.
