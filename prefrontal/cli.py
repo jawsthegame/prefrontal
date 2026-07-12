@@ -1418,10 +1418,16 @@ def _cmd_usage(args: argparse.Namespace) -> int:
             if not report.get("feature"):
                 print(f"No nudge: {report.get('reason', 'nothing to do')}.")
                 return 0
-            verb = "Delivered" if report.get("delivered") else "Would nudge"
+            if report.get("delivered"):
+                verb, tail = "Delivered", " Reply Mute/Keep on the push."
+            elif args.deliver:
+                verb = "Tried to nudge"
+                tail = " (no push went out — check your ntfy/Pushover route.)"
+            else:
+                verb, tail = "Would nudge", " (dry run — pass --deliver to send.)"
             print(
                 f"{verb}: “{report['feature']}” (offered {report['offered']}×, "
-                f"acted on {report['engaged']}). Reply Mute/Keep on the push."
+                f"acted on {report['engaged']}).{tail}"
             )
             return 0
 

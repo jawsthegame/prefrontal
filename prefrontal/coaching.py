@@ -831,6 +831,7 @@ def run_coaching_tick(
     try:
         muted = store.muted_features()
     except Exception:  # noqa: BLE001 — mute is a convenience, never a tick blocker
+        logger.warning("muted_features() read failed; running with none muted", exc_info=True)
         muted = set()
     if muted:
         modules = [m for m in modules if m.key not in muted]

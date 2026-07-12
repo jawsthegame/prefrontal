@@ -137,9 +137,9 @@ class FeatureUsageRepo(Repo):
             ``muted`` — the resulting state, so a one-tap handler can confirm.
         """
         current = self.muted_features()
-        if muted:
-            current.add(feature)
-        else:
-            current.discard(feature)
-        self.set_state(MUTED_FEATURES_KEY, ",".join(sorted(current)), source="explicit")
+        updated = current | {feature} if muted else current - {feature}
+        if updated != current:  # genuinely a no-op write when the set is unchanged
+            self.set_state(
+                MUTED_FEATURES_KEY, ",".join(sorted(updated)), source="explicit"
+            )
         return muted

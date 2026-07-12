@@ -202,7 +202,8 @@ def run_usage_check(
         handle: The user's handle, for signing the one-tap links.
         now: Optional naive-UTC "now".
         client: Optional delivery client (tests inject one).
-        deliver: When ``False``, select + stash but send nothing (dry run).
+        deliver: When ``False``, a side-effect-free dry run — report what *would*
+            be sent without stashing a pending target or stamping the week.
 
     Returns:
         A small report dict: ``{delivered, feature?, offered?, engaged?, reason?}``.
