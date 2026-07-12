@@ -192,3 +192,11 @@ class TravelPadding(BaseModel):
             "`percent` is ignored."
         ),
     )
+    autolearn: bool | None = Field(
+        default=None,
+        description=(
+            "Master switch for auto-populating the pad from your departure "
+            "lateness. `false` freezes it; `true` re-enables learning. When set, "
+            "`percent`/`auto` are ignored — it toggles the setting only."
+        ),
+    )

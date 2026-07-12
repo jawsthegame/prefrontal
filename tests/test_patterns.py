@@ -31,6 +31,7 @@ from prefrontal.memory.patterns import (
     decay_bias_toward_neutral,
     decay_channel_rate_toward_pooled,
     decay_weight,
+    departure_late_stats,
     derive_band_half_lives,
     derive_context_half_lives,
     derive_half_life,
@@ -1144,3 +1145,24 @@ def test_recompute_respects_explicit_travel_pad_fraction():
             store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 08:00:00")
         recompute_patterns(store, timezone="UTC")
         assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.1)
+
+
+def test_recompute_skips_travel_pad_when_autolearn_off():
+    """With the auto-learn switch off, the learner never touches the pad."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("travel_pad_autolearn", "off", source="explicit")
+        for d in range(1, 7):  # would otherwise learn a 0.25 pad
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 08:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.travel_pad_fraction is None
+        assert store.get_float("travel_pad_fraction", 0.0) == 0.0  # untouched seed
+
+
+def test_departure_late_stats_counts_misses_over_scored_departures():
+    """(late, total) counts misses vs on-times; ignores unscored / non-departures."""
+    eps = _departures(3, 5)  # 3 late, 5 on time
+    eps.append(_ep(episode_type="departure", outcome=None))  # unscored — ignored
+    eps.append(_ep(episode_type="task", outcome="miss"))  # not a departure — ignored
+    assert departure_late_stats(eps) == (3, 8)
+    assert departure_late_stats([]) is None

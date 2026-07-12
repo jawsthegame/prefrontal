@@ -1034,6 +1034,26 @@ def compute_travel_pad_fraction(
     return round(padded, 4)
 
 
+def departure_late_stats(episodes: list[dict[str, Any]]) -> tuple[int, int] | None:
+    """``(late, total)`` over scored ``departure`` episodes, or ``None`` when none.
+
+    ``late`` is the number that came in a *miss* (left more than the departure
+    grace late); ``total`` is misses + on-times. The plain counts behind a learned
+    :func:`compute_travel_pad_fraction`, so the Settings card can say — in words —
+    why the pad is what it is ("late on 5 of the last 12 departures"). Unweighted
+    on purpose: a headcount reads more honestly than the recency-weighted rate.
+    """
+    scored = [
+        e
+        for e in episodes
+        if e.get("episode_type") == "departure" and e.get("outcome") in DRIFT_WEIGHTS
+    ]
+    if not scored:
+        return None
+    late = sum(1 for e in scored if e.get("outcome") == "miss")
+    return late, len(scored)
+
+
 def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None]:
     """Build the per-context half-life lookup used by the bias-by-context passes.
 
@@ -1397,17 +1417,22 @@ def recompute_patterns(
 
     # Learn the departure travel cushion (``travel_pad_fraction``) from how often
     # departures run late, so the Settings field pre-populates from behavior rather
-    # than sitting at 0. Same explicit-override guard as above: a hand-set value on
-    # the Settings page wins and the learner leaves it alone.
-    travel_pad_fraction = compute_travel_pad_fraction(
-        episodes, now=now, half_life_days=half_life_days
-    )
-    if travel_pad_fraction is not None:
-        source = (store.all_state().get("travel_pad_fraction", {}) or {}).get("source")
-        if source != "explicit":
-            store.set_state(
-                "travel_pad_fraction", str(travel_pad_fraction), source="inferred"
-            )
+    # than sitting at 0. Skipped when the user switched auto-learn off
+    # (``travel_pad_autolearn``); and, like early_start_threshold, a hand-set value
+    # (source ``explicit``) always wins so the learner leaves it alone. Only the
+    # actually-written value is reported in the summary.
+    travel_pad_fraction: float | None = None
+    if store.get_bool("travel_pad_autolearn", True):
+        suggested_pad = compute_travel_pad_fraction(
+            episodes, now=now, half_life_days=half_life_days
+        )
+        if suggested_pad is not None:
+            source = (store.all_state().get("travel_pad_fraction", {}) or {}).get("source")
+            if source != "explicit":
+                store.set_state(
+                    "travel_pad_fraction", str(suggested_pad), source="inferred"
+                )
+                travel_pad_fraction = suggested_pad
 
     return PatternRunSummary(
         episodes=len(episodes),

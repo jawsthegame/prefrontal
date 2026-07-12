@@ -165,6 +165,8 @@
       drive — a longer trip gets proportionally more (15% pads a 40-min drive by 6
       min, a 10-min one by 1.5). Prefrontal fills this in from how often your
       departures run late; edit it to set your own, or leave it at 0 for none.</p>
+    <label class="sc-master"><input type="checkbox" id="travelpad-auto"/>
+      <span>Set this automatically from how often my departures run late</span></label>
     <label class="dep-pad">Pad every drive by
       <input class="sc-num" type="number" id="travelpad" min="0" max="100" step="5"
         inputmode="numeric" /> %</label>
@@ -357,16 +359,21 @@ $("#autodecomp").addEventListener("change", async (e) => {
 // then leaves alone. "Reset to automatic" hands it back to the learner.
 function renderDepNote(d) {
   const note = $("#dep-note");
-  if (d.source === "explicit") {
+  if (!d.autolearn) {
+    // Auto-populate is off: the value is frozen/manual, so no learned framing.
+    note.textContent = "";
+  } else if (d.source === "explicit") {
     note.innerHTML = `Set by you. <a href="#" id="dep-auto">Use the value Prefrontal learns instead</a>.`;
-  } else if (d.learned && d.percent > 0) {
-    note.textContent = "Learned from how often your recent departures run late. Edit to override.";
+  } else if (d.learned && d.reason) {
+    // Note that it was auto-set and briefly explain how it got there.
+    note.textContent = `${d.reason} Edit to override.`;
   } else {
     note.textContent = "";
   }
 }
 function applyDep(d) {
   if ($("#travelpad") !== document.activeElement) $("#travelpad").value = d.percent;
+  if ($("#travelpad-auto") !== document.activeElement) $("#travelpad-auto").checked = !!d.autolearn;
   renderDepNote(d);
 }
 async function loadDeparture() {
@@ -394,6 +401,7 @@ $("#travelpad").addEventListener("change", (e) => {
   e.target.value = pct;
   saveDep({ percent: pct });
 });
+$("#travelpad-auto").addEventListener("change", (e) => saveDep({ autolearn: e.target.checked }));
 $("#c-departure").addEventListener("click", (e) => {
   if (e.target.id === "dep-auto") { e.preventDefault(); saveDep({ auto: true }); }
 });

@@ -51,7 +51,9 @@ from prefrontal.config import (
 )
 from prefrontal.departure import (
     DEFAULT_DEPARTURE_GRACE_MINUTES,
+    DEFAULT_TRAVEL_PAD_AUTOLEARN,
     DEFAULT_TRAVEL_PAD_FRACTION,
+    TRAVEL_PAD_AUTOLEARN_KEY,
     TRAVEL_PAD_FRACTION_KEY,
     _attend_slugs,
     attribute_departure,
@@ -73,6 +75,9 @@ from prefrontal.impact import (
     cascade_phrase,
     project_free_time,
     utcnow,
+)
+from prefrontal.memory.patterns import (
+    departure_late_stats,
 )
 from prefrontal.memory.store import (
     feed_label,
@@ -635,15 +640,28 @@ def build_router(services: RouterServices) -> APIRouter:
         ``source`` is the coaching-state provenance: ``"inferred"`` (learned from
         the departure late-rate by the learning pass), ``"explicit"`` (hand-set on
         this page), or ``None`` (never written). ``learned`` is the convenient
-        boolean the Settings card uses to show the "learned from your departures"
-        note and offer "reset to automatic".
+        boolean the card uses to show the auto-set note; ``reason`` is the plain
+        one-liner explaining *how* a learned value was reached (the departure
+        headcount behind it); ``autolearn`` is the master switch's state.
         """
         fraction = store.get_float(TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION)
         source = (store.all_state().get(TRAVEL_PAD_FRACTION_KEY, {}) or {}).get("source")
+        reason: str | None = None
+        if source == "inferred":
+            stats = departure_late_stats(store.episodes_by_type("departure", limit=200))
+            if stats is not None:
+                late, total = stats
+                pct = round(100 * late / total)
+                reason = (
+                    "Prefrontal set this automatically from your departures — "
+                    f"you left late on {late} of the last {total} ({pct}%)."
+                )
         return {
             "percent": round(max(fraction, 0.0) * 100),
             "source": source,
             "learned": source == "inferred",
+            "reason": reason,
+            "autolearn": store.get_bool(TRAVEL_PAD_AUTOLEARN_KEY, DEFAULT_TRAVEL_PAD_AUTOLEARN),
         }
 
     @router.get("/departure/padding", tags=["schedule"])
@@ -655,8 +673,10 @@ def build_router(services: RouterServices) -> APIRouter:
         Reads the ``travel_pad_fraction`` coaching key (a fraction) and returns it
         as a percentage for the Settings control — ``0.15`` → ``15``. ``0`` means
         the padding is off. Also reports whether the value was **learned** from the
-        user's departure lateness (``source='inferred'``) or hand-set here
-        (``'explicit'``), so the card can label it and offer a reset.
+        user's departure lateness (``source='inferred'``, with a ``reason`` string
+        explaining how) or hand-set here (``'explicit'``), and the ``autolearn``
+        master-switch state — so the card can label it, explain it, and offer both a
+        reset and an off switch.
         """
         return _padding_payload(ctx.store)
 
@@ -667,15 +687,27 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """Set the travel-time padding from Settings, or hand it back to the learner.
 
-        With ``auto=true`` the stored value is re-marked ``inferred`` — the manual
-        override is cleared so the learning pass resumes tuning it from the
-        departure late-rate. Otherwise the ``percent`` is stored as the
-        ``travel_pad_fraction`` fraction (percent ÷ 100) as an **explicit** user
-        choice, which the learner then leaves alone. ``0`` turns padding off; the
-        value is clamped to 0–100 by the schema, and padding only ever lengthens the
-        estimate.
+        Three mutually-exclusive shapes, in precedence order:
+
+        - ``autolearn`` present → flip the master switch only (``on``/``off``); when
+          off, the learning pass stops auto-populating the pad. ``percent``/``auto``
+          are ignored.
+        - ``auto=true`` → re-mark the stored value ``inferred``, clearing a manual
+          override so the learner resumes tuning it from the departure late-rate.
+        - otherwise → store ``percent`` as the ``travel_pad_fraction`` fraction
+          (percent ÷ 100) as an **explicit** user choice the learner leaves alone.
+
+        ``0`` turns padding off; ``percent`` is clamped to 0–100 by the schema, and
+        padding only ever lengthens the estimate.
         """
         memory = ctx.store
+        if payload.autolearn is not None:
+            memory.set_state(
+                TRAVEL_PAD_AUTOLEARN_KEY,
+                "on" if payload.autolearn else "off",
+                source="explicit",
+            )
+            return _padding_payload(memory)
         if payload.auto:
             # Keep the current number but drop the "explicit" flag, so the learner's
             # override guard no longer skips it on the next pass.

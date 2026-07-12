@@ -84,6 +84,12 @@ DEFAULT_TRAVEL_PAD_FRACTION = 0.0
 #: Coaching-state key holding :data:`DEFAULT_TRAVEL_PAD_FRACTION`'s override.
 TRAVEL_PAD_FRACTION_KEY = "travel_pad_fraction"
 
+#: Whether the learning pass may auto-populate ``travel_pad_fraction`` from the
+#: departure late-rate. On by default; the Settings card can switch it off to
+#: freeze the pad (a hand-set value already sticks regardless via its source).
+TRAVEL_PAD_AUTOLEARN_KEY = "travel_pad_autolearn"
+DEFAULT_TRAVEL_PAD_AUTOLEARN = True
+
 #: Leave-by horizons (minutes) for the two pre-departure nudge levels.
 DEFAULT_HEADS_UP_MINUTES = 30.0
 DEFAULT_SOON_MINUTES = 10.0

@@ -579,6 +579,34 @@ def test_departure_padding_requires_percent_or_auto(client, store):
     assert resp.status_code == 422
 
 
+def test_departure_padding_explains_a_learned_value(client, store):
+    """A learned (inferred) pad comes back with a plain-language reason string."""
+    # Simulate what the learning pass writes: an inferred pad + the departures.
+    store.set_state("travel_pad_fraction", "0.15", source="inferred")
+    for d in range(1, 6):
+        store.log_episode("departure", outcome="miss", timestamp=f"2026-02-{d:02d} 08:00:00")
+    for d in range(6, 11):
+        store.log_episode("departure", outcome="success", timestamp=f"2026-02-{d:02d} 08:00:00")
+    body = client.get("/departure/padding", headers=_auth()).json()
+    assert body["learned"] is True and body["percent"] == 15
+    # Notes it was auto-set and how it got there (5 late of 10).
+    assert body["reason"] and "5 of the last 10" in body["reason"]
+
+
+def test_departure_padding_autolearn_toggle(client, store):
+    """Auto-learn defaults on and can be switched off from Settings."""
+    assert client.get("/departure/padding", headers=_auth()).json()["autolearn"] is True
+
+    off = client.post("/departure/padding", json={"autolearn": False}, headers=_auth()).json()
+    assert off["autolearn"] is False
+    assert store.get_bool("travel_pad_autolearn", True) is False
+    # Toggling doesn't disturb the stored pad value.
+    assert store.all_state().get("travel_pad_fraction", {}).get("source") != "explicit"
+
+    on = client.post("/departure/padding", json={"autolearn": True}, headers=_auth()).json()
+    assert on["autolearn"] is True
+
+
 def test_departure_padding_rejects_out_of_range(client, store):
     """The schema clamps to 0–100; a percentage above that is a 422, not a silent cap."""
     resp = client.post("/departure/padding", json={"percent": 150}, headers=_auth())

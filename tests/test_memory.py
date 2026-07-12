@@ -28,6 +28,7 @@ SEED_KEYS = {
     "travel_road_factor",
     "departure_prep_minutes",
     "travel_pad_fraction",
+    "travel_pad_autolearn",
     "departure_heads_up_minutes",
     "departure_soon_minutes",
     "geocoding_enabled",
