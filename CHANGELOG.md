@@ -18,6 +18,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   the delegate on launch). Requires Always-location (prompted only when you turn
   it on); off by default. Client-only.
 
+- **In-app new-user Guide — a per-module walkthrough** ✅ — a `/guide` page (in
+  the shared nav) that walks a first-time user through each of *their* enabled
+  modules: what it helps with, what Prefrontal will do, and a reassuring "nothing
+  to switch on." The walkthrough is derived from each module's own `challenge` +
+  `interventions()` (new `Module.tutorial()` → `TutorialStep`s in
+  `modules/base.py`), so it always matches what the deployment actually runs and a
+  new module surfaces its guide automatically. Each module can be marked *Read*
+  and the whole tour reset (`GET /guide/data`, `POST /guide/seen`, `POST
+  /guide/reset`) — progress is per-user (`guide_seen` coaching state) and the guide
+  is always re-readable, never a one-shot. Same content is available offline via
+  `prefrontal modules --tutorial [key]`. Covered by `tests/test_guide.py`.
+
 - **APNs — native iOS push, client side** ✅ (#467, part 2) — the app now opts a
   device into native Apple Push: on notification authorization it registers for
   remote notifications and `AppDelegate` posts the token to the new

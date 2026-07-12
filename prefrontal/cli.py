@@ -3217,13 +3217,33 @@ def _cmd_modules(args: argparse.Namespace) -> int:
     """List available modules and whether each is enabled.
 
     Args:
-        args: Parsed arguments; uses ``args.verbose`` to also list interventions.
+        args: Parsed arguments; uses ``args.verbose`` to also list interventions,
+            and ``args.tutorial`` to instead print the new-user walkthrough (the
+            same content the in-app ``/guide`` page shows), optionally for a single
+            module key.
 
     Returns:
         Process exit code (0 on success).
     """
     settings = get_settings()
     enabled = {m.key for m in enabled_modules(settings)}
+    if getattr(args, "tutorial", None) is not None:
+        wanted = args.tutorial or None  # "" (bare flag) → all enabled modules
+        shown = 0
+        for module in enabled_modules(settings):
+            if wanted and module.key != wanted:
+                continue
+            shown += 1
+            print(f"\n{module.title}")
+            print("=" * len(module.title))
+            for i, step in enumerate(module.tutorial(), start=1):
+                print(f"\n{i}. {step.title}")
+                for line in step.body.splitlines():
+                    print(f"   {line}")
+        if wanted and shown == 0:
+            print(f"No enabled module '{wanted}'. See `prefrontal modules`.")
+            return 1
+        return 0
     for module in available():
         mark = "on " if module.key in enabled else "off"
         print(f"[{mark}] {module.key} — {module.title}")
@@ -4200,6 +4220,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_modules = sub.add_parser("modules", help="List challenge-area modules and their status.")
     p_modules.add_argument(
         "-v", "--verbose", action="store_true", help="Also list each module's interventions."
+    )
+    p_modules.add_argument(
+        "--tutorial", nargs="?", const="", metavar="KEY", default=None,
+        help="Print the new-user walkthrough (the /guide content) for all enabled "
+        "modules, or just one when given a module KEY.",
     )
     p_modules.set_defaults(func=_cmd_modules)
 

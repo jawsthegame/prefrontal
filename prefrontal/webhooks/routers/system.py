@@ -22,6 +22,7 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import local_datetime, utcnow
+from prefrontal.modules import enabled_modules
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
@@ -44,6 +45,7 @@ from prefrontal.webhooks._common import (
     APP_VERSION,
     CALENDAR_HTML,
     DASHBOARD_HTML,
+    GUIDE_HTML,
     HOUSEHOLD_HTML,
     PROJECTS_HTML,
     REVIEW_HTML,
@@ -57,6 +59,7 @@ from prefrontal.webhooks.deps import (
 )
 from prefrontal.webhooks.schemas import (
     ApnsTokenRegistration,
+    GuideProgress,
     SelfCareConfig,
     SelfCareMark,
     SmtpConfig,
@@ -75,6 +78,58 @@ _PAGE_NO_CACHE = {"Cache-Control": "no-cache"}
 def _page(html: str) -> HTMLResponse:
     """An HTML shell response that a browser must revalidate (never serve stale)."""
     return HTMLResponse(html, headers=_PAGE_NO_CACHE)
+
+
+#: Coaching-state key holding the set of modules whose Guide walkthrough the user
+#: has marked read, as a comma-separated list of module keys. Read-your-own-progress
+#: only — it gates nothing and is cleared wholesale by ``POST /guide/reset``.
+_GUIDE_SEEN_KEY = "guide_seen"
+
+
+def _guide_seen(store: Any) -> set[str]:
+    """The set of module keys the signed-in user has marked read in the Guide."""
+    raw = store.get_state(_GUIDE_SEEN_KEY) or ""
+    return {k for k in raw.split(",") if k}
+
+
+def _write_guide_seen(store: Any, keys: set[str]) -> None:
+    """Persist the marked-read set (sorted, deduped) back to coaching state."""
+    store.set_state(_GUIDE_SEEN_KEY, ",".join(sorted(keys)), source="explicit")
+
+
+def _guide_payload(store: Any, settings: Any) -> dict[str, Any]:
+    """Assemble the Guide's JSON — one entry per *enabled* module, plus progress.
+
+    Built from each module's own ``tutorial()`` and ``interventions()`` so the
+    walkthrough always matches what the deployment actually runs (a disabled
+    module never appears), and adding a module surfaces its guide automatically.
+    """
+    seen = _guide_seen(store)
+    modules = [
+        {
+            "key": m.key,
+            "title": m.title,
+            "challenge": m.challenge,
+            "completed": m.key in seen,
+            "steps": [{"title": s.title, "body": s.body} for s in m.tutorial()],
+            "interventions": [
+                {
+                    "name": i.name,
+                    "description": i.description,
+                    "trigger": i.trigger,
+                    "status": i.status,
+                }
+                for i in m.interventions()
+            ],
+        }
+        for m in enabled_modules(settings)
+    ]
+    live = {m["key"] for m in modules}
+    return {
+        "modules": modules,
+        "completed": sorted(seen & live),
+        "total": len(modules),
+    }
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -227,6 +282,20 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         return _page(SETTINGS_HTML)
 
+    @router.get("/guide", response_class=HTMLResponse, tags=["system"])
+    def guide_page() -> HTMLResponse:
+        """Serve the new-user Guide — a walkthrough of each enabled module.
+
+        Self-contained shell (unauthenticated, carries no data); it signs in via
+        Google session or an access code, then reads ``GET /guide/data`` and walks
+        the caller through what each of *their* enabled modules does, step by step.
+        Each module can be marked "Got it" (``POST /guide/seen``) to track how far
+        a new user has got, and the whole thing reset (``POST /guide/reset``) so it
+        can be re-read any time — the tour is never a one-shot. Shares the unified
+        theme + nav.
+        """
+        return _page(GUIDE_HTML)
+
     @router.get("/admin", response_class=HTMLResponse, tags=["system"])
     def admin_page() -> HTMLResponse:
         """Serve the operator-only user-management page.
@@ -307,6 +376,49 @@ def build_router(services: RouterServices) -> APIRouter:
         if headline is None:
             raise HTTPException(status_code=404, detail=f"unknown check: {payload.key}")
         return {"headline": headline, **self_care_status(ctx.store, now, tz)}
+
+    @router.get("/guide/data", tags=["system"])
+    def guide_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The new-user walkthrough for the signed-in user's enabled modules (JSON).
+
+        Backs the ``/guide`` page: each enabled module's step-by-step tour plus the
+        caller's own read-progress. Read-only — reading the guide records nothing.
+        """
+        return _guide_payload(ctx.store, services.settings)
+
+    @router.post("/guide/seen", tags=["system"])
+    def mark_guide_seen(
+        payload: GuideProgress,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mark one module's walkthrough read (or new again) for the signed-in user.
+
+        Backs the per-module "Got it ✓ / Mark as new" toggle. Idempotent, and a
+        no-op semantically for anything but progress display — a user can flip a
+        module back to new and re-read it as often as they like. Returns the fresh
+        payload so the caller re-renders from it.
+        """
+        seen = _guide_seen(ctx.store)
+        if payload.seen:
+            seen.add(payload.key)
+        else:
+            seen.discard(payload.key)
+        _write_guide_seen(ctx.store, seen)
+        return _guide_payload(ctx.store, services.settings)
+
+    @router.post("/guide/reset", tags=["system"])
+    def reset_guide(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Clear the signed-in user's Guide progress — start the tour over.
+
+        The "re-do" affordance: marks every module's walkthrough unread again so
+        the Guide reads as fresh. Returns the reset payload.
+        """
+        _write_guide_seen(ctx.store, set())
+        return _guide_payload(ctx.store, services.settings)
 
     @router.post("/route/apns-token", tags=["system"])
     def register_apns_token(

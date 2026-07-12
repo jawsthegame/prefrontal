@@ -66,6 +66,11 @@ profile, and declares the interventions it provides. Select a subset with
 `PREFRONTAL_MODULES` (see `.env.example`), and list status with `prefrontal modules -v`.
 Adding your own is a small subclass — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+New here? Every enabled module has a short, plain-English walkthrough — what it
+helps with and how it'll show up — in the in-app **Guide** (`/guide`, in the nav),
+re-readable any time. The same content is available offline via `prefrontal
+modules --tutorial`.
+
 ---
 
 ## Architecture
@@ -200,6 +205,10 @@ prefrontal balance --days 30  # zoom out to a month
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v
+
+# New user? Read the per-module walkthrough (the same content as the in-app /guide)
+prefrontal modules --tutorial            # every enabled module
+prefrontal modules --tutorial hyperfocus # just one
 ```
 
 To run it always-on on a Mac mini and wire up Ollama, n8n, iOS Shortcuts, and

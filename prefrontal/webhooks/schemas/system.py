@@ -65,6 +65,22 @@ class SelfCareMark(BaseModel):
         "Takes precedence over ``undo``.",
     )
 
+class GuideProgress(BaseModel):
+    """Body of ``POST /guide/seen`` — mark one module's walkthrough done (or not).
+
+    Backs the in-app Guide's per-module "Got it ✓ / Mark as new" toggle. Purely a
+    read-your-own-progress convenience — it records nothing about behavior and
+    never changes whether a module is enabled, so a user can re-read any guide as
+    often as they like.
+    """
+
+    key: str = Field(description="The module key whose walkthrough to mark (e.g. 'hyperfocus').")
+    seen: bool = Field(
+        default=True,
+        description="True to mark this module's guide as read; false to mark it new again.",
+    )
+
+
 class ApnsTokenRegistration(BaseModel):
     """Body of ``POST /route/apns-token`` — register this device for native push.
 

@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Guide</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /dashboard, /household, /stats, /review) ─ */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  header { max-width: 760px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .card h2 { font-size: 18px; margin: 0 0 2px; font-weight: 660; }
+  .sub { color: var(--muted); font-size: 14px; margin: 2px 0 0; }
+  .empty { color: var(--muted); font-style: italic; }
+
+  /* ── Progress bar (how far a new user has got) ───────────────────────────── */
+  .progress { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .progress .bar { flex: 1; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .progress .bar > span { display: block; height: 100%; width: 0; background: var(--accent);
+    border-radius: 999px; transition: width .35s ease; }
+  .progress .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ── Module cards ────────────────────────────────────────────────────────── */
+  .mod .head { display: flex; align-items: flex-start; gap: 10px; }
+  .mod .head .title { flex: 1; min-width: 0; }
+  .mod.done { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+  .badge { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+    padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+  .badge.on { background: var(--good); color: var(--accent-fg); }
+  .steps { margin: 14px 0 0; display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .step .n { flex: none; width: 26px; height: 26px; border-radius: 999px; background: var(--bg);
+    border: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+  .step .body { flex: 1; min-width: 0; }
+  .step .body h3 { font-size: 15px; margin: 2px 0 4px; font-weight: 640; }
+  .step .body p { margin: 0; color: var(--fg); font-size: 14.5px; }
+  .step .body ul { margin: 4px 0 0; padding-left: 18px; color: var(--fg); font-size: 14.5px; }
+  .step .body li { margin: 3px 0; }
+  details.ivs { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+  details.ivs summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  details.ivs .iv { margin: 10px 0 0; font-size: 13.5px; }
+  details.ivs .iv .nm { font-weight: 640; }
+  details.ivs .iv .tr { color: var(--muted); }
+  .card-foot { display: flex; align-items: center; gap: 10px; margin-top: 16px;
+    border-top: 1px solid var(--line); padding-top: 14px; }
+
+  .btn { padding: 10px 16px; background: var(--accent); color: var(--accent-fg);
+    border: none; border-radius: 10px; font-weight: 650; font-size: 15px; cursor: pointer; }
+  .btn:hover { opacity: .92; }
+  .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .btn.ghost:hover { color: var(--fg); border-color: var(--accent); opacity: 1; }
+  .btn.done { background: transparent; color: var(--good); border: 1px solid var(--good); }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/projects/board">Projects</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+    <a href="/guide" aria-current="page">Guide</a>
+    <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>👋 Getting started</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card" id="intro">
+    <h2>Welcome to Prefrontal</h2>
+    <p class="sub">Prefrontal's support is organized into <b>modules</b> — one per
+      executive-function challenge. You don't have to set anything up: the modules
+      below are the ones running for you right now. Read through each to see what it
+      does and how it'll show up. This guide is always here — come back and re-read it
+      any time.</p>
+    <div class="progress" aria-hidden="true">
+      <div class="bar"><span id="pbar"></span></div>
+      <div class="count" id="pcount"></div>
+    </div>
+    <div class="card-foot" style="border:0; padding:0; margin-top:14px;">
+      <button class="btn ghost" id="reset" type="button">Start the tour over</button>
+    </div>
+  </section>
+
+  <div id="modules"></div>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path, opts) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { ...(opts || {}), headers });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+// A step body is plain prose; lines beginning with "• " become a bullet list.
+function stepBody(body) {
+  const lines = String(body || "").split("\n");
+  const bullets = lines.filter((l) => l.startsWith("• "));
+  if (bullets.length) {
+    const items = bullets.map((l) => `<li>${esc(l.slice(2))}</li>`).join("");
+    return `<ul>${items}</ul>`;
+  }
+  return `<p>${esc(body)}</p>`;
+}
+
+function moduleCard(m) {
+  const steps = (m.steps || []).map((s, i) => `
+    <div class="step">
+      <div class="n">${i + 1}</div>
+      <div class="body">
+        <h3>${esc(s.title)}</h3>
+        ${stepBody(s.body)}
+      </div>
+    </div>`).join("");
+
+  const ivs = (m.interventions || []).map((iv) => `
+    <div class="iv"><span class="nm">${esc(iv.name)}</span> — ${esc(iv.description)}
+      <div class="tr">Happens: ${esc(iv.trigger)}</div></div>`).join("");
+  const ivBlock = ivs
+    ? `<details class="ivs"><summary>Everything ${esc(m.title)} can do (${m.interventions.length})</summary>${ivs}</details>`
+    : "";
+
+  const done = !!m.completed;
+  const btnLabel = done ? "✓ Got it — mark as new" : "Got it ✓";
+  return `
+    <section class="card mod${done ? " done" : ""}" data-key="${esc(m.key)}">
+      <div class="head">
+        <div class="title">
+          <h2>${esc(m.title)}</h2>
+          ${m.challenge ? `<p class="sub">${esc(m.challenge)}</p>` : ""}
+        </div>
+        <span class="badge${done ? " on" : ""}">${done ? "Read" : "New"}</span>
+      </div>
+      <div class="steps">${steps}</div>
+      ${ivBlock}
+      <div class="card-foot">
+        <button class="btn${done ? " done" : ""}" data-mark="${esc(m.key)}" data-done="${done ? 1 : 0}" type="button">${btnLabel}</button>
+      </div>
+    </section>`;
+}
+
+function render(data) {
+  const mods = data.modules || [];
+  const done = (data.completed || []).length;
+  const total = data.total || mods.length;
+  $("#status").textContent = total
+    ? `${done} of ${total} module${total === 1 ? "" : "s"} read`
+    : "No modules are enabled for this deployment.";
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $("#pbar").style.width = pct + "%";
+  $("#pcount").textContent = `${done} / ${total}`;
+
+  const host = $("#modules");
+  host.innerHTML = mods.length
+    ? mods.map(moduleCard).join("")
+    : `<section class="card"><p class="empty">No modules are enabled right now. Enable some with PREFRONTAL_MODULES to see their guides here.</p></section>`;
+
+  host.querySelectorAll("[data-mark]").forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const key = btn.getAttribute("data-mark");
+        const seen = btn.getAttribute("data-done") !== "1"; // toggle
+        render(await api("/guide/seen", { method: "POST", body: JSON.stringify({ key, seen }) }));
+      } catch (e) { if (e.code === 401) gate("Session expired — sign in again."); else btn.disabled = false; }
+    };
+  });
+}
+
+$("#reset").onclick = async () => {
+  try { render(await api("/guide/reset", { method: "POST", body: "{}" })); }
+  catch (e) { if (e.code === 401) gate("Session expired — sign in again."); }
+};
+
+async function load() {
+  try {
+    const data = await api("/guide/data");
+    $("#gate").style.display = "none";
+    $("#wrap").style.display = "";
+    render(data);
+  } catch (e) {
+    if (e.code === 401) gate();
+    else $("#status").textContent = "Couldn't load the guide — " + e.message;
+  }
+}
+
+// ── Access-code fallback (Google sign-in posts back to a session cookie) ────
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; try { localStorage.setItem(KEY, v); } catch (e) {}
+  load();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+load();
+</script>
+</body>
+</html>

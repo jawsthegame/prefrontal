@@ -36,12 +36,13 @@ from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after
     time_blindness,
     trip_tracking,
 )
-from prefrontal.modules.base import Intervention, Module
+from prefrontal.modules.base import Intervention, Module, TutorialStep
 from prefrontal.modules.registry import available, enabled_modules, get, register
 
 __all__ = [
     "Intervention",
     "Module",
+    "TutorialStep",
     "available",
     "enabled_modules",
     "get",

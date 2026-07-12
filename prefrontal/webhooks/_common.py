@@ -149,6 +149,9 @@ REVIEW_HTML = _with_shortcuts(_with_card_layout(_shell("review.html")))
 #: The Settings page — config that adjusts behavior (currently the self-care
 #: master switch + per-check knobs), reading/writing GET + POST /self-care.
 SETTINGS_HTML = _with_shortcuts(_with_card_layout(_shell("settings.html")))
+#: The new-user Guide — a per-module walkthrough for someone just getting started.
+#: Reads GET /guide/data; marks progress via POST /guide/seen and /guide/reset.
+GUIDE_HTML = _with_shortcuts(_shell("guide.html"))
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.
