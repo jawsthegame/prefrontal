@@ -66,6 +66,20 @@ def test_empty_history_is_safe_and_zeroed(scoped):
     assert len(ch["series"]) == CHORE_SERIES_LEN
 
 
+def test_chores_view_surfaces_a_real_error(scoped, monkeypatch):
+    """A genuine failure (not the no-household RuntimeError) must propagate rather
+    than being silently swallowed and zeroed — the reason the except is narrowed
+    to RuntimeError."""
+    import sqlite3
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("no such column: bogus")
+
+    monkeypatch.setattr(scoped, "chore_log_since", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        build_stats(scoped)
+
+
 def test_chores_view_tallies_completions_per_person_and_day():
     """Completions roll up into totals, a per-person split, and today/yesterday counts."""
     import datetime as _dt
