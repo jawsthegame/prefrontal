@@ -214,3 +214,83 @@ def test_close_releases_every_thread_connection(tmp_path):
     for c in conns:
         with pytest.raises(sqlite3.ProgrammingError):
             c.execute("SELECT 1")  # type: ignore[attr-defined]
+
+
+def test_concurrent_invite_redemption_only_one_wins(tmp_path):
+    """Two users racing to redeem the same single-use invite: exactly one joins.
+
+    Regression for the check-then-update TOCTOU in redeem_invite — both callers
+    could pass the ``redeemed_by IS NULL`` check and both join off one invite.
+    The claim is now a conditional UPDATE, so the loser gets rowcount 0 and the
+    "already used" reply, and only one user ends up in the household.
+    """
+    store = MemoryStore.threaded(str(tmp_path / "memory.db"))
+    try:
+        owner, _ = provision_user(store, "owner", is_operator=True)
+        alice, _ = provision_user(store, "alice")
+        bob, _ = provision_user(store, "bob")
+        owner_s = store.scoped(owner["id"])
+        hid = owner_s.create_own_household("The Nest")
+        code = owner_s.create_invite()["code"]
+
+        barrier = threading.Barrier(2)
+
+        def redeem(uid: int) -> dict:
+            scoped = store.scoped(uid)
+            barrier.wait()  # line both up so both clear the SELECT before either UPDATE
+            return scoped.redeem_invite(code)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(redeem, uid) for uid in (alice["id"], bob["id"])]
+            results = [f.result() for f in futures]
+
+        oks = [r for r in results if r["ok"]]
+        assert len(oks) == 1  # exactly one redemption won
+        losers = [r for r in results if not r["ok"]]
+        assert len(losers) == 1 and "already been used" in losers[0]["error"]
+        # Exactly one of the two is actually in the household; the other is not.
+        joined = [
+            uid
+            for uid in (alice["id"], bob["id"])
+            if store.scoped(uid).household_id_or_none() == hid
+        ]
+        assert len(joined) == 1
+    finally:
+        store.close()
+
+
+def test_concurrent_create_own_household_no_orphan(tmp_path):
+    """A user racing two create_own_household calls ends with exactly one household.
+
+    Regression for the check-then-update TOCTOU: both calls could pass the
+    "already in one?" check, each INSERT a household, and both set household_id
+    (last-writer-wins, leaving an orphan household). The user-update is now
+    conditional on ``household_id IS NULL``; the loser rolls back, discarding its
+    just-inserted household — so no orphan row survives.
+    """
+    store = MemoryStore.threaded(str(tmp_path / "memory.db"))
+    try:
+        user, _ = provision_user(store, "solo", is_operator=True)
+        uid = user["id"]
+
+        barrier = threading.Barrier(2)
+
+        def create(name: str):
+            scoped = store.scoped(uid)
+            barrier.wait()
+            try:
+                return scoped.create_own_household(name)
+            except ValueError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create, n) for n in ("A", "B")]
+            results = [f.result() for f in futures]
+
+        created = [r for r in results if r is not None]
+        assert len(created) == 1  # exactly one create succeeded
+        # No orphan household row: exactly one exists, and it's the caller's.
+        assert len(store.list_households()) == 1
+        assert store.scoped(uid).household_id_or_none() == created[0]
+    finally:
+        store.close()

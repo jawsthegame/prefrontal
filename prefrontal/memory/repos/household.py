@@ -1429,7 +1429,16 @@ class HouseholdRepo(Repo):
             raise ValueError("you're already in a household")
         cur = self.conn.execute("INSERT INTO households (name) VALUES (?)", (name.strip(),))
         hid = int(cur.lastrowid)
-        self.conn.execute("UPDATE users SET household_id = ? WHERE id = ?", (hid, uid))
+        # Conditional on household_id IS NULL so a concurrent join/create can't
+        # double-assign: the loser's UPDATE matches 0 rows and we roll back — which
+        # also discards the household just inserted above (no orphan row).
+        claimed = self.conn.execute(
+            "UPDATE users SET household_id = ? WHERE id = ? AND household_id IS NULL",
+            (hid, uid),
+        )
+        if claimed.rowcount == 0:
+            self.conn.rollback()
+            raise ValueError("you're already in a household")
         self.conn.commit()
         return hid
 
@@ -1510,13 +1519,20 @@ class HouseholdRepo(Repo):
             return {"ok": False, "error": "That invite has expired — ask for a fresh one."}
         if self.household_id_or_none() is not None:
             return {"ok": False, "error": "You're already in a household."}
+        # Atomically claim the invite: the conditional WHERE means only one of two
+        # concurrent redemptions wins, closing the check-then-update race where both
+        # passed the redeemed_by check above and both joined off one invite. The
+        # loser sees rowcount 0 and gets the friendly "already used".
+        claimed = self.conn.execute(
+            "UPDATE household_invites SET redeemed_by = ?, redeemed_at = datetime('now') "
+            "WHERE id = ? AND redeemed_by IS NULL",
+            (uid, row["id"]),
+        )
+        if claimed.rowcount == 0:
+            self.conn.rollback()
+            return {"ok": False, "error": "That invite has already been used."}
         self.conn.execute(
             "UPDATE users SET household_id = ? WHERE id = ?", (row["household_id"], uid)
-        )
-        self.conn.execute(
-            "UPDATE household_invites SET redeemed_by = ?, redeemed_at = datetime('now') "
-            "WHERE id = ?",
-            (uid, row["id"]),
         )
         self.conn.commit()
         name = self.conn.execute(
