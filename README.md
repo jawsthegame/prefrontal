@@ -255,6 +255,9 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for project layout, local setup, and co
 Early development. Not yet ready for general use. See [`ROADMAP.md`](ROADMAP.md)
 for what's planned next, and [`CHANGELOG.md`](CHANGELOG.md) for what's shipped.
 
+> **Note:** This project is 100% write-only — the codebase is written entirely
+> by AI (Claude), not hand-authored line-by-line. Read it with that in mind.
+
 ---
 
 ## License
