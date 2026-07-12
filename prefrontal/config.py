@@ -194,6 +194,17 @@ class Settings:
     # call never rings another's phone). The account creds above are shared; only
     # this recipient number is per-user.
     twilio_to: str = ""
+    # APNs (native iOS push) — an alternative to ntfy for the native-app users
+    # who register a device token (per-user ``apns_token`` in ``coaching_state``).
+    # Token-based auth: a .p8 key (its PEM contents), its key id, and the team id;
+    # ``apns_topic`` is the app bundle id. These are operator/account credentials
+    # (shared), like the Twilio account — only the device token is per-user. Empty
+    # ⇒ APNs off, and delivery falls back to ntfy. See docs/multi-tenant.md.
+    apns_key_id: str = ""
+    apns_team_id: str = ""
+    apns_auth_key: str = ""   # the .p8 private key PEM contents
+    apns_topic: str = "com.morningstatic.prefrontal"
+    apns_use_sandbox: bool = False   # true → api.sandbox.push.apple.com (dev builds)
     mail_accounts: tuple[tuple[str, str], ...] = ()
     mail_default_policy: str = "signals"
     #: Logical account names that are Gmail inboxes (resolved from IMAP host
@@ -394,6 +405,26 @@ def _float_env(name: str, default: float) -> float:
     return value if math.isfinite(value) else default
 
 
+def _read_apns_auth_key() -> str:
+    """The APNs .p8 signing key PEM, from ``APNS_AUTH_KEY`` or ``APNS_AUTH_KEY_PATH``.
+
+    Accepts the key inline (``APNS_AUTH_KEY`` — ``\\n`` escapes are turned back
+    into newlines so it survives a single-line ``.env``) or a path to the ``.p8``
+    file (``APNS_AUTH_KEY_PATH``). Returns ``""`` if neither is set or the path
+    can't be read, which leaves APNs disabled (delivery falls back to ntfy).
+    """
+    inline = os.environ.get("APNS_AUTH_KEY", "")
+    if inline.strip():
+        return inline.replace("\\n", "\n").strip()
+    path = os.environ.get("APNS_AUTH_KEY_PATH", "").strip()
+    if path:
+        try:
+            return Path(path).read_text().strip()
+        except OSError:
+            return ""
+    return ""
+
+
 def load_settings(dotenv_path: str = ".env") -> Settings:
     """Read configuration from the environment and return a fresh ``Settings``.
 
@@ -464,6 +495,14 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN", "").strip(),
         twilio_from=os.environ.get("TWILIO_FROM", "").strip(),
         twilio_to=os.environ.get("TWILIO_TO", "").strip(),
+        apns_key_id=os.environ.get("APNS_KEY_ID", "").strip(),
+        apns_team_id=os.environ.get("APNS_TEAM_ID", "").strip(),
+        # Accept the .p8 contents inline (APNS_AUTH_KEY) or a path to it
+        # (APNS_AUTH_KEY_PATH); \n-escapes in the inline form are unescaped.
+        apns_auth_key=_read_apns_auth_key(),
+        apns_topic=os.environ.get("APNS_TOPIC", "com.morningstatic.prefrontal").strip(),
+        apns_use_sandbox=os.environ.get("APNS_USE_SANDBOX", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         mail_accounts=mail_accounts,
         mail_default_policy=default_policy,
         gmail_accounts=gmail_accounts,
