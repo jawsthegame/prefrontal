@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 from prefrontal.integrations import OllamaError
-from prefrontal.triage import ROUTE_FOR_KIND, Signal, classify
+from prefrontal.triage import HEURISTIC_TRUST, ROUTE_FOR_KIND, Signal, classify
 
 TODAY = date(2026, 7, 3)  # a Friday, for deterministic weekday math
 
@@ -122,6 +122,34 @@ def test_ambiguous_signal_is_refined_by_the_model():
     d = classify(mail("follow up on the thing"), client=gen, today=TODAY)
     assert gen.calls == 1
     assert (d.kind, d.source, d.reason) == ("noise", "llm", "promo blast")
+
+
+def test_marketing_word_alone_defers_to_the_model():
+    """A marketing cue with no bulk-sender/list signal is weak evidence, so a genuine
+    action email that merely mentions it isn't silently dropped — the model adjudicates
+    (previously it scored 0.78 ≥ HEURISTIC_TRUST and the model was never consulted)."""
+    gen = FakeGen('{"kind":"action","urgency":"today","reason":"real request"}')
+    d = classify(
+        mail("Please review the sale agreement by Friday", sender="bob@lawfirm.com"),
+        client=gen, today=TODAY,
+    )
+    assert gen.calls == 1  # marketing-word-only confidence is now below HEURISTIC_TRUST
+    assert d.kind == "action" and d.source == "llm"
+
+
+def test_marketing_word_alone_stays_noise_offline():
+    """With no model available, the marketing cue still classifies as noise — but at a
+    confidence below the trust floor (so it would defer to a model if one existed)."""
+    d = classify(mail("Huge sale this weekend", sender="shop@store.com"), today=TODAY)
+    assert d.kind == "noise"
+    assert d.confidence < HEURISTIC_TRUST
+
+
+def test_bulk_sender_marketing_still_high_confidence():
+    """A bulk sender (or list header) remains strong evidence and skips the model."""
+    gen = FakeGen('{"kind":"action","urgency":"now"}')
+    d = classify(mail("Weekend sale", sender="noreply@store.com"), client=gen, today=TODAY)
+    assert gen.calls == 0 and d.kind == "noise" and d.confidence >= 0.9
 
 
 def test_malformed_model_json_falls_back_to_heuristic():
