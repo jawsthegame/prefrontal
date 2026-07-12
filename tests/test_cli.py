@@ -58,6 +58,7 @@ def test_build_parser_registers_expected_commands():
         "mail",
         "calendar",
         "modules",
+        "focus",
         "cleanup-drops",
         "cleanup-focus-estimates",
     ):
@@ -70,6 +71,7 @@ def test_build_parser_registers_expected_commands():
             "fit": ["fit", "30"],
             "secrets": ["secrets", "status"],
             "calendar": ["calendar", "list-sources"],
+            "focus": ["focus", "arm"],
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"
@@ -291,6 +293,82 @@ def test_notify_delivers_through_configured_route(tmp_path, capsys):
     assert received and received[0]["message"] == "hello mini"
     assert received[0]["topic"] == "test-topic"
     assert received[0]["priority"] == 4  # sound → priority 4
+
+
+def test_briefing_deliver_publishes_through_route(tmp_path, capsys):
+    """`briefing --deliver` publishes the digest as a push to the user's own route —
+    the native twin of the morning-briefing n8n workflow."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+
+    srv, url, received = _local_ntfy_server()
+    try:
+        with MemoryStore.open(str(db)) as raw:
+            uid = next(u["id"] for u in raw.list_users() if u["handle"] == "tester")
+            scoped = raw.scoped(uid)
+            scoped.set_state("ntfy_server", url, source="explicit")
+            scoped.set_state("ntfy_topic", "briefing-topic", source="explicit")
+
+        rc = main(["briefing", "--db-path", str(db), "--user", "tester", "--deliver"])
+        assert rc == 0
+    finally:
+        srv.shutdown()
+
+    out = capsys.readouterr().out
+    assert "sent" in out
+    assert received and received[0]["topic"] == "briefing-topic"
+    assert received[0]["priority"] == 3  # push → normal priority
+    assert received[0]["message"]  # the rendered briefing text rode along
+
+
+def test_briefing_deliver_exit_1_without_route(tmp_path, capsys):
+    """`briefing --deliver` exits non-zero when the user has no transport configured."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+    # No ntfy/Pushover route set → nothing can be delivered → exit 1.
+    assert main(["briefing", "--db-path", str(db), "--user", "tester", "--deliver"]) == 1
+
+
+def test_focus_arm_cli_arms_live_block(tmp_path, capsys):
+    """`focus arm` auto-starts a session from a live calendar focus block — the
+    native twin of POST /webhooks/focus/arm (no n8n poll)."""
+    from datetime import timedelta
+
+    from prefrontal.cli import _resolve_user_store
+    from prefrontal.clock import TS_FMT
+    from prefrontal.impact import utcnow
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
+    capsys.readouterr()
+
+    now = utcnow()
+    with MemoryStore.open(str(db)) as raw:
+        scoped = _resolve_user_store(raw, "tester")
+        scoped.upsert_commitment(
+            title="Deep work: the RFC",
+            start_at=(now - timedelta(minutes=20)).strftime(TS_FMT),
+            end_at=(now + timedelta(minutes=40)).strftime(TS_FMT),
+            hardness="soft",
+        )
+
+    assert main(["focus", "arm", "--db-path", str(db), "--user", "tester"]) == 0
+    out = capsys.readouterr().out
+    assert "Armed focus: “the RFC”" in out
+
+    with MemoryStore.open(str(db)) as raw:
+        scoped = _resolve_user_store(raw, "tester")
+        active = scoped.active_focus_sessions()
+        assert active and active[0]["intended_task"] == "the RFC"
+
+    # Idempotent: a second arm doesn't stack a session.
+    assert main(["focus", "arm", "--db-path", str(db), "--user", "tester"]) == 0
+    assert "No arm:" in capsys.readouterr().out
 
 
 def test_deliver_panic_publishes_when_overwhelmed(tmp_path, capsys):

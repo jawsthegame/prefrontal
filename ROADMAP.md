@@ -530,10 +530,18 @@ ordered by leverage; each is independent but builds on denser capture.
     + `deploy/coach.sh` run the native tick every 60s (`coach --deliver
     --all-users`), fanning over every enabled module and delivering what fired —
     replacing the coach-check, hyperfocus-check, departure-reminder, and
-    panic-check n8n poll workflows in one job. Per-user delivery via `resolve_route`
+    panic-check n8n poll workflows in one job. `coach.sh` also runs `prefrontal
+    focus arm --all-users` first (shared `arm_focus_session`, idempotent), so the
+    **focus-arm-check** workflow is native too — a live calendar focus block
+    auto-starts a session with no poll. Per-user delivery via `resolve_route`
     (a user without their own target is computed but never delivered to the
     operator's device). Household sweeps and calendar/mail sync have their own
     native launchd jobs too (`com.prefrontal-{household,calendar,mail}.plist`).
+  - **native morning briefing** ✅ — `prefrontal briefing --deliver [--all-users]`
+    renders each user's digest and publishes it through their own `resolve_route`
+    (channel `push`), so `deploy/com.prefrontal-briefing.plist` + `deploy/briefing.sh`
+    deliver it daily at 7am with no `GET /briefing` → ntfy n8n hop — retiring the
+    **morning-briefing** workflow. Covered by `tests/test_cli.py`.
   - **proactive panic nudge — first step inline + open-triage button** ✅ — the
     overwhelm nudge already carried the first step in its message; it now also
     returns an `actions` list (`panic_actions`, a signed-free ntfy `view` button)

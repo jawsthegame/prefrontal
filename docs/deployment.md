@@ -538,7 +538,11 @@ week, and a reminder of your time bias — calibrated to `preferred_briefing_for
 (`short`/`long`).
 
 - Preview it now: `prefrontal briefing` (add `--llm` for Ollama prose).
-- Deliver it daily: import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json)
+- Deliver it daily (recommended, native): run `prefrontal briefing --deliver
+  --all-users` on a daily launchd timer — see
+  [§19c](#19-native-scheduling-retiring-the-n8n-nudge-workflows). It renders each
+  user's digest and pushes it through their own route, so there's no n8n hop.
+- Deliver it daily (legacy, n8n): import [`../deploy/n8n/morning-briefing.workflow.json`](../deploy/n8n/morning-briefing.workflow.json)
   (token credential + `$env` from *Configure once* — nothing to edit). It fires at 7am,
   `GET /briefing`, and pushes the digest text. (Insert an Ollama node between the
   two for prose, or point it at `prefrontal summarize`-style output.)
@@ -741,7 +745,12 @@ with a get-back-on-track plan instead of another reminder (`docs/encouragement.m
     SELECT id,'encouragement_tone','warm','explicit' FROM users LIMIT 1;"
   ```
 - Preview: `prefrontal encourage` (add `--llm` for warmer Ollama prose).
-- Deliver: import [`../deploy/n8n/encouragement.workflow.json`](../deploy/n8n/encouragement.workflow.json).
+- Deliver (recommended, native): nothing to schedule separately — the
+  encouragement/recovery cue is folded into the coaching tick (§15), so
+  `prefrontal coach --deliver` (§19a) already sends it once on a rough day,
+  through the same channel choice, debounce, and quiet-hours gate as everything
+  else. The once-per-day cursor still caps it at one.
+- Deliver (legacy, n8n): import [`../deploy/n8n/encouragement.workflow.json`](../deploy/n8n/encouragement.workflow.json).
   It polls `GET /encouragement` a few times an afternoon and, on a rough & unsent
   day, pushes the message to ntfy **once**, then `POST /encouragement/sent` stamps
   the day (a `last_encouragement_date` cursor caps it at one per day).
@@ -756,13 +765,17 @@ Two more delivery workflows round out the module coverage:
   [`../deploy/n8n/hyperfocus-check.workflow.json`](../deploy/n8n/hyperfocus-check.workflow.json).
   It polls `POST /webhooks/focus/check` and pushes the gentle alignment check /
   biological-break nudge when an aligned block overruns.
-- **Calendar-armed focus** — import
-  [`../deploy/n8n/focus-arm-check.workflow.json`](../deploy/n8n/focus-arm-check.workflow.json).
-  Every 5 min it POSTs `/webhooks/focus/arm`, which auto-starts a protected
-  session whenever a "focus"/"deep work" calendar block is live and none is
-  running — so a session you scheduled needs zero taps to begin. (Pairs with the
-  one-tap `focus/start` — leave its body empty and it infers the task from your
-  top open todo.)
+- **Calendar-armed focus** — auto-starts a protected session whenever a
+  "focus"/"deep work" calendar block is live and none is running, so a session
+  you scheduled needs zero taps to begin. (Pairs with the one-tap `focus/start` —
+  leave its body empty and it infers the task from your top open todo.)
+  - Native (recommended): `deploy/coach.sh` runs `prefrontal focus arm
+    --all-users` on the coaching tick (§19a), so the native coach agent covers
+    this — no separate schedule.
+  - Legacy (n8n): import
+    [`../deploy/n8n/focus-arm-check.workflow.json`](../deploy/n8n/focus-arm-check.workflow.json),
+    which POSTs `/webhooks/focus/arm` every 5 min. Both call the same shared
+    `arm_focus_session`, so deactivate the workflow once the coach agent runs.
 - **Interactive one-tap actions over ntfy** — no setup needed: the native
   delivery client on the `prefrontal coach --deliver` tick attaches ntfy's action
   buttons (wired to the signed `/nudge/act` links) to each cue, so a tap (Made it,
@@ -846,17 +859,21 @@ behind [ntfy pushes silently stopping](n8n-sync.md)). Two launchd agents cover
 the clear cases:
 
 **a) The coaching tick** — replaces `coach-check`, `hyperfocus-check`,
-`departure-reminder`, and `panic-check` in one job. `prefrontal coach --deliver`
-fans over every enabled module (hyperfocus, outing/arrival, departure,
-self-care, task-paralysis, impulsivity, trip-tracking), applies channel choice +
-quiet-hours + debounce, and publishes what fires — plus the proactive overwhelm
-(panic) check on the same tick.
+`departure-reminder`, `panic-check`, and `focus-arm-check` in one job.
+`prefrontal coach --deliver` fans over every enabled module (hyperfocus,
+outing/arrival, departure, self-care, task-paralysis, impulsivity,
+trip-tracking), applies channel choice + quiet-hours + debounce, and publishes
+what fires — plus the proactive overwhelm (panic) check and the
+**encouragement/recovery** cue on the same tick. `coach.sh` also runs
+`prefrontal focus arm` first (idempotent), so a live calendar focus block
+auto-starts a session with no separate `focus-arm-check` poll.
 
 ```sh
-# One job covers everyone: coach.sh runs `coach --deliver --all-users` (no handle
-# to set). Delivery is per-user — a user with no ntfy/Pushover target of their own
-# is computed but not delivered to, so nudges never land on someone else's device.
-# coach.sh auto-detects the repo root, so no path editing is needed.
+# One job covers everyone: coach.sh runs `focus arm --all-users` then
+# `coach --deliver --all-users` (no handle to set). Delivery is per-user — a user
+# with no ntfy/Pushover target of their own is computed but not delivered to, so
+# nudges never land on someone else's device. coach.sh auto-detects the repo root,
+# so no path editing is needed.
 deploy/coach.sh                                       # run once by hand — should print what fires
 bash deploy/install-launchd.sh com.prefrontal-coach   # fills paths, loads it
 ```
@@ -867,16 +884,34 @@ four `prefrontal household …-check` twins; each self-gates on due-ness (off,
 wrong day/time, already sent, nothing new), so a 15-min interval only means
 "check often." Same install shape with `com.prefrontal-household.plist`.
 
+**c) The morning briefing** — replaces `morning-briefing`. `prefrontal briefing
+--deliver --all-users` renders each user's digest and publishes it as a push
+through their own route (the same `DeliveryClient` the coaching tick uses), so no
+`GET /briefing` → ntfy n8n hop is needed. It's a periodic (daily) job, not the
+always-on server, so `com.prefrontal-briefing.plist` runs `deploy/briefing.sh`
+at 7am with no `KeepAlive` (like the nightly `learn` agent). Add `--llm` in the
+script for Ollama prose (it falls back to the structured briefing if Ollama's
+down).
+
+```sh
+deploy/briefing.sh                                       # run once by hand — prints per-user send status
+bash deploy/install-launchd.sh com.prefrontal-briefing   # fills paths, loads it (daily 7am)
+```
+
 **Cutover — do this per agent to avoid double-sends:** the n8n workflow and its
 launchd replacement both deliver, so once a launchd agent is confirmed working,
 **deactivate the workflows it replaces** in the n8n UI (toggle Active off). Watch
 `~/Library/Logs/prefrontal.coach.log` / `prefrontal.household.log` for a tick or
 two first. Debounce catches most accidental doubles, but don't lean on it.
 
-**Deliberately still on n8n:** `triage-ingest` pulls external data *in*
-(mail/Signal) using n8n's connectors; `morning-briefing`, `encouragement`, and
-`focus-arm-check` don't have a native `--deliver` path yet. These stay until
-there's a first-class replacement — see `ROADMAP.md`.
+**Deliberately still on n8n:** only the **triage** pair remains — `triage-ingest`
+pulls external data *in* (mail/Signal) using n8n's connectors (email itself has a
+native path, `prefrontal mail fetch`), and `triage-urgent` delivers the
+`triage.urgent` event Prefrontal POSTs to `N8N_WEBHOOK_URL` for imminent/overdue
+signals. These are genuinely n8n's job (an inbound connector and its outbound
+push); everything else now has a native launchd path. (`encouragement` is
+delivered on the coaching tick, and `morning-briefing`/`focus-arm-check` have the
+native twins in (a)/(c) above.) See `ROADMAP.md`.
 
 The **150% voice call** is no longer on that list: the native delivery client now
 places it via Twilio (the `voice`/`critical` channel dials a call with inline

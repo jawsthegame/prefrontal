@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that delivers the morning briefing (deploy/briefing.sh):
+  `prefrontal briefing --deliver --all-users`.
+
+  The native replacement for the morning-briefing n8n workflow. Separate from
+  com.prefrontal.plist (the always-on server): this one is a periodic job, not a
+  daemon, so no KeepAlive — it runs once at the scheduled time and exits.
+
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
+  home directory, then loads the agent. The committed file is a template with no
+  machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal-briefing.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal-briefing.plist
+    # run it once now to confirm it works (don't wait for 7am):
+    launchctl start com.prefrontal-briefing
+
+  StartCalendarInterval fires at 07:00 local time daily. If the mini is asleep
+  at that hour, launchd runs the job on the next wake. Adjust Hour/Minute to
+  taste.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.prefrontal-briefing</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PREFRONTAL_HOME__/deploy/briefing.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PREFRONTAL_HOME__</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/prefrontal.briefing.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/prefrontal.briefing.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so Ollama and other tools resolve. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Install location; briefing.sh cd's here so the adjacent .env loads. -->
+        <key>PREFRONTAL_HOME</key>
+        <string>__PREFRONTAL_HOME__</string>
+    </dict>
+</dict>
+</plist>

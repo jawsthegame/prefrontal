@@ -17,8 +17,7 @@ from fastapi import (
     status,
 )
 
-from prefrontal.clock import TS_FMT, local_day_bounds
-from prefrontal.clock import parse_ts as _parse_ts
+from prefrontal.clock import TS_FMT
 from prefrontal.impact import (
     utcnow,
 )
@@ -27,11 +26,10 @@ from prefrontal.modules.hyperfocus import (
     DEFAULT_HARD_INTERRUPT_MINUTES,
     DEFAULT_SOFT_BLOCK_MINUTES,
     apply_focus_evaluation,
+    arm_focus_session,
     evaluate_focus_session,
     focus_level,
-    focus_task_from_title,
     infer_focus_start,
-    is_focus_intent_title,
     record_focus_abandoned,
     record_focus_end,
     should_protect,
@@ -140,52 +138,14 @@ def build_router(services: RouterServices) -> APIRouter:
         you scheduled once *is* the intention. When such a block is happening now
         and no session is already running, arm one for the rest of its window —
         the event's own end is the planned duration. A bare "Focus time" (no task
-        in the title) protects your top open todo instead. Idempotent: n8n can
-        poll this every few minutes without stacking sessions.
+        in the title) protects your top open todo instead. Idempotent: a poller
+        can hit this every few minutes without stacking sessions.
+
+        The decision + side effects live in
+        :func:`prefrontal.modules.hyperfocus.arm_focus_session`, shared with the
+        native ``prefrontal focus arm`` tick so the two can't drift.
         """
-        memory = ctx.store
-        if memory.active_focus_sessions():
-            return {"armed": False, "reason": "a focus session is already active"}
-
-        now = utcnow()
-        # The candidate focus blocks are today's in the user's *local* day.
-        day_start, day_end = local_day_bounds(now, resolved_settings.timezone)
-        live: dict[str, Any] | None = None
-        end_at: datetime | None = None
-        for c in memory.commitments_between(
-            day_start.strftime(TS_FMT), day_end.strftime(TS_FMT)
-        ):
-            if not is_focus_intent_title(c.get("title")):
-                continue
-            start = _parse_ts(c.get("start_at"))
-            end = _parse_ts(c.get("end_at"))
-            if start is None or start > now or end is None or end <= now:
-                continue  # not happening right now
-            live, end_at = c, end
-            break
-
-        if live is None:
-            return {"armed": False, "reason": "no live focus block on the calendar"}
-
-        remaining = round((end_at - now).total_seconds() / 60.0, 1)
-        task = focus_task_from_title(live.get("title"))
-        todo_id = None
-        if task is None:  # a bare "Focus time" — protect the top todo instead
-            guess = _top_todo_guess(memory, now)
-            task, todo_id = guess.intended_task, guess.todo_id
-        session_id = memory.start_focus_session(
-            task,
-            planned_minutes=remaining if remaining > 0 else None,
-            aligned=True,
-            todo_id=todo_id,
-        )
-        return {
-            "armed": True,
-            "session_id": session_id,
-            "intended_task": task,
-            "planned_minutes": remaining,
-            "from_commitment": live.get("id"),
-        }
+        return arm_focus_session(ctx.store, resolved_settings, now=utcnow())
 
     @router.post(
         "/webhooks/focus/log", status_code=status.HTTP_201_CREATED, tags=["focus"]

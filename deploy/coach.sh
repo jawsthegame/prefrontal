@@ -23,6 +23,12 @@ PREFRONTAL_BIN="${PREFRONTAL_BIN:-$PREFRONTAL_HOME/.venv/bin/prefrontal}"
 
 cd "$PREFRONTAL_HOME"
 
+# Arm any live calendar focus block first (zero-tap start): idempotent, so it's
+# safe every tick and never stacks sessions. This is the native replacement for
+# the focus-arm-check n8n workflow; the coaching tick below then delivers that
+# session's interrupts. A failure here must not stop the tick, so it's non-fatal.
+"$PREFRONTAL_BIN" focus arm --all-users || true
+
 # --all-users: one job coaches every active user (on a single-user box that's
 # just the one user). Delivery is per-user: resolve_route only sends to a user's
 # OWN ntfy/Pushover target, so a user without one is computed but never delivered
