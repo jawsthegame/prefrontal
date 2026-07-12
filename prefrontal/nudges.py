@@ -81,8 +81,12 @@ _ACT_FEATURE = {
     "away_confirm": "household",
     "briefing_helped": "briefing",
     "briefing_not_helped": "briefing",
-    "made_it": "departure",
-    "missed_it": "departure",
+    # Departure outcomes belong to the Time Blindness module — its departure_buffer
+    # cue is what fired (module="time_blindness") — so engaged joins that module's
+    # offered events on /stats rather than a standalone "departure" bucket that
+    # would leave time_blindness looking permanently ignored.
+    "made_it": "time_blindness",
+    "missed_it": "time_blindness",
     **{f"trip_domain_{d}": "trip_tracking" for d in FOCUS_DOMAINS},
     **{a: "self_care" for a in SELF_CARE_ACTIONS},
     **{a: "household" for a in CHECKIN_ACTION_RESPONSE},

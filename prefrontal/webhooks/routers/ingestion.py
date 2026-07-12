@@ -73,6 +73,12 @@ from prefrontal.webhooks.services import RouterServices
 
 logger = get_logger(__name__)
 
+#: Shortcut ``episode_type`` → usage-loop feature key, for the ones that belong to
+#: a coaching module so engaged events join that module's offered events on /stats
+#: (a "departure" outcome is the Time Blindness module's departure_buffer firing).
+#: Unlisted types (task/checkin/reminder) fall through to the episode_type itself.
+_EPISODE_TYPE_FEATURE = {"departure": "time_blindness"}
+
 #: Speakable words for the trip-retro read-back (see :func:`_trip_retro_confirmation`).
 _RETRO_DOMAIN_WORDS = {
     "shop": "shopping", "work": "work", "home": "home", "kids": "kids", "personal": "personal",
@@ -184,10 +190,12 @@ def build_router(services: RouterServices) -> APIRouter:
 
         # A one-tap Shortcut report is the low-friction-capture feature in use —
         # record the engaged half of the usage loop (best-effort; never fatal to
-        # the log). The episode_type names the feature (e.g. "departure").
+        # the log). The episode_type names the feature, normalized to the owning
+        # module where one exists (a "departure" outcome is the Time Blindness
+        # module firing) so engaged joins that module's offered events on /stats.
         try:
             memory.record_feature_event(
-                payload.episode_type,
+                _EPISODE_TYPE_FEATURE.get(payload.episode_type, payload.episode_type),
                 "engaged",
                 intervention=payload.action,
                 source="shortcut",
