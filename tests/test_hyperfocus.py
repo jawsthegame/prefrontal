@@ -18,7 +18,9 @@ from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.hyperfocus import (
+    DEFAULT_SOFT_BLOCK_MINUTES,
     HyperfocusModule,
+    adapt_soft_block,
     build_focus_message,
     focus_level,
     focus_task_from_title,
@@ -677,3 +679,85 @@ def test_focus_endpoints_require_auth(client):
     assert client.post("/webhooks/focus/check").status_code == 401
     assert client.post("/webhooks/focus/end", json={}).status_code == 401
     assert client.get("/focus").status_code == 401
+
+
+# -- learned personal soft-block length --------------------------------------
+
+
+def _log_focus(store, *, actual, rating):
+    """Log a cleanly-ended focus task episode with a one-tap rating (as notes)."""
+    outcome = {"worth_it": "success", "should_have_stopped": "partial", "pulled_off": "miss"}
+    store.log_episode(
+        "task",
+        predicted_value=None,
+        actual_value=actual,
+        acknowledged=True,
+        context="focus: deep work",
+        outcome=outcome[rating],
+        notes=f"rating: {rating}",
+    )
+
+
+def test_soft_block_targets_overrun_point(store):
+    """Repeatedly rating 'should have stopped' around 110 min moves the soft check there."""
+    for _ in range(5):
+        _log_focus(store, actual=110.0, rating="should_have_stopped")
+    result = adapt_soft_block(store)
+    assert result["changed"] is True
+    assert result["soft_block"] == 110
+    assert store.get_float("hyperfocus_block_minutes", 0) == 110
+
+
+def test_soft_block_raises_for_long_productive_focus(store):
+    """With only 'worth it' long blocks, the soft point rises to stop interrupting them."""
+    for _ in range(5):
+        _log_focus(store, actual=150.0, rating="worth_it")
+    result = adapt_soft_block(store)
+    assert result["changed"] is True
+    assert result["soft_block"] == 150
+
+
+def test_soft_block_clamped_below_hard_ceiling(store):
+    """A huge overrun mean can't push the soft check onto the biological break."""
+    store.set_state("hard_interrupt_minutes", "180", source="inferred")
+    for _ in range(5):
+        _log_focus(store, actual=300.0, rating="should_have_stopped")
+    result = adapt_soft_block(store)
+    assert result["soft_block"] == 170  # hard(180) − SOFT_BLOCK_HARD_MARGIN(10)
+
+
+def test_soft_block_ignores_pulled_off(store):
+    """'Pulled off' is misalignment, not a duration signal — it doesn't count."""
+    for _ in range(6):
+        _log_focus(store, actual=60.0, rating="pulled_off")
+    result = adapt_soft_block(store)
+    assert result["changed"] is False
+    assert result["samples"] == 0
+
+
+def test_soft_block_holds_without_enough_ratings(store):
+    """Below the rated-sample floor it reports but doesn't move."""
+    _log_focus(store, actual=120.0, rating="should_have_stopped")
+    result = adapt_soft_block(store)
+    assert result["changed"] is False
+    assert result["soft_block"] == round(DEFAULT_SOFT_BLOCK_MINUTES)
+
+
+def test_soft_block_respects_explicit_value(store):
+    """A block length the user set by hand is never overridden."""
+    store.set_state("hyperfocus_block_minutes", "60", source="explicit")
+    for _ in range(5):
+        _log_focus(store, actual=120.0, rating="should_have_stopped")
+    result = adapt_soft_block(store)
+    assert result["changed"] is False
+    assert store.get_float("hyperfocus_block_minutes", 0) == 60
+
+
+def test_soft_block_excludes_abandoned_and_switched(store):
+    """Only 'focus:' episodes count — abandoned/switched carry no real duration."""
+    for _ in range(4):
+        store.log_episode(
+            "task", actual_value=None, context="focus abandoned: x", outcome="miss"
+        )
+    result = adapt_soft_block(store)
+    assert result["samples"] == 0

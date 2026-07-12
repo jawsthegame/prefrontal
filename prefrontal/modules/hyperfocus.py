@@ -656,6 +656,123 @@ def is_focus_protected(store: MemoryStore) -> bool:
     return False
 
 
+# --- Learned personal soft-block length (learning loop) ----------------------
+#
+# The soft alignment check fires at ``hyperfocus_block_minutes`` (default 90) when
+# no per-session duration was stated — a one-size default for everyone. But closed
+# focus sessions carry their real duration *and* the one-tap exit rating
+# (``worth_it`` / ``should_have_stopped`` / ``pulled_off``), which is exactly the
+# signal for where *this* person's productive focus tips into diminishing returns:
+# sessions they rate "should have stopped" mark the overrun point, while long
+# "worth it" blocks say their good focus simply runs longer than 90. Learn the soft
+# point from that — run in the nightly ``learn`` pass, bounded, and never
+# overriding a value the user set by hand.
+
+#: A learned soft point never drops below this (a check any earlier is just noise).
+MIN_SOFT_BLOCK_MINUTES = 30.0
+#: Keep the soft check this far below the hard biological-break ceiling, so the two
+#: interrupts never collapse onto the same moment.
+SOFT_BLOCK_HARD_MARGIN = 10.0
+#: Recent focus ``task`` episodes to consider, the total rated floor before we
+#: adapt, and the per-signal floors for the two things we can read.
+SOFT_BLOCK_LOOKBACK = 60
+MIN_SOFT_BLOCK_SAMPLES = 5
+MIN_REGRET_SAMPLES = 2
+MIN_WORTH_IT_SAMPLES = 3
+#: A move smaller than this reads as noise — hold rather than churn the soft point.
+SOFT_BLOCK_DEADBAND = 5.0
+
+#: The one-tap exit rating as recorded verbatim in a focus episode's notes
+#: ("rating: should_have_stopped"; see :func:`record_focus_end`).
+_RATING_RE = re.compile(r"rating: (\w+)")
+
+
+def _focus_rating(notes: str | None) -> str | None:
+    """The raw one-tap exit rating parsed from a focus episode's notes, or ``None``."""
+    m = _RATING_RE.search(notes or "")
+    return m.group(1) if m else None
+
+
+def adapt_soft_block(store: MemoryStore, now: datetime | None = None) -> dict | None:
+    """Learn ``hyperfocus_block_minutes`` from rated focus sessions' durations.
+
+    Reads recent focus ``task`` episodes that carry a real duration *and* a one-tap
+    rating (``record_focus_end``'s notes). Sessions rated ``should_have_stopped``
+    mark where the user typically overruns — the clearest "diminishing returns"
+    signal — so their mean becomes the target when there are enough; otherwise, if
+    "worth it" blocks routinely run long, their mean raises the soft point to stop
+    interrupting genuinely productive focus at 90. ``pulled_off`` sessions are
+    ignored (that's misalignment, not duration). Bounded to
+    ``[MIN_SOFT_BLOCK_MINUTES, hard − SOFT_BLOCK_HARD_MARGIN]``, inside a deadband,
+    never overriding a hand-set value. Returns a CLI summary or ``None``.
+    """
+    default = DEFAULT_SOFT_BLOCK_MINUTES
+    current = store.get_float("hyperfocus_block_minutes", default)
+    hard = store.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
+    user_set = (
+        (store.all_state().get("hyperfocus_block_minutes", {}) or {}).get("source") == "explicit"
+    )
+
+    worth_it: list[float] = []
+    regret: list[float] = []
+    for ep in store.episodes_by_type("task", limit=SOFT_BLOCK_LOOKBACK):
+        context = ep.get("context") or ""
+        # Only cleanly-ended blocks carry a real duration; "focus abandoned:" /
+        # "focus switched:" episodes null their actual_value by design.
+        if not context.startswith("focus:"):
+            continue
+        actual = ep.get("actual_value")
+        if actual is None:
+            continue
+        rating = _focus_rating(ep.get("notes"))
+        if rating == "worth_it":
+            worth_it.append(float(actual))
+        elif rating == "should_have_stopped":
+            regret.append(float(actual))
+
+    rated = len(worth_it) + len(regret)
+    if rated < MIN_SOFT_BLOCK_SAMPLES:
+        return {
+            "soft_block": round(current),
+            "changed": False,
+            "samples": rated,
+            "reason": "not enough rated focus sessions yet",
+        }
+    if user_set:
+        return {
+            "soft_block": round(current),
+            "changed": False,
+            "samples": rated,
+            "reason": "held (you set this block length)",
+        }
+
+    if len(regret) >= MIN_REGRET_SAMPLES:
+        target = sum(regret) / len(regret)
+        trend = "you tend to overrun around here"
+    elif len(worth_it) >= MIN_WORTH_IT_SAMPLES:
+        target = sum(worth_it) / len(worth_it)
+        trend = "your productive focus runs longer than the default"
+    else:
+        return {
+            "soft_block": round(current),
+            "changed": False,
+            "samples": rated,
+            "reason": "no clear duration signal yet",
+        }
+
+    upper = max(MIN_SOFT_BLOCK_MINUTES, hard - SOFT_BLOCK_HARD_MARGIN)
+    suggested = int(round(min(max(target, MIN_SOFT_BLOCK_MINUTES), upper) / 5.0) * 5)
+    if abs(suggested - current) <= SOFT_BLOCK_DEADBAND:
+        return {
+            "soft_block": round(current),
+            "changed": False,
+            "samples": rated,
+            "reason": "soft check lands about right",
+        }
+    store.set_state("hyperfocus_block_minutes", str(suggested), source="inferred")
+    return {"soft_block": suggested, "changed": True, "samples": rated, "reason": trend}
+
+
 #: Interrupt level → the declared intervention it delivers.
 _INTERRUPT_INTERVENTION = {"check": "alignment_check", "break": "biological_break"}
 #: Interrupt level → coaching urgency. A soft check is a gentle ``nudge``; a

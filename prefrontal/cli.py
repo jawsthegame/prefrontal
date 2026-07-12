@@ -64,6 +64,7 @@ from prefrontal.memory.summarizer import (
     summarize_profile,
 )
 from prefrontal.modules import available, enabled_modules
+from prefrontal.modules.hyperfocus import adapt_soft_block
 from prefrontal.modules.self_care import (
     adapt_self_care,
 )
@@ -1300,6 +1301,13 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 print(
                     f"[{label}] morning routine lead {arrow} {routine['routine']}m "
                     f"({routine['reason']})"
+                )
+            soft = adapt_soft_block(s)
+            if soft is not None and (soft["changed"] or soft["samples"]):
+                arrow = "->" if soft["changed"] else "="
+                print(
+                    f"[{label}] hyperfocus soft block {arrow} {soft['soft_block']}m "
+                    f"({soft['reason']})"
                 )
     return 0
 
