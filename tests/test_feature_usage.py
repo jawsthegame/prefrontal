@@ -119,6 +119,23 @@ def test_one_tap_action_stamps_engaged(scoped):
     assert roll["self_care"]["engaged"] == 1
 
 
+def test_departure_tap_joins_time_blindness_offered(scoped):
+    # A departure offered event is filed under the module that fires it
+    # (time_blindness); the made_it tap must land on the SAME key so the two join
+    # (rather than a standalone "departure" that leaves the module looking ignored).
+    cue = Cue(
+        module="time_blindness", intervention="departure_buffer", urgency="urgent",
+        text="leave now", context_key="departure", dedup_key="dep:1",
+    )
+    record_fired(scoped, [Decision(cue=cue, channel="push", text="leave now")], utcnow())
+    user = scoped.get_user("tester")
+    apply_nudge_action(scoped, "made_it", 0, user=user, settings=Settings())
+    roll = {r["feature"]: r for r in scoped.feature_usage_rollup(30)}
+    assert "departure" not in roll
+    assert roll["time_blindness"]["offered"] == 1
+    assert roll["time_blindness"]["engaged"] == 1
+
+
 def test_unknown_one_tap_action_is_not_recorded(scoped):
     # An action the dispatcher doesn't recognize no-ops; it must not pollute stats.
     user = scoped.get_user("tester")
@@ -146,7 +163,10 @@ def test_shortcut_webhook_stamps_engaged(store):
         )
         assert r.status_code == 201
     roll = {r["feature"]: r for r in scoped.feature_usage_rollup(30)}
-    assert roll["departure"]["engaged"] == 1
+    # A departure outcome is attributed to the owning module (time_blindness), so
+    # it joins that module's offered events rather than a standalone "departure".
+    assert "departure" not in roll
+    assert roll["time_blindness"]["engaged"] == 1
 
 
 def test_non_pull_get_is_not_recorded(store):
