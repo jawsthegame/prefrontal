@@ -125,9 +125,10 @@ def is_muted(store: Any, key: str) -> bool:
     The per-user counterpart to :func:`is_enabled`: the same intervention entry
     points (the webhook "check" routes) consult this so a module the user muted
     from the weekly usage nudge stops firing its proactive nudges everywhere, not
-    just in the coaching tick's fan-out. Best-effort — a store lacking the repo
-    (an older double) or a read that raises reads as *not muted*, so mute is a
-    convenience that can never hard-fail a nudge path.
+    just in the coaching tick's fan-out. Best-effort — any read failure (a store
+    lacking the repo, e.g. an older test double, or an exception mid-read) is
+    treated as *not muted*, so mute is a convenience that can never hard-fail a
+    nudge path.
 
     Args:
         store: The user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
