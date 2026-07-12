@@ -39,6 +39,9 @@ from prefrontal.modules.hyperfocus import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
+from prefrontal.modules.registry import (
+    is_muted as module_muted,
+)
 from prefrontal.todos import (
     avoided_todos,
 )
@@ -256,6 +259,10 @@ def build_router(services: RouterServices) -> APIRouter:
         # Hyperfocus owns focus-session interrupts; disabling it suppresses them.
         if not module_enabled("hyperfocus", resolved_settings):
             return {"active": [], "protect": False, "skipped": "module_disabled"}
+        # A per-user mute (from the weekly usage nudge) silences it here too, not
+        # just in the coaching tick — so muting is authoritative across fire paths.
+        if module_muted(memory, "hyperfocus"):
+            return {"active": [], "protect": False, "skipped": "module_muted"}
         name = ctx.user.get("display_name") or ""
         soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)

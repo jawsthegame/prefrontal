@@ -54,6 +54,9 @@ from prefrontal.modules.location_anchor import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
+from prefrontal.modules.registry import (
+    is_muted as module_muted,
+)
 from prefrontal.nudges import apply_nudge_action
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -220,6 +223,10 @@ def build_router(services: RouterServices) -> APIRouter:
         # interventions are off, not just its profile section).
         if not module_enabled("location_anchor", resolved_settings):
             return {"active": [], "skipped": "module_disabled"}
+        # A per-user mute (from the weekly usage nudge) silences the escalation
+        # here too, not just in the coaching tick — mute is authoritative.
+        if module_muted(memory, "location_anchor"):
+            return {"active": [], "skipped": "module_muted"}
         try:
             body = await request.json()
         except Exception:

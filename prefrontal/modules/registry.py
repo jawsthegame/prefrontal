@@ -8,6 +8,8 @@ is the single place the rest of the system asks "which modules exist?" and
 
 from __future__ import annotations
 
+from typing import Any
+
 from prefrontal.config import Settings, get_settings
 from prefrontal.modules.base import Module
 
@@ -115,3 +117,27 @@ def is_enabled(key: str, settings: Settings | None = None) -> bool:
     from prefrontal.packs.registry import pack_module_keys
 
     return key in pack_module_keys(resolved)
+
+
+def is_muted(store: Any, key: str) -> bool:
+    """Return whether the user has muted this module (usage-loop mute).
+
+    The per-user counterpart to :func:`is_enabled`: the same intervention entry
+    points (the webhook "check" routes) consult this so a module the user muted
+    from the weekly usage nudge stops firing its proactive nudges everywhere, not
+    just in the coaching tick's fan-out. Best-effort — any read failure (a store
+    lacking the repo, e.g. an older test double, or an exception mid-read) is
+    treated as *not muted*, so mute is a convenience that can never hard-fail a
+    nudge path.
+
+    Args:
+        store: The user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        key: The module key to test.
+
+    Returns:
+        ``True`` only if a working store reports ``key`` in its muted set.
+    """
+    try:
+        return key in store.muted_features()
+    except Exception:  # noqa: BLE001 — mute is a convenience, never a hard gate
+        return False
