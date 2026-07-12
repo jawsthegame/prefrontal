@@ -249,6 +249,11 @@ class Settings:
     # prefrontal/crypto.py.
     secret_key: str = ""
     secret_key_file: str = ""
+    # Retired Fernet keys, accepted for *decrypt only* (comma-separated), so the
+    # primary secret_key can be rotated without every sealed secret breaking at
+    # once: new seals use secret_key, old secrets keep opening under a retired key
+    # until they're re-sealed. See prefrontal/crypto.py.
+    secret_keys_old: tuple[str, ...] = ()
     # Remote self-update: pull the latest code + restart the service from an
     # operator HTTP call (POST /admin/update) or the CLI (`prefrontal update`).
     # Powerful (it runs whatever is on the branch), so the HTTP surface is OFF
@@ -481,6 +486,11 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         google_oauth_allowed=os.environ.get("GOOGLE_OAUTH_ALLOWED", ""),
         secret_key=os.environ.get("PREFRONTAL_SECRET_KEY", "").strip(),
         secret_key_file=os.environ.get("PREFRONTAL_SECRET_KEY_FILE", "").strip(),
+        secret_keys_old=tuple(
+            k.strip()
+            for k in os.environ.get("PREFRONTAL_SECRET_KEYS_OLD", "").split(",")
+            if k.strip()
+        ),
         self_update_enabled=os.environ.get("PREFRONTAL_SELF_UPDATE", "").strip().lower()
         in ("1", "true", "yes", "on"),
         self_update_repo_dir=os.environ.get("PREFRONTAL_REPO_DIR", "").strip(),
