@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.morningstatic.prefrontal</string>
 	</array>
+	<!-- Native push (APNs). "development" for dev/TestFlight builds; Xcode /
+	     the release profile maps it to production at distribution. -->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

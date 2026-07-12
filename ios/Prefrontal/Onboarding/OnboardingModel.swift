@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 /// Drives the first-run flow and owns the seam between it and the rest of the
@@ -55,9 +56,15 @@ final class OnboardingModel: ObservableObject {
     func requestNotifications() async -> Bool {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
+        let granted: Bool
         if settings.authorizationStatus == .notDetermined {
-            return (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+            granted = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+        } else {
+            granted = settings.authorizationStatus == .authorized
         }
-        return settings.authorizationStatus == .authorized
+        // Register for APNs so the server can deliver native push (the device
+        // token flows back through AppDelegate → POST /route/apns-token).
+        if granted { UIApplication.shared.registerForRemoteNotifications() }
+        return granted
     }
 }

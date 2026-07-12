@@ -4,6 +4,7 @@ import WidgetKit
 
 @main
 struct PrefrontalApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var config = AppConfig.shared
     @StateObject private var onboarding = OnboardingModel.shared
     @Environment(\.scenePhase) private var scenePhase

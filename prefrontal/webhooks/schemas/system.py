@@ -65,6 +65,20 @@ class SelfCareMark(BaseModel):
         "Takes precedence over ``undo``.",
     )
 
+class ApnsTokenRegistration(BaseModel):
+    """Body of ``POST /route/apns-token`` — register this device for native push.
+
+    The iOS app posts the APNs device token it got from
+    ``registerForRemoteNotifications``; the server stores it as the user's
+    per-user ``apns_token`` route, so :class:`DeliveryClient` can deliver via
+    Apple Push. Send an empty ``token`` to unregister (e.g. on sign-out).
+    """
+
+    token: str = Field(
+        description="The hex APNs device token, or '' to clear (unregister).",
+    )
+
+
 class SmtpConfig(BaseModel):
     """Body of ``POST /smtp`` — one of the user's outbound-email (SMTP) accounts.
 

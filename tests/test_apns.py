@@ -25,7 +25,7 @@ from prefrontal.integrations.delivery import (
     Route,
     resolve_route,
 )
-from prefrontal.memory.store import MemoryStore
+from prefrontal.memory.store import MemoryStore, provision_user
 from tests.conftest import scoped_default
 
 
@@ -155,3 +155,34 @@ def test_deliver_falls_back_to_ntfy_when_apns_fails():
     result = client.deliver(_decision(), Route(apns_token="stale", ntfy_topic="me"))
     assert apns.calls and ntfy.calls == 1
     assert result.transport == "ntfy"                   # fell through
+
+
+def test_register_apns_token_endpoint_stores_and_clears():
+    """POST /route/apns-token stores the token as the user's route, and ''
+    clears it — so the app can register on launch and unregister on sign-out."""
+    from fastapi.testclient import TestClient
+
+    from prefrontal.memory.db import init_db
+    from prefrontal.webhooks.app import create_app
+
+    conn = init_db(":memory:")
+    s = MemoryStore(conn)
+    _, token = provision_user(s, "sam", display_name="Sam", is_operator=False)
+    try:
+        app = create_app(store=s, settings=Settings())
+        with TestClient(app) as c:
+            hdr = {"X-Prefrontal-Token": token}
+            r = c.post("/route/apns-token", json={"token": "deadbeefdevicetoken"}, headers=hdr)
+            assert r.status_code == 200 and r.json() == {"registered": True}
+            assert resolve_route(_scoped(s, "sam"), Settings()).apns_token == "deadbeefdevicetoken"
+
+            r2 = c.post("/route/apns-token", json={"token": ""}, headers=hdr)
+            assert r2.status_code == 200 and r2.json() == {"registered": False}
+            assert resolve_route(_scoped(s, "sam"), Settings()).apns_token == ""
+    finally:
+        conn.close()
+
+
+def _scoped(store: MemoryStore, handle: str) -> MemoryStore:
+    uid = next(u["id"] for u in store.list_users() if u["handle"] == handle)
+    return store.scoped(uid)
