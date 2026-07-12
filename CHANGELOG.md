@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS Live Activities — outing/focus countdown on Lock Screen + Dynamic Island** ✅ (#466)
+  — a running outing shows a self-ticking **"back by" countdown** and a focus
+  session an **elapsed timer**, live on the Lock Screen and in the Dynamic Island.
+  A shared `SessionActivityAttributes` (`Models/`) is rendered by
+  `PrefrontalWidgets/SessionLiveActivity.swift`; `Activities/LiveActivityManager`
+  **syncs** activities against the active session on each Today refresh (start when
+  one appears, end when it's gone), so it works regardless of how the outing/focus
+  was started (app, App Intent, widget, ntfy). The clock uses SwiftUI
+  `Text(timerInterval:)` / `.timer`, so it stays live with **no push updates** —
+  no APNs needed. `NSSupportsLiveActivities` added to the app Info.plist. Client-only.
+
 - **iOS signing — set the Team ID once, for good** ✅ — the tracked
   `ios/Signing.xcconfig` shipped with an empty `DEVELOPMENT_TEAM`, so every fresh
   clone reset it and the `git update-index --skip-worktree` workaround didn't

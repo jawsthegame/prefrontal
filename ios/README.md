@@ -20,8 +20,12 @@ session is active it shows a one-tap **I'm back** / **Wrap up** button
 (`ImBackIntent` / `EndFocusIntent`) — all without launching the app. A separate
 **configurable** Lock Screen circular ring (`SelfCareCircleWidget.swift`) lets you
 long-press → **Edit** → pick which self-care check it tracks (Water, Meals, …),
-rather than being fixed to water. The app and widget share the base URL + token
-via the **App Group** `group.com.morningstatic.prefrontal`.
+rather than being fixed to water. When an outing or focus session is running it
+also shows a **Live Activity** on the Lock Screen and in the Dynamic Island — a
+self-ticking "back by" countdown (outing) or elapsed timer (focus), started and
+ended by `Activities/LiveActivityManager` and rendered by
+`PrefrontalWidgets/SessionLiveActivity.swift`. The app and widget share the base
+URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
 
 ## Layout
 
@@ -37,6 +41,8 @@ ios/
     Theme/                 # Brand palette + Card
     Onboarding/            # ConnectPayload, OnboardingModel, QRScannerView
     Intents/               # App Intents (Siri/Shortcuts/Spotlight/Action Button)
+    Activities/            # LiveActivityManager (starts/ends the Live Activity)
+    Notifications/         # LocalNotifications (off-tailnet fallback nudges)
     Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)

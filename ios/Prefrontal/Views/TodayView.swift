@@ -240,6 +240,8 @@ struct TodayView: View {
         // Schedule a local "leave by" as an off-tailnet fallback (replaced each
         // refresh from current state). No-op unless notifications are authorized.
         await LocalNotifications.reconcileDeparture(departure)
+        // Keep the outing/focus Live Activity in sync with the active session.
+        await LiveActivityManager.sync(outing: activeOuting, focus: activeFocus)
         loaded = true
     }
 }
