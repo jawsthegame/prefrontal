@@ -19,12 +19,14 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import (
+    CAPTURE_RETRO_MIN,
     DEFAULT_DRIFT_THRESHOLD,
     DEFAULT_PAUSE_SECONDS,
     SWITCH_DRIFT_THRESHOLD_KEY,
     ImpulsivityModule,
     build_drift_message,
     build_pause_message,
+    captured_impulse_retro_text,
     heuristic_capture_title,
     infer_capture_title,
     pause_seconds,
@@ -451,3 +453,72 @@ def test_evaluate_threshold_is_configurable(store):
     assert ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow())) == []
     # Default remains 3 without configuration.
     assert DEFAULT_DRIFT_THRESHOLD == 3
+
+
+# -- captured-impulse retro --------------------------------------------------
+
+
+def _park_impulse(store, title, *, age_days=5):
+    """Add a captured impulse and backdate it so the retro's age filter counts it."""
+    tid = store.add_todo(title, notes=title, source="impulse")
+    ts = (datetime.utcnow() - timedelta(days=age_days)).strftime("%Y-%m-%d %H:%M:%S")
+    store.conn.execute("UPDATE todos SET created_at = ? WHERE id = ?", (ts, tid))
+    store.conn.commit()
+    return tid
+
+
+def test_retro_text_none_below_min():
+    """Too few parked impulses → nothing to review."""
+    few = [{"title": "x"}] * (CAPTURE_RETRO_MIN - 1)
+    assert captured_impulse_retro_text(few) is None
+
+
+def test_retro_text_names_a_few_and_counts():
+    parked = [{"title": f"idea {i}"} for i in range(5)]
+    text = captured_impulse_retro_text(parked, name="Tom")
+    assert text is not None
+    assert text.startswith("Tom,")
+    assert "5 impulses" in text
+    assert "idea 0" in text and "+2 more" in text
+
+
+def test_parked_impulses_excludes_fresh_and_non_impulse(store):
+    """The age filter skips a just-captured impulse; manual todos never count."""
+    _park_impulse(store, "old idea", age_days=5)
+    store.add_todo("fresh idea", source="impulse")          # too new
+    store.add_todo("a manual task", source="manual")         # not an impulse
+    aged = store.parked_impulses(min_age_days=2.0)
+    assert [t["title"] for t in aged] == ["old idea"]
+    # No age filter sees both impulses but still not the manual one.
+    assert {t["title"] for t in store.parked_impulses()} == {"old idea", "fresh idea"}
+
+
+def test_evaluate_emits_weekly_retro_cue(store):
+    """Enough aged parked impulses produce one ambient, week-deduped retro cue."""
+    for i in range(CAPTURE_RETRO_MIN):
+        _park_impulse(store, f"stray thought {i}")
+    cues = ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow()))
+    retro = [c for c in cues if c.intervention == "captured_impulse_retro"]
+    assert len(retro) == 1
+    assert retro[0].urgency == "ambient"
+    assert retro[0].context_key == "capture_retro"
+    assert retro[0].ref["parked"] == CAPTURE_RETRO_MIN
+
+
+def test_evaluate_no_retro_when_capture_disabled(store):
+    """Opting out of capture-and-defer silences the retro too."""
+    store.set_state("capture_then_defer", "false", source="explicit")
+    for i in range(CAPTURE_RETRO_MIN):
+        _park_impulse(store, f"stray thought {i}")
+    cues = ImpulsivityModule().evaluate(store, CoachContext(now=datetime.utcnow()))
+    assert not any(c.intervention == "captured_impulse_retro" for c in cues)
+
+
+def test_impulses_parked_endpoint(client, store):
+    """GET /impulses/parked lists the parked todos and a speakable retro line."""
+    for i in range(CAPTURE_RETRO_MIN):
+        _park_impulse(store, f"stray thought {i}")
+    body = client.get("/impulses/parked", headers=_auth()).json()
+    assert len(body["parked"]) == CAPTURE_RETRO_MIN
+    assert body["retro"] is not None
+    assert "parked" in body["retro"]

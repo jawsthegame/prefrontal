@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import (
     Annotated,
+    Any,
 )
 
 from fastapi import (
@@ -19,9 +20,11 @@ from prefrontal.modules.hyperfocus import (
     record_focus_switched,
 )
 from prefrontal.modules.impulsivity import (
+    CAPTURE_RETRO_LIMIT,
     DEFAULT_PAUSE_SECONDS,
     SWITCH_ACTIONS,
     build_pause_message,
+    captured_impulse_retro_text,
     infer_capture_title,
     pause_seconds,
     switch_response,
@@ -94,6 +97,34 @@ def build_router(services: RouterServices) -> APIRouter:
             raw=raw,
             confirmation=_impulse_captured_confirmation(title),
         )
+
+    @router.get("/impulses/parked", tags=["impulsivity"])
+    def impulses_parked(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Still-open captured impulses, for the retro review surface.
+
+        The read behind the Impulsivity ``captured_impulse_retro`` intervention:
+        the parked (``source='impulse'``) todos to triage — keep the real ones,
+        drop the noise — plus a ready-to-speak retro line. Triage itself reuses the
+        normal todo done/drop endpoints; this just surfaces the batch.
+        """
+        memory = ctx.store
+        parked = memory.parked_impulses(limit=CAPTURE_RETRO_LIMIT)
+        name = ctx.user.get("display_name") or ""
+        return {
+            "parked": [
+                {
+                    "todo_id": t["id"],
+                    "title": t["title"],
+                    "notes": t.get("notes"),
+                    "created_at": t.get("created_at"),
+                    "priority": t.get("priority"),
+                }
+                for t in parked
+            ],
+            "retro": captured_impulse_retro_text(parked, name=name),
+        }
 
     # -- Focus sessions (Hyperfocus) -----------------------------------------
 

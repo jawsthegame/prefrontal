@@ -31,6 +31,15 @@ SWITCH_DRIFT_THRESHOLD_KEY = "switch_drift_threshold"
 #: Default for :data:`SWITCH_DRIFT_THRESHOLD_KEY`.
 DEFAULT_DRIFT_THRESHOLD = 3
 
+#: Fewest still-open parked impulses before a weekly retro is worth surfacing —
+#: below this the inbox isn't cluttered enough to be worth a review.
+CAPTURE_RETRO_MIN = 3
+#: A parked impulse must have sat at least this many days before the retro counts
+#: it, so a fresh capture isn't immediately dragged into a "was this noise?" ask.
+CAPTURE_RETRO_MIN_AGE_DAYS = 2.0
+#: How many parked impulses the retro read considers at once.
+CAPTURE_RETRO_LIMIT = 30
+
 #: Words past this many in the raw impulse get dropped from the heuristic title.
 _CAPTURE_TITLE_MAX_WORDS = 8
 
@@ -187,6 +196,35 @@ def build_drift_message(intended_task: str, acted: int, *, name: str = "") -> st
     )
 
 
+def captured_impulse_retro_text(impulses: list[dict], *, name: str = "") -> str | None:
+    """The weekly captured-impulse retro message, or ``None`` when there's too little.
+
+    Closes the loop ``capture_and_defer`` opens ("the ideas are safe if you jot
+    them down"): a handful of still-open parked impulses, surfaced as a batch to
+    triage — keep the ones that matter, drop the noise — which both empties the
+    inbox and *proves the capture worked*, so parking stays trustworthy enough to
+    keep choosing over chasing. Returns ``None`` below :data:`CAPTURE_RETRO_MIN`
+    so a near-empty inbox is left alone.
+
+    Args:
+        impulses: Open ``source='impulse'`` todos (as from ``parked_impulses``).
+        name: Optional first name for a warmer lead.
+
+    Returns:
+        The ambient retro text, or ``None``.
+    """
+    if len(impulses) < CAPTURE_RETRO_MIN:
+        return None
+    who = f"{name}, a" if name else "A"
+    sample = ", ".join(f"“{t.get('title') or 'a note'}”" for t in impulses[:3])
+    more = f" (+{len(impulses) - 3} more)" if len(impulses) > 3 else ""
+    return (
+        f"{who} quick capture retro: you've parked {len(impulses)} impulses that are "
+        f"still open — {sample}{more}. Keep the ones that matter, drop the noise. "
+        "The capture did its job; clearing them keeps the inbox trustworthy."
+    )
+
+
 #: System prompt for LLM-titling a captured impulse. Kept tight so a local model
 #: returns a clean label, never a paragraph; the heuristic covers it if it doesn't.
 CAPTURE_TITLE_SYSTEM_PROMPT = (
@@ -296,6 +334,16 @@ class ImpulsivityModule(Module):
                 trigger="the end-of-day check-in",
                 status="active",
             ),
+            Intervention(
+                name="captured_impulse_retro",
+                description=(
+                    "A weekly ambient review of still-open parked impulses — keep the "
+                    "real ones, drop the noise — closing the capture-and-defer loop so "
+                    "parking stays trustworthy."
+                ),
+                trigger="enough captured impulses have sat open for a few days",
+                status="active",
+            ),
         ]
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
@@ -313,9 +361,18 @@ class ImpulsivityModule(Module):
         protected-hyperfocus holding are applied downstream by the engine — an
         aligned, shielded block is deep work, not drift, so it's held there.
         """
-        # This nudge reinforces capture-and-defer; honor that opt-out.
+        # This nudge reinforces capture-and-defer; honor that opt-out. The retro
+        # below shares the switch — both are capture-and-defer follow-throughs.
         if not store.get_bool("capture_then_defer", True):
             return []
+
+        cues: list[Cue] = []
+        cues.extend(self._drift_cues(store, ctx))
+        cues.extend(self._capture_retro_cues(store, ctx))
+        return cues
+
+    def _drift_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """The reactive drift nudge for a churny active block (fires once per block)."""
         session = store.most_recent_active_focus_session()
         if not session:
             return []
@@ -346,6 +403,34 @@ class ImpulsivityModule(Module):
             )
         ]
 
+    def _capture_retro_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """At most one weekly, ambient captured-impulse retro.
+
+        Inert unless enough parked impulses have sat open for a few days
+        (:func:`captured_impulse_retro_text`). Ambient (rides the digest, never
+        interrupts — a triage of finished-with captures is never urgent) and deduped
+        to the ISO week so it can't fire more than once a week however often the tick
+        runs.
+        """
+        impulses = store.parked_impulses(
+            min_age_days=CAPTURE_RETRO_MIN_AGE_DAYS, limit=CAPTURE_RETRO_LIMIT
+        )
+        text = captured_impulse_retro_text(impulses, name=ctx.display_name)
+        if text is None:
+            return []
+        iso = ctx.now.isocalendar()
+        return [
+            Cue(
+                module=self.key,
+                intervention="captured_impulse_retro",
+                urgency="ambient",
+                text=text,
+                context_key="capture_retro",
+                dedup_key=f"capture_retro:{iso[0]}-W{iso[1]:02d}",
+                ref={"parked": len(impulses), "todo_ids": [t["id"] for t in impulses[:10]]},
+            )
+        ]
+
     def profile_section(self, store: MemoryStore) -> str | None:
         """Summarize switch behavior and the configured pause."""
         lines: list[str] = []
@@ -360,6 +445,12 @@ class ImpulsivityModule(Module):
                 "Capture new impulses to the inbox and defer them rather than acting "
                 "immediately — the capture itself relieves the urgency."
             )
+            parked = store.parked_impulses(limit=CAPTURE_RETRO_LIMIT)
+            if len(parked) >= CAPTURE_RETRO_MIN:
+                lines.append(
+                    f"{len(parked)} parked impulse(s) still open — worth a quick retro "
+                    "to keep the real ones and drop the noise."
+                )
         for p in store.get_patterns("context_switch"):
             observed = p.get("observed_value")
             conf = p.get("confidence") or 0.0

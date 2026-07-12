@@ -124,6 +124,25 @@ class TodosRepo(Repo):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def parked_impulses(
+        self, *, min_age_days: float = 0.0, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Open captured-and-deferred impulses (``source='impulse'``), oldest first.
+
+        The review queue behind the Impulsivity *captured-impulse retro*: a parked
+        impulse still open after ``min_age_days`` is a candidate for triage — keep
+        the real ones, drop the noise. Oldest first, since the stalest captures are
+        the ones most worth revisiting (and most likely to have been just noise).
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM todos WHERE user_id = ? AND status = 'open' "
+            "AND source = 'impulse' "
+            "AND (julianday('now') - julianday(created_at)) >= ? "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (self._uid(), min_age_days, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def actively_delegated_todos(self) -> list[dict[str, Any]]:
         """Open todos that are currently parked with an assistant, delegation attached.
 
