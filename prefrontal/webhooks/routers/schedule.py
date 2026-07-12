@@ -51,6 +51,8 @@ from prefrontal.config import (
 )
 from prefrontal.departure import (
     DEFAULT_DEPARTURE_GRACE_MINUTES,
+    DEFAULT_TRAVEL_PAD_FRACTION,
+    TRAVEL_PAD_FRACTION_KEY,
     _attend_slugs,
     attribute_departure,
     departure_kwargs,
@@ -115,6 +117,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentPrepared,
     ConflictDismiss,
     PlaceCreate,
+    TravelPadding,
 )
 from prefrontal.webhooks.services import RouterServices
 
@@ -625,6 +628,39 @@ def build_router(services: RouterServices) -> APIRouter:
             },
             "location_known": location_known,
         }
+
+    @router.get("/departure/padding", tags=["schedule"])
+    def get_departure_padding(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The travel-time safety padding, as a whole-number percentage.
+
+        Reads the ``travel_pad_fraction`` coaching key (a fraction) and returns it
+        as a percentage for the Settings control — ``0.15`` → ``15``. ``0`` means
+        the padding is off (the default).
+        """
+        fraction = ctx.store.get_float(
+            TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION
+        )
+        return {"percent": round(max(fraction, 0.0) * 100)}
+
+    @router.post("/departure/padding", tags=["schedule"])
+    def set_departure_padding(
+        payload: TravelPadding,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the travel-time safety padding from Settings.
+
+        Stores the percentage as the ``travel_pad_fraction`` fraction (percent ÷
+        100) as an explicit user choice, so every departure estimate pads the drive
+        by that proportion. ``0`` turns it off. The value is clamped to 0–100 by the
+        schema; padding only ever lengthens the estimate.
+        """
+        fraction = payload.percent / 100.0
+        ctx.store.set_state(
+            TRAVEL_PAD_FRACTION_KEY, f"{fraction:g}", source="explicit"
+        )
+        return {"percent": round(fraction * 100)}
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(

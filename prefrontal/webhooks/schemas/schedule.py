@@ -168,3 +168,17 @@ class CommitmentDomain(BaseModel):
             "kept across calendar re-syncs."
         ),
     )
+
+class TravelPadding(BaseModel):
+    """Body of ``POST /departure/padding`` — the distance-relative travel cushion."""
+
+    percent: float = Field(
+        ge=0,
+        le=100,
+        description=(
+            "Safety padding added to every travel estimate, as a percentage of the "
+            "drive (so a longer trip gets proportionally more). E.g. `15` pads a "
+            "40-min drive by 6 min and a 10-min one by 1.5. `0` turns it off. Stored "
+            "as the `travel_pad_fraction` coaching key (percent ÷ 100)."
+        ),
+    )

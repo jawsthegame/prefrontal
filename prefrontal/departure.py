@@ -81,6 +81,9 @@ DEFAULT_PREP_MINUTES = 5.0
 #: defaults to ``0.0`` (off) so it changes nothing until set.
 DEFAULT_TRAVEL_PAD_FRACTION = 0.0
 
+#: Coaching-state key holding :data:`DEFAULT_TRAVEL_PAD_FRACTION`'s override.
+TRAVEL_PAD_FRACTION_KEY = "travel_pad_fraction"
+
 #: Leave-by horizons (minutes) for the two pre-departure nudge levels.
 DEFAULT_HEADS_UP_MINUTES = 30.0
 DEFAULT_SOON_MINUTES = 10.0
@@ -675,7 +678,7 @@ def departure_kwargs(store: MemoryStore) -> dict[str, Any]:
         "road_factor": store.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
         "prep_minutes": store.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
         "pad_fraction": store.get_float(
-            "travel_pad_fraction", DEFAULT_TRAVEL_PAD_FRACTION
+            TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION
         ),
         "heads_up_minutes": store.get_float(
             "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES

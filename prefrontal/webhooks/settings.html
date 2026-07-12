@@ -70,6 +70,7 @@
     background: var(--bg); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
   .sc-num:disabled { opacity: .5; }
   .sc-check-off { opacity: .6; }
+  .dep-pad { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; }
   .saved { color: var(--good); font-size: 13px; min-height: 16px; margin-top: 10px; }
 
   /* ── SMTP (outbound email) form ──────────────────────────────────────────── */
@@ -155,6 +156,18 @@
     <label class="sc-master"><input type="checkbox" id="autodecomp"/>
       <span>Automatically break down todos I'm avoiding</span></label>
     <div class="saved" id="td-saved"></div>
+  </section>
+
+  <section class="card" id="c-departure">
+    <h2>Departure reminders</h2>
+    <p class="sub">Prefrontal estimates how long it takes to get to each commitment
+      and nudges you to leave in time. Add a safety cushion as a percentage of the
+      drive — a longer trip gets proportionally more (15% pads a 40-min drive by 6
+      min, a 10-min one by 1.5). Leave it at 0 to use the raw estimate.</p>
+    <label class="dep-pad">Pad every drive by
+      <input class="sc-num" type="number" id="travelpad" min="0" max="100" step="5"
+        inputmode="numeric" /> %</label>
+    <div class="saved" id="dep-saved"></div>
   </section>
 
   <section class="card" id="c-smtp">
@@ -336,6 +349,33 @@ $("#autodecomp").addEventListener("change", async (e) => {
   }
 });
 
+// ── Departure: the travel-time safety padding (% of the drive; 0 = off) ──────
+async function loadDeparture() {
+  try {
+    const d = await api("/departure/padding");
+    if ($("#travelpad") !== document.activeElement) $("#travelpad").value = d.percent;
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+$("#travelpad").addEventListener("change", async (e) => {
+  let pct = Math.round(Number(e.target.value));
+  if (!Number.isFinite(pct)) pct = 0;
+  pct = Math.min(100, Math.max(0, pct));  // mirror the server's 0–100 clamp
+  e.target.value = pct;
+  try {
+    const d = await api("/departure/padding", {
+      method: "POST", body: JSON.stringify({ percent: pct }),
+    });
+    $("#travelpad").value = d.percent;
+    $("#dep-saved").textContent = "Saved ✓";
+    setTimeout(() => { $("#dep-saved").textContent = ""; }, 1600);
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    $("#dep-saved").textContent = "couldn't save — retry";
+  }
+});
+
 // ── SMTP (outbound email) config: a small form saved as a whole ──────────────
 // ── SMTP: several named outbox accounts, each its own inline form ────────────
 // A todo delegated by email sends from the account matching its mail account or
@@ -462,6 +502,7 @@ async function load() {
     $("#selfcare").innerHTML = renderSelfCare(data);
   }
   await loadTodos();
+  await loadDeparture();
   await loadSmtp();
   $("#status").textContent = "your preferences";
   if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible
