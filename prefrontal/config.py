@@ -12,6 +12,7 @@ to force a fresh read of the environment.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -355,6 +356,39 @@ class Settings:
         return {key: spec for key, spec in self.todo_windows}
 
 
+def _int_env(name: str, default: int) -> int:
+    """Read an integer env var, falling back to ``default`` if absent or malformed.
+
+    Matches the forgiving spirit of the string parsers here: a fat-fingered value
+    (``PREFRONTAL_PORT=eight``) degrades to the default rather than raising a
+    ``ValueError`` that takes the whole process down at startup.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    """Read a float env var, falling back to ``default`` if absent or malformed.
+
+    The float counterpart to :func:`_int_env` (see its rationale).
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+    # float() parses "nan"/"inf" — but a non-finite threshold silently breaks
+    # comparisons (every `x < nan` is False), so treat it as malformed too.
+    return value if math.isfinite(value) else default
+
+
 def load_settings(dotenv_path: str = ".env") -> Settings:
     """Read configuration from the environment and return a fresh ``Settings``.
 
@@ -391,7 +425,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     return Settings(
         db_path=os.environ.get("PREFRONTAL_DB_PATH", "prefrontal.db"),
         host=os.environ.get("PREFRONTAL_HOST", "0.0.0.0"),
-        port=int(os.environ.get("PREFRONTAL_PORT", "8000")),
+        port=_int_env("PREFRONTAL_PORT", 8000),
         webhook_secret=os.environ.get("PREFRONTAL_WEBHOOK_SECRET", ""),
         default_user=os.environ.get("PREFRONTAL_DEFAULT_USER", ""),
         n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", ""),
@@ -432,20 +466,14 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         calendar_labels=calendar_labels,
         account_domains=account_domains,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
-        calendar_horizon_days=float(
-            os.environ.get("PREFRONTAL_CALENDAR_HORIZON_DAYS", "30") or "30"
-        ),
+        calendar_horizon_days=_float_env("PREFRONTAL_CALENDAR_HORIZON_DAYS", 30.0),
         todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
         todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),
-        triage_quick_drop_days=float(
-            os.environ.get("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", "2")
-        ),
-        triage_repeat_threshold=int(
-            os.environ.get("PREFRONTAL_TRIAGE_REPEAT_THRESHOLD", "2")
-        ),
+        triage_quick_drop_days=_float_env("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", 2.0),
+        triage_repeat_threshold=_int_env("PREFRONTAL_TRIAGE_REPEAT_THRESHOLD", 2),
         triage_use_llm=os.environ.get("PREFRONTAL_TRIAGE_LLM", "true").strip().lower()
         not in ("0", "false", "no", "off"),
-        triage_drop_threshold=float(os.environ.get("PREFRONTAL_TRIAGE_DROP", "0") or "0"),
+        triage_drop_threshold=_float_env("PREFRONTAL_TRIAGE_DROP", 0.0),
         google_oauth_client_id=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
         google_oauth_client_secret=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
         oauth_base_url=os.environ.get("OAUTH_BASE_URL", "").rstrip("/"),
