@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Channel-choice auto-act — damp a non-predictive channel signal** ✅ (learning
+  §4) — the channel-calibration walk-forward was report-only; now it closes the
+  loop like the bias auto-act. When `channel_calibration` finds per-channel
+  ack-rates *don't* predict held-out acks (a noisy signal that would still push
+  `choose_channel` to bump a cue up a rung), the nightly `learn` pass damps each
+  channel's stored `channel_response` rate toward the sample-weighted pooled rate
+  (`decay_channel_rate_toward_pooled` / `pooled_channel_rate`) — collapsing the
+  spread so the noise stops crossing the ignore-threshold. Controlled by
+  `channel_decay_on_miss` (default 0.5 = halve the deviation; `0` = old report-only
+  behavior), records `channel_calibration_decayed`, and `prefrontal learn` reports
+  when it damped. This leaves only the harder, design-blocked **sensor causal
+  check** open in the learning loop. Covered by `tests/test_patterns.py`.
+
 - **iOS offline-tolerant local notifications** ✅ (#474) — while the app has
   network it now schedules a **local** "leave by" notification for the next
   departure (`/departure/next` → `leave_by`), so the alert still fires at that

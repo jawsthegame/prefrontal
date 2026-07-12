@@ -70,6 +70,16 @@ DEFAULT_CALIBRATION_TEST_FRACTION = 0.34
 #: ``bias_decay_on_miss`` coaching key.
 DEFAULT_BIAS_DECAY_ON_MISS = 0.5
 
+#: The channel-choice analog of ``bias_decay_on_miss`` (§4 auto-act): when the
+#: walk-forward :func:`channel_calibration` finds per-channel ack-rates are *not*
+#: predictive (a noisy signal that would still drive ``choose_channel`` to bump a
+#: cue up a rung), shrink each channel's stored ``channel_response`` rate toward the
+#: pooled rate by this fraction of its deviation — collapsing the spread so the
+#: noise stops crossing the ignore-threshold. 0.5 halves the deviation; 1.0 flattens
+#: to the pooled rate entirely; 0.0 disables the auto-act (report-only). Tunable via
+#: the ``channel_decay_on_miss`` coaching key.
+DEFAULT_CHANNEL_DECAY_ON_MISS = 0.5
+
 #: How much each outcome contributes to a drift score (higher = more off-track).
 DRIFT_WEIGHTS = {"success": 0.0, "partial": 0.5, "miss": 1.0}
 
@@ -289,6 +299,40 @@ def decay_bias_toward_neutral(bias: float, factor: float = DEFAULT_BIAS_DECAY_ON
     return round(1.0 + (bias - 1.0) * (1.0 - factor), 2)
 
 
+def pooled_channel_rate(patterns: list[dict[str, Any]]) -> float | None:
+    """The sample-weighted mean ack-rate across ``channel_response`` patterns.
+
+    This is the "neutral" the per-channel rates collapse toward when the channel
+    signal is judged non-predictive (§4 auto-act) — flattening every channel to
+    this value is exactly "stop treating channels as different". Weighted by each
+    channel's ``sample_size`` so a channel with one delivery doesn't sway it as much
+    as one with fifty. Returns ``None`` when there's nothing to pool.
+    """
+    total_w = 0.0
+    acc = 0.0
+    for p in patterns:
+        rate = p.get("observed_value")
+        n = p.get("sample_size") or 0
+        if rate is None or n <= 0:
+            continue
+        acc += float(rate) * n
+        total_w += n
+    return acc / total_w if total_w > 0 else None
+
+
+def decay_channel_rate_toward_pooled(rate: float, pooled: float, factor: float) -> float:
+    """Shrink one channel's ack-rate toward the ``pooled`` rate (§4 channel auto-act).
+
+    ``pooled + (rate - pooled) * (1 - factor)`` — the channel analog of
+    :func:`decay_bias_toward_neutral`, with the pooled rate playing the role the
+    neutral 1.0 plays for the bias. ``factor`` is the fraction of the deviation to
+    remove, clamped to ``[0, 1]`` so a stray value can only move the rate *toward*
+    pooled, never past it.
+    """
+    factor = min(1.0, max(0.0, factor))
+    return round(pooled + (rate - pooled) * (1.0 - factor), 3)
+
+
 @dataclass(frozen=True)
 class PatternRunSummary:
     """Summary of a single :func:`recompute_patterns` run."""
@@ -302,8 +346,11 @@ class PatternRunSummary:
     #: and this is the pre value). ``None`` when nothing was auto-decayed.
     bias_pre_decay: float | None = None
     calibration: BiasCalibration | None = None
-    #: Walk-forward verdict on the channel-choice adaptation (§4), report-first.
+    #: Walk-forward verdict on the channel-choice adaptation (§4).
     channel_calibration: ChannelCalibration | None = None
+    #: ``True`` when a "not helping" channel verdict damped the per-channel
+    #: ``channel_response`` rates toward pooled this pass (the §4 channel auto-act).
+    channel_decayed: bool = False
     band_bias: dict[str, float] = field(default_factory=dict)
     type_bias: dict[str, float] = field(default_factory=dict)
     energy_bias: dict[str, float] = field(default_factory=dict)
@@ -1233,11 +1280,13 @@ def recompute_patterns(
             store.set_state("bias_calibration_decayed", decayed, source="inferred")
 
     # Close the loop on the *channel-choice* adaptation too (§4): does conditioning
-    # on channel predict held-out acks better than a pooled rate? Report-first —
-    # persisted for the profile/CLI, no auto-act yet (a bad channel signal is made
-    # visible rather than silently driving escalation). Independent of the bias, so
-    # it runs regardless of `update_bias`.
+    # on channel predict held-out acks better than a pooled rate? Persisted for the
+    # profile/CLI, and — like the bias — it now **auto-acts**: a "not helping"
+    # verdict damps the per-channel ack-rates toward pooled so a noisy signal stops
+    # driving `choose_channel`'s escalation, rather than only being reported.
+    # Independent of the bias, so it runs regardless of `update_bias`.
     channel_cal = channel_calibration(episodes)
+    channel_decayed = False
     if channel_cal.status == "ok":
         store.set_state(
             "channel_calibration_helps", "true" if channel_cal.helps else "false",
@@ -1248,6 +1297,33 @@ def recompute_patterns(
         )
         store.set_state(
             "channel_calibration_samples", str(channel_cal.samples), source="inferred"
+        )
+        # Auto-act (§4): flatten the per-channel rates toward pooled when the
+        # signal isn't predictive, so `choose_channel` stops bumping cues up a rung
+        # on channel noise. Skips when the user disabled it (`channel_decay_on_miss`
+        # = 0 → report-only) or there's nothing meaningful to flatten.
+        decay = store.get_float("channel_decay_on_miss", DEFAULT_CHANNEL_DECAY_ON_MISS)
+        if not channel_cal.helps and decay > 0:
+            chan_patterns = store.get_patterns("channel_response")
+            pooled = pooled_channel_rate(chan_patterns)
+            if pooled is not None and len(chan_patterns) >= 2:
+                for p in chan_patterns:
+                    rate = p.get("observed_value")
+                    if rate is None:
+                        continue
+                    adjusted = decay_channel_rate_toward_pooled(float(rate), pooled, decay)
+                    if adjusted != rate:
+                        store.upsert_pattern(
+                            "channel_response",
+                            p["context_key"],
+                            observed_value=adjusted,
+                            sample_size=p.get("sample_size"),
+                            confidence=p.get("confidence"),
+                        )
+                        channel_decayed = True
+        store.set_state(
+            "channel_calibration_decayed", "true" if channel_decayed else "false",
+            source="inferred",
         )
 
     # Learn the Time Blindness morning_prep cutoff (``early_start_threshold``) from
@@ -1270,6 +1346,7 @@ def recompute_patterns(
         bias_pre_decay=bias_pre_decay,
         calibration=calibration,
         channel_calibration=channel_cal,
+        channel_decayed=channel_decayed,
         band_bias=band_bias,
         type_bias=type_bias,
         energy_bias=energy_bias,

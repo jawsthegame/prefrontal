@@ -16,10 +16,12 @@ closeout, consolidation, and a few net-new surfaces.
    deeper pack infrastructure it and Parent share: pack-specific **situation-tool
    registries** and **surface tailoring beyond `/kids`** (a caregiver surface + a
    dedicated `care` commitment kind). Highest-leverage *new* capability, most work.
-2. **Close the learning loop's causal checks** (see "Learning & adaptation" §2,
-   §4). The sensor's causal check (did an accepted proposal actually improve
-   downstream calibration?) and an auto-act on a non-predictive channel signal.
-   Genuinely valuable but design-blocked, so last.
+2. **Close the learning loop's remaining causal check** (see "Learning &
+   adaptation" §2). The channel-signal auto-act shipped (§4 now damps a
+   non-predictive channel toward pooled); what's left is the harder **sensor
+   causal check** — after a state proposal is accepted, did the downstream numeric
+   calibration actually improve? — which stays design-blocked on the
+   broader-allowlist / generalized-check question, so last.
 
 **Recently closed out:**
 
@@ -351,10 +353,15 @@ ordered by leverage; each is independent but builds on denser capture.
    whether predicting each ack with its channel's train ack-rate beats a single
    pooled rate (`baseline_error` → `adjusted_error`, `helps`) — so a channel signal
    that's really noise is *visible* (persisted as `channel_calibration_*`, printed
-   in `prefrontal learn`) rather than silently driving escalation. Report-first, no
-   auto-act yet. *(Next: an auto-act for a non-predictive channel signal; drift is
-   a surfaced diagnostic, not a predictive adaptation, so it has no held-out error
-   to walk-forward — left as-is.)*
+   in `prefrontal learn`) rather than silently driving escalation. And it now
+   **auto-acts** too ✅ — a "not helping" verdict damps the per-channel
+   `channel_response` rates toward the pooled rate (`decay_channel_rate_toward_pooled`
+   / `pooled_channel_rate`, `channel_decay_on_miss` key — default halve the
+   deviation, `0` for the old report-only behavior), so a noisy channel signal stops
+   crossing `choose_channel`'s ignore-threshold and driving escalation, recording
+   `channel_calibration_decayed` for the CLI. Covered by `tests/test_patterns.py`.
+   *(Drift is a surfaced diagnostic, not a predictive adaptation, so it has no
+   held-out error to walk-forward — left as-is.)*
 5. **Context-conditioned patterns.** ✅ (time of day + task type + energy + category) — the learned
    time-estimation bias is now computed **per time-of-day band** (morning /
    afternoon / evening) as well as globally, because the same person often
