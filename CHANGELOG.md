@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS offline-tolerant local notifications** ✅ (#474) — while the app has
+  network it now schedules a **local** "leave by" notification for the next
+  departure (`/departure/next` → `leave_by`), so the alert still fires at that
+  time even if the phone has since gone off the tailnet, where ntfy/APNs can't
+  reach it (`ios/Prefrontal/Notifications/LocalNotifications.swift`). Reconciled
+  on every Today refresh — a moved/cancelled departure replaces or clears the
+  pending one rather than double-firing — and a no-op unless notifications were
+  authorized during onboarding. Scoped to departures (the one nudge with a
+  concrete fire time); self-care local scheduling is a follow-up (no next-due
+  timestamp in the API yet). Client-only.
+
 - **iOS widget-connection diagnostic** ✅ — a read-only **Diagnostics** section in
   Me ▸ Settings shows the App Group id, whether the shared store initialized, and
   whether the base URL + token are present in the shared container the widget

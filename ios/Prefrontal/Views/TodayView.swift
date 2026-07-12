@@ -237,6 +237,9 @@ struct TodayView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         queuedOffline = OfflineQueue.count
+        // Schedule a local "leave by" as an off-tailnet fallback (replaced each
+        // refresh from current state). No-op unless notifications are authorized.
+        await LocalNotifications.reconcileDeparture(departure)
         loaded = true
     }
 }
