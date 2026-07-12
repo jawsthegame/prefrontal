@@ -57,12 +57,33 @@ struct SettingsView: View {
                 }
                 .disabled(testing || url.isEmpty || token.isEmpty)
             }
+
+            if !isOnboarding { diagnostics }
         }
         .brandScreen()
         .navigationTitle(isOnboarding ? "Welcome" : "Settings")
         .onAppear {
             url = config.baseURLString
             token = config.token
+        }
+    }
+
+    /// Read-only App Group health, to diagnose the "widget won't connect" case:
+    /// the app writes its base URL + token into the shared App Group container,
+    /// and the widget reads them back. This shows what the *app* sees; if a token
+    /// is present here but the widget still says "Tap to connect," the App Group
+    /// capability isn't provisioned into the *widget* target.
+    private var diagnostics: some View {
+        Section("Diagnostics") {
+            LabeledContent("App Group", value: SharedStore.appGroup)
+            LabeledContent("Shared store",
+                           value: UserDefaults(suiteName: SharedStore.appGroup) != nil
+                               ? "initialized" : "unavailable (app-local fallback)")
+            LabeledContent("Token", value: SharedStore.token.isEmpty
+                           ? "— not set" : "set · \(SharedStore.token.count) chars")
+            LabeledContent("Server URL", value: SharedStore.baseURL)
+            Text("These are shared with the widget via the App Group. If a token shows here but the widget still says “Tap to connect,” the App Group capability isn't provisioned into the widget target — enable it on **both** targets (same Team) in Signing & Capabilities, then delete the app and reinstall.")
+                .font(.caption).foregroundStyle(Brand.muted)
         }
     }
 
