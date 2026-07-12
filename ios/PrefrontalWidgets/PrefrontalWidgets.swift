@@ -16,6 +16,9 @@ struct Glance {
     var nextTitle: String?
     var meal: (Int, Int)?
     var water: (Int, Int)?
+    /// Every enabled self-care check, keyed by its `key` (count, target) — so the
+    /// configurable Lock Screen ring can render whichever one you pick.
+    var selfCareChecks: [String: (Int, Int)] = [:]
     // Active lifecycle state — when set, the widget offers a one-tap end action.
     var outingIntention: String?
     var focusTask: String?
@@ -56,8 +59,9 @@ struct Glance {
             g.fits = (try? await client.todosFit(minutes: g.freeMinutes))?.fits.count ?? 0
         }
         if let checks = sc?.checks {
-            if let m = checks.first(where: { $0.key == "meal" }) { g.meal = (m.count, m.target) }
-            if let w = checks.first(where: { $0.key == "water" }) { g.water = (w.count, w.target) }
+            for c in checks where c.enabled { g.selfCareChecks[c.key] = (c.count, c.target) }
+            g.meal = g.selfCareChecks["meal"]
+            g.water = g.selfCareChecks["water"]
         }
         return g
     }
@@ -136,7 +140,6 @@ struct PrefrontalWidgetView: View {
         case .systemSmall: small
         case .systemMedium: medium
         case .accessoryRectangular: accRect
-        case .accessoryCircular: accCircle
         case .accessoryInline: accInline
         default: small
         }
@@ -302,15 +305,8 @@ struct PrefrontalWidgetView: View {
         .widgetAccentable()
     }
 
-    private var accCircle: some View {
-        let w = g.water ?? (0, 6)
-        return Gauge(value: Double(w.0), in: 0...Double(max(1, w.1))) {
-            Image(systemName: "drop.fill")
-        } currentValueLabel: {
-            Text("\(w.0)")
-        }
-        .gaugeStyle(.accessoryCircular)
-    }
+    // The circular self-care ring moved to its own configurable widget
+    // (`SelfCareCircleWidget.swift`) so you can pick which check it shows.
 
     private var accInline: some View {
         Group {
@@ -335,7 +331,7 @@ struct PrefrontalWidget: Widget {
         .configurationDisplayName("Prefrontal")
         .description("Your next departure, what fits now, and tap-to-log self-care.")
         .supportedFamilies([.systemSmall, .systemMedium,
-                            .accessoryRectangular, .accessoryCircular, .accessoryInline])
+                            .accessoryRectangular, .accessoryInline])
     }
 }
 
@@ -343,6 +339,7 @@ struct PrefrontalWidget: Widget {
 struct PrefrontalWidgetBundle: WidgetBundle {
     var body: some Widget {
         PrefrontalWidget()
+        PrefrontalSelfCareCircle()   // configurable Lock Screen self-care ring
         // Control Center controls (Panic / I'm Back / Wrap Up Focus) — iOS 18+.
         if #available(iOS 18.0, *) {
             PanicControl()

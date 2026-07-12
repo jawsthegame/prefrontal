@@ -7,6 +7,14 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS configurable Lock Screen self-care ring** ✅ (#465) — the circular Lock
+  Screen accessory was hardcoded to water; it's now a separate **configurable**
+  widget (`ios/PrefrontalWidgets/SelfCareCircleWidget.swift`) — long-press → Edit →
+  pick which check it tracks (Water / Meals / Meds / Breaks / Wind-down /
+  Movement) via an `AppIntentConfiguration` + `SelfCareCheck` app enum. The glance
+  fetch now carries every enabled check (not just meal/water), and the old
+  hardcoded circular was removed from the main static widget.
+
 - **Per-module next steps — one net-new capability per challenge module** ✅ — with
   every module's declared interventions already wired, each challenge module gained
   one honest next surface, all composing existing primitives:

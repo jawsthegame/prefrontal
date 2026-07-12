@@ -17,8 +17,11 @@ your next departure, what-fits-now, and self-care progress. The Home Screen
 widget is **interactive** (iOS 17): tapping the self-care chips logs a meal /
 glass of water in place (`MarkSelfCareIntent`), and when an outing or focus
 session is active it shows a one-tap **I'm back** / **Wrap up** button
-(`ImBackIntent` / `EndFocusIntent`) — all without launching the app. The app and
-widget share the base URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
+(`ImBackIntent` / `EndFocusIntent`) — all without launching the app. A separate
+**configurable** Lock Screen circular ring (`SelfCareCircleWidget.swift`) lets you
+long-press → **Edit** → pick which self-care check it tracks (Water, Meals, …),
+rather than being fixed to water. The app and widget share the base URL + token
+via the **App Group** `group.com.morningstatic.prefrontal`.
 
 ## Layout
 
