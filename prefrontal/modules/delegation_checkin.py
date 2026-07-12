@@ -26,7 +26,13 @@ from prefrontal.coaching import (
     stamp_pending_engagement,
     sweep_engagement,
 )
-from prefrontal.delegation import checkin_interval_hours, checkin_message
+from prefrontal.delegation import (
+    DEFAULT_STALLED_CHECKIN_MISSES,
+    STATUS_FORWARDED,
+    checkin_interval_hours,
+    checkin_message,
+    stalled_handoff_message,
+)
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -58,7 +64,45 @@ class DelegationCheckinModule(Module):
                 trigger="a parked delegation has gone quiet past its check-in interval",
                 status="active",
             ),
+            Intervention(
+                name="stalled_escalation",
+                description=(
+                    "After repeated ignored check-ins on a forwarded hand-off with no "
+                    "movement, escalate the copy from 'heard back?' to a decision "
+                    "prompt — take it back, re-delegate, or drop it — so a dead "
+                    "hand-off gets resolved instead of rotting on the parked list."
+                ),
+                trigger="a forwarded hand-off has drawn delegation_stall_misses ignored check-ins",
+                status="active",
+            ),
         ]
+
+    def _ignored_streak(self, store: MemoryStore, todo_id: int) -> int:
+        """Consecutive ignored check-ins for ``todo_id`` since its last movement.
+
+        Counts recent ``delegation`` engagement episodes (from
+        :meth:`before_collect`) for this todo, newest first, stopping at the first
+        ``success`` — a check-in that *did* move the hand-off resets the streak.
+        """
+        target_ctx = f"{self.key} nudge: {todo_id}"
+        streak = 0
+        for ep in store.episodes_by_type(ENGAGE_EPISODE, limit=100):
+            if (ep.get("context") or "") != target_ctx:
+                continue
+            if ep.get("outcome") == "success":
+                break  # it moved after that check-in — streak resets
+            if ep.get("outcome") == "ignored":
+                streak += 1
+        return streak
+
+    def _stall_threshold(self, store: MemoryStore) -> int:
+        """The ignored-check-in count that trips escalation (default, on a bad value too)."""
+        try:
+            return int(
+                store.get_state("delegation_stall_misses") or DEFAULT_STALLED_CHECKIN_MISSES
+            )
+        except (TypeError, ValueError):
+            return DEFAULT_STALLED_CHECKIN_MISSES
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Emit at most one check-in — the most-overdue parked delegation.
@@ -68,12 +112,26 @@ class DelegationCheckinModule(Module):
         interval, and only surface the one that is furthest past due. The engine
         still applies quiet hours and its own debounce downstream.
         """
+        threshold = self._stall_threshold(store)
         best: tuple[float, Cue] | None = None
         for todo in store.actively_delegated_todos():
             delegation = todo.get("delegation")
             if not delegation:
                 continue
-            text = checkin_message(todo, delegation, ctx.now)
+            # A forwarded hand-off that keeps drawing ignored check-ins escalates
+            # from "heard back?" to a take-back/re-delegate/drop decision prompt.
+            misses = (
+                self._ignored_streak(store, todo["id"])
+                if delegation.get("status") == STATUS_FORWARDED
+                else 0
+            )
+            stalled = misses >= threshold
+            if stalled:
+                text = stalled_handoff_message(todo, delegation, misses, ctx.now)
+                intervention = "stalled_escalation"
+            else:
+                text = checkin_message(todo, delegation, ctx.now)
+                intervention = "delegation_checkin"
             if not text:
                 continue  # in_prep etc. — nothing worth a nudge yet
             interval = checkin_interval_hours(todo, delegation, ctx.now)
@@ -84,16 +142,24 @@ class DelegationCheckinModule(Module):
             )
             if elapsed is not None and elapsed < interval:
                 continue  # checked in recently enough
-            # How far past due (first-ever check-in counts as maximally due).
-            overdue = 999.0 if elapsed is None else elapsed / interval
+            # How far past due (first-ever check-in counts as maximally due); a
+            # stalled hand-off sorts ahead of ordinary check-ins so the decision
+            # prompt wins the one-per-tick slot.
+            overdue = (999.0 if elapsed is None else elapsed / interval) + (
+                1000.0 if stalled else 0.0
+            )
             cue = Cue(
                 module=self.key,
-                intervention="delegation_checkin",
+                intervention=intervention,
                 urgency="nudge",
                 text=text + note_hint(todo.get("notes")),
                 context_key="todo",
                 dedup_key=dedup_key,
-                ref={"todo_id": todo["id"], "delegation_status": delegation.get("status")},
+                ref={
+                    "todo_id": todo["id"],
+                    "delegation_status": delegation.get("status"),
+                    "stalled": stalled,
+                },
             )
             if best is None or overdue > best[0]:
                 best = (overdue, cue)
