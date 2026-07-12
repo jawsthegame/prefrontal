@@ -150,6 +150,13 @@ queued — replaying a "start focus" long after the fact would log a bogus
 session. Delivery is at-least-once (a replay can double-apply if the original
 actually landed), which is acceptable for todos/self-care.
 
+The reverse case — nudges that can't reach you off-tailnet — is covered by
+**local notifications** (`Notifications/LocalNotifications.swift`): each Today
+refresh schedules a local "leave by" alert for the next departure, which fires
+at that time even after the phone leaves the tailnet (where ntfy/APNs can't). It
+reconciles each refresh (a moved departure replaces the pending one) and no-ops
+unless notifications were authorized during onboarding.
+
 ## What maps to what
 
 | Screen | Endpoints |
