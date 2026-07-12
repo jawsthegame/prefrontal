@@ -7,6 +7,14 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS widget-connection diagnostic** ✅ — a read-only **Diagnostics** section in
+  Me ▸ Settings shows the App Group id, whether the shared store initialized, and
+  whether the base URL + token are present in the shared container the widget
+  reads. Pins down the "widget says Tap to connect while the app works" case: if a
+  token shows here but the widget doesn't see it, the App Group capability isn't
+  provisioned into the widget target (fix on both targets in Signing &
+  Capabilities, same Team, then reinstall). Never prints the token itself.
+
 - **Freeform calendar assistant — "find me a time"** ✅ — a conversational
   scheduler (`prefrontal/availability.py`): say *"find 45 min for coffee with Sam
   this week"* or *"when are my wife and I both free for dinner tomorrow evening?"*
