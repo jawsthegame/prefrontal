@@ -21,11 +21,27 @@ from __future__ import annotations
 import logging
 import os
 
+#: The logger namespace Prefrontal configures. Every :func:`get_logger`
+#: (``get_logger(__name__)``) returns a ``prefrontal.*`` descendant of it.
+_NAMESPACE = "prefrontal"
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
 _configured = False
 
 
 def configure_logging(*, level: str | None = None) -> None:
-    """Install a root log handler and set the level, once (idempotent).
+    """Install a handler on Prefrontal's logger namespace and set its level, once.
+
+    Configures the ``prefrontal`` logger (parent of every ``get_logger(__name__)``)
+    rather than calling :func:`logging.basicConfig` on the root logger.
+    ``basicConfig`` is a **no-op when the root logger already has handlers** — which
+    is exactly the case under uvicorn/gunicorn, so the deployed webhook server never
+    got Prefrontal's intended format. Attaching the handler to our own namespace and
+    stopping propagation gives Prefrontal's records a consistent format regardless of
+    the host, and avoids double-logging them through the host's root handlers.
+
+    Idempotent (guarded by ``_configured``) so multiple entry points can call it
+    without stacking duplicate handlers.
 
     Args:
         level: Explicit level name (e.g. ``"DEBUG"``). Defaults to
@@ -35,10 +51,12 @@ def configure_logging(*, level: str | None = None) -> None:
     if _configured:
         return
     name = (level or os.environ.get("PREFRONTAL_LOG_LEVEL") or "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    logger = logging.getLogger(_NAMESPACE)
+    logger.setLevel(getattr(logging, name, logging.INFO))
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logger.addHandler(handler)
+    logger.propagate = False  # our handler is authoritative; don't also hit root
     _configured = True
 
 
