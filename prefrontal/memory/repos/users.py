@@ -4,7 +4,6 @@ Mixin for :class:`prefrontal.memory.store.MemoryStore`; not used standalone.
 """
 from __future__ import annotations
 
-import hmac
 from typing import Any
 
 from prefrontal.memory._helpers import (
@@ -84,15 +83,18 @@ class UsersRepo(Repo):
     def get_user_by_token_hash(self, token_hash: str) -> dict[str, Any] | None:
         """Return the user whose ``token_hash`` matches, or ``None``.
 
-        The comparison goes through the indexed lookup; callers should compare
-        the *hash* with :func:`hmac.compare_digest` when they already hold a
-        candidate (see the webhook auth layer) to keep it constant-time.
+        A single indexed lookup on the unique ``token_hash`` column
+        (``idx_users_token``). ``token_hash`` is already a SHA-256 of the bearer
+        token — a 256-bit high-entropy value, not a low-entropy secret an attacker
+        could brute-force by timing a byte-at-a-time compare — so an equality match
+        is appropriate here. This replaces a ``SELECT * FROM users`` + per-row
+        ``hmac.compare_digest`` loop that ran on **every** authenticated request:
+        O(users) instead of O(1), and its duration leaked the user count.
         """
-        rows = self.conn.execute("SELECT * FROM users").fetchall()
-        for row in rows:
-            if hmac.compare_digest(row["token_hash"], token_hash):
-                return dict(row)
-        return None
+        row = self.conn.execute(
+            "SELECT * FROM users WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
+        return _row_to_dict(row)
 
     def list_users(self) -> list[dict[str, Any]]:
         """Return all users (never their tokens), oldest first."""
