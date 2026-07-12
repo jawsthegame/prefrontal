@@ -55,16 +55,8 @@ final class AppConfig: ObservableObject {
 
     var isConfigured: Bool { !token.isEmpty && URL(string: baseURLString) != nil }
     var baseURL: URL? { URL(string: baseURLString) }
-
-    /// Apply a scanned/opened connect payload. Only overwrites fields the
-    /// payload actually carries, so a QR that omits (say) the ntfy topic
-    /// leaves an existing one intact. The token/URL are validated separately
-    /// by the onboarding flow before this is trusted for real requests.
-    func apply(_ payload: ConnectPayload) {
-        baseURLString = payload.baseURL
-        if let t = payload.token, !t.isEmpty { token = t }
-        if let s = payload.ntfyServer, !s.isEmpty { ntfyServer = s }
-        if let topic = payload.ntfyTopic, !topic.isEmpty { ntfyTopic = topic }
-        if let name = payload.displayName, !name.isEmpty { displayName = name }
-    }
 }
+// `apply(_ payload: ConnectPayload)` lives in an app-only extension in
+// Onboarding/ConnectPayload.swift — NOT here. This file (Config/) is compiled
+// into the widget extension too, and `ConnectPayload` is app-target-only, so a
+// reference here would fail to compile in the widget.
