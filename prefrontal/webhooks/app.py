@@ -159,6 +159,13 @@ def create_app(
     # clients keep using per-user tokens. resolve_user accepts either.
     register_oauth_routes(app, resolved_settings)
 
+    # Observe which pull surfaces (dashboard/panic/briefing/…) actually get
+    # opened — the `invoked` half of the feature-usage loop. Pure side-effect
+    # middleware: it never alters the response.
+    from prefrontal.webhooks.usage import usage_middleware
+
+    app.middleware("http")(usage_middleware)
+
     from prefrontal.webhooks.routers import (
         admin,
         anchor,

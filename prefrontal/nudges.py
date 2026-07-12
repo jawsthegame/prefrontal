@@ -60,6 +60,54 @@ _ACT_CONTEXT = {
     **{f"trip_domain_{d}": "trip" for d in FOCUS_DOMAINS},
 }
 
+#: One-tap ``/nudge/act`` action → the *feature* it engages, for the usage loop's
+#: ``engaged`` half. Keyed to module registry keys where one exists (so a feature's
+#: ``offered`` and ``engaged`` counts line up on the /stats panel), and to a
+#: pull-surface name (``panic``/``briefing``/``household``) otherwise. Every tap
+#: flows through :func:`apply_nudge_action`, so one lookup here covers them all;
+#: the raw ``action`` rides along as the ``intervention`` for finer slicing.
+_ACT_FEATURE = {
+    "focus_end": "hyperfocus",
+    "switch_return": "impulsivity",
+    "switch_defer": "impulsivity",
+    "switch_switch": "impulsivity",
+    "outing_return": "location_anchor",
+    "outing_abandon": "location_anchor",
+    "panic_step_done": "panic",
+    "star_award": "household",
+    "star_skip": "household",
+    "digest_seen": "household",
+    "chore_done": "household",
+    "away_confirm": "household",
+    "briefing_helped": "briefing",
+    "briefing_not_helped": "briefing",
+    "made_it": "departure",
+    "missed_it": "departure",
+    **{f"trip_domain_{d}": "trip_tracking" for d in FOCUS_DOMAINS},
+    **{a: "self_care" for a in SELF_CARE_ACTIONS},
+    **{a: "household" for a in CHECKIN_ACTION_RESPONSE},
+}
+
+
+def _record_engaged(memory: MemoryStore, action: str, target_id: int) -> None:
+    """Best-effort ``engaged`` stamp for a one-tap action (never raises).
+
+    A tap is the clearest signal a feature is *used*, so every action that flows
+    through :func:`apply_nudge_action` records one usage event. Telemetry must
+    never break the button, so a failure is logged and swallowed — the tap's real
+    work (below) is what matters.
+    """
+    try:
+        memory.record_feature_event(
+            _ACT_FEATURE.get(action, action),
+            "engaged",
+            intervention=action,
+            source="ntfy",
+            ref=str(target_id),
+        )
+    except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+        logger.debug("record_feature_event(engaged) failed for %r", action, exc_info=True)
+
 
 def apply_nudge_action(
     memory: MemoryStore,
@@ -87,6 +135,10 @@ def apply_nudge_action(
     # record which channel landed (feeds channel_response; spec §8). A no-op for
     # nudges the engine didn't originate.
     resolve_ack(memory, _ACT_CONTEXT.get(action, ""), target_id)
+
+    # A tap is also the clearest "I use this feature" signal — the engaged half of
+    # the usage feedback loop (best-effort; never blocks the button).
+    _record_engaged(memory, action, target_id)
 
     if action == "focus_end":
         closed = memory.close_focus_session(target_id, status="ended")

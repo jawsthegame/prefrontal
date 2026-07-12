@@ -56,6 +56,28 @@ CHORE_WINDOW_DAYS = 30
 #: How many recent days the chores completion sparkline shows (oldest→newest).
 CHORE_SERIES_LEN = 14
 
+#: Rolling window (days) for the feature-usage view.
+USAGE_WINDOW_DAYS = 30
+
+#: A push feature must have fired at least this many times before a low
+#: engagement rate counts as "firing but ignored" — below it there isn't enough
+#: signal to call it noise rather than just new.
+USAGE_IGNORED_MIN_OFFERED = 3
+
+#: Engagement rate (engaged / offered) below which a push feature that has fired
+#: enough times is flagged "firing but ignored" — a candidate to retune or mute.
+USAGE_IGNORED_RATE = 0.15
+
+#: The pull surfaces (things you open / invoke, not module nudges) the usage view
+#: measures, so one you've never opened still shows up as dormant rather than
+#: silently missing. Names match :data:`prefrontal.webhooks.usage.PULL_SURFACES`
+#: and the CLI pull map.
+PULL_FEATURES: tuple[str, ...] = (
+    "dashboard", "stats", "panic", "briefing", "balance", "profile",
+    "encouragement", "clarify", "calendar", "review", "household", "projects",
+    "self_care", "scheduling", "modules", "trip_tracking",
+)
+
 
 def _ratio_summary(pairs: list[float]) -> dict[str, Any]:
     """Median over/under ratio for a list of actual/predicted ratios (or empty)."""
@@ -280,6 +302,83 @@ def _chores(store: MemoryStore) -> dict[str, Any]:
     }
 
 
+def _feature_usage(store: MemoryStore) -> dict[str, Any]:
+    """Which features you lean on, which fire-and-get-ignored, which lie dormant.
+
+    Joins the ``feature_events`` rollup (what was offered/engaged/invoked over the
+    window) against the *universe* of features that could have shown up — every
+    enabled module plus the known pull surfaces — so a feature that never fired is
+    visible as **dormant** rather than merely absent. Each feature is bucketed:
+
+    - ``using`` — you engage with it, or you open it;
+    - ``ignored`` — a push feature that fires often but you rarely act on
+      (a candidate to retune or mute);
+    - ``dormant`` — nothing offered, engaged, or invoked in the window.
+
+    Pure and model-free like the rest of this module. Safe before any usage event
+    exists (everything is dormant) and independent of ``prefrontal learn``.
+    """
+    from prefrontal.modules.registry import enabled_modules
+
+    rows = {r["feature"]: r for r in store.feature_usage_rollup(USAGE_WINDOW_DAYS)}
+    push = {m.key for m in enabled_modules()}
+    universe = push | set(PULL_FEATURES) | set(rows)
+
+    now = utcnow()
+    features: list[dict[str, Any]] = []
+    for name in sorted(universe):
+        row = rows.get(name, {})
+        offered = int(row.get("offered") or 0)
+        engaged = int(row.get("engaged") or 0)
+        invoked = int(row.get("invoked") or 0)
+        total = offered + engaged + invoked
+        last_used = row.get("last_used")
+        days_ago = None
+        if last_used:
+            try:
+                # SQLite CURRENT_TIMESTAMP and utcnow() are both naive UTC.
+                seen = datetime.strptime(last_used, "%Y-%m-%d %H:%M:%S")
+                days_ago = max(0, (now - seen).days)
+            except ValueError:
+                days_ago = None
+        rate = round(engaged / offered, 2) if offered else None
+        kind = "push" if name in push else "pull"
+
+        if total == 0:
+            bucket = "dormant"
+        elif (
+            kind == "push"
+            and offered >= USAGE_IGNORED_MIN_OFFERED
+            and rate is not None
+            and rate < USAGE_IGNORED_RATE
+        ):
+            bucket = "ignored"
+        else:
+            bucket = "using"
+
+        features.append({
+            "feature": name,
+            "kind": kind,
+            "offered": offered,
+            "engaged": engaged,
+            "invoked": invoked,
+            "engagement_rate": rate,
+            "last_used": last_used,
+            "days_ago": days_ago,
+            "bucket": bucket,
+        })
+
+    # Most-active first within the page's natural reading order (using → ignored →
+    # dormant is applied in the template); here sort by recent activity so the
+    # busiest features head each group.
+    features.sort(key=lambda f: (f["offered"] + f["engaged"] + f["invoked"]), reverse=True)
+    summary = {
+        b: sum(1 for f in features if f["bucket"] == b)
+        for b in ("using", "ignored", "dormant")
+    }
+    return {"window_days": USAGE_WINDOW_DAYS, "features": features, "summary": summary}
+
+
 def build_stats(store: MemoryStore) -> dict[str, Any]:
     """Assemble the Insights payload from the (scoped) user's episodes.
 
@@ -287,9 +386,10 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
         store: A user-scoped :class:`MemoryStore`.
 
     Returns:
-        ``{time_estimation, follow_through, channels, self_care, counts}`` — see
-        the module docstring. All fields are JSON-serializable and safe on an
-        empty history (counts are 0, ratios/rates are ``None``).
+        ``{time_estimation, follow_through, channels, self_care, feature_usage,
+        chores, counts}`` — see the module docstring. All fields are
+        JSON-serializable and safe on an empty history (counts are 0, ratios/rates
+        are ``None``).
     """
     episodes = store.all_episodes()
     return {
@@ -297,6 +397,7 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
         "follow_through": _follow_through(episodes),
         "channels": _channels(episodes),
         "self_care": _self_care(store),
+        "feature_usage": _feature_usage(store),
         "chores": _chores(store),
         "counts": {"episodes": len(episodes)},
     }

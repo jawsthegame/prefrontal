@@ -272,6 +272,21 @@ also defines:
   the widget/dashboard can surface "the last thing Prefrontal told you" and a
   missed push stays visible. An optional `expires_at` gives a nudge a TTL, so a
   stale "leave now" stops showing once its moment has passed.
+- **`feature_events`** — the append-only feature-usage stream behind the "what am
+  I using, what am I not?" loop (`prefrontal/memory/repos/feature_usage.py`,
+  surfaced on `/stats`). One row per time a feature was **offered** to you (a
+  coaching nudge fired — stamped in `record_fired` with the `Cue`'s `module` +
+  `intervention`, otherwise only ever in memory), **engaged** with (a one-tap
+  action / iOS Shortcut — `apply_nudge_action` / `POST /webhooks/shortcut`), or
+  **invoked** by you (a pull surface opened — one FastAPI middleware for the
+  dashboard/panic/briefing/… routes, and a hook in the `prefrontal` CLI). Columns:
+  `feature` (module key or pull-surface name), `intervention` (the declared
+  `Intervention.name` for a push feature, else NULL), `event`
+  (`offered`/`engaged`/`invoked`), `source`, `ref`. Deliberately separate from
+  `episodes` — this is meta-telemetry about *which behaviors you lean on*, not a
+  behavioral outcome the learning loop trains on. Every write is best-effort and
+  never blocks the thing it records. `feature_usage_rollup` joins it against the
+  module registry so a *never-fired* feature still shows as dormant.
 - **`proposals`** — LLM-as-sensor candidates (`prefrontal/sensor.py`): per-user
   rows with a `kind` (`state`/`episode`), a JSON `payload`, a `rationale`, a
   `source` (`llm_inferred`), and a `status` (`pending`/`accepted`/`rejected`).

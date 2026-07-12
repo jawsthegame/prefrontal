@@ -83,6 +83,20 @@
   .spark { display: flex; gap: 2px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap; }
   .spark .tick { width: 9px; height: 20px; border-radius: 2px; }
 
+  /* feature-usage groups (leaning on / ignored / dormant) */
+  .ugroup { margin: 14px 0 0; }
+  .ugroup:first-child { margin-top: 4px; }
+  .ugroup .gh { font-size: 12px; font-weight: 700; letter-spacing: .3px; margin: 0 0 6px;
+    display: flex; align-items: center; gap: 7px; }
+  .ugroup .gh .gd { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+  .ugroup .gh .gn { color: var(--muted); font-weight: 600; }
+  .feat { display: flex; align-items: baseline; gap: 8px; margin: 5px 0; font-size: 14px; }
+  .feat .fn { font-weight: 600; text-transform: capitalize; }
+  .feat .fm { flex: 1; color: var(--muted); font-size: 12.5px;
+    font-variant-numeric: tabular-nums; }
+  .feat .ft { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .feat.dorm .fn { color: var(--muted); font-weight: 500; }
+
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
 
   #gate { position: fixed; inset: 0; background: var(--bg); display: none;
@@ -149,6 +163,12 @@
     <p class="label">Channel responsiveness</p>
     <p class="sub">Which nudge channels you actually answer.</p>
     <div id="channels-body"></div>
+  </section>
+
+  <section class="card" id="c-usage">
+    <p class="label">Feature usage</p>
+    <p class="sub">What you lean on, what fires and gets ignored, and what's gone quiet — last 30 days.</p>
+    <div id="usage-body"></div>
   </section>
 
   <section class="card" id="c-selfcare" style="display:none">
@@ -371,6 +391,60 @@ function renderChoreStats(ch) {
   $("#chorestats-body").innerHTML = html;
 }
 
+// Feature-usage groups, in reading order, with their headline colour + copy.
+const USAGE_GROUPS = [
+  { key: "using",   label: "Leaning on",        color: "var(--good)",
+    empty: "Nothing engaged yet." },
+  { key: "ignored", label: "Firing but ignored", color: "var(--warn)",
+    empty: "" },
+  { key: "dormant", label: "Dormant",           color: "var(--muted)",
+    empty: "" },
+];
+
+function featMeta(f) {
+  // The count line that best explains why a feature is where it is.
+  const bits = [];
+  if (f.offered) {
+    const rate = f.engagement_rate == null ? "" : ` · ${pct(f.engagement_rate)}% acted on`;
+    bits.push(`offered ${f.offered}${rate}`);
+  }
+  if (f.engaged && !f.offered) bits.push(`engaged ${f.engaged}×`);
+  if (f.invoked) bits.push(`opened ${f.invoked}×`);
+  return bits.join(" · ");
+}
+
+function ago(f) {
+  if (f.days_ago == null) return "never";
+  if (f.days_ago === 0) return "today";
+  if (f.days_ago === 1) return "yesterday";
+  return `${f.days_ago}d ago`;
+}
+
+function renderFeatureUsage(u) {
+  if (!u || !u.features || !u.features.length) {
+    $("#usage-body").innerHTML = `<p class="empty">No usage recorded yet — this fills in as features fire and you use them.</p>`;
+    return;
+  }
+  const s = u.summary || {};
+  let html = `<div class="hero"><span class="n">${s.using || 0}</span>
+    <span class="u">in active use</span><span style="flex:1"></span>
+    <span class="u">${s.ignored || 0} ignored · ${s.dormant || 0} dormant</span></div>`;
+  for (const g of USAGE_GROUPS) {
+    const rows = u.features.filter((f) => f.bucket === g.key);
+    if (!rows.length) continue;
+    html += `<div class="ugroup"><p class="gh"><span class="gd" style="background:${g.color}"></span>` +
+      `${esc(g.label)} <span class="gn">${rows.length}</span></p>`;
+    html += rows.map((f) =>
+      `<div class="feat${f.bucket === "dormant" ? " dorm" : ""}">
+        <span class="fn">${esc(f.feature.replace(/_/g, " "))}</span>
+        <span class="fm">${esc(featMeta(f))}</span>
+        <span class="ft">${esc(ago(f))}</span></div>`
+    ).join("");
+    html += `</div>`;
+  }
+  $("#usage-body").innerHTML = html;
+}
+
 async function load() {
   $("#status").textContent = "updating…";
   let data;
@@ -386,6 +460,7 @@ async function load() {
   renderTime(data.time_estimation);
   renderFollow(data.follow_through);
   renderChannels(data.channels);
+  renderFeatureUsage(data.feature_usage);
   renderSelfCare(data.self_care);
   renderChoreStats(data.chores);
   const n = (data.counts || {}).episodes || 0;

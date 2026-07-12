@@ -3794,6 +3794,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: CLI subcommand → the feature invoking it records, for the usage loop's
+#: ``invoked`` half. Only the *pull* commands the operator runs to get value
+#: (not the engine ticks / provisioning / write commands), and only single-user
+#: runs (an ``--all-users`` cron fan-out isn't "me using a feature").
+_CLI_PULL_FEATURES = {
+    "panic": "panic",
+    "briefing": "briefing",
+    "balance": "balance",
+    "encourage": "encouragement",
+    "open-day": "encouragement",
+    "fit": "scheduling",
+    "profile": "profile",
+    "modules": "modules",
+    "clarify": "clarify",
+}
+
+
+def _record_cli_invocation(args: argparse.Namespace) -> None:
+    """Best-effort ``invoked`` stamp for a pull command (never raises).
+
+    Reproduces the same db-path + user resolution the commands use, so the event
+    is scoped to exactly the user the command acted on. A telemetry failure must
+    never turn a successful command into an error, so everything is swallowed.
+    """
+    feature = _CLI_PULL_FEATURES.get(getattr(args, "command", None) or "")
+    if feature is None or getattr(args, "all_users", False):
+        return
+    try:
+        settings = get_settings()
+        db_path = getattr(args, "db_path", None) or settings.db_path
+        with MemoryStore.open(db_path) as unscoped:
+            store = _resolve_user_store(unscoped, getattr(args, "user", None))
+            store.record_feature_event(feature, "invoked", source="cli")
+    except (Exception, SystemExit):  # noqa: BLE001 — telemetry is best-effort
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Program entry point.
 
@@ -3806,7 +3843,10 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    rc = args.func(args)
+    if rc == 0:
+        _record_cli_invocation(args)
+    return rc
 
 
 if __name__ == "__main__":  # pragma: no cover
