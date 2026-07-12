@@ -823,6 +823,17 @@ def run_coaching_tick(
 
     now = now or utcnow()
     modules = enabled_modules(settings)
+    # Per-user mute (the usage loop's "act on it" half): a module the user muted
+    # from the weekly usage nudge is dropped from the whole tick — it offers no
+    # cues, provides no protection, and records no `offered` events — without
+    # touching global config. Best-effort read so a store without the repo (older
+    # test doubles) still runs the tick.
+    try:
+        muted = store.muted_features()
+    except Exception:  # noqa: BLE001 — mute is a convenience, never a tick blocker
+        muted = set()
+    if muted:
+        modules = [m for m in modules if m.key not in muted]
     # Close last round's channel outcomes (taps clear their own markers, so what's
     # swept really went unanswered). Engine-native; a module's own pre-collection
     # housekeeping runs through its before_collect hook below.

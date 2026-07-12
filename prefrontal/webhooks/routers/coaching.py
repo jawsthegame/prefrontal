@@ -152,6 +152,28 @@ def build_router(services: RouterServices) -> APIRouter:
             ]
         }
 
+    @router.post("/webhooks/usage/check", tags=["coaching"])
+    def usage_check(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Run the weekly feature-usage nudge — the "act on it" half of the loop.
+
+        Poll this ~daily like the other ``*/check`` sweeps; it self-limits to at
+        most one nudge per ISO week. When a coaching module keeps firing but you
+        rarely act on it, it delivers one push with one-tap **Mute** / **Keep**
+        buttons and stashes the pending target those buttons resolve. Returns the
+        small ``run_usage_check`` report (what, if anything, was sent).
+        """
+        # Lazy import: prefrontal.usage → delivery → webhooks.notify pulls the app
+        # package, so importing it at module scope would cycle during bootstrap.
+        from prefrontal.usage import run_usage_check
+
+        return run_usage_check(
+            ctx.store,
+            settings=resolved_settings,
+            handle=ctx.user.get("handle") or "",
+        )
+
     @router.post("/webhooks/coach/ack", tags=["coaching"])
     async def coach_ack(
         request: Request,

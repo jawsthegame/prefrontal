@@ -1374,6 +1374,81 @@ def _cmd_balance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_usage(args: argparse.Namespace) -> int:
+    """Feature-usage loop: list usage, mute/un-mute a module, or run the weekly nudge.
+
+    - ``list`` — the /stats buckets (leaning on / firing but ignored / dormant),
+      plus which modules are muted.
+    - ``mute <feature>`` / ``unmute <feature>`` — silence a module's nudges (or
+      turn them back on) for this user.
+    - ``check`` — run the weekly usage nudge now (``--deliver`` to actually send;
+      otherwise a dry run that only reports what it would send).
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``usage_action``,
+            and (for mute/unmute) ``feature``, (for check) ``deliver``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.stats import _feature_usage
+    from prefrontal.usage import run_usage_check
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        handle = next(
+            (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id),
+            "",
+        )
+        action = args.usage_action
+
+        if action in ("mute", "unmute"):
+            store.set_feature_muted(args.feature, action == "mute")
+            verb = "Muted" if action == "mute" else "Un-muted"
+            now_muted = ", ".join(sorted(store.muted_features())) or "(none)"
+            print(f"{verb} {args.feature}. Now muted: {now_muted}")
+            return 0
+
+        if action == "check":
+            report = run_usage_check(
+                store, settings=settings, handle=handle, deliver=args.deliver
+            )
+            if not report.get("feature"):
+                print(f"No nudge: {report.get('reason', 'nothing to do')}.")
+                return 0
+            verb = "Delivered" if report.get("delivered") else "Would nudge"
+            print(
+                f"{verb}: “{report['feature']}” (offered {report['offered']}×, "
+                f"acted on {report['engaged']}). Reply Mute/Keep on the push."
+            )
+            return 0
+
+        # list
+        fu = _feature_usage(store)
+        s = fu["summary"]
+        print(
+            f"Feature usage (last {fu['window_days']}d): "
+            f"{s['using']} in use · {s['ignored']} ignored · "
+            f"{s['dormant']} dormant · {s['muted']} muted"
+        )
+        for f in fu["features"]:
+            if not (f["offered"] or f["engaged"] or f["invoked"] or f["muted"]):
+                continue
+            tag = {"using": "✓", "ignored": "⚠", "dormant": "·"}[f["bucket"]]
+            mute = " 🔕" if f["muted"] else ""
+            bits = []
+            if f["offered"]:
+                r = f["engagement_rate"]
+                rate = "" if r is None else f" ({round(r * 100)}% acted on)"
+                bits.append(f"offered {f['offered']}{rate}")
+            if f["invoked"]:
+                bits.append(f"opened {f['invoked']}×")
+            print(f"  {tag} {f['feature']:<18} {', '.join(bits)}{mute}")
+        return 0
+
+
 def _cmd_body_double(args: argparse.Namespace) -> int:
     """Start a timed start-together (body-double) sprint on a stalled todo.
 
@@ -3488,6 +3563,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually publish each fired decision via ntfy/Pushover/TTS (else just print).",
     )
     p_coach.set_defaults(func=_cmd_coach)
+
+    p_usage = sub.add_parser(
+        "usage",
+        help="Feature-usage loop: list usage, mute/un-mute a module, or run the weekly nudge.",
+    )
+    p_usage.add_argument("--db-path", default=None, help="Override the database path.")
+    p_usage.add_argument("--user", default=None, help="Handle of the user to act on.")
+    usage_sub = p_usage.add_subparsers(dest="usage_action", required=True)
+    usage_sub.add_parser("list", help="Show usage buckets (using/ignored/dormant) + muted.")
+    u_mute = usage_sub.add_parser("mute", help="Mute a module's nudges for this user.")
+    u_mute.add_argument("feature", help="Module key to mute (e.g. location_anchor).")
+    u_unmute = usage_sub.add_parser("unmute", help="Turn a muted module back on.")
+    u_unmute.add_argument("feature", help="Module key to un-mute.")
+    u_check = usage_sub.add_parser(
+        "check", help="Run the weekly usage nudge now (once/week; --deliver to send)."
+    )
+    u_check.add_argument(
+        "--deliver",
+        action="store_true",
+        help="Actually send the push (else a dry run that only reports).",
+    )
+    p_usage.set_defaults(func=_cmd_usage)
 
     p_panic = sub.add_parser(
         "panic", help="Overwhelmed? Triage what's on fire now + one first step."
