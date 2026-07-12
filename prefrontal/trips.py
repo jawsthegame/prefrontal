@@ -22,6 +22,7 @@ category vocabulary, and the episode-recording helpers. The HTTP surface
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from prefrontal.geo import DEFAULT_HOME_RADIUS_M, haversine_m
@@ -114,6 +115,19 @@ _REFLECTION_CUES: tuple[tuple[tuple[str, ...], str], ...] = (
     ),
 )
 
+#: The cue groups above, precompiled to word-boundary regexes so a cue matches a
+#: whole word/phrase — not a fragment inside an unrelated word ("late" in
+#: "related", "fast" in "breakfast", "good" in "goodbye", "a bit" in "a bitter").
+#: Trailing-space cues ("blew ", "ok ") strip cleanly since ``\b`` supplies the
+#: boundary. Compiled once at import; matching is then a single regex per group.
+_REFLECTION_CUE_RES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (
+        re.compile(r"\b(?:" + "|".join(re.escape(k.strip()) for k in keywords) + r")\b"),
+        outcome,
+    )
+    for keywords, outcome in _REFLECTION_CUES
+)
+
 REFLECTION_SYSTEM_PROMPT = (
     "You read a short, honest note about how a trip/errand went and classify it "
     "as exactly one word: SUCCESS (it went to plan — on time, no drift), PARTIAL "
@@ -135,8 +149,8 @@ def heuristic_reflection_outcome(text: str) -> str | None:
         (most-negative first), or ``None`` when nothing matches.
     """
     lowered = (text or "").lower()
-    for keywords, outcome in _REFLECTION_CUES:
-        if any(keyword in lowered for keyword in keywords):
+    for pattern, outcome in _REFLECTION_CUE_RES:
+        if pattern.search(lowered):
             return outcome
     return None
 
@@ -147,7 +161,7 @@ def parse_outcome_reply(reply: str) -> str | None:
     if not lowered:
         return None
     for word, outcome in _OUTCOME_WORDS.items():
-        if word in lowered:
+        if re.search(rf"\b{re.escape(word)}\b", lowered):  # "miss" not inside "dismiss"
             return outcome
     return None
 

@@ -88,16 +88,19 @@ def parse_kind_reply(reply: str) -> str | None:
     """Extract ``self``/``child``/``fyi`` from a model reply, or ``None`` if unclear.
 
     The reply is meant to be a single word, but we tolerate surrounding prose:
-    whichever label token appears *earliest* wins. The tokens don't overlap
-    (none is a substring of another), so first-occurrence is unambiguous.
+    whichever label token appears *earliest* wins. Matched on **word boundaries**
+    so a label isn't found inside an unrelated word — e.g. "self" in "yourself"
+    or "child" in "children" — which a bare substring search would falsely hit
+    (a reply like "it's FYI, not something you'd attend yourself" must read as
+    ``fyi``, not ``self``).
     """
     lowered = (reply or "").strip().lower()
     if not lowered:
         return None
     positions = {
-        kind: at
+        kind: m.start()
         for kind in (KIND_SELF, KIND_CHILD, KIND_FYI)
-        if (at := lowered.find(kind)) != -1
+        if (m := re.search(rf"\b{re.escape(kind)}\b", lowered)) is not None
     }
     if not positions:
         return None

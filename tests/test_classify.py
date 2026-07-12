@@ -40,6 +40,16 @@ def test_parse_kind_reply_reads_any_label():
     assert parse_kind_reply("maybe?") is None
 
 
+def test_parse_kind_reply_matches_whole_words_not_fragments():
+    """A label embedded in an unrelated word must not match (word boundaries)."""
+    # 'self' inside 'yourself' and 'child' inside 'children' are not labels.
+    assert parse_kind_reply("something you'd handle yourself") is None
+    assert parse_kind_reply("bring the children along") is None
+    # The bug this guards: a clear FYI reply that merely contains 'yourself'
+    # used to match 'self' first and misread as self.
+    assert parse_kind_reply("It's FYI — not something you'd attend yourself") == "fyi"
+
+
 def test_roster_child_match_word_boundary_and_case():
     assert roster_child_match("Sam — dentist", ["Sam"]) is True
     assert roster_child_match("SAM dentist", ["Sam"]) is True          # case-insensitive
