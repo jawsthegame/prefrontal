@@ -525,18 +525,30 @@ def retriage_messages(
             elif dry_run:
                 summary.todos_created += 1
             else:
-                todo_title = _todo_title(item, verdict)
-                todo_notes = _todo_notes(item, verdict)
-                project_id = suggest_project(
-                    todo_title, todo_notes, store.active_projects(), client=client
+                # Route through the shared triage pipeline, exactly as
+                # ingest_messages does, so a newly-flagged todo is created *and*
+                # writes a triage_log row — otherwise GET /triage/recent would be
+                # inconsistent depending on whether a todo came from ingest or
+                # retriage. `apply` is idempotent on (source, external_id): if this
+                # message was already logged, it returns the prior ref instead of
+                # double-logging.
+                from prefrontal.triage import apply as triage_apply
+
+                todo_payload = _mail_todo_payload(
+                    store, item, verdict, client=client, domain=domain
                 )
-                todo_id = store.add_todo(
-                    todo_title,
-                    notes=todo_notes,
-                    priority=verdict.priority,
-                    domain=domain,
-                    project_id=project_id,
+                result = triage_apply(
+                    _mail_signal(item, verdict, row["account"]),
+                    _mail_decision(
+                        verdict, matched=False, route="todo", todo_payload=todo_payload
+                    ),
+                    store,
+                    n8n=None,
+                    client=None,  # payload is pre-built; no augmentation needed
                 )
+                routed_id = _todo_id_from_ref(result.get("routed_ref"))
+                if routed_id is not None:
+                    todo_id = routed_id
                 summary.todos_created += 1
 
         if (
