@@ -263,6 +263,7 @@ def build_router(services: RouterServices) -> APIRouter:
             commitments, cur_lat, cur_lon,
             bias=dep["bias"], speed_kmh=dep["speed_kmh"],
             road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+            pad_fraction=dep["pad_fraction"],
         )
         delivery = _delivery_fields(memory)
 

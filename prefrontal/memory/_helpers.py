@@ -31,10 +31,13 @@ DEFAULT_COACHING_STATE: tuple[tuple[str, str, str], ...] = (
     ("active_escalation_path", "notification,sound,tts", "explicit"),
     # Departure-reminder tuning (see prefrontal.modules.departure). Travel time
     # is estimated locally: straight-line distance * road_factor / speed, then
-    # padded by time_estimation_bias and a prep buffer.
+    # padded by time_estimation_bias, an optional distance-relative safety margin
+    # (travel_pad_fraction), and a flat prep buffer. travel_pad_fraction is a
+    # fraction of the drive (0.15 = +15%), so it scales with distance; 0 = off.
     ("travel_speed_kmh", "30", "inferred"),
     ("travel_road_factor", "1.3", "inferred"),
     ("departure_prep_minutes", "5", "inferred"),
+    ("travel_pad_fraction", "0", "inferred"),
     ("departure_heads_up_minutes", "30", "inferred"),
     ("departure_soon_minutes", "10", "inferred"),
     # Opt-in network geocoding (Nominatim) for commitment destinations. Off by

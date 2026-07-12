@@ -729,6 +729,7 @@ class LocationAnchorModule(Module):
             commitments, ctx.current_lat, ctx.current_lon,
             bias=dep["bias"], speed_kmh=dep["speed_kmh"],
             road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+            pad_fraction=dep["pad_fraction"],
         )
         return [
             (

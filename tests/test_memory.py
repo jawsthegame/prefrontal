@@ -27,6 +27,7 @@ SEED_KEYS = {
     "travel_speed_kmh",
     "travel_road_factor",
     "departure_prep_minutes",
+    "travel_pad_fraction",
     "departure_heads_up_minutes",
     "departure_soon_minutes",
     "geocoding_enabled",
