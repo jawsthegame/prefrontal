@@ -706,7 +706,14 @@ def test_retriage_all_can_newly_flag_and_create_todo(store):
     assert summary.newly_flagged == 1
     assert summary.todos_created == 1
     assert len(store.mail_needing_action()) == 1
-    assert len(store.open_todos()) == 1
+    (todo,) = store.open_todos()
+    # Regression: the retriage-created todo is routed through the shared pipeline,
+    # so it appears in triage_log like an ingest-created one (it previously wrote
+    # no row, leaving GET /triage/recent inconsistent by origin). The message was
+    # no-action at ingest, so this is the only triage_log row.
+    (row,) = store.recent_triage()
+    assert (row["source"], row["kind"], row["route"]) == ("mail", "action", "todo")
+    assert row["routed_ref"] == f"todo:{todo['id']}"
 
 
 # -- webhook routes ----------------------------------------------------------
