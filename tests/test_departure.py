@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
 from prefrontal.departure import (
+    adjusted_travel_minutes,
     attribute_departure,
     build_departure_message,
     classify_departure,
@@ -132,6 +133,69 @@ def test_plan_departure_applies_bias_to_travel():
         now=NOW,
     )
     assert biased.travel_minutes == pytest.approx(base.travel_minutes * 2, rel=1e-6)
+
+
+def test_adjusted_travel_minutes_pad_scales_with_distance():
+    """The pad is a fraction of travel time, so its absolute add grows with distance."""
+    near = estimate_travel_minutes(5000, speed_kmh=30, road_factor=1.0)
+    far = estimate_travel_minutes(20000, speed_kmh=30, road_factor=1.0)
+    padded_near = adjusted_travel_minutes(
+        5000, speed_kmh=30, road_factor=1.0, pad_fraction=0.15
+    )
+    padded_far = adjusted_travel_minutes(
+        20000, speed_kmh=30, road_factor=1.0, pad_fraction=0.15
+    )
+    # +15% each, so the longer trip gets four times the absolute cushion.
+    assert padded_near == pytest.approx(near * 1.15)
+    assert padded_far == pytest.approx(far * 1.15)
+    assert (padded_far - far) == pytest.approx((padded_near - near) * 4, rel=1e-6)
+
+
+def test_adjusted_travel_minutes_pad_composes_with_bias_and_never_shrinks():
+    """Pad multiplies on top of bias; a negative pad is floored (never trims)."""
+    raw = estimate_travel_minutes(10000, speed_kmh=30, road_factor=1.3)
+    both = adjusted_travel_minutes(
+        10000, speed_kmh=30, road_factor=1.3, bias=1.4, pad_fraction=0.2
+    )
+    assert both == pytest.approx(raw * 1.4 * 1.2)
+    floored = adjusted_travel_minutes(10000, pad_fraction=-0.5)
+    assert floored == pytest.approx(adjusted_travel_minutes(10000, pad_fraction=0.0))
+
+
+def test_plan_departure_pad_pushes_leave_by_earlier():
+    """A travel pad lengthens the buffer, so leave-by moves earlier than unpadded."""
+    unpadded = plan_departure(
+        _commit("2026-06-29 13:00:00", dest=(0.1, 0.0)),
+        current_lat=0.0,
+        current_lon=0.0,
+        prep_minutes=0.0,
+        pad_fraction=0.0,
+        now=NOW,
+    )
+    padded = plan_departure(
+        _commit("2026-06-29 13:00:00", dest=(0.1, 0.0)),
+        current_lat=0.0,
+        current_lon=0.0,
+        prep_minutes=0.0,
+        pad_fraction=0.25,
+        now=NOW,
+    )
+    # travel_minutes is rounded to 0.1, so compare with a rounding-width tolerance.
+    assert padded.travel_minutes == pytest.approx(unpadded.travel_minutes * 1.25, abs=0.1)
+    # More travel buffer ⇒ must leave earlier ⇒ less time until leave-by.
+    assert padded.minutes_until_leave < unpadded.minutes_until_leave
+
+
+def test_travel_leads_applies_pad_fraction():
+    """The pad reaches the cascade lead map too, on the distance-bearing legs."""
+    commits = [
+        {"id": 3, "start_at": "2026-07-10 11:00:00", "dest_lat": 0.5, "dest_lon": 0.5},
+    ]
+    base = travel_leads(commits, 0.0, 0.0, prep_minutes=5.0, pad_fraction=0.0)
+    padded = travel_leads(commits, 0.0, 0.0, prep_minutes=5.0, pad_fraction=0.2)
+    # Prep (5) is flat; only the travel component is scaled by the pad. Leads are
+    # rounded to 0.1, so allow a rounding-width tolerance.
+    assert (padded[3] - 5.0) == pytest.approx((base[3] - 5.0) * 1.2, abs=0.1)
 
 
 def test_plan_departure_falls_back_to_lead_without_coords():

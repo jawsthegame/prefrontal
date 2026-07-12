@@ -8,8 +8,10 @@ decides when to nudge the user out the door.
 
 Travel time is a deliberately crude but **fully local** estimate: straight-line
 (haversine) distance × a road-factor ÷ an assumed speed, then padded by the same
-``time_estimation_bias`` the rest of the system learns and a small prep buffer —
-so it self-corrects as the user logs real departures, no routing API required.
+``time_estimation_bias`` the rest of the system learns, an optional
+distance-relative safety margin (``travel_pad_fraction`` — a percentage of the
+drive, so longer trips get more cushion), and a small prep buffer — so it
+self-corrects as the user logs real departures, no routing API required.
 When a commitment has no coordinates (or there is no recent location), it falls
 back to the commitment's static ``lead_minutes``.
 
@@ -69,6 +71,16 @@ DEFAULT_ROAD_FACTOR = 1.3
 #: Minutes added to the travel estimate for getting out the door / parking.
 DEFAULT_PREP_MINUTES = 5.0
 
+#: Distance-relative safety padding on the travel estimate, as a fraction of the
+#: estimated travel time (which is itself proportional to distance). ``0.15``
+#: means "pad the drive by 15%", so a 40-minute trip gains 6 minutes and a
+#: 10-minute one only 1.5 — the cushion grows with the distance, unlike the flat
+#: ``prep_minutes``. Kept separate from ``time_estimation_bias`` (which is
+#: *learned* and self-correcting) so an explicit safety margin never pollutes the
+#: learned multiplier. Tunable via the ``travel_pad_fraction`` coaching-state key;
+#: defaults to ``0.0`` (off) so it changes nothing until set.
+DEFAULT_TRAVEL_PAD_FRACTION = 0.0
+
 #: Leave-by horizons (minutes) for the two pre-departure nudge levels.
 DEFAULT_HEADS_UP_MINUTES = 30.0
 DEFAULT_SOON_MINUTES = 10.0
@@ -121,6 +133,27 @@ def estimate_travel_minutes(
     return road_m / (speed_kmh * 1000.0 / 60.0)
 
 
+def adjusted_travel_minutes(
+    distance_m: float,
+    *,
+    speed_kmh: float = DEFAULT_TRAVEL_SPEED_KMH,
+    road_factor: float = DEFAULT_ROAD_FACTOR,
+    bias: float = 1.0,
+    pad_fraction: float = DEFAULT_TRAVEL_PAD_FRACTION,
+) -> float:
+    """Travel estimate with the learned bias and the distance-relative safety pad.
+
+    The raw geometric estimate (:func:`estimate_travel_minutes`) times ``bias``
+    (the learned ``time_estimation_bias``) times ``1 + pad_fraction`` (an explicit
+    safety cushion that scales with the trip). Both departure surfaces route
+    through here so a commitment is planned and scored against the same padded
+    estimate. A non-positive ``pad_fraction`` is floored at ``0`` — padding only
+    ever lengthens the estimate, it never trims it.
+    """
+    raw = estimate_travel_minutes(distance_m, speed_kmh, road_factor)
+    return raw * bias * (1.0 + max(pad_fraction, 0.0))
+
+
 def travel_leads(
     commitments: list[dict[str, Any]],
     current_lat: float | None,
@@ -130,16 +163,18 @@ def travel_leads(
     speed_kmh: float = DEFAULT_TRAVEL_SPEED_KMH,
     road_factor: float = DEFAULT_ROAD_FACTOR,
     prep_minutes: float = DEFAULT_PREP_MINUTES,
+    pad_fraction: float = DEFAULT_TRAVEL_PAD_FRACTION,
 ) -> dict[int, float]:
     """Effective per-commitment lead times from real travel along the day's chain.
 
     Walks the commitments in start order as a sequence of legs: from your current
     location to the first, then location-to-location between consecutive ones. For
-    each leg where both endpoints have coordinates, the lead is the bias-adjusted
-    travel estimate (:func:`estimate_travel_minutes`) plus a ``prep_minutes`` "out
-    the door" buffer — the same formula the departure reminder uses. Legs with an
-    unknown endpoint are omitted, so :func:`prefrontal.impact.cascade_impact` falls
-    back to their static ``lead_minutes``.
+    each leg where both endpoints have coordinates, the lead is the bias- and
+    pad-adjusted travel estimate (:func:`adjusted_travel_minutes`) plus a
+    ``prep_minutes`` "out the door" buffer — the same formula the departure
+    reminder uses. Legs with an unknown endpoint are omitted, so
+    :func:`prefrontal.impact.cascade_impact` falls back to their static
+    ``lead_minutes``.
 
     Returns a ``{commitment_id: minutes}`` map suitable for ``cascade_impact``'s
     ``lead_override``. Empty when nothing can be estimated (no location, or no
@@ -157,7 +192,13 @@ def travel_leads(
         cid = c.get("id")
         if prev is not None and dest is not None and cid is not None:
             distance_m = haversine_m(prev[0], prev[1], dest[0], dest[1])
-            travel = estimate_travel_minutes(distance_m, speed_kmh, road_factor) * bias
+            travel = adjusted_travel_minutes(
+                distance_m,
+                speed_kmh=speed_kmh,
+                road_factor=road_factor,
+                bias=bias,
+                pad_fraction=pad_fraction,
+            )
             leads[cid] = round(travel + prep_minutes, 1)
         # Advance the chain to this destination when we know it; an unknown
         # location leaves ``prev`` as the last place we could pin down.
@@ -239,8 +280,8 @@ class DeparturePlan:
         commitment: The commitment dict.
         leave_by: UTC text — the latest you can leave and still arrive on time.
         minutes_until_leave: Minutes from now until ``leave_by`` (negative = late).
-        travel_minutes: Bias-adjusted travel estimate, or ``None`` when distance
-            could not be computed (fell back to ``lead_minutes``).
+        travel_minutes: Bias- and pad-adjusted travel estimate, or ``None`` when
+            distance could not be computed (fell back to ``lead_minutes``).
         basis: ``"distance"`` (estimated from coordinates), ``"lead"`` (used the
             commitment's static ``lead_minutes``), or ``"attend"`` (a fixed short
             lead — you're already where you'll attend, no travel).
@@ -266,6 +307,7 @@ def plan_departure(
     speed_kmh: float = DEFAULT_TRAVEL_SPEED_KMH,
     road_factor: float = DEFAULT_ROAD_FACTOR,
     prep_minutes: float = DEFAULT_PREP_MINUTES,
+    pad_fraction: float = DEFAULT_TRAVEL_PAD_FRACTION,
     heads_up_minutes: float = DEFAULT_HEADS_UP_MINUTES,
     soon_minutes: float = DEFAULT_SOON_MINUTES,
     work_lead_minutes: float = DEFAULT_WORK_LEAD_MINUTES,
@@ -282,7 +324,7 @@ def plan_departure(
       single reminder (level ``go``) once that lead is reached; ``basis`` is
       ``"attend"``. This is the "I'm already where I need to be" case.
     - **travel** (the default) — the leave-by is ``start − buffer``, where the
-      buffer is the bias-adjusted travel estimate plus a prep allowance when both
+      buffer is the bias- and pad-adjusted travel estimate plus a prep allowance when both
       the current location and the destination coordinates are known, otherwise
       the commitment's static ``lead_minutes``. It escalates
       ``heads_up`` → ``soon`` → ``go`` as the leave-by approaches.
@@ -296,6 +338,9 @@ def plan_departure(
         speed_kmh: Assumed average travel speed.
         road_factor: Straight-line → road-distance multiplier.
         prep_minutes: Minutes added to travel for getting out the door.
+        pad_fraction: Distance-relative safety padding on the travel estimate, as
+            a fraction of the estimated travel time (e.g. ``0.15`` = +15%). Grows
+            with the trip, unlike the flat ``prep_minutes``. ``0.0`` disables it.
         heads_up_minutes: Horizon for the ``heads_up`` level (travel mode).
         soon_minutes: Horizon for the ``soon`` level (travel mode).
         work_lead_minutes: Fixed lead for an attend-mode reminder.
@@ -324,7 +369,13 @@ def plan_departure(
             and dest_lon is not None
         ):
             distance_m = haversine_m(current_lat, current_lon, dest_lat, dest_lon)
-            travel = estimate_travel_minutes(distance_m, speed_kmh, road_factor) * bias
+            travel = adjusted_travel_minutes(
+                distance_m,
+                speed_kmh=speed_kmh,
+                road_factor=road_factor,
+                bias=bias,
+                pad_fraction=pad_fraction,
+            )
             buffer = travel + prep_minutes
             basis = "distance"
         else:
@@ -623,6 +674,9 @@ def departure_kwargs(store: MemoryStore) -> dict[str, Any]:
         "speed_kmh": store.get_float("travel_speed_kmh", DEFAULT_TRAVEL_SPEED_KMH),
         "road_factor": store.get_float("travel_road_factor", DEFAULT_ROAD_FACTOR),
         "prep_minutes": store.get_float("departure_prep_minutes", DEFAULT_PREP_MINUTES),
+        "pad_fraction": store.get_float(
+            "travel_pad_fraction", DEFAULT_TRAVEL_PAD_FRACTION
+        ),
         "heads_up_minutes": store.get_float(
             "departure_heads_up_minutes", DEFAULT_HEADS_UP_MINUTES
         ),

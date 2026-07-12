@@ -389,6 +389,7 @@ def _cascade_chain(
         loc["lon"] if loc else None,
         bias=dep["bias"], speed_kmh=dep["speed_kmh"],
         road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+        pad_fraction=dep["pad_fraction"],
     )
     risky = cascade_at_risk(cascade_impact(now, upcoming, lead_override=leads))
     if len(risky) < 2:

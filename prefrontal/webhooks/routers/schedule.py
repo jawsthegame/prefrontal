@@ -730,6 +730,7 @@ def build_router(services: RouterServices) -> APIRouter:
             commitments, current_lat, current_lon,
             bias=dep["bias"], speed_kmh=dep["speed_kmh"],
             road_factor=dep["road_factor"], prep_minutes=dep["prep_minutes"],
+            pad_fraction=dep["pad_fraction"],
         )
 
         chain = cascade_impact(free, commitments, lead_override=leads)
