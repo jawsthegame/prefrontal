@@ -34,6 +34,7 @@ Nothing here writes: it is pure read + compute, safe to poll.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -445,6 +446,7 @@ def find_availability(
     now: datetime,
     tz: str,
     awake_band: tuple[str, str] = ("06:00", "22:00"),
+    band_for_weekday: Callable[[int], tuple[str, str] | None] | None = None,
     limit: int = DEFAULT_SLOT_LIMIT,
 ) -> tuple[list[FreeWindow], int, int]:
     """Open windows that fit ``request``, given who's involved.
@@ -453,6 +455,11 @@ def find_availability(
     participants (:func:`constraint_commitments`), then subtracts them across the
     coming days' waking band with :func:`prefrontal.scheduling.find_slots`. The
     request's ``time_window`` narrows the daily band when set.
+
+    Per-weekday "available hours" arrive as ``band_for_weekday`` and supersede the
+    flat ``awake_band`` day-by-day — but an explicit ``time_window`` in the request
+    ("afternoons only") is the user's stated intent for *this* ask, so it wins and
+    the per-weekday schedule is not applied.
 
     Returns ``(slots, considered, ignored_fyi)`` — the open windows plus how many
     commitments blocked and how many FYI events were ignored (see
@@ -469,6 +476,7 @@ def find_availability(
         minutes=request.minutes,
         days=request.days,
         awake_band=band,
+        band_for_weekday=None if request.time_window else band_for_weekday,
         limit=limit,
     )
     return slots, len(blocking), ignored_fyi
@@ -482,6 +490,7 @@ def plan_availability(
     now: datetime | None = None,
     tz: str = "UTC",
     awake_band: tuple[str, str] = ("06:00", "22:00"),
+    band_for_weekday: Callable[[int], tuple[str, str] | None] | None = None,
     default_days: int = DEFAULT_SLOT_DAYS,
 ) -> AvailabilityPlan:
     """End-to-end: free text + a scoped store → a question or a list of open slots.
@@ -489,7 +498,8 @@ def plan_availability(
     Reads the user's upcoming commitments, interprets the ask
     (:func:`interpret_request`), and — when the ask is answerable — returns the
     fitting slots scoped to who's involved. When it isn't (no duration), returns
-    the clarifying question instead. Never writes.
+    the clarifying question instead. ``band_for_weekday`` carries the user's
+    per-weekday "available hours" through to :func:`find_availability`. Never writes.
     """
     now = now or utcnow()
     partner_names = known_partner_names(memory)
@@ -514,6 +524,7 @@ def plan_availability(
         now=now,
         tz=tz,
         awake_band=awake_band,
+        band_for_weekday=band_for_weekday,
     )
     return AvailabilityPlan(
         question=None,

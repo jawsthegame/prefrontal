@@ -4,7 +4,13 @@ Split from the webhooks schemas god-module (audit #408).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from prefrontal.scheduling import WEEKDAYS
+
+#: Regex for a zero-padded 24-hour ``HH:MM`` clock time. Zero-padding lets the
+#: start < end check be a plain string comparison (lexical == chronological).
+_HHMM_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
 
 
 class CalendarEvent(BaseModel):
@@ -200,3 +206,62 @@ class TravelPadding(BaseModel):
             "`percent`/`auto` are ignored — it toggles the setting only."
         ),
     )
+
+
+class DayAvailability(BaseModel):
+    """One weekday's availability in ``GET/POST /schedule/available-hours``.
+
+    An available day carries a within-day ``start``/``end`` waking band that the
+    slot-finder (and todo suggester) work inside for that weekday; an unavailable
+    day (``available=false``) yields no slots at all. ``start``/``end`` are kept
+    even when unavailable so toggling a day back on restores its last band.
+    """
+
+    available: bool = Field(
+        default=True,
+        description="Whether anything is scheduled on this weekday at all.",
+    )
+    start: str = Field(
+        default="09:00",
+        pattern=_HHMM_PATTERN,
+        description="Local start of the available window, `HH:MM` (24-hour).",
+    )
+    end: str = Field(
+        default="17:00",
+        pattern=_HHMM_PATTERN,
+        description="Local end of the available window, `HH:MM`; must be after `start`.",
+    )
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> DayAvailability:
+        # Only meaningful for an available day; an off day's band is inert. Both
+        # values are zero-padded HH:MM, so a string compare is chronological.
+        if self.available and self.start >= self.end:
+            raise ValueError("`end` must be later than `start` for an available day")
+        return self
+
+
+class AvailableHours(BaseModel):
+    """Body/response of ``/schedule/available-hours`` — the per-weekday schedule.
+
+    ``days`` maps weekday keys (`mon`…`sun`, the canonical
+    :data:`prefrontal.scheduling.WEEKDAYS`) to their :class:`DayAvailability`. A
+    write may be partial: only the weekdays present are updated, the rest keep
+    their stored value. A read always returns all seven.
+    """
+
+    days: dict[str, DayAvailability] = Field(
+        default_factory=dict,
+        description="Weekday (`mon`…`sun`) → that day's availability.",
+    )
+
+    @field_validator("days")
+    @classmethod
+    def _known_weekdays(cls, value: dict[str, DayAvailability]) -> dict[str, DayAvailability]:
+        unknown = sorted(set(value) - set(WEEKDAYS))
+        if unknown:
+            raise ValueError(
+                f"unknown weekday key(s): {', '.join(unknown)}; "
+                f"expected any of {', '.join(WEEKDAYS)}"
+            )
+        return value

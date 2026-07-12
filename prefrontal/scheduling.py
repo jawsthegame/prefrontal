@@ -18,6 +18,7 @@ Two modes:
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -126,6 +127,21 @@ DEFAULT_SLOT_DAYS = 7
 DEFAULT_SLOT_LIMIT = 24
 
 
+def _band_bounds(band: tuple[str, str]) -> tuple[int, int, int, int]:
+    """Split an ``("HH:MM", "HH:MM")`` waking band into ``(sh, sm, eh, em)``.
+
+    A wrapping (overnight) or unparseable band is meaningless as a waking window,
+    so it falls back to the full local day — slots are still found, never
+    overnight-only.
+    """
+    parsed = parse_window(f"{band[0]}-{band[1]}")
+    if parsed is None or parsed[0] >= parsed[1]:
+        parsed = (0, 24 * 60 - 1)
+    sh, sm = divmod(parsed[0], 60)
+    eh, em = divmod(parsed[1], 60)
+    return sh, sm, eh, em
+
+
 def find_slots(
     commitments: list[dict[str, Any]],
     now: datetime,
@@ -134,16 +150,23 @@ def find_slots(
     minutes: float,
     days: int = DEFAULT_SLOT_DAYS,
     awake_band: tuple[str, str] = ("06:00", "22:00"),
+    band_for_weekday: Callable[[int], tuple[str, str] | None] | None = None,
     default_event_minutes: float = DEFAULT_EVENT_MINUTES,
     limit: int = DEFAULT_SLOT_LIMIT,
 ) -> list[FreeWindow]:
     """Free windows of at least ``minutes`` across the next ``days`` local days.
 
     "Find me a 45-minute slot this week": each local calendar day contributes only
-    its waking band (``awake_band``, local ``HH:MM`` bounds), so an open slot is
-    never offered overnight; today's band is clamped to start no earlier than
-    ``now`` (a slot you can actually use). Within each day the busy commitments are
-    subtracted (:func:`free_windows`) and only gaps ``>= minutes`` survive.
+    its waking band (local ``HH:MM`` bounds), so an open slot is never offered
+    overnight; today's band is clamped to start no earlier than ``now`` (a slot you
+    can actually use). Within each day the busy commitments are subtracted
+    (:func:`free_windows`) and only gaps ``>= minutes`` survive.
+
+    The waking band per day comes from ``band_for_weekday`` when given — a resolver
+    mapping a Python weekday (0=Mon … 6=Sun) to that day's band, or ``None`` to mark
+    the whole day unavailable (no slots). This is how per-day "available hours"
+    supersede a single flat band. When ``band_for_weekday`` is ``None`` the flat
+    ``awake_band`` applies to every day, preserving the original behaviour.
 
     Args:
         commitments: Commitment dicts (``start_at`` + optional ``end_at``, UTC).
@@ -151,9 +174,12 @@ def find_slots(
         tz: IANA timezone for the local days / waking band (falls back to UTC).
         minutes: The slot length to look for — gaps shorter than this are dropped.
         days: How many local days to scan, starting today.
-        awake_band: ``("HH:MM", "HH:MM")`` local waking hours (non-wrapping); the
-            usual off-zone complement. A malformed or wrapping band falls back to
-            the whole day.
+        awake_band: ``("HH:MM", "HH:MM")`` local waking hours (non-wrapping) used
+            for every day when ``band_for_weekday`` is not given; the usual off-zone
+            complement. A malformed or wrapping band falls back to the whole day.
+        band_for_weekday: Optional per-weekday band resolver (0=Mon … 6=Sun) → the
+            day's band, or ``None`` to skip that day entirely. Overrides
+            ``awake_band`` when supplied.
         default_event_minutes: Assumed length for a commitment with no ``end_at``.
         limit: Cap on the number of slots returned (chronological, soonest first).
 
@@ -166,13 +192,7 @@ def find_slots(
         zone = ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
         zone = ZoneInfo("UTC")
-    band = parse_window(f"{awake_band[0]}-{awake_band[1]}")
-    # A wrapping (overnight) or unparseable band is meaningless as a waking window;
-    # fall back to the full local day so slots are still found, never overnight-only.
-    if band is None or band[0] >= band[1]:
-        band = (0, 24 * 60 - 1)
-    sh, sm = divmod(band[0], 60)
-    eh, em = divmod(band[1], 60)
+    flat_bounds = _band_bounds(awake_band) if band_for_weekday is None else None
     today_local = now.replace(tzinfo=timezone.utc).astimezone(zone).date()
 
     def _naive_utc(local_dt: datetime) -> datetime:
@@ -181,6 +201,14 @@ def find_slots(
     slots: list[FreeWindow] = []
     for offset in range(days):
         day = today_local + timedelta(days=offset)
+        if band_for_weekday is not None:
+            band = band_for_weekday(day.weekday())
+            if band is None:
+                continue  # the user marked this weekday unavailable
+            sh, sm, eh, em = _band_bounds(band)
+        else:
+            assert flat_bounds is not None  # set whenever band_for_weekday is None
+            sh, sm, eh, em = flat_bounds
         start_utc = _naive_utc(datetime(day.year, day.month, day.day, sh, sm, tzinfo=zone))
         end_utc = _naive_utc(datetime(day.year, day.month, day.day, eh, em, tzinfo=zone))
         if offset == 0:
@@ -490,6 +518,57 @@ def parse_window(spec: str | None) -> tuple[int, int] | None:
     return (start, end)
 
 
+#: Weekday keys for "available hours", indexed to match Python's
+#: :meth:`datetime.date.weekday` (0=Monday … 6=Sunday). This tuple is the single
+#: source of truth for the vocabulary shared by the storage layer, the
+#: ``/schedule/available-hours`` API schema, and both clients (web + iOS).
+WEEKDAYS: tuple[str, str, str, str, str, str, str] = (
+    "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+)
+#: Coaching-state key holding the per-weekday availability schedule as JSON. The
+#: stored value mirrors the ``/schedule/available-hours`` API's ``days`` map
+#: exactly — ``{"mon": {"available": true, "start": "09:00", "end": "17:00"}, …}``
+#: — so there's one shape for storage and wire. Only configured weekdays appear;
+#: an absent key entirely ⇒ feature unconfigured, and the flat off-zone complement
+#: applies (original behaviour).
+STATE_AVAILABLE_HOURS_KEY = "available_hours"
+
+
+def parse_available_hours(raw: str | None) -> dict[int, tuple[int, int] | None] | None:
+    """Interpret the stored ``available_hours`` JSON as ``{weekday: band | None}``.
+
+    Maps each configured weekday index (0=Mon … 6=Sun) to a ``(start_min,
+    end_min)`` band, or ``None`` when that day is marked unavailable. Reads the
+    per-day ``{"available", "start", "end"}`` objects (see
+    :data:`STATE_AVAILABLE_HOURS_KEY`). Returns ``None`` — "not configured" — when
+    ``raw`` is absent or not a usable JSON object, so callers fall back to the flat
+    waking band. Unknown keys, non-objects, and unparseable/wrapping bands are
+    skipped rather than raising, so a partial or garbled value degrades gracefully.
+    """
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    bands: dict[int, tuple[int, int] | None] = {}
+    for idx, name in enumerate(WEEKDAYS):
+        spec = data.get(name)
+        if not isinstance(spec, dict):
+            continue
+        if not spec.get("available", True):
+            bands[idx] = None
+            continue
+        parsed = parse_window(f"{spec.get('start')}-{spec.get('end')}")
+        # An available day needs a real, non-wrapping within-day band; anything
+        # else is dropped (that day falls back to the flat band, never overnight).
+        if parsed is not None and parsed[0] < parsed[1]:
+            bands[idx] = parsed
+    return bands or None
+
+
 def _in_span(minute: int, span: tuple[int, int]) -> bool:
     """Whether ``minute`` (0–1439) is inside ``[start, end)``, midnight-wrap aware."""
     start, end = span
@@ -519,6 +598,11 @@ class WindowConfig:
     #: waking hour — the off-zone and travel-late gate still apply. Set by a
     #: self-expiring ``crunch_until`` coaching-state timestamp; see window_config_for.
     crunch: bool = False
+    #: Per-weekday "available hours" (0=Mon … 6=Sun) → within-day waking band, or
+    #: ``None`` for an unavailable day. ``None`` for the whole field means the
+    #: feature is unconfigured, so :meth:`band_for_weekday` falls back to the flat
+    #: :meth:`awake_band` (the off-zone complement) — the original behaviour.
+    weekly_bands: dict[int, tuple[int, int] | None] | None = None
 
     @classmethod
     def build(
@@ -530,13 +614,15 @@ class WindowConfig:
         state_windows: dict[str, str] | None = None,
         default_window: str | None = None,
         crunch: bool = False,
+        state_available_hours: str | None = None,
     ) -> WindowConfig:
         """Assemble a config, layering **state over env over built-in** per key.
 
         Every ``*_window`` string is ``"HH:MM-HH:MM"``; an unparseable value is
         ignored (the lower-precedence value stands), so a typo degrades to the
         default rather than raising. ``env_windows`` / ``state_windows`` map a
-        category or source key to its window.
+        category or source key to its window. ``state_available_hours`` is the raw
+        per-user :data:`STATE_AVAILABLE_HOURS_KEY` JSON (or ``None`` when unset).
         """
         offzone = (
             parse_window(state_offzone)
@@ -558,7 +644,13 @@ class WindowConfig:
                 if parsed is not None:
                     windows[key.strip().lower()] = parsed
         assert offzone is not None and default is not None  # built-in constants parse
-        return cls(offzone=offzone, default_window=default, windows=windows, crunch=crunch)
+        return cls(
+            offzone=offzone,
+            default_window=default,
+            windows=windows,
+            crunch=crunch,
+            weekly_bands=parse_available_hours(state_available_hours),
+        )
 
     def awake_band(self) -> tuple[str, str]:
         """The off-zone's complement as ``("HH:MM", "HH:MM")`` waking-hours band.
@@ -569,6 +661,22 @@ class WindowConfig:
         """
         off_start, off_end = self.offzone
         return (_minutes_to_hhmm(off_end), _minutes_to_hhmm(off_start))
+
+    def band_for_weekday(self, weekday: int) -> tuple[str, str] | None:
+        """The waking band for a given weekday (0=Mon … 6=Sun), or ``None`` if off.
+
+        When the user has configured "available hours" (:attr:`weekly_bands`), a
+        listed day returns its own band and an explicitly-unavailable day returns
+        ``None`` (no slots that day). An unconfigured feature — or a weekday not
+        present in the map — falls back to the flat :meth:`awake_band`, so callers
+        can pass this resolver to :func:`find_slots` unconditionally.
+        """
+        if self.weekly_bands is None or weekday not in self.weekly_bands:
+            return self.awake_band()
+        band = self.weekly_bands[weekday]
+        if band is None:
+            return None
+        return (_minutes_to_hhmm(band[0]), _minutes_to_hhmm(band[1]))
 
 
 #: Coaching-state key for a per-user off-zone override ("HH:MM-HH:MM").
@@ -615,6 +723,7 @@ def window_config_for(settings: Any, store: Any) -> WindowConfig:
         state_offzone=sval(STATE_OFFZONE_KEY),
         state_windows=state_windows,
         crunch=_crunch_active(sval(STATE_CRUNCH_UNTIL_KEY)),
+        state_available_hours=sval(STATE_AVAILABLE_HOURS_KEY),
     )
 
 
