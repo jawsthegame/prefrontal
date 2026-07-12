@@ -1,0 +1,10 @@
+// Copy this to `Signing.local.xcconfig` (same folder) and set your Team ID.
+// That copy is git-ignored, so it's never committed and survives both a fresh
+// clone and `xcodegen generate` — set it once and you never re-enter the team.
+//
+//     cp ios/Signing.local.xcconfig.example ios/Signing.local.xcconfig
+//
+// Find your Team ID in Xcode ▸ Settings ▸ Accounts ▸ (your team), or at
+// developer.apple.com ▸ Membership.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

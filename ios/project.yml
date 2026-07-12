@@ -6,8 +6,9 @@ options:
   createIntermediateGroups: true
   xcodeVersion: "26.0"
 
-# Signing team comes from Signing.xcconfig (kept local; see ios/README.md),
-# so it survives regeneration and isn't committed to this public repo.
+# Signing team comes from Signing.xcconfig, which #include?s a git-ignored
+# Signing.local.xcconfig holding your Team ID (see ios/README.md) — so it
+# survives regeneration + clones and isn't committed to this public repo.
 configFiles:
   Debug: Signing.xcconfig
   Release: Signing.xcconfig
