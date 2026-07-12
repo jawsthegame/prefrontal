@@ -45,6 +45,7 @@ from prefrontal.memory._helpers import (
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.repos.clarifications import ClarificationsRepo
 from prefrontal.memory.repos.episodes import EpisodesRepo
+from prefrontal.memory.repos.feature_usage import FeatureUsageRepo
 from prefrontal.memory.repos.household import HouseholdRepo
 from prefrontal.memory.repos.mail import MailRepo
 from prefrontal.memory.repos.nudges import NudgesRepo
@@ -87,6 +88,7 @@ class MemoryStore(
     ProjectsRepo,
     MailRepo,
     NudgesRepo,
+    FeatureUsageRepo,
     ProposalsRepo,
     ClarificationsRepo,
     HouseholdRepo,

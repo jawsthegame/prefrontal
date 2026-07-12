@@ -23,6 +23,7 @@ from prefrontal.focus_balance import (
     build_focus_balance,
     normalize_focus_domain,
 )
+from prefrontal.log import get_logger
 from prefrontal.mail import (
     ingest_messages,
 )
@@ -69,6 +70,8 @@ from prefrontal.webhooks.schemas import (
     TripRetro,
 )
 from prefrontal.webhooks.services import RouterServices
+
+logger = get_logger(__name__)
 
 #: Speakable words for the trip-retro read-back (see :func:`_trip_retro_confirmation`).
 _RETRO_DOMAIN_WORDS = {
@@ -178,6 +181,20 @@ def build_router(services: RouterServices) -> APIRouter:
             outcome=outcome,
             notes=payload.notes,
         )
+
+        # A one-tap Shortcut report is the low-friction-capture feature in use —
+        # record the engaged half of the usage loop (best-effort; never fatal to
+        # the log). The episode_type names the feature (e.g. "departure").
+        try:
+            memory.record_feature_event(
+                payload.episode_type,
+                "engaged",
+                intervention=payload.action,
+                source="shortcut",
+                ref=str(episode_id),
+            )
+        except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+            logger.debug("record_feature_event(shortcut) failed", exc_info=True)
 
         result = n8n.trigger(
             "episode.logged",

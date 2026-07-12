@@ -447,11 +447,25 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
 
     Kept out of :func:`decide` so the decision logic stays pure and a ``--dry-run``
     never mutates state; the delivering caller invokes this once it commits to
-    sending.
+    sending. This is also the single point every module-driven nudge passes
+    through once we've committed to firing it, so it doubles as the ``offered``
+    half of the feature-usage loop: each decision carries its owning module +
+    intervention, which we record here (best-effort — a telemetry write must never
+    sink the tick, exactly as the nudge log itself is fire-and-forget).
     """
     stamp = now.strftime(TS_FMT)
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
+        try:
+            store.record_feature_event(
+                d.cue.module,
+                "offered",
+                intervention=d.cue.intervention,
+                source=d.channel,
+                ref=d.cue.dedup_key,
+            )
+        except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+            logger.debug("record_feature_event(offered) failed", exc_info=True)
 
 
 # --- Outcome loop: learn which channels actually land (spec §8) --------------

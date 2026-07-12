@@ -452,6 +452,27 @@ CREATE TABLE IF NOT EXISTS nudges (
 
 CREATE INDEX IF NOT EXISTS idx_nudges_user ON nudges (user_id, created_at);
 
+-- Feature-usage event stream — the spine of the "what am I using, what am I not?"
+-- feedback loop (prefrontal/memory/repos/feature_usage.py, surfaced on /stats).
+-- One append-only row per time a feature was *offered* to you, *engaged* with, or
+-- *invoked* by you, stamped with the structured (module, intervention) key that
+-- was otherwise only ever in-memory on a coaching Cue. Deliberately thin and
+-- separate from `episodes`: this is meta-telemetry about which behaviors you lean
+-- on, not a behavioral outcome to learn from. Local-only, counts + keys, no PII.
+CREATE TABLE IF NOT EXISTS feature_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(id),
+    feature      TEXT    NOT NULL,   -- module key ('location_anchor') or pull surface ('panic')
+    intervention TEXT,               -- declared Intervention.name for a push feature, else NULL
+    event        TEXT    NOT NULL,   -- 'offered' | 'engaged' | 'invoked'
+    source       TEXT,               -- 'ntfy' | 'shortcut' | 'http' | 'cli' | 'push' | …
+    ref          TEXT,               -- optional free-text hook back to the thing (id, route, …)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_events_user
+    ON feature_events (user_id, feature, created_at);
+
 -- Cached LLM profile narrative — the prioritized coaching prose produced by the
 -- summarizer (prefrontal/memory/summarizer.py). Generating it needs an Ollama
 -- (or, later, Anthropic) round-trip, which is too slow to run on every
