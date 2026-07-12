@@ -907,7 +907,9 @@ function fmtTime(hhmm) {
 function renderAppts(upcoming) {
   $("#appts").innerHTML = (upcoming || []).length
     ? upcoming.map((ap) => `<div class="appt"><span class="when">${esc(ap.when)}</span>
-        <span class="grow">${esc(ap.title)}${ap.location ? ` · ${esc(ap.location)}` : ""}</span></div>`).join("")
+        <span class="grow">${esc(ap.title)}${ap.location ? ` · ${esc(ap.location)}` : ""}</span>
+        <button class="iconbtn" data-notkid="${ap.id}"
+          title="Not a kid's appointment — remove it from here (kept as your own commitment)">Not a kid's</button></div>`).join("")
     : `<div class="empty">No upcoming kid appointments. (Add one below, or sync a calendar event tagged as a kid's.)</div>`;
 }
 
@@ -1271,6 +1273,18 @@ $("#shopping").addEventListener("click", async (e) => {
 $("#shopping").addEventListener("change", async (e) => {
   const id = e.target.getAttribute("data-got");
   if (id) { await post(`/household/shopping/${id}/got`, { got: e.target.checked }); await loadSheet(); }
+});
+
+// Correct a miscategorized appointment: an event wrongly tagged as a kid's is
+// reclassified to the viewer's own commitment (kind=self), which the server
+// marks kind_source=user so a re-sync won't re-tag it — dropping it from this
+// child-only section while keeping it on the dashboard.
+$("#appts").addEventListener("click", async (e) => {
+  const id = e.target.getAttribute("data-notkid");
+  if (id && confirm("This isn't a kid's appointment? It'll move to your own commitments.")) {
+    await post(`/commitments/${id}/kind`, { kind: "self" });
+    await loadSheet();
+  }
 });
 
 // -- chores + routines --------------------------------------------------------

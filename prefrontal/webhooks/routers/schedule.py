@@ -807,7 +807,12 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: CommitmentKind,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Correct a commitment's kind (``self`` vs ``fyi``).
+        """Correct a commitment's kind (``self``, ``child``, or ``fyi``).
+
+        Covers every miscategorization: your own commitment mistaken for FYI (or
+        vice versa), and — driven from the household sheet's "Upcoming
+        appointments" — an event wrongly tagged as a kid's, reclassified to
+        ``self`` so it drops off the shared sheet but stays your own commitment.
 
         Records the correction as feedback (alongside the model's prior verdict)
         so the classifier's prompt evolves toward the user's judgement, and marks

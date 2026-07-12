@@ -265,8 +265,15 @@ class Change:
 
 @dataclass(frozen=True)
 class Appointment:
-    """One upcoming child appointment (a ``kind='child'`` commitment)."""
+    """One upcoming child appointment (a ``kind='child'`` commitment).
 
+    Carries the underlying commitment ``id`` so a viewer can correct a
+    miscategorization from the sheet — an event wrongly tagged as a kid's is
+    reclassified via ``POST /commitments/{id}/kind`` (kind ``self``), which drops
+    it from this child-only section.
+    """
+
+    id: int
     title: str
     when: str
     start_at: str
@@ -601,6 +608,7 @@ def _upcoming_child_appts(
             continue
         out.append(
             Appointment(
+                id=c["id"],
                 title=c.get("title") or "appointment",
                 when=_appt_when(start, now, tz),
                 start_at=str(c.get("start_at")),
