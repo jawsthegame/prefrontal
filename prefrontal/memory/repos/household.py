@@ -1531,9 +1531,18 @@ class HouseholdRepo(Repo):
         if claimed.rowcount == 0:
             self.conn.rollback()
             return {"ok": False, "error": "That invite has already been used."}
-        self.conn.execute(
-            "UPDATE users SET household_id = ? WHERE id = ?", (row["household_id"], uid)
+        # Place the caller in the household, also conditional on being unassigned:
+        # if a concurrent self-create or operator-assign filled household_id after
+        # the check above, this matches 0 rows and we roll back — which undoes the
+        # invite claim too (same transaction), so the invite isn't spent on a no-op
+        # join and the user isn't yanked out of the household they just got.
+        assigned = self.conn.execute(
+            "UPDATE users SET household_id = ? WHERE id = ? AND household_id IS NULL",
+            (row["household_id"], uid),
         )
+        if assigned.rowcount == 0:
+            self.conn.rollback()
+            return {"ok": False, "error": "You're already in a household."}
         self.conn.commit()
         name = self.conn.execute(
             "SELECT name FROM households WHERE id = ?", (row["household_id"],)

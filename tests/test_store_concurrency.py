@@ -237,7 +237,7 @@ def test_concurrent_invite_redemption_only_one_wins(tmp_path):
 
         def redeem(uid: int) -> dict:
             scoped = store.scoped(uid)
-            barrier.wait()  # line both up so both clear the SELECT before either UPDATE
+            barrier.wait()  # release both redemptions together so they contend
             return scoped.redeem_invite(code)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -280,7 +280,10 @@ def test_concurrent_create_own_household_no_orphan(tmp_path):
             barrier.wait()
             try:
                 return scoped.create_own_household(name)
-            except ValueError:
+            except ValueError as exc:
+                # Only the expected loser path ("already in one"); surface anything else.
+                if "already in a household" not in str(exc):
+                    raise
                 return None
 
         with ThreadPoolExecutor(max_workers=2) as pool:
