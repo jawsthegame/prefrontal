@@ -1,0 +1,39 @@
+{
+  "name": "Prefrontal — Weekly Feature-Usage Nudge",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "hours", "hoursInterval": 1 } ] }
+      },
+      "id": "schedule-trigger",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PREFRONTAL_BASE_URL }}/webhooks/usage/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "prefrontal-token", "name": "Prefrontal Token" } },
+      "id": "usage-check",
+      "name": "Usage Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    }
+  ],
+  "connections": {
+    "Every hour": { "main": [[{ "node": "Usage Check", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": {
+    "notes": "The 'act on it' half of the feature-usage loop: when a coaching module keeps firing but the token owner rarely acts on it, the endpoint sends one push with a one-tap Mute / Keep. It self-gates to at most one nudge per ISO week per user (and only when a module is actually firing-but-ignored), so a frequent poll is fine. Uses the caller's per-user token, so it nudges that user. Prefer the native launchd twin (deploy/com.prefrontal-usage.plist, `prefrontal usage check --deliver --all-users`) for a multi-user box; if you enable this workflow instead, keep only one active to avoid a double nudge."
+  }
+}

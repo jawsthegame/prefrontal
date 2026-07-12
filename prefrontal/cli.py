@@ -1397,27 +1397,15 @@ def _cmd_usage(args: argparse.Namespace) -> int:
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as unscoped:
-        store = _resolve_user_store(unscoped, args.user)
-        handle = next(
-            (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id),
-            "",
-        )
         action = args.usage_action
 
-        if action in ("mute", "unmute"):
-            store.set_feature_muted(args.feature, action == "mute")
-            verb = "Muted" if action == "mute" else "Un-muted"
-            now_muted = ", ".join(sorted(store.muted_features())) or "(none)"
-            print(f"{verb} {args.feature}. Now muted: {now_muted}")
-            return 0
-
-        if action == "check":
+        def _report_check(store: MemoryStore, handle: str) -> None:
             report = run_usage_check(
                 store, settings=settings, handle=handle, deliver=args.deliver
             )
             if not report.get("feature"):
                 print(f"No nudge: {report.get('reason', 'nothing to do')}.")
-                return 0
+                return
             if report.get("delivered"):
                 verb, tail = "Delivered", " Reply Mute/Keep on the push."
             elif args.deliver:
@@ -1429,6 +1417,31 @@ def _cmd_usage(args: argparse.Namespace) -> int:
                 f"{verb}: “{report['feature']}” (offered {report['offered']}×, "
                 f"acted on {report['engaged']}).{tail}"
             )
+
+        if action == "check":
+            # --all-users fans the weekly nudge over every active user (one job for
+            # the box); each run self-gates to once per ISO week per user.
+            if getattr(args, "all_users", False):
+                for handle, store in _user_targets(unscoped, args):
+                    print(f"== {handle} ==")
+                    _report_check(store, handle)
+            else:
+                store = _resolve_user_store(unscoped, args.user)
+                handle = next(
+                    (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id),
+                    "",
+                )
+                _report_check(store, handle)
+            return 0
+
+        # mute / unmute / list act on a single user.
+        store = _resolve_user_store(unscoped, args.user)
+
+        if action in ("mute", "unmute"):
+            store.set_feature_muted(args.feature, action == "mute")
+            verb = "Muted" if action == "mute" else "Un-muted"
+            now_muted = ", ".join(sorted(store.muted_features())) or "(none)"
+            print(f"{verb} {args.feature}. Now muted: {now_muted}")
             return 0
 
         # list
@@ -3635,6 +3648,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--deliver",
         action="store_true",
         help="Actually send the push (else a dry run that only reports).",
+    )
+    u_check.add_argument(
+        "--all-users",
+        action="store_true",
+        help="Fan the weekly check over every active user (one job for the box).",
     )
     p_usage.set_defaults(func=_cmd_usage)
 
