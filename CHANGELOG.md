@@ -7,6 +7,22 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Freeform calendar assistant — "find me a time"** ✅ — a conversational
+  scheduler (`prefrontal/availability.py`): say *"find 45 min for coffee with Sam
+  this week"* or *"when are my wife and I both free for dinner tomorrow evening?"*
+  and get back open slots — or a single clarifying question when the ask is too
+  vague (almost always a missing duration). It parses duration + timeframe +
+  time-of-day + **who's involved** from free text (Claude/Ollama when available,
+  else an offline heuristic that never needs a model), then finds slots over the
+  existing engine (`find_slots`). The key move is **participant-aware
+  constraints**: your own commitments always block, but a partner's whereabouts —
+  the *FYI* events ("where someone else will be") — block **only** when the plan
+  involves them. So "just me" ignores items that are only your wife's, while "the
+  two of us" treats her calendar as a hard constraint too; the reply reports how
+  many FYI items it ignored so you can pull them back in. Surfaced as
+  `POST /assistant/find-time` (structured slots + a `question` + a ready-to-send
+  `text`) and `prefrontal find-time "…"`. Read-only — it never writes.
+
 - **iOS delegation — hand a todo to the AI agent or a VA** ✅ — the native Todos
   tab now has the delegation flow the web dashboard already offered (parity, not a
   new server feature). Each open todo gets a **Delegate** action → a sheet to pick

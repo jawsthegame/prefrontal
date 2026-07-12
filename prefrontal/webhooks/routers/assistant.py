@@ -22,7 +22,9 @@ from prefrontal.assistant import (
 from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
-from prefrontal.clock import utcnow
+from prefrontal.availability import plan_availability, render_plan
+from prefrontal.clock import local_datetime, parse_ts, utcnow
+from prefrontal.scheduling import window_config_for
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -30,6 +32,7 @@ from prefrontal.webhooks.deps import (
 from prefrontal.webhooks.schemas import (
     AssistantApply,
     AssistantMessage,
+    FindTimeMessage,
 )
 from prefrontal.webhooks.services import RouterServices
 
@@ -97,5 +100,76 @@ def build_router(services: RouterServices) -> APIRouter:
         )
         applied = sum(1 for r in results if r["ok"])
         return {"applied": applied, "results": results, "errors": errors}
+
+    @router.post("/assistant/find-time", tags=["assistant"])
+    def assistant_find_time(
+        payload: FindTimeMessage,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Find open calendar slots from a free-text ask — read-only.
+
+        "Find 45 minutes for coffee with Sam this week", or "when are my wife and
+        I both free for dinner tomorrow evening?" The message is parsed into a
+        duration + timeframe + who's-involved (Claude when the ``assistant`` agent
+        is configured for Anthropic, else the local Ollama model, else an offline
+        heuristic), and open windows are computed from the calendar.
+
+        **Who's involved shapes the constraints.** Your own commitments always
+        block. A partner's whereabouts — the *FYI* events (where someone else will
+        be) — block **only** when the plan involves them: "just me" ignores items
+        that are only your partner's, while "the two of us" treats their calendar
+        as a hard constraint too. ``ignored_fyi`` reports how many FYI items were
+        left out so the client can offer to include them.
+
+        When the ask is too vague to answer (almost always a missing duration),
+        ``question`` is set and ``slots`` is empty — the caller should put the
+        question back to the user and re-ask. Nothing is written either way.
+        """
+        client, provider_name = provider.select("assistant")
+        memory = ctx.store
+        tz = resolved_settings.timezone
+        awake = window_config_for(resolved_settings, memory).awake_band()
+        plan = plan_availability(
+            payload.message,
+            memory,
+            client=client,
+            now=utcnow(),
+            tz=tz,
+            awake_band=awake,
+        )
+
+        def dump_slot(w: Any) -> dict[str, Any]:
+            start_local = local_datetime(parse_ts(w.start), tz)
+            end_local = local_datetime(parse_ts(w.end), tz)
+            return {
+                "start_at": w.start,
+                "end_at": w.end,
+                "minutes": w.minutes,
+                "day": start_local.strftime("%a %b %-d"),
+                "start": start_local.strftime("%-I:%M %p"),
+                "end": end_local.strftime("%-I:%M %p"),
+            }
+
+        request = plan.request
+        return {
+            "question": plan.question,
+            "request": (
+                {
+                    "minutes": request.minutes,
+                    "days": request.days,
+                    "with_partner": request.with_partner,
+                    "title": request.title,
+                    "time_window": list(request.time_window) if request.time_window else None,
+                }
+                if request is not None
+                else None
+            ),
+            "slots": [dump_slot(w) for w in plan.slots],
+            "with_partner": plan.with_partner,
+            "considered": plan.considered,
+            "ignored_fyi": plan.ignored_fyi,
+            "text": render_plan(plan, tz),
+            "provider": provider_name,
+        }
 
     return router

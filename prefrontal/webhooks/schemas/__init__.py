@@ -21,6 +21,7 @@ from prefrontal.webhooks.schemas.anchor import (
 from prefrontal.webhooks.schemas.assistant import (
     AssistantApply,
     AssistantMessage,
+    FindTimeMessage,
 )
 from prefrontal.webhooks.schemas.clarify import (
     ClarificationLocalization,
@@ -127,6 +128,7 @@ __all__ = [
     "AppointmentCreate",
     "AssistantApply",
     "AssistantMessage",
+    "FindTimeMessage",
     "AutoDecomposeConfig",
     "BalanceConfig",
     "CalendarEvent",

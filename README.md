@@ -108,6 +108,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one-tap Shortcut) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
 | Coaching agent | `prefrontal/coaching.py` | ✅ Tick engine — fans over every module's `evaluate()`, picks channel (urgency floor → learned bump), suppresses on quiet hours + debounce; `prefrontal coach`, `POST /webhooks/coach/check` |
 | Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. Also woven into the morning brief as a day-shaped closing line (`briefing_note`). `prefrontal encourage` / `open-day`, `GET /encouragement`, `POST /briefing/open-day` |
+| Freeform calendar assistant | `prefrontal/availability.py` · `webhooks/routers/assistant.py` | ✅ "Find me a time" from free text: parses duration + timeframe + who's-involved (LLM with an offline-heuristic fallback), asks one clarifying question when the ask is too vague, then finds open slots over `find_slots`. **Participant-aware** — a partner's FYI events ("where someone else will be") block only when the plan involves them, so "just me" ignores items that are only your wife's. `POST /assistant/find-time`, `prefrontal find-time "…"` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing. Honest prioritization: surfaces the important todo you keep skipping, pins in-progress todos to the top, and flags when you're mid-task on something less important than what you're avoiding (`focus_conflict`) |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — the detection sweep runs on the coaching tick (`sweep_ambiguous_items`), with `POST /clarifications/check` as the on-demand twin, plus `GET /clarifications`, resolve/dismiss, and a `prefrontal clarify check/list/resolve/dismiss/guide/localize` CLI. Guides for the recognized task types (tax filing, passport, DMV/license, vehicle registration, insurance claim, home repair, finding a provider, appointments) **localize to your home ZIP** when you opt in — from the dashboard's clarify card or `prefrontal clarify localize on` (both write `POST /clarifications/localization`) |
@@ -179,6 +180,13 @@ prefrontal panic
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
 prefrontal fit 20      # "with 20 min free, you could knock out…"
+
+# Find a time from free text (the calendar assistant). Parses how long, when, and
+# who's involved; asks one question if the ask is too vague to answer.
+prefrontal find-time "45 min for coffee with Sam this week"
+prefrontal find-time "when are my wife and I both free for dinner tomorrow evening"
+#   → a partner's FYI items block only when the plan involves them; solo asks
+#     ignore items that are just hers. Add --llm to parse with the model.
 
 # Hone in a vague item ("Tax") so it can actually be started (also runs on the tick)
 prefrontal clarify check                 # flag ambiguous todos/commitments
