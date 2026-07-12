@@ -126,6 +126,12 @@ Persistent preferences and working memory for the coaching layer.
 > `(commitment, level)` so a standing departure reminder doesn't re-alert.
 > `crunch_until` is a self-expiring timestamp (set by `prefrontal crunch on`) that
 > suspends the per-key work/life time bands during a deadline stretch.
+> The **feature-usage loop** (`prefrontal/usage.py`) stores its state here too:
+> `usage_muted_features` is the CSV of modules the user muted (the coaching tick
+> drops them); `usage_nudge_week` is the ISO week the weekly nudge last fired
+> (once-a-week dedup); `usage_nudge_pending` is the feature the live nudge's
+> one-tap Mute/Keep buttons act on; and `usage_kept:<feature>` timestamps a "keep"
+> so that feature isn't re-suggested for a while.
 
 > **Module-contributed keys.** Each enabled challenge-area module
 > (`prefrontal/modules/`) seeds its own additional `coaching_state` rows when the

@@ -21,10 +21,16 @@ three signature views the Insights page renders (all pure and model-free, mirror
 5. **Chores** — shared-chore completions over the last month: the total, a
    per-person split, today/yesterday counts, and a recent day-by-day series —
    read from the ``household_chore_log`` rather than ``episodes``.
+6. **Feature usage** — which features you lean on, which fire-and-get-ignored,
+   and which lie dormant, from the ``feature_events`` stream joined against the
+   module registry (so a never-fired feature reads as dormant, not absent); each
+   flagged with whether it's currently muted. The "act on it" half of this view
+   is the weekly usage nudge in :mod:`prefrontal.usage`.
 
 The first four are derived straight from ``episodes`` (not the ``patterns``
 table), so the page is meaningful even before ``prefrontal learn`` has ever run;
-the chores view reads the household completion log.
+the chores view reads the household completion log, and feature usage the
+``feature_events`` stream.
 """
 from __future__ import annotations
 
@@ -324,7 +330,8 @@ def _feature_usage(store: MemoryStore) -> dict[str, Any]:
 
     rows = {r["feature"]: r for r in store.feature_usage_rollup(USAGE_WINDOW_DAYS)}
     push = {m.key for m in enabled_modules()}
-    universe = push | set(PULL_FEATURES) | set(rows)
+    muted = store.muted_features()
+    universe = push | set(PULL_FEATURES) | set(rows) | muted
 
     now = utcnow()
     features: list[dict[str, Any]] = []
@@ -366,6 +373,7 @@ def _feature_usage(store: MemoryStore) -> dict[str, Any]:
             "last_used": last_used,
             "days_ago": days_ago,
             "bucket": bucket,
+            "muted": name in muted,
         })
 
     # Most-active first within the page's natural reading order (using → ignored →
@@ -376,6 +384,7 @@ def _feature_usage(store: MemoryStore) -> dict[str, Any]:
         b: sum(1 for f in features if f["bucket"] == b)
         for b in ("using", "ignored", "dormant")
     }
+    summary["muted"] = len(muted)
     return {"window_days": USAGE_WINDOW_DAYS, "features": features, "summary": summary}
 
 

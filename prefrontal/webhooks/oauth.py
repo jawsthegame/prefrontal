@@ -180,6 +180,8 @@ NUDGE_ACTIONS = (
     "trip_domain_home",      # trip-label ask → file this trip under home
     "trip_domain_kids",      # trip-label ask → file this trip under kids
     "trip_domain_personal",  # trip-label ask → file this trip under personal
+    "usage_mute",      # weekly usage nudge → mute the flagged feature (goes silent)
+    "usage_keep",      # weekly usage nudge → keep it on (snooze the suggestion)
 )
 
 #: One-tap action links share the dismiss TTL — a nudge is only actionable for a

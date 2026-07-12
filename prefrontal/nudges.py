@@ -335,6 +335,14 @@ def apply_nudge_action(
             else f"Logged — ran late for “{title}.” It happens."
         )
 
+    if action in ("usage_mute", "usage_keep"):
+        # Weekly usage nudge → mute the flagged module or keep it (snooze). Acts on
+        # the pending feature stashed at delivery (no entity id — target rides a
+        # synthetic 0), so the logic lives with the nudge in prefrontal.usage.
+        from prefrontal.usage import apply_usage_decision
+
+        return apply_usage_decision(memory, action)
+
     # Unknown/unhandled action: fail safe. Previously this fell through the
     # made_it/missed_it branch as an unguarded else, so a malformed or
     # future action name silently logged a spurious "departure" miss and

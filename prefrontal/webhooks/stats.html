@@ -96,6 +96,8 @@
     font-variant-numeric: tabular-nums; }
   .feat .ft { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .feat.dorm .fn { color: var(--muted); font-weight: 500; }
+  .feat .mp { margin-left: 7px; font-size: 11px; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
 
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
 
@@ -426,9 +428,10 @@ function renderFeatureUsage(u) {
     return;
   }
   const s = u.summary || {};
+  const mutedNote = s.muted ? ` · ${s.muted} muted` : "";
   let html = `<div class="hero"><span class="n">${s.using || 0}</span>
     <span class="u">in active use</span><span style="flex:1"></span>
-    <span class="u">${s.ignored || 0} ignored · ${s.dormant || 0} dormant</span></div>`;
+    <span class="u">${s.ignored || 0} ignored · ${s.dormant || 0} dormant${mutedNote}</span></div>`;
   for (const g of USAGE_GROUPS) {
     const rows = u.features.filter((f) => f.bucket === g.key);
     if (!rows.length) continue;
@@ -436,7 +439,7 @@ function renderFeatureUsage(u) {
       `${esc(g.label)} <span class="gn">${rows.length}</span></p>`;
     html += rows.map((f) =>
       `<div class="feat${f.bucket === "dormant" ? " dorm" : ""}">
-        <span class="fn">${esc(f.feature.replace(/_/g, " "))}</span>
+        <span class="fn">${esc(f.feature.replace(/_/g, " "))}${f.muted ? `<span class="mp">🔕 muted</span>` : ""}</span>
         <span class="fm">${esc(featMeta(f))}</span>
         <span class="ft">${esc(ago(f))}</span></div>`
     ).join("");
