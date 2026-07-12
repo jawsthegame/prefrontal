@@ -31,6 +31,7 @@ from prefrontal.mail.feedback import learned_denylist
 from prefrontal.mail.imap import (
     ImapAccount,
     _important_filter,
+    _parse_rfc822,
     _unseen_criteria,
     gmail_account_names,
 )
@@ -168,6 +169,29 @@ def test_normalize_unknown_policy_is_treated_as_signals():
 def test_normalize_requires_a_message_id():
     with pytest.raises(ValueError):
         normalize_message({"subject": "no id here"}, account="personal")
+
+
+def test_normalize_uses_uid_when_message_id_absent():
+    """A message with no Message-ID but a uid fallback dedups on the uid, not dropped."""
+    item = normalize_message(
+        {"subject": "list mail, no message-id", "uid": "imap-uid:42"}, account="personal"
+    )
+    assert item.message_id == "imap-uid:42"
+
+
+def test_parse_rfc822_carries_the_imap_uid_as_a_fallback_id():
+    """A header-less message keeps the IMAP UID as its dedup id; a real Message-ID wins."""
+    headerless = b"From: list@x.com\r\nSubject: weekly digest\r\n\r\nbody text"
+    d = _parse_rfc822(headerless, "personal", uid="42")
+    assert d["message_id"] is None and d["uid"] == "imap-uid:42"
+    # …and it now ingests instead of raising as invalid.
+    assert normalize_message(d, account="personal").message_id == "imap-uid:42"
+
+    with_header = b"Message-ID: <abc@x>\r\nSubject: hi\r\n\r\nbody"
+    d2 = _parse_rfc822(with_header, "personal", uid="42")
+    assert d2["message_id"] == "<abc@x>"
+    # A present Message-ID wins over the uid fallback.
+    assert normalize_message(d2, account="personal").message_id == "<abc@x>"
 
 
 def test_normalize_bad_date_is_none_not_error():

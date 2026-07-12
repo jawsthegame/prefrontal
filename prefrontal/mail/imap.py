@@ -19,6 +19,7 @@ from __future__ import annotations
 import email
 import imaplib
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
@@ -187,10 +188,17 @@ def fetch_unread(
             ids = ids[-limit:]  # most recent
         messages: list[dict[str, Any]] = []
         for num in ids:
-            typ, msg_data = conn.fetch(num, "(RFC822)")
+            # Fetch the stable IMAP UID alongside the body: some list/automation
+            # senders omit the Message-ID header, and without a fallback id
+            # normalize_message would drop those messages as "invalid". The UID is
+            # stable per mailbox, so it dedups a re-delivered header-less message.
+            typ, msg_data = conn.fetch(num, "(UID RFC822)")
             if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
                 continue
-            messages.append(_parse_rfc822(msg_data[0][1], account.name))
+            meta, raw_bytes = msg_data[0]
+            uid_match = re.search(rb"UID (\d+)", meta or b"")
+            uid = uid_match.group(1).decode() if uid_match else None
+            messages.append(_parse_rfc822(raw_bytes, account.name, uid=uid))
         return messages
     finally:
         try:
@@ -235,11 +243,17 @@ def _env_bool(value: str | None) -> bool | None:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _parse_rfc822(raw_bytes: bytes, account: str) -> dict[str, Any]:
-    """Parse raw RFC822 bytes into a normalize_message-shaped dict."""
+def _parse_rfc822(raw_bytes: bytes, account: str, *, uid: str | None = None) -> dict[str, Any]:
+    """Parse raw RFC822 bytes into a normalize_message-shaped dict.
+
+    ``uid`` is the message's IMAP UID, carried as a ``uid`` fallback so a message
+    that omits the ``Message-ID`` header still gets a stable dedup id (normalize_
+    message uses ``uid`` only when ``message_id`` is absent).
+    """
     msg = email.message_from_bytes(raw_bytes)
     return {
         "message_id": (msg.get("Message-ID") or "").strip() or None,
+        "uid": f"imap-uid:{uid}" if uid else None,
         "from": _decode(msg.get("From")),
         "subject": _decode(msg.get("Subject")),
         "date": msg.get("Date"),
