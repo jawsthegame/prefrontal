@@ -4,6 +4,7 @@ APIRouter factory for :func:`prefrontal.webhooks.app.create_app`.
 """
 from __future__ import annotations
 
+import json
 from datetime import (
     timedelta,
 )
@@ -95,6 +96,8 @@ from prefrontal.panic import (
 )
 from prefrontal.scheduling import (
     DEFAULT_SLOT_DAYS,
+    STATE_AVAILABLE_HOURS_KEY,
+    WEEKDAYS,
     find_slots,
     window_config_for,
 )
@@ -111,6 +114,7 @@ from prefrontal.webhooks.notify import (
     panic_actions,
 )
 from prefrontal.webhooks.schemas import (
+    AvailableHours,
     CalendarSync,
     CommitmentCreate,
     CommitmentDomain,
@@ -564,15 +568,17 @@ def build_router(services: RouterServices) -> APIRouter:
         tz = resolved_settings.timezone
         # The waking band is the user's own off-zone complement (state over env over
         # the 06:00–22:00 default), so slot-finding respects the same "not overnight"
-        # policy the todo suggester uses.
-        awake = window_config_for(resolved_settings, memory).awake_band()
+        # policy the todo suggester uses. Per-weekday "available hours" (when set)
+        # supersede it day-by-day and mark whole days unavailable.
+        cfg = window_config_for(resolved_settings, memory)
         found = find_slots(
             memory.upcoming_commitments(),
             utcnow(),
             tz,
             minutes=float(minutes),
             days=days,
-            awake_band=awake,
+            awake_band=cfg.awake_band(),
+            band_for_weekday=cfg.band_for_weekday,
         )
 
         def dump(w: Any) -> dict[str, Any]:
@@ -724,6 +730,83 @@ def build_router(services: RouterServices) -> APIRouter:
         fraction = payload.percent / 100.0
         memory.set_state(TRAVEL_PAD_FRACTION_KEY, f"{fraction:g}", source="explicit")
         return _padding_payload(memory)
+
+    def _stored_available_hours(store: Any) -> dict[str, Any]:
+        """The raw stored per-weekday schedule dict (``{}`` when unconfigured)."""
+        raw = (store.all_state().get(STATE_AVAILABLE_HOURS_KEY, {}) or {}).get("value")
+        if isinstance(raw, str):
+            try:
+                loaded = json.loads(raw)
+            except (ValueError, TypeError):
+                return {}
+            if isinstance(loaded, dict):
+                return loaded
+        return {}
+
+    def _available_hours_payload(store: Any) -> dict[str, Any]:
+        """The full seven-day schedule for the Settings control.
+
+        Always returns all seven weekdays so a client can render the whole week:
+        a configured day echoes its stored ``available``/``start``/``end`` (kept
+        even while unavailable, so toggling a day back on restores its band); an
+        unconfigured day falls back to the user's flat waking band (the off-zone
+        complement). ``configured`` tells the client whether these are the user's
+        explicit hours or the inherited default.
+        """
+        default_start, default_end = window_config_for(resolved_settings, store).awake_band()
+        stored = _stored_available_hours(store)
+        days: dict[str, dict[str, Any]] = {}
+        for name in WEEKDAYS:
+            entry = stored.get(name)
+            if isinstance(entry, dict):
+                days[name] = {
+                    "available": bool(entry.get("available", True)),
+                    "start": str(entry.get("start") or default_start),
+                    "end": str(entry.get("end") or default_end),
+                }
+            else:
+                days[name] = {
+                    "available": True, "start": default_start, "end": default_end,
+                }
+        return {"configured": bool(stored), "days": days}
+
+    @router.get("/schedule/available-hours", tags=["schedule"])
+    def get_available_hours(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The per-weekday "available hours" the slot-finder works within.
+
+        Returns all seven weekdays (`mon`…`sun`), each with `available` and a local
+        `start`/`end` `HH:MM` band. When the user hasn't set them, every day falls
+        back to their flat waking band (the off-zone complement) and `configured`
+        is `false`. These hours gate `/calendar/slots` and the assistant's
+        "find me a time": an unavailable day yields no slots, and an available day
+        is searched only inside its band.
+        """
+        return _available_hours_payload(ctx.store)
+
+    @router.post("/schedule/available-hours", tags=["schedule"])
+    def set_available_hours(
+        payload: AvailableHours,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the per-weekday available hours from Settings.
+
+        A **partial** write: only the weekdays present in `days` are updated; the
+        rest keep their stored value (so a client can save one day at a time). Each
+        day's `start`/`end` are validated `HH:MM` and, when `available`, `end` must
+        be after `start` (schema-enforced). Stored as the `available_hours` coaching
+        key, marked an explicit user choice, and the fresh seven-day view is echoed
+        back so the client re-renders from the response.
+        """
+        memory = ctx.store
+        stored = _stored_available_hours(memory)
+        for name, day in payload.days.items():
+            stored[name] = {
+                "available": day.available, "start": day.start, "end": day.end,
+            }
+        memory.set_state(STATE_AVAILABLE_HOURS_KEY, json.dumps(stored), source="explicit")
+        return _available_hours_payload(memory)
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(

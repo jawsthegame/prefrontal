@@ -2663,14 +2663,15 @@ def _cmd_find_time(args: argparse.Namespace) -> int:
         # Claude when the ``assistant`` agent is opted into Anthropic, else local
         # Ollama; the module falls back to an offline heuristic if neither replies.
         client = ProviderResolver.from_settings(settings).client("assistant") if args.llm else None
-        awake = window_config_for(settings, store).awake_band()
+        cfg = window_config_for(settings, store)
         plan = plan_availability(
             message,
             store,
             client=client,
             now=utcnow(),
             tz=settings.timezone,
-            awake_band=awake,
+            awake_band=cfg.awake_band(),
+            band_for_weekday=cfg.band_for_weekday,
         )
     print(render_plan(plan, settings.timezone))
     return 0

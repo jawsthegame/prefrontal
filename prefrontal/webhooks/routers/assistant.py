@@ -128,14 +128,15 @@ def build_router(services: RouterServices) -> APIRouter:
         client, provider_name = provider.select("assistant")
         memory = ctx.store
         tz = resolved_settings.timezone
-        awake = window_config_for(resolved_settings, memory).awake_band()
+        cfg = window_config_for(resolved_settings, memory)
         plan = plan_availability(
             payload.message,
             memory,
             client=client,
             now=utcnow(),
             tz=tz,
-            awake_band=awake,
+            awake_band=cfg.awake_band(),
+            band_for_weekday=cfg.band_for_weekday,
         )
 
         def dump_slot(w: Any) -> dict[str, Any]:

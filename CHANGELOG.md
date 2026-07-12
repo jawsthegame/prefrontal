@@ -7,6 +7,24 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Available hours by day of week** ✅ — a per-weekday availability schedule the
+  user edits in Settings. Each weekday is either **off** or a single available
+  window (`HH:MM–HH:MM`); the slot-finder (`/calendar/slots`) and the assistant's
+  "find me a time" now search **only** inside a day's window and skip an
+  unavailable day entirely, superseding the single flat off-zone complement
+  per-day (`WindowConfig.band_for_weekday` → `find_slots(band_for_weekday=…)`).
+  Stored as the schema-less `available_hours` coaching key (JSON mirroring the API
+  shape, so an off day keeps its band for when it's toggled back on); unconfigured
+  = the previous flat-band behaviour, so it's a no-op until set. New
+  `GET/POST /schedule/available-hours` (partial writes; `AvailableHours` /
+  `DayAvailability` schema). Web dashboard gets an "Available hours" card; the iOS
+  Settings screen follows in a companion change. **Drift guard:** because the
+  contract is hand-mirrored across Pydantic ↔ web JS ↔ Swift, a committed OpenAPI
+  snapshot + example fixture (`tests/contracts/available_hours.*`,
+  `tests/test_contract_available_hours.py`) fails CI on any structural change
+  until the mirrors are updated in lockstep. Server + web + drift infra covered by
+  `tests/test_available_hours.py`.
+
 - **iOS geofencing — auto-log leaving home** ✅ (#469) — an **opt-in** location
   automation (Me ▸ Settings) that monitors your curated places (`GET /places`)
   with `CLCircularRegion` geofences (`ios/Prefrontal/Location/LocationMonitor.swift`).

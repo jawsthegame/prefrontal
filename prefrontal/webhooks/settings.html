@@ -70,6 +70,10 @@
     background: var(--bg); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
   .sc-num:disabled { opacity: .5; }
   .sc-check-off { opacity: .6; }
+  .hr-time { padding: 6px 6px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--fg); font: inherit;
+    font-variant-numeric: tabular-nums; }
+  .hr-time:disabled { opacity: .5; }
   .dep-pad { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; }
   .saved { color: var(--good); font-size: 13px; min-height: 16px; margin-top: 10px; }
 
@@ -172,6 +176,16 @@
         inputmode="numeric" /> %</label>
     <div class="sc-hint" id="dep-note"></div>
     <div class="saved" id="dep-saved"></div>
+  </section>
+
+  <section class="card" id="c-hours">
+    <h2>Available hours</h2>
+    <p class="sub">The hours you're generally free each day. Prefrontal only offers
+      open time (in "find me a slot") and suggests todos <b>inside</b> these hours —
+      an unchecked day is off entirely. Until you set them, every day inherits your
+      default waking hours (the complement of your quiet hours).</p>
+    <div id="hours"></div>
+    <div class="saved" id="hr-saved"></div>
   </section>
 
   <section class="card" id="c-smtp">
@@ -406,6 +420,74 @@ $("#c-departure").addEventListener("click", (e) => {
   if (e.target.id === "dep-auto") { e.preventDefault(); saveDep({ auto: true }); }
 });
 
+// ── Available hours: a per-weekday available window (unchecked = day off) ────
+// The stored shape mirrors the /schedule/available-hours contract exactly
+// (tests/contracts/available_hours.*). A change writes the whole edited day —
+// available + start + end together — so an off day keeps its band server-side.
+const HR_DAYS = [
+  ["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"],
+  ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"],
+];
+function hrRow(key, label, d) {
+  const on = !!d.available;
+  const time = (field, val) =>
+    `<input class="hr-time" type="time" data-hr-day="${key}" data-hr-field="${field}" `
+    + `value="${esc(val)}"${on ? "" : " disabled"} />`;
+  return `<div class="sc-check${on ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-hr-day="${key}" data-hr-field="available"`
+    + `${on ? " checked" : ""}/> ${esc(label)}</label>
+    <span class="sc-field">${time("start", d.start)}</span>
+    <span class="sc-field">to ${time("end", d.end)}</span>
+  </div>`;
+}
+function renderHours(body) {
+  const days = (body && body.days) || {};
+  return HR_DAYS.map(([key, label]) =>
+    hrRow(key, label, days[key] || { available: true, start: "09:00", end: "17:00" })
+  ).join("");
+}
+function flashHours(msg) {
+  $("#hr-saved").textContent = msg;
+  setTimeout(() => { $("#hr-saved").textContent = ""; }, 1600);
+}
+async function loadHours() {
+  try {
+    if (!$("#hours").contains(document.activeElement)) {
+      $("#hours").innerHTML = renderHours(await api("/schedule/available-hours"));
+    }
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+$("#hours").addEventListener("change", async (e) => {
+  const inp = e.target.closest("input");
+  if (!inp) return;
+  const key = inp.dataset.hrDay;
+  if (!key) return;
+  // Send the day as a whole so the server keeps a valid, complete band (and so an
+  // off day's hours survive for when it's toggled back on).
+  const row = $(`#hours`);
+  const val = (field) => row.querySelector(`[data-hr-day="${key}"][data-hr-field="${field}"]`);
+  const day = {
+    available: val("available").checked,
+    start: val("start").value || "09:00",
+    end: val("end").value || "17:00",
+  };
+  try {
+    const fresh = await api("/schedule/available-hours", {
+      method: "POST", body: JSON.stringify({ days: { [key]: day } }),
+    });
+    $("#hours").innerHTML = renderHours(fresh);
+    flashHours("Saved ✓");
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    // A 422 here is almost always end ≤ start on an available day.
+    flashHours(day.available && day.start >= day.end
+      ? "end must be after start" : "couldn't save — retry");
+    loadHours();  // resync the controls to what's actually stored
+  }
+});
+
 // ── SMTP (outbound email) config: a small form saved as a whole ──────────────
 // ── SMTP: several named outbox accounts, each its own inline form ────────────
 // A todo delegated by email sends from the account matching its mail account or
@@ -533,6 +615,7 @@ async function load() {
   }
   await loadTodos();
   await loadDeparture();
+  await loadHours();
   await loadSmtp();
   $("#status").textContent = "your preferences";
   if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible

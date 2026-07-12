@@ -101,6 +101,16 @@ Please make sure `pytest` and `ruff check .` pass before opening a pull request.
   "finished" is always visible.
 - **Tests for behavior you add.** New endpoints or store methods come with a
   test in `tests/`.
+- **A cross-client contract is hand-mirrored, so pin it.** A JSON shape consumed
+  by more than one client — the Pydantic schema, the web dashboard's inline JS
+  (`prefrontal/webhooks/*.html`), and the iOS Swift `Codable` models
+  (`ios/Prefrontal/Models/`) — has no code generation keeping the three copies in
+  step. When you add or change such a shape, add (or update) a contract guard
+  under `tests/contracts/`: a normalized OpenAPI snapshot the test re-derives from
+  `app.openapi()` and compares, plus an example fixture validated against the
+  model. `tests/test_contract_available_hours.py` is the template — it fails CI on
+  any structural drift and its message names the mirrors to update. Regenerate a
+  snapshot deliberately with `UPDATE_CONTRACT=1 uv run pytest <the test>`.
 
 ## Adding a challenge-area module
 

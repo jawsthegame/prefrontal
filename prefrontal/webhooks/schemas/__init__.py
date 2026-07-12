@@ -86,6 +86,7 @@ from prefrontal.webhooks.schemas.projects import (
     ProjectUpdate,
 )
 from prefrontal.webhooks.schemas.schedule import (
+    AvailableHours,
     CalendarEvent,
     CalendarSync,
     CommitmentCreate,
@@ -131,6 +132,7 @@ __all__ = [
     "AppointmentCreate",
     "AssistantApply",
     "AssistantMessage",
+    "AvailableHours",
     "FindTimeMessage",
     "AutoDecomposeConfig",
     "BalanceConfig",

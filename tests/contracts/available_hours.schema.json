@@ -1,0 +1,32 @@
+{
+  "AvailableHours": {
+    "properties": {
+      "days": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/DayAvailability"
+        },
+        "type": "object"
+      }
+    },
+    "type": "object"
+  },
+  "DayAvailability": {
+    "properties": {
+      "available": {
+        "default": true,
+        "type": "boolean"
+      },
+      "end": {
+        "default": "17:00",
+        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+        "type": "string"
+      },
+      "start": {
+        "default": "09:00",
+        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  }
+}
