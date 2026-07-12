@@ -693,7 +693,7 @@ def _focus_rating(notes: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def adapt_soft_block(store: MemoryStore, now: datetime | None = None) -> dict | None:
+def adapt_soft_block(store: MemoryStore, now: datetime | None = None) -> dict:
     """Learn ``hyperfocus_block_minutes`` from rated focus sessions' durations.
 
     Reads recent focus ``task`` episodes that carry a real duration *and* a one-tap
@@ -704,7 +704,8 @@ def adapt_soft_block(store: MemoryStore, now: datetime | None = None) -> dict | 
     interrupting genuinely productive focus at 90. ``pulled_off`` sessions are
     ignored (that's misalignment, not duration). Bounded to
     ``[MIN_SOFT_BLOCK_MINUTES, hard − SOFT_BLOCK_HARD_MARGIN]``, inside a deadband,
-    never overriding a hand-set value. Returns a CLI summary or ``None``.
+    never overriding a hand-set value. Always returns a CLI summary dict —
+    ``changed`` is ``False`` (with a ``reason``) when the soft point held.
     """
     default = DEFAULT_SOFT_BLOCK_MINUTES
     current = store.get_float("hyperfocus_block_minutes", default)

@@ -1296,14 +1296,14 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"{c['interval']}m ({c['reason']})"
                 )
             routine = adapt_morning_routine(s)
-            if routine is not None and (routine["changed"] or routine["samples"]):
+            if routine["changed"] or routine["samples"]:
                 arrow = "->" if routine["changed"] else "="
                 print(
                     f"[{label}] morning routine lead {arrow} {routine['routine']}m "
                     f"({routine['reason']})"
                 )
             soft = adapt_soft_block(s)
-            if soft is not None and (soft["changed"] or soft["samples"]):
+            if soft["changed"] or soft["samples"]:
                 arrow = "->" if soft["changed"] else "="
                 print(
                     f"[{label}] hyperfocus soft block {arrow} {soft['soft_block']}m "

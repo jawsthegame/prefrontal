@@ -245,7 +245,7 @@ def _bounded_routine(value: float) -> int:
     return int(round(clamped / 5.0) * 5)
 
 
-def adapt_morning_routine(store: MemoryStore, now: datetime | None = None) -> dict | None:
+def adapt_morning_routine(store: MemoryStore, now: datetime | None = None) -> dict:
     """Learn ``morning_routine_minutes`` from recent early-start departures.
 
     Runs in the nightly ``learn`` pass. Looks at ``departure`` episodes whose
@@ -255,8 +255,9 @@ def adapt_morning_routine(store: MemoryStore, now: datetime | None = None) -> di
     wake earlier, so a mean of "+12 min late" grows the lead ~12 min. Two-sided but
     bounded (:data:`MIN_ROUTINE_MINUTES`/:data:`MAX_ROUTINE_MINUTES`), inside a
     small deadband so it doesn't churn, and it never overrides a lead the user set
-    explicitly. Returns a summary dict for the CLI, or ``None`` when self-care-style
-    "nothing to say" applies (no early-start data / already user-set).
+    explicitly. Always returns a summary dict for the CLI — ``changed`` is ``False``
+    (with a ``reason``) when nothing moved, e.g. no early-start data yet or a
+    user-set lead.
     """
     default = DEFAULT_MORNING_ROUTINE_MINUTES
     current = int(store.get_float("morning_routine_minutes", default))
