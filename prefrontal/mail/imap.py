@@ -247,8 +247,8 @@ def _parse_rfc822(raw_bytes: bytes, account: str, *, uid: str | None = None) -> 
     """Parse raw RFC822 bytes into a normalize_message-shaped dict.
 
     ``uid`` is the message's IMAP UID, carried as a ``uid`` fallback so a message
-    that omits the ``Message-ID`` header still gets a stable dedup id (normalize_
-    message uses ``uid`` only when ``message_id`` is absent).
+    that omits the ``Message-ID`` header still gets a stable dedup id
+    (``normalize_message`` uses ``uid`` only when ``message_id`` is absent).
     """
     msg = email.message_from_bytes(raw_bytes)
     return {
