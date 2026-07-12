@@ -335,6 +335,30 @@ def test_upcoming_appointments_from_child_commitments(store, alex):
     assert "Upcoming appointments" in render_sheet(sheet)
 
 
+def test_upcoming_appointment_carries_commitment_id_and_can_be_uncategorized(store, alex):
+    """The sheet exposes each appointment's commitment id, and reclassifying it as
+    the viewer's own (kind='self') — the "not a kid's" correction — drops it from
+    the child-only Upcoming section."""
+    now = utcnow()
+    start = now + datetime.timedelta(days=2)
+    alex.add_child(name="Sam")
+    cid, _ = alex.upsert_commitment(
+        title="Not actually Sam's thing",
+        start_at=start.strftime("%Y-%m-%d %H:%M:%S"),
+        source="manual",
+        kind="child",
+        kind_source="user",
+    )
+    sheet = build_sheet(alex, now=now)
+    assert sheet.upcoming[0].id == cid
+
+    # The correction the "Not a kid's" button performs.
+    alex.set_commitment_kind(cid, "self", "user")
+    sheet2 = build_sheet(alex, now=now)
+    assert sheet2.counts["upcoming"] == 0
+    assert sheet2.upcoming == []
+
+
 def test_upcoming_appointment_time_is_local(store, alex):
     """A child appointment's 'when' reads in the household's zone, not raw UTC.
 
