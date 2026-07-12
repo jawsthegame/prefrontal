@@ -23,15 +23,20 @@ category vocabulary, and the episode-recording helpers. The HTTP surface
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
+from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.geo import DEFAULT_HOME_RADIUS_M, haversine_m
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
+from prefrontal.scheduling import minutes_between
 
 __all__ = [
     "TRIP_CATEGORIES",
     "DEFAULT_HOME_RADIUS_M",
+    "DEFAULT_STOP_RADIUS_M",
+    "DEFAULT_DWELL_MINUTES",
     "normalize_trip_category",
     "heuristic_reflection_outcome",
     "classify_reflection",
@@ -40,6 +45,15 @@ __all__ = [
     "apply_reflection",
     "trip_label_prompt",
 ]
+
+#: How close two fixes must be (metres) to count as "the same stop" — inside this
+#: the phone is dwelling at one place, beyond it it has moved on to a new spot.
+#: Tunable via the ``trip_stop_radius_m`` coaching key.
+DEFAULT_STOP_RADIUS_M = 150.0
+#: How long (minutes) the phone must linger at a spot before it counts as a real
+#: *stop* (a leg boundary) rather than passing through — a red light or slow
+#: traffic shouldn't split a trip. Tunable via ``trip_dwell_minutes``.
+DEFAULT_DWELL_MINUTES = 8.0
 
 #: Suggested categories a trip can be filed under. Free text is still accepted
 #: (people's lives don't fit a fixed list), but these are what the label prompt
@@ -199,6 +213,52 @@ def classify_reflection(
 # --- Location state machine --------------------------------------------------
 
 
+def _update_dwell(
+    store: Any,
+    trip: dict[str, Any],
+    lat: float,
+    lon: float,
+    home: dict[str, float],
+    now: datetime,
+    *,
+    stop_radius_m: float,
+    dwell_minutes: float,
+) -> int | None:
+    """Advance a trip's dwell state for one away ping; return a new waypoint id, if any.
+
+    Tracks a single "stop candidate" on the trip (where the phone is currently
+    lingering). Each away ping either **holds** the candidate (still within
+    ``stop_radius_m``) — and, once the dwell there passes ``dwell_minutes``,
+    promotes it to a :meth:`add_trip_waypoint` stop exactly once — or **resets** it
+    to the new position (the phone moved on). So a chained run (home → store →
+    school → home) lays down a waypoint per real stop, while passing through
+    (traffic, a red light) never lingers long enough to count.
+    """
+    now_str = now.strftime(TS_FMT)
+    cand_lat = trip.get("cand_lat")
+    cand_lon = trip.get("cand_lon")
+    cand_since = trip.get("cand_since")
+    if cand_lat is None or cand_lon is None or cand_since is None:
+        store.set_trip_stop_candidate(trip["id"], lat, lon, now_str)
+        return None
+    if haversine_m(cand_lat, cand_lon, lat, lon) > stop_radius_m:
+        # Moved on from the candidate spot — start a fresh candidate here.
+        store.set_trip_stop_candidate(trip["id"], lat, lon, now_str)
+        return None
+    # Still around the candidate: accumulate dwell and promote once it's a real stop.
+    if trip.get("cand_logged"):
+        return None
+    dwelled = minutes_between(cand_since, now_str)
+    if dwelled is None or dwelled < dwell_minutes:
+        return None
+    dist_from_home = round(haversine_m(home["lat"], home["lon"], cand_lat, cand_lon))
+    waypoint_id = store.add_trip_waypoint(
+        trip["id"], cand_lat, cand_lon, dist_from_home, cand_since
+    )
+    store.mark_trip_candidate_logged(trip["id"])
+    return waypoint_id
+
+
 def process_location(
     store: Any,
     lat: float,
@@ -206,6 +266,7 @@ def process_location(
     *,
     radius_m: float | None = None,
     home: dict[str, float] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Fold a location ping into the closed-loop trip state machine.
 
@@ -215,7 +276,11 @@ def process_location(
     - **Away with no open trip** → **open** one (a *depart* edge), unless a
       *declared* outing is already tracking this trip (the Location-Aware Task
       Anchor owns those; we don't double-count).
-    - **Away with an open trip** → grow its ``max_distance_m`` (still out).
+    - **Away with an open trip** → grow its ``max_distance_m`` (still out) and
+      advance dwell detection (:func:`_update_dwell`), which lays down an
+      intermediate **waypoint** each time the phone lingers somewhere away from
+      home long enough to count as a stop — so a chained errand run is split into
+      its legs rather than collapsing into one blob.
     - **Home with an open trip** → **close** it (a *return* edge — the loop is now
       closed) and log a ``task`` episode for the learning loop.
     - **Home with no open trip** → nothing (still home).
@@ -232,14 +297,18 @@ def process_location(
         home: The home coordinate; defaults to :meth:`MemoryStore.get_home`.
 
     Returns:
-        ``{"event", "trip_id", "distance_m", "at_home", "episode_id", "reason"}``
-        where ``event`` is ``"depart"``/``"return"``/``None``. ``reason`` explains
-        a ``None`` event when it's notable (``"no_home"``/``"outing_active"``).
+        ``{"event", "trip_id", "distance_m", "at_home", "episode_id", "reason",
+        "waypoint_id"}`` where ``event`` is ``"depart"``/``"return"``/``None`` and
+        ``waypoint_id`` is the id of an intermediate stop recorded on this ping (or
+        ``None``). ``reason`` explains a ``None`` event when it's notable
+        (``"no_home"``/``"outing_active"``).
     """
+    now = now or utcnow()
     home = home if home is not None else store.get_home()
     if home is None:
         return {"event": None, "reason": "no_home", "trip_id": None,
-                "distance_m": None, "at_home": None, "episode_id": None}
+                "distance_m": None, "at_home": None, "episode_id": None,
+                "waypoint_id": None}
     if radius_m is None:
         radius_m = store.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M)
 
@@ -254,6 +323,7 @@ def process_location(
         "distance_m": distance_m,
         "at_home": at_home,
         "episode_id": None,
+        "waypoint_id": None,
     }
 
     if at_home:
@@ -268,6 +338,12 @@ def process_location(
     # Away from home.
     if active is not None:
         store.bump_trip_distance(active["id"], distance_m)
+        stop_radius = store.get_float("trip_stop_radius_m", DEFAULT_STOP_RADIUS_M)
+        dwell = store.get_float("trip_dwell_minutes", DEFAULT_DWELL_MINUTES)
+        result["waypoint_id"] = _update_dwell(
+            store, active, lat, lon, home, now,
+            stop_radius_m=stop_radius, dwell_minutes=dwell,
+        )
         return result
     # A declared outing already tracks this trip — don't open a passive duplicate.
     if store.active_outings():
@@ -293,13 +369,15 @@ def record_trip_return(store: Any, closed: dict[str, Any]) -> int | None:
     find it. ``None`` (no episode) only when the trip has no measured duration.
     """
     actual = closed.get("actual_minutes")
+    stops = len(store.trip_waypoints(closed["id"]))
+    stop_note = f"; {stops} stop{'s' if stops != 1 else ''}" if stops else ""
     episode_id = store.log_episode(
         "task",
         actual_value=round(actual, 1) if actual is not None else None,
         acknowledged=False,
         context="trip",
         outcome=None,
-        notes="closed-loop trip (auto-detected); awaiting reflection",
+        notes=f"closed-loop trip (auto-detected){stop_note}; awaiting reflection",
     )
     store.set_trip_episode(closed["id"], episode_id)
     return episode_id
@@ -378,14 +456,23 @@ def trip_label_prompt(trip: dict[str, Any]) -> str:
     """
     minutes = trip.get("actual_minutes")
     dist = trip.get("max_distance_m")
+    stops = trip.get("stop_count") or 0
     bits = []
     if minutes is not None:
         bits.append(f"{round(minutes)} min")
     if dist:
         km = dist / 1000.0
         bits.append(f"{km:.1f} km out" if km >= 1 else f"{round(dist)} m out")
+    if stops:
+        bits.append(f"{stops} stop{'s' if stops != 1 else ''}")
     span = f" ({', '.join(bits)})" if bits else ""
+    multi = (
+        " Looks like a few stops — tell me about each if they were different errands."
+        if stops >= 2
+        else ""
+    )
     return (
         f"You got back from a trip{span} — what was it? "
         "Tap to label it, file it (shop/work/home/kids/personal), and say how it went."
+        f"{multi}"
     )
