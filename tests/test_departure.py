@@ -554,9 +554,57 @@ def test_departure_padding_round_trips_percent_to_fraction(client, store):
         "/departure/padding", json={"percent": 15}, headers=_auth()
     ).json()
     assert saved["percent"] == 15
+    # A hand-set value is marked explicit, so the learner won't overwrite it.
+    assert saved["source"] == "explicit"
+    assert saved["learned"] is False
     # Stored as a fraction on the coaching key the planner reads.
     assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.15)
     assert client.get("/departure/padding", headers=_auth()).json()["percent"] == 15
+
+
+def test_departure_padding_auto_hands_back_to_the_learner(client, store):
+    """`auto` clears the explicit override (keeping the number) so learning resumes."""
+    client.post("/departure/padding", json={"percent": 20}, headers=_auth())
+    assert store.all_state()["travel_pad_fraction"]["source"] == "explicit"
+
+    back = client.post("/departure/padding", json={"auto": True}, headers=_auth()).json()
+    assert back["percent"] == 20  # value kept
+    assert back["source"] == "inferred" and back["learned"] is True
+    assert store.all_state()["travel_pad_fraction"]["source"] == "inferred"
+
+
+def test_departure_padding_requires_percent_or_auto(client, store):
+    """An empty body sets nothing — percent is required unless auto is given."""
+    resp = client.post("/departure/padding", json={}, headers=_auth())
+    assert resp.status_code == 422
+
+
+def test_departure_padding_explains_a_learned_value(client, store):
+    """A learned (inferred) pad comes back with a plain-language reason string."""
+    # Simulate what the learning pass writes: an inferred pad + the departures.
+    store.set_state("travel_pad_fraction", "0.15", source="inferred")
+    for d in range(1, 6):
+        store.log_episode("departure", outcome="miss", timestamp=f"2026-02-{d:02d} 08:00:00")
+    for d in range(6, 11):
+        store.log_episode("departure", outcome="success", timestamp=f"2026-02-{d:02d} 08:00:00")
+    body = client.get("/departure/padding", headers=_auth()).json()
+    assert body["learned"] is True and body["percent"] == 15
+    # Notes it was auto-set and how it got there (5 late of 10).
+    assert body["reason"] and "5 of the last 10" in body["reason"]
+
+
+def test_departure_padding_autolearn_toggle(client, store):
+    """Auto-learn defaults on and can be switched off from Settings."""
+    assert client.get("/departure/padding", headers=_auth()).json()["autolearn"] is True
+
+    off = client.post("/departure/padding", json={"autolearn": False}, headers=_auth()).json()
+    assert off["autolearn"] is False
+    assert store.get_bool("travel_pad_autolearn", True) is False
+    # Toggling doesn't disturb the stored pad value.
+    assert store.all_state().get("travel_pad_fraction", {}).get("source") != "explicit"
+
+    on = client.post("/departure/padding", json={"autolearn": True}, headers=_auth()).json()
+    assert on["autolearn"] is True
 
 
 def test_departure_padding_rejects_out_of_range(client, store):

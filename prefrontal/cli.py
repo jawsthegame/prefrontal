@@ -1243,6 +1243,11 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 print(f"[{label}] auto half-life -> {hls}")
             if summary.early_start_threshold is not None:
                 print(f"[{label}] early_start_threshold -> {summary.early_start_threshold}")
+            if summary.travel_pad_fraction is not None:
+                print(
+                    f"[{label}] travel_pad_fraction -> {summary.travel_pad_fraction} "
+                    f"({round(summary.travel_pad_fraction * 100)}%)"
+                )
             if summary.type_bias:
                 types = ", ".join(f"{t}={v}" for t, v in sorted(summary.type_bias.items()))
                 print(f"[{label}] task-type bias -> {types}")

@@ -172,13 +172,31 @@ class CommitmentDomain(BaseModel):
 class TravelPadding(BaseModel):
     """Body of ``POST /departure/padding`` — the distance-relative travel cushion."""
 
-    percent: float = Field(
+    percent: float | None = Field(
+        default=None,
         ge=0,
         le=100,
         description=(
             "Safety padding added to every travel estimate, as a percentage of the "
             "drive (so a longer trip gets proportionally more). E.g. `15` pads a "
             "40-min drive by 6 min and a 10-min one by 1.5. `0` turns it off. Stored "
-            "as the `travel_pad_fraction` coaching key (percent ÷ 100)."
+            "as the `travel_pad_fraction` coaching key (percent ÷ 100), marked an "
+            "explicit user choice. Required unless `auto` is set."
+        ),
+    )
+    auto: bool = Field(
+        default=False,
+        description=(
+            "Hand the pad back to the learner: clear the manual override so the "
+            "learning pass sets it from your departure lateness again. When true, "
+            "`percent` is ignored."
+        ),
+    )
+    autolearn: bool | None = Field(
+        default=None,
+        description=(
+            "Master switch for auto-populating the pad from your departure "
+            "lateness. `false` freezes it; `true` re-enables learning. When set, "
+            "`percent`/`auto` are ignored — it toggles the setting only."
         ),
     )

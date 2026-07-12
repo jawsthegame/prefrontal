@@ -27,9 +27,11 @@ from prefrontal.memory.patterns import (
     compute_confidence,
     compute_early_start_threshold,
     compute_patterns,
+    compute_travel_pad_fraction,
     decay_bias_toward_neutral,
     decay_channel_rate_toward_pooled,
     decay_weight,
+    departure_late_stats,
     derive_band_half_lives,
     derive_context_half_lives,
     derive_half_life,
@@ -1077,3 +1079,90 @@ def test_recompute_respects_explicit_early_start_threshold():
             store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 07:00:00")
         recompute_patterns(store, timezone="UTC")
         assert store.get_state("early_start_threshold") == "08:30"
+
+
+# -- travel-pad suggestion from the departure late-rate ----------------------
+
+
+def _departures(misses, successes):
+    """`misses` late + `successes` on-time departure episodes (no decay in tests)."""
+    eps = [_late_departure("08:00", d) for d in range(misses)]
+    eps += [
+        _ep(episode_type="departure", outcome="success", timestamp=f"2026-01-{d + 1:02d} 08:00:00")
+        for d in range(successes)
+    ]
+    return eps
+
+
+def test_travel_pad_all_late_hits_the_cap():
+    """A 100% late-rate scales past the ceiling and is clamped to the cap (0.25)."""
+    pad = compute_travel_pad_fraction(_departures(6, 0), half_life_days=None)
+    assert pad == pytest.approx(0.25)
+
+
+def test_travel_pad_scales_with_late_rate():
+    """Half the departures late → 0.4 × 0.5 = 0.20, snapped to the 5% step."""
+    pad = compute_travel_pad_fraction(_departures(5, 5), half_life_days=None)
+    assert pad == pytest.approx(0.20)
+
+
+def test_travel_pad_zero_when_reliably_on_time():
+    """Enough departures, all on time → 0.0 (padding eases off), not None."""
+    pad = compute_travel_pad_fraction(_departures(0, 6), half_life_days=None)
+    assert pad == 0.0
+
+
+def test_travel_pad_none_below_sample_floor():
+    """Fewer than the sample floor of departures → no suggestion at all."""
+    assert compute_travel_pad_fraction(_departures(4, 0), half_life_days=None) is None
+
+
+def test_travel_pad_ignores_non_departure_episodes():
+    """Only departure episodes count — late tasks/outings don't pad travel here."""
+    tasks = [_ep(episode_type="task", outcome="miss") for _ in range(8)]
+    assert compute_travel_pad_fraction(tasks, half_life_days=None) is None
+
+
+def test_recompute_learns_and_persists_travel_pad_fraction():
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for d in range(1, 7):  # six late departures
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 08:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.travel_pad_fraction == pytest.approx(0.25)
+        assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.25)
+        # Written as a learned value, so the Settings card can label it and the
+        # next pass can keep tuning it.
+        assert store.all_state()["travel_pad_fraction"]["source"] == "inferred"
+
+
+def test_recompute_respects_explicit_travel_pad_fraction():
+    """A pad set on the Settings page (explicit) is left alone by the learner."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("travel_pad_fraction", "0.1", source="explicit")
+        for d in range(1, 7):
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 08:00:00")
+        recompute_patterns(store, timezone="UTC")
+        assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.1)
+
+
+def test_recompute_skips_travel_pad_when_autolearn_off():
+    """With the auto-learn switch off, the learner never touches the pad."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        store.set_state("travel_pad_autolearn", "off", source="explicit")
+        for d in range(1, 7):  # would otherwise learn a 0.25 pad
+            store.log_episode("departure", outcome="miss", timestamp=f"2026-01-{d:02d} 08:00:00")
+        summary = recompute_patterns(store, timezone="UTC")
+        assert summary.travel_pad_fraction is None
+        assert store.get_float("travel_pad_fraction", 0.0) == 0.0  # untouched seed
+
+
+def test_departure_late_stats_counts_misses_over_scored_departures():
+    """(late, total) counts misses vs on-times; ignores unscored / non-departures."""
+    eps = _departures(3, 5)  # 3 late, 5 on time
+    eps.append(_ep(episode_type="departure", outcome=None))  # unscored — ignored
+    eps.append(_ep(episode_type="task", outcome="miss"))  # not a departure — ignored
+    assert departure_late_stats(eps) == (3, 8)
+    assert departure_late_stats([]) is None

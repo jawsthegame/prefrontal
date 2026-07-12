@@ -38,6 +38,9 @@ DEFAULT_COACHING_STATE: tuple[tuple[str, str, str], ...] = (
     ("travel_road_factor", "1.3", "inferred"),
     ("departure_prep_minutes", "5", "inferred"),
     ("travel_pad_fraction", "0", "inferred"),
+    # Master switch for auto-populating travel_pad_fraction from the departure
+    # late-rate (prefrontal.memory.patterns). On by default; off freezes the pad.
+    ("travel_pad_autolearn", "on", "explicit"),
     ("departure_heads_up_minutes", "30", "inferred"),
     ("departure_soon_minutes", "10", "inferred"),
     # Opt-in network geocoding (Nominatim) for commitment destinations. Off by
