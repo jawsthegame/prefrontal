@@ -80,13 +80,16 @@ The widget uses an **App Group**, which requires a **paid Apple Developer
 account** (App Groups aren't available to free "Personal Team" signing). The
 app alone runs under free signing, but the full app + widget needs the paid tier.
 
-1. **Set your team once, locally** (survives `xcodegen generate`, never committed):
+1. **Set your team once, locally** — create a git-ignored override; it survives
+   `xcodegen generate` **and** fresh clones, so you never re-enter the team:
    ```sh
-   git update-index --skip-worktree ios/Signing.xcconfig   # ignore local edits
-   # then edit ios/Signing.xcconfig → DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
+   cp ios/Signing.local.xcconfig.example ios/Signing.local.xcconfig
+   # then edit ios/Signing.local.xcconfig → DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
    ```
-   Find the Team ID in Xcode ▸ Settings ▸ Accounts ▸ (your team), or at
-   developer.apple.com ▸ Membership.
+   `Signing.xcconfig` (tracked) optionally `#include?`s that local file, so the
+   team applies to both targets without being committed — no
+   `git update-index --skip-worktree` needed. Find the Team ID in Xcode ▸
+   Settings ▸ Accounts ▸ (your team), or at developer.apple.com ▸ Membership.
 2. `cd ios && xcodegen generate && open Prefrontal.xcodeproj`
 3. Both targets use **Automatically manage signing**; with the team set, Xcode
    registers the App Group (`group.com.morningstatic.prefrontal`) on the portal

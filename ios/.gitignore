@@ -3,6 +3,8 @@ Prefrontal.xcodeproj/
 # XcodeGen also generates each target's Info.plist.
 PrefrontalWidgets/Info.plist
 Prefrontal/Info.plist
+# Local signing override (your Team ID) — never committed; see Signing.xcconfig.
+Signing.local.xcconfig
 # Build output
 build/
 DerivedData/

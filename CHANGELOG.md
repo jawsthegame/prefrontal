@@ -7,6 +7,15 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS signing — set the Team ID once, for good** ✅ — the tracked
+  `ios/Signing.xcconfig` shipped with an empty `DEVELOPMENT_TEAM`, so every fresh
+  clone reset it and the `git update-index --skip-worktree` workaround didn't
+  survive re-clones — you'd re-enter the team in Xcode and `xcodegen generate`
+  would wipe it. Now `Signing.xcconfig` `#include?`s a **git-ignored**
+  `Signing.local.xcconfig` (template: `Signing.local.xcconfig.example`): put your
+  Team ID there once and it survives clones and regeneration, never committed, no
+  skip-worktree. See `ios/README.md`.
+
 - **Channel-choice auto-act — damp a non-predictive channel signal** ✅ (learning
   §4) — the channel-calibration walk-forward was report-only; now it closes the
   loop like the bias auto-act. When `channel_calibration` finds per-channel

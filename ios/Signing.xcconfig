@@ -1,14 +1,21 @@
-// Local code-signing config for the Prefrontal app + widget.
+// Code-signing config for the Prefrontal app + widget (applied to both targets
+// via `configFiles` in project.yml, so it survives `xcodegen generate`).
 //
-// Set your Apple Developer Team ID below, then keep the edit local so it is
-// never committed to this public repo:
+// Your Apple Developer Team ID is NOT committed to this public repo. Put it in a
+// local, git-ignored override once — it then survives clones AND regeneration,
+// with no `git update-index --skip-worktree` needed:
 //
-//     git update-index --skip-worktree ios/Signing.xcconfig
-//
-// (undo with: git update-index --no-skip-worktree ios/Signing.xcconfig)
+//     cp ios/Signing.local.xcconfig.example ios/Signing.local.xcconfig
+//     # edit ios/Signing.local.xcconfig → DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
+//     cd ios && xcodegen generate
 //
 // Find your Team ID in Xcode ▸ Settings ▸ Accounts ▸ (your team), or at
 // developer.apple.com ▸ Membership.
 
-DEVELOPMENT_TEAM =
 CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+// Optional local override (git-ignored). The `?` makes it a no-op when absent,
+// so a fresh clone that hasn't created it yet still generates cleanly. Declared
+// last so its DEVELOPMENT_TEAM wins over the empty default above.
+#include? "Signing.local.xcconfig"
