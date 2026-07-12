@@ -42,7 +42,8 @@ ios/
     Onboarding/            # ConnectPayload, OnboardingModel, QRScannerView
     Intents/               # App Intents (Siri/Shortcuts/Spotlight/Action Button)
     Activities/            # LiveActivityManager (starts/ends the Live Activity)
-    Notifications/         # LocalNotifications (off-tailnet fallback nudges)
+    Notifications/         # LocalNotifications + AppDelegate (APNs, categories)
+    Location/              # LocationMonitor (opt-in geofences over /places)
     Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
@@ -189,6 +190,18 @@ the native equivalent of ntfy's inline buttons. Needs the **Push Notifications**
 capability (the `aps-environment` entitlement); the server falls back to ntfy for
 any device that hasn't registered. See the server side in
 `prefrontal/integrations/delivery.py` + `docs/multi-tenant.md`.
+
+## Location automations (opt-in geofencing)
+
+Off by default. Enabled in **Me ▸ Settings ▸ Location automations**, it prompts
+for **Always** location and monitors your curated places (`GET /places`) with
+`CLCircularRegion` geofences (`Location/LocationMonitor.swift`). Leaving the
+place named **home** posts `/webhooks/departure/left` — the native replacement
+for the "when I leave Home" Shortcut automation — and any enter/exit posts the
+current position to `/webhooks/location`, feeding departure-timing and outing
+distance without a tap. Region monitoring is battery-cheap (the OS wakes the app
+only on a crossing, even from terminated; `AppDelegate` re-attaches the delegate
+on launch). Add places with `prefrontal place add <name> <lat> <lon>`.
 
 ## Siri / Shortcuts / Action Button (App Intents)
 

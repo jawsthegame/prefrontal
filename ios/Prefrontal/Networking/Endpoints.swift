@@ -75,6 +75,21 @@ extension APIClient {
         try await post("route/apns-token", json: ["token": token])
     }
 
+    // Geofencing (#469) — curated places to monitor, and the position/departure
+    // pings a region crossing fires.
+    func places() async throws -> [Place] { try await get("places", as: PlacesList.self).places }
+    func postLocation(lat: Double, lon: Double, accuracy: Double? = nil) async throws {
+        var body: [String: Any] = ["lat": lat, "lon": lon]
+        if let accuracy { body["accuracy_m"] = accuracy }
+        try await post("webhooks/location", json: body)
+    }
+    func postDepartureLeft(lat: Double? = nil, lon: Double? = nil) async throws {
+        var body: [String: Any] = [:]
+        if let lat { body["current_lat"] = lat }
+        if let lon { body["current_lon"] = lon }
+        try await post("webhooks/departure/left", json: body)
+    }
+
     // One-tap outcome log (the /webhooks/shortcut path). `action` is made_it /
     // missed_it / partial; `episodeType` defaults to a departure.
     func logShortcut(action: String, episodeType: String = "departure",

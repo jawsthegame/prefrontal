@@ -58,7 +58,10 @@ struct SettingsView: View {
                 .disabled(testing || url.isEmpty || token.isEmpty)
             }
 
-            if !isOnboarding { diagnostics }
+            if !isOnboarding {
+                locationSection
+                diagnostics
+            }
         }
         .brandScreen()
         .navigationTitle(isOnboarding ? "Welcome" : "Settings")
@@ -73,6 +76,22 @@ struct SettingsView: View {
     /// and the widget reads them back. This shows what the *app* sees; if a token
     /// is present here but the widget still says "Tap to connect," the App Group
     /// capability isn't provisioned into the *widget* target.
+    /// Opt-in geofencing: on, it prompts for Always-location and monitors your
+    /// curated places so leaving home auto-logs a departure (no Shortcut needed).
+    private var locationSection: some View {
+        Section("Location automations") {
+            Toggle("Auto-log leaving home & arrivals", isOn: Binding(
+                get: { config.locationEnabled },
+                set: { on in
+                    config.locationEnabled = on
+                    if on { LocationMonitor.shared.enable() } else { LocationMonitor.shared.disable() }
+                }
+            ))
+            Text("Uses background location to notice when you leave a curated place (Always access). Add places with `prefrontal place add`.")
+                .font(.caption).foregroundStyle(Brand.muted)
+        }
+    }
+
     private var diagnostics: some View {
         Section("Diagnostics") {
             LabeledContent("App Group", value: SharedStore.appGroup)

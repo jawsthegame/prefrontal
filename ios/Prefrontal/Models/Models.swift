@@ -197,6 +197,18 @@ struct CommitmentList: Codable {
     let previous: [Commitment]?
 }
 
+/// A curated place (from `/places`) the app can geofence. `name` is the match
+/// key; a place named "home" is treated as the departure anchor.
+struct Place: Codable, Identifiable, Hashable {
+    let name: String
+    let lat: Double
+    let lon: Double
+    let label: String?
+    var id: String { name }
+}
+
+struct PlacesList: Codable { let places: [Place] }
+
 struct Slots: Codable {
     let minutes: Int
     let days: Int

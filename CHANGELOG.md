@@ -7,6 +7,17 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS geofencing — auto-log leaving home** ✅ (#469) — an **opt-in** location
+  automation (Me ▸ Settings) that monitors your curated places (`GET /places`)
+  with `CLCircularRegion` geofences (`ios/Prefrontal/Location/LocationMonitor.swift`).
+  Leaving the place named **home** posts `/webhooks/departure/left` — the native
+  replacement for the "when I leave Home" Shortcut automation — and any
+  enter/exit posts the position to `/webhooks/location`, so departure timing and
+  outing distance capture without a tap. Battery-cheap region monitoring (the OS
+  wakes the app only on a crossing, even from terminated; `AppDelegate` re-attaches
+  the delegate on launch). Requires Always-location (prompted only when you turn
+  it on); off by default. Client-only.
+
 - **APNs — native iOS push, client side** ✅ (#467, part 2) — the app now opts a
   device into native Apple Push: on notification authorization it registers for
   remote notifications and `AppDelegate` posts the token to the new
