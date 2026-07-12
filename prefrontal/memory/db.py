@@ -44,7 +44,8 @@ def connect(db_path: str) -> sqlite3.Connection:
         # Expand '~' once and use the *same* path for both the parent-dir mkdir
         # and sqlite3.connect below. Previously mkdir expanded the path but
         # connect got the raw db_path, so a '~/prefrontal.db' created the intended
-        # home directory yet opened a literal file named '~' under the CWD.
+        # home directory yet opened './~/prefrontal.db' (a literal '~' directory
+        # under the CWD) — a different, silently-wrong database file.
         expanded = Path(db_path).expanduser()
         expanded.parent.mkdir(parents=True, exist_ok=True)
         db_path = str(expanded)
