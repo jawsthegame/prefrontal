@@ -17,8 +17,11 @@ your next departure, what-fits-now, and self-care progress. The Home Screen
 widget is **interactive** (iOS 17): tapping the self-care chips logs a meal /
 glass of water in place (`MarkSelfCareIntent`), and when an outing or focus
 session is active it shows a one-tap **I'm back** / **Wrap up** button
-(`ImBackIntent` / `EndFocusIntent`) — all without launching the app. The app and
-widget share the base URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
+(`ImBackIntent` / `EndFocusIntent`) — all without launching the app. A separate
+**configurable** Lock Screen circular ring (`SelfCareCircleWidget.swift`) lets you
+long-press → **Edit** → pick which self-care check it tracks (Water, Meals, …),
+rather than being fixed to water. The app and widget share the base URL + token
+via the **App Group** `group.com.morningstatic.prefrontal`.
 
 ## Layout
 
@@ -148,7 +151,7 @@ actually landed), which is acceptable for todos/self-care.
 | Screen | Endpoints |
 |---|---|
 | Today | `/todos/now`, `/departure/next`, `/outings`, `/focus`, `/nudges`, `/briefing`; Add → `POST /todos`; briefing 👍/👎 → `POST /briefing/feedback`; Panic |
-| Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done` |
+| Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done`; Delegate → `/todos/delegate-recipients`, `/todos/{id}/delegate` · `/delegate/return` |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
 | Me | `/self-care` + `/self-care/mark`; `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Panic | `/panic` |

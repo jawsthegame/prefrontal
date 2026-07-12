@@ -52,15 +52,52 @@ struct Todo: Codable, Identifiable, Hashable {
     let startedAt: String?
     let avoidance: Avoidance?
     let decomposition: Decomposition?
+    let delegation: Delegation?
 
     enum CodingKeys: String, CodingKey {
         case id, title, notes, priority, energy, status, category, domain, avoidance, decomposition
+        case delegation
         case estimateMinutes = "estimate_minutes"
         case deadline
         case startedAt = "started_at"
     }
 
     var isStarted: Bool { startedAt != nil }
+}
+
+/// A todo handed to an assistant: the in-app AI agent (writes a brief + drafts +
+/// action items back onto the todo) or a human VA over email. Mirrors the
+/// server's `get_delegation` shape and the web dashboard's delegation panel.
+struct Delegation: Codable, Hashable {
+    let handler: String?          // "agent" | "email"
+    let destination: String?      // VA email (email handler)
+    let status: String            // in_prep | prepped | forwarded | returned | failed
+    let brief: String?
+    let detail: String?
+    let context: String?
+    let drafts: [Draft]?
+    let actions: [Action]?
+
+    struct Draft: Codable, Hashable {
+        let channel: String?; let to: String?; let subject: String?; let body: String?
+    }
+    struct Action: Codable, Hashable {
+        let text: String?; let mine: Bool?
+    }
+
+    /// (label, done-ish) for the status pill.
+    var label: String {
+        switch status {
+        case "prepped":   return "🤖 Prepped"
+        case "forwarded": return "✉ Sent"
+        case "in_prep":   return "… Prepping"
+        case "returned":  return "↩ Returned"
+        case "failed":    return "⚠ Needs a hand"
+        default:          return status
+        }
+    }
+    var isWorking: Bool { status == "in_prep" }
+    var canReturn: Bool { status == "prepped" || status == "forwarded" }
 }
 
 struct Avoidance: Codable, Hashable {
@@ -93,6 +130,8 @@ struct Decomposition: Codable, Hashable {
 }
 
 struct TodoList: Codable { let todos: [Todo] }
+
+struct Recipients: Codable { let recipients: [String] }
 
 struct TodosNow: Codable {
     let freeMinutes: Double?

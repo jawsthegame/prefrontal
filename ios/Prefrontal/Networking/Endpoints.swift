@@ -40,6 +40,20 @@ extension APIClient {
     func decomposeTodo(_ id: Int) async throws { try await post("todos/\(id)/decompose") }
     func markStepDone(_ id: Int, step: Int) async throws { try await post("todos/\(id)/steps/\(step)/done") }
 
+    // Delegation — hand a todo to the in-app AI agent or email a human VA.
+    func delegateRecipients() async throws -> [String] {
+        try await get("todos/delegate-recipients", as: Recipients.self).recipients
+    }
+    func delegateTodo(_ id: Int, handler: String, destination: String? = nil,
+                      context: String? = nil, note: String? = nil) async throws {
+        var body: [String: Any] = ["handler": handler]
+        if let destination, !destination.isEmpty { body["destination"] = destination }
+        if let context, !context.isEmpty { body["context"] = context }
+        if let note, !note.isEmpty { body["note"] = note }
+        try await post("todos/\(id)/delegate", json: body)
+    }
+    func returnDelegation(_ id: Int) async throws { try await post("todos/\(id)/delegate/return") }
+
     // Self-care
     func markSelfCare(key: String, undo: Bool = false) async throws {
         try await post("self-care/mark", json: ["key": key, "undo": undo], queueable: true)

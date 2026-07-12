@@ -7,6 +7,24 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS delegation — hand a todo to the AI agent or a VA** ✅ — the native Todos
+  tab now has the delegation flow the web dashboard already offered (parity, not a
+  new server feature). Each open todo gets a **Delegate** action → a sheet to pick
+  **AI agent** (local model writes a brief + drafts + action items back onto the
+  todo) or **email a VA** (recipient pick-list from `/todos/delegate-recipients` +
+  cover note), with optional pasted context, calling `POST /todos/{id}/delegate`.
+  The row shows a status pill (prepping → prepped/sent/returned/failed) and an
+  inline panel with the brief, action items (your own get one-tap **＋ Todo**),
+  draft messages, and **Mark returned** (`/todos/{id}/delegate/return`). Client-only.
+
+- **iOS configurable Lock Screen self-care ring** ✅ (#465) — the circular Lock
+  Screen accessory was hardcoded to water; it's now a separate **configurable**
+  widget (`ios/PrefrontalWidgets/SelfCareCircleWidget.swift`) — long-press → Edit →
+  pick which check it tracks (Water / Meals / Meds / Breaks / Wind-down /
+  Movement) via an `AppIntentConfiguration` + `SelfCareCheck` app enum. The glance
+  fetch now carries every enabled check (not just meal/water), and the old
+  hardcoded circular was removed from the main static widget.
+
 - **Per-module next steps — one net-new capability per challenge module** ✅ — with
   every module's declared interventions already wired, each challenge module gained
   one honest next surface, all composing existing primitives:
