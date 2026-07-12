@@ -33,7 +33,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from prefrontal.clock import TS_FMT, local_datetime
+from prefrontal.clock import TS_FMT, local_datetime, local_day_bounds
+from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.coaching import CoachContext, Cue
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -283,6 +284,84 @@ def focus_task_from_title(title: str | None) -> str | None:
     """
     remainder = _FOCUS_LABEL_RE.sub("", (title or "").strip()).strip(" :–—-")
     return remainder or None
+
+
+def _infer_focus_task(store: MemoryStore, now: datetime) -> InferredFocus:
+    """Infer a focus task from open todos (most-avoided first).
+
+    The bare-``Focus time`` fallback: a block with no task in its title protects
+    your top open loop instead. Mirrors the focus router's one-tap start ordering
+    so the endpoint and CLI arm identically.
+    """
+    from prefrontal.todos import avoided_todos  # lazy: avoid an import cycle
+
+    open_todos = store.open_todos(exclude_delegated=True)
+    avoided = [a["todo"] for a in avoided_todos(open_todos, now)]
+    seen = {t["id"] for t in avoided}
+    return infer_focus_start(avoided + [t for t in open_todos if t["id"] not in seen])
+
+
+def arm_focus_session(
+    store: MemoryStore, settings: Any, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Auto-start a focus session from a *live* calendar focus block (zero taps).
+
+    The shared core behind ``POST /webhooks/focus/arm`` and ``prefrontal focus
+    arm`` (so the endpoint and the native launchd tick can't drift): when a
+    "focus"/"deep work" event is happening now and no session is already running,
+    arm one for the rest of its window — the event's own end is the planned
+    duration. A bare "Focus time" (no task in the title) protects your top open
+    todo instead. Idempotent: safe to call every tick without stacking sessions.
+
+    Returns the same shape the endpoint returns: ``{"armed": bool, ...}`` — with
+    ``session_id``/``intended_task``/``planned_minutes``/``from_commitment`` when
+    it armed, or a ``reason`` when it didn't.
+    """
+    if store.active_focus_sessions():
+        return {"armed": False, "reason": "a focus session is already active"}
+
+    if now is None:
+        from prefrontal.impact import utcnow  # lazy: keep this module impact-free
+
+        now = utcnow()
+    # The candidate focus blocks are today's in the user's *local* day.
+    day_start, day_end = local_day_bounds(now, settings.timezone)
+    live: dict[str, Any] | None = None
+    end_at: datetime | None = None
+    for c in store.commitments_between(
+        day_start.strftime(TS_FMT), day_end.strftime(TS_FMT)
+    ):
+        if not is_focus_intent_title(c.get("title")):
+            continue
+        start = _parse_ts(c.get("start_at"))
+        end = _parse_ts(c.get("end_at"))
+        if start is None or start > now or end is None or end <= now:
+            continue  # not happening right now
+        live, end_at = c, end
+        break
+
+    if live is None:
+        return {"armed": False, "reason": "no live focus block on the calendar"}
+
+    remaining = round((end_at - now).total_seconds() / 60.0, 1)
+    task = focus_task_from_title(live.get("title"))
+    todo_id = None
+    if task is None:  # a bare "Focus time" — protect the top todo instead
+        guess = _infer_focus_task(store, now)
+        task, todo_id = guess.intended_task, guess.todo_id
+    session_id = store.start_focus_session(
+        task,
+        planned_minutes=remaining if remaining > 0 else None,
+        aligned=True,
+        todo_id=todo_id,
+    )
+    return {
+        "armed": True,
+        "session_id": session_id,
+        "intended_task": task,
+        "planned_minutes": remaining,
+        "from_commitment": live.get("id"),
+    }
 
 
 # --- Proactive "want to focus?" suggestion (opt-in) --------------------------

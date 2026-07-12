@@ -1594,39 +1594,133 @@ def _cmd_summarize(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_briefing(args: argparse.Namespace) -> int:
-    """Print today's morning briefing (deterministic, or LLM prose with --llm).
+def _cmd_focus(args: argparse.Namespace) -> int:
+    """Arm a focus session from a live calendar block (native focus-arm tick).
+
+    The launchd-native twin of ``POST /webhooks/focus/arm``: when a
+    "focus"/"deep work" event is happening now and no session is running, it
+    auto-starts one for the rest of that window (the coaching tick then delivers
+    that session's interrupts). Idempotent — safe on a short interval — and it
+    shares :func:`prefrontal.modules.hyperfocus.arm_focus_session` with the
+    endpoint so the two can't drift. ``--all-users`` fans over every active user
+    (one job for the box); ``deploy/coach.sh`` runs it on the coaching tick.
 
     Args:
-        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``.
+        args: Parsed arguments; uses ``db_path``, ``user``, ``all_users``.
 
     Returns:
         Process exit code (0 on success).
     """
-    from prefrontal.integrations import ProviderResolver
+    from prefrontal.modules.hyperfocus import arm_focus_session
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path
     with MemoryStore.open(db_path) as unscoped:
+        for handle, store in _user_targets(unscoped, args):
+            if getattr(args, "all_users", False):
+                print(f"== {handle} ==")
+            result = arm_focus_session(store, settings)
+            if result.get("armed"):
+                mins = result.get("planned_minutes")
+                tail = f" ({mins:g} min left)" if isinstance(mins, (int, float)) else ""
+                print(f"Armed focus: “{result['intended_task']}”{tail}.")
+            else:
+                print(f"No arm: {result.get('reason', 'nothing to do')}.")
+    return 0
+
+
+def _briefing_text(store: MemoryStore, settings, *, llm: bool) -> str:
+    """Render today's briefing for a scoped user — deterministic, or LLM prose.
+
+    Shared by the print/write path and the ``--deliver`` push so both send the
+    same text. On ``--llm`` a down Ollama falls back to the structured briefing
+    (a note goes to stderr), so it always produces something.
+    """
+    if llm:
+        from prefrontal.integrations import ProviderResolver
+
+        # Claude when the ``briefing`` agent is opted into Anthropic, else local.
+        client = ProviderResolver.from_settings(settings).client("briefing")
+        result = summarize_briefing(store, client=client)
+        if result.source == "heuristic":
+            print(
+                "Ollama unavailable; using the structured briefing.",
+                file=sys.stderr,
+            )
+        return result.text
+    return render_briefing(build_briefing(store))
+
+
+def _cmd_briefing(args: argparse.Namespace) -> int:
+    """Print today's morning briefing (deterministic, or LLM prose with --llm).
+
+    With ``--deliver`` it publishes the digest as a push through the user's own
+    delivery route (the native twin of the ``morning-briefing`` n8n workflow),
+    honoring ``--all-users`` so one launchd job briefs the whole box; otherwise
+    it prints (or writes ``--output``) for a single user.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``llm``, ``output``, ``user``,
+            ``deliver``, ``all_users``, ``channel``.
+
+    Returns:
+        Process exit code (0 on success; 1 if ``--deliver`` sent nothing).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        if getattr(args, "deliver", False):
+            return _deliver_briefing(unscoped, args, settings)
         store = _resolve_user_store(unscoped, args.user)
-        if args.llm:
-            # Claude when the ``briefing`` agent is opted into Anthropic, else local.
-            client = ProviderResolver.from_settings(settings).client("briefing")
-            result = summarize_briefing(store, client=client)
-            text = result.text
-            if result.source == "heuristic":
-                print(
-                    "Ollama unavailable; printing the structured briefing.",
-                    file=sys.stderr,
-                )
-        else:
-            text = render_briefing(build_briefing(store))
+        text = _briefing_text(store, settings, llm=args.llm)
     if args.output:
         Path(args.output).write_text(text)
         print(f"Wrote briefing to {args.output}")
     else:
         print(text, end="")
     return 0
+
+
+def _deliver_briefing(unscoped: MemoryStore, args: argparse.Namespace, settings) -> int:
+    """Publish the briefing as a push per user; return 0 if any send succeeded.
+
+    A plain notification (no one-tap buttons) on the ``push`` channel — the
+    briefing is the digest, so unlike an ``ambient`` cue it actually sends. Uses
+    the same per-user :func:`~prefrontal.integrations.delivery.resolve_route` +
+    :class:`~prefrontal.integrations.delivery.DeliveryClient` the coaching tick
+    uses, so a user with no route of their own is skipped, never delivered to the
+    operator's device (no cross-account leak on a multi-user box).
+    """
+    from prefrontal.coaching import Cue, Decision
+    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+
+    client = DeliveryClient.from_settings(settings)
+    any_sent = False
+    for handle, store in _user_targets(unscoped, args):
+        if getattr(args, "all_users", False):
+            print(f"== {handle} ==")
+        text = _briefing_text(store, settings, llm=args.llm)
+        route = resolve_route(store, settings)
+        cue = Cue(
+            module="briefing",
+            intervention="morning",
+            urgency="nudge",
+            text=text,
+            context_key="briefing",  # unmapped → a plain push, no action buttons
+            dedup_key="morning_briefing",
+        )
+        decision = Decision(cue=cue, channel=args.channel, text=text)
+        result = client.deliver(
+            decision,
+            route,
+            base_url=settings.oauth_base_url,
+            secret=settings.session_secret,
+            handle=handle,
+        )
+        any_sent = any_sent or result.delivered
+        status = "sent" if result.delivered else "not sent"
+        print(f"  → {result.transport}: {status} ({result.detail})")
+    return 0 if any_sent else 1
 
 
 def _cmd_encourage(args: argparse.Namespace) -> int:
@@ -3596,7 +3690,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--llm", action="store_true", help="Rewrite as prose via Ollama (falls back)."
     )
     p_brief.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_brief.add_argument(
+        "--deliver",
+        action="store_true",
+        help="Publish the briefing as a push (native morning-briefing delivery).",
+    )
+    p_brief.add_argument(
+        "--all-users",
+        action="store_true",
+        help="With --deliver, brief every active user (one launchd job for the box).",
+    )
+    p_brief.add_argument(
+        "--channel",
+        default="push",
+        choices=("digest", "push", "sound", "voice"),
+        help="Delivery channel class for --deliver (default: push).",
+    )
     p_brief.set_defaults(func=_cmd_briefing)
+
+    p_focus = sub.add_parser(
+        "focus", help="Arm a focus session from a live calendar block."
+    )
+    focus_sub = p_focus.add_subparsers(dest="focus_action", required=True)
+    p_focus_arm = focus_sub.add_parser(
+        "arm", help="Auto-start a session for a live focus/deep-work calendar block."
+    )
+    p_focus_arm.add_argument("--db-path", default=None, help="Override the database path.")
+    p_focus_arm.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_focus_arm.add_argument(
+        "--all-users", action="store_true", help="Fan out over every active user."
+    )
+    p_focus_arm.set_defaults(func=_cmd_focus)
 
     p_encourage = sub.add_parser(
         "encourage", help="Print today's recovery message if the day's gone rough."
