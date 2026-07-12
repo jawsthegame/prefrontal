@@ -223,8 +223,15 @@ def _heuristic_classify(signal: Signal, *, today: date) -> TriageDecision:
 
     # 1. Noise: automated senders / bulk list headers / marketing subject cues.
     listy = "list-unsubscribe" in meta_blob or "bulk" in meta_blob
-    if listy or any(s in sender for s in _NOISE_SENDERS) or _has(text, _NOISE_WORDS):
-        conf = 0.9 if (listy or any(s in sender for s in _NOISE_SENDERS)) else 0.78
+    sender_noise = any(s in sender for s in _NOISE_SENDERS)
+    if listy or sender_noise or _has(text, _NOISE_WORDS):
+        # A bulk sender or list header is strong evidence (0.9). A marketing *word*
+        # alone is weaker: the same words appear in genuine action mail ("please
+        # review the sale agreement by Friday", "close the deal today"), so keep it
+        # *below* HEURISTIC_TRUST — the model then adjudicates when one is available,
+        # rather than the email being silently dropped as noise. Offline (no client),
+        # the heuristic still classifies it noise.
+        conf = 0.9 if (listy or sender_noise) else 0.7
         return _decide("noise", "none", "automated / bulk sender or marketing cue", conf)
 
     # 2. Preference: the user telling us how to coach them.
