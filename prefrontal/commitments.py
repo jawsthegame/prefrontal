@@ -49,6 +49,15 @@ DEFAULT_EVENT_MINUTES = 30.0
 #: duplicates, and each poll rolls the window forward.
 RECUR_HORIZON_HOURS = 24.0 * 30
 
+#: Hard ceiling on occurrences materialized from a single RRULE master, regardless
+#: of horizon. The horizon already bounds a *sane* series (daily-over-a-month = ~30,
+#: hourly = ~720), but a hostile or fat-fingered ``FREQ=MINUTELY``/``SECONDLY`` feed
+#: would otherwise expand to tens of thousands / millions of dicts in one sync — an
+#: unbounded-memory DoS. This caps that at a value comfortably above any real
+#: calendar cadence; hitting it is logged so a legitimate high-frequency series that
+#: got truncated is visible rather than silent.
+MAX_RECURRENCE_OCCURRENCES = 2000
+
 #: Joins a recurring series' id to a generated occurrence's start stamp, forming a
 #: stable per-occurrence ``external_id`` so repeated polls upsert (never duplicate).
 RECUR_OCCURRENCE_SEP = "::"
@@ -598,7 +607,24 @@ def _expand_master(
         return []
     try:
         rule = rrulestr(rule_text.replace("RRULE:", "", 1), dtstart=dtstart)
-        occurrences = list(rule.between(window_start, window_end, inc=True))
+        # Iterate lazily (xafter) rather than materializing rule.between(...): a
+        # high-frequency RRULE over the horizon can yield millions of occurrences,
+        # and list(between) builds them all before we can bound them. Walk in order,
+        # stop at window_end, and hard-cap the count so a hostile feed can't exhaust
+        # memory (see MAX_RECURRENCE_OCCURRENCES).
+        occurrences: list[datetime] = []
+        for occ in rule.xafter(window_start, inc=True):
+            if occ > window_end:
+                break
+            occurrences.append(occ)
+            if len(occurrences) >= MAX_RECURRENCE_OCCURRENCES:
+                logger.warning(
+                    "RRULE for %r hit the %d-occurrence cap within the horizon; "
+                    "truncating (check the feed's frequency)",
+                    master.get("external_id") or master.get("title") or "?",
+                    MAX_RECURRENCE_OCCURRENCES,
+                )
+                break
     except (ValueError, TypeError):
         return []  # a malformed RRULE must never sink the whole sync
 

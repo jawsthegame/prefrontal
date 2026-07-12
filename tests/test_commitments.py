@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.commitments import (
+    MAX_RECURRENCE_OCCURRENCES,
     RECUR_OCCURRENCE_SEP,
     conflict_dismissal_key,
     expand_recurrences,
@@ -167,6 +168,28 @@ _WEEKLY_WED = {
 def _wed_noon(month: int) -> datetime:
     """A Wednesday-noon UTC reference instant in the given 2026 month."""
     return datetime(2026, month, {7: 1, 1: 7}[month], 12, tzinfo=timezone.utc)
+
+
+def test_expand_caps_a_high_frequency_rrule():
+    """A pathological high-frequency RRULE can't expand without bound.
+
+    A FREQ=MINUTELY series over a 48h horizon would yield ~2880 occurrences (and
+    FREQ=SECONDLY would be millions — an unbounded-memory DoS). Expansion is capped
+    at MAX_RECURRENCE_OCCURRENCES and returns promptly rather than materializing the
+    whole series.
+    """
+    now = datetime(2026, 7, 1, 12, tzinfo=timezone.utc)
+    master = {
+        "title": "Chatty sensor",
+        "start_at": "2026-07-01T00:00:00",
+        "end_at": "2026-07-01T00:01:00",
+        "tzid": "UTC",
+        "external_id": "personal:noise@x",
+        "rrule": "FREQ=MINUTELY",
+    }
+    out = expand_recurrences([master], now=now, default_tz="UTC", horizon_hours=48)
+    # ~2880 minutes fall in the window, but expansion is hard-capped.
+    assert len(out) == MAX_RECURRENCE_OCCURRENCES
 
 
 def test_expand_weekly_master_yields_todays_occurrence():
