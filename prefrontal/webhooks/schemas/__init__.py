@@ -98,6 +98,7 @@ from prefrontal.webhooks.schemas.schedule import (
     CommitmentPrepared,
     ConflictDismiss,
     PlaceCreate,
+    TravelPadding,
 )
 from prefrontal.webhooks.schemas.sensor import (
     ConversationTurn,
@@ -206,6 +207,7 @@ __all__ = [
     "TodoNotesUpdate",
     "TodoSchedule",
     "TodoWindowUpdate",
+    "TravelPadding",
     "TriageForget",
     "TriageIn",
     "TripDomain",

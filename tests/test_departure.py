@@ -546,6 +546,41 @@ def test_departure_next_endpoint_null_when_nothing_upcoming(client, store):
     assert body["departure"] is None
 
 
+def test_departure_padding_round_trips_percent_to_fraction(client, store):
+    """GET defaults to 0; POST stores percent as the travel_pad_fraction fraction."""
+    assert client.get("/departure/padding", headers=_auth()).json()["percent"] == 0
+
+    saved = client.post(
+        "/departure/padding", json={"percent": 15}, headers=_auth()
+    ).json()
+    assert saved["percent"] == 15
+    # Stored as a fraction on the coaching key the planner reads.
+    assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.15)
+    assert client.get("/departure/padding", headers=_auth()).json()["percent"] == 15
+
+
+def test_departure_padding_rejects_out_of_range(client, store):
+    """The schema clamps to 0–100; a percentage above that is a 422, not a silent cap."""
+    resp = client.post("/departure/padding", json={"percent": 150}, headers=_auth())
+    assert resp.status_code == 422
+    # The rejected write left the seeded default (0) untouched.
+    assert store.get_float("travel_pad_fraction", -1.0) == 0.0
+
+
+def test_departure_padding_lengthens_the_planned_leave_by(client, store):
+    """Setting a pad via the endpoint pushes the computed leave-by earlier."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(120), dest_lat=0.3, dest_lon=0.0,
+        location="123 Main St", source="manual",
+    )
+    before = client.get("/departure/next", headers=_auth()).json()["departure"]
+    client.post("/departure/padding", json={"percent": 30}, headers=_auth())
+    after = client.get("/departure/next", headers=_auth()).json()["departure"]
+    assert after["travel_minutes"] == pytest.approx(before["travel_minutes"] * 1.3, abs=0.1)
+    assert after["minutes_until_leave"] < before["minutes_until_leave"]
+
+
 def test_departure_check_records_nudge_and_lists_it(client, store):
     """A fired departure nudge is recorded once and surfaces via GET /nudges."""
     store.set_location(0.0, 0.0)
