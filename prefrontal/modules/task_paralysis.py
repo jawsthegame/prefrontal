@@ -129,15 +129,6 @@ def body_double_start_message(
     )
 
 
-def body_double_checkin_message(title: str, *, name: str = "") -> str:
-    """The end-of-sprint check-in — reframes *any* start as the win."""
-    who = f" {name}" if name else ""
-    return (
-        f"Timer's up{who} — how did the start-together on “{title}” go? "
-        "Even just beginning counts as a win; wrap up or keep the momentum going."
-    )
-
-
 def start_body_double(
     store: MemoryStore,
     *,
