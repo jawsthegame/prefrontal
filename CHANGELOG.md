@@ -7,6 +7,21 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **APNs delivery transport (server side of native iOS push)** ✅ (#467, part 1) —
+  a native-push transport alongside ntfy/Pushover/Twilio in
+  `prefrontal/integrations/delivery.py`. When a user has registered an
+  `apns_token` (per-user `coaching_state`, a targeting field withheld on
+  multi-user boxes) **and** APNs is configured, `DeliveryClient` delivers via
+  Apple Push — with the cue's `context_key` as the notification `category` (the
+  app's action buttons) and the signed action URLs in the payload — falling back
+  to ntfy if it doesn't land, so ntfy stays the default for everyone else.
+  Token-based (ES256 .p8) provider auth in `integrations/apns.py`; creds via
+  `APNS_*` env (operator-shared, like Twilio). Needs the `prefrontal[apns]` extra
+  (APNs requires HTTP/2 via `h2`); without it the transport reports unavailable.
+  Set a token with `prefrontal user route --apns-token`. Covered by
+  `tests/test_apns.py`. The **client** half (device-token registration +
+  `UNNotificationCategory` action handlers + entitlement) is part 2.
+
 - **iOS Live Activities — outing/focus countdown on Lock Screen + Dynamic Island** ✅ (#466)
   — a running outing shows a self-ticking **"back by" countdown** and a focus
   session an **elapsed timer**, live on the Lock Screen and in the Dynamic Island.

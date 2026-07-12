@@ -55,6 +55,13 @@ anthropic = [
 qr = [
     "segno>=1.6",
 ]
+# Native iOS push (APNs) delivery. APNs requires HTTP/2, which httpx does via
+# the `h2` package; opt-in so the base install stays lean — without it the APNs
+# transport reports unavailable and delivery falls back to ntfy. The ES256
+# provider-token signing uses `cryptography`, already a base dependency.
+apns = [
+    "h2>=4.1",
+]
 
 [project.scripts]
 prefrontal = "prefrontal.cli:main"

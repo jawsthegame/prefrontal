@@ -56,6 +56,7 @@ from xml.sax.saxutils import escape as _xml_escape
 import httpx
 
 from prefrontal.config import Settings, get_settings
+from prefrontal.integrations.apns import build_apns_jwt, build_apns_payload
 from prefrontal.integrations.sms import _API_ROOT as _TWILIO_API_ROOT
 from prefrontal.integrations.sms import normalize_phone
 from prefrontal.log import get_logger
@@ -84,6 +85,11 @@ NTFY_PRIORITY = {"digest": 2, "push": 3, "sound": 4, "voice": 5}
 #: (2) requires ``retry``/``expire`` params, and ``voice`` really wants TTS/a
 #: call, not a louder push — so we never send a malformed emergency alert.
 PUSHOVER_PRIORITY = {"digest": -1, "push": 0, "sound": 1, "voice": 1}
+
+#: Channel class → APNs ``interruption-level`` (iOS 15+). ``time-sensitive``
+#: breaks through Focus/Do-Not-Disturb (the app needs the Time Sensitive
+#: Notifications capability; without it iOS quietly treats it as ``active``).
+APNS_LEVEL = {"digest": "passive", "push": "active", "sound": "active", "voice": "time-sensitive"}
 
 #: A cue's ``context_key`` → the :mod:`~prefrontal.webhooks.notify` nudge *kind*
 #: whose action buttons apply, and the ``ref`` key holding the button's target
@@ -147,6 +153,10 @@ class Route:
     twilio_auth_token: str = ""
     twilio_from: str = ""
     twilio_to: str = ""
+    # Native iOS push (APNs). The device token is per-user (registered by the
+    # app), so it's a targeting field like ``ntfy_topic``; the signing creds live
+    # in Settings (operator-shared). Empty ⇒ this user isn't an APNs recipient.
+    apns_token: str = ""
 
 
 @dataclass(frozen=True)
@@ -222,6 +232,9 @@ def resolve_route(store: Any, settings: Settings | None = None) -> Route:
         ),
         twilio_from=store.get_state("twilio_from") or resolved.twilio_from,
         twilio_to=_target("twilio_to", resolved.twilio_to),
+        # The APNs device token is this user's own — a target, so it's withheld on
+        # a multi-user box (no operator default exists for it anyway).
+        apns_token=_target("apns_token", ""),
     )
 
 
@@ -485,6 +498,98 @@ def _actions_for_cue(
     return nudge_actions(kind, target_id, base_url=base_url, secret=secret, handle=handle)
 
 
+class ApnsClient:
+    """Publish a notification to a device via APNs (native iOS push).
+
+    The signing creds come from :class:`~prefrontal.config.Settings`
+    (operator-shared); the device token is per-user (:attr:`Route.apns_token`).
+    Like every transport here it returns a :class:`DeliveryResult` and never
+    raises. Needs HTTP/2 (APNs requires it) — the ``prefrontal[apns]`` extra
+    installs ``h2``; without it this reports unavailable and delivery falls back
+    to ntfy.
+    """
+
+    def __init__(self, settings: Settings, *, timeout: float = 10.0,
+                 transport: httpx.BaseTransport | None = None) -> None:
+        self.key_id = settings.apns_key_id
+        self.team_id = settings.apns_team_id
+        self.auth_key = settings.apns_auth_key
+        self.topic = settings.apns_topic
+        self.host = (
+            "api.sandbox.push.apple.com" if settings.apns_use_sandbox
+            else "api.push.apple.com"
+        )
+        self._timeout = timeout
+        self._transport = transport
+        self._jwt: str | None = None
+        self._jwt_at = 0.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.key_id and self.team_id and self.auth_key)
+
+    def _provider_token(self, now: float) -> str:
+        # APNs rejects tokens > 1h old and rate-limits regeneration; refresh at
+        # ~50 min. (No wall-clock in tests — callers pass `now`.)
+        if self._jwt is None or now - self._jwt_at > 3000:
+            self._jwt = build_apns_jwt(self.key_id, self.team_id, self.auth_key, issued_at=int(now))
+            self._jwt_at = now
+        return self._jwt
+
+    def publish(
+        self,
+        device_token: str,
+        *,
+        title: str,
+        message: str,
+        channel: str,
+        category: str = "",
+        actions: list[dict[str, Any]] | None = None,
+        now: float | None = None,
+    ) -> DeliveryResult:
+        if not self.configured:
+            return DeliveryResult(transport="apns", detail="apns: not configured")
+        if not device_token:
+            return DeliveryResult(transport="apns", detail="apns: no device token")
+        import time as _time
+
+        payload = build_apns_payload(
+            title, message,
+            category=category or None,
+            interruption_level=APNS_LEVEL.get(channel),
+            actions=actions,
+        )
+        issued = now if now is not None else _time.time()
+        headers = {
+            "authorization": f"bearer {self._provider_token(issued)}",
+            "apns-topic": self.topic,
+            "apns-push-type": "alert",
+            "apns-priority": "5" if channel == "digest" else "10",
+        }
+        try:
+            client = httpx.Client(http2=True, timeout=self._timeout, transport=self._transport)
+        except ImportError:
+            return DeliveryResult(
+                transport="apns",
+                detail="apns: HTTP/2 unavailable — install prefrontal[apns]",
+            )
+        try:
+            with client:
+                resp = client.post(
+                    f"https://{self.host}/3/device/{device_token}",
+                    json=payload, headers=headers,
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("apns delivery failed: %s", exc)
+            return DeliveryResult(transport="apns", detail=f"apns request failed: {exc}")
+        return DeliveryResult(
+            transport="apns",
+            delivered=resp.status_code == 200,
+            status_code=resp.status_code,
+            detail=f"apns responded {resp.status_code}",
+        )
+
+
 class DeliveryClient:
     """Route a :class:`~prefrontal.coaching.Decision` to a transport and publish.
 
@@ -502,22 +607,26 @@ class DeliveryClient:
         pushover: PushoverClient | None = None,
         tts: TTSClient | None = None,
         voice: TwilioVoiceClient | None = None,
+        apns: ApnsClient | None = None,
     ) -> None:
         self.ntfy = ntfy or NtfyClient()
         self.pushover = pushover or PushoverClient()
         self.tts = tts or TTSClient()
         self.voice = voice or TwilioVoiceClient()
+        self.apns = apns or ApnsClient(get_settings())
 
     @classmethod
     def from_settings(
         cls, settings: Settings | None = None, *, transport: httpx.BaseTransport | None = None
     ) -> DeliveryClient:
         """Build a client. ``transport`` (tests) is shared by every HTTP transport."""
+        resolved = settings or get_settings()
         return cls(
             ntfy=NtfyClient(transport=transport),
             pushover=PushoverClient(transport=transport),
             tts=TTSClient(),
             voice=TwilioVoiceClient(transport=transport),
+            apns=ApnsClient(resolved, transport=transport),
         )
 
     def deliver(
@@ -570,6 +679,23 @@ class DeliveryClient:
             if extra_actions is not None
             else _actions_for_cue(decision.cue, base_url=base_url, secret=secret, handle=handle)
         )
+
+        # Native iOS push first when this user registered a device token and APNs
+        # is configured — it renders real notification-action buttons (via the
+        # `category`) rather than ntfy's http buttons. If it doesn't land, fall
+        # through to ntfy/Pushover, so a token that's gone stale never black-holes
+        # a nudge. ntfy stays the default for everyone who hasn't opted in.
+        if route.apns_token and self.apns.configured:
+            apns_result = self.apns.publish(
+                route.apns_token,
+                title=_TITLE,
+                message=message,
+                channel=channel,
+                category=decision.cue.context_key,
+                actions=actions,
+            )
+            if apns_result.delivered:
+                return replace(apns_result, channel=channel)
 
         if route.ntfy_topic:
             result = self.ntfy.publish(

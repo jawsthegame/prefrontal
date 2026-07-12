@@ -347,6 +347,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 "ntfy_token": args.ntfy_token,
                 "pushover_user_key": args.pushover_user_key,
                 "pushover_token": args.pushover_token,
+                "apns_token": args.apns_token,
             }
             changed = {k: v for k, v in fields.items() if v is not None}
             for key, value in changed.items():
@@ -361,6 +362,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 f"  pushover    user_key {shown(route.pushover_user_key)} · "
                 f"token {shown(route.pushover_token)}"
             )
+            print(f"  apns        device token {shown(route.apns_token)}")
             if changed:
                 print(
                     f"Updated: {', '.join(sorted(changed))}. "
@@ -3248,6 +3250,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     u_route.add_argument(
         "--pushover-token", default=None, help="Pushover app token (pass '' to clear)."
+    )
+    u_route.add_argument(
+        "--apns-token",
+        default=None,
+        help="Their iOS device's APNs token (usually registered by the app; pass '' to clear).",
     )
     u_link = user_sub.add_parser(
         "connect-link",
