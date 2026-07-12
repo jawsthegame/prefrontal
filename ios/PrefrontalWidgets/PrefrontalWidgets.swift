@@ -340,6 +340,7 @@ struct PrefrontalWidgetBundle: WidgetBundle {
     var body: some Widget {
         PrefrontalWidget()
         PrefrontalSelfCareCircle()   // configurable Lock Screen self-care ring
+        SessionLiveActivity()        // outing/focus Live Activity (Lock Screen + Dynamic Island)
         // Control Center controls (Panic / I'm Back / Wrap Up Focus) — iOS 18+.
         if #available(iOS 18.0, *) {
             PanicControl()

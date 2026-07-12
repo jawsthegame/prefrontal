@@ -40,6 +40,8 @@ targets:
         # widget when the app isn't open. Identifier matches refreshTaskID.
         UIBackgroundModes: [fetch]
         BGTaskSchedulerPermittedIdentifiers: [com.morningstatic.prefrontal.refresh]
+        # Live Activities (outing/focus countdown on Lock Screen + Dynamic Island).
+        NSSupportsLiveActivities: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal
