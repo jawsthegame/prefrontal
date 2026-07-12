@@ -46,10 +46,10 @@ from prefrontal.modules.location_anchor import (
     apply_outing_evaluation,
     escalation_level,
     evaluate_outing,
-    infer_time_window,
     parse_time_window,
     record_outing_abandoned,
     record_outing_return,
+    resolve_time_window,
 )
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
@@ -100,9 +100,11 @@ def build_router(services: RouterServices) -> APIRouter:
 
         The window is resolved in order of confidence: ``time_window_minutes`` if
         given ('explicit'), else parsed from the text like "back in 15 minutes"
-        ('parsed'), else **inferred** from the intention — the local model first,
-        then a keyword heuristic, then a default ('llm'/'heuristic'/'default').
-        Only a blank intention (nothing to reason from) responds 422.
+        ('parsed'), else your **learned** typical duration for this errand from
+        past returns ('history'), else **inferred** from the intention — the local
+        model first, then a keyword heuristic, then a default
+        ('llm'/'heuristic'/'default'). Only a blank intention (nothing to reason
+        from) responds 422.
 
         The **life-domain** is resolved at declaration too, so the outing arrives
         pre-filed for the focus-balance rollup instead of needing a retrospective
@@ -119,7 +121,7 @@ def build_router(services: RouterServices) -> APIRouter:
             if parsed is not None:
                 window, source = parsed, "parsed"
         if window is None:
-            inferred = infer_time_window(payload.intention, client=ollama_client)
+            inferred = resolve_time_window(memory, payload.intention, client=ollama_client)
             if inferred is not None:
                 window, source = inferred
         if window is None or window <= 0:

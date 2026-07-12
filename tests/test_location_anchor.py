@@ -29,7 +29,10 @@ from prefrontal.modules.location_anchor import (
     infer_time_window,
     is_abandoned,
     is_at_home,
+    learned_window,
+    outing_intention_bucket,
     parse_time_window,
+    resolve_time_window,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
@@ -159,6 +162,80 @@ def test_infer_no_fallback_returns_none_on_model_miss():
     """With fallback disabled, an unusable model reply gives None (no default)."""
     bad = _ollama_replying("no idea")
     assert infer_time_window("grab a coffee", client=bad, fallback=False) is None
+
+
+# -- learned per-errand windows ----------------------------------------------
+
+
+def _log_outing_return(store, intention, actual):
+    """Log a returned-outing task episode (as record_outing_return does)."""
+    store.log_episode(
+        "task",
+        predicted_value=15.0,
+        actual_value=actual,
+        acknowledged=True,
+        context=f"outing: {intention}",
+        outcome="success",
+    )
+
+
+def test_outing_intention_bucket_groups_by_keyword():
+    """Different phrasings of the same errand share one bucket; others fall to text."""
+    assert outing_intention_bucket("grab a coffee") == outing_intention_bucket("quick espresso")
+    assert outing_intention_bucket("grab a coffee").startswith("kw:")
+    assert outing_intention_bucket("visit Aunt May").startswith("text:")
+
+
+def test_learned_window_needs_min_samples(store):
+    """Below the sample floor there's no learned window; at it, the mean is returned."""
+    _log_outing_return(store, "grab a coffee", 18.0)
+    _log_outing_return(store, "coffee run", 22.0)
+    assert learned_window(store, "get a coffee") is None  # only 2 samples
+    _log_outing_return(store, "espresso", 20.0)
+    learned = learned_window(store, "get a coffee")
+    assert learned is not None
+    minutes, count = learned
+    assert count == 3
+    assert minutes == 20.0  # mean(18,22,20) = 20, rounded to 5
+
+
+def test_learned_window_ignores_abandoned_outings(store):
+    """Abandoned outings (no real duration) never feed the learned window."""
+    for _ in range(3):
+        store.log_episode(
+            "task", actual_value=None, context="outing abandoned: grab a coffee", outcome="miss"
+        )
+    assert learned_window(store, "grab a coffee") is None
+
+
+def test_resolve_prefers_history_over_heuristic(store):
+    """With enough history, resolve returns the learned window tagged 'history'."""
+    for actual in (25.0, 27.0, 26.0):
+        _log_outing_return(store, "grab a coffee", actual)
+    minutes, source = resolve_time_window(store, "get a coffee")
+    assert source == "history"
+    assert minutes == 25.0  # mean ~26 → rounded to 25, not the 15-min coffee heuristic
+
+
+def test_resolve_falls_back_to_infer_without_history(store):
+    """No history → the existing heuristic/default path (source not 'history')."""
+    minutes, source = resolve_time_window(store, "grab a coffee")
+    assert source == "heuristic"
+    assert minutes == 15.0
+
+
+def test_start_uses_learned_window_source(client, store):
+    """A windowless start pre-fills the user's learned window and reports 'history'."""
+    for actual in (25.0, 27.0, 26.0):
+        _log_outing_return(store, "grab a coffee", actual)
+    resp = client.post(
+        "/webhooks/outing/start", json={"intention": "grab a coffee"}, headers=_auth()
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["time_window_source"] == "history"
+    assert body["time_window_minutes"] == 25.0
+    assert "your usual" in body["confirmation"]
 
 
 def test_build_message_uses_name_for_call():
