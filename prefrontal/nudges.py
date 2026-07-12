@@ -34,6 +34,7 @@ from prefrontal.household import (
     week_key,
 )
 from prefrontal.impact import utcnow
+from prefrontal.log import get_logger
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.hyperfocus import record_focus_end, record_focus_switched
 from prefrontal.modules.location_anchor import (
@@ -42,6 +43,8 @@ from prefrontal.modules.location_anchor import (
 )
 from prefrontal.modules.self_care import SELF_CARE_ACTIONS, apply_self_care_action
 from prefrontal.panic import resolve_panic_step
+
+logger = get_logger(__name__)
 
 #: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
 #: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).
@@ -257,19 +260,27 @@ def apply_nudge_action(
             else "Thanks — I'll make the next one tighter and more focused."
         )
 
-    # made_it / missed_it — log a commitment's departure outcome.
-    commitment = memory.get_commitment(target_id)
-    title = (commitment or {}).get("title") or "your commitment"
-    made = action == "made_it"
-    memory.log_episode(
-        "departure",
-        acknowledged=True,
-        context=f"commitment: {title}",
-        outcome="success" if made else "miss",
-        notes=f"one-tap: {'made it' if made else 'missed it'}",
-    )
-    memory.dismiss_departure(target_id)
-    return (
-        f"Logged — you made it to “{title}.” 🎯" if made
-        else f"Logged — ran late for “{title}.” It happens."
-    )
+    if action in ("made_it", "missed_it"):
+        # Log a commitment's departure outcome.
+        commitment = memory.get_commitment(target_id)
+        title = (commitment or {}).get("title") or "your commitment"
+        made = action == "made_it"
+        memory.log_episode(
+            "departure",
+            acknowledged=True,
+            context=f"commitment: {title}",
+            outcome="success" if made else "miss",
+            notes=f"one-tap: {'made it' if made else 'missed it'}",
+        )
+        memory.dismiss_departure(target_id)
+        return (
+            f"Logged — you made it to “{title}.” 🎯" if made
+            else f"Logged — ran late for “{title}.” It happens."
+        )
+
+    # Unknown/unhandled action: fail safe. Previously this fell through the
+    # made_it/missed_it branch as an unguarded else, so a malformed or
+    # future action name silently logged a spurious "departure" miss and
+    # dismissed a departure. Now it's a friendly no-op.
+    logger.warning("apply_nudge_action: unhandled action %r (target %s)", action, target_id)
+    return "That button isn't something I recognize anymore."

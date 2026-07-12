@@ -346,3 +346,21 @@ def test_apply_nudge_action_service_returns_headlines():
         assert "okay" in apply_nudge_action(
             store, "star_skip", 0, user=user, settings=settings
         ).lower()
+
+
+def test_apply_nudge_action_unknown_action_is_a_safe_noop():
+    """An unrecognized action must not fall through the made_it/missed_it branch
+    and log a spurious 'departure' episode (the old unguarded else) — it returns a
+    friendly no-op and touches no departure history."""
+    from prefrontal.nudges import apply_nudge_action
+
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        user = {"id": store.user_id}
+        settings = Settings(timezone="UTC")
+        headline = apply_nudge_action(
+            store, "some_future_action", 5, user=user, settings=settings
+        )
+        assert "recognize" in headline.lower()
+        # The bug: this used to log a 'departure' miss + dismiss a departure.
+        assert [e for e in store.all_episodes() if e["episode_type"] == "departure"] == []
