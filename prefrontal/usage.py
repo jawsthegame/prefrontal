@@ -173,7 +173,7 @@ def apply_usage_decision(store: Any, action: str, *, now: datetime | None = None
         store.set_feature_muted(feature, True)
         return (
             f"Muted {title} — I'll stop nudging you about it. "
-            "(Turn it back on anytime in Settings.)"
+            "(Turn it back on anytime on the Insights page.)"
         )
     # usage_keep — leave it on, and don't re-suggest it for a while.
     store.set_state(_kept_key(feature), fmt_ts(now), source="inferred")

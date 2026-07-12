@@ -98,6 +98,11 @@
   .feat.dorm .fn { color: var(--muted); font-weight: 500; }
   .feat .mp { margin-left: 7px; font-size: 11px; font-weight: 600; color: var(--muted);
     border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+  .feat .mtoggle { flex: none; font-size: 11px; font-weight: 600; color: var(--muted);
+    background: transparent; border: 1px solid var(--line); border-radius: 8px;
+    padding: 2px 9px; cursor: pointer; white-space: nowrap; }
+  .feat .mtoggle:hover { color: var(--fg); border-color: var(--accent); }
+  .feat .mtoggle:disabled { opacity: .5; cursor: default; }
 
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
 
@@ -232,6 +237,24 @@ const secs = (s) => s == null ? "" : (s < 60 ? `${Math.round(s)}s` : `${Math.rou
   };
 })();
 
+// ── Mute / un-mute toggle (delegated; #usage-body is static in the shell) ──
+(function () {
+  const body = $("#usage-body");
+  if (!body) return;
+  body.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".mtoggle");
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+      await post("/usage/mute", { feature: btn.dataset.feature, muted: btn.dataset.mute === "1" });
+      await load();  // re-render with the new muted state
+    } catch (err) {
+      if (err.code === 401) { gate("That code didn't work."); return; }
+      btn.disabled = false;
+    }
+  });
+})();
+
 function gate(msg) {
   token = null; localStorage.removeItem(KEY); clearInterval(timer);
   $("#gate-err").textContent = msg || "";
@@ -239,6 +262,14 @@ function gate(msg) {
 }
 async function api(path) {
   const r = await fetch(path, { headers: token ? { "X-Prefrontal-Token": token } : {} });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+async function post(path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["X-Prefrontal-Token"] = token;
+  const r = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
@@ -441,11 +472,19 @@ function renderFeatureUsage(u) {
       `<div class="feat${f.bucket === "dormant" ? " dorm" : ""}">
         <span class="fn">${esc(f.feature.replace(/_/g, " "))}${f.muted ? `<span class="mp">🔕 muted</span>` : ""}</span>
         <span class="fm">${esc(featMeta(f))}</span>
-        <span class="ft">${esc(ago(f))}</span></div>`
+        <span class="ft">${esc(ago(f))}</span>${usageToggle(f)}</div>`
     ).join("");
     html += `</div>`;
   }
   $("#usage-body").innerHTML = html;
+}
+
+// Mute / un-mute control, only for push features (module nudges) — a pull
+// surface is opened on demand, so there's nothing to mute.
+function usageToggle(f) {
+  if (f.kind !== "push") return "";
+  return `<button class="mtoggle" data-feature="${esc(f.feature)}" data-mute="${f.muted ? "0" : "1"}">` +
+    `${f.muted ? "Un-mute" : "Mute"}</button>`;
 }
 
 async function load() {

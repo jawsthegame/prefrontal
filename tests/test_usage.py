@@ -220,6 +220,29 @@ def test_unmuted_module_check_endpoint_runs(store):
     assert r.json().get("skipped") != "module_muted"
 
 
+def test_usage_mute_endpoint_toggles_state(store):
+    scoped = store.scoped(store.get_user("tom")["id"])
+    app = create_app(store=store, settings=Settings())
+    h = {"X-Prefrontal-Token": SECRET}
+    with TestClient(app) as c:
+        r = c.post("/usage/mute", headers=h, json={"feature": "location_anchor", "muted": True})
+        assert r.status_code == 200
+        assert r.json()["muted"] is True
+        assert r.json()["muted_features"] == ["location_anchor"]
+        assert scoped.muted_features() == {"location_anchor"}
+        # Un-mute the same feature back off.
+        r = c.post("/usage/mute", headers=h, json={"feature": "location_anchor", "muted": False})
+        assert r.status_code == 200 and r.json()["muted"] is False
+        assert scoped.muted_features() == set()
+
+
+def test_usage_mute_endpoint_requires_feature(store):
+    app = create_app(store=store, settings=Settings())
+    with TestClient(app) as c:
+        r = c.post("/usage/mute", headers={"X-Prefrontal-Token": SECRET}, json={})
+    assert r.status_code == 422
+
+
 def test_usage_check_endpoint(store):
     scoped = store.scoped(store.get_user("tom")["id"])
     _ignored(scoped, "location_anchor")

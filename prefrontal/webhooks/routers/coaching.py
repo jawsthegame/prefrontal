@@ -14,7 +14,9 @@ from typing import (
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
     Request,
+    status,
 )
 
 from prefrontal.coaching import (
@@ -173,6 +175,39 @@ def build_router(services: RouterServices) -> APIRouter:
             settings=resolved_settings,
             handle=ctx.user.get("handle") or "",
         )
+
+    @router.post("/usage/mute", tags=["coaching"])
+    async def usage_mute(
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mute or un-mute a module for the signed-in user (the /stats toggle).
+
+        The web counterpart to the one-tap Mute button and ``prefrontal usage
+        mute`` — so the "turn it back on" the mute confirmation promises is a real
+        control, not just a CLI. Body: ``{"feature": "<module key>", "muted":
+        true|false}`` (``muted`` defaults to ``true``). Returns the feature's new
+        state plus the full muted set so the Insights page can re-render.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        feature = str(body.get("feature") or "").strip()
+        if not feature:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A 'feature' (module key) is required.",
+            )
+        muted = bool(body.get("muted", True))
+        ctx.store.set_feature_muted(feature, muted)
+        return {
+            "feature": feature,
+            "muted": muted,
+            "muted_features": sorted(ctx.store.muted_features()),
+        }
 
     @router.post("/webhooks/coach/ack", tags=["coaching"])
     async def coach_ack(
