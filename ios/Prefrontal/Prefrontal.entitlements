@@ -6,9 +6,12 @@
 	<array>
 		<string>group.com.morningstatic.prefrontal</string>
 	</array>
-	<!-- Native push (APNs). "development" for dev/TestFlight builds; Xcode /
-	     the release profile maps it to production at distribution. -->
-	<key>aps-environment</key>
-	<string>development</string>
+	<!-- Native push (APNs) is intentionally NOT declared here. The
+	     `aps-environment` entitlement requires a paid Apple Developer account;
+	     a free "Personal Team" can't mint a profile that includes it, which
+	     blocks the whole app from signing. To use native push (paid tier only),
+	     add the Push Notifications capability in Xcode ▸ Signing & Capabilities
+	     — it writes `aps-environment` back into this file. Without it, delivery
+	     falls back to ntfy server-side, so the app still works. See ios/README.md. -->
 </dict>
 </plist>

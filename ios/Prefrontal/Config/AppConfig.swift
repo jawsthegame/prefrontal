@@ -23,6 +23,10 @@ enum SharedStore {
     static var ntfyServer: String { defaults.string(forKey: "ntfyServer") ?? "https://ntfy.sh" }
     static var ntfyTopic: String { defaults.string(forKey: "ntfyTopic") ?? "" }
     static var displayName: String { defaults.string(forKey: "displayName") ?? "" }
+
+    /// Opt-in geofencing flag, read from the plain defaults so the (nonisolated)
+    /// `LocationMonitor` can check it without touching the `@MainActor` AppConfig.
+    static var locationEnabled: Bool { defaults.bool(forKey: "locationEnabled") }
 }
 
 @MainActor
@@ -44,6 +48,11 @@ final class AppConfig: ObservableObject {
     @Published var displayName: String {
         didSet { SharedStore.defaults.set(displayName, forKey: "displayName") }
     }
+    /// Opt-in: monitor curated places (`/places`) with geofences to auto-log
+    /// leaving home / arrivals. Off by default (needs Always-location + battery).
+    @Published var locationEnabled: Bool {
+        didSet { SharedStore.defaults.set(locationEnabled, forKey: "locationEnabled") }
+    }
 
     private init() {
         baseURLString = SharedStore.baseURL
@@ -51,6 +60,7 @@ final class AppConfig: ObservableObject {
         ntfyServer = SharedStore.ntfyServer
         ntfyTopic = SharedStore.ntfyTopic
         displayName = SharedStore.displayName
+        locationEnabled = SharedStore.defaults.bool(forKey: "locationEnabled")
     }
 
     var isConfigured: Bool { !token.isEmpty && URL(string: baseURLString) != nil }

@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories(PushCategories.all)
+        // Re-attach the geofence delegate so a boundary-crossing relaunch (even
+        // from terminated) is received; no-op unless the user opted in.
+        LocationMonitor.shared.startIfEnabled()
         // If the user already granted notifications on a past launch, refresh the
         // APNs token now (tokens can rotate); the didRegister callback re-posts it.
         Task {
