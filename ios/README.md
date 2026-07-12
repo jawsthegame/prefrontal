@@ -186,10 +186,21 @@ notification authorization it registers for remote notifications, and
 arrive as native notifications whose **action buttons** (registered as
 `UNNotificationCategory`s mirroring the server's nudge buttons — *I'm back*,
 *Ate*, *Wrap up*, …) fire the signed `/nudge/act` URL from the payload on tap —
-the native equivalent of ntfy's inline buttons. Needs the **Push Notifications**
-capability (the `aps-environment` entitlement); the server falls back to ntfy for
+the native equivalent of ntfy's inline buttons. The server falls back to ntfy for
 any device that hasn't registered. See the server side in
 `prefrontal/integrations/delivery.py` + `docs/multi-tenant.md`.
+
+> **Paid tier only.** Native push needs the **Push Notifications** capability
+> (the `aps-environment` entitlement), which — like App Groups — requires a
+> **paid Apple Developer account**. A free "Personal Team" can't mint a profile
+> that includes it, and Xcode will refuse to sign the app if it's declared. So
+> `aps-environment` is **not** in the committed `Prefrontal.entitlements`; the
+> app builds and signs on free signing and just uses ntfy. To turn on native
+> push, open the target in **Xcode ▸ Signing & Capabilities ▸ + Capability ▸
+> Push Notifications** — that writes the entitlement back in. (It'll be dropped
+> again on the next `xcodegen generate`; re-add it, or keep a paid-team-only
+> local project.) The APNs client code ships either way and is a no-op without
+> the entitlement (`didFailToRegisterForRemoteNotifications` is handled).
 
 ## Location automations (opt-in geofencing)
 
