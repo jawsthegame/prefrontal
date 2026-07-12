@@ -667,6 +667,29 @@ def test_smtp_client_skips_login_without_credentials():
     assert "tls" not in record  # use_tls False → no starttls
 
 
+def test_smtp_client_port_465_uses_implicit_tls_without_starttls():
+    """Port 465 (SMTPS) is TLS from the first byte, so STARTTLS is skipped even with
+    use_tls=True — issuing STARTTLS on an already-encrypted socket would error."""
+    record: dict = {}
+    r = SmtpClient(connect=lambda h, p, t: _FakeConn(record)).send(
+        "smtp.test", 465, "me@x", "pw", sender="me@x", to="you@x",
+        subject="s", body="b", use_tls=True,
+    )
+    assert r.delivered is True
+    assert "tls" not in record  # no STARTTLS on the implicit-TLS port
+    assert record["login"] == ("me@x", "pw") and record["to"] == "you@x"
+
+
+def test_smtp_client_port_587_still_starttls():
+    """The submission port still upgrades via STARTTLS when use_tls is set."""
+    record: dict = {}
+    SmtpClient(connect=lambda h, p, t: _FakeConn(record)).send(
+        "smtp.test", 587, "me@x", "pw", sender="me@x", to="you@x",
+        subject="s", body="b", use_tls=True,
+    )
+    assert record["tls"] is True
+
+
 # -- SMTP source encryption --------------------------------------------------
 
 
