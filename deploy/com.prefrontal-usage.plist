@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent that runs the weekly feature-usage nudge (deploy/usage-nudge.sh):
+  when a coaching module keeps firing but you rarely act on it, it sends one push
+  offering a one-tap Mute / Keep. The "act on it" half of the usage loop the
+  /stats "Feature usage" card surfaces.
+
+  Native twin of the POST /webhooks/usage/check endpoint (so if you run the
+  n8n usage-check workflow instead, DEACTIVATE one to avoid a double nudge). The
+  check self-gates to at most one nudge per ISO week per user, so running hourly
+  just means "check often"; it only sends when a week is due and a module is
+  actually firing-but-ignored.
+
+  Install (recommended): run `bash deploy/install-launchd.sh` — it fills the
+  __PREFRONTAL_HOME__ / __HOME__ placeholders below with your real repo root and
+  home directory, then loads the agent. The committed file is a template with no
+  machine-specific paths.
+
+  Manual alternative: substitute those placeholders yourself, then
+    cp deploy/com.prefrontal-usage.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.prefrontal-usage.plist
+    # run the wrapper once by hand first to confirm it works:
+    deploy/usage-nudge.sh
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.prefrontal-usage</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PREFRONTAL_HOME__/deploy/usage-nudge.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PREFRONTAL_HOME__</string>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/prefrontal.usage.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/prefrontal.usage.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew (Apple Silicon) on PATH so Ollama and other tools resolve. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Install location; the wrapper cd's here so the adjacent .env loads. -->
+        <key>PREFRONTAL_HOME</key>
+        <string>__PREFRONTAL_HOME__</string>
+    </dict>
+</dict>
+</plist>

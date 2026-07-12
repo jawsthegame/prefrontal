@@ -172,6 +172,25 @@ def test_usage_actions_are_signable():
 # --- endpoint ---------------------------------------------------------------
 
 
+def test_cli_usage_check_all_users(tmp_path, capsys):
+    from prefrontal.cli import main
+
+    db = str(tmp_path / "u.db")
+    init_db(db)
+    with MemoryStore.open(db) as u:
+        provision_user(u, "a", is_operator=True)
+        provision_user(u, "b")
+        for handle in ("a", "b"):
+            s = u.scoped(u.get_user(handle)["id"])
+            for i in range(6):
+                s.record_feature_event("location_anchor", "offered", ref=str(i))
+    rc = main(["usage", "--db-path", db, "check", "--all-users"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "== a ==" in out and "== b ==" in out
+    assert out.count("Would nudge") == 2  # dry run (no --deliver) for both users
+
+
 def test_usage_check_endpoint(store):
     scoped = store.scoped(store.get_user("tom")["id"])
     _ignored(scoped, "location_anchor")
