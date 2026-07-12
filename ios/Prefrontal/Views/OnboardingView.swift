@@ -351,11 +351,12 @@ private struct WideLabel: View {
 }
 
 private struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { Body(configuration: configuration) }
+    func makeBody(configuration: Configuration) -> some View { StyledButton(configuration: configuration) }
 
     // `@Environment(\.isEnabled)` only resolves inside a View, not a ButtonStyle,
-    // so the label lives in a nested view to pick up the disabled state.
-    private struct Body: View {
+    // so the label lives in a nested view to pick up the disabled state. NOT
+    // named `Body` — that collides with ButtonStyle's `Body` associated type.
+    private struct StyledButton: View {
         let configuration: ButtonStyleConfiguration
         @Environment(\.isEnabled) private var enabled
         var body: some View {
