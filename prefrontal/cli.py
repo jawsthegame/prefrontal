@@ -1270,7 +1270,12 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 )
             ccal = summary.channel_calibration
             if ccal is not None and ccal.status == "ok":
-                cverdict = "helping" if ccal.helps else "NOT helping — channel signal is noise"
+                if ccal.helps:
+                    cverdict = "helping"
+                elif summary.channel_decayed:
+                    cverdict = "NOT helping — auto-damped channel rates toward pooled"
+                else:
+                    cverdict = "NOT helping — channel signal is noise"
                 print(
                     f"[{label}] channel check: error {ccal.baseline_error} -> "
                     f"{ccal.adjusted_error} on {ccal.samples} recent ({cverdict})"

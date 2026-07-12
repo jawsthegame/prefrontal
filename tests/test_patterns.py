@@ -28,12 +28,14 @@ from prefrontal.memory.patterns import (
     compute_early_start_threshold,
     compute_patterns,
     decay_bias_toward_neutral,
+    decay_channel_rate_toward_pooled,
     decay_weight,
     derive_band_half_lives,
     derive_context_half_lives,
     derive_half_life,
     episode_activity,
     filter_to_window,
+    pooled_channel_rate,
     recompute_patterns,
     resolve_bias,
     task_bias_resolver,
@@ -930,6 +932,95 @@ def test_recompute_persists_channel_calibration():
         assert summary.channel_calibration.helps
         assert store.get_state("channel_calibration_helps") == "true"
         assert store.get_state("channel_calibration_samples") is not None
+
+
+# -- channel-choice auto-act (§4): damp a non-predictive channel signal ------
+
+
+def test_pooled_channel_rate_is_sample_weighted():
+    pats = [
+        {"observed_value": 1.0, "sample_size": 3},
+        {"observed_value": 0.0, "sample_size": 1},
+    ]
+    assert pooled_channel_rate(pats) == 0.75  # (1.0*3 + 0.0*1) / 4
+    assert pooled_channel_rate([]) is None
+    assert pooled_channel_rate([{"observed_value": None, "sample_size": 5}]) is None
+
+
+def test_decay_channel_rate_toward_pooled():
+    assert decay_channel_rate_toward_pooled(1.0, 0.5, 0.5) == 0.75  # halve the deviation
+    assert decay_channel_rate_toward_pooled(0.0, 0.5, 1.0) == 0.5   # flatten fully
+    assert decay_channel_rate_toward_pooled(0.8, 0.5, 0.0) == 0.8   # disabled → unchanged
+    # A stray >1 factor still only moves toward pooled (clamped), never past it.
+    assert decay_channel_rate_toward_pooled(1.0, 0.5, 5.0) == 0.5
+
+
+def _seed_nonpredictive_channels(store):
+    """Deliveries whose per-channel ack-rate flips between train and test slices.
+
+    Older (train): push acked, sms ignored. Newer (test, the recent third): the
+    reverse — so conditioning on channel predicts held-out acks *worse* than a
+    pooled rate, i.e. the channel signal is noise (helps=False).
+    """
+    for d in range(1, 5):  # 8 train deliveries
+        store.log_episode("reminder", channel="push", acknowledged=True,
+                          timestamp=f"2026-06-{d:02d} 09:00:00")
+        store.log_episode("reminder", channel="sms", acknowledged=False,
+                          timestamp=f"2026-06-{d:02d} 10:00:00")
+    for d in range(10, 12):  # 4 test deliveries, flipped
+        store.log_episode("reminder", channel="push", acknowledged=False,
+                          timestamp=f"2026-06-{d:02d} 09:00:00")
+        store.log_episode("reminder", channel="sms", acknowledged=True,
+                          timestamp=f"2026-06-{d:02d} 10:00:00")
+
+
+def _channel_rates(store):
+    return {
+        p["context_key"]: p["observed_value"]
+        for p in store.get_patterns("channel_response")
+    }
+
+
+def test_channel_autoact_damps_nonpredictive_rates():
+    """A 'not helping' channel verdict flattens the per-channel rates toward pooled."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        _seed_nonpredictive_channels(store)
+        summary = recompute_patterns(store)
+        assert summary.channel_calibration.helps is False
+        assert summary.channel_decayed is True
+        assert store.get_state("channel_calibration_decayed") == "true"
+        damped = _channel_rates(store)
+
+    # Same episodes, auto-act disabled (report-only) → rates left as computed.
+    with MemoryStore.open(":memory:") as raw:
+        store2 = scoped_default(raw)
+        _seed_nonpredictive_channels(store2)
+        store2.set_state("channel_decay_on_miss", "0")
+        s2 = recompute_patterns(store2)
+        assert s2.channel_calibration.helps is False
+        assert s2.channel_decayed is False
+        assert store2.get_state("channel_calibration_decayed") == "false"
+        raw_rates = _channel_rates(store2)
+
+    # Damping strictly shrinks the spread between channels (toward the pooled rate),
+    # so choose_channel stops bumping on the noise.
+    assert abs(damped["push"] - damped["sms"]) < abs(raw_rates["push"] - raw_rates["sms"])
+
+
+def test_channel_autoact_noop_when_channel_helps():
+    """A predictive channel signal is left intact — nothing to correct."""
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for d in range(1, 6):
+            store.log_episode("reminder", channel="push", acknowledged=True,
+                              timestamp=f"2026-06-{d:02d} 09:00:00")
+            store.log_episode("reminder", channel="sms", acknowledged=False,
+                              timestamp=f"2026-06-{d:02d} 10:00:00")
+        s = recompute_patterns(store)
+        assert s.channel_calibration.helps is True
+        assert s.channel_decayed is False
+        assert store.get_state("channel_calibration_decayed") == "false"
 
 
 # -- early-start threshold learning (Time Blindness morning_prep) -------------
