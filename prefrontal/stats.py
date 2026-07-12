@@ -247,8 +247,10 @@ def _chores(store: MemoryStore) -> dict[str, Any]:
                 - timedelta(days=CHORE_WINDOW_DAYS - 1)
             ).isoformat()
         )
-    except Exception:
-        # No household (unscoped/solo store) → nothing shared to tally.
+    except RuntimeError:
+        # No household (unscoped/solo store) → nothing shared to tally. Narrow to
+        # RuntimeError (what _household_id raises when the user is in no household)
+        # so a genuine SQL error surfaces instead of silently zeroing the view.
         rows = []
     today = local_datetime(utcnow(), get_settings().timezone).date()
     by_person = Counter((r.get("done_by_name") or "Someone") for r in rows)
@@ -263,8 +265,8 @@ def _chores(store: MemoryStore) -> dict[str, Any]:
     ]
     try:
         enabled = sum(1 for c in store.chores() if c.get("enabled"))
-    except Exception:
-        enabled = 0
+    except RuntimeError:
+        enabled = 0  # no household (see the chore_log_since catch above)
     return {
         "window_days": CHORE_WINDOW_DAYS,
         "total": len(rows),
