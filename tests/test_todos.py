@@ -494,6 +494,29 @@ def _auth():
     return {"X-Prefrontal-Token": SECRET}
 
 
+def test_body_double_endpoint_starts_a_session(client, store_open):
+    """POST /todos/{id}/body-double opens a real aligned focus session on the todo."""
+    tid = client.post(
+        "/todos", json={"title": "Sort the paperwork", "estimate_minutes": 90}, headers=_auth()
+    ).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/body-double", headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["todo_id"] == tid
+    assert body["planned_minutes"] == 15.0
+    assert "Sort the paperwork" in body["message"]
+    # The session is live and linked back to the todo.
+    active = store_open.active_focus_sessions()
+    assert len(active) == 1
+    assert active[0]["todo_id"] == tid
+
+
+def test_body_double_endpoint_404_on_missing_todo(client):
+    """A body-double on a non-open todo is a 404, like decompose."""
+    r = client.post("/todos/9999/body-double", headers=_auth())
+    assert r.status_code == 404
+
+
 def test_schedule_todo_at_explicit_time(client, store_open):
     """Scheduling with an explicit `at` blocks the bias-adjusted estimate as a commitment."""
     store_open.set_state("time_estimation_bias", "1.0")  # keep the math simple

@@ -26,8 +26,10 @@ stall detector, and the profile narrative.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
+from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue, note_hint
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -101,6 +103,109 @@ def body_double_message(title: str, misses: int) -> str:
         "start. Schedule a start-together window: 15 minutes, someone (or just a "
         "timer) alongside you, and only the first tiny step."
     )
+
+
+#: Default length (minutes) of a body-double / start-together sprint — short on
+#: purpose: the goal is to get *past the start*, not to run a full block. Tunable
+#: via the ``body_double_window_minutes`` coaching key.
+DEFAULT_BODY_DOUBLE_WINDOW_MINUTES = 15
+
+
+def body_double_start_message(
+    title: str, first_step: str | None, minutes: int, *, partner: str | None = None, name: str = ""
+) -> str:
+    """The message shown when a start-together sprint begins.
+
+    Names the tiny first step (the decomposition's when it exists, else "just
+    open it"), the running timer, and — when a household co-parent is around — an
+    invite for them to start theirs alongside you.
+    """
+    who = f" {name}" if name else ""
+    step = first_step or f"just open “{title}.”"
+    together = f" Ask {partner} to start theirs too — you're not alone in it." if partner else ""
+    return (
+        f"Let's start together{who} — {minutes} min on “{title}”, timer running. "
+        f"First step: {step}{together} I'll check in when it's up."
+    )
+
+
+def body_double_checkin_message(title: str, *, name: str = "") -> str:
+    """The end-of-sprint check-in — reframes *any* start as the win."""
+    who = f" {name}" if name else ""
+    return (
+        f"Timer's up{who} — how did the start-together on “{title}” go? "
+        "Even just beginning counts as a win; wrap up or keep the momentum going."
+    )
+
+
+def start_body_double(
+    store: MemoryStore,
+    *,
+    todo: dict[str, Any],
+    window_minutes: int = DEFAULT_BODY_DOUBLE_WINDOW_MINUTES,
+    partner: str | None = None,
+    name: str = "",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Start a real timed start-together session on a stuck todo.
+
+    A body-double is not a new primitive — it's a short, *aligned* focus session
+    opened on the stalled task's tiny first step (:func:`start_focus_session`), so
+    the existing focus check/end machinery supplies the end check-in (the soft
+    ``alignment_check`` fires at ``window_minutes``) and the learning episode for
+    free. This turns ``body_double_nudge``'s *suggestion* into a running scaffold.
+
+    Args:
+        store: A user-scoped store.
+        todo: The stalled todo to start on (needs ``id``/``title``).
+        window_minutes: The sprint length; also the planned duration, so the soft
+            check lands right at the end.
+        partner: A household co-parent's name to invite, or ``None`` for a solo
+            (timer-only) sprint.
+        name: Optional first name for a warmer message.
+        now: Optional start instant (naive UTC), mainly for tests.
+
+    Returns:
+        ``{"session_id", "todo_id", "intended_task", "planned_minutes",
+        "first_step", "message"}``.
+    """
+    title = (todo.get("title") or "this").strip()
+    decomp = store.get_decomposition(todo["id"])
+    first_step = (decomp or {}).get("first_step")
+    session_id = store.start_focus_session(
+        title,
+        planned_minutes=float(window_minutes),
+        aligned=True,
+        todo_id=todo["id"],
+        started_at=now.strftime(TS_FMT) if now is not None else None,
+    )
+    return {
+        "session_id": session_id,
+        "todo_id": todo["id"],
+        "intended_task": title,
+        "planned_minutes": float(window_minutes),
+        "first_step": first_step,
+        "message": body_double_start_message(
+            title, first_step, window_minutes, partner=partner, name=name
+        ),
+    }
+
+
+def resolve_body_double_partner(store: MemoryStore) -> str | None:
+    """A household co-parent's display name to invite into a sprint, or ``None``.
+
+    Picks the first *other* member of the user's household (there's usually one
+    co-parent). Returns ``None`` when the user is solo, so a start-together sprint
+    with no one to pair with is simply a timer — still a real scaffold.
+    """
+    household_id = store.household_id_or_none()
+    if household_id is None:
+        return None
+    uid = store.user_id
+    for member in store.household_members(household_id):
+        if member.get("id") != uid:
+            return member.get("display_name") or member.get("handle")
+    return None
 
 
 class TaskParalysisModule(Module):

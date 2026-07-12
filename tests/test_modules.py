@@ -18,7 +18,11 @@ from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
 from prefrontal.memory.summarizer import build_profile
 from prefrontal.modules import available, enabled_modules, get
-from prefrontal.modules.task_paralysis import repeat_stalled_tasks
+from prefrontal.modules.task_paralysis import (
+    DEFAULT_BODY_DOUBLE_WINDOW_MINUTES,
+    repeat_stalled_tasks,
+    start_body_double,
+)
 from prefrontal.modules.time_blindness import (
     DEFAULT_MORNING_ROUTINE_MINUTES,
     TimeBlindnessModule,
@@ -433,6 +437,45 @@ def test_repeat_stalled_tasks_respects_min_misses():
     episodes = [{"id": 1, "context": "todo dropped: Email Sam", "outcome": "miss"}]
     assert repeat_stalled_tasks(episodes) == []
     assert repeat_stalled_tasks(episodes, min_misses=1)[0]["title"] == "Email Sam"
+
+
+def test_start_body_double_opens_a_real_focus_session(store):
+    """A body-double is a short aligned focus session on the stuck todo."""
+    tid = store.add_todo("Renew passport", estimate_minutes=90, priority=3)
+    result = start_body_double(store, todo=store.get_todo(tid), window_minutes=15)
+    assert result["todo_id"] == tid
+    assert result["planned_minutes"] == 15.0
+    # A real, active focus session now exists, linked to the todo and aligned.
+    active = store.active_focus_sessions()
+    assert len(active) == 1
+    session = active[0]
+    assert session["id"] == result["session_id"]
+    assert session["todo_id"] == tid
+    assert session["aligned"] == 1
+    assert session["planned_minutes"] == 15.0
+    assert "Renew passport" in result["message"]
+
+
+def test_start_body_double_uses_stored_first_step(store):
+    """The message leads with the decomposition's first step when there is one."""
+    tid = store.add_todo("File taxes", estimate_minutes=120)
+    store.set_decomposition(
+        tid,
+        first_step="Open the tax portal",
+        first_step_minutes=5.0,
+        steps=["gather docs"],
+        source="llm",
+    )
+    result = start_body_double(store, todo=store.get_todo(tid))
+    assert "Open the tax portal" in result["message"]
+    assert result["planned_minutes"] == float(DEFAULT_BODY_DOUBLE_WINDOW_MINUTES)
+
+
+def test_start_body_double_solo_has_no_partner_invite(store):
+    """Outside a household there's no co-parent to invite — just a timer."""
+    tid = store.add_todo("Clean the garage")
+    result = start_body_double(store, todo=store.get_todo(tid))
+    assert "Ask" not in result["message"]
 
 
 def test_task_paralysis_profile_names_stuck_tasks(store):

@@ -46,8 +46,11 @@ from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.modules.task_paralysis import (
     DEFAULT_BODY_DOUBLE_MIN_MISSES,
+    DEFAULT_BODY_DOUBLE_WINDOW_MINUTES,
     body_double_message,
     repeat_stalled_tasks,
+    resolve_body_double_partner,
+    start_body_double,
 )
 from prefrontal.scheduling import (
     DEFAULT_FIT_CAP_MINUTES,
@@ -409,6 +412,38 @@ def build_router(services: RouterServices) -> APIRouter:
             memory, todo_id, todo["title"], ollama_client
         )
         return {"todo_id": todo_id, "decomposition": decomposition}
+
+    @router.post("/todos/{todo_id}/body-double", tags=["todos"])
+    def todo_body_double(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Start a timed start-together (body-double) sprint on a stuck todo.
+
+        The Task Paralysis ``body_double_nudge`` intervention made real: instead of
+        only *suggesting* a start-together window, this opens a short, aligned focus
+        session on the task's tiny first step, so the existing focus check/end
+        machinery gives the end check-in and the learning episode. When the user is
+        in a household, the message invites a co-parent to start theirs too.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None or todo["status"] != "open":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} is not open.",
+            )
+        window = int(
+            memory.get_float("body_double_window_minutes", DEFAULT_BODY_DOUBLE_WINDOW_MINUTES)
+        )
+        result = start_body_double(
+            memory,
+            todo=todo,
+            window_minutes=window,
+            partner=resolve_body_double_partner(memory),
+            name=memory.get_state("user_name", "") or "",
+        )
+        return result
 
     @router.post("/todos/{todo_id}/decompose/dismiss", tags=["todos"])
     def todo_decompose_dismiss(
