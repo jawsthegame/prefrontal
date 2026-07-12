@@ -67,6 +67,17 @@ def test_user_crud_works_unscoped(unscoped):
     assert [u["handle"] for u in unscoped.list_users()] == ["carol"]
 
 
+def test_get_user_by_token_hash_selects_the_right_user(unscoped):
+    """The indexed token lookup returns the *matching* user among several — not the
+    first row — and None for an unknown hash (guards the scan→indexed-lookup change)."""
+    _amy, tok_a = unscoped.create_user("amy")
+    ben, tok_b = unscoped.create_user("ben")
+    cid, tok_c = unscoped.create_user("cid")
+    assert unscoped.get_user_by_token_hash(sha256_hex(tok_b))["id"] == ben["id"]
+    assert unscoped.get_user_by_token_hash(sha256_hex(tok_c))["id"] == cid["id"]
+    assert unscoped.get_user_by_token_hash(sha256_hex("not-a-real-token")) is None
+
+
 # -- isolation across every per-user table -----------------------------------
 
 
