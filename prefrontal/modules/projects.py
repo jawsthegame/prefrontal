@@ -66,7 +66,8 @@ class ProjectStalenessModule(Module):
                 description=(
                     "Gently re-surface an active project with open todos that hasn't "
                     "been touched (focus/todo/commitment) past the staleness cutoff — "
-                    "'still on it, or should this be parked?'"
+                    "'still on it, or should this be parked?' — paired with a tiny "
+                    "first step for its oldest open todo so re-engaging is one action."
                 ),
                 trigger="a project with open work has gone quiet past project_stale_days",
                 status="active",
@@ -97,6 +98,16 @@ class ProjectStalenessModule(Module):
                 f"You haven't touched *{project['name']}* in {days} days — still on "
                 f"it? ({n} open todo{'s' if n != 1 else ''})"
             )
+            # Pair the re-surface with a concrete next action: a project usually
+            # goes quiet because its next step is fuzzy (task paralysis at the
+            # project scale), so offer the oldest open todo's tiny first step rather
+            # than a bare yes/no. Prefer a stored decomposition, else a heuristic one.
+            first_step, todo_id = self._next_action(store, project["id"])
+            if first_step:
+                text += f" Ease back in with one step: {first_step}"
+            ref = {"project_id": project["id"]}
+            if todo_id is not None:
+                ref["todo_id"] = todo_id
             return [
                 Cue(
                     module=self.key,
@@ -105,10 +116,36 @@ class ProjectStalenessModule(Module):
                     text=text + note_hint(project.get("notes")),
                     context_key="project",
                     dedup_key=dedup_key,
-                    ref={"project_id": project["id"]},
+                    ref=ref,
                 )
             ]
         return []
+
+    def _next_action(
+        self, store: MemoryStore, project_id: int
+    ) -> tuple[str | None, int | None]:
+        """A tiny first step (+ its todo id) for ``project_id``'s oldest open todo.
+
+        Prefers a decomposition already stored on the todo; otherwise computes a
+        heuristic first step (:func:`~prefrontal.todos.decompose_task` with no
+        client — a pure, network-free read, per the ``evaluate`` contract). Returns
+        ``(None, None)`` when the project has no open todo to point at.
+        """
+        from prefrontal.todos import DEFAULT_MAX_FIRST_STEP_MINUTES, decompose_task
+
+        todos = store.project_open_todos(project_id, limit=1)
+        if not todos:
+            return (None, None)
+        todo = todos[0]
+        decomp = store.get_decomposition(todo["id"])
+        first_step = (decomp or {}).get("first_step")
+        if not first_step:
+            max_first = store.get_float(
+                "max_first_step_minutes", DEFAULT_MAX_FIRST_STEP_MINUTES
+            )
+            result = decompose_task(todo["title"], max_first_minutes=max_first)
+            first_step = result.first_step if result else None
+        return (first_step, todo["id"])
 
     def before_collect(self, store: MemoryStore, ctx: CoachContext) -> None:
         """Mature prior staleness nudges into engagement outcomes.
