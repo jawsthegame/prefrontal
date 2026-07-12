@@ -206,9 +206,18 @@ def _parse_minutes(message: str) -> float | None:
     # Word forms first, so "half an hour" doesn't get read as a bare "hour" = 60.
     if re.search(r"\bhalf an? hour\b|\bhalf-hour\b", text):
         return 30.0
+    # "…and a half" riders must beat the plain "an hour" / "N hours" rules below,
+    # which would otherwise match first and drop the extra 30 min. Both orderings:
+    # "an hour and a half" / "2 hours and a half", and "2 and a half hours".
+    m = re.search(r"\b(?:an|(\d+))\s+hours?\s+and a half\b", text)
+    if m:
+        return (float(m.group(1)) if m.group(1) else 1.0) * 60.0 + 30.0
+    m = re.search(r"\b(\d+)\s+and a half\s+hours?\b", text)
+    if m:
+        return float(m.group(1)) * 60.0 + 30.0
     if re.search(r"\ban hour\b", text):
         return 60.0
-    # "1.5 hours", "2 hrs", "an hour and a half" (handled above via number+hour)
+    # "1.5 hours", "2 hrs", "2h"
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:h\b|hr|hrs|hour|hours)", text)
     if m:
         return float(m.group(1)) * 60.0
@@ -407,9 +416,10 @@ def interpret_request(
     title = title.strip() if isinstance(title, str) and title.strip() else _clean_title(message)
 
     # The model must ask when it couldn't find a duration; honor its own question
-    # rather than our generic one when it phrased one.
+    # rather than our generic one when it phrased one. (Who's-involved that we did
+    # infer isn't lost — plan_availability still echoes it on the question path.)
     if minutes is None:
-        request, fallback_q = _build_request(
+        _, fallback_q = _build_request(
             minutes=None, days=days, with_partner=False, title=title,
             time_window=None, default_days=default_days,
         )
@@ -487,10 +497,19 @@ def plan_availability(
         message, client=client, partner_names=partner_names, default_days=default_days
     )
     if request is None:
-        return AvailabilityPlan(question=question)
+        # Even while clarifying, echo who we already understood to be involved, so
+        # the client doesn't have to re-ask "is this for both of you?" too.
+        return AvailabilityPlan(
+            question=question,
+            with_partner=_detect_partner(message, partner_names),
+        )
 
+    # Window the commitments by the *same* ``now`` we slot against, so the blocking
+    # set and the free windows agree — otherwise the store filters "upcoming" by
+    # the wall clock while find_slots reasons from an injected ``now``, and the two
+    # disagree (e.g. a test's fixed clock, or a request planned as-of a past instant).
     slots, considered, ignored_fyi = find_availability(
-        memory.upcoming_commitments(limit=1000),
+        memory.upcoming_commitments(limit=1000, now=now),
         request,
         now=now,
         tz=tz,

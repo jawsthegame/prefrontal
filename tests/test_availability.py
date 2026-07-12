@@ -99,6 +99,9 @@ def test_placeholder_holds_never_block():
         ("1.5 hours this week", 90.0),
         ("half an hour tomorrow", 30.0),
         ("90m for the gym", 90.0),
+        ("an hour and a half for a walk", 90.0),
+        ("2 hours and a half this week", 150.0),
+        ("2 and a half hours to focus", 150.0),
     ],
 )
 def test_heuristic_parses_duration(message, expected):
@@ -295,6 +298,15 @@ def test_plan_asks_when_underspecified(memory):
     _seed(memory)
     plan = plan_availability("find time to catch up", memory, tz="UTC")
     assert plan.question is not None and not plan.slots
+
+
+def test_plan_echoes_participants_even_while_asking(memory):
+    # No duration → we ask, but still report that both of us are involved, so the
+    # client needn't re-ask "is this for both of you?".
+    _seed(memory)
+    plan = plan_availability("when are we both free to catch up", memory, tz="UTC")
+    assert plan.question is not None
+    assert plan.with_partner is True
 
 
 # --- render_plan ------------------------------------------------------------
