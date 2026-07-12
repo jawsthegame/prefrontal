@@ -25,6 +25,7 @@ from prefrontal.trips import (
     classify_reflection,
     heuristic_reflection_outcome,
     normalize_trip_category,
+    parse_outcome_reply,
     process_location,
     record_trip_return,
 )
@@ -92,10 +93,27 @@ def test_normalize_trip_category(value, expected):
         ("quick and smooth, in and out", "success"),
         ("went well, productive", "success"),
         ("drove around for a while", None),  # nothing decisive
+        # Word-boundary matching: a cue embedded in an unrelated word must not
+        # fire. Previously "late" in "related", "fast" in "breakfast", "good" in
+        # "goodbye", and "a bit" in "a bitter" all matched via bare substring.
+        ("we related, nothing crazy", None),          # not 'late' -> miss
+        ("grabbed breakfast on the way", None),         # not 'fast' -> success
+        ("said goodbye and headed home", None),         # not 'good' -> success
+        ("left a bitter taste honestly", None),         # not 'a bit' -> partial
+        # …and the genuine whole-word cues still fire.
+        ("all good, no problem", "success"),
+        ("ran late the whole time", "miss"),
     ],
 )
 def test_heuristic_reflection_outcome(text, expected):
     assert heuristic_reflection_outcome(text) == expected
+
+
+def test_parse_outcome_reply_matches_whole_words():
+    """The one-word verdict is matched on boundaries — 'miss' not inside 'dismiss'."""
+    assert parse_outcome_reply("MISS") == "miss"
+    assert parse_outcome_reply("the verdict is success") == "success"
+    assert parse_outcome_reply("please dismiss this") is None  # 'miss' in 'dismiss'
 
 
 def test_classify_reflection_prefers_llm_then_heuristic():
