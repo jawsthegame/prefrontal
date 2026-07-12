@@ -690,6 +690,25 @@ def test_smtp_client_port_587_still_starttls():
     assert record["tls"] is True
 
 
+def test_default_connect_selects_ssl_on_465_and_plain_smtp_elsewhere(monkeypatch):
+    """The production connect factory (bypassed by the injected-connect tests above)
+    must pick smtplib.SMTP_SSL for implicit-TLS 465 and plain smtplib.SMTP otherwise."""
+    import prefrontal.integrations.smtp as smtp_mod
+
+    calls: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(
+        smtp_mod.smtplib, "SMTP_SSL",
+        lambda host, port, timeout=None: calls.append(("SSL", host, port)),
+    )
+    monkeypatch.setattr(
+        smtp_mod.smtplib, "SMTP",
+        lambda host, port, timeout=None: calls.append(("SMTP", host, port)),
+    )
+    smtp_mod._default_connect("smtp.test", 465, 5.0)
+    smtp_mod._default_connect("smtp.test", 587, 5.0)
+    assert calls == [("SSL", "smtp.test", 465), ("SMTP", "smtp.test", 587)]
+
+
 # -- SMTP source encryption --------------------------------------------------
 
 
