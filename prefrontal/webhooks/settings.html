@@ -163,10 +163,12 @@
     <p class="sub">Prefrontal estimates how long it takes to get to each commitment
       and nudges you to leave in time. Add a safety cushion as a percentage of the
       drive — a longer trip gets proportionally more (15% pads a 40-min drive by 6
-      min, a 10-min one by 1.5). Leave it at 0 to use the raw estimate.</p>
+      min, a 10-min one by 1.5). Prefrontal fills this in from how often your
+      departures run late; edit it to set your own, or leave it at 0 for none.</p>
     <label class="dep-pad">Pad every drive by
       <input class="sc-num" type="number" id="travelpad" min="0" max="100" step="5"
         inputmode="numeric" /> %</label>
+    <div class="sc-hint" id="dep-note"></div>
     <div class="saved" id="dep-saved"></div>
   </section>
 
@@ -350,30 +352,50 @@ $("#autodecomp").addEventListener("change", async (e) => {
 });
 
 // ── Departure: the travel-time safety padding (% of the drive; 0 = off) ──────
+// The value is pre-populated by the learning pass from how often departures run
+// late (source "inferred"); editing it makes it an explicit override the learner
+// then leaves alone. "Reset to automatic" hands it back to the learner.
+function renderDepNote(d) {
+  const note = $("#dep-note");
+  if (d.source === "explicit") {
+    note.innerHTML = `Set by you. <a href="#" id="dep-auto">Use the value Prefrontal learns instead</a>.`;
+  } else if (d.learned && d.percent > 0) {
+    note.textContent = "Learned from how often your recent departures run late. Edit to override.";
+  } else {
+    note.textContent = "";
+  }
+}
+function applyDep(d) {
+  if ($("#travelpad") !== document.activeElement) $("#travelpad").value = d.percent;
+  renderDepNote(d);
+}
 async function loadDeparture() {
   try {
-    const d = await api("/departure/padding");
-    if ($("#travelpad") !== document.activeElement) $("#travelpad").value = d.percent;
+    applyDep(await api("/departure/padding"));
   } catch (err) {
     if (err.code === 401) gate("Session expired.");
   }
 }
-$("#travelpad").addEventListener("change", async (e) => {
-  let pct = Math.round(Number(e.target.value));
-  if (!Number.isFinite(pct)) pct = 0;
-  pct = Math.min(100, Math.max(0, pct));  // mirror the server's 0–100 clamp
-  e.target.value = pct;
+async function saveDep(body, revertTo) {
   try {
-    const d = await api("/departure/padding", {
-      method: "POST", body: JSON.stringify({ percent: pct }),
-    });
-    $("#travelpad").value = d.percent;
+    applyDep(await api("/departure/padding", { method: "POST", body: JSON.stringify(body) }));
     $("#dep-saved").textContent = "Saved ✓";
     setTimeout(() => { $("#dep-saved").textContent = ""; }, 1600);
   } catch (err) {
     if (err.code === 401) { gate("Session expired."); return; }
+    if (revertTo != null) $("#travelpad").value = revertTo;
     $("#dep-saved").textContent = "couldn't save — retry";
   }
+}
+$("#travelpad").addEventListener("change", (e) => {
+  let pct = Math.round(Number(e.target.value));
+  if (!Number.isFinite(pct)) pct = 0;
+  pct = Math.min(100, Math.max(0, pct));  // mirror the server's 0–100 clamp
+  e.target.value = pct;
+  saveDep({ percent: pct });
+});
+$("#c-departure").addEventListener("click", (e) => {
+  if (e.target.id === "dep-auto") { e.preventDefault(); saveDep({ auto: true }); }
 });
 
 // ── SMTP (outbound email) config: a small form saved as a whole ──────────────

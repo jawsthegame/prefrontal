@@ -108,7 +108,7 @@ Persistent preferences and working memory for the coaching layer.
 | `travel_speed_kmh` | `30` | inferred (departure-reminder travel estimate) |
 | `travel_road_factor` | `1.3` | inferred (straight-line → road distance) |
 | `departure_prep_minutes` | `5` | inferred (flat buffer added to travel) |
-| `travel_pad_fraction` | `0` | inferred (distance-relative travel padding, e.g. `0.15` = +15%; off by default) |
+| `travel_pad_fraction` | `0` | inferred (distance-relative travel padding, e.g. `0.15` = +15%; learned from the departure late-rate, or set explicitly in Settings) |
 | `departure_heads_up_minutes` | `30` | inferred (gentle "leave soon" horizon) |
 | `departure_soon_minutes` | `10` | inferred ("get ready" horizon) |
 | `geocoding_enabled` | `0` | explicit (opt-in network geocoding; off by default) |

@@ -93,6 +93,17 @@ EARLY_START_MORNING_BAND = (4, 11)  # local hours [4, 11)
 EARLY_START_MARGIN_MINUTES = 30
 EARLY_START_CLAMP = (6 * 60, 10 * 60)  # 06:00 .. 10:00, as minutes-of-day
 
+#: Learning the departure travel-time cushion (``travel_pad_fraction``) from how
+#: often departures run late. ``MIN`` late-or-not departures are needed before a
+#: pad is suggested (no track record → no pad); ``PER_LATE_RATE`` scales the
+#: recency-weighted late-rate ∈ [0,1] into a pad fraction; ``CAP`` ceilings it; and
+#: ``STEP`` snaps the result to whole-number percents (matching the Settings
+#: control). A late-rate of 0.5 → a 20% pad; ~0.625+ tops out at the 25% cap.
+MIN_TRAVEL_PAD_SAMPLES = 5
+TRAVEL_PAD_PER_LATE_RATE = 0.4
+TRAVEL_PAD_CAP = 0.25
+TRAVEL_PAD_STEP = 0.05
+
 #: Recency half-life (days) for the learning pass: an episode this old counts
 #: half as much as a fresh one, and the weight halves again every half-life after
 #: that (exponential decay). This is what lets the profile *follow* a person who
@@ -369,6 +380,10 @@ class PatternRunSummary:
     #: departures this pass (``HH:MM``), or ``None`` when there wasn't enough signal
     #: to move off the current/seeded default.
     early_start_threshold: str | None = None
+    #: The travel-time safety pad (``travel_pad_fraction``) learned from the
+    #: departure late-rate this pass, or ``None`` when there weren't enough
+    #: departures to suggest one (or a hand-set override held it).
+    travel_pad_fraction: float | None = None
 
 
 def compute_confidence(n: float, k: float = DEFAULT_CONFIDENCE_K) -> float:
@@ -977,6 +992,48 @@ def compute_early_start_threshold(
     return f"{h:02d}:{m:02d}"
 
 
+def compute_travel_pad_fraction(
+    episodes: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    half_life_days: float | None = None,
+) -> float | None:
+    """Learn the travel-time safety pad (``travel_pad_fraction``) from late departures.
+
+    Travel estimates are padded by ``time_estimation_bias`` (learned, two-way) plus
+    an explicit ``travel_pad_fraction`` cushion. Departure episodes are drift-only
+    (``actual_value`` is deliberately ``None``, see :mod:`prefrontal.departure`), so
+    leaving late never moves the bias — it's the one lateness signal the padding can
+    own without double-counting. (Outing *overruns* already feed the bias via their
+    predicted/actual pair, so they're handled there, not here.)
+
+    Take the recency-weighted late-rate of ``departure`` episodes — the fraction
+    that came in a *miss* (left more than the departure grace late) — and scale it
+    into a standing cushion: the more often you leave late, the larger the pad,
+    ceilinged at :data:`TRAVEL_PAD_CAP` and snapped to :data:`TRAVEL_PAD_STEP` so it
+    lines up with the whole-number percentages the Settings control offers. The pad
+    tracks the rate both ways, so it eases back toward ``0`` as departures improve.
+
+    Returns ``None`` (keep the current/seeded value) until there are at least
+    :data:`MIN_TRAVEL_PAD_SAMPLES` departure episodes — we never pad for someone
+    with no track record.
+    """
+    now = now or utcnow()
+    weighted = [
+        (DRIFT_WEIGHTS[e["outcome"]], decay_weight(e.get("timestamp"), now, half_life_days))
+        for e in episodes
+        if e.get("episode_type") == "departure" and e.get("outcome") in DRIFT_WEIGHTS
+    ]
+    if len(weighted) < MIN_TRAVEL_PAD_SAMPLES:
+        return None
+    late_rate = _wmean(weighted)
+    if late_rate is None:
+        return None
+    raw = min(TRAVEL_PAD_CAP, TRAVEL_PAD_PER_LATE_RATE * late_rate)
+    padded = max(0.0, round(raw / TRAVEL_PAD_STEP) * TRAVEL_PAD_STEP)
+    return round(padded, 4)
+
+
 def _make_half_life_resolver(store: MemoryStore) -> Callable[[str], float | None]:
     """Build the per-context half-life lookup used by the bias-by-context passes.
 
@@ -1338,6 +1395,20 @@ def recompute_patterns(
         if source != "explicit":
             store.set_state("early_start_threshold", early_start_threshold, source="inferred")
 
+    # Learn the departure travel cushion (``travel_pad_fraction``) from how often
+    # departures run late, so the Settings field pre-populates from behavior rather
+    # than sitting at 0. Same explicit-override guard as above: a hand-set value on
+    # the Settings page wins and the learner leaves it alone.
+    travel_pad_fraction = compute_travel_pad_fraction(
+        episodes, now=now, half_life_days=half_life_days
+    )
+    if travel_pad_fraction is not None:
+        source = (store.all_state().get("travel_pad_fraction", {}) or {}).get("source")
+        if source != "explicit":
+            store.set_state(
+                "travel_pad_fraction", str(travel_pad_fraction), source="inferred"
+            )
+
     return PatternRunSummary(
         episodes=len(episodes),
         patterns=len(results),
@@ -1356,6 +1427,7 @@ def recompute_patterns(
         windowed_out=windowed_out,
         auto_half_lives=auto_half_lives,
         early_start_threshold=early_start_threshold,
+        travel_pad_fraction=travel_pad_fraction,
     )
 
 

@@ -629,6 +629,23 @@ def build_router(services: RouterServices) -> APIRouter:
             "location_known": location_known,
         }
 
+    def _padding_payload(store: Any) -> dict[str, Any]:
+        """The pad as a whole-number percentage plus how it was set.
+
+        ``source`` is the coaching-state provenance: ``"inferred"`` (learned from
+        the departure late-rate by the learning pass), ``"explicit"`` (hand-set on
+        this page), or ``None`` (never written). ``learned`` is the convenient
+        boolean the Settings card uses to show the "learned from your departures"
+        note and offer "reset to automatic".
+        """
+        fraction = store.get_float(TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION)
+        source = (store.all_state().get(TRAVEL_PAD_FRACTION_KEY, {}) or {}).get("source")
+        return {
+            "percent": round(max(fraction, 0.0) * 100),
+            "source": source,
+            "learned": source == "inferred",
+        }
+
     @router.get("/departure/padding", tags=["schedule"])
     def get_departure_padding(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
@@ -637,30 +654,44 @@ def build_router(services: RouterServices) -> APIRouter:
 
         Reads the ``travel_pad_fraction`` coaching key (a fraction) and returns it
         as a percentage for the Settings control — ``0.15`` → ``15``. ``0`` means
-        the padding is off (the default).
+        the padding is off. Also reports whether the value was **learned** from the
+        user's departure lateness (``source='inferred'``) or hand-set here
+        (``'explicit'``), so the card can label it and offer a reset.
         """
-        fraction = ctx.store.get_float(
-            TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION
-        )
-        return {"percent": round(max(fraction, 0.0) * 100)}
+        return _padding_payload(ctx.store)
 
     @router.post("/departure/padding", tags=["schedule"])
     def set_departure_padding(
         payload: TravelPadding,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Set the travel-time safety padding from Settings.
+        """Set the travel-time padding from Settings, or hand it back to the learner.
 
-        Stores the percentage as the ``travel_pad_fraction`` fraction (percent ÷
-        100) as an explicit user choice, so every departure estimate pads the drive
-        by that proportion. ``0`` turns it off. The value is clamped to 0–100 by the
-        schema; padding only ever lengthens the estimate.
+        With ``auto=true`` the stored value is re-marked ``inferred`` — the manual
+        override is cleared so the learning pass resumes tuning it from the
+        departure late-rate. Otherwise the ``percent`` is stored as the
+        ``travel_pad_fraction`` fraction (percent ÷ 100) as an **explicit** user
+        choice, which the learner then leaves alone. ``0`` turns padding off; the
+        value is clamped to 0–100 by the schema, and padding only ever lengthens the
+        estimate.
         """
+        memory = ctx.store
+        if payload.auto:
+            # Keep the current number but drop the "explicit" flag, so the learner's
+            # override guard no longer skips it on the next pass.
+            current = memory.get_float(TRAVEL_PAD_FRACTION_KEY, DEFAULT_TRAVEL_PAD_FRACTION)
+            memory.set_state(
+                TRAVEL_PAD_FRACTION_KEY, f"{max(current, 0.0):g}", source="inferred"
+            )
+            return _padding_payload(memory)
+        if payload.percent is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="percent is required unless auto is set",
+            )
         fraction = payload.percent / 100.0
-        ctx.store.set_state(
-            TRAVEL_PAD_FRACTION_KEY, f"{fraction:g}", source="explicit"
-        )
-        return {"percent": round(fraction * 100)}
+        memory.set_state(TRAVEL_PAD_FRACTION_KEY, f"{fraction:g}", source="explicit")
+        return _padding_payload(memory)
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(

@@ -554,9 +554,29 @@ def test_departure_padding_round_trips_percent_to_fraction(client, store):
         "/departure/padding", json={"percent": 15}, headers=_auth()
     ).json()
     assert saved["percent"] == 15
+    # A hand-set value is marked explicit, so the learner won't overwrite it.
+    assert saved["source"] == "explicit"
+    assert saved["learned"] is False
     # Stored as a fraction on the coaching key the planner reads.
     assert store.get_float("travel_pad_fraction", 0.0) == pytest.approx(0.15)
     assert client.get("/departure/padding", headers=_auth()).json()["percent"] == 15
+
+
+def test_departure_padding_auto_hands_back_to_the_learner(client, store):
+    """`auto` clears the explicit override (keeping the number) so learning resumes."""
+    client.post("/departure/padding", json={"percent": 20}, headers=_auth())
+    assert store.all_state()["travel_pad_fraction"]["source"] == "explicit"
+
+    back = client.post("/departure/padding", json={"auto": True}, headers=_auth()).json()
+    assert back["percent"] == 20  # value kept
+    assert back["source"] == "inferred" and back["learned"] is True
+    assert store.all_state()["travel_pad_fraction"]["source"] == "inferred"
+
+
+def test_departure_padding_requires_percent_or_auto(client, store):
+    """An empty body sets nothing — percent is required unless auto is given."""
+    resp = client.post("/departure/padding", json={}, headers=_auth())
+    assert resp.status_code == 422
 
 
 def test_departure_padding_rejects_out_of_range(client, store):
