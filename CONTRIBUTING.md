@@ -51,6 +51,8 @@ prefrontal/
 │   └── geocode.py             # places -> cache -> opt-in Nominatim resolution
 ├── docs/                      # schema.md, whitepaper.md, household-sheet.md + design specs; brand/
 ├── deploy/                    # launchd plist, n8n workflows, iOS Shortcuts
+├── scripts/                   # repo-maintenance scripts (e.g. collate_changelog.py)
+├── changelog.d/               # changelog fragments (one file per change; see its README)
 ├── tests/                     # pytest suite (memory, webhooks, modules, ...)
 ├── pyproject.toml             # build, dependencies, tooling config
 └── .env.example               # all configuration, with safe defaults
@@ -101,6 +103,14 @@ Please make sure `pytest` and `ruff check .` pass before opening a pull request.
   "finished" is always visible.
 - **Tests for behavior you add.** New endpoints or store methods come with a
   test in `tests/`.
+- **Changelog via fragments, not direct edits.** Don't edit `CHANGELOG.md` in a
+  PR — it used to be a rebase hotspot because every change prepended a bullet to
+  the same spot. Instead add a fragment file `changelog.d/YYYY-MM-DD-slug.md`
+  whose body is the changelog bullet(s) as they'd read under `## Recently
+  shipped`. Two branches adding two different files never conflict.
+  `python scripts/collate_changelog.py` folds the fragments into `CHANGELOG.md`
+  (newest-first) and deletes them — run periodically, not per PR. See
+  `changelog.d/README.md`.
 - **A cross-client contract is hand-mirrored, so pin it.** A JSON shape consumed
   by more than one client — the Pydantic schema, the web dashboard's inline JS
   (`prefrontal/webhooks/*.html`), and the iOS Swift `Codable` models
