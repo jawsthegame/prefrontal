@@ -32,10 +32,13 @@ window-bounded one, an **end hour**):
   a bedtime is a personal preference (like meds). From ``winddown_start_hour``
   (default 21, in the *evening*) it nudges "start winding down for bed" every
   ``winddown_reask_minutes`` until one "Winding down" settles it for the night.
-  Unlike the daytime checks it lives right up against the responsive-hours edge:
-  it deliberately leans on the engine's quiet-hours gate (a cue outside responsive
-  hours is suppressed) so it never nags past bedtime, rather than modelling a
-  bedtime itself.
+  Being an *evening* nudge it collides with the shared **daytime** responsive-hours
+  window (with the seeded 14:00 end a 21:00 cue would never land), so by default it
+  **bypasses quiet hours** (``winddown_bypass_quiet_hours``) and self-bounds with
+  its own ``winddown_end_hour`` (default 23) instead — the bedtime it used to
+  approximate by leaning on the engine's gate. Turn the bypass off to restore the
+  "leans on responsive hours" behavior; the end hour keeps it from nagging into the
+  small hours either way.
 - **movement** (target 1) — **off by default** even when self-care is on, because
   an exercise cadence is personal (like meds/winddown). The daily-movement
   *floor*: a tiny, always-doable minimum (a few minutes of stretching) that
@@ -122,16 +125,25 @@ DEFAULT_BIOBREAK_SNOOZE_MINUTES = 30
 DEFAULT_BIOBREAK_DAILY_TARGET = 6
 #: Wind-down defaults (target 1: one "Winding down" and it's settled for the night).
 #: Unlike the other basics this one lives in the *evening* — it nudges in the
-#: run-up to bed, so its default start hour sits just inside the default
-#: responsive-hours end (22:00). The engine still owns the "no overnight nag"
-#: guarantee: a wind-down cue outside responsive hours is suppressed like any
-#: other, so the check leans on that gate rather than re-implementing a bedtime.
-#: It's the personal-preference kind of nudge (a bedtime is opinionated), so like
-#: meds it's **off even when self_care is on** — opt in via ``winddown_enabled``.
+#: run-up to bed. A bedtime is opinionated, so like meds it's **off even when
+#: self_care is on** — opt in via ``winddown_enabled``.
+#:
+#: **Quiet-hours bypass + its own end hour.** An evening nudge collides with the
+#: shared *daytime* responsive-hours window: with the seeded ``responsive_hours_end``
+#: of 14:00, a 21:00 wind-down cue would be silenced before it ever landed. So
+#: wind-down **bypasses quiet hours** by default (``winddown_bypass_quiet_hours``)
+#: and instead self-bounds with its own ``winddown_end_hour`` (default 23) — the
+#: bedtime it used to lean on the engine's gate to approximate. Turn the bypass off
+#: to restore the old "leans on responsive hours" behavior; either way the end hour
+#: keeps it from nagging into the small hours.
 DEFAULT_WINDDOWN_START_HOUR = 21
+DEFAULT_WINDDOWN_END_HOUR = 23
 DEFAULT_WINDDOWN_REASK_MINUTES = 30
 DEFAULT_WINDDOWN_SNOOZE_MINUTES = 15
 DEFAULT_WINDDOWN_DAILY_TARGET = 1
+#: Wind-down bypasses the shared daytime quiet-hours gate by default (see above);
+#: it's self-bounded by ``winddown_end_hour`` instead. Configurable per user.
+DEFAULT_WINDDOWN_BYPASS_QUIET_HOURS = True
 #: Movement/stretch defaults (target 1: one "Stretched" and it's done for the day).
 #: The daily-movement *floor* — a tiny, always-doable minimum (a few minutes of
 #: stretching) that survives the worst day, so a movement habit never hits zero.
@@ -162,10 +174,14 @@ DEFAULT_MOVEMENT_DAILY_TARGET = 1
 #: recap is a personal-preference nudge, like meds/winddown — opt in via
 #: ``self_care_review_enabled``. Fires once, in the evening from
 #: ``self_care_review_hour``, and only when there's a gap worth naming (a clean day
-#: stays silent). Like wind-down it leans on the engine's responsive-hours gate to
-#: not fire past bedtime, so a deployment whose ``responsive_hours_end`` is early
-#: should widen it to actually receive the evening recap.
+#: stays silent). Like wind-down it **bypasses the shared daytime quiet-hours gate**
+#: by default (``self_care_review_bypass_quiet_hours``) — an end-of-day recap that a
+#: seeded ``responsive_hours_end`` of 14:00 would otherwise silence is no recap at
+#: all. It can't nag: it fires once per day (dedup) and only from the review hour
+#: onward on the *same* local day, so an early-morning tick never triggers it. Turn
+#: the bypass off to hold it to responsive hours instead.
 DEFAULT_REVIEW_HOUR = 21
+DEFAULT_REVIEW_BYPASS_QUIET_HOURS = True
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -305,6 +321,16 @@ class BasicCheck:
     #: can show the check green after you've been and clear it the moment the next
     #: reminder comes due. ``None`` for quota checks, whose green state is ``done``.
     confirmed_key: str | None = None
+    #: The coaching-state key for this check's **quiet-hours bypass** toggle, or
+    #: ``None`` when it has none (the daytime checks). An evening check (wind-down)
+    #: sets it so its cue can carry ``quiet_hours_exempt`` — landing at the edge of /
+    #: outside the shared daytime responsive window rather than being silenced by it.
+    #: A check with a bypass key should also declare an ``end_hour_key`` so it stays
+    #: self-bounded once the engine's quiet-hours gate no longer stops it.
+    quiet_hours_bypass_key: str | None = None
+    #: The default for :attr:`quiet_hours_bypass_key` when the state row is absent
+    #: (an un-migrated DB). Ignored when the check has no bypass key.
+    quiet_hours_bypass_default: bool = False
 
 
 CHECKS: tuple[BasicCheck, ...] = (
@@ -415,6 +441,13 @@ CHECKS: tuple[BasicCheck, ...] = (
         # progress_headline is a belt-and-braces default it never actually reaches.
         progress_headline="Good — winding down. 🌙",
         done_headline="Good — wind down and rest well. 🌙 Night.",
+        # Evening check: bypasses the shared daytime quiet-hours gate by default and
+        # self-bounds with its own end hour instead, so a 21:00 nudge isn't silenced
+        # by a responsive window that closed in the afternoon.
+        end_hour_key="winddown_end_hour",
+        end_hour_default=DEFAULT_WINDDOWN_END_HOUR,
+        quiet_hours_bypass_key="winddown_bypass_quiet_hours",
+        quiet_hours_bypass_default=DEFAULT_WINDDOWN_BYPASS_QUIET_HOURS,
     ),
     BasicCheck(
         key="movement",
@@ -461,12 +494,27 @@ def _target(store: MemoryStore, check: BasicCheck) -> int:
 def _end_hour(store: MemoryStore, check: BasicCheck) -> int | None:
     """The local hour after which ``check`` goes quiet, or ``None`` if it has none.
 
-    Only checks that declare an ``end_hour_key`` (bio breaks today) are bounded by
-    a wall-clock end; the rest run until their daily target or responsive hours.
+    Only checks that declare an ``end_hour_key`` (bio breaks, wind-down) are
+    bounded by a wall-clock end; the rest run until their daily target or
+    responsive hours.
     """
     if check.end_hour_key is None:
         return None
     return store.get_hour(check.end_hour_key, check.end_hour_default or 24)
+
+
+def _bypasses_quiet_hours(store: MemoryStore, check: BasicCheck) -> bool:
+    """Whether ``check``'s cue should skip the engine's quiet-hours gate.
+
+    ``False`` for a check with no bypass key (the daytime checks). Otherwise reads
+    the check's ``quiet_hours_bypass_key`` toggle, defaulting to the check's own
+    ``quiet_hours_bypass_default`` when the state row is absent — so an evening
+    check (wind-down) is exempt out of the box while a user can still turn it off.
+    """
+    if check.quiet_hours_bypass_key is None:
+        return False
+    default = "on" if check.quiet_hours_bypass_default else "off"
+    return (store.get_state(check.quiet_hours_bypass_key, default) or default) == "on"
 
 
 def day_count(store: MemoryStore, check: BasicCheck, today: str) -> int:
@@ -656,11 +704,36 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                     end_hour=end_hour, interval=interval, local=local,
                     responsive_end=responsive_end,
                 ),
+                # Whether this check's cue skips the shared daytime quiet-hours gate
+                # (an evening check like wind-down does, so it isn't silenced by a
+                # responsive window that closed in the afternoon). None for a check
+                # with no bypass toggle, so a surface only shows the control where it
+                # means something.
+                "bypass_quiet_hours": (
+                    _bypasses_quiet_hours(store, check)
+                    if check.quiet_hours_bypass_key is not None
+                    else None
+                ),
             }
         )
     return {
         "enabled": (store.get_state("self_care", "off") or "off") == "on",
         "checks": checks,
+        # The end-of-day gap review (prefrontal/self_care_review.py) — a module-level
+        # evening push, not a per-check quota — so a surface can show and set it
+        # alongside the checks.
+        "review": {
+            "enabled": (store.get_state("self_care_review_enabled", "off") or "off") == "on",
+            "hour": store.get_hour("self_care_review_hour", DEFAULT_REVIEW_HOUR),
+            "bypass_quiet_hours": (
+                store.get_state(
+                    "self_care_review_bypass_quiet_hours",
+                    "on" if DEFAULT_REVIEW_BYPASS_QUIET_HOURS else "off",
+                )
+                or ("on" if DEFAULT_REVIEW_BYPASS_QUIET_HOURS else "off")
+            )
+            == "on",
+        },
     }
 
 
@@ -669,6 +742,7 @@ def apply_self_care_config(
     *,
     enabled: bool | None = None,
     checks: dict[str, dict[str, Any]] | None = None,
+    review: dict[str, Any] | None = None,
 ) -> None:
     """Persist self-care settings from the dashboard (explicit user writes).
 
@@ -682,9 +756,13 @@ def apply_self_care_config(
         store: A user-scoped store.
         enabled: Master switch, when provided.
         checks: ``{check_key: {enabled?, target?, start_hour?, end_hour?,
-            interval_minutes?}}``. ``end_hour`` applies only to a window-bounded
-            check (bio breaks); it's ignored for the rest. Unknown check keys are
-            ignored; absent fields are left untouched.
+            interval_minutes?, bypass_quiet_hours?}}``. ``end_hour`` and
+            ``bypass_quiet_hours`` apply only to a check that declares them (a
+            window-bounded check like bio breaks / wind-down); they're ignored for
+            the rest. Unknown check keys are ignored; absent fields are left
+            untouched.
+        review: ``{enabled?, hour?, bypass_quiet_hours?}`` — the end-of-day gap
+            review's module-level settings. Absent fields are left untouched.
     """
     if enabled is not None:
         store.set_state("self_care", "on" if enabled else "off", source="explicit")
@@ -704,13 +782,39 @@ def apply_self_care_config(
             hour = str(min(23, max(0, int(cfg["start_hour"]))))
             store.set_state(check.start_hour_key, hour, source="explicit")
         if cfg.get("end_hour") is not None and check.end_hour_key is not None:
-            # Only meaningful for a window-bounded check (bio breaks); ignored for
-            # the rest, which have no end-hour key to write.
+            # Only meaningful for a window-bounded check (bio breaks, wind-down);
+            # ignored for the rest, which have no end-hour key to write.
             hour = str(min(23, max(0, int(cfg["end_hour"]))))
             store.set_state(check.end_hour_key, hour, source="explicit")
         if cfg.get("interval_minutes") is not None:
             store.set_state(
                 check.interval_key, str(max(1, int(cfg["interval_minutes"]))), source="explicit"
+            )
+        if cfg.get("bypass_quiet_hours") is not None and check.quiet_hours_bypass_key:
+            # Only meaningful for an evening check (wind-down); ignored for the rest.
+            store.set_state(
+                check.quiet_hours_bypass_key,
+                "on" if cfg["bypass_quiet_hours"] else "off",
+                source="explicit",
+            )
+    if review:
+        if review.get("enabled") is not None:
+            store.set_state(
+                "self_care_review_enabled",
+                "on" if review["enabled"] else "off",
+                source="explicit",
+            )
+        if review.get("hour") is not None:
+            store.set_state(
+                "self_care_review_hour",
+                str(min(23, max(0, int(review["hour"])))),
+                source="explicit",
+            )
+        if review.get("bypass_quiet_hours") is not None:
+            store.set_state(
+                "self_care_review_bypass_quiet_hours",
+                "on" if review["bypass_quiet_hours"] else "off",
+                source="explicit",
             )
 
 
@@ -1227,13 +1331,19 @@ class SelfCareModule(Module):
         "biobreak_snooze_minutes": str(DEFAULT_BIOBREAK_SNOOZE_MINUTES),
         "biobreak_daily_target": str(DEFAULT_BIOBREAK_DAILY_TARGET),
         # Wind-down: off even when self_care is on (a bedtime is a personal
-        # preference, like meds) — opt in via winddown_enabled. It nudges in the
-        # evening run-up to bed; the engine's responsive hours bound how late.
+        # preference, like meds) — opt in via winddown_enabled. An *evening* nudge,
+        # so it bypasses the shared daytime quiet-hours gate by default and
+        # self-bounds with its own end hour (23:00) instead — otherwise a 21:00
+        # cue is silenced by a responsive window that closed in the afternoon.
         "winddown_enabled": "off",
         "winddown_start_hour": str(DEFAULT_WINDDOWN_START_HOUR),
+        "winddown_end_hour": str(DEFAULT_WINDDOWN_END_HOUR),
         "winddown_reask_minutes": str(DEFAULT_WINDDOWN_REASK_MINUTES),
         "winddown_snooze_minutes": str(DEFAULT_WINDDOWN_SNOOZE_MINUTES),
         "winddown_daily_target": str(DEFAULT_WINDDOWN_DAILY_TARGET),
+        "winddown_bypass_quiet_hours": (
+            "on" if DEFAULT_WINDDOWN_BYPASS_QUIET_HOURS else "off"
+        ),
         # Movement/stretch: the daily-movement floor. Off even when self_care is
         # on (an exercise cadence is personal, like meds/winddown) — opt in via
         # movement_enabled. Defaults to the morning, anchored to the first coffee;
@@ -1247,9 +1357,14 @@ class SelfCareModule(Module):
         # End-of-day gap review: a single evening push summarizing the day's
         # self-care *timing* (see prefrontal/self_care_review.py). Off even when
         # self_care is on (a recap is a personal-preference nudge, like
-        # meds/winddown) — opt in via self_care_review_enabled.
+        # meds/winddown) — opt in via self_care_review_enabled. Like wind-down it's
+        # an evening nudge, so it bypasses quiet hours by default (it fires once/day
+        # and only from the review hour onward, so it can't nag).
         "self_care_review_enabled": "off",
         "self_care_review_hour": str(DEFAULT_REVIEW_HOUR),
+        "self_care_review_bypass_quiet_hours": (
+            "on" if DEFAULT_REVIEW_BYPASS_QUIET_HOURS else "off"
+        ),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -1301,11 +1416,13 @@ class SelfCareModule(Module):
             Intervention(
                 name="winddown_check",
                 description=(
-                    "From winddown_start_hour (evening), a 'start winding down for "
-                    "bed' reminder every winddown_reask_minutes until you confirm. "
-                    "Off unless winddown_enabled — a bedtime is personal. Leans on "
-                    "responsive hours so it never nags past your quiet-hours start. "
-                    "One-tap Winding down / Snooze on ntfy."
+                    "From winddown_start_hour (evening) to winddown_end_hour, a "
+                    "'start winding down for bed' reminder every "
+                    "winddown_reask_minutes until you confirm. Off unless "
+                    "winddown_enabled — a bedtime is personal. An evening nudge, so "
+                    "it bypasses the shared daytime quiet-hours window by default "
+                    "(winddown_bypass_quiet_hours) and self-bounds with its own end "
+                    "hour instead. One-tap Winding down / Snooze on ntfy."
                 ),
                 trigger="evening run-up to bed, until you confirm you're winding down",
                 status="active",
@@ -1333,7 +1450,10 @@ class SelfCareModule(Module):
                     "a quota that finished short. From self_care_review_hour, once, "
                     "and only when there's a gap worth naming (a clean day stays "
                     "silent). Off unless self_care_review_enabled — a daily recap "
-                    "is personal. No buttons; a plain informational push."
+                    "is personal. Bypasses the daytime quiet-hours window by default "
+                    "(self_care_review_bypass_quiet_hours) so an end-of-day recap "
+                    "actually lands; it can't nag (once/day, evening-only). No "
+                    "buttons; a plain informational push."
                 ),
                 trigger="evening, once, when the day's clicks show a gap",
                 status="active",
@@ -1349,8 +1469,11 @@ class SelfCareModule(Module):
         hour), it hasn't already fired today, and the day's clicks actually show a
         gap worth naming (:func:`~prefrontal.self_care_review.review_message`). The
         cue is informational — its ``context_key`` isn't in the delivery button map,
-        so it goes out as a plain push with no one-tap actions. Imported locally to
-        avoid a module-import cycle (the review module reads this module's metadata).
+        so it goes out as a plain push with no one-tap actions. It bypasses quiet
+        hours by default (``self_care_review_bypass_quiet_hours``): an end-of-day
+        recap that the shared daytime responsive window would otherwise silence is
+        no recap at all, and it can't nag (it fires once/day, evening-only). Imported
+        locally to avoid a module-import cycle (the review reads this module).
         """
         if (store.get_state("self_care_review_enabled", "off") or "off") != "on":
             return None
@@ -1367,6 +1490,10 @@ class SelfCareModule(Module):
         body = review_message(review, ctx.display_name)
         if not body:
             return None
+        default = "on" if DEFAULT_REVIEW_BYPASS_QUIET_HOURS else "off"
+        exempt = (
+            store.get_state("self_care_review_bypass_quiet_hours", default) or default
+        ) == "on"
         return Cue(
             module=self.key,
             intervention="self_care_review",
@@ -1375,6 +1502,7 @@ class SelfCareModule(Module):
             context_key="self_care_review",
             dedup_key=dedup_key,
             suggested_channel="push",
+            quiet_hours_exempt=exempt,
         )
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
@@ -1453,6 +1581,9 @@ class SelfCareModule(Module):
                     # button has an id to carry; the tap acts on "now", not on it.
                     ref={"date": today, "target": int(today.replace("-", ""))},
                     suggested_channel="push",
+                    # An evening check (wind-down) may skip the daytime quiet-hours
+                    # gate; it's self-bounded by its own end hour above instead.
+                    quiet_hours_exempt=_bypasses_quiet_hours(store, check),
                 ),
             ))
         if not due:

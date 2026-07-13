@@ -22,11 +22,35 @@ class SelfCareCheckConfig(BaseModel):
         default=None, ge=0, le=23,
         description=(
             "Local hour the check stops nudging for the day. Only applies to a "
-            "window-bounded check (bio breaks); ignored for the others."
+            "window-bounded check (bio breaks, wind-down); ignored for the others."
         ),
     )
     interval_minutes: int | None = Field(
         default=None, ge=1, description="Minutes between nudges (re-ask / recurring cadence)."
+    )
+    bypass_quiet_hours: bool | None = Field(
+        default=None,
+        description=(
+            "Whether this check's cue skips the shared daytime quiet-hours window. "
+            "Only applies to an evening check (wind-down); ignored for the others."
+        ),
+    )
+
+class SelfCareReviewConfig(BaseModel):
+    """The end-of-day gap review's settings in ``POST /self-care``. All optional."""
+
+    enabled: bool | None = Field(
+        default=None, description="Turn the opt-in evening gap-review push on/off."
+    )
+    hour: int | None = Field(
+        default=None, ge=0, le=23, description="Local hour the review fires (evening)."
+    )
+    bypass_quiet_hours: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the review skips the daytime quiet-hours window (on by default "
+            "so an end-of-day recap actually lands)."
+        ),
     )
 
 class SelfCareConfig(BaseModel):
@@ -35,11 +59,13 @@ class SelfCareConfig(BaseModel):
     Every field is optional so the UI can send a partial update (e.g. just the
     master switch, or just one check's target). ``checks`` is keyed by check key
     (``meal`` / ``water`` / ``meds`` / ``biobreak`` / ``winddown`` /
-    ``movement``); unknown keys are ignored server-side.
+    ``movement``); unknown keys are ignored server-side. ``review`` carries the
+    end-of-day gap review's module-level settings.
     """
 
     enabled: bool | None = Field(default=None, description="Master self-care switch.")
     checks: dict[str, SelfCareCheckConfig] = Field(default_factory=dict)
+    review: SelfCareReviewConfig | None = Field(default=None)
 
 class SelfCareMark(BaseModel):
     """Body of ``POST /self-care/mark`` — log a confirm for one check today.

@@ -378,6 +378,7 @@ def build_router(services: RouterServices) -> APIRouter:
             ctx.store,
             enabled=payload.enabled,
             checks={k: v.model_dump(exclude_none=True) for k, v in payload.checks.items()},
+            review=payload.review.model_dump(exclude_none=True) if payload.review else None,
         )
         return self_care_status(ctx.store, utcnow(), services.settings.timezone)
 

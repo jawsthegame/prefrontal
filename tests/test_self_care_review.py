@@ -249,3 +249,68 @@ def test_eod_cue_fires_once_per_day(store):
     assert last_fired(store, "self_care_review:2026-07-13") is not None
     cues = SelfCareModule().evaluate(store, _ctx(EVENING))
     assert all(c.intervention != "self_care_review" for c in cues)
+
+
+# -- the review bypasses quiet hours ------------------------------------------
+
+
+def test_eod_cue_bypasses_quiet_hours_by_default(store):
+    """The recap lands even when the daytime responsive window closed in the
+    afternoon — that's the whole point of an *end-of-day* push."""
+    from prefrontal.coaching import suppressed
+
+    store.set_state("self_care_review_enabled", "on", source="explicit")
+    _confirm(store, "water", 15, 0)  # a late-first gap exists
+    ctx = CoachContext(now=EVENING, timezone=TZ, display_name="Tom", responsive_end=14)
+    cue = next(
+        c
+        for c in SelfCareModule().evaluate(store, ctx)
+        if c.intervention == "self_care_review"
+    )
+    assert cue.quiet_hours_exempt is True
+    assert suppressed(store, cue, ctx) is False
+
+
+def test_eod_cue_bypass_off_respects_quiet_hours(store):
+    from prefrontal.coaching import suppressed
+
+    store.set_state("self_care_review_enabled", "on", source="explicit")
+    store.set_state("self_care_review_bypass_quiet_hours", "off", source="explicit")
+    _confirm(store, "water", 15, 0)
+    ctx = CoachContext(now=EVENING, timezone=TZ, display_name="Tom", responsive_end=14)
+    cue = next(
+        c
+        for c in SelfCareModule().evaluate(store, ctx)
+        if c.intervention == "self_care_review"
+    )
+    assert cue.quiet_hours_exempt is False
+    assert suppressed(store, cue, ctx) is True
+
+
+def test_review_config_round_trips(store):
+    """The review's settings are configurable via apply_self_care_config + status."""
+    from prefrontal.modules.self_care import apply_self_care_config
+
+    apply_self_care_config(
+        store,
+        review={"enabled": True, "hour": 20, "bypass_quiet_hours": False},
+    )
+    status = self_care_status_review(store)
+    assert status["enabled"] is True
+    assert status["hour"] == 20
+    assert status["bypass_quiet_hours"] is False
+
+
+def test_winddown_bypass_config_round_trips(store):
+    """A per-check bypass toggle is settable and surfaces in status."""
+    from prefrontal.modules.self_care import apply_self_care_config, self_care_status
+
+    apply_self_care_config(store, checks={"winddown": {"bypass_quiet_hours": False}})
+    by_key = {c["key"]: c for c in self_care_status(store, EVENING, TZ)["checks"]}
+    assert by_key["winddown"]["bypass_quiet_hours"] is False
+
+
+def self_care_status_review(store):
+    from prefrontal.modules.self_care import self_care_status
+
+    return self_care_status(store, EVENING, TZ)["review"]

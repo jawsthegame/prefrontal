@@ -7,6 +7,24 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Self-Care: evening nudges bypass the daytime quiet-hours window** ✅ — an
+  evening nudge collided with the shared *daytime* responsive-hours window: with
+  the seeded `responsive_hours_end` of 14:00 a 21:00 **wind-down** cue (and the new
+  end-of-day **gap review**) was silenced before it ever landed. Both now **bypass
+  quiet hours by default** and are individually configurable. A new
+  `Cue.quiet_hours_exempt` lets a non-critical cue skip *only* the quiet-hours gate
+  (still debounces, still respects focus protection) without escalating to the
+  voice channel the way `critical` would. Wind-down bypasses via
+  `winddown_bypass_quiet_hours` and now self-bounds with its own `winddown_end_hour`
+  (default 23:00) — the bedtime it used to approximate by leaning on the engine's
+  gate — so it can't nag into the small hours; turn the bypass off to restore the
+  old "leans on responsive hours" behavior. The gap review bypasses via
+  `self_care_review_bypass_quiet_hours` and can't nag regardless (once/day,
+  evening-only). All settable from the Settings page and `POST /self-care` (per-check
+  `bypass_quiet_hours`; a `review` block for enabled/hour/bypass) and surfaced on
+  `GET /self-care`. Covered by `tests/test_self_care.py` /
+  `tests/test_self_care_review.py`.
+
 - **Self-Care: end-of-day gap review** ✅ — the self-care checks already *log*
   every Ate / Drank / Went click as a timestamped `self_care` episode; this reads
   those clicks back at day's end as a **timeline** and names the gaps a raw tally

@@ -161,6 +161,14 @@ class Cue:
     dedup_key: str         # stable id so a given thing fires once (debounce, §6)
     ref: dict[str, Any] = field(default_factory=dict)  # payload for outcome logging
     suggested_channel: str | None = None  # module hint; the agent may raise it
+    # When True, this cue skips the **quiet-hours** gate (but still debounces and
+    # still respects focus protection unless the module pierces it). For an evening
+    # nudge whose whole point is to land at the edge of / outside the responsive
+    # window — a "wind down for bed" cue, an end-of-day recap — where the shared
+    # daytime responsive-hours window would otherwise silence it. Unlike
+    # ``critical`` it does *not* force the voice channel; it's an ordinary push that
+    # is simply allowed through late. A module sets this from a per-user toggle.
+    quiet_hours_exempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -314,11 +322,19 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     and **debounce** (the same ``dedup_key`` won't refire within
     ``debounce_minutes``). ``critical`` bypasses quiet hours and protection — a
     missed hard commitment at 6am still warrants the call — but still debounces.
+
+    A non-critical cue may also opt out of the **quiet-hours** gate alone by
+    setting ``quiet_hours_exempt`` — for an evening nudge (wind-down, the
+    end-of-day recap) whose intended moment sits at the edge of / outside the
+    shared daytime responsive window. Unlike ``critical`` it doesn't escalate to
+    voice or pierce protection; it's an ordinary push simply allowed through late,
+    and it still debounces.
     """
     if cue.urgency != "critical":
-        hour = local_hour_of(ctx.now, ctx.timezone)
-        if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
-            return True
+        if not cue.quiet_hours_exempt:
+            hour = local_hour_of(ctx.now, ctx.timezone)
+            if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
+                return True
         # Protected hyperfocus: an aligned, healthy deep-work block shields the
         # user from *other* modules' noise. The modules that pierce it declare so
         # via ``pierces_protection`` (collected into ``ctx.pierce_keys`` once per
