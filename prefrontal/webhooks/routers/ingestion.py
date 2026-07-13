@@ -153,11 +153,14 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: ShortcutPayload,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> EpisodeCreated:
-        """Log a one-tap outcome from an iOS Shortcut.
+        """Log a one-tap outcome from the native app or an iOS Shortcut.
 
         Maps ``made_it``/``missed_it``/``partial`` to the corresponding episode
-        ``outcome``; ``log`` uses the explicit ``outcome`` field. Best-effort
-        fires an ``episode.logged`` event to n8n (a no-op unless configured).
+        ``outcome``; ``log`` uses the explicit ``outcome`` field. The client's
+        ``source`` (``app_intent``/``geofence``/``shortcut``, default ``shortcut``)
+        is recorded as usage provenance so /stats can tell native taps from
+        fallback-Shortcut ones. Best-effort fires an ``episode.logged`` event to
+        n8n (a no-op unless configured).
         """
         memory = ctx.store
 
@@ -191,8 +194,9 @@ def build_router(services: RouterServices) -> APIRouter:
             notes=payload.notes,
         )
 
-        # A one-tap Shortcut report is the low-friction-capture feature in use —
-        # record the engaged half of the usage loop (best-effort; never fatal to
+        # A one-tap report (App Intent, geofence, or fallback Shortcut) is the
+        # low-friction-capture feature in use — record the engaged half of the
+        # usage loop, tagged with its `source` provenance (best-effort; never fatal to
         # the log). The episode_type names the feature, normalized to the owning
         # module where one exists (a "departure" outcome is the Time Blindness
         # module firing) so engaged joins that module's offered events on /stats.
@@ -201,7 +205,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 _EPISODE_TYPE_FEATURE.get(payload.episode_type, payload.episode_type),
                 "engaged",
                 intervention=payload.action,
-                source="shortcut",
+                source=payload.source,
                 ref=str(episode_id),
             )
         except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal

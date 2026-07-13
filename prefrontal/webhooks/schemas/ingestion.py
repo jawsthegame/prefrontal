@@ -12,12 +12,24 @@ from pydantic import BaseModel, Field
 class ShortcutPayload(BaseModel):
     """Body of a ``POST /webhooks/shortcut`` request.
 
-    Modeled on a one-tap iOS Shortcut: the only required field is ``action``.
-    Everything else is optional context the Shortcut can attach if available.
+    Modeled on a one-tap outcome report: the only required field is ``action``.
+    Everything else is optional context the client can attach if available. The
+    endpoint name is historical — the native app's App Intents and geofences post
+    here too, distinguished by ``source``; a hand-built iOS Shortcut is the
+    free-signing fallback.
     """
 
     action: Literal["made_it", "missed_it", "partial", "log"] = Field(
         description="One-tap outcome. Use 'log' to supply an explicit `outcome`.",
+    )
+    source: Literal["app_intent", "geofence", "shortcut"] = Field(
+        default="shortcut",
+        description=(
+            "Provenance of this write, recorded for usage slicing: 'app_intent' "
+            "(native Siri / Action Button / widget), 'geofence' (a native location "
+            "trigger), or 'shortcut' (a hand-built iOS Shortcut — the free-signing "
+            "fallback, and the default so existing Shortcuts keep working)."
+        ),
     )
     episode_type: Literal["departure", "task", "checkin", "reminder"] = Field(
         default="departure",

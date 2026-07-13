@@ -170,7 +170,7 @@ def create_app(
     app = FastAPI(
         title="Prefrontal Webhooks",
         version=APP_VERSION,
-        summary="Low-friction ingestion for iOS Shortcut and n8n triggers.",
+        summary="Low-friction ingestion for native-app, Shortcut, and n8n triggers.",
         lifespan=lifespan,
     )
 

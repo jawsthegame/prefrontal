@@ -22,10 +22,11 @@ What remains is three buckets:
 2. **Hard cases** — things iOS won't let a third-party app do natively at all
    (system alarms), where a Shortcut or a surrogate is the only option.
 3. **The paper cut** — docs, the `onboard-user` skill, and server self-
-   description still tell users to build Shortcuts. That's the last mile. *(The
-   `onboard-user` skill and the user-facing docs — README, deployment, guide, the
-   iOS README — have since been repointed at the native app with Shortcuts as the
-   documented fallback; only the server self-description / `source` enum remains.)*
+   description still tell users to build Shortcuts. That's the last mile. *(Now
+   closed: the `onboard-user` skill and the user-facing docs — README, deployment,
+   guide, the iOS README — are repointed at the native app with Shortcuts as the
+   documented fallback, and the server self-description + `source` provenance enum
+   have shipped. Only the iOS client sending `source: "app_intent"` remains.)*
 
 The end state is **not** "delete Shortcuts." It's "native is the default path;
 Shortcuts remain a documented fallback for free-signing installs" (see
@@ -195,8 +196,8 @@ Small, independently-shippable steps; each leaves the app working:
    location" shortcut.
 5. **Alarm decision** — keep the Shortcut (option 1); file an AlarmKit follow-up.
 6. **Retire Shortcuts from onboarding** (below) — the actual "migration" from the
-   user's point of view. ✅ Done for the `onboard-user` skill and the user-facing
-   docs; the server self-description / `source` enum is the remaining sliver.
+   user's point of view. ✅ Done: the `onboard-user` skill, the user-facing docs,
+   and the server self-description / `source` provenance enum have all shipped.
 
 Steps 1–4 are additive and low-risk. Step 6 is the one users notice.
 
@@ -212,11 +213,13 @@ The last mile is documentation, not code:
   iOS Shortcuts reframed as the free-signing fallback, native app as primary; the
   data-flow diagrams now read `App Intent / geofence → POST …` with the Shortcut as
   the fallback lane.
-- **Server self-description** — `prefrontal/__init__.py`, `webhooks/app.py`
-  endpoint summaries, and the `source="shortcut"` provenance tag. The endpoints
-  don't change (the app hits the same ones), so this is wording plus, optionally,
-  a richer `source` enum (`app_intent`, `geofence`) if we want provenance to
-  distinguish native from Shortcut writes. **Still open** — the remaining sliver.
+- ✅ **Server self-description** — `prefrontal/__init__.py` and the FastAPI
+  `summary` now name the native app alongside Shortcuts, and `POST /webhooks/shortcut`
+  takes a `source` provenance enum (`app_intent`/`geofence`/`shortcut`, default
+  `shortcut`) threaded into the `engaged` feature-usage event, so /stats can
+  distinguish native taps from fallback-Shortcut ones. The endpoints are unchanged
+  (the app hits the same ones). *(Client follow-up: have the iOS App Intents send
+  `source: "app_intent"` so the provenance is actually populated.)*
 
 Nothing in `deploy/ios-shortcut.md` needs deleting — it becomes the fallback
 reference, not the primary setup.
