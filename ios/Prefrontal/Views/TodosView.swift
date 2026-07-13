@@ -107,7 +107,10 @@ struct TodoRow: View {
                 }
             }
         }
-        HStack(spacing: 8) {
+        // A wrapping row: four bordered buttons don't fit one line on a narrow
+        // phone, so let them flow onto a second line at natural width rather than
+        // getting crushed into blobs with letter-wrapped labels.
+        FlowRow(spacing: 8, lineSpacing: 8) {
             if todo.isStarted {
                 actionBtn("Pause", "pause.circle") { try await withAPI { try await $0.unstartTodo(todo.id) } }
             } else {
@@ -117,7 +120,8 @@ struct TodoRow: View {
                 actionBtn("Break down", "list.bullet.indent") { try await withAPI { try await $0.decomposeTodo(todo.id) } }
             }
             Button { showDelegate = true } label: {
-                Label(todo.delegation == nil ? "Delegate" : "Re-delegate", systemImage: "person.wave.2").font(.caption)
+                Label(todo.delegation == nil ? "Delegate" : "Re-delegate", systemImage: "person.wave.2")
+                    .font(.caption).lineLimit(1)
             }
             .buttonStyle(.bordered).tint(Brand.blue)
             actionBtn("Drop", "trash", role: .destructive) { try await withAPI { try await $0.closeTodo(todo.id, done: false) } }
@@ -196,7 +200,7 @@ struct TodoRow: View {
             try await action()
             await reload()
         } label: {
-            Label(title, systemImage: icon).font(.caption)
+            Label(title, systemImage: icon).font(.caption).lineLimit(1)
         } onError: { onError($0) }
         .buttonStyle(.bordered)
         .tint(role == .destructive ? Brand.danger : Brand.teal)
