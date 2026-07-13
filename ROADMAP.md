@@ -159,6 +159,13 @@ for the release note); the descriptions below are kept as the design of record.
 
 ## Module 1 — Location-Aware Task Anchor: follow-ups
 
+- **Web UI to name/manage curated places** ✅ — curated places (matched by a
+  geofence and departure travel-time) are now list/add/edit/delete from the
+  Settings "Places" card, not just `prefrontal place add`. New
+  `DELETE /places/{name}` + `ScheduleRepo.delete_place`; add/relabel/fix-coords
+  reuse the upserting `POST /places` (a rename is add-new + delete-old client-side).
+  See `CHANGELOG.md`. *(Next: let the phone name a just-visited `CLVisit` venue
+  straight into a curated place.)*
 - **Location-gating the escalation** ✅ — when a location check places the user
   within the home radius (`home_radius_m`), `/webhooks/outing/check` suppresses
   the nudge and passively closes the outing as returned, so coming home early (or

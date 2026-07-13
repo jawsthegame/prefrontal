@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Web UI to manage curated places** ✅ (epic #569) — curated places (the
+  `/places` a geofence and departure travel-time match against) were add-only via
+  the CLI (`prefrontal place add`); they're now full CRUD from the web dashboard.
+  New `DELETE /places/{name}` (name normalized via `normalize_query`, returns
+  `{"deleted": name}`, 404 if absent) backed by `ScheduleRepo.delete_place(name)`
+  (per-user scoped, returns whether a row was removed). Add / relabel / fix-coords
+  reuse the existing upserting `POST /places`; a rename is add-new + delete-old on
+  the client. A "Places" card in `settings.html` (modeled on the SMTP card) lists
+  each place with inline name/label/lat/lon inputs + a delete button, plus a dashed
+  "add" form. The friendly label already flows through to nudges (stored and read
+  by the matcher). Covered by `tests/test_geocode.py`. *(Future follow-up: let the
+  phone name a just-visited `CLVisit` venue straight into a curated place.)*
+
 - **Context Packs: the caregiver `/care` surface** ✅ — the second "surface
   tailoring" slice (builds on the `care` commitment kind). A read-only `/care`
   page — the caregiver counterpart to `/kids` — surfaces the adult you look after:
