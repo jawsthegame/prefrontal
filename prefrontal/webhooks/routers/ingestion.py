@@ -31,7 +31,6 @@ from prefrontal.mail.feedback import (
     learned_corrections,
     learned_denylist,
 )
-from prefrontal.memory.repos.state import DEFAULT_LOCATION_TTL_SECONDS
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
@@ -306,14 +305,7 @@ def build_router(services: RouterServices) -> APIRouter:
         fix is still returned regardless, so a client can show "last seen N min ago"
         and decide for itself; a stationary user's old-but-correct fix isn't hidden.
         """
-        memory = ctx.store
-        age = memory.location_age_seconds()
-        ttl = memory.get_float("location_staleness_seconds", DEFAULT_LOCATION_TTL_SECONDS)
-        return {
-            "location": memory.get_location(),
-            "age_seconds": age,
-            "stale": age is not None and age > ttl,
-        }
+        return ctx.store.location_freshness()
 
     # -- Closed-loop trip tracking -------------------------------------------
 

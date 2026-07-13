@@ -96,6 +96,21 @@ def test_get_location_fresh(client) -> None:
     assert body["stale"] is False
 
 
+def test_get_location_undatable_is_stale(client, store) -> None:
+    # A present fix whose timestamp can't be parsed is reported stale (age None),
+    # matching what fresh_location() treats as absent — not a misleading "fresh".
+    client.post("/webhooks/location", json={"lat": 37.77, "lon": -122.41}, headers=_auth())
+    store.conn.execute(
+        "UPDATE coaching_state SET last_updated = 'not-a-timestamp' "
+        "WHERE key = 'last_location_lat'"
+    )
+    store.conn.commit()
+    body = client.get("/location", headers=_auth()).json()
+    assert body["location"] is not None
+    assert body["age_seconds"] is None
+    assert body["stale"] is True
+
+
 def test_get_location_stale_flag(client, store) -> None:
     client.post("/webhooks/location", json={"lat": 37.77, "lon": -122.41}, headers=_auth())
     # Back-date the stored fix well beyond the default window.

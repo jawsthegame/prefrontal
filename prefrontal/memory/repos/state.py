@@ -247,6 +247,25 @@ class StateRepo(Repo):
         age = max(0.0, ((now or utcnow()) - stamped).total_seconds())
         return loc if age <= ttl else None
 
+    def location_freshness(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """The stored fix plus its freshness, in a single read — for ``GET /location``.
+
+        Returns ``{"location", "age_seconds", "stale"}``. ``stale`` is ``True`` when
+        a fix exists but is older than the window *or* can't be dated — matching what
+        :meth:`fresh_location` treats as absent — and ``False`` when there's no fix at
+        all (nothing to be stale). The raw fix is always included so a client can show
+        it regardless and decide for itself.
+        """
+        loc = self.get_location()
+        if loc is None:
+            return {"location": None, "age_seconds": None, "stale": False}
+        stamped = parse_ts(loc.get("at"))
+        if stamped is None:
+            return {"location": loc, "age_seconds": None, "stale": True}
+        ttl = self.get_float("location_staleness_seconds", DEFAULT_LOCATION_TTL_SECONDS)
+        age = max(0.0, ((now or utcnow()) - stamped).total_seconds())
+        return {"location": loc, "age_seconds": age, "stale": age > ttl}
+
     def set_home(self, lat: float, lon: float) -> None:
         """Record the user's home coordinate — the anchor for trip detection.
 
