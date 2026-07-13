@@ -83,7 +83,7 @@ is free text the summarizer can later bucket on.
 ## Automation: log a departure trigger by location
 
 > **Native app: not needed** — the native home-exit geofence (#469) and the
-> `CLVisit` departure signal (#564) cover this. Use this only on a web/ntfy-only
+> `CLVisit` departure signal (#564) cover this. Use this only on a web / ntfy-only
 > setup.
 
 1. Shortcuts → **Automation** → **+** → **Leave** a location (e.g. Home).
@@ -390,7 +390,7 @@ Shortcut's input. So this Shortcut just needs to turn that text into an alarm:
 
 > **Native app: not needed** — replaced by the app's significant-location-change
 > feed (#562), which keeps `/webhooks/location` fresh between places on its own.
-> Use this only on a web/ntfy-only setup.
+> Use this only on a web / ntfy-only setup.
 
 A single automation that tells Prefrontal where you are. It's the one source of
 "where am I now" for everything location-aware: it lets the coffee-shop nudge
@@ -458,7 +458,7 @@ Tune the estimate with the `travel_speed_kmh`, `travel_road_factor`,
 ### Automation: "Leaving Home" (did you actually leave on time?)
 
 > **Native app: not needed** — the app's home-exit geofence posts
-> `/webhooks/departure/left` natively (#469). Use this only on a web/ntfy-only
+> `/webhooks/departure/left` natively (#469). Use this only on a web / ntfy-only
 > setup.
 
 The reminder above is the *prediction*; this captures the *outcome* — so
@@ -492,7 +492,7 @@ weren't heading to anything, it records nothing rather than inventing an episode
 > **Native app: not needed** — Tier 1 (arrival → return) runs natively on the
 > app's home geofence (#563), and Tier 2's continuous gating is superseded by the
 > native significant-change feed's live-ish coordinates (#562), so Home Assistant
-> is now optional/legacy. Both tiers below are for web/ntfy-only setups.
+> is now optional/legacy. Both tiers below are for web / ntfy-only setups.
 
 Location is **optional** — without it the anchor escalates purely on elapsed
 time. Wiring it in lets Prefrontal stop nudging once you're actually home. The
