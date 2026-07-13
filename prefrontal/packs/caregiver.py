@@ -41,8 +41,12 @@ CAREGIVER_PACK = Pack(
     # starting dreaded admin — insurance calls, benefits forms (task_paralysis) —
     # and, unlike other contexts, on *self_care*: caregiver self-neglect is the
     # signature risk, so the pack switches the basic-needs checks on (see the
-    # ``self_care`` default below, which arms them).
-    modules=("time_blindness", "task_paralysis", "self_care"),
+    # ``self_care`` default below, which arms them). ``trip_tracking`` rides along
+    # because the focus-balance guardrail (seeded below) lives entirely in that
+    # module — it detects the out-of-home trips the "light on personal" nudge
+    # measures and fires the nudge itself; without it the seeded target/flag would
+    # be inert for a caregiver on an explicit PREFRONTAL_MODULES list.
+    modules=("time_blindness", "task_paralysis", "self_care", "trip_tracking"),
     # Caregiver-life todo buckets (also the keys the windows below shape):
     # ``medical`` (appointments, prescriptions, pharmacy), ``admin`` (insurance,
     # benefits, legal, paperwork), ``caregiving`` (day-to-day care tasks + errands

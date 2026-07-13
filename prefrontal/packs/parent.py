@@ -26,7 +26,14 @@ PARENT_PACK = Pack(
     ),
     # A parent leans hardest on getting-out-the-door timing and on starting
     # dreaded logistics, so the pack turns these on (atop PREFRONTAL_MODULES).
-    modules=("time_blindness", "task_paralysis"),
+    # ``trip_tracking`` is switched on for the same reason the focus-balance
+    # defaults below are seeded: the guardrail lives *entirely* in that module —
+    # it both detects the passive round trips the rollup measures and fires the
+    # weekly "light on kids/personal" nudge the ``focus_balance_nudge`` flag arms.
+    # Without it, a parent who sets an explicit PREFRONTAL_MODULES list would get
+    # the targets and flag seeded but no trips ever tracked and no nudge — the
+    # config would be inert (see focus_balance defaults in coaching_defaults).
+    modules=("time_blindness", "task_paralysis", "trip_tracking"),
     # Parent-life todo buckets (also the keys the windows below shape).
     categories=("school", "childcare", "household"),
     # ``child`` is already a valid commitment kind; declared here as pack vocab.
