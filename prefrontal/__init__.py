@@ -5,7 +5,8 @@ manage time, attention, and task switching. The package is organized into small,
 focused subpackages mirroring the architecture described in the project README:
 
 - :mod:`prefrontal.memory` — the SQLite behavioral memory layer (the core).
-- :mod:`prefrontal.webhooks` — the FastAPI listener for iOS Shortcut triggers.
+- :mod:`prefrontal.webhooks` — the FastAPI listener for native-app (App Intent /
+  geofence), iOS Shortcut, and n8n triggers.
 - :mod:`prefrontal.integrations` — outbound/inbound integrations such as n8n.
 - :mod:`prefrontal.config` — environment-driven runtime settings.
 - :mod:`prefrontal.cli` — the ``prefrontal`` command line entry point.

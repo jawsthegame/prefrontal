@@ -319,6 +319,48 @@ def test_invalid_episode_type_is_rejected(client):
     assert resp.status_code == 422
 
 
+def _feature_source_for(store, episode_id):
+    """The `source` recorded on the feature event for a given episode's log."""
+    row = store.conn.execute(
+        "SELECT source FROM feature_events WHERE ref = ? ORDER BY id DESC LIMIT 1",
+        (str(episode_id),),
+    ).fetchone()
+    return row["source"] if row is not None else None
+
+
+def test_shortcut_source_defaults_to_shortcut(client, user_store):
+    """Omitting `source` records the usage event as the free-signing fallback."""
+    resp = client.post(
+        "/webhooks/shortcut",
+        json={"action": "made_it"},
+        headers={"X-Prefrontal-Token": SECRET},
+    )
+    assert resp.status_code == 201
+    assert _feature_source_for(user_store, resp.json()["episode_id"]) == "shortcut"
+
+
+def test_shortcut_records_native_provenance(client, user_store):
+    """A native App Intent / geofence write tags its own source, not 'shortcut'."""
+    for source in ("app_intent", "geofence"):
+        resp = client.post(
+            "/webhooks/shortcut",
+            json={"action": "made_it", "source": source},
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+        assert resp.status_code == 201
+        assert _feature_source_for(user_store, resp.json()["episode_id"]) == source
+
+
+def test_shortcut_rejects_unknown_source(client):
+    """An out-of-vocab source is a 422 (the provenance set is closed)."""
+    resp = client.post(
+        "/webhooks/shortcut",
+        json={"action": "made_it", "source": "carrier_pigeon"},
+        headers={"X-Prefrontal-Token": SECRET},
+    )
+    assert resp.status_code == 422
+
+
 def test_n8n_inbound_triages_and_routes(client):
     """The inbound n8n route now classifies + routes the signal (handled=True)."""
     resp = client.post(
