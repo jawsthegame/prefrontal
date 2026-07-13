@@ -519,7 +519,8 @@ def balance_hint(
         )
     age = fresh.get("age_seconds")
     if age is not None and age > STALE_LOCATION_HINT_DAYS * 86400:
-        days = int(age // 86400)
+        # Round, don't floor: 3d23h should read "4 days", not a misleading "3".
+        days = round(age / 86400)
         return (
             f"No location ping in {days} days — the balance can't see recent trips "
             "until your phone resumes posting its position."
