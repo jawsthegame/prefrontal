@@ -196,6 +196,7 @@ def create_app(
         impulsivity,
         ingestion,
         memory,
+        packs,
         projects,
         schedule,
         search,
@@ -233,6 +234,7 @@ def create_app(
         clarify,
         admin,
         assistant,
+        packs,
     ):
         app.include_router(_module.build_router(services))
     return app

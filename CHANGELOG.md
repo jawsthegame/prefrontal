@@ -20,6 +20,21 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   by the matcher). Covered by `tests/test_geocode.py`. *(Future follow-up: let the
   phone name a just-visited `CLVisit` venue straight into a curated place.)*
 
+- **Context Packs: pack situation tools** ✅ — the registry backbone for a pack's
+  *situation tools* (ROADMAP surface-tailoring, point 3): read-only, on-demand
+  questions a pack answers from live data, the active counterpart to the vocabulary
+  a pack seeds. A `SituationTool` (key/title/description + a store→dict handler) rides
+  on `Pack.situations`; the registry exposes an enabled pack's tools
+  (`enabled_situations` / `get_situation`), and a new `packs` router lists them
+  (`GET /packs/situations`) and runs one (`POST /packs/situations/{tool}`), gated on
+  the owning pack — a tool behind a disabled pack 404s like one that doesn't exist.
+  Seeded on the **Parent** pack with the **school-run** tool: it composes the
+  departure engine (`plan_upcoming_departures`), narrowed to `child` commitments, to
+  answer "when do I leave for the kids' things?" — read-only, so it never arms the
+  standing nudge. `prefrontal packs -v` lists a pack's situations. Covered by
+  `tests/test_situations.py`. Next tools slot into the same seam (sick-day replan,
+  pack-the-bag checklist).
+
 - **Context Packs: the caregiver `/care` surface** ✅ — the second "surface
   tailoring" slice (builds on the `care` commitment kind). A read-only `/care`
   page — the caregiver counterpart to `/kids` — surfaces the adult you look after:

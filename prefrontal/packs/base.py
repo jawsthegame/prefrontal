@@ -23,13 +23,41 @@ backbone they slot into. Packs register themselves with
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from prefrontal.memory.store import MemoryStore
+
+
+@dataclass(frozen=True)
+class SituationTool:
+    """One read-only "situation" a pack answers for the life-context it manages.
+
+    A pack switches on modules and seeds vocabulary; a **situation tool** is the
+    active counterpart — a named, on-demand question the pack can answer from the
+    user's live data ("when do I leave for the school run?"). It composes an
+    existing primitive (e.g. :func:`prefrontal.departure.plan_upcoming_departures`)
+    into a small computed result, exactly like ``POST /assistant/find-time`` reads
+    the calendar without writing anything. Tools are surfaced and run through the
+    ``/packs/situations`` router, gated on their owning pack being enabled.
+
+    Attributes:
+        key: Stable machine identifier, unique across enabled packs, used in the
+            ``/packs/situations/{tool}`` path (e.g. ``school_run``).
+        title: Human-readable name (e.g. "School run").
+        description: One sentence on what the tool answers.
+        handler: The read-only computation. Takes the caller's scoped
+            :class:`~prefrontal.memory.store.MemoryStore` and returns a
+            JSON-serializable dict — it must never write.
+    """
+
+    key: str
+    title: str
+    description: str
+    handler: Callable[[MemoryStore], dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -53,6 +81,9 @@ class Pack:
             pack is enabled (via :meth:`seed`), never clobbering existing values —
             e.g. ``{"todo_window:school": "08:00-15:00"}`` to shape scheduling for
             a pack category. Read-only so the shared base default is never mutated.
+        situations: Read-only :class:`SituationTool` s this pack answers on demand
+            (e.g. the Parent pack's school-run leave-by). Surfaced and run through
+            the ``/packs/situations`` router only when the pack is enabled.
     """
 
     key: str
@@ -62,6 +93,7 @@ class Pack:
     categories: tuple[str, ...] = ()
     commitment_kinds: tuple[str, ...] = ()
     coaching_defaults: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    situations: tuple[SituationTool, ...] = ()
 
     def seed(self, store: MemoryStore) -> None:
         """Seed this pack's :attr:`coaching_defaults` into coaching state.

@@ -12,10 +12,13 @@ order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
 1. **Context Pack surface tailoring** (see "Beyond v1 › Context Packs"). The
-   **Caregiver** pack now exists (the second pack instance), so what remains is the
-   deeper pack infrastructure it and Parent share: pack-specific **situation-tool
-   registries** and **surface tailoring beyond `/kids`** (a caregiver surface + a
-   dedicated `care` commitment kind). Highest-leverage *new* capability, most work.
+   **Caregiver** pack, the dedicated `care` commitment kind, the `/care` surface, and
+   the **situation-tool registry** (with the Parent pack's school-run tool) have now
+   shipped. What remains is breadth on the same seams: **more situation tools**
+   (sick-day replan, pack-the-bag checklist) slotting into the `packs` router, and
+   **more tailored surfaces** — plus the smaller `/care` follow-ups (a conditional
+   nav link and a care-recipient facts/roster model, the caregiver mirror of
+   `child_names`).
 2. **Close the learning loop's remaining causal check** (see "Learning &
    adaptation" §2). The channel-signal auto-act shipped (§4 now damps a
    non-predictive channel toward pooled); what's left is the harder **sensor
@@ -683,9 +686,14 @@ ordered by leverage; each is independent but builds on denser capture.
   can stack `parent,caregiver`). **Overlap precedence is defined**:
   `resolve_pack_vocabulary` unions categories/kinds and merges coaching defaults
   earlier-pack-wins in `PREFRONTAL_PACKS` order (seeding is absent-only, preserving
-  that winner). Still open: more packs (Grad student / New job), a dedicated `care`
-  commitment kind, and pack-specific situation-tool registries + surface tailoring
-  beyond `/kids` (a caregiver surface — the counterpart to the household sheet).)*
+  that winner). **The `care` commitment kind, the `/care` caregiver surface, and the
+  pack situation-tool registry have now shipped too** — `Pack.situations` carries
+  read-only `SituationTool`s (a store→dict handler over an existing primitive),
+  surfaced/run through the `packs` router (`GET`+`POST /packs/situations[/{tool}]`)
+  gated on the owning pack, seeded with the **Parent** pack's **school-run** tool
+  (the departure engine narrowed to `child` commitments). Still open: more packs
+  (Grad student / New job), more situation tools (sick-day replan, pack-the-bag
+  checklist), and more tailored surfaces.)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
   ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; `prefrontal household …`) — kept here for the
