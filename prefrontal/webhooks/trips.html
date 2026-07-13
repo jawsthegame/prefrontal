@@ -159,6 +159,7 @@
       each bar is your weekly aim (set in the household pack); an amber bar is running
       under half of it.</p>
     <div class="bal-summary" id="bal-summary"></div>
+    <p class="hint" id="bal-hint" style="display:none"></p>
     <div class="bars" id="bars"></div>
   </section>
 
@@ -255,6 +256,9 @@ function km(m) { return m == null ? "" : (m >= 1000 ? (m / 1000).toFixed(1) + " 
 // ── Focus balance ─────────────────────────────────────────────────────────
 function renderBalance(bal) {
   $("#bal-summary").textContent = bal.summary || "";
+  const hint = $("#bal-hint");
+  if (bal.hint) { hint.textContent = bal.hint; hint.style.display = ""; }
+  else { hint.textContent = ""; hint.style.display = "none"; }
   const doms = bal.domains || [];
   const max = Math.max(1, ...doms.map((d) => Math.max(d.minutes || 0, d.target_minutes || 0)));
   const rows = doms.map((d) => {

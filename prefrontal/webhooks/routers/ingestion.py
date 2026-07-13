@@ -19,6 +19,7 @@ from fastapi import (
 
 from prefrontal.focus_balance import (
     FOCUS_DOMAINS,
+    balance_hint,
     balance_summary_line,
     build_focus_balance,
     normalize_focus_domain,
@@ -411,7 +412,10 @@ def build_router(services: RouterServices) -> APIRouter:
 
         Read-only, safe to poll. ``summary`` is the one-line digest; ``domains``
         the per-sphere breakdown with minutes, trip count, weekly target (scaled to
-        the window), and whether it's running under half its aim.
+        the window), and whether it's running under half its aim. ``hint`` is a
+        one-line reason the balance looks empty/lopsided when it does (no home set,
+        no recent pings, trip_tracking off, lots of untagged trips), or ``null`` when
+        the data looks healthy — so an empty view explains itself.
         """
         days = max(1, min(days, 365))
         balance = build_focus_balance(ctx.store, days=days)
@@ -419,6 +423,11 @@ def build_router(services: RouterServices) -> APIRouter:
             "days": balance.days,
             "total_minutes": balance.total_minutes,
             "summary": balance_summary_line(balance),
+            "hint": balance_hint(
+                ctx.store,
+                balance,
+                trip_tracking_enabled=module_enabled("trip_tracking", resolved_settings),
+            ),
             "domains": [
                 {
                     "domain": d.domain,
