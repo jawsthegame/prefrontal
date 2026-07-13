@@ -39,9 +39,26 @@ struct CalendarView: View {
     private var outcomeCard: some View {
         Card {
             CardLabel(text: "Did you make it?")
-            Text("A quick, honest check on what just passed — it teaches Prefrontal your real follow-through.")
+            Text("A quick, honest check on what just passed — it teaches Prefrontal your real follow-through. Swipe left to hide an FYI you never had to go to.")
                 .font(.caption).foregroundStyle(Brand.muted)
-            ForEach(previous) { c in outcomeRow(c) }
+            ForEach(previous) { c in
+                SwipeToReveal(label: "Hide") { await hide(c) } content: {
+                    outcomeRow(c)
+                }
+                if c.id != previous.last?.id { Divider().overlay(Brand.line) }
+            }
+        }
+    }
+
+    /// Drop a recently-elapsed item from the "Did you make it?" list without
+    /// scoring it — for FYIs or events the user didn't need to attend. Hiding it
+    /// on the server also keeps it out of upcoming reads and survives a re-sync.
+    private func hide(_ c: Commitment) async {
+        do {
+            try await withAPI { try await $0.setCommitmentHidden(c.id) }
+            await load()
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
@@ -82,7 +99,6 @@ struct CalendarView: View {
                     .buttonStyle(.bordered).tint(Brand.danger)
                 }
             }
-            if c.id != previous.last?.id { Divider().overlay(Brand.line) }
         }
     }
 

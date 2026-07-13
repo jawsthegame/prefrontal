@@ -124,6 +124,102 @@ struct ProgressChip: View {
     }
 }
 
+/// Swipe-left-to-reveal a single trailing action, for our card-based layouts
+/// where a `List`'s `.swipeActions` isn't available. The row content slides
+/// left over a pinned action button; releasing past a short threshold snaps it
+/// open (tap the button to confirm), and a full swipe fires `action` outright —
+/// the familiar "swipe to delete" idiom. Vertical drags fall through to the
+/// enclosing `ScrollView` untouched (the gesture only engages once horizontal
+/// movement dominates), so scrolling still works over a swipeable row.
+struct SwipeToReveal<Content: View>: View {
+    var label: String = "Hide"
+    var systemImage: String = "eye.slash.fill"
+    var tint: Color = Brand.muted
+    /// Card fill the sliding content sits on, so it fully masks the button when
+    /// closed. Defaults to the standard card surface.
+    var surface: Color = Brand.card
+    let action: () async -> Void
+    @ViewBuilder var content: Content
+
+    @State private var offset: CGFloat = 0      // live horizontal offset (≤ 0)
+    @State private var settled: CGFloat = 0     // resting offset (0 or -revealWidth)
+    @State private var engaged = false          // this drag has claimed the horizontal axis
+
+    private let revealWidth: CGFloat = 84
+    private let commitThreshold: CGFloat = 180
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button { fire() } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: systemImage).font(.body)
+                    Text(label).font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: revealWidth)
+                .frame(maxHeight: .infinity)
+                .background(tint)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -1 ? 1 : 0)
+
+            content
+                .background(surface)
+                .offset(x: offset)
+                // Simultaneous (not high-priority) so a vertical drag still
+                // scrolls the enclosing ScrollView; we only move the row once
+                // the swipe is clearly horizontal (see `engaged`).
+                .simultaneousGesture(drag)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { v in
+                if !engaged {
+                    // Only take over once the swipe is clearly horizontal; a
+                    // mostly-vertical drag stays with the ScrollView.
+                    guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                    engaged = true
+                }
+                offset = min(0, settled + v.translation.width)
+            }
+            .onEnded { v in
+                // A drag that stayed vertical never engaged, so it left `offset`
+                // at rest — leave it there rather than acting on its stray width.
+                guard engaged else { return }
+                engaged = false
+                let dx = settled + v.translation.width
+                if dx <= -commitThreshold {
+                    withAnimation(.easeOut(duration: 0.18)) { offset = -600 }
+                    fire()
+                } else if dx <= -revealWidth * 0.5 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        offset = -revealWidth; settled = -revealWidth
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        offset = 0; settled = 0
+                    }
+                }
+            }
+    }
+
+    private func fire() {
+        Task {
+            await action()
+            // On success the row is removed by the caller's reload and this is a
+            // no-op on a gone view; if the action failed the row survives, so
+            // settle it back closed instead of leaving it flung off-screen.
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                offset = 0; settled = 0
+            }
+        }
+    }
+}
+
 /// A simple wrapping row — lays children left→right, wrapping to new lines.
 struct FlowRow: Layout {
     var spacing: CGFloat = 6

@@ -78,6 +78,14 @@ extension APIClient {
         try await post("commitments/\(id)/outcome", json: ["outcome": outcome ?? NSNull()])
     }
 
+    // Hide (or un-hide) a commitment. Hiding drops it from every surface that
+    // reads upcoming_commitments, and — because previous_commitments also
+    // excludes hidden rows — clears it from the "Did you make it?" list, the
+    // escape hatch for FYI events you never had to attend.
+    func setCommitmentHidden(_ id: Int, hidden: Bool = true) async throws {
+        try await post("commitments/\(id)/hidden", json: ["hidden": hidden])
+    }
+
     // Briefing 👍/👎 — steers the LLM briefing voice over time.
     func briefingFeedback(helpful: Bool) async throws {
         try await post("briefing/feedback", json: ["helpful": helpful])
