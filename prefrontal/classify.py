@@ -89,7 +89,7 @@ def build_system_prompt(examples: list[dict[str, Any]] | None = None) -> str:
 
 
 def parse_kind_reply(reply: str) -> str | None:
-    """Extract ``self``/``child``/``fyi`` from a model reply, or ``None`` if unclear.
+    """Extract ``self``/``child``/``care``/``fyi`` from a model reply, or ``None`` if unclear.
 
     The reply is meant to be a single word, but we tolerate surrounding prose:
     whichever label token appears *earliest* wins. Matched on **word boundaries**
