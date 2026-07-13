@@ -8,7 +8,7 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 ## Recently shipped
 
 - **iOS: native arrival home closes the active outing** ✅ (#563, epic #569) —
-  restores the Tier-1 "I'm back" Shortcut natively. `GET /webhooks/location`
+  restores the Tier-1 "I'm back" Shortcut natively. `POST /webhooks/location`
   only *stores* the phone's fix; the server's passive home-return close runs on
   a coach tick and is confirmation-prompt + grace gated, so for a Shortcut-free
   native user arriving home neither closed the outing off the location post nor

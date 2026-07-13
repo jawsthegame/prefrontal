@@ -117,6 +117,10 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         let fix = manager.location
         let arrivedHome = region.identifier.lowercased() == Self.homeName
+        // Nothing to do for a non-home entry with no fix — skip building a client
+        // and hopping to the main actor for a call we'd never make. Home arrivals
+        // still proceed without a fix (the outing return needs no coordinates).
+        guard fix != nil || arrivedHome else { return }
         Task {
             try? await withAPI { client in
                 if let fix {
