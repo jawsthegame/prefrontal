@@ -275,10 +275,23 @@ struct PrefrontalWidgetView: View {
                 Text("Next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
                 Spacer(minLength: 4)
                 if let at = g.nextAt {
-                    Text(at, style: .time).font(.caption).foregroundStyle(Color.wMuted)
+                    Text(nextWhen(at)).font(.caption).foregroundStyle(Color.wMuted)
                 }
             }
         }
+    }
+
+    // The next commitment's time — bare "3:40 PM" when it's today, but prefixed
+    // with the weekday ("Wed 9:00 AM") when it isn't, so a commitment days out
+    // doesn't read as this morning. Mirrors the Today card's PFDate.dayTime.
+    private func nextWhen(_ date: Date) -> String {
+        let f = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            f.timeStyle = .short; f.dateStyle = .none
+        } else {
+            f.setLocalizedDateFormatFromTemplate("EEE h:mm a")
+        }
+        return f.string(from: date)
     }
 
     // Active outing / focus with its one-tap end action (medium layout).
