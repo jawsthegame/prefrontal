@@ -308,14 +308,18 @@ class LocationSettings(BaseModel):
 
 
 class CareRecipients(BaseModel):
-    """Body/response of ``/care/recipients`` — the care-recipient names roster.
+    """Request body of ``POST /care/recipients`` — the care-recipient names roster.
 
     The adults the user looks after (an aging parent, ill partner). A per-user
     list — the caregiver counterpart to the household kids' roster — that drives
     the deterministic ``care`` classification pass so "Mom — cardiology" reliably
     reaches the ``/care`` surface. Stored comma-separated in ``coaching_state``;
-    the server normalizes (trim blanks, de-duplicate case-insensitively), so the
-    ``names`` a read returns are the stored, cleaned list.
+    the server normalizes (trim blanks, de-duplicate case-insensitively).
+
+    This models the **write body** (which carries only ``names``). Both endpoints
+    *respond* with ``{"enabled": bool, "names": [...]}`` — the ``enabled`` flag
+    reports whether the Caregiver pack is on, and ``names`` is the stored, cleaned
+    list — so the response is a superset of this body, not this model itself.
     """
 
     names: list[str] = Field(
