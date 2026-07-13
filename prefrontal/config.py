@@ -119,6 +119,12 @@ class Settings:
             bounds how far a weekly/standing series is materialized (a series must
             be bounded), so the calendar page and slot finder see a month out
             instead of ~1 day. Env: ``PREFRONTAL_CALENDAR_HORIZON_DAYS``.
+        ics_fetch_timeout: Per-request timeout (seconds) for pulling an ICS feed
+            over HTTP (default 90). Large/busy corporate calendars can take 30-60s
+            for the provider to *generate* their ``.ics``, longer than a tight
+            default would wait — so the fetch aborts, the feed ingests nothing, and
+            its events go missing. Raise it if a feed still times out.
+            Env: ``PREFRONTAL_ICS_TIMEOUT``.
     """
 
     db_path: str = "prefrontal.db"
@@ -225,6 +231,11 @@ class Settings:
     # out rather than ~1 day. The CLI/webhook sync pass it to `sync_calendar`
     # as `recur_horizon_hours`. See `prefrontal.commitments.RECUR_HORIZON_HOURS`.
     calendar_horizon_days: float = 30.0
+    # Per-request timeout (seconds) for fetching an ICS feed. A big/busy corporate
+    # calendar can take 30-60s for the provider to render its `.ics`; a tight
+    # timeout aborts the fetch, the feed ingests nothing, and its events vanish.
+    # Env: `PREFRONTAL_ICS_TIMEOUT`. See `prefrontal.ics.fetch_ics`.
+    ics_fetch_timeout: float = 90.0
     # Suggestion time windows: when a todo may be proposed into free time. The
     # off-zone is a hard local band nothing is ever suggested inside (default
     # 22:00-06:00 overnight); `todo_windows` maps a todo *category* or *source*
@@ -511,6 +522,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         account_domains=account_domains,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         calendar_horizon_days=_float_env("PREFRONTAL_CALENDAR_HORIZON_DAYS", 30.0),
+        ics_fetch_timeout=_float_env("PREFRONTAL_ICS_TIMEOUT", 90.0),
         todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
         todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),
         triage_quick_drop_days=_float_env("PREFRONTAL_TRIAGE_QUICK_DROP_DAYS", 2.0),

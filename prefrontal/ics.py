@@ -26,8 +26,15 @@ import httpx
 _ICS_DATE_RE = re.compile(r"(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?")
 
 
-def fetch_ics(url: str, *, timeout: float = 30.0) -> str:
-    """Fetch an ICS feed's text over HTTPS. Raises on a network/HTTP error."""
+def fetch_ics(url: str, *, timeout: float = 90.0) -> str:
+    """Fetch an ICS feed's text over HTTPS. Raises on a network/HTTP error.
+
+    ``timeout`` is deliberately generous: a large/busy calendar can take 30-60s
+    for the provider to *generate* its ``.ics`` (the wait is server-side render
+    time, not transfer), and a tight timeout aborts the fetch so the feed ingests
+    nothing and its events silently go missing. Callers pass
+    :attr:`Settings.ics_fetch_timeout` (env ``PREFRONTAL_ICS_TIMEOUT``).
+    """
     resp = httpx.get(url, timeout=timeout, follow_redirects=True)
     resp.raise_for_status()
     return resp.text

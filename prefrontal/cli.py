@@ -2823,19 +2823,36 @@ def _cmd_calendar(args: argparse.Namespace) -> int:
                 print(f"[{handle}] no calendar sources configured.", file=sys.stderr)
                 continue
             events: list[dict] = []
+            fetch_failed = False
             for feed in feeds:
                 try:
-                    text = fetch_ics(feed.url)
+                    text = fetch_ics(feed.url, timeout=settings.ics_fetch_timeout)
                 except Exception as exc:  # httpx raises a variety of errors
                     print(
                         f"[{handle}/{feed.account}] ICS fetch failed: {exc}",
                         file=sys.stderr,
                     )
                     status = 1
+                    fetch_failed = True
                     continue
                 events.extend(
                     parse_ics(text, namespace=feed.namespace, me_emails=feed.me_emails)
                 )
+
+            # Don't let a fetch failure masquerade as an empty calendar. When a
+            # feed times out (or otherwise errors) it contributes no events; if
+            # that leaves the whole batch empty, sync_calendar would prune every
+            # existing calendar commitment as "missing" — a transient network
+            # blip would silently wipe the calendar. Skip the sync entirely and
+            # leave the stored events untouched until a feed actually responds.
+            # (A genuinely empty batch with no fetch error still prunes normally.)
+            if fetch_failed and not events:
+                print(
+                    f"[{handle}] calendar sync skipped: all feeds failed to fetch; "
+                    "leaving existing events untouched.",
+                    file=sys.stderr,
+                )
+                continue
 
             # The roster pass is deterministic/offline, so a kid's appointment
             # still lands on the shared sheet as 'child' even when Ollama is down;
