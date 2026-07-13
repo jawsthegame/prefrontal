@@ -116,11 +116,16 @@ extension APIClient {
     }
 
     // One-tap outcome log (the /webhooks/shortcut path). `action` is made_it /
-    // missed_it / partial; `episodeType` defaults to a departure.
+    // missed_it / partial; `episodeType` defaults to a departure. `source` tags
+    // provenance for the server's usage stats and defaults to `app_intent` —
+    // every caller here is a native App Intent, distinct from a hand-built
+    // fallback Shortcut (which omits it and the server defaults to `shortcut`).
     func logShortcut(action: String, episodeType: String = "departure",
-                     channel: String = "notification") async throws {
+                     channel: String = "notification",
+                     source: String = "app_intent") async throws {
         try await post("webhooks/shortcut",
-                       json: ["action": action, "episode_type": episodeType, "channel": channel],
+                       json: ["action": action, "episode_type": episodeType,
+                              "channel": channel, "source": source],
                        queueable: true)
     }
 
