@@ -568,6 +568,21 @@ class ScheduleRepo(Repo):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def delete_place(self, name: str) -> bool:
+        """Delete a curated place by its normalized ``name``. ``True`` if removed.
+
+        Scoped to this user (a place's ``name`` is unique per user), so one user
+        can't delete another's. ``False`` when there was no such place — the
+        route turns that into a 404. A rename is add-new + delete-old at the
+        caller, since :meth:`add_place` upserts by name.
+        """
+        cur = self.conn.execute(
+            "DELETE FROM places WHERE user_id = ? AND name = ?",
+            (self._uid(), name),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def get_geocode_cache(self, query: str) -> dict[str, Any] | None:
         """Return a cached geocode row for ``query``, or ``None`` if not cached.
 

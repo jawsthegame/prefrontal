@@ -199,6 +199,18 @@
     <div class="saved" id="loc-saved"></div>
   </section>
 
+  <section class="card" id="c-places">
+    <h2>Places</h2>
+    <p class="sub">Named spots Prefrontal matches by name — a geofence and a
+      departure's travel time key off these before any geocoding. A place's
+      <b>name</b> is what's matched against a commitment's location or title
+      (so <code>gym</code> resolves "Gym session"); the <b>label</b> is the
+      friendly spelling shown in nudges. Add one, fix its coordinates, rename or
+      relabel it, or remove it — no CLI needed.</p>
+    <div id="places-list"></div>
+    <div class="saved" id="places-saved"></div>
+  </section>
+
   <section class="card" id="c-smtp">
     <h2>Email hand-off (SMTP)</h2>
     <p class="sub">When you delegate a todo to a human assistant, Prefrontal emails
@@ -700,6 +712,97 @@ $("#smtp-list").addEventListener("click", async (ev) => {
   }
 });
 
+// ── Curated places: one inline form per place + a dashed "add" form ──────────
+// Modeled on the SMTP card. A place's `name` is the normalized match key; the
+// server re-normalizes whatever's typed. Save is an upsert (POST /places), so
+// relabeling or fixing coordinates is just a save. A rename (the name field
+// normalizes to a different key) is add-new + delete-old: POST the new name,
+// then DELETE the old key — done client-side because the store upserts by name.
+function placeForm(p, isNew) {
+  const name = p.name || "";
+  const head = isNew
+    ? `<div class="head"><span class="name">Add a place</span></div>`
+    : `<div class="head"><span class="name">${esc(p.label || name)}</span>`
+      + `<span class="pill on">${esc(name)}</span></div>`;
+  return `<div class="smtp-acct${isNew ? " new" : ""}" data-name="${esc(name)}" data-new="${isNew ? 1 : 0}">
+    ${head}
+    <div class="form-grid">
+      <label class="field"><span>Name (match key)</span>
+        <input type="text" data-f="name" placeholder="gym" value="${esc(name)}" autocomplete="off"/></label>
+      <label class="field"><span>Label (shown in nudges)</span>
+        <input type="text" data-f="label" placeholder="The Gym" value="${esc(p.label || "")}" autocomplete="off"/></label>
+      <label class="field"><span>Latitude</span>
+        <input type="number" data-f="lat" step="any" min="-90" max="90" placeholder="40.7128" value="${esc(p.lat != null ? p.lat : "")}"/></label>
+      <label class="field"><span>Longitude</span>
+        <input type="number" data-f="lon" step="any" min="-180" max="180" placeholder="-74.0060" value="${esc(p.lon != null ? p.lon : "")}"/></label>
+    </div>
+    <div class="btnrow">
+      <button class="btn" data-act="save" type="button">${isNew ? "Add place" : "Save"}</button>
+      ${isNew ? "" : `<button class="btn ghost" data-act="remove" type="button">Remove</button>`}
+    </div>
+  </div>`;
+}
+
+function renderPlaces(d) {
+  const places = (d && d.places) || [];
+  $("#places-list").innerHTML =
+    places.map((p) => placeForm(p, false)).join("")
+    + placeForm({}, true);
+}
+
+async function loadPlaces() {
+  try {
+    // Don't clobber the list while the user is editing a field in it.
+    if ($("#places-list").contains(document.activeElement)) return;
+    renderPlaces(await api("/places"));
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+
+function placesFlash(msg) {
+  $("#places-saved").textContent = msg;
+  setTimeout(() => { $("#places-saved").textContent = ""; }, 1800);
+}
+
+// Save / Remove are delegated (forms are re-rendered on every reload).
+$("#places-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const block = btn.closest(".smtp-acct");
+  const isNew = block.dataset.new === "1";
+  const val = (f) => block.querySelector(`[data-f="${f}"]`);
+  try {
+    if (btn.dataset.act === "remove") {
+      const oldName = block.dataset.name;
+      if (!confirm(`Remove the "${oldName}" place?`)) return;
+      await api("/places/" + encodeURIComponent(oldName), { method: "DELETE" });
+      placesFlash("Removed ✓");
+      return loadPlaces();
+    }
+    const name = val("name").value.trim();
+    const lat = Number(val("lat").value);
+    const lon = Number(val("lon").value);
+    if (!name) { placesFlash("name is required"); return; }
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      placesFlash("lat/lon are required"); return;
+    }
+    const body = { name, lat, lon, label: val("label").value.trim() || name };
+    const saved = await api("/places", { method: "POST", body: JSON.stringify(body) });
+    // A rename: the normalized key changed, so drop the old row (the POST already
+    // wrote the new one). Editing an existing place only — the add form has none.
+    const oldName = block.dataset.name;
+    if (!isNew && oldName && saved.name && saved.name !== oldName) {
+      await api("/places/" + encodeURIComponent(oldName), { method: "DELETE" });
+    }
+    placesFlash("Saved ✓");
+    loadPlaces();
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    placesFlash("couldn't save — retry");
+  }
+});
+
 async function load() {
   $("#status").textContent = "loading…";
   let data;
@@ -720,6 +823,7 @@ async function load() {
   await loadDeparture();
   await loadHours();
   await loadLocation();
+  await loadPlaces();
   await loadSmtp();
   $("#status").textContent = "your preferences";
   if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible

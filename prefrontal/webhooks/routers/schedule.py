@@ -516,6 +516,28 @@ def build_router(services: RouterServices) -> APIRouter:
         memory = ctx.store
         return {"places": memory.places()}
 
+    @router.delete("/places/{name}", tags=["schedule"])
+    def place_delete(
+        name: str,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Remove a curated place by name; 404 if there's no such place.
+
+        The path ``name`` is normalized the same way :func:`place_create` and the
+        matcher normalize it, so the dashboard can delete by either the stored key
+        or the original spelling. There's no separate rename/relabel/edit-coords
+        route — those all reuse ``POST /places`` (it upserts by name), and a rename
+        is add-new + delete-old on the client.
+        """
+        memory = ctx.store
+        normalized = normalize_query(name)
+        if not memory.delete_place(normalized):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No curated place '{normalized}'.",
+            )
+        return {"deleted": normalized}
+
     @router.get("/commitments", tags=["schedule"])
     def commitments_list(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],

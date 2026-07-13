@@ -239,6 +239,71 @@ def test_places_crud_and_auth(client):
     assert places[0]["label"] == "The Gym"
 
 
+def test_place_add_list_delete_and_404(client):
+    """The web dashboard's full lifecycle: add → list → delete → 404 on missing."""
+    # Add two places (one with a friendly label).
+    client.post("/places", json={"name": "The Gym", "lat": 1.0, "lon": 2.0}, headers=_auth())
+    client.post("/places", json={"name": "dentist", "lat": 3.0, "lon": 4.0}, headers=_auth())
+    names = {p["name"] for p in client.get("/places", headers=_auth()).json()["places"]}
+    assert names == {"the gym", "dentist"}
+
+    # Delete by the original spelling — the path name is normalized, matching the
+    # stored key, so "The Gym" removes "the gym".
+    resp = client.delete("/places/The Gym", headers=_auth())
+    assert resp.status_code == 200 and resp.json() == {"deleted": "the gym"}
+    names = {p["name"] for p in client.get("/places", headers=_auth()).json()["places"]}
+    assert names == {"dentist"}
+
+    # Deleting an absent place is a 404 (nothing was removed).
+    assert client.delete("/places/the gym", headers=_auth()).status_code == 404
+    # And the route is auth-gated like the rest.
+    assert client.delete("/places/dentist").status_code == 401
+
+
+def test_place_relabel_and_coords_via_upsert(client):
+    """Relabeling / fixing coordinates is a plain re-POST (upsert by name)."""
+    client.post("/places", json={"name": "gym", "lat": 1.0, "lon": 2.0}, headers=_auth())
+    client.post(
+        "/places",
+        json={"name": "gym", "lat": 9.0, "lon": 8.0, "label": "The Fancy Gym"},
+        headers=_auth(),
+    )
+    places = client.get("/places", headers=_auth()).json()["places"]
+    assert len(places) == 1
+    assert places[0]["label"] == "The Fancy Gym"
+    assert (places[0]["lat"], places[0]["lon"]) == (9.0, 8.0)
+
+
+def test_delete_place_is_scoped_per_user(unscoped):
+    """One user's delete can't remove another user's place (store-level scope)."""
+    from prefrontal.memory.store import provision_user
+
+    ua, _ = provision_user(unscoped, "alice", display_name="Alice")
+    ub, _ = provision_user(unscoped, "bob", display_name="Bob")
+    a = unscoped.scoped(ua["id"])
+    b = unscoped.scoped(ub["id"])
+
+    a.add_place("gym", 1.0, 2.0)
+    b.add_place("gym", 3.0, 4.0)
+
+    # Bob deleting "gym" removes only his own; Alice's survives untouched.
+    assert b.delete_place("gym") is True
+    assert [p["name"] for p in b.places()] == []
+    assert [(p["name"], p["lat"]) for p in a.places()] == [("gym", 1.0)]
+
+    # Deleting again (now absent for Bob) reports nothing removed.
+    assert b.delete_place("gym") is False
+
+
+@pytest.fixture()
+def unscoped():
+    conn = init_db(":memory:")
+    try:
+        yield MemoryStore(conn)
+    finally:
+        conn.close()
+
+
 def test_manual_commitment_resolves_via_place_offline(client, store, stub):
     """A curated place resolves a manual commitment without geocoding enabled."""
     client.post("/places", json={"name": "gym", "lat": 1.0, "lon": 2.0}, headers=_auth())
