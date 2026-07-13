@@ -1,4 +1,6 @@
 import SwiftUI
+import CoreLocation
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject var config: AppConfig
@@ -60,7 +62,7 @@ struct SettingsView: View {
 
             if !isOnboarding {
                 AvailableHoursSection()
-                locationSection
+                LocationSection()
                 diagnostics
             }
         }
@@ -69,27 +71,6 @@ struct SettingsView: View {
         .onAppear {
             url = config.baseURLString
             token = config.token
-        }
-    }
-
-    /// Read-only App Group health, to diagnose the "widget won't connect" case:
-    /// the app writes its base URL + token into the shared App Group container,
-    /// and the widget reads them back. This shows what the *app* sees; if a token
-    /// is present here but the widget still says "Tap to connect," the App Group
-    /// capability isn't provisioned into the *widget* target.
-    /// Opt-in geofencing: on, it prompts for Always-location and monitors your
-    /// curated places so leaving home auto-logs a departure (no Shortcut needed).
-    private var locationSection: some View {
-        Section("Location automations") {
-            Toggle("Auto-log leaving home & arrivals", isOn: Binding(
-                get: { config.locationEnabled },
-                set: { on in
-                    config.locationEnabled = on
-                    if on { LocationMonitor.shared.enable() } else { LocationMonitor.shared.disable() }
-                }
-            ))
-            Text("Uses background location to notice when you leave a curated place (Always access). Add places with `prefrontal place add`.")
-                .font(.caption).foregroundStyle(Brand.muted)
         }
     }
 
@@ -216,4 +197,87 @@ struct AvailableHoursSection: View {
     }
 
     private func apply(_ h: AvailableHours) { days = h.days }
+}
+
+/// Location-permission UX for the geofence/visit auto-logging (#566). Owns the
+/// opt-in toggle plus everything that keeps it honest: always-on priming text
+/// (so the one-shot system prompt isn't wasted), a status row reflecting the
+/// *true* CoreLocation authorization, an "upgrade to Always" nudge when only
+/// While-Using was granted, and an "open iOS Settings" path when it's denied.
+/// Observes `LocationMonitor` so it re-renders the moment authorization changes.
+struct LocationSection: View {
+    @EnvironmentObject var config: AppConfig
+    @ObservedObject private var monitor = LocationMonitor.shared
+    @Environment(\.openURL) private var openURL
+
+    private var denied: Bool {
+        monitor.authorization == .denied || monitor.authorization == .restricted
+    }
+
+    var body: some View {
+        Section("Location automations") {
+            Toggle("Auto-log leaving home & arrivals", isOn: Binding(
+                get: { config.locationEnabled },
+                set: { on in
+                    guard on else { config.locationEnabled = false; monitor.disable(); return }
+                    // Already denied → the system won't prompt; leave the toggle
+                    // off and let the "Open iOS Settings" row below guide them.
+                    guard !denied else { return }
+                    config.locationEnabled = true
+                    monitor.enable()  // prompts for Always (or upgrades from While-Using)
+                }
+            ))
+
+            // Priming, always visible so the user knows what the system prompt is
+            // for before it appears — a one-shot dialog we can't re-trigger.
+            Text("Uses background location to auto-log when you leave home and arrive places — no Shortcut needed. Needs **Always** access to work in the background; add places with `prefrontal place add`.")
+                .font(.caption).foregroundStyle(Brand.muted)
+
+            LabeledContent("Permission", value: authText)
+
+            if config.locationEnabled, monitor.authorization == .authorizedWhenInUse {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Prefrontal only has “While Using” access, so departures and arrivals won't log when the app is closed. Grant **Always** for background auto-logging.")
+                        .font(.caption).foregroundStyle(Brand.warn)
+                    Button("Upgrade to Always") { monitor.requestAlways() }
+                        .font(.caption.weight(.semibold))
+                }
+            }
+
+            if denied {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Location is off for Prefrontal in iOS Settings, so auto-logging can't run.")
+                        .font(.caption).foregroundStyle(Brand.danger)
+                    Button("Open iOS Settings") {
+                        if let u = URL(string: UIApplication.openSettingsURLString) { openURL(u) }
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+            }
+        }
+        .onAppear(perform: reconcile)
+        .onChange(of: monitor.authorization) { _, _ in reconcile() }
+    }
+
+    private var authText: String {
+        switch monitor.authorization {
+        case .authorizedAlways: return "Always ✓"
+        case .authorizedWhenInUse: return "While Using"
+        case .denied: return "Denied"
+        case .restricted: return "Restricted"
+        case .notDetermined: return "Not requested"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    /// Keep the stored opt-in honest: if the system says denied/restricted, the
+    /// toggle can't truly be "on", so flip it off (monitoring is already stopped
+    /// in `LocationMonitor`). Runs on appear and on any authorization change, so a
+    /// revoke made in the Settings app is reflected when the user returns.
+    private func reconcile() {
+        if denied, config.locationEnabled {
+            config.locationEnabled = false
+            monitor.disable()
+        }
+    }
 }
