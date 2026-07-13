@@ -219,6 +219,37 @@ struct Slots: Codable {
     }
 }
 
+// MARK: - Impulsivity / trip App Intents
+
+/// Response of `POST /webhooks/impulse/capture` — an impulse parked as a todo.
+struct ImpulseCaptured: Codable {
+    let title: String
+    let confirmation: String
+    enum CodingKeys: String, CodingKey { case title, confirmation }
+}
+
+/// Response of `POST /webhooks/focus/switch` — the reflective-pause directive
+/// when you feel the pull to switch off the active focus block.
+struct SwitchPause: Codable {
+    let intendedTask: String
+    let elapsedMinutes: Double
+    let pauseSeconds: Double
+    let message: String
+    let options: [String]
+    enum CodingKeys: String, CodingKey {
+        case intendedTask = "intended_task"
+        case elapsedMinutes = "elapsed_minutes"
+        case pauseSeconds = "pause_seconds"
+        case message, options
+    }
+}
+
+/// Response of `POST /webhooks/trip/retro` — the closed-out trip's read-back.
+struct TripRetroResult: Codable {
+    let confirmation: String
+    enum CodingKeys: String, CodingKey { case confirmation }
+}
+
 // MARK: - Location settings
 
 /// The web-configurable location tunables (`GET /schedule/location-settings`) the

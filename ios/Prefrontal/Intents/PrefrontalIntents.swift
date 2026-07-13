@@ -178,3 +178,95 @@ struct MissedItIntent: AppIntent {
         return .result(dialog: "Logged — noted the miss.")
     }
 }
+
+// MARK: - Impulsivity
+
+struct CaptureImpulseIntent: AppIntent {
+    static let title: LocalizedStringResource = "Capture Impulse"
+    static let description = IntentDescription(
+        "Park an impulsive idea as a todo so you can stay on what you're doing."
+    )
+    static var openAppWhenRun: Bool { false }
+
+    @Parameter(title: "Impulse", requestValueDialog: "What's the impulse?")
+    var text: String
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let client = try prefrontalClient()
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            // Whitespace-only voice/typing would 422 server-side; catch it here.
+            return .result(dialog: "Nothing to capture — say the impulse and try again.")
+        }
+        let captured = try await client.captureImpulse(raw)
+        reloadWidgets()
+        let line = captured.confirmation.isEmpty ? "Parked “\(captured.title)”." : captured.confirmation
+        return .result(dialog: IntentDialog(stringLiteral: line))
+    }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Capture impulse \(\.$text) in Prefrontal")
+    }
+}
+
+struct ReflectivePauseIntent: AppIntent {
+    static let title: LocalizedStringResource = "Reflective Pause"
+    static let description = IntentDescription(
+        "Feeling the pull to switch tasks? Take a beat and hear where you are before you do."
+    )
+    static var openAppWhenRun: Bool { false }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let client = try prefrontalClient()
+        do {
+            let pause = try await client.focusSwitch()
+            // Speak the reflective-pause directive; resolving it (stay / park it /
+            // switch) is a follow-up via Wrap Up Focus or Capture Impulse.
+            var line = pause.message
+            if line.isEmpty {
+                let mins = Int(pause.elapsedMinutes.rounded())
+                line = "You've been on “\(pause.intendedTask)” for \(mins) min. "
+                    + "Take a breath before you switch."
+            }
+            return .result(dialog: IntentDialog(stringLiteral: line))
+        } catch APIError.http(let code, _) where code == 409 {
+            // No active focus block to switch from — nothing to pause. Offer the
+            // capture path instead, which needs no session.
+            return .result(dialog: "No focus session running — capture the thought instead so it's not lost.")
+        }
+    }
+}
+
+// MARK: - Trips
+
+struct LogTripIntent: AppIntent {
+    static let title: LocalizedStringResource = "Log Trip"
+    static let description = IntentDescription(
+        "Close out your last trip with a label and an optional how-it-went note."
+    )
+    static var openAppWhenRun: Bool { false }
+
+    @Parameter(title: "What was it?", requestValueDialog: "What was the trip?")
+    var label: String
+    @Parameter(title: "How did it go? (optional)")
+    var reflection: String?
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let client = try prefrontalClient()
+        let what = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !what.isEmpty else {
+            // This intent only ever sends label/reflection, so a blank label would
+            // 422 ("provide at least one of …"); ask for it instead of failing.
+            return .result(dialog: "What was the trip? Give it a label and try again.")
+        }
+        let note = reflection?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = try await client.tripRetro(label: what, reflection: (note?.isEmpty ?? true) ? nil : note)
+        reloadWidgets()
+        let line = result.confirmation.isEmpty ? "Logged “\(what)”." : result.confirmation
+        return .result(dialog: IntentDialog(stringLiteral: line))
+    }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Log trip \(\.$label) in Prefrontal") { \.$reflection }
+    }
+}

@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS: native App Intents for the last three Shortcuts gaps** ✅ — closes the
+  non-location half of the Shortcuts → native migration. Added **Capture Impulse**
+  (`POST /webhooks/impulse/capture` — park a thought as a todo), **Reflective
+  Pause** (`POST /webhooks/focus/switch` — speaks the pause directive when you feel
+  the pull to switch; a no-active-session 409 gracefully suggests capturing
+  instead), and **Log Trip** (`POST /webhooks/trip/retro` — label + optional note
+  to close out the newest trip). Each reads the App-Group token like the other
+  intents and runs without launching the app. Registered in `PrefrontalShortcuts`;
+  since `AppShortcutsProvider` caps at 10 Siri phrases, the "Missed It" phrase was
+  dropped (its intent stays; the notification action buttons cover that path).
+  Client-only (build on a Mac).
+
 - **Server: last-known-location staleness guard** ✅ (#568, epic #569) — with the
   native significant-change feed a long-stationary stretch can leave the stored
   fix hours old, and `get_location()` had no TTL. Added `at`-based freshness on the
