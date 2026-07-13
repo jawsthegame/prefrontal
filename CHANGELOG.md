@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS token hardening — shared Keychain** ✅ (#496) — the bearer token moves out
+  of App Group `UserDefaults` (unencrypted in the container and in backups) into a
+  shared **Keychain access group** both the app and the widget carry
+  (`ios/Prefrontal/Config/KeychainStore.swift`), with
+  `kSecAttrAccessibleAfterFirstUnlock` so the widget/background refresh can read it
+  while locked. Existing installs migrate transparently on next launch
+  (`SharedStore.migrateTokenIfNeeded()` copies the legacy value over and wipes the
+  plaintext copy; the `token` getter falls back to the old value until then, so a
+  widget refresh mid-migration still authenticates). The base URL + ntfy hints stay
+  in the App Group (not secret). Needs the paid Apple Developer account (same tier
+  App Groups already require). Closes the piece deferred from QR onboarding (#473).
+
 - **Available hours by day of week** ✅ — a per-weekday availability schedule the
   user edits in Settings. Each weekday is either **off** or a single available
   window (`HH:MM–HH:MM`); the slot-finder (`/calendar/slots`) and the assistant's

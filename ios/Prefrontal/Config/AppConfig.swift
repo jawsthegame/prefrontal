@@ -1,13 +1,14 @@
 import Foundation
 import Combine
 
-/// Shared storage between the app and its widget extension. Base URL + token
-/// live in an App Group so the widget can authenticate too.
+/// Shared storage between the app and its widget extension.
 ///
-/// Note: the token is kept in the App Group `UserDefaults` (not the Keychain)
-/// so the extension can read it without a shared Keychain access group — an
-/// acceptable tradeoff for a self-hosted personal tool reached over Tailscale.
-/// Hardening to a shared Keychain group is tracked under the onboarding issue.
+/// Non-secret config (base URL, ntfy hints, display name) lives in an App Group
+/// `UserDefaults` both targets read. The **token** lives in a shared Keychain
+/// access group instead (`KeychainStore`, #496) — a bearer credential doesn't
+/// belong in `UserDefaults`, which is unencrypted in the container and in
+/// backups. Both the app and the widget carry the `keychain-access-groups`
+/// entitlement, so both read the same item.
 enum SharedStore {
     static let appGroup = "group.com.morningstatic.prefrontal"
     static let defaults = UserDefaults(suiteName: appGroup) ?? .standard
@@ -15,7 +16,30 @@ enum SharedStore {
     static let defaultBaseURL = "https://agent-1.tail8b0a.ts.net"
 
     static var baseURL: String { defaults.string(forKey: "baseURL") ?? defaultBaseURL }
-    static var token: String { defaults.string(forKey: "token") ?? "" }
+
+    /// The token, from the shared Keychain. Falls back to the legacy App Group
+    /// `UserDefaults` copy until `migrateTokenIfNeeded()` runs (so an install that
+    /// hasn't relaunched the app since the update — e.g. a widget refresh — still
+    /// authenticates). Empty string means "not connected".
+    static var token: String {
+        if let t = KeychainStore.token(), !t.isEmpty { return t }
+        return defaults.string(forKey: "token") ?? ""
+    }
+
+    /// One-time move of a pre-#496 token from App Group `UserDefaults` into the
+    /// Keychain, then wipe the plaintext copy. Idempotent — safe to call on every
+    /// launch. Runs from `AppConfig.init` (the app owns the migration; the widget
+    /// only reads, and the `token` getter's fallback covers it until then).
+    static func migrateTokenIfNeeded() {
+        let legacy = defaults.string(forKey: "token") ?? ""
+        if (KeychainStore.token() ?? "").isEmpty, !legacy.isEmpty {
+            KeychainStore.setToken(legacy)
+        }
+        // Once the token is safely in the Keychain, remove the plaintext copy.
+        if !(KeychainStore.token() ?? "").isEmpty {
+            defaults.removeObject(forKey: "token")
+        }
+    }
 
     // ntfy hints carried through onboarding so the app can walk the user
     // through subscribing their phone to the right topic. Not used by the
@@ -37,7 +61,12 @@ final class AppConfig: ObservableObject {
         didSet { SharedStore.defaults.set(baseURLString, forKey: "baseURL") }
     }
     @Published var token: String {
-        didSet { SharedStore.defaults.set(token, forKey: "token") }
+        // Persist to the shared Keychain (empty clears it). Also drop any stale
+        // plaintext copy so a legacy value can't shadow a change.
+        didSet {
+            KeychainStore.setToken(token)
+            SharedStore.defaults.removeObject(forKey: "token")
+        }
     }
     @Published var ntfyServer: String {
         didSet { SharedStore.defaults.set(ntfyServer, forKey: "ntfyServer") }
@@ -55,6 +84,8 @@ final class AppConfig: ObservableObject {
     }
 
     private init() {
+        // Move a pre-#496 plaintext token into the Keychain before the first read.
+        SharedStore.migrateTokenIfNeeded()
         baseURLString = SharedStore.baseURL
         token = SharedStore.token
         ntfyServer = SharedStore.ntfyServer

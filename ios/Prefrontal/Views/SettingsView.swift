@@ -100,9 +100,9 @@ struct SettingsView: View {
                            value: UserDefaults(suiteName: SharedStore.appGroup) != nil
                                ? "initialized" : "unavailable (app-local fallback)")
             LabeledContent("Token", value: SharedStore.token.isEmpty
-                           ? "— not set" : "set · \(SharedStore.token.count) chars")
+                           ? "— not set" : "set · \(SharedStore.token.count) chars (Keychain)")
             LabeledContent("Server URL", value: SharedStore.baseURL)
-            Text("These are shared with the widget via the App Group. If a token shows here but the widget still says “Tap to connect,” the App Group capability isn't provisioned into the widget target — enable it on **both** targets (same Team) in Signing & Capabilities, then delete the app and reinstall.")
+            Text("The server URL is shared with the widget via the App Group; the token lives in a shared **Keychain** group. If a token shows here but the widget still says “Tap to connect,” the App Group and Keychain-sharing capabilities aren't provisioned into the widget target — enable both on **both** targets (same Team) in Signing & Capabilities, then delete the app and reinstall.")
                 .font(.caption).foregroundStyle(Brand.muted)
         }
     }
