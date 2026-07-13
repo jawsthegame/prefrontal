@@ -34,7 +34,7 @@ For the moments you're too overwhelmed to think. On demand, it cuts through ever
 The counterweight to a system whose job is nudging. When a day genuinely goes rough — a missed hard commitment, a pile of misses — it stops nudging and shifts to reassurance: acknowledges the rough day without judgment, then hands back a concrete plan (what still fits, what's safe to move, and one tiny next step). Opt-in, tone-calibrated, and capped at once a day so it never becomes a pile-on.
 
 **Self-care checks**
-The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** on ntfy, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in.
+The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** on ntfy, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in. At day's end it can read those taps back as a *timeline* and name the gaps a raw tally hides — you drank all six glasses, but your first wasn't until 3pm; six hours passed between two bio breaks — as an opt-in evening recap (and on demand via `prefrontal self-care review` / `GET /self-care/review`).
 
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
@@ -59,7 +59,7 @@ assistant. Enable only the ones that match your profile (an empty config enables
 | Impulsivity | `impulsivity` | A reflective pause and capture-then-defer before impulsive switches |
 | Location-Aware Task Anchor | `location_anchor` | Escalating nudges (push → push → Twilio call) back to a stated intention as its time window elapses |
 | Closed-Loop Trip Tracking | `trip_tracking` | Passively logs undeclared round trips (leave home → return), then asks for a label, category, life-domain, and an honest plain-English "how it went" that feeds the learning engine. Rolls out-of-home time up by life-sphere (shop/work/home/kids/personal) into a **focus-balance** read, with an opt-in "light on kids/personal this week" nudge |
-| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day), "drink some water" (to a daily target), an opt-in "taken your meds?" (`meds_enabled`), and an opt-in daily-movement floor — "time to move / stretch" (`movement_enabled`) — re-asked until met (opt-in via the `self_care` key) |
+| Self-Care | `self_care` | Basic-needs checks that pierce flow — "have you eaten?" (once/day), "drink some water" (to a daily target), an opt-in "taken your meds?" (`meds_enabled`), and an opt-in daily-movement floor — "time to move / stretch" (`movement_enabled`) — re-asked until met (opt-in via the `self_care` key). Plus an opt-in **end-of-day gap review** (`self_care_review_enabled`) that reads the day's clicks back as a timeline and names the gaps a tally hides (a late first glass, a long stretch between bio breaks) |
 
 Each module owns its coaching-state defaults, contributes a section to the behavioral
 profile, and declares the interventions it provides. Select a subset with
@@ -202,6 +202,11 @@ prefrontal clarify localize on --zip 19027   # opt in: localize guides to your Z
 # Where did the week's out-of-home time go? (shop/work/home/kids/personal)
 prefrontal balance            # last 7 days by life-sphere, vs your weekly aims
 prefrontal balance --days 30  # zoom out to a month
+
+# End-of-day self-care gap review — the day's clicks read back as a timeline
+# ("you drank enough, but your first glass wasn't until 3pm"; "6h between bio
+# breaks"). On demand here; opt into the evening push with self_care_review_enabled.
+prefrontal self-care review
 
 # See which challenge-area modules are enabled (and their interventions)
 prefrontal modules -v

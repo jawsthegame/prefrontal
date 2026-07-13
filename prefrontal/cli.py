@@ -1723,6 +1723,31 @@ def _deliver_briefing(unscoped: MemoryStore, args: argparse.Namespace, settings)
     return 0 if any_sent else 1
 
 
+def _cmd_self_care(args: argparse.Namespace) -> int:
+    """Print today's end-of-day self-care gap review (read-only).
+
+    Reads today's self-care confirms back as a timeline and surfaces the gaps a
+    raw tally hides — a late first glass of water, a long stretch between bio
+    breaks, a quota that finished short — alongside what went well. Safe to run
+    any time against the live DB; it never writes.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.self_care_review import render_review, self_care_review
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        review = self_care_review(store, utcnow(), settings.timezone)
+    print(render_review(review))
+    return 0
+
+
 def _cmd_encourage(args: argparse.Namespace) -> int:
     """Print today's encouragement/recovery message when the day's gone rough.
 
@@ -3773,6 +3798,17 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output", default=None, help="Write to a file instead of stdout."
     )
     p_encourage.set_defaults(func=_cmd_encourage)
+
+    p_self_care = sub.add_parser(
+        "self-care", help="Self-care tools (end-of-day gap review)."
+    )
+    self_care_sub = p_self_care.add_subparsers(dest="self_care_action", required=True)
+    p_sc_review = self_care_sub.add_parser(
+        "review", help="Print today's end-of-day self-care gap review."
+    )
+    p_sc_review.add_argument("--db-path", default=None, help="Override the database path.")
+    p_sc_review.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_sc_review.set_defaults(func=_cmd_self_care)
 
     p_open_day = sub.add_parser(
         "open-day",

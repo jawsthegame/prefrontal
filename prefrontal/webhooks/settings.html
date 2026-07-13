@@ -290,6 +290,13 @@ function scRow(c) {
   const target = c.open_ended
     ? ""
     : `<span class="sc-field">target ${num("target", c.target, 'min="1"')}</span>`;
+  // An evening check (wind-down) offers a "bypass quiet hours" toggle — the server
+  // sends a non-null bypass_quiet_hours only where it applies.
+  const bypass = (c.bypass_quiet_hours != null)
+    ? `<label class="sc-field" title="Let this nudge land even outside your responsive hours">`
+      + `<input type="checkbox" data-sc-check="${c.key}" data-sc-field="bypass_quiet_hours"`
+      + `${c.bypass_quiet_hours ? " checked" : ""}${c.enabled ? "" : " disabled"}/> late-ok</label>`
+    : "";
   return `<div class="sc-check${c.enabled ? "" : " sc-check-off"}">
     <label class="sc-en"><input type="checkbox" data-sc-check="${c.key}" data-sc-field="enabled"`
     + `${c.enabled ? " checked" : ""}/> ${m.icon} ${esc(m.label)}</label>
@@ -297,6 +304,25 @@ function scRow(c) {
     <span class="sc-field">from ${num("start_hour", c.start_hour, 'min="0" max="23"')}:00</span>
     ${endHour}
     ${cadence}
+    ${bypass}
+  </div>`;
+}
+
+// The end-of-day gap review — a module-level evening push, not a per-check quota —
+// so it writes to the `review` block rather than `checks`.
+function scReviewRow(r) {
+  const on = !!(r && r.enabled);
+  const dis = on ? "" : " disabled";
+  const hour = `<input class="sc-num" type="number" min="0" max="23" data-sc-review `
+    + `data-sc-field="hour" value="${r.hour}"${dis} />`;
+  const bypass = `<label class="sc-field" title="Let the recap land even outside your responsive hours">`
+    + `<input type="checkbox" data-sc-review data-sc-field="bypass_quiet_hours"`
+    + `${r.bypass_quiet_hours ? " checked" : ""}${dis}/> late-ok</label>`;
+  return `<div class="sc-check${on ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-sc-review data-sc-field="enabled"`
+    + `${on ? " checked" : ""}/> 🌙 End-of-day review</label>
+    <span class="sc-field">at ${hour}:00</span>
+    ${bypass}
   </div>`;
 }
 
@@ -309,7 +335,8 @@ function renderSelfCare(d) {
       + `<span class="sc-hint">Turn on to get meal, water, meds, bio-break &amp; wind-down nudges.</span></div>`;
   }
   const rows = (d.checks || []).map(scRow).join("");
-  return `<div class="sc-controls">${master}${rows}</div>`;
+  const review = d.review ? scReviewRow(d.review) : "";
+  return `<div class="sc-controls">${master}${rows}${review}</div>`;
 }
 
 let flashTimer = null;
@@ -328,11 +355,18 @@ $("#selfcare").addEventListener("change", async (e) => {
   let body;
   if (inp.hasAttribute("data-sc-master")) {
     body = { enabled: inp.checked };
+  } else if (inp.hasAttribute("data-sc-review")) {
+    // The end-of-day gap review's module-level settings (enabled / hour / bypass).
+    const field = inp.dataset.scField;
+    if (!field) return;
+    const val = inp.type === "checkbox" ? inp.checked : Number(inp.value);
+    if (inp.type !== "checkbox" && !Number.isFinite(val)) return;  // ignore a cleared box
+    body = { review: { [field]: val } };
   } else {
     const key = inp.dataset.scCheck, field = inp.dataset.scField;
     if (!key || !field) return;
-    const val = field === "enabled" ? inp.checked : Number(inp.value);
-    if (field !== "enabled" && !Number.isFinite(val)) return;  // ignore a cleared box
+    const val = inp.type === "checkbox" ? inp.checked : Number(inp.value);
+    if (inp.type !== "checkbox" && !Number.isFinite(val)) return;  // ignore a cleared box
     body = { checks: { [key]: { [field]: val } } };
   }
   try {

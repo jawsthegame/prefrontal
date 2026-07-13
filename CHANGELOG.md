@@ -7,6 +7,43 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Self-Care: evening nudges bypass the daytime quiet-hours window** ✅ — an
+  evening nudge collided with the shared *daytime* responsive-hours window: with
+  the seeded `responsive_hours_end` of 14:00 a 21:00 **wind-down** cue (and the new
+  end-of-day **gap review**) was silenced before it ever landed. Both now **bypass
+  quiet hours by default** and are individually configurable. A new
+  `Cue.quiet_hours_exempt` lets a non-critical cue skip *only* the quiet-hours gate
+  (still debounces, still respects focus protection) without escalating to the
+  voice channel the way `critical` would. Wind-down bypasses via
+  `winddown_bypass_quiet_hours` and now self-bounds with its own `winddown_end_hour`
+  (default 23:00) — the bedtime it used to approximate by leaning on the engine's
+  gate — so it can't nag into the small hours; turn the bypass off to restore the
+  old "leans on responsive hours" behavior. The gap review bypasses via
+  `self_care_review_bypass_quiet_hours` and can't nag regardless (once/day,
+  evening-only). All settable from the Settings page and `POST /self-care` (per-check
+  `bypass_quiet_hours`; a `review` block for enabled/hour/bypass) and surfaced on
+  `GET /self-care`. Covered by `tests/test_self_care.py` /
+  `tests/test_self_care_review.py`.
+
+- **Self-Care: end-of-day gap review** ✅ — the self-care checks already *log*
+  every Ate / Drank / Went click as a timestamped `self_care` episode; this reads
+  those clicks back at day's end as a **timeline** and names the gaps a raw tally
+  hides. Three findings beyond "did you hit the target": **late first** (you drank
+  all six glasses, but the first wasn't until 3pm — flagged even when the quota was
+  met, because *when* matters), **long gap** (six hours between two bio breaks vs. a
+  2h cadence), and **shortfall** (a quota that finished the day short) — plus a
+  plain **none** for an enabled check with nothing logged, and a "what went well"
+  line so it's never pure scolding. The analysis is a pure read
+  (`prefrontal/self_care_review.py`) shared by three surfaces: `prefrontal
+  self-care review` (CLI) and `GET /self-care/review` (JSON) are always-available
+  pulls, and an **opt-in evening push** (`self_care_review_enabled`, off by default
+  like meds/wind-down; from `self_care_review_hour`, default 21:00) fires once at
+  day's end — but only when there's a gap worth naming, so a clean day stays
+  silent. Like wind-down it bypasses the daytime quiet-hours window by default (see
+  the entry above) so an end-of-day recap actually lands; it can't nag regardless,
+  since it fires at most once a day and only from the review hour onward. Declared
+  as the `self_care_review` intervention; covered by `tests/test_self_care_review.py`.
+
 - **Docs: retire the Shortcuts location automations for native-app users** ✅
   (#567, epic #569 capstone) — with the native CoreLocation feeds all shipped
   (#562/#469/#563/#564), `deploy/ios-shortcut.md` now leads with a banner + table

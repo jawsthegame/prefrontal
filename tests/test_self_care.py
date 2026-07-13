@@ -466,12 +466,16 @@ def test_winddown_message_greets_by_name():
     assert winddown_message().startswith("Wind-down check")
 
 
-def test_winddown_status_has_no_end_hour(store):
-    """Like meal/meds it's bounded by its target + responsive hours, not a wall clock."""
+def test_winddown_has_end_hour_and_bypasses_quiet_hours(store):
+    """An evening nudge: self-bounded by its own end hour (default 23), and exempt
+    from the shared daytime quiet-hours window by default so a 21:00 cue can land."""
     status = self_care_status(store, datetime(2026, 7, 2, 21, 0, 0), "UTC")
     by_key = {c["key"]: c for c in status["checks"]}
-    assert by_key["winddown"]["end_hour"] is None
+    assert by_key["winddown"]["end_hour"] == 23
     assert by_key["winddown"]["open_ended"] is False
+    assert by_key["winddown"]["bypass_quiet_hours"] is True
+    # A daytime check has no bypass control at all.
+    assert by_key["water"]["bypass_quiet_hours"] is None
 
 
 def test_act_winddown_started_counts_logs_and_settles(client, store):
@@ -485,24 +489,42 @@ def test_act_winddown_started_counts_logs_and_settles(client, store):
     assert eps and eps[0]["outcome"] == "confirmed" and "winddown" in eps[0]["context"]
 
 
-def test_winddown_relies_on_quiet_hours_not_an_end_hour(store):
-    """The design contract: the engine's quiet-hours gate — not a bedtime in the
-    module — is what keeps wind-down from nagging into the night.
+def _evening_ctx(now: datetime, *, responsive_end: int = 14) -> CoachContext:
+    """A context whose *daytime* responsive window closes early (default 14:00) —
+    the seeded default that would otherwise silence any evening nudge."""
+    return CoachContext(now=now, timezone="UTC", responsive_start=8, responsive_end=responsive_end)
 
-    The module keeps emitting the cue while past its start hour and unmet; it's
-    ``suppressed`` that drops it once outside responsive hours."""
+
+def test_winddown_bypasses_quiet_hours_by_default(store):
+    """New contract: wind-down is an evening nudge, so by default it bypasses the
+    daytime quiet-hours window and self-bounds with its own end hour instead."""
     from prefrontal.coaching import suppressed
     _winddown_only(store)
-    # Responsive hours 8–22: at 23:00 the module still *emits* a cue…
-    late = _ctx(datetime(2026, 7, 2, 23, 0, 0))
+    # 21:30 with the responsive window closed at 14:00: the cue is emitted AND the
+    # engine lets it through, because the cue carries quiet_hours_exempt.
+    ok = _evening_ctx(datetime(2026, 7, 2, 21, 30, 0))
+    cue = _by_kind(SelfCareModule().evaluate(store, ok), "winddown")
+    assert cue is not None
+    assert cue.quiet_hours_exempt is True
+    assert suppressed(store, cue, ok) is False
+    # At/after the end hour (23:00) the module stops emitting — its own bound, not
+    # the engine's, is what ends the night now.
+    assert _by_kind(
+        SelfCareModule().evaluate(store, _evening_ctx(datetime(2026, 7, 2, 23, 0, 0))), "winddown"
+    ) is None
+
+
+def test_winddown_bypass_off_reverts_to_quiet_hours(store):
+    """Turning the bypass off restores the old 'leans on responsive hours' behavior."""
+    from prefrontal.coaching import suppressed
+    _winddown_only(store)
+    store.set_state("winddown_bypass_quiet_hours", "off", source="explicit")
+    late = _evening_ctx(datetime(2026, 7, 2, 21, 30, 0))
     cue = _by_kind(SelfCareModule().evaluate(store, late), "winddown")
     assert cue is not None
-    # …but the engine suppresses it (a non-critical cue outside responsive hours).
+    assert cue.quiet_hours_exempt is False
+    # Responsive window closed at 14:00, so a non-exempt evening cue is held.
     assert suppressed(store, cue, late) is True
-    # Inside responsive hours (21:30) the same cue is allowed through.
-    ok = _ctx(datetime(2026, 7, 2, 21, 30, 0))
-    early = _by_kind(SelfCareModule().evaluate(store, ok), "winddown")
-    assert suppressed(store, early, ok) is False
 
 
 # -- movement / stretch: a morning once-a-day floor, off by default (like meds) --
