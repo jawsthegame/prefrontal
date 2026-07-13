@@ -115,22 +115,31 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
         _ client: APIClient, lat: Double, lon: Double, accuracy: Double?
     ) async throws {
         let d = SharedStore.defaults
-        let lastAt = d.double(forKey: Self.lastPostKey)
-        if lastAt > 0, Date().timeIntervalSince1970 - lastAt < Self.dedupeWindow {
-            let prev = CLLocation(
-                latitude: d.double(forKey: Self.lastPostLatKey),
-                longitude: d.double(forKey: Self.lastPostLonKey)
-            )
+        let prevAt = d.double(forKey: Self.lastPostKey)
+        let prevLat = d.double(forKey: Self.lastPostLatKey)
+        let prevLon = d.double(forKey: Self.lastPostLonKey)
+        if prevAt > 0, Date().timeIntervalSince1970 - prevAt < Self.dedupeWindow {
+            let prev = CLLocation(latitude: prevLat, longitude: prevLon)
             if CLLocation(latitude: lat, longitude: lon).distance(from: prev) < Self.dedupeRadius {
                 return  // same place, moments ago — the other feed already posted it
             }
         }
-        try await client.postLocation(lat: lat, lon: lon, accuracy: accuracy)
-        // Stamp the record *after* delivery, so a slow POST can't back-date the
-        // window and let a near-duplicate slip through.
+        // Claim the slot *before* awaiting the POST. This method runs on the main
+        // actor, so read-check-stamp is atomic against other feeds' tasks (which
+        // only run at an await point) — a geofence + significant-change update
+        // firing together can't both pass the guard and double-post. On failure we
+        // roll the record back so a transient error doesn't suppress a retry.
         d.set(Date().timeIntervalSince1970, forKey: Self.lastPostKey)
         d.set(lat, forKey: Self.lastPostLatKey)
         d.set(lon, forKey: Self.lastPostLonKey)
+        do {
+            try await client.postLocation(lat: lat, lon: lon, accuracy: accuracy)
+        } catch {
+            d.set(prevAt, forKey: Self.lastPostKey)
+            d.set(prevLat, forKey: Self.lastPostLatKey)
+            d.set(prevLon, forKey: Self.lastPostLonKey)
+            throw error
+        }
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -204,21 +213,24 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
               let fix = locations.last,
               fix.horizontalAccuracy >= 0  // negative = invalid fix
         else { return }
-        // Throttle across launches on the feed's own key: SLC can relaunch us
-        // from terminated, so the last-post time lives in the App Group rather
-        // than in memory. Advance it up front (matching the original optimistic
-        // throttle) so this stays independent of geofence/visit posts; the post
-        // itself still runs through the shared de-dupe below.
+        // Throttle across launches on the feed's own key (independent of
+        // geofence/visit posts): SLC can relaunch us from terminated, so the
+        // last-post time lives in the App Group rather than in memory.
         let now = Date().timeIntervalSince1970
         let last = SharedStore.defaults.double(forKey: Self.lastSlcPostKey)
         guard now - last >= Self.minPostInterval else { return }
-        SharedStore.defaults.set(now, forKey: Self.lastSlcPostKey)
         Task {
             try? await withAPI {
                 try await self.postLocationDeduped(
                     $0, lat: fix.coordinate.latitude, lon: fix.coordinate.longitude,
                     accuracy: fix.horizontalAccuracy
                 )
+                // Advance the throttle only after a successful attempt (a posted
+                // or intentionally de-duped call — not a thrown network error), so
+                // a transient failure doesn't leave the feed stale for the whole
+                // interval. A self-burst can't double-post: the de-dupe above
+                // claims its slot synchronously.
+                SharedStore.defaults.set(now, forKey: Self.lastSlcPostKey)
             }
         }
     }
