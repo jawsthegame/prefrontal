@@ -111,6 +111,7 @@ from prefrontal.webhooks.schemas.sensor import (
 from prefrontal.webhooks.schemas.system import (
     ApnsTokenRegistration,
     FeatureToggle,
+    GeocodingToggle,
     GuideProgress,
     SelfCareCheckConfig,
     SelfCareConfig,
@@ -201,6 +202,7 @@ __all__ = [
     "SelfCareConfig",
     "ApnsTokenRegistration",
     "FeatureToggle",
+    "GeocodingToggle",
     "GuideProgress",
     "SelfCareMark",
     "ShoppingAdd",

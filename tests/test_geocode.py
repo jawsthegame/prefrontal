@@ -212,6 +212,58 @@ def test_nominatim_malformed_result_raises():
         geo.geocode("x")
 
 
+def test_nominatim_search_returns_named_candidates():
+    """search() yields several matches with their display names (for the picker)."""
+    def handler(request):
+        assert request.url.params["limit"] == "5"
+        return httpx.Response(200, json=[
+            {"display_name": "1600 Amphitheatre Pkwy, Mountain View, CA",
+             "lat": "37.42", "lon": "-122.08"},
+            {"display_name": "1600 Pennsylvania Ave, Washington, DC",
+             "lat": "38.89", "lon": "-77.03"},
+        ])
+
+    geo = NominatimGeocoder(transport=httpx.MockTransport(handler))
+    results = geo.search("1600")
+    assert [r["display_name"] for r in results] == [
+        "1600 Amphitheatre Pkwy, Mountain View, CA",
+        "1600 Pennsylvania Ave, Washington, DC",
+    ]
+    assert results[0]["lat"] == 37.42 and results[0]["lon"] == -122.08
+
+
+def test_nominatim_search_skips_malformed_rows_but_keeps_good_ones():
+    """A single bad row is dropped, not fatal — unlike the top-1 geocode() path."""
+    payload = [
+        {"display_name": "Good place", "lat": "1.0", "lon": "2.0"},
+        {"display_name": "No coords"},  # malformed → skipped
+    ]
+    geo = NominatimGeocoder(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))
+    )
+    results = geo.search("x")
+    assert [r["display_name"] for r in results] == ["Good place"]
+
+
+def test_nominatim_search_http_error_raises():
+    geo = NominatimGeocoder(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    with pytest.raises(GeocoderError):
+        geo.search("x")
+
+
+def test_nominatim_search_clamps_limit():
+    """limit is clamped into 1–10 so a caller can't ask for an abusive page."""
+    seen = {}
+
+    def handler(request):
+        seen["limit"] = request.url.params["limit"]
+        return httpx.Response(200, json=[])
+
+    geo = NominatimGeocoder(transport=httpx.MockTransport(handler))
+    geo.search("x", limit=999)
+    assert seen["limit"] == "10"
+
+
 # -- HTTP surface ------------------------------------------------------------
 
 
