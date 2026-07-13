@@ -39,9 +39,10 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   pulls, and an **opt-in evening push** (`self_care_review_enabled`, off by default
   like meds/wind-down; from `self_care_review_hour`, default 21:00) fires once at
   day's end — but only when there's a gap worth naming, so a clean day stays
-  silent. Like wind-down it leans on the engine's responsive-hours gate to not
-  buzz past bedtime. Declared as the `self_care_review` intervention; covered by
-  `tests/test_self_care_review.py`.
+  silent. Like wind-down it bypasses the daytime quiet-hours window by default (see
+  the entry above) so an end-of-day recap actually lands; it can't nag regardless,
+  since it fires at most once a day and only from the review hour onward. Declared
+  as the `self_care_review` intervention; covered by `tests/test_self_care_review.py`.
 
 - **Docs: retire the Shortcuts location automations for native-app users** ✅
   (#567, epic #569 capstone) — with the native CoreLocation feeds all shipped
