@@ -198,8 +198,11 @@ struct MarkdownText: View {
     }
 
     /// Number of rendered content lines (blank lines and a leading `#` title
-    /// excluded) — used to decide whether a "Show more" toggle is warranted.
-    static func lineCount(_ text: String) -> Int { blocks(from: text, limit: nil).count }
+    /// excluded) — used to decide whether a "Show more" toggle is warranted. A
+    /// lightweight scan: it applies the same filtering as `blocks(from:)` but
+    /// skips the per-line `AttributedString` Markdown parse, which is wasted work
+    /// for a count that runs on every render.
+    static func lineCount(_ text: String) -> Int { contentLines(from: text, limit: nil).count }
 
     private static func inline(_ s: String) -> AttributedString {
         (try? AttributedString(
@@ -208,31 +211,36 @@ struct MarkdownText: View {
         )) ?? AttributedString(s)
     }
 
-    private static func blocks(from text: String, limit: Int?) -> [Block] {
-        var out: [Block] = []
+    /// Classify a trimmed, non-empty line into its block kind and the text after
+    /// any marker — no inline parsing, so it's cheap enough for `lineCount`.
+    private static func classify(_ line: String) -> (kind: Kind, text: String) {
+        if line.hasPrefix("### ") { return (.h3, String(line.dropFirst(4))) }
+        if line.hasPrefix("## ") { return (.h2, String(line.dropFirst(3))) }
+        if line.hasPrefix("# ") { return (.h2, String(line.dropFirst(2))) }
+        if line.hasPrefix("- ") || line.hasPrefix("* ") { return (.bullet, String(line.dropFirst(2))) }
+        return (.body, line)
+    }
+
+    /// The content lines to render, blank lines and a leading `#` title dropped.
+    /// Trims with `.whitespacesAndNewlines` so a trailing `\r` from CRLF server
+    /// text doesn't survive into the content or break the prefix checks.
+    private static func contentLines(from text: String, limit: Int?) -> [(kind: Kind, text: String)] {
+        var out: [(kind: Kind, text: String)] = []
         var sawContent = false
         for raw in text.components(separatedBy: "\n") {
-            let t = raw.trimmingCharacters(in: .whitespaces)
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if t.isEmpty { continue }  // blank lines → uniform VStack spacing
             // Drop a leading H1 title; the card already shows "Morning briefing".
             if !sawContent, t.hasPrefix("# ") { continue }
             sawContent = true
-            let block: Block
-            if t.hasPrefix("### ") {
-                block = Block(content: inline(String(t.dropFirst(4))), kind: .h3)
-            } else if t.hasPrefix("## ") {
-                block = Block(content: inline(String(t.dropFirst(3))), kind: .h2)
-            } else if t.hasPrefix("# ") {
-                block = Block(content: inline(String(t.dropFirst(2))), kind: .h2)
-            } else if t.hasPrefix("- ") || t.hasPrefix("* ") {
-                block = Block(content: inline(String(t.dropFirst(2))), kind: .bullet)
-            } else {
-                block = Block(content: inline(t), kind: .body)
-            }
-            out.append(block)
+            out.append(classify(t))
             if let limit, out.count >= limit { break }
         }
         return out
+    }
+
+    private static func blocks(from text: String, limit: Int?) -> [Block] {
+        contentLines(from: text, limit: limit).map { Block(content: inline($0.text), kind: $0.kind) }
     }
 }
 
