@@ -25,7 +25,8 @@ also shows a **Live Activity** on the Lock Screen and in the Dynamic Island — 
 self-ticking "back by" countdown (outing) or elapsed timer (focus), started and
 ended by `Activities/LiveActivityManager` and rendered by
 `PrefrontalWidgets/SessionLiveActivity.swift`. The app and widget share the base
-URL + token via the **App Group** `group.com.morningstatic.prefrontal`.
+base URL via the **App Group** `group.com.morningstatic.prefrontal`, and the
+token via a shared **Keychain** access group (`…prefrontal.shared`).
 
 ## Layout
 
@@ -34,8 +35,8 @@ ios/
   project.yml              # XcodeGen spec — source of truth for the Xcode project
   Prefrontal/
     PrefrontalApp.swift    # @main; routes prefrontal:// connect deep links
-    Prefrontal.entitlements# App Group (shared with the widget)
-    Config/                # AppConfig + SharedStore (App Group base URL + token)
+    Prefrontal.entitlements# App Group + shared Keychain group (both shared with the widget)
+    Config/                # AppConfig + SharedStore (App Group base URL); KeychainStore (token)
     Networking/            # APIClient (async URLSession) + typed Endpoints
     Models/                # Codable structs mirroring the JSON API
     Theme/                 # Brand palette + Card
@@ -48,12 +49,13 @@ ios/
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
     PrefrontalWidgets.swift
-    PrefrontalWidgets.entitlements  # same App Group
+    PrefrontalWidgets.entitlements  # same App Group + shared Keychain group
 ```
 
 The widget target re-uses the app's `Config/`, `Networking/`, `Models/`,
 `Theme/` sources (compiled into the extension too) and reads config from the
-shared App Group, so it authenticates without you entering the token twice.
+shared App Group (base URL) and shared Keychain group (token), so it
+authenticates without you entering the token twice.
 
 The `.xcodeproj` is **generated** and git-ignored. Regenerate any time with:
 
@@ -83,9 +85,10 @@ find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64
 
 ## Run on your iPhone
 
-The widget uses an **App Group**, which requires a **paid Apple Developer
-account** (App Groups aren't available to free "Personal Team" signing). The
-app alone runs under free signing, but the full app + widget needs the paid tier.
+The widget uses an **App Group** and a **shared Keychain access group** (for the
+token), both of which require a **paid Apple Developer account** (neither is
+available to free "Personal Team" signing). The app alone runs under free
+signing, but the full app + widget needs the paid tier.
 
 1. **Set your team once, locally** — create a git-ignored override; it survives
    `xcodegen generate` **and** fresh clones, so you never re-enter the team:
@@ -124,8 +127,9 @@ notifications → done (design: `../docs/design/ios-onboarding.md`). Connect is
   - **Token:** your personal `X-Prefrontal-Token` (from your setup sheet, or
     `prefrontal user connect-link <handle> --rotate`).
 
-Tap **Connect** to verify against `/self-care` before advancing. The URL + token
-live in the App Group so the widget authenticates too; change either later in
+Tap **Connect** to verify against `/self-care` before advancing. The base URL
+lives in the App Group and the token in a shared Keychain group, so the widget
+authenticates too; change either later in
 **Me ▸ Settings** (gear icon). That screen also has an **Available hours** section
 — a per-weekday toggle + start/end time pickers that write
 `/schedule/available-hours`, so the slot-finder and todo suggestions stay inside
