@@ -31,6 +31,7 @@ from prefrontal.mail.feedback import (
     learned_corrections,
     learned_denylist,
 )
+from prefrontal.memory.repos.state import DEFAULT_LOCATION_TTL_SECONDS
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
@@ -295,9 +296,24 @@ def build_router(services: RouterServices) -> APIRouter:
     def location_get(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Return the last-known position (or ``{"location": null}`` if unset)."""
+        """Return the last-known position with its freshness.
+
+        ``{"location": {...} | null, "age_seconds": float | null, "stale": bool}``.
+        ``age_seconds`` is how long ago the fix was recorded; ``stale`` is ``true``
+        once that exceeds the staleness window (``location_staleness_seconds``, else
+        :data:`~prefrontal.memory.repos.state.DEFAULT_LOCATION_TTL_SECONDS`) — the
+        same window travel-time and outing gating treat as absent (#568). The raw
+        fix is still returned regardless, so a client can show "last seen N min ago"
+        and decide for itself; a stationary user's old-but-correct fix isn't hidden.
+        """
         memory = ctx.store
-        return {"location": memory.get_location()}
+        age = memory.location_age_seconds()
+        ttl = memory.get_float("location_staleness_seconds", DEFAULT_LOCATION_TTL_SECONDS)
+        return {
+            "location": memory.get_location(),
+            "age_seconds": age,
+            "stale": age is not None and age > ttl,
+        }
 
     # -- Closed-loop trip tracking -------------------------------------------
 
