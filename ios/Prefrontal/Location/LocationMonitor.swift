@@ -68,18 +68,32 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
         authorization = manager.authorizationStatus
     }
 
-    /// Called on launch: resume monitoring if the user previously opted in.
+    /// Called on launch: resume monitoring if the user previously opted in — but
+    /// only when authorization is actually granted. If it was denied/revoked in
+    /// the Settings app while we were off, starting would be a silent no-op and the
+    /// authorization callback may not fire on launch to stop it, so we skip;
+    /// `LocationSection` reconciles the stale opt-in when the user next opens it.
     func startIfEnabled() {
         guard SharedStore.locationEnabled else { return }
-        manager.startMonitoringSignificantLocationChanges()
-        manager.startMonitoringVisits()
-        refreshRegions()
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            startMonitoring()
+        default:
+            break
+        }
     }
 
     /// Turn monitoring on — prompts for Always-location, then monitors places,
     /// the significant-change position feed, and CLVisit arrivals/departures.
     func enable() {
         manager.requestAlwaysAuthorization()
+        startMonitoring()
+    }
+
+    /// Start the three feeds. Safe to call before a grant resolves — CoreLocation
+    /// only delivers once authorized, and the authorization callback refreshes
+    /// regions then.
+    private func startMonitoring() {
         manager.startMonitoringSignificantLocationChanges()
         manager.startMonitoringVisits()
         refreshRegions()
@@ -159,17 +173,23 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     // MARK: - CLLocationManagerDelegate
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        authorization = manager.authorizationStatus
-        switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            if SharedStore.locationEnabled { refreshRegions() }
-        case .denied, .restricted:
-            // Permission is gone — stop the now-silent monitoring. The Settings
-            // section reconciles the stored opt-in (flips the toggle off) so the
-            // in-app state matches reality.
-            disable()
-        default:
-            break
+        // Marshal onto main: `authorization` is @Published (SwiftUI observes it)
+        // and the side effects touch the manager, but the callback isn't
+        // guaranteed to arrive on the main thread.
+        let status = manager.authorizationStatus
+        DispatchQueue.main.async {
+            self.authorization = status
+            switch status {
+            case .authorizedAlways, .authorizedWhenInUse:
+                if SharedStore.locationEnabled { self.refreshRegions() }
+            case .denied, .restricted:
+                // Permission is gone — stop the now-silent monitoring. The Settings
+                // section reconciles the stored opt-in (flips the toggle off) so the
+                // in-app state matches reality.
+                self.disable()
+            default:
+                break
+            }
         }
     }
 
