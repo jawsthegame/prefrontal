@@ -1,0 +1,6 @@
+{
+  "home_radius_m": 150,
+  "geofence_radius_m": 120,
+  "post_interval_s": 300,
+  "visits_enabled": true
+}

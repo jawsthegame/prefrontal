@@ -7,6 +7,22 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Web-configurable location settings** ✅ (#565, epic #569) — the location
+  **tunables** now live on the web dashboard, keeping the phone's Settings to just
+  the master on/off (only it can trigger the OS "Always" prompt). New
+  `GET/POST /schedule/location-settings` reads/writes four coaching-state keys —
+  `home_radius_m` (the existing shared key, also read by outing gating + trip
+  detection), `geofence_radius_m`, `location_post_interval_s`, and
+  `location_visits_enabled` (the API fields drop the `location_` prefix:
+  `post_interval_s` / `visits_enabled`) — with a `LocationSettings` Pydantic schema
+  (bounded, partial writes). A "Location" card in
+  `settings.html` edits them; the iOS `LocationMonitor` fetches them on
+  enable/launch into the App Group and applies them (geofence radius, significant-
+  change floor, `CLVisit` on/off). Shape pinned by an OpenAPI snapshot + example
+  fixture + contract test (`tests/test_contract_location_settings.py`), mirroring
+  the `available_hours` pattern; endpoint behavior covered by
+  `tests/test_location_settings.py`. iOS is client-only (build on a Mac).
+
 - **Self-Care: evening nudges bypass the daytime quiet-hours window** ✅ — an
   evening nudge collided with the shared *daytime* responsive-hours window: with
   the seeded `responsive_hours_end` of 14:00 a 21:00 **wind-down** cue (and the new

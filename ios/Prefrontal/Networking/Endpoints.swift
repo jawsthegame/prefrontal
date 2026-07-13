@@ -32,6 +32,10 @@ extension APIClient {
     func availableHours() async throws -> AvailableHours {
         try await get("schedule/available-hours", as: AvailableHours.self)
     }
+    /// The web-configured location tunables the app applies to `LocationMonitor`.
+    func locationSettings() async throws -> LocationSettings {
+        try await get("schedule/location-settings", as: LocationSettings.self)
+    }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
 

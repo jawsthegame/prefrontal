@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.scheduling import WEEKDAYS
 
 #: Regex for a zero-padded 24-hour ``HH:MM`` clock time. Zero-padding lets the
@@ -257,6 +258,51 @@ class TravelPadding(BaseModel):
             "lateness. `false` freezes it; `true` re-enables learning. When set, "
             "`percent`/`auto` are ignored — it toggles the setting only."
         ),
+    )
+
+
+class LocationSettings(BaseModel):
+    """Body/response of ``/schedule/location-settings`` — the location tunables.
+
+    The knobs the native iOS app applies to its CoreLocation monitoring, kept on
+    the web dashboard (mirroring ``available_hours``: stored in ``coaching_state``,
+    read by the app on refresh). The **master opt-in** stays on the phone — only
+    it can trigger the OS "Always Allow" prompt — so it is deliberately *not* here.
+
+    A write may be **partial**: only the fields present are updated (Pydantic's
+    ``exclude_unset``), the rest keep their stored value. A read always returns all
+    four with defaults applied. This shape is hand-mirrored in the web dashboard's
+    ``settings.html`` and the iOS ``Models.swift``; the contract guard
+    (``tests/test_contract_location_settings.py``) pins it.
+    """
+
+    home_radius_m: float = Field(
+        default=DEFAULT_HOME_RADIUS_M,
+        ge=10,
+        le=2000,
+        description=(
+            "Radius (m) counted as 'home' for outing return-gating and trip "
+            "detection. Server-consumed; also the home geofence anchor."
+        ),
+    )
+    geofence_radius_m: float = Field(
+        default=120.0,
+        ge=50,
+        le=1000,
+        description="Radius (m) of each curated-place `CLCircularRegion` the app monitors.",
+    )
+    post_interval_s: int = Field(
+        default=300,
+        ge=60,
+        le=3600,
+        description=(
+            "Minimum seconds between significant-change position posts — the "
+            "battery-vs-freshness floor for the coarse feed."
+        ),
+    )
+    visits_enabled: bool = Field(
+        default=True,
+        description="Whether the app runs `CLVisit` monitoring (arrivals/departures at any venue).",
     )
 
 

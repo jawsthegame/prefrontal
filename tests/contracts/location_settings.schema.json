@@ -1,0 +1,29 @@
+{
+  "LocationSettings": {
+    "properties": {
+      "geofence_radius_m": {
+        "default": 120.0,
+        "maximum": 1000.0,
+        "minimum": 50.0,
+        "type": "number"
+      },
+      "home_radius_m": {
+        "default": 150.0,
+        "maximum": 2000.0,
+        "minimum": 10.0,
+        "type": "number"
+      },
+      "post_interval_s": {
+        "default": 300,
+        "maximum": 3600.0,
+        "minimum": 60.0,
+        "type": "integer"
+      },
+      "visits_enabled": {
+        "default": true,
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  }
+}

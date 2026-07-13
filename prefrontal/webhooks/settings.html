@@ -189,6 +189,16 @@
     <div class="saved" id="hr-saved"></div>
   </section>
 
+  <section class="card" id="c-location">
+    <h2>Location</h2>
+    <p class="sub">Tunables for the iOS app's background location. The on/off switch
+      itself lives on your phone (<b>Me ▸ Settings ▸ Location automations</b>) — only
+      it can ask iOS for "Always" permission. Changes here apply on the app's next
+      refresh.</p>
+    <div id="location"></div>
+    <div class="saved" id="loc-saved"></div>
+  </section>
+
   <section class="card" id="c-smtp">
     <h2>Email hand-off (SMTP)</h2>
     <p class="sub">When you delegate a todo to a human assistant, Prefrontal emails
@@ -523,6 +533,64 @@ $("#hours").addEventListener("change", async (e) => {
   }
 });
 
+// ── Location tunables (the phone keeps the on/off; these are the knobs) ──────
+// The stored shape mirrors the /schedule/location-settings contract exactly
+// (tests/contracts/location_settings.*). Each change writes just that one field
+// (a partial POST the server merges); the master opt-in is not here — it lives on
+// the phone because only it can trigger the OS "Always" permission prompt.
+const LOC_FIELDS = [
+  ["home_radius_m", "Home radius (m)", { min: 10, max: 2000, step: 10 }],
+  ["geofence_radius_m", "Place geofence radius (m)", { min: 50, max: 1000, step: 10 }],
+  ["post_interval_s", "Position update floor (sec)", { min: 60, max: 3600, step: 30 }],
+];
+function locRow(key, label, attrs, val) {
+  const a = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(" ");
+  // The value goes in the `value` attribute (not a post-build `.value` set): the
+  // property doesn't serialize back into innerHTML, so the numbers would render
+  // blank after a reload. Numbers are safe, but esc() keeps it defensive.
+  return `<div class="sc-check">
+    <label class="sc-en">${esc(label)}</label>
+    <span class="sc-field"><input class="hr-time" type="number" data-loc="${key}" ${a} value="${esc(val)}" /></span>
+  </div>`;
+}
+function renderLocation(d) {
+  const rows = LOC_FIELDS.map(([k, label, attrs]) => locRow(k, label, attrs, d[k])).join("");
+  const on = !!d.visits_enabled;
+  const toggle = `<div class="sc-check${on ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-loc="visits_enabled"${on ? " checked" : ""}/>`
+    + ` Visit monitoring (arrivals at any venue)</label></div>`;
+  return rows + toggle;
+}
+function flashLoc(msg) {
+  $("#loc-saved").textContent = msg;
+  setTimeout(() => { $("#loc-saved").textContent = ""; }, 1600);
+}
+async function loadLocation() {
+  try {
+    if (!$("#location").contains(document.activeElement)) {
+      $("#location").innerHTML = renderLocation(await api("/schedule/location-settings"));
+    }
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+$("#location").addEventListener("change", async (e) => {
+  const inp = e.target.closest("input");
+  if (!inp || !inp.dataset.loc) return;
+  const key = inp.dataset.loc;
+  const value = inp.type === "checkbox" ? inp.checked : Number(inp.value);
+  try {
+    $("#location").innerHTML = renderLocation(await api("/schedule/location-settings", {
+      method: "POST", body: JSON.stringify({ [key]: value }),
+    }));
+    flashLoc("Saved ✓");
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    flashLoc("couldn't save — check the range");  // 422 = out of bounds
+    loadLocation();
+  }
+});
+
 // ── SMTP (outbound email) config: a small form saved as a whole ──────────────
 // ── SMTP: several named outbox accounts, each its own inline form ────────────
 // A todo delegated by email sends from the account matching its mail account or
@@ -651,6 +719,7 @@ async function load() {
   await loadTodos();
   await loadDeparture();
   await loadHours();
+  await loadLocation();
   await loadSmtp();
   $("#status").textContent = "your preferences";
   if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible
