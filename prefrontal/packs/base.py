@@ -81,7 +81,7 @@ class Pack:
             pack is enabled (via :meth:`seed`), never clobbering existing values —
             e.g. ``{"todo_window:school": "08:00-15:00"}`` to shape scheduling for
             a pack category. Read-only so the shared base default is never mutated.
-        situations: Read-only :class:`SituationTool` s this pack answers on demand
+        situations: Read-only :class:`SituationTool` instances this pack answers on demand
             (e.g. the Parent pack's school-run leave-by). Surfaced and run through
             the ``/packs/situations`` router only when the pack is enabled.
     """
