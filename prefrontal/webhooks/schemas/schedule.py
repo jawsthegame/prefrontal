@@ -307,6 +307,31 @@ class LocationSettings(BaseModel):
     )
 
 
+class CareRecipients(BaseModel):
+    """Request body of ``POST /care/recipients`` — the care-recipient names roster.
+
+    The adults the user looks after (an aging parent, ill partner). A per-user
+    list — the caregiver counterpart to the household kids' roster — that drives
+    the deterministic ``care`` classification pass so "Mom — cardiology" reliably
+    reaches the ``/care`` surface. Stored comma-separated in ``coaching_state``;
+    the server normalizes (trim blanks, de-duplicate case-insensitively).
+
+    This models the **write body** (which carries only ``names``). Both endpoints
+    *respond* with ``{"enabled": bool, "names": [...]}`` — the ``enabled`` flag
+    reports whether the Caregiver pack is on, and ``names`` is the stored, cleaned
+    list — so the response is a superset of this body, not this model itself.
+    """
+
+    names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Care-recipient names (e.g. ['Mom', 'Dad']). A write replaces the whole "
+            "roster; an empty list clears it. Blanks and case-insensitive duplicates "
+            "are dropped server-side."
+        ),
+    )
+
+
 class DayAvailability(BaseModel):
     """One weekday's availability in ``GET/POST /schedule/available-hours``.
 

@@ -58,6 +58,7 @@ def test_build_parser_registers_expected_commands():
         "mail",
         "calendar",
         "modules",
+        "care-recipient",
         "focus",
         "cleanup-drops",
         "cleanup-focus-estimates",
@@ -72,9 +73,35 @@ def test_build_parser_registers_expected_commands():
             "secrets": ["secrets", "status"],
             "calendar": ["calendar", "list-sources"],
             "focus": ["focus", "arm"],
+            "care-recipient": ["care-recipient", "list"],
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"
+
+
+def test_care_recipient_roster_cli_roundtrip(tmp_path, capsys):
+    """`care-recipient set/add/remove/list` wire through and normalize the roster."""
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    assert main(["user", "--db-path", str(db), "add", "tom", "--operator"]) == 0
+    capsys.readouterr()
+
+    base = ["care-recipient", "--db-path", str(db), "--user", "tom"]
+    # Empty to start.
+    assert main([*base, "list"]) == 0
+    assert "No care recipients set." in capsys.readouterr().out
+    # set replaces; normalization (trim + de-dupe) applies.
+    assert main([*base, "set", "  Mom ", "Dad", "mom"]) == 0
+    assert "Care recipients: Mom, Dad" in capsys.readouterr().out
+    # add appends a new name.
+    assert main([*base, "add", "Aunt May"]) == 0
+    assert "Care recipients: Mom, Dad, Aunt May" in capsys.readouterr().out
+    # remove is case-insensitive.
+    assert main([*base, "remove", "dad"]) == 0
+    assert "Care recipients: Mom, Aunt May" in capsys.readouterr().out
+    # set with no names clears.
+    assert main([*base, "set"]) == 0
+    assert "No care recipients set." in capsys.readouterr().out
 
 
 def test_user_resolution_is_case_insensitive(tmp_path, capsys):

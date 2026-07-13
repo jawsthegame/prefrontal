@@ -61,6 +61,13 @@
   .notice { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
     padding: 18px 20px; margin: 16px 0 0; color: var(--muted); }
   .notice code { background: var(--line); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
+  .recip-edit { display: flex; gap: 8px; flex-wrap: wrap; }
+  .recip-edit input { flex: 1; min-width: 180px; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg); font-size: 15px; }
+  .recip-edit button { padding: 10px 16px; background: var(--accent); color: var(--accent-fg);
+    border: none; border-radius: 10px; font-weight: 650; font-size: 15px; cursor: pointer; }
+  .recip-edit button:disabled { opacity: .55; cursor: default; }
+  .recip-status { color: var(--muted); font-size: 13px; min-height: 16px; margin-top: 8px; }
   #gate { position: fixed; inset: 0; background: var(--bg); display: none;
     align-items: center; justify-content: center; padding: 18px; z-index: 40; }
   #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
@@ -109,6 +116,17 @@
     <code>PREFRONTAL_PACKS=caregiver</code> to surface the person you look after —
     their upcoming appointments and your medical/admin todos — here.
   </div>
+  <section class="card" id="c-recipients" style="display:none">
+    <h2>Who you're caring for</h2>
+    <p class="sub">Names of the adults you look after. An appointment whose title
+    mentions one (e.g. <b>Mom — cardiology</b>) is filed as <b>care</b>
+    automatically on the next calendar sync — even with the model offline.</p>
+    <div class="recip-edit">
+      <input id="recipients-input" type="text" placeholder="Mom, Dad" autocomplete="off" />
+      <button id="recipients-save" type="button">Save</button>
+    </div>
+    <div class="recip-status" id="recipients-status"></div>
+  </section>
   <section class="card" id="c-appts" style="display:none">
     <h2>Upcoming care appointments</h2>
     <p class="sub">Appointments for the adult you look after (marked <b>care</b>) —
@@ -164,9 +182,10 @@ function gate(msg) {
   $("#gate").style.display = "flex";
 }
 
-async function api(path) {
+async function api(path, opts) {
   const headers = token ? { "X-Prefrontal-Token": token } : {};
-  const r = await fetch(path, { headers });
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { headers, ...(opts || {}) });
   if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
   return r.json();
@@ -205,6 +224,7 @@ async function load() {
   $("#wrap").style.display = "block";
   if (!data.enabled) {
     $("#disabled").style.display = "block";
+    $("#c-recipients").style.display = "none";
     $("#c-appts").style.display = "none";
     $("#c-todos").style.display = "none";
     $("#status").textContent = "Caregiver pack is off";
@@ -213,6 +233,7 @@ async function load() {
   $("#disabled").style.display = "none";
   const appts = data.appointments || [];
   const todos = data.todos || [];
+  $("#c-recipients").style.display = "block";
   $("#c-appts").style.display = "block";
   $("#c-todos").style.display = "block";
   $("#appts").innerHTML = appts.length
@@ -220,7 +241,49 @@ async function load() {
   $("#todos").innerHTML = todos.length
     ? todos.map(todoRow).join("") : `<div class="empty">No open care todos.</div>`;
   $("#status").textContent = "who you're caring for";
+  loadRecipients();
 }
+
+// ── Care-recipient roster ────────────────────────────────────────────────
+function renderRecipients(names) {
+  $("#recipients-input").value = (names || []).join(", ");
+}
+async function loadRecipients() {
+  try {
+    const data = await api("/care/recipients");
+    renderRecipients(data.names);
+    $("#recipients-status").textContent = "";
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#recipients-status").textContent = "couldn't load names";
+  }
+}
+async function saveRecipients() {
+  const raw = $("#recipients-input").value;
+  const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const btn = $("#recipients-save");
+  btn.disabled = true;
+  $("#recipients-status").textContent = "saving…";
+  try {
+    const data = await api("/care/recipients", {
+      method: "POST",
+      body: JSON.stringify({ names }),
+    });
+    renderRecipients(data.names);  // reflect server-side normalization
+    $("#recipients-status").textContent = data.names.length
+      ? "Saved. New appointments naming these are filed as care."
+      : "Roster cleared.";
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#recipients-status").textContent = "couldn't save — retry";
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("#recipients-save").onclick = saveRecipients;
+$("#recipients-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") saveRecipients();
+});
 
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();

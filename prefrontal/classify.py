@@ -18,7 +18,10 @@ Two design choices keep it honest:
 - **A deterministic roster pass first.** When an event title names one of the
   household's kids (:func:`roster_child_match`), it's tagged ``child`` outright —
   offline, no model needed — so "Sam — dentist" reliably lands on the shared
-  sheet. The model is only consulted for titles the roster doesn't catch.
+  sheet. The same pass tags an event that names one of the user's *care
+  recipients* (:func:`roster_care_match`) as ``care`` — the adult-you-look-after
+  counterpart, so "Mom — cardiology" reliably reaches the ``/care`` surface. The
+  model is only consulted for titles the roster doesn't catch.
 - **Graceful degradation.** If the model is unreachable or replies with junk we
   fall back to ``self`` — the conservative default, since treating a real
   commitment as FYI would hide a genuine conflict.
@@ -111,21 +114,40 @@ def parse_kind_reply(reply: str) -> str | None:
     return min(positions, key=positions.get)
 
 
+def _roster_hit(title: str, names: list[str] | None) -> bool:
+    """Whether ``title`` names one of ``names`` (case-insensitive, word-boundary).
+
+    The shared matcher behind both roster passes. Word-boundary matching keeps
+    "Sam" from firing on "Samuelson" while still catching the possessive "Sam's".
+    """
+    if not title or not names:
+        return False
+    for name in names:
+        n = (name or "").strip()
+        if n and re.search(rf"\b{re.escape(n)}\b", title, re.IGNORECASE):
+            return True
+    return False
+
+
 def roster_child_match(title: str, child_names: list[str] | None) -> bool:
     """Whether ``title`` names a household child (case-insensitive, word-boundary).
 
     The deterministic, offline signal that a synced event is a kid's — so
     "Sam — dentist" is tagged ``child`` (and reaches the shared sheet) without
-    the model. Word-boundary matching keeps "Sam" from firing on "Samuelson",
-    while still catching the possessive "Sam's".
+    the model.
     """
-    if not title or not child_names:
-        return False
-    for name in child_names:
-        n = (name or "").strip()
-        if n and re.search(rf"\b{re.escape(n)}\b", title, re.IGNORECASE):
-            return True
-    return False
+    return _roster_hit(title, child_names)
+
+
+def roster_care_match(title: str, care_names: list[str] | None) -> bool:
+    """Whether ``title`` names one of the user's care recipients.
+
+    The care-recipient counterpart to :func:`roster_child_match`: the
+    deterministic, offline signal that a synced event is an appointment for an
+    adult the user looks after — so "Mom — cardiology" is tagged ``care`` (and
+    reaches the ``/care`` surface) without the model.
+    """
+    return _roster_hit(title, care_names)
 
 
 def classify_kind(
@@ -134,8 +156,9 @@ def classify_kind(
     client: Generator | None = None,
     examples: list[dict[str, Any]] | None = None,
     child_names: list[str] | None = None,
+    care_names: list[str] | None = None,
 ) -> tuple[str, str]:
-    """Classify a commitment title as ``self``, ``child``, or ``fyi``.
+    """Classify a commitment title as ``self``, ``child``, ``care``, or ``fyi``.
 
     Args:
         title: The event title to classify.
@@ -145,16 +168,23 @@ def classify_kind(
             tagged ``child`` deterministically (source ``"roster"``) — no model
             call — so a kid's appointment reaches the shared household sheet even
             when Ollama is down.
+        care_names: The user's care-recipient names (an aging parent, ill partner).
+            When the title names one, the event is tagged ``care`` deterministically
+            (source ``"roster"``) — the adult-you-look-after counterpart, so it
+            reaches the ``/care`` surface even offline. Checked *after* the child
+            roster, so a name on both lists resolves as ``child``.
 
     Returns:
-        ``(kind, source)`` where ``source`` is ``"roster"`` (matched a kid's name),
-        ``"llm"`` (the model decided), or ``"default"`` (fallback). A blank title
-        is ``("self", "default")``.
+        ``(kind, source)`` where ``source`` is ``"roster"`` (matched a kid's or
+        care-recipient's name), ``"llm"`` (the model decided), or ``"default"``
+        (fallback). A blank title is ``("self", "default")``.
     """
     if not title or not title.strip():
         return (KIND_SELF, "default")
     if roster_child_match(title, child_names):
         return (KIND_CHILD, "roster")
+    if roster_care_match(title, care_names):
+        return (KIND_CARE, "roster")
     if client is not None:
         try:
             reply = client.generate(

@@ -12,13 +12,14 @@ order. Nearly every capability area has shipped its core; what remains is
 closeout, consolidation, and a few net-new surfaces.
 
 1. **Context Pack surface tailoring** (see "Beyond v1 › Context Packs"). The
-   **Caregiver** pack, the dedicated `care` commitment kind, the `/care` surface, and
-   the **situation-tool registry** (with the Parent pack's school-run tool) have now
-   shipped. What remains is breadth on the same seams: **more situation tools**
-   (sick-day replan, pack-the-bag checklist) slotting into the `packs` router, and
-   **more tailored surfaces** — plus the smaller `/care` follow-ups (a conditional
-   nav link and a care-recipient facts/roster model, the caregiver mirror of
-   `child_names`).
+   **Caregiver** pack, the dedicated `care` commitment kind, the `/care` surface,
+   the **situation-tool registry** (with the Parent pack's school-run tool), and the
+   **care-recipient names roster** (the caregiver mirror of `child_names`, driving
+   deterministic `care` classification) have now shipped. What remains is breadth on
+   the same seams: **more situation tools** (sick-day replan, pack-the-bag checklist)
+   slotting into the `packs` router, and **more tailored surfaces** — plus the
+   smaller `/care` follow-up of a conditional nav link (revealed when the pack is on,
+   mirroring the operator Admin link).
 2. **Close the learning loop's remaining causal check** (see "Learning &
    adaptation" §2). The channel-signal auto-act shipped (§4 now damps a
    non-predictive channel toward pooled); what's left is the harder **sensor

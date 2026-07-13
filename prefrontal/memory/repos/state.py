@@ -21,6 +21,14 @@ from prefrontal.memory.repos._base import Repo
 #: the ``location_staleness_seconds`` coaching key.
 DEFAULT_LOCATION_TTL_SECONDS = 3600.0
 
+#: Coaching-state key holding the user's care-recipient names — the adults they
+#: look after (an aging parent, ill partner). Comma-separated (names carry spaces,
+#: so unlike ``trip_quick_domains`` we don't split on whitespace). Per-user, not
+#: household: a solo caregiver isn't a co-parent, so this is the caregiver
+#: counterpart to the household kids' roster. Drives the deterministic ``care``
+#: classification pass (:func:`prefrontal.classify.roster_care_match`).
+CARE_RECIPIENT_NAMES_KEY = "care_recipient_names"
+
 
 class StateRepo(Repo):
     """Coaching state, last-known location, and the profile-narrative cache."""
@@ -141,6 +149,58 @@ class StateRepo(Repo):
             (self._uid(), key),
         )
         self.conn.commit()
+
+    def care_recipient_names(self) -> list[str]:
+        """The user's care-recipient names, or ``[]`` when none are set.
+
+        A sync-safe accessor for the calendar classifier's care roster pass
+        (:func:`prefrontal.classify.roster_care_match`), the per-user counterpart
+        to :meth:`~prefrontal.memory.repos.household.HouseholdRepo.child_names`.
+        Reads :data:`CARE_RECIPIENT_NAMES_KEY` (comma-separated), trimming blanks
+        and de-duplicating case-insensitively while preserving order — so a stray
+        trailing comma or a repeat never produces an empty or duplicate roster name.
+        """
+        raw = self.get_state(CARE_RECIPIENT_NAMES_KEY, "") or ""
+        names: list[str] = []
+        seen: set[str] = set()
+        for token in raw.split(","):
+            name = token.strip()
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
+                names.append(name)
+        return names
+
+    def set_care_recipient_names(
+        self, names: list[str], source: str = "explicit"
+    ) -> list[str]:
+        """Replace the care-recipient roster, returning the normalized list stored.
+
+        Trims blanks and de-duplicates (case-insensitive, order-preserving) the
+        same way :meth:`care_recipient_names` reads them, then stores the result
+        comma-separated under :data:`CARE_RECIPIENT_NAMES_KEY`. An empty result
+        deletes the key (rather than storing an empty string), so "clear the
+        roster" and "never set one" read identically.
+
+        Args:
+            names: The desired care-recipient names (raw; normalized here).
+            source: ``explicit`` when the user set it (the default), ``inferred``
+                if derived.
+
+        Returns:
+            The normalized names actually stored.
+        """
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            n = (name or "").strip()
+            if n and n.lower() not in seen:
+                seen.add(n.lower())
+                cleaned.append(n)
+        if cleaned:
+            self.set_state(CARE_RECIPIENT_NAMES_KEY, ", ".join(cleaned), source=source)
+        else:
+            self.delete_state(CARE_RECIPIENT_NAMES_KEY)
+        return cleaned
 
     def all_state(self) -> dict[str, dict[str, Any]]:
         """Return the entire coaching state keyed by preference name.

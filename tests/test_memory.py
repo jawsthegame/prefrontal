@@ -42,6 +42,22 @@ def store():
         yield scoped_default(s)
 
 
+def test_care_recipient_names_roundtrip_and_normalization(store):
+    # Empty by default.
+    assert store.care_recipient_names() == []
+    # A write normalizes: trims blanks, drops case-insensitive dupes, keeps order.
+    stored = store.set_care_recipient_names(["  Mom ", "Dad", "mom", ""])
+    assert stored == ["Mom", "Dad"]
+    assert store.care_recipient_names() == ["Mom", "Dad"]
+    # A read tolerates a hand-edited value with stray/empty tokens.
+    store.set_state("care_recipient_names", "Mom, , Aunt May,", source="explicit")
+    assert store.care_recipient_names() == ["Mom", "Aunt May"]
+    # Clearing deletes the key (so "cleared" reads the same as "never set").
+    assert store.set_care_recipient_names([]) == []
+    assert store.care_recipient_names() == []
+    assert store.get_state("care_recipient_names") is None
+
+
 def test_schema_creates_core_tables(store):
     """init_db should create at least the three core tables (plus feature tables)."""
     rows = store.conn.execute(

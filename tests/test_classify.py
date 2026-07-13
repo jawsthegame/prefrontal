@@ -6,6 +6,7 @@ from prefrontal.classify import (
     build_system_prompt,
     classify_kind,
     parse_kind_reply,
+    roster_care_match,
     roster_child_match,
 )
 from prefrontal.integrations.ollama import OllamaError
@@ -73,6 +74,30 @@ def test_classify_kind_roster_pass_wins_offline_and_over_model():
     assert classify_kind(
         "Standup", client=_StubClient("SELF"), child_names=["Sam"]
     ) == ("self", "llm")
+
+
+def test_roster_care_match_word_boundary_and_case():
+    assert roster_care_match("Mom — cardiology", ["Mom"]) is True
+    assert roster_care_match("MOM's PT", ["Mom"]) is True              # case + possessive
+    assert roster_care_match("Mommy group", ["Mom"]) is False         # not a substring
+    assert roster_care_match("cardiology", ["Mom", "Dad"]) is False
+    assert roster_care_match("Mom appt", []) is False                 # no roster
+
+
+def test_classify_kind_care_roster_offline_and_over_model():
+    # Names a care recipient, no model → deterministic 'care'.
+    assert classify_kind("Mom cardiology", care_names=["Mom"]) == ("care", "roster")
+    # Care roster short-circuits the model too.
+    client = _StubClient("SELF")
+    assert classify_kind("Mom PT", client=client, care_names=["Mom"]) == ("care", "roster")
+    assert client.calls == []
+
+
+def test_classify_kind_child_roster_wins_over_care_when_name_on_both():
+    # A name on both lists resolves as 'child' — the child pass runs first.
+    assert classify_kind(
+        "Alex checkup", child_names=["Alex"], care_names=["Alex"]
+    ) == ("child", "roster")
 
 
 def test_classify_kind_model_can_return_child():

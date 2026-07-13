@@ -65,6 +65,56 @@ def test_care_sheet_surfaces_care_appointments_and_care_todos(store):
     assert "Buy groceries" not in todo_titles
 
 
+def test_care_recipients_disabled_when_pack_off(store):
+    with _client(store) as c:
+        body = c.get("/care/recipients", headers=_auth()).json()
+        assert body == {"enabled": False, "names": []}
+        # A write is refused when the pack is off.
+        r = c.post("/care/recipients", headers=_auth(), json={"names": ["Mom"]})
+    assert r.status_code == 409
+
+
+def test_care_recipients_set_get_and_normalization(store):
+    with _client(store, packs=("caregiver",)) as c:
+        # Empty roster to start.
+        assert c.get("/care/recipients", headers=_auth()).json() == {
+            "enabled": True,
+            "names": [],
+        }
+        # A write normalizes (trim, de-dupe) and echoes the stored list.
+        body = c.post(
+            "/care/recipients", headers=_auth(), json={"names": ["  Mom ", "Dad", "mom"]}
+        ).json()
+        assert body == {"enabled": True, "names": ["Mom", "Dad"]}
+        assert c.get("/care/recipients", headers=_auth()).json()["names"] == ["Mom", "Dad"]
+        # An empty list clears the roster.
+        assert c.post("/care/recipients", headers=_auth(), json={"names": []}).json()[
+            "names"
+        ] == []
+
+
+def test_care_recipient_names_drive_care_classification(store):
+    # The roster tags a matching synced event 'care' deterministically (offline),
+    # so it then shows on the care sheet — the whole point of the roster.
+    store.set_care_recipient_names(["Mom"])
+    with _client(store, packs=("caregiver",)) as c:
+        c.post(
+            "/webhooks/calendar/sync",
+            headers=_auth(),
+            json={
+                "events": [
+                    {
+                        "title": "Mom cardiology",
+                        "start_at": "2099-02-02 10:00:00",
+                        "external_id": "ev-mom-1",
+                    }
+                ]
+            },
+        )
+        body = c.get("/care/sheet", headers=_auth()).json()
+    assert [a["title"] for a in body["appointments"]] == ["Mom cardiology"]
+
+
 def test_care_page_serves_html(store):
     # The /care page is a self-contained shell (data-less); it loads regardless of
     # the pack (the data endpoint does the gating).
