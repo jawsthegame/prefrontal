@@ -33,7 +33,9 @@ from prefrontal.packs import get as get_pack
 def test_parent_pack_is_registered_with_expected_composition():
     parent = get_pack("parent")
     assert parent.title == "Parent"
-    assert set(parent.modules) == {"time_blindness", "task_paralysis"}
+    # trip_tracking rides along so the seeded focus-balance guardrail (its module)
+    # actually detects trips and fires its nudge.
+    assert set(parent.modules) == {"time_blindness", "task_paralysis", "trip_tracking"}
     assert "child" in parent.commitment_kinds
     assert "school" in parent.categories
     assert parent in available()
@@ -42,8 +44,11 @@ def test_parent_pack_is_registered_with_expected_composition():
 def test_caregiver_pack_is_registered_with_expected_composition():
     care = get_pack("caregiver")
     assert care.title == "Caregiver"
-    # Leans on appointment timing, dreaded admin, and — distinctively — self-care.
-    assert set(care.modules) == {"time_blindness", "task_paralysis", "self_care"}
+    # Leans on appointment timing, dreaded admin, and — distinctively — self-care;
+    # trip_tracking rides along to power the seeded focus-balance guardrail.
+    assert set(care.modules) == {
+        "time_blindness", "task_paralysis", "self_care", "trip_tracking"
+    }
     assert set(care.categories) == {"medical", "admin", "caregiving"}
     assert care.commitment_kinds == ("care",)  # the dedicated care-recipient kind
     # Arms the self-care checks and protects personal time; keeps admin in hours.
@@ -60,7 +65,7 @@ def test_caregiver_pack_switches_on_self_care_and_arms_it(monkeypatch):
 
     s = Settings(modules=("impulsivity",), packs=("caregiver",))
     keys = {m.key for m in enabled_modules(s)}
-    assert {"time_blindness", "task_paralysis", "self_care"} <= keys
+    assert {"time_blindness", "task_paralysis", "self_care", "trip_tracking"} <= keys
     assert module_is_enabled("self_care", s)
 
 
@@ -86,8 +91,10 @@ def test_enabled_pack_switches_its_modules_on():
     # A specific module list is extended by the pack's modules.
     s = Settings(modules=("impulsivity",), packs=("parent",))
     keys = {m.key for m in enabled_modules(s)}
-    assert keys == {"impulsivity", "time_blindness", "task_paralysis"}
-    assert pack_module_keys(s) == ["time_blindness", "task_paralysis"]
+    assert keys == {"impulsivity", "time_blindness", "task_paralysis", "trip_tracking"}
+    assert pack_module_keys(s) == ["time_blindness", "task_paralysis", "trip_tracking"]
+    # The focus-balance guardrail the pack seeds actually fires: its module is on.
+    assert module_is_enabled("trip_tracking", s)
     # is_enabled honors the pack too, so the module's cues actually fire.
     assert module_is_enabled("time_blindness", s)
     assert not module_is_enabled("time_blindness", Settings(modules=("impulsivity",)))
