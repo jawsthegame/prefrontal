@@ -106,6 +106,58 @@ class ConflictDismiss(BaseModel):
 
     key: str = Field(description="The possible-conflict's `key` from the conflicts list.")
 
+class RescheduleRequest(BaseModel):
+    """Body of ``POST /commitments/conflicts/reschedule``.
+
+    Resolve a double-booking by asking one side to move: identify the conflicting
+    pair by its ``key`` (from ``GET /commitments/conflicts``), optionally choose
+    which listed side to move, and draft — or, with ``send``, actually email — a
+    polite reschedule request to the other party.
+    """
+
+    key: str = Field(description="The conflict pair's `key` from the conflicts list.")
+    move: str | None = Field(
+        default=None,
+        description=(
+            "Which side of the listed pair to move: `a` or `b`. Omit to let the "
+            "server suggest one (it prefers moving the softer/later appointment)."
+        ),
+    )
+    to: str | None = Field(
+        default=None,
+        description=(
+            "Recipient email for the reschedule notice. Required to actually `send`; "
+            "for a preview (the default) it may be omitted."
+        ),
+    )
+    recipient_name: str | None = Field(
+        default=None, description="The other party's display name, used in the draft."
+    )
+    note: str | None = Field(
+        default=None,
+        description="Optional cover note from the user folded into the request.",
+    )
+    offer_slots: bool = Field(
+        default=True,
+        description="Offer a few of your open times as alternatives in the draft.",
+    )
+    send: bool = Field(
+        default=False,
+        description=(
+            "`false` (default) previews the draft without sending — the "
+            "confirm-first path. `true` emails it over your SMTP (requires `to`) and, "
+            "on success, dismisses the conflict so it stops re-alerting."
+        ),
+    )
+
+    @field_validator("move")
+    @classmethod
+    def _valid_side(cls, value: str | None) -> str | None:
+        if value is not None and value.strip().lower() not in ("a", "b"):
+            raise ValueError("move must be 'a' or 'b'")
+        return value.strip().lower() if value is not None else None
+
+
 class CommitmentKind(BaseModel):
     """Body of ``POST /commitments/{id}/kind`` — correct a commitment's kind."""
 

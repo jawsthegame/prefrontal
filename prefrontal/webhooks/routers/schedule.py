@@ -94,12 +94,23 @@ from prefrontal.panic import (
     evaluate_panic_check,
     render_panic,
 )
+from prefrontal.reschedule import (
+    STATUS_DRAFTED,
+    STATUS_FORWARDED,
+    RescheduleResult,
+    build_reschedule_draft,
+    pick_move_side,
+    send_reschedule_draft,
+)
 from prefrontal.scheduling import (
     DEFAULT_SLOT_DAYS,
     STATE_AVAILABLE_HOURS_KEY,
     WEEKDAYS,
     find_slots,
     window_config_for,
+)
+from prefrontal.sources import (
+    resolve_smtp_for,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -126,6 +137,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentPrepared,
     ConflictDismiss,
     PlaceCreate,
+    RescheduleRequest,
     TravelPadding,
 )
 from prefrontal.webhooks.services import RouterServices
@@ -984,6 +996,146 @@ def build_router(services: RouterServices) -> APIRouter:
         memory = ctx.store
         memory.dismiss_conflict(payload.key)
         return {"dismissed": payload.key}
+
+    @router.post("/commitments/conflicts/reschedule", tags=["schedule"])
+    def reschedule_conflict(
+        payload: RescheduleRequest,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Resolve a double-booking by asking one side to move (delegation-style).
+
+        Identifies the conflicting pair by its ``key`` (from
+        ``GET /commitments/conflicts``), picks which appointment to move (the
+        softer/later one by default; override with ``move: "a"|"b"``), and drafts a
+        short, polite reschedule request to the other party — offering a few of your
+        open slots as alternatives. The local model writes the draft when reachable,
+        with an honest offline fallback.
+
+        Confirm-first by design: with ``send`` omitted/false this only **previews**
+        the draft (``status: "drafted"``, nothing leaves the box). With ``send:
+        true`` and a ``to`` recipient it emails the notice over your own SMTP source
+        (``resolve_smtp_for``) — ``forwarded`` on success (and the conflict is then
+        dismissed so it stops re-alerting), or ``failed`` with the draft kept for
+        manual sending if SMTP isn't configured or the relay errors (nothing lost).
+        """
+        memory = ctx.store
+        # Recompute the current conflicts and find the pair by its dismissal key —
+        # the same identity the conflicts list and dismiss endpoint use. Reschedule
+        # applies only to *firm* double-bookings (two real events): a soft
+        # "possible" conflict is a placeholder/hold overlapping a real event, which
+        # has no genuine other party to email, so it's rejected explicitly below
+        # rather than silently drafted against a "Busy" block.
+        hard, possible = partition_conflicts(
+            find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
+        )
+        match = next(
+            (c for c in hard if conflict_dismissal_key(c) == payload.key), None
+        )
+        if match is None:
+            if any(conflict_dismissal_key(c) == payload.key for c in possible):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        "that overlap is a soft possible-conflict (a placeholder/hold "
+                        "block), not a firm double-booking; reschedule applies only to "
+                        "firm double-bookings"
+                    ),
+                )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no such active conflict (it may have been resolved or dismissed)",
+            )
+
+        # Which side moves: an explicit override, else the suggested (softer) one.
+        if payload.move == "a":
+            keep, move = match.b, match.a
+        elif payload.move == "b":
+            keep, move = match.a, match.b
+        else:
+            keep, move = pick_move_side(match.a, match.b)
+
+        tz = resolved_settings.timezone
+
+        def _local(ts: str | None) -> Any:
+            return local_datetime(_parse_dt_or_none(ts), tz)
+
+        move_start_local = _local(move["start_at"])
+        move_when = (
+            move_start_local.strftime("%a %b %-d, %-I:%M %p")
+            if move_start_local
+            else None
+        )
+
+        # Offer a few open slots the same length as the moved appointment as
+        # alternatives (read-only; honors the user's available-hours band).
+        slot_labels: list[str] = []
+        if payload.offer_slots:
+            span = _parse_dt_or_none(move.get("end_at"))
+            start = _parse_dt_or_none(move.get("start_at"))
+            minutes = 30.0
+            if span is not None and start is not None and span > start:
+                minutes = max(15.0, (span - start).total_seconds() / 60.0)
+            cfg = window_config_for(resolved_settings, memory)
+            for w in find_slots(
+                memory.upcoming_commitments(), utcnow(), tz,
+                minutes=minutes, days=DEFAULT_SLOT_DAYS,
+                awake_band=cfg.awake_band(), band_for_weekday=cfg.band_for_weekday,
+                limit=3,
+            ):
+                start_local, end_local = _local(w.start), _local(w.end)
+                if start_local is None or end_local is None:
+                    continue
+                slot_labels.append(
+                    f"{start_local.strftime('%a %b %-d')}, "
+                    f"{start_local.strftime('%-I:%M %p')}–{end_local.strftime('%-I:%M %p')}"
+                )
+
+        client = ollama_client if ollama_client.available() else None
+        draft = build_reschedule_draft(
+            move_title=move["title"],
+            move_when=move_when,
+            recipient_name=payload.recipient_name,
+            owner_name=ctx.user.get("display_name") or None,
+            note=payload.note,
+            slots=slot_labels or None,
+            client=client,
+        )
+
+        if not payload.send:
+            result = RescheduleResult(
+                STATUS_DRAFTED, draft.subject, draft.body, recipient=payload.to,
+                detail="preview only — nothing sent", offline=draft.offline,
+            )
+        else:
+            smtp = resolve_smtp_for(memory, domain=move.get("domain"))
+            result = send_reschedule_draft(draft, recipient=payload.to, smtp=smtp)
+
+        dismissed: str | None = None
+        if result.status == STATUS_FORWARDED:
+            # Sent — stop this pair from re-alerting while we await a reply.
+            memory.dismiss_conflict(payload.key)
+            dismissed = payload.key
+
+        def side(x: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "id": x["id"],
+                "title": x["title"],
+                "start_at": x["start_at"],
+                "calendar": feed_label(x.get("external_id")),
+            }
+
+        return {
+            "moved": side(move),
+            "kept": side(keep),
+            "status": result.status,
+            "subject": result.subject,
+            "body": result.body,
+            "recipient": result.recipient,
+            "detail": result.detail,
+            "offline": result.offline,
+            "slots": slot_labels,
+            "dismissed": dismissed,
+        }
 
     @router.post("/commitments/{commitment_id}/kind", tags=["schedule"])
     def set_commitment_kind(
