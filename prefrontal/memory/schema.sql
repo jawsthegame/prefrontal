@@ -596,6 +596,10 @@ CREATE TABLE IF NOT EXISTS places (
     label      TEXT,                       -- original display name
     lat        REAL    NOT NULL,
     lon        REAL    NOT NULL,
+    -- Optional life-sphere (shop/work/home/kids/personal). When set, a closed-loop
+    -- trip whose stop lands at this place pre-fills its focus-balance domain, so a
+    -- recurring destination tagged once auto-files every trip through it.
+    domain     TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, name)
 );

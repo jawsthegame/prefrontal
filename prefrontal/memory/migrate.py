@@ -334,9 +334,12 @@ def _rebuild_constraints(conn: sqlite3.Connection, legacy_id: int) -> None:
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "user_id INTEGER NOT NULL REFERENCES users(id), "
             "name TEXT NOT NULL, label TEXT, lat REAL NOT NULL, lon REAL NOT NULL, "
+            "domain TEXT, "
             "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
             "UNIQUE (user_id, name))"
         ),
+        # domain is new (nullable): a legacy row has none, so it isn't copied and
+        # defaults NULL in the rebuilt table.
         columns="id, user_id, name, label, lat, lon, created_at",
     )
     _rebuild_table(

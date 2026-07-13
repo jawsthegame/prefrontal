@@ -27,7 +27,12 @@ from datetime import datetime
 from typing import Any
 
 from prefrontal.clock import TS_FMT, utcnow
-from prefrontal.geo import DEFAULT_HOME_RADIUS_M, haversine_m
+from prefrontal.geo import (
+    DEFAULT_HOME_RADIUS_M,
+    DEFAULT_PLACE_MATCH_RADIUS_M,
+    haversine_m,
+    nearest_place,
+)
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.scheduling import minutes_between
@@ -43,6 +48,7 @@ __all__ = [
     "process_location",
     "record_trip_return",
     "apply_reflection",
+    "suggest_trip_labeling",
     "trip_label_prompt",
 ]
 
@@ -447,12 +453,92 @@ def apply_reflection(
     }
 
 
-def trip_label_prompt(trip: dict[str, Any]) -> str:
+def suggest_trip_labeling(
+    store: Any,
+    trip: dict[str, Any],
+    *,
+    radius_m: float | None = None,
+    places: list[dict[str, Any]] | None = None,
+    waypoints: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Reverse-match a completed trip's stops to a curated place — a label/domain guess.
+
+    The passive counterpart to naming a trip by hand: a trip records a **waypoint**
+    for each place the phone dwelt at long enough to count as a stop
+    (:func:`process_location`), so a stop that lands at one of the user's curated
+    places (:meth:`~prefrontal.memory.repos.schedule.ScheduleRepo.places`) *is* a
+    destination they've already named. This snaps that coordinate back onto the
+    place (:func:`prefrontal.geo.nearest_place`) and returns a labeling suggestion
+    the ask can pre-fill — so a recurring destination is confirmed with a tap rather
+    than typed, and a place tagged with a life-sphere pre-files the focus-balance
+    domain too.
+
+    The **farthest-from-home** matched stop wins — that's the trip's real
+    destination (a home → shop → home run should read as "shop", not the corner the
+    phone paused at). Best-effort and offline (curated places only, no network
+    reverse-geocode): ``None`` when the trip has no stops, no places are curated, or
+    no stop lands within the match radius.
+
+    Reads are ordered cheapest-signal-first and every input is prefetchable, so a
+    caller annotating many trips per tick (the ``/trips`` list, the label-ask cue)
+    can avoid an N+1: waypoints are checked *before* places/radius, so a
+    no-stop trip costs nothing further, and ``places``/``radius_m``/``waypoints`` can
+    each be passed in to reuse a single read across the batch.
+
+    Args:
+        store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        trip: The completed trip dict (needs ``id``).
+        radius_m: Match radius in metres; defaults to the ``place_match_radius_m``
+            coaching key, then :data:`~prefrontal.geo.DEFAULT_PLACE_MATCH_RADIUS_M`.
+        places: Preloaded curated places to match against; ``None`` reads them from
+            the store (pass the shared list when annotating several trips at once).
+        waypoints: Preloaded stops for this trip; ``None`` reads them from the store
+            (pass them to reuse a read the caller already did, e.g. for a stop count).
+
+    Returns:
+        ``{"place", "label", "domain", "distance_m"}`` for the best match (``domain``
+        may be ``None`` if the place carries no sphere), or ``None``.
+    """
+    # Cheapest signal first: no stops → nothing to match, and we skip the places/
+    # radius reads entirely (the common short trip that never dwelt anywhere).
+    raw_waypoints = waypoints if waypoints is not None else store.trip_waypoints(trip["id"])
+    if not raw_waypoints:
+        return None
+    resolved_places = places if places is not None else store.places()
+    if not resolved_places:
+        return None
+    if radius_m is None:
+        radius_m = store.get_float("place_match_radius_m", DEFAULT_PLACE_MATCH_RADIUS_M)
+    # Destination-first: the farthest stop from home is the most informative label.
+    stops = sorted(raw_waypoints, key=lambda w: -(w.get("distance_m") or 0))
+    for stop in stops:
+        lat, lon = stop.get("lat"), stop.get("lon")
+        if lat is None or lon is None:
+            continue
+        match = nearest_place(resolved_places, lat, lon, radius_m=radius_m)
+        if match is not None:
+            place, dist = match
+            return {
+                "place": place.get("name"),
+                "label": place.get("label") or place.get("name"),
+                "domain": place.get("domain"),
+                "distance_m": round(dist),
+            }
+    return None
+
+
+def trip_label_prompt(
+    trip: dict[str, Any], *, suggestion: dict[str, Any] | None = None
+) -> str:
     """Build the one-line "what was this trip?" ask for a completed, unlabeled trip.
 
     Args:
         trip: A completed trip dict (uses ``actual_minutes`` / ``max_distance_m``
             when present for a little grounding).
+        suggestion: An optional reverse-match guess from
+            :func:`suggest_trip_labeling`; when present the ask leads with it ("Looks
+            like <place> — tap to confirm") so a recognized destination is a
+            one-tap confirm rather than a cold prompt.
     """
     minutes = trip.get("actual_minutes")
     dist = trip.get("max_distance_m")
@@ -466,13 +552,21 @@ def trip_label_prompt(trip: dict[str, Any]) -> str:
     if stops:
         bits.append(f"{stops} stop{'s' if stops != 1 else ''}")
     span = f" ({', '.join(bits)})" if bits else ""
+    if suggestion and suggestion.get("label"):
+        domain = suggestion.get("domain")
+        sphere = f" ({domain})" if domain else ""
+        lead = (
+            f"You got back from a trip{span} — looks like {suggestion['label']}{sphere}? "
+            "Tap to confirm, relabel, or say how it went."
+        )
+    else:
+        lead = (
+            f"You got back from a trip{span} — what was it? "
+            "Tap to label it, file it (shop/work/home/kids/personal), and say how it went."
+        )
     multi = (
         " Looks like a few stops — tell me about each if they were different errands."
         if stops >= 2
         else ""
     )
-    return (
-        f"You got back from a trip{span} — what was it? "
-        "Tap to label it, file it (shop/work/home/kids/personal), and say how it went."
-        f"{multi}"
-    )
+    return f"{lead}{multi}"

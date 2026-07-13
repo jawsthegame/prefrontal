@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.config import Settings
+from prefrontal.geo import nearest_place
 from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
@@ -28,6 +29,7 @@ from prefrontal.trips import (
     parse_outcome_reply,
     process_location,
     record_trip_return,
+    suggest_trip_labeling,
     trip_label_prompt,
 )
 from prefrontal.webhooks.app import create_app
@@ -196,6 +198,117 @@ def _at(minutes):
     """A naive-UTC instant `minutes` from a fixed base (deterministic dwell math)."""
     base = datetime(2026, 7, 12, 9, 0, 0)
     return base + timedelta(minutes=minutes)
+
+
+# -- reverse-match trip stops to curated places ------------------------------
+
+
+def test_nearest_place_within_and_beyond_radius():
+    places = [
+        {"name": "costco", "label": "Costco", "lat": FAR[0], "lon": FAR[1]},
+        {"name": "office", "label": "Office", "lat": FARTHER[0], "lon": FARTHER[1]},
+    ]
+    hit = nearest_place(places, FAR[0], FAR[1], radius_m=200)
+    assert hit is not None and hit[0]["name"] == "costco" and hit[1] < 50
+    # Nothing within radius of home.
+    assert nearest_place(places, HOME[0], HOME[1], radius_m=200) is None
+    # No places → no match; bad coords are skipped, not fatal.
+    assert nearest_place([], FAR[0], FAR[1]) is None
+    assert nearest_place([{"name": "x"}], FAR[0], FAR[1]) is None
+
+
+def test_place_domain_persists_and_coalesces(store):
+    pid = store.add_place("costco", FAR[0], FAR[1], label="Costco", domain="business")
+    assert pid
+    got = next(p for p in store.places() if p["name"] == "costco")
+    assert got["domain"] == "business"  # stored as given (CLI normalizes to shop)
+    # A re-add that omits the domain keeps the prior one (COALESCE).
+    store.add_place("costco", FAR[0], FAR[1], label="Costco Wholesale")
+    assert next(p for p in store.places() if p["name"] == "costco")["domain"] == "business"
+    # set_place_domain edits/clears.
+    assert store.set_place_domain("costco", "shop") is True
+    assert next(p for p in store.places() if p["name"] == "costco")["domain"] == "shop"
+    assert store.set_place_domain("costco", None) is True
+    assert next(p for p in store.places() if p["name"] == "costco")["domain"] is None
+    assert store.set_place_domain("nope", "shop") is False
+
+
+def _ts(minutes):
+    return _at(minutes).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _completed_trip_with_stop(store, coords, *, dist_m, minutes=30):
+    """A completed trip carrying one waypoint at ``coords``."""
+    tid = store.open_trip(departed_at=_ts(0))
+    store.add_trip_waypoint(tid, coords[0], coords[1], dist_m, _ts(10))
+    store.close_trip(tid)
+    return store.get_trip(tid)
+
+
+def test_suggest_trip_labeling_matches_a_stop_to_a_place(store):
+    store.set_home(*HOME)
+    store.add_place("costco", FAR[0], FAR[1], label="Costco", domain="shop")
+    trip = _completed_trip_with_stop(store, FAR, dist_m=7000)
+    sugg = suggest_trip_labeling(store, trip)
+    assert sugg is not None
+    assert sugg["place"] == "costco" and sugg["label"] == "Costco"
+    assert sugg["domain"] == "shop" and sugg["distance_m"] < 50
+
+
+def test_suggest_trip_labeling_prefers_the_farthest_stop(store):
+    store.set_home(*HOME)
+    store.add_place("gym", FAR[0], FAR[1], label="Gym", domain="personal")
+    store.add_place("office", FARTHER[0], FARTHER[1], label="Office", domain="work")
+    tid = store.open_trip(departed_at=_ts(0))
+    store.add_trip_waypoint(tid, FAR[0], FAR[1], 7000, _ts(10))
+    store.add_trip_waypoint(tid, FARTHER[0], FARTHER[1], 11000, _ts(20))
+    store.close_trip(tid)
+    sugg = suggest_trip_labeling(store, store.get_trip(tid))
+    # The destination (farthest from home) leads, not the closer stop.
+    assert sugg["place"] == "office" and sugg["domain"] == "work"
+
+
+def test_suggest_trip_labeling_none_when_no_match(store):
+    store.set_home(*HOME)
+    # No places at all.
+    trip = _completed_trip_with_stop(store, FAR, dist_m=7000)
+    assert suggest_trip_labeling(store, trip) is None
+    # A place exists but the stop is out of range of it.
+    store.add_place("office", FARTHER[0], FARTHER[1], label="Office")
+    assert suggest_trip_labeling(store, trip, radius_m=100) is None
+    # A trip with no recorded stops has nothing to match.
+    bare = store.open_trip(departed_at=_ts(0))
+    store.close_trip(bare)
+    assert suggest_trip_labeling(store, store.get_trip(bare)) is None
+
+
+def test_suggest_trip_labeling_accepts_prefetched_inputs(store):
+    """Preloaded places/waypoints/radius reuse one read across a batch of trips."""
+    store.set_home(*HOME)
+    trip = _completed_trip_with_stop(store, FAR, dist_m=7000)
+    places = [{"name": "costco", "label": "Costco", "lat": FAR[0], "lon": FAR[1], "domain": "shop"}]
+    wps = store.trip_waypoints(trip["id"])
+    sugg = suggest_trip_labeling(store, trip, places=places, radius_m=200, waypoints=wps)
+    assert sugg["label"] == "Costco" and sugg["domain"] == "shop"
+
+
+def test_suggest_trip_labeling_short_circuits_without_stops(store):
+    """A stopless trip returns None from prefetched waypoints without touching places."""
+    store.set_home(*HOME)
+    tid = store.open_trip(departed_at=_ts(0))
+    store.close_trip(tid)
+    # Passing empty waypoints proves the no-stop early-out needs no places lookup.
+    assert suggest_trip_labeling(store, store.get_trip(tid), waypoints=[]) is None
+
+
+def test_trip_label_prompt_leads_with_suggestion():
+    plain = trip_label_prompt({"actual_minutes": 30})
+    assert "what was it" in plain.lower()
+    guided = trip_label_prompt(
+        {"actual_minutes": 30}, suggestion={"label": "Costco", "domain": "shop"}
+    )
+    assert "looks like costco (shop)" in guided.lower()
+    assert "confirm" in guided.lower()
 
 
 def test_multi_stop_trip_records_a_waypoint_per_dwell(store):
@@ -483,6 +596,21 @@ def test_location_endpoint_detects_loop(client):
     assert trips["active"] is None
     assert trip_id in [t["id"] for t in trips["unlabeled"]]
     assert "errand" in trips["categories"]
+    # Each unlabeled trip carries a suggestion slot (null here — no curated place).
+    assert all("suggestion" in t for t in trips["unlabeled"])
+
+
+def test_trips_unlabeled_carries_place_suggestion(client, store):
+    """A stop landing at a curated place surfaces a labeling suggestion on /trips."""
+    store.set_home(*HOME)
+    store.add_place("costco", FAR[0], FAR[1], label="Costco", domain="shop")
+    tid = store.open_trip(departed_at=_ts(0))
+    store.add_trip_waypoint(tid, FAR[0], FAR[1], 7000, _ts(10))
+    store.close_trip(tid)
+    unlabeled = client.get("/trips", headers=_auth()).json()["unlabeled"]
+    row = next(t for t in unlabeled if t["id"] == tid)
+    assert row["suggestion"]["label"] == "Costco"
+    assert row["suggestion"]["domain"] == "shop"
 
 
 def test_location_endpoint_dormant_without_home(client):

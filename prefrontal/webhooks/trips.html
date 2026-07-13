@@ -299,9 +299,17 @@ function tripRow(t) {
     tags.push(`<span class="chip ${cls}">${word}</span>`);
   }
   const refl = t.reflection ? `<div class="refl">“${esc(t.reflection)}”</div>` : "";
+  // For a trip still awaiting a name, show the reverse-matched place guess so it
+  // reads as a one-tap confirm rather than a blank "unlabeled".
+  let sugg = "";
+  if (!t.label && t.suggestion && t.suggestion.label) {
+    const d = t.suggestion.domain;
+    const dom = d ? ` (${esc(DOMAIN_LABEL[d] || d)})` : "";
+    sugg = `<div class="hint">Looks like ${esc(t.suggestion.label)}${dom} — confirm on your phone.</div>`;
+  }
   return `<div class="trip">
     <div class="when"><b>${esc(w.day)}</b>${esc(w.time)}</div>
-    <div class="main">${name}<div class="tags">${tags.join("")}</div>${refl}</div>
+    <div class="main">${name}${sugg}<div class="tags">${tags.join("")}</div>${refl}</div>
   </div>`;
 }
 
