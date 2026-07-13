@@ -176,6 +176,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 classify=classify,
                 default_tz=resolved_settings.timezone,
                 recur_horizon_hours=resolved_settings.calendar_horizon_days * 24.0,
+                recur_min_occurrences=resolved_settings.calendar_min_occurrences,
             )
         except ValueError as exc:
             raise HTTPException(

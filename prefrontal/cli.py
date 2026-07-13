@@ -2870,6 +2870,7 @@ def _cmd_calendar(args: argparse.Namespace) -> int:
                 summary = sync_calendar(
                     store, events, classify=classify, default_tz=settings.timezone,
                     recur_horizon_hours=settings.calendar_horizon_days * 24.0,
+                    recur_min_occurrences=settings.calendar_min_occurrences,
                 )
             except ValueError as exc:
                 print(f"[{handle}] calendar sync rejected: {exc}", file=sys.stderr)

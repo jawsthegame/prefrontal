@@ -119,6 +119,12 @@ class Settings:
             bounds how far a weekly/standing series is materialized (a series must
             be bounded), so the calendar page and slot finder see a month out
             instead of ~1 day. Env: ``PREFRONTAL_CALENDAR_HORIZON_DAYS``.
+        calendar_min_occurrences: Per-series backstop (default 2). Keep at least this
+            many future occurrences of each recurring series even when its next
+            instance is beyond ``calendar_horizon_days``, so a monthly/quarterly/annual
+            meeting stays visible instead of vanishing between occurrences. Passed to
+            ``sync_calendar`` as ``recur_min_occurrences``; 0 disables it.
+            Env: ``PREFRONTAL_CALENDAR_MIN_OCCURRENCES``.
         ics_fetch_timeout: Per-request timeout (seconds) for pulling an ICS feed
             over HTTP (default 90). Large/busy corporate calendars can take 30-60s
             for the provider to *generate* their ``.ics``, longer than a tight
@@ -231,6 +237,16 @@ class Settings:
     # out rather than ~1 day. The CLI/webhook sync pass it to `sync_calendar`
     # as `recur_horizon_hours`. See `prefrontal.commitments.RECUR_HORIZON_HOURS`.
     calendar_horizon_days: float = 30.0
+    # Per-series backstop for recurring events: the minimum number of *future*
+    # occurrences to keep for each series even when its next instance falls beyond
+    # `calendar_horizon_days`. Without it, a meeting that recurs less often than the
+    # horizon (monthly/quarterly/annual) is invisible between occurrences — its next
+    # instance is past the window. This reaches past the horizon per-series until it
+    # has this many future occurrences, so long-interval meetings stay visible
+    # without widening the horizon for *every* series (which would materialize daily/
+    # weekly runs months out). 0 disables it. Env: `PREFRONTAL_CALENDAR_MIN_OCCURRENCES`.
+    # See `prefrontal.commitments.expand_recurrences`.
+    calendar_min_occurrences: int = 2
     # Per-request timeout (seconds) for fetching an ICS feed. A big/busy corporate
     # calendar can take 30-60s for the provider to render its `.ics`; a tight
     # timeout aborts the fetch, the feed ingests nothing, and its events vanish.
@@ -522,6 +538,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         account_domains=account_domains,
         timezone=os.environ.get("PREFRONTAL_TIMEZONE", "UTC").strip() or "UTC",
         calendar_horizon_days=_float_env("PREFRONTAL_CALENDAR_HORIZON_DAYS", 30.0),
+        calendar_min_occurrences=_int_env("PREFRONTAL_CALENDAR_MIN_OCCURRENCES", 2),
         ics_fetch_timeout=_float_env("PREFRONTAL_ICS_TIMEOUT", 90.0),
         todo_offzone=os.environ.get("PREFRONTAL_TODO_OFFZONE", "").strip(),
         todo_windows=_parse_todo_windows(os.environ.get("PREFRONTAL_TODO_WINDOWS", "")),
