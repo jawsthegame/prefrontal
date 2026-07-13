@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from prefrontal.commitments import KIND_CHILD, KIND_FYI, KIND_SELF, KINDS
+from prefrontal.commitments import KIND_CARE, KIND_CHILD, KIND_FYI, KIND_SELF, KINDS
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 
@@ -42,16 +42,20 @@ from prefrontal.integrations.ollama import OllamaError
 MAX_EXAMPLES = 20
 
 _BASE_SYSTEM_PROMPT = (
-    "You classify a single calendar event title as SELF, CHILD, or FYI.\n"
+    "You classify a single calendar event title as SELF, CHILD, CARE, or FYI.\n"
     "SELF = the user's own commitment: something they personally attend or do, "
     "and which could clash with another of their commitments.\n"
     "CHILD = a child's or dependent's appointment or activity that the user is "
     "responsible for — a dentist/doctor visit, school event, or lesson for a kid. "
     "Prefer CHILD over SELF whenever the event is about a child.\n"
+    "CARE = an appointment for an adult the user cares for — an aging parent, ill "
+    "partner, or disabled family member — that the user arranges or attends on "
+    "their behalf (e.g. \"Mom's cardiology\", \"Dad's PT\"). Like CHILD it's a real "
+    "obligation the user must cover, but for an adult care-recipient, not a kid.\n"
     "FYI = informational only: an event that exists so the user knows where "
     "another adult (e.g. a partner) will be. The user does not attend it "
     "themselves. Examples: another person's beauty/grooming or medical appointments.\n"
-    "Answer with exactly one word: SELF, CHILD, or FYI."
+    "Answer with exactly one word: SELF, CHILD, CARE, or FYI."
 )
 
 
@@ -85,7 +89,7 @@ def build_system_prompt(examples: list[dict[str, Any]] | None = None) -> str:
 
 
 def parse_kind_reply(reply: str) -> str | None:
-    """Extract ``self``/``child``/``fyi`` from a model reply, or ``None`` if unclear.
+    """Extract ``self``/``child``/``care``/``fyi`` from a model reply, or ``None`` if unclear.
 
     The reply is meant to be a single word, but we tolerate surrounding prose:
     whichever label token appears *earliest* wins. Matched on **word boundaries**
@@ -99,7 +103,7 @@ def parse_kind_reply(reply: str) -> str | None:
         return None
     positions = {
         kind: m.start()
-        for kind in (KIND_SELF, KIND_CHILD, KIND_FYI)
+        for kind in (KIND_SELF, KIND_CHILD, KIND_CARE, KIND_FYI)
         if (m := re.search(rf"\b{re.escape(kind)}\b", lowered)) is not None
     }
     if not positions:

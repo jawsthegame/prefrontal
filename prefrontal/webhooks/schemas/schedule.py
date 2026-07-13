@@ -165,7 +165,8 @@ class CommitmentKind(BaseModel):
     kind: str = Field(
         description=(
             "`self` (your commitment), `child` (a kid's appointment — also shows on "
-            "the household sheet), or `fyi` (where someone else will be)."
+            "the household sheet), `care` (an appointment for an adult you care for — "
+            "aging parent, ill partner), or `fyi` (where someone else will be)."
         )
     )
 

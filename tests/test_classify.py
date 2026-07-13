@@ -31,6 +31,7 @@ def test_parse_kind_reply_reads_any_label():
     assert parse_kind_reply("FYI") == "fyi"
     assert parse_kind_reply("SELF") == "self"
     assert parse_kind_reply("CHILD") == "child"
+    assert parse_kind_reply("CARE") == "care"
     assert parse_kind_reply("  This looks like FYI to me.") == "fyi"
     assert parse_kind_reply("That's the user's own (self) event") == "self"
     assert parse_kind_reply("Looks like a CHILD appointment") == "child"
@@ -78,9 +79,14 @@ def test_classify_kind_model_can_return_child():
     assert classify_kind("Pediatrician", client=_StubClient("CHILD")) == ("child", "llm")
 
 
+def test_classify_kind_model_can_return_care():
+    # An adult care-recipient's appointment (aging parent / ill partner).
+    assert classify_kind("Mom's cardiology", client=_StubClient("CARE")) == ("care", "llm")
+
+
 def test_build_system_prompt_folds_in_examples():
     base = build_system_prompt([])
-    assert "SELF" in base and "FYI" in base and "CHILD" in base
+    assert "SELF" in base and "FYI" in base and "CHILD" in base and "CARE" in base
     evolved = build_system_prompt(
         [{"display": "Harlequin Brow Appt", "kind": "fyi"},
          {"display": "Sam dentist", "kind": "child"}]

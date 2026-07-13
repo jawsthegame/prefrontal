@@ -48,10 +48,11 @@ CAREGIVER_PACK = Pack(
     # benefits, legal, paperwork), ``caregiving`` (day-to-day care tasks + errands
     # for the person you look after).
     categories=("medical", "admin", "caregiving"),
-    # No new commitment kind yet — a dedicated ``care`` kind pairs with the
-    # caregiver surface/situation-tools slice (see the module docstring), so it's
-    # deferred rather than declared as dead vocabulary here.
-    commitment_kinds=(),
+    # The ``care`` commitment kind (``prefrontal.commitments.KIND_CARE``): an
+    # appointment for the adult the caregiver looks after — the care-recipient
+    # counterpart to a kid's ``child`` appointment. Now wired into the classifier
+    # and treated as a real, attendable obligation.
+    commitment_kinds=("care",),
     # Defaults, all absent-only (a user's own value always wins):
     # - keep medical/admin work inside the daytime hours those calls and clinics
     #   actually happen (the scheduler reads these ``todo_window:<category>`` keys);
