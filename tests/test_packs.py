@@ -122,6 +122,15 @@ def test_focus_balance_seeding_gap_flags_inert_config():
             ),
         )
     )
+    # A pack whose defaults are unrelated to focus balance — enabled below to prove
+    # the guard doesn't false-positive on any pack, only ones that seed the guardrail.
+    plain_pack = register(
+        Pack(
+            key="_test_plain",
+            title="Plain",
+            coaching_defaults=MappingProxyType({"todo_window:admin": "09:00-17:00"}),
+        )
+    )
     try:
         # Explicit module list without trip_tracking → seeded config is inert.
         gap = Settings(modules=("impulsivity",), packs=("_test_balance_gap",))
@@ -131,10 +140,18 @@ def test_focus_balance_seeding_gap_flags_inert_config():
         assert focus_balance_seeding_gap(ok) == []
         # Blank module list (all modules on) also closes it.
         assert focus_balance_seeding_gap(Settings(modules=(), packs=("_test_balance_gap",))) == []
-        # A pack that seeds no focus-balance keys is never flagged.
-        assert focus_balance_seeding_gap(Settings(modules=("impulsivity",), packs=())) == []
+        # An *enabled* pack that seeds no focus-balance keys is never flagged, even
+        # with trip_tracking off — the guard keys on the seeded config, not presence.
+        assert focus_balance_seeding_gap(
+            Settings(modules=("impulsivity",), packs=("_test_plain",))
+        ) == []
+        # Mixed: only the balance-seeding pack is named, not the plain one alongside.
+        assert focus_balance_seeding_gap(
+            Settings(modules=("impulsivity",), packs=("_test_plain", "_test_balance_gap"))
+        ) == ["_test_balance_gap"]
     finally:
         _REGISTRY.pop(gap_pack.key, None)
+        _REGISTRY.pop(plain_pack.key, None)
 
 
 def test_builtin_packs_have_no_focus_balance_gap():
