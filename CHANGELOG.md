@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Context Packs: the caregiver `/care` surface** ✅ — the second "surface
+  tailoring" slice (builds on the `care` commitment kind). A read-only `/care`
+  page — the caregiver counterpart to `/kids` — surfaces the adult you look after:
+  upcoming `care` appointments and your open medical/admin/caregiving todos. New
+  `GET /care/sheet` powers it, gated on the **Caregiver context pack**
+  (`PREFRONTAL_PACKS=caregiver`) rather than household membership (a solo caregiver
+  for an aging parent isn't a co-parent); when the pack is off it reports
+  `enabled:false` and the page prompts to turn it on. Server + web, covered by
+  `tests/test_care_surface.py`. Follow-ups: a conditional nav link (revealed when
+  the pack is on, mirroring the operator Admin link) and a care-recipient
+  facts/roster model.
+
 - **Context Packs: the `care` commitment kind** ✅ — the first of the Context-Pack
   "surface tailoring" slices. Added `care` to `commitments.KINDS` — the
   care-recipient counterpart to `child` (an appointment for an aging parent / ill

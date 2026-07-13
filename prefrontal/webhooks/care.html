@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Care</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+  header { max-width: 720px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .card h2 { font-size: 17px; margin: 0 0 2px; font-weight: 660; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .empty { color: var(--muted); font-style: italic; }
+  .row { display: flex; align-items: baseline; gap: 8px 10px; flex-wrap: wrap;
+    padding: 10px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: none; }
+  .row .title { font-weight: 550; }
+  .row .when, .row .where { color: var(--muted); font-size: 13px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: transparent; border: 1px solid var(--warn); color: var(--warn); }
+  .notice { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; color: var(--muted); }
+  .notice code { background: var(--line); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/projects/board">Projects</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/care" aria-current="page">Care</a>
+    <a href="/stats">Insights</a>
+    <a href="/trips/board">Trips</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+    <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>🫶 Care</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <div class="notice" id="disabled" style="display:none">
+    The <b>Caregiver</b> context pack is off. Turn it on with
+    <code>PREFRONTAL_PACKS=caregiver</code> to surface the person you look after —
+    their upcoming appointments and your medical/admin todos — here.
+  </div>
+  <section class="card" id="c-appts" style="display:none">
+    <h2>Upcoming care appointments</h2>
+    <p class="sub">Appointments for the adult you look after (marked <b>care</b>) —
+    the counterpart to a kid's appointment on the household sheet.</p>
+    <div id="appts"></div>
+  </section>
+  <section class="card" id="c-todos" style="display:none">
+    <h2>Care todos</h2>
+    <p class="sub">Open todos in the caregiver buckets — medical, admin, caregiving.</p>
+    <div id="todos"></div>
+  </section>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.addEventListener("click", () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  });
+})();
+
+function gate(msg) { $("#gate").style.display = "flex"; if (msg) $("#gate-err").textContent = msg; }
+
+async function api(path) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  const r = await fetch(path, { headers });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// "YYYY-MM-DD HH:MM:SS" (UTC) → a friendly local string.
+function fmt(ts) {
+  if (!ts) return "";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d.getTime()) ? ts
+    : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function apptRow(a) {
+  const where = a.location ? ` <span class="where">· ${esc(a.location)}</span>` : "";
+  return `<div class="row"><span class="title">${esc(a.title)}</span>`
+    + `<span class="when">${esc(fmt(a.start_at))}</span>${where}</div>`;
+}
+function todoRow(t) {
+  const cat = t.category ? ` <span class="pill">${esc(t.category)}</span>` : "";
+  const due = t.deadline ? ` <span class="when">due ${esc(fmt(t.deadline))}</span>` : "";
+  return `<div class="row"><span class="title">${esc(t.title)}</span>${cat}${due}</div>`;
+}
+
+async function load() {
+  $("#status").textContent = "loading…";
+  let data;
+  try {
+    data = await api("/care/sheet");
+  } catch (err) {
+    if (err.code === 401) { gate("That code didn't work."); return; }
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  $("#gate").style.display = "none";
+  $("#wrap").style.display = "block";
+  if (!data.enabled) {
+    $("#disabled").style.display = "block";
+    $("#c-appts").style.display = "none";
+    $("#c-todos").style.display = "none";
+    $("#status").textContent = "Caregiver pack is off";
+    return;
+  }
+  $("#disabled").style.display = "none";
+  const appts = data.appointments || [];
+  const todos = data.todos || [];
+  $("#c-appts").style.display = "block";
+  $("#c-todos").style.display = "block";
+  $("#appts").innerHTML = appts.length
+    ? appts.map(apptRow).join("") : `<div class="empty">Nothing coming up.</div>`;
+  $("#todos").innerHTML = todos.length
+    ? todos.map(todoRow).join("") : `<div class="empty">No open care todos.</div>`;
+  $("#status").textContent = "who you're caring for";
+}
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; localStorage.setItem(KEY, v);
+  $("#gate").style.display = "none"; $("#gate-err").textContent = "";
+  load();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) load(); });
+
+load();
+</script>
+</body>
+</html>

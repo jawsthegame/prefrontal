@@ -45,6 +45,7 @@ from prefrontal.webhooks._common import (
     APP_ICON_PNG,
     APP_VERSION,
     CALENDAR_HTML,
+    CARE_HTML,
     DASHBOARD_HTML,
     GUIDE_HTML,
     HOUSEHOLD_HTML,
@@ -227,6 +228,19 @@ def build_router(services: RouterServices) -> APIRouter:
         surfaces; reads ``GET /household/sheet``.
         """
         return _page(lens_html("kids"))
+
+    @router.get("/care", response_class=HTMLResponse, tags=["system"])
+    def care() -> HTMLResponse:
+        """Serve the read-only **Care** surface — the caregiver counterpart to /kids.
+
+        Upcoming ``care`` appointments (for the adult you look after) and your open
+        medical/admin/caregiving todos. Gated in the data endpoint on the Caregiver
+        context pack (``PREFRONTAL_PACKS=caregiver``), not household membership — a
+        solo caregiver isn't a co-parent; the page prompts to enable it when off.
+        Same self-contained, data-less shell as the other web surfaces; reads
+        ``GET /care/sheet``.
+        """
+        return _page(CARE_HTML)
 
     @router.get("/pets", response_class=HTMLResponse, tags=["system"])
     def pets() -> HTMLResponse:

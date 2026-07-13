@@ -125,6 +125,10 @@ HOUSEHOLD_HTML = _with_shortcuts(_with_card_layout(_shell("household.html")))
 #: The read-only lens shell, parameterized per focus by replacing ``__LENS__``
 #: with ``kids`` / ``pets`` (see :func:`lens_html`). One file backs both lenses.
 LENS_HTML = _with_shortcuts(_with_card_layout(_shell("lens.html")))
+#: The read-only Caregiver surface — upcoming ``care`` appointments + medical/admin
+#: todos for the adult you look after. The caregiver counterpart to ``/kids``,
+#: gated on the Caregiver context pack. Reads GET /care/sheet.
+CARE_HTML = _with_shortcuts(_shell("care.html"))
 
 
 def lens_html(lens: str) -> str:
