@@ -14,8 +14,8 @@ for the deeper design of individual agents see the specs linked from
 
 ```
 iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
-   Scriptable  ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
-     widget   ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
+   iOS app +   ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
+    widget    ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
                      ▼
               Prefrontal API (FastAPI, :8000)  ──►  SQLite (your data, on-box)
 ```
@@ -525,9 +525,10 @@ and every path keeps its deterministic fallback when both are down.
   follow-through (success rate, current streak, the success/partial/miss split
   and a recent sparkline), and channel responsiveness (which nudge channels you
   actually answer). Drawn with inline SVG/CSS, no external libraries.
-- **Scriptable widget** ([`../deploy/scriptable/`](../deploy/scriptable)) — a
-  home-screen glance: outing status dot, next commitments, conflict/todo counts.
-  Tapping opens the family view.
+- **iOS widget** ([`../ios/PrefrontalWidgets/`](../ios/PrefrontalWidgets)) — a
+  native WidgetKit Home Screen / Lock Screen glance: your next departure, the one
+  todo to start right now, the next commitment, and tap-to-log self-care, plus a
+  Live Activity for an active outing/focus. Tapping opens the app.
 
 All of these share one light/dark theme and a common top nav, are reached over
 Tailscale (e.g. `http://mac-mini.tailnet.ts.net:8000/dashboard`), and

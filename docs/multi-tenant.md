@@ -444,7 +444,7 @@ light up the actual second user.
 - **Per-user timezone.** Briefings/commitments normalize to UTC and render
   "today" — a multi-user household is probably one timezone, but a `timezone`
   coaching-state key per user is the clean fix if not. Flag, don't block.
-- **Token in URL for widgets.** The Scriptable widget and dashboard hold the
+- **Token in URL for widgets.** The iOS app/widget and dashboard hold the
   token; per-user tokens mean each device holds its user's token. Rotation
   (`/admin/users/{h}/rotate`) invalidates old devices — acceptable, document it.
 - **Per-user module enablement** (v2) — would move `PREFRONTAL_MODULES` into a

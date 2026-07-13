@@ -51,9 +51,10 @@ closeout, consolidation, and a few net-new surfaces.
   deprecated** now that `coach/check` runs the identical anchor decision. See
   "Beyond v1 › Coaching agent".
 
-**Deferred by choice:** a native **WidgetKit + ActivityKit Live Activity** for a
-true live outing timer (needs a Swift app / Xcode / Apple Developer account) — the
-Scriptable widget covers the glanceable case today. See "Beyond v1."
+**Shipped:** the native **WidgetKit + ActivityKit Live Activity** (once deferred
+for needing a Swift app / Xcode / Apple Developer account) now ships in
+`ios/PrefrontalWidgets/`, along with Home Screen / Lock Screen glances. The legacy
+Scriptable widget it once stood in for has been retired.
 
 The sections that follow track each capability area in detail, marking shipped
 progress (✅) inline against what remains open.
@@ -620,19 +621,15 @@ ordered by leverage; each is independent but builds on denser capture.
   `GET /encouragement` read and the coaching tick (coaching-agent spec §9). The
   tick advances the once-per-day cursor only when the cue actually fires, so a cue
   held by quiet hours re-offers when the window opens.
-- **Native Lock Screen Live Activity (live outing timer)** — the shipped
-  Scriptable widget renders the Lock Screen accessory slots but refreshes only on
-  iOS's ~15-min timeline cadence, so an active outing's elapsed time is stale
-  between refreshes. A true *live* timer that counts up in real time on the Lock
-  Screen (and in the Dynamic Island) needs a native **WidgetKit + ActivityKit
-  Live Activity**, which Scriptable can't provide. This would be a small Swift
-  app: start an Activity on `outing/start` (via a Shortcut or a push), update it
-  as the escalation `level` changes, and end it on return — reading the same
-  `/outings` data and per-user token. Cost is real: it needs Xcode, an Apple
-  Developer account, and building/sideloading the app to the phone, so it's an
-  opt-in upgrade rather than a replacement for the Scriptable widget, which stays
-  the zero-native-code default. *(Deferred by choice; the accessory widget covers
-  the glanceable case today.)*
+- **Native Lock Screen Live Activity (live outing timer)** ✅ **shipped** — a
+  glanceable widget refreshed only on iOS's ~15-min timeline cadence left an active
+  outing's elapsed time stale between refreshes. The native **WidgetKit +
+  ActivityKit Live Activity** now in `ios/PrefrontalWidgets/SessionLiveActivity.swift`
+  counts up in real time on the Lock Screen and in the Dynamic Island: started on
+  `outing/start`, updated as the escalation `level` changes, ended on return —
+  reading the same `/outings` data and per-user token. It ships alongside the
+  native Home Screen / Lock Screen glances and supersedes the retired Scriptable
+  widget.
 - **Context Packs — composition over primitives, not new modules.**
   Challenge-area modules answer *how your ADHD shows up* (time blindness,
   hyperfocus, impulsivity, …); a **Pack** answers *what life you're managing* —

@@ -13,7 +13,8 @@ features planned next (background refresh, native notification actions).
 
 It ships a **WidgetKit extension** (`PrefrontalWidgets`) — Home Screen
 (small/medium) and Lock Screen (rectangular/circular/inline) glances showing
-your next departure, what-fits-now, and self-care progress. The Home Screen
+your next departure, the one todo to start right now (with the next commitment
+on its own line), and self-care progress. The Home Screen
 widget is **interactive** (iOS 17): tapping the self-care chips logs a meal /
 glass of water in place (`MarkSelfCareIntent`), and when an outing or focus
 session is active it shows a one-tap **I'm back** / **Wrap up** button
