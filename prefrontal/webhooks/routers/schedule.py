@@ -90,6 +90,8 @@ from prefrontal.modules.registry import (
 from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
+from prefrontal.packs.registry import get as get_pack
+from prefrontal.packs.registry import is_enabled as pack_enabled
 from prefrontal.panic import (
     build_panic,
     evaluate_panic_check,
@@ -888,6 +890,56 @@ def build_router(services: RouterServices) -> APIRouter:
                 source="explicit",
             )
         return _location_settings_payload(memory)
+
+    @router.get("/care/sheet", tags=["schedule"])
+    def care_sheet(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Caregiver surface data — upcoming ``care`` appointments + care-admin todos.
+
+        The read behind the read-only ``/care`` lens (the caregiver counterpart to
+        the household ``/kids`` sheet). Gated on the **Caregiver context pack**
+        (``PREFRONTAL_PACKS=caregiver``), *not* household membership — a solo
+        caregiver for an aging parent isn't a co-parent. When the pack is off,
+        ``enabled`` is ``false`` and the lists are empty so the page can prompt to
+        turn it on.
+
+        - ``appointments``: upcoming commitments classified ``kind='care'`` — an
+          aging parent's / ill partner's appointment the caregiver arranges or
+          attends (the care-recipient counterpart to a kid's ``child`` appointment).
+        - ``todos``: open todos in the pack's caregiver categories (``medical`` /
+          ``admin`` / ``caregiving``) — the paperwork-and-errands load the surface
+          exists to make legible.
+        """
+        memory = ctx.store
+        if not pack_enabled("caregiver", resolved_settings):
+            return {"enabled": False, "appointments": [], "todos": []}
+        # Enabled implies registered, so get_pack never raises here.
+        care_categories = set(get_pack("caregiver").categories)
+        appointments = [
+            {
+                "id": c["id"],
+                "title": c["title"],
+                "start_at": c.get("start_at"),
+                "end_at": c.get("end_at"),
+                "location": c.get("location"),
+                "calendar": c.get("calendar"),
+            }
+            for c in memory.upcoming_commitments(limit=100)
+            if c.get("kind") == "care"  # commitments.KIND_CARE
+        ]
+        todos = [
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "category": t.get("category"),
+                "deadline": t.get("deadline"),
+                "priority": t.get("priority"),
+            }
+            for t in memory.open_todos()
+            if t.get("category") in care_categories
+        ]
+        return {"enabled": True, "appointments": appointments, "todos": todos}
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(
