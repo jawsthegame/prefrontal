@@ -53,16 +53,22 @@ enum LocalNotifications {
     /// `next_due`, replacing any previously-scheduled self-care locals. A check
     /// that's gone off/done/open-ended/out-of-window simply isn't re-added.
     static func reconcileSelfCare(_ selfCare: SelfCare?) async {
+        // A failed refresh (nil) must NOT wipe already-scheduled offline nudges —
+        // off the tailnet is exactly when this fallback matters. `/self-care`
+        // always returns a payload when reachable (even master-off), so nil here
+        // means the fetch failed; only reconcile against real data. Real data with
+        // `enabled == false` still clears below.
+        guard let selfCare else { return }
         let center = UNUserNotificationCenter.current()
 
-        // Clear all prior self-care locals up front (one id per check key), so a
-        // now-quiet check drops out rather than lingering.
+        // Replace prior self-care locals from current state (one id per check key),
+        // so a now-quiet/off check drops out. Cleared even when unauthorized.
         let pending = await center.pendingNotificationRequests()
         let stale = pending.map(\.identifier).filter { $0.hasPrefix(selfCarePrefix) }
         if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: stale) }
 
         guard await center.notificationSettings().authorizationStatus == .authorized,
-              let selfCare, selfCare.enabled else { return }
+              selfCare.enabled else { return }
 
         for check in selfCare.checks {
             guard check.enabled, !check.openEnded, !check.done,
