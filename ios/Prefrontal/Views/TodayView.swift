@@ -76,17 +76,17 @@ struct TodayView: View {
     }
 
     private func briefingCard(_ b: Briefing, _ text: String) -> some View {
-        let long = text.count > 240
+        // Collapsed preview shows the first few rendered lines; the server sends
+        // Markdown (## headers, - bullets, **bold**) which MarkdownText renders.
+        let previewLines = 6
+        let long = MarkdownText.lineCount(text) > previewLines
         return Card {
             HStack {
                 CardLabel(text: "Morning briefing")
                 Spacer()
                 if let d = b.date { Text(d).font(.caption2).foregroundStyle(Brand.muted) }
             }
-            Text(text)
-                .font(.subheadline).foregroundStyle(Brand.nearWhite)
-                .lineLimit(briefingExpanded ? nil : 6)
-                .fixedSize(horizontal: false, vertical: true)
+            MarkdownText(text: text, lineLimit: briefingExpanded ? nil : previewLines)
             if long {
                 Button(briefingExpanded ? "Show less" : "Show more") {
                     withAnimation { briefingExpanded.toggle() }
