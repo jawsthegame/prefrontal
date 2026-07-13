@@ -163,6 +163,11 @@ struct SwipeToReveal<Content: View>: View {
             }
             .buttonStyle(.plain)
             .opacity(offset < -1 ? 1 : 0)
+            // When the row is closed the button is fully masked by the content;
+            // drop it from hit-testing and the accessibility tree too, so it
+            // can't be tapped through or focused by VoiceOver until revealed.
+            .allowsHitTesting(offset < -1)
+            .accessibilityHidden(offset >= -1)
 
             content
                 .background(surface)
