@@ -5,6 +5,11 @@ Shipped work in Prefrontal. This is the release-notes companion to
 Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 "see §N" references point into `ROADMAP.md`'s forward-looking sections.
 
+> **Adding an entry?** Don't edit this file in a PR — add a fragment under
+> [`changelog.d/`](changelog.d/) instead (see its README). Fragments are folded
+> in here periodically by `scripts/collate_changelog.py`, which keeps the
+> changelog out of every rebase.
+
 ## Recently shipped
 
 - **Web UI to manage curated places** ✅ (epic #569) — curated places (the
