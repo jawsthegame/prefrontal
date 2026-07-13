@@ -248,14 +248,15 @@ def test_place_add_list_delete_and_404(client):
     assert names == {"the gym", "dentist"}
 
     # Delete by the original spelling — the path name is normalized, matching the
-    # stored key, so "The Gym" removes "the gym".
-    resp = client.delete("/places/The Gym", headers=_auth())
+    # stored key, so "The Gym" removes "the gym". The space is percent-encoded, as
+    # a real HTTP client would send it.
+    resp = client.delete("/places/The%20Gym", headers=_auth())
     assert resp.status_code == 200 and resp.json() == {"deleted": "the gym"}
     names = {p["name"] for p in client.get("/places", headers=_auth()).json()["places"]}
     assert names == {"dentist"}
 
     # Deleting an absent place is a 404 (nothing was removed).
-    assert client.delete("/places/the gym", headers=_auth()).status_code == 404
+    assert client.delete("/places/the%20gym", headers=_auth()).status_code == 404
     # And the route is auth-gated like the rest.
     assert client.delete("/places/dentist").status_code == 401
 

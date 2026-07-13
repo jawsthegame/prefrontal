@@ -773,6 +773,11 @@ $("#places-list").addEventListener("click", async (ev) => {
   const isNew = block.dataset.new === "1";
   const val = (f) => block.querySelector(`[data-f="${f}"]`);
   try {
+    // Drop focus off the clicked button first: loadPlaces() skips re-rendering
+    // while focus is inside the list (its anti-clobber guard for live editing),
+    // and after a click the button itself holds focus — so without this the
+    // refresh after a Save/Remove would be a no-op until the user clicked away.
+    btn.blur();
     if (btn.dataset.act === "remove") {
       const oldName = block.dataset.name;
       if (!confirm(`Remove the "${oldName}" place?`)) return;
@@ -781,10 +786,14 @@ $("#places-list").addEventListener("click", async (ev) => {
       return loadPlaces();
     }
     const name = val("name").value.trim();
-    const lat = Number(val("lat").value);
-    const lon = Number(val("lon").value);
+    // Read the raw strings first: Number("") is 0, so a blank lat/lon would slip
+    // past Number.isFinite and silently save (0, 0) — reject empties explicitly.
+    const latRaw = val("lat").value.trim();
+    const lonRaw = val("lon").value.trim();
+    const lat = Number(latRaw);
+    const lon = Number(lonRaw);
     if (!name) { placesFlash("name is required"); return; }
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    if (latRaw === "" || lonRaw === "" || !Number.isFinite(lat) || !Number.isFinite(lon)) {
       placesFlash("lat/lon are required"); return;
     }
     const body = { name, lat, lon, label: val("label").value.trim() || name };
