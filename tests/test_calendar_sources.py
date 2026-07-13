@@ -268,3 +268,81 @@ def test_calendar_sync_reports_no_feeds(tmp_path, monkeypatch, capsys):
     assert main(["calendar", "--db-path", db, "sync"]) == 0
     assert "no calendar sources" in capsys.readouterr().err
     get_settings.cache_clear()
+
+
+def test_calendar_sync_keeps_events_when_fetch_fails(tmp_path, monkeypatch, capsys):
+    """A feed that fails to fetch must not prune the calendar it couldn't read.
+
+    Regression: an empty event batch used to fall into sync_calendar's legacy
+    "prune anything missing" path, so a transient ICS timeout silently cancelled
+    every stored commitment. A fetch failure that leaves no events now skips the
+    sync entirely and leaves the stored events untouched.
+    """
+    monkeypatch.setenv("PREFRONTAL_SECRET_KEY", generate_key())
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "prefrontal.integrations.ollama.OllamaClient.available", lambda self: False
+    )
+    db = str(tmp_path / "p.db")
+    main(["init-db", "--db-path", db])
+    main(["user", "--db-path", db, "add", "tester", "--operator"])
+    main([
+        "calendar", "--db-path", db, "--user", "tester", "add-source",
+        "--account", "work", "--url", "https://host/work.ics",
+    ])
+
+    good = (
+        "BEGIN:VCALENDAR\nBEGIN:VEVENT\n"
+        "UID:evt-1\nSUMMARY:Standup\n"
+        "DTSTART:20990301T100000Z\nEND:VEVENT\nEND:VCALENDAR"
+    )
+    monkeypatch.setattr("prefrontal.ics.fetch_ics", lambda url, **kw: good)
+    assert main(["calendar", "--db-path", db, "--user", "tester", "sync"]) == 0
+
+    with MemoryStore.open(db, initialize=False) as unscoped:
+        tester = unscoped.scoped(unscoped.get_user("tester")["id"])
+        assert [c["title"] for c in tester.upcoming_commitments()] == ["Standup"]
+
+    # The only feed now times out — the stored event must survive, not be pruned.
+    def boom(url, **kw):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr("prefrontal.ics.fetch_ics", boom)
+    capsys.readouterr()
+    rc = main(["calendar", "--db-path", db, "--user", "tester", "sync"])
+    err = capsys.readouterr().err
+    assert rc == 1  # the failure is surfaced, not swallowed
+    assert "skipped" in err
+
+    with MemoryStore.open(db, initialize=False) as unscoped:
+        tester = unscoped.scoped(unscoped.get_user("tester")["id"])
+        assert [c["title"] for c in tester.upcoming_commitments()] == ["Standup"]
+    get_settings.cache_clear()
+
+
+def test_calendar_sync_passes_configured_timeout(tmp_path, monkeypatch):
+    """`PREFRONTAL_ICS_TIMEOUT` is threaded through to fetch_ics."""
+    monkeypatch.setenv("PREFRONTAL_SECRET_KEY", generate_key())
+    monkeypatch.setenv("PREFRONTAL_ICS_TIMEOUT", "123")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "prefrontal.integrations.ollama.OllamaClient.available", lambda self: False
+    )
+    db = str(tmp_path / "p.db")
+    main(["init-db", "--db-path", db])
+    main(["user", "--db-path", db, "add", "tester", "--operator"])
+    main([
+        "calendar", "--db-path", db, "--user", "tester", "add-source",
+        "--account", "work", "--url", "https://host/work.ics",
+    ])
+
+    seen: dict[str, float] = {}
+
+    def fake_fetch(url, *, timeout=90.0):
+        seen["timeout"] = timeout
+        return "BEGIN:VCALENDAR\nEND:VCALENDAR"
+
+    monkeypatch.setattr("prefrontal.ics.fetch_ics", fake_fetch)
+    assert main(["calendar", "--db-path", db, "--user", "tester", "sync"]) == 0
+    assert seen["timeout"] == 123.0
+    get_settings.cache_clear()
