@@ -530,30 +530,58 @@ class ScheduleRepo(Repo):
         return [dict(r) for r in rows]
 
     def add_place(
-        self, name: str, lat: float, lon: float, *, label: str | None = None
+        self,
+        name: str,
+        lat: float,
+        lon: float,
+        *,
+        label: str | None = None,
+        domain: str | None = None,
     ) -> int:
         """Insert or replace a curated place alias, returning its id.
 
         ``name`` is the normalized match key (unique); re-adding the same name
-        updates its coordinates in place.
+        updates its coordinates in place. ``domain`` is an optional life-sphere
+        (shop/work/home/kids/personal) — when set, a closed-loop trip whose stop
+        lands here pre-fills its focus-balance domain
+        (:func:`prefrontal.trips.suggest_trip_labeling`). It is ``COALESCE``-d, so a
+        re-add that omits it keeps a previously-set sphere (clear it with
+        :meth:`set_place_domain`).
 
         Args:
             name: Normalized match key (e.g. ``"gym"``).
             lat: Latitude in degrees.
             lon: Longitude in degrees.
             label: Optional original spelling for display.
+            domain: Optional life-sphere this place counts toward.
 
         Returns:
             The place's ``id``.
         """
         return self._upsert_returning_id(
-            "INSERT INTO places (user_id, name, label, lat, lon) VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO places (user_id, name, label, lat, lon, domain) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (user_id, name) DO UPDATE SET label = excluded.label, "
-            "lat = excluded.lat, lon = excluded.lon",
-            (self._uid(), name, label, lat, lon),
+            "lat = excluded.lat, lon = excluded.lon, "
+            "domain = COALESCE(excluded.domain, places.domain)",
+            (self._uid(), name, label, lat, lon, domain),
             select_sql="SELECT id FROM places WHERE user_id = ? AND name = ?",
             select_params=(self._uid(), name),
         )
+
+    def set_place_domain(self, name: str, domain: str | None) -> bool:
+        """Set (or clear) a curated place's life-sphere; ``True`` if a row changed.
+
+        The edit path for a place's focus-balance domain without re-entering its
+        coordinates. ``None`` clears it. Scoped to this user; ``False`` when there
+        is no such place.
+        """
+        cur = self.conn.execute(
+            "UPDATE places SET domain = ? WHERE user_id = ? AND name = ?",
+            (domain, self._uid(), name),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def places(self) -> list[dict[str, Any]]:
         """Return all curated places, longest name first.

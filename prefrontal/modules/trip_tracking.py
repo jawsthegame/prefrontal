@@ -96,7 +96,7 @@ class ClosedLoopTripModule(Module):
         # Imported lazily: prefrontal.trips depends on this module's package, so a
         # top-level import here would be a cycle at package-init time.
         from prefrontal.focus_balance import resolve_quick_domains
-        from prefrontal.trips import trip_label_prompt
+        from prefrontal.trips import suggest_trip_labeling, trip_label_prompt
 
         # Resolve the user's one-tap quick-file domains once per tick and stamp them
         # on each cue's ref, so both delivery paths (the coach/check fan-out and the
@@ -115,15 +115,22 @@ class ClosedLoopTripModule(Module):
             # How many intermediate stops the passive detector split out, so the ask
             # can invite a per-leg label when it was a chained errand run.
             enriched["stop_count"] = len(store.trip_waypoints(trip["id"]))
+            # Reverse-match the trip's stops to a curated place so the ask can lead
+            # with a one-tap "looks like <place>?" instead of a cold prompt, and
+            # pre-file the sphere when the place carries one.
+            suggestion = suggest_trip_labeling(store, trip)
+            ref = {"trip_id": trip["id"], "quick_domains": quick_domains}
+            if suggestion is not None:
+                ref["suggestion"] = suggestion
             cues.append(
                 Cue(
                     module=self.key,
                     intervention="label_prompt",
                     urgency="ambient",
-                    text=trip_label_prompt(enriched),
+                    text=trip_label_prompt(enriched, suggestion=suggestion),
                     context_key="trip",
                     dedup_key=f"trip_label:{trip['id']}",
-                    ref={"trip_id": trip["id"], "quick_domains": quick_domains},
+                    ref=ref,
                 )
             )
 

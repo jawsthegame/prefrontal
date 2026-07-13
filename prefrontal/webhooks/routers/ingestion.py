@@ -49,6 +49,7 @@ from prefrontal.trips import (
     apply_reflection,
     normalize_trip_category,
     process_location,
+    suggest_trip_labeling,
 )
 from prefrontal.webhooks._common import (
     ACTION_OUTCOME,
@@ -333,16 +334,22 @@ def build_router(services: RouterServices) -> APIRouter:
 
         ``active`` is the open trip (if you're out right now); ``recent`` is the
         history newest-first; ``unlabeled`` are the completed trips still awaiting
-        a label, i.e. the ones the system is asking you to name. ``categories`` is
-        the suggested activity vocabulary; ``domains`` the life-sphere vocabulary
-        (shop/work/home/kids/personal) the focus-balance rollup buckets time-out by —
-        both for the label form.
+        a label, i.e. the ones the system is asking you to name — each carries a
+        ``suggestion`` (``{place, label, domain, distance_m}`` or ``null``) when one
+        of its stops reverse-matches a curated place, so the label form can pre-fill
+        it. ``categories`` is the suggested activity vocabulary; ``domains`` the
+        life-sphere vocabulary (shop/work/home/kids/personal) the focus-balance
+        rollup buckets time-out by — both for the label form.
         """
         memory = ctx.store
+        unlabeled = [
+            {**trip, "suggestion": suggest_trip_labeling(memory, trip)}
+            for trip in memory.unlabeled_trips(limit=20)
+        ]
         return {
             "active": memory.active_trip(),
             "recent": memory.recent_trips(limit=20),
-            "unlabeled": memory.unlabeled_trips(limit=20),
+            "unlabeled": unlabeled,
             "categories": list(TRIP_CATEGORIES),
             "domains": list(FOCUS_DOMAINS),
         }

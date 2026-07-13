@@ -2491,14 +2491,18 @@ def _cmd_place(args: argparse.Namespace) -> int:
     with MemoryStore.open(db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
         if args.place_action == "add":
+            from prefrontal.focus_balance import normalize_focus_domain
+
             name = normalize_query(args.name)
             if not name:
                 print("Place name is empty after normalization.")
                 return 1
+            domain = normalize_focus_domain(args.domain)
             place_id = store.add_place(
-                name, args.lat, args.lon, label=args.label or args.name
+                name, args.lat, args.lon, label=args.label or args.name, domain=domain
             )
-            print(f"Saved place #{place_id}: {name} ({args.lat:g}, {args.lon:g})")
+            dom = f", domain={domain}" if domain else ""
+            print(f"Saved place #{place_id}: {name} ({args.lat:g}, {args.lon:g}){dom}")
         elif args.place_action == "list":
             places = store.places()
             if not places:
@@ -2506,7 +2510,8 @@ def _cmd_place(args: argparse.Namespace) -> int:
             for p in places:
                 label = p.get("label")
                 extra = f" — {label}" if label and label != p["name"] else ""
-                print(f"{p['name']}{extra}  ({p['lat']:g}, {p['lon']:g})")
+                dom = f"  [{p['domain']}]" if p.get("domain") else ""
+                print(f"{p['name']}{extra}  ({p['lat']:g}, {p['lon']:g}){dom}")
     return 0
 
 
@@ -4084,6 +4089,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl_add.add_argument("lat", type=float, help="Latitude in degrees.")
     pl_add.add_argument("lon", type=float, help="Longitude in degrees.")
     pl_add.add_argument("--label", default=None, help="Display label (defaults to the name).")
+    pl_add.add_argument(
+        "--domain",
+        default=None,
+        help="Life-sphere for focus balance (shop/work/home/kids/personal); a trip "
+        "stopping here pre-fills it. Omit to leave unset.",
+    )
     place_sub.add_parser("list", help="List curated places (most specific first).")
     p_place.set_defaults(func=_cmd_place)
 
