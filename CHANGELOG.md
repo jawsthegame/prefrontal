@@ -12,8 +12,10 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   the master on/off (only it can trigger the OS "Always" prompt). New
   `GET/POST /schedule/location-settings` reads/writes four coaching-state keys —
   `home_radius_m` (the existing shared key, also read by outing gating + trip
-  detection), `geofence_radius_m`, `post_interval_s`, and `visits_enabled` — with a
-  `LocationSettings` Pydantic schema (bounded, partial writes). A "Location" card in
+  detection), `geofence_radius_m`, `location_post_interval_s`, and
+  `location_visits_enabled` (the API fields drop the `location_` prefix:
+  `post_interval_s` / `visits_enabled`) — with a `LocationSettings` Pydantic schema
+  (bounded, partial writes). A "Location" card in
   `settings.html` edits them; the iOS `LocationMonitor` fetches them on
   enable/launch into the App Group and applies them (geofence radius, significant-
   change floor, `CLVisit` on/off). Shape pinned by an OpenAPI snapshot + example

@@ -55,7 +55,9 @@ enum SharedStore {
     // Web-configured location tunables (#565): cached in the App Group by
     // `LocationMonitor.syncLocationSettings()` from `/schedule/location-settings`
     // so the nonisolated monitor reads them synchronously, with a sensible default
-    // until the first sync. Keys match the server's response fields.
+    // until the first sync. These are local App-Group cache keys, not the API
+    // field names — `post_interval_s`/`visits_enabled` on the wire map to the
+    // `location_`-prefixed keys here (the prefix namespaces them in shared defaults).
     static let geofenceRadiusKey = "geofence_radius_m"
     static let locationPostIntervalKey = "location_post_interval_s"
     static let visitsEnabledKey = "location_visits_enabled"

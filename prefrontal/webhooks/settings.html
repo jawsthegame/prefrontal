@@ -543,28 +543,23 @@ const LOC_FIELDS = [
   ["geofence_radius_m", "Place geofence radius (m)", { min: 50, max: 1000, step: 10 }],
   ["post_interval_s", "Position update floor (sec)", { min: 60, max: 3600, step: 30 }],
 ];
-function locRow(key, label, attrs) {
+function locRow(key, label, attrs, val) {
   const a = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(" ");
+  // The value goes in the `value` attribute (not a post-build `.value` set): the
+  // property doesn't serialize back into innerHTML, so the numbers would render
+  // blank after a reload. Numbers are safe, but esc() keeps it defensive.
   return `<div class="sc-check">
     <label class="sc-en">${esc(label)}</label>
-    <span class="sc-field"><input class="hr-time" type="number" data-loc="${key}" ${a} /></span>
+    <span class="sc-field"><input class="hr-time" type="number" data-loc="${key}" ${a} value="${esc(val)}" /></span>
   </div>`;
 }
 function renderLocation(d) {
-  const rows = LOC_FIELDS.map(([k, label, attrs]) => locRow(k, label, attrs)).join("");
+  const rows = LOC_FIELDS.map(([k, label, attrs]) => locRow(k, label, attrs, d[k])).join("");
   const on = !!d.visits_enabled;
   const toggle = `<div class="sc-check${on ? "" : " sc-check-off"}">
     <label class="sc-en"><input type="checkbox" data-loc="visits_enabled"${on ? " checked" : ""}/>`
     + ` Visit monitoring (arrivals at any venue)</label></div>`;
-  const html = rows + toggle;
-  // Set number values after building, so esc() isn't needed and the browser coerces.
-  const wrap = document.createElement("div");
-  wrap.innerHTML = html;
-  LOC_FIELDS.forEach(([k]) => {
-    const inp = wrap.querySelector(`[data-loc="${k}"]`);
-    if (inp) inp.value = d[k];
-  });
-  return wrap.innerHTML;
+  return rows + toggle;
 }
 function flashLoc(msg) {
   $("#loc-saved").textContent = msg;
