@@ -223,6 +223,13 @@ distance without a tap. Region monitoring is battery-cheap (the OS wakes the app
 only on a crossing, even from terminated; `AppDelegate` re-attaches the delegate
 on launch). Add places with `prefrontal place add <name> <lat> <lon>`.
 
+Alongside the geofences it also runs a **significant-location-change** feed
+(#562) — coarse (~500 m / cell-tower) position updates that keep
+`/webhooks/location` fresh *between* curated places (what departure travel-time
+and trip stop-detection need), replacing the Shortcuts "Update location"
+automation. Same Always-location opt-in; also battery-cheap and terminated-state
+capable. Posts are throttled (default 5 min floor; web-configurable under #565).
+
 ## Siri / Shortcuts / Action Button (App Intents)
 
 `Intents/PrefrontalIntents.swift` exposes the core one-tap actions as **App

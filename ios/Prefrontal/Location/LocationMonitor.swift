@@ -1,22 +1,35 @@
 import Foundation
 import CoreLocation
 
-/// Opt-in geofencing (#469). Monitors the user's curated places (`/places`) with
-/// `CLCircularRegion`s so crossing a boundary auto-logs without a Shortcut:
-/// leaving the place named **home** posts `/webhooks/departure/left` (the native
-/// replacement for the "when I leave Home" automation), and any enter/exit posts
-/// the current position to `/webhooks/location`.
+/// Opt-in location monitoring. Two battery-cheap CoreLocation mechanisms feed
+/// Prefrontal without any Shortcut, both waking the app even from terminated:
 ///
-/// Region monitoring is battery-cheap (the OS wakes the app only on a boundary
-/// crossing, even from terminated) — so `AppDelegate` touches `.shared` on every
-/// launch to re-attach the delegate and receive events. Off unless the user opts
-/// in (`AppConfig.locationEnabled`), which also gates the Always-location prompt.
+/// - **Geofences (#469).** Curated places (`/places`) as `CLCircularRegion`s:
+///   leaving the place named **home** posts `/webhooks/departure/left` (the
+///   native replacement for the "when I leave Home" automation), and any
+///   enter/exit posts the current position to `/webhooks/location`.
+/// - **Significant-location-change feed (#562).** Coarse (~500 m / cell-tower)
+///   position updates keep `/webhooks/location` fresh *between* curated places —
+///   what departure travel-time and trip stop-detection need — replacing the
+///   Shortcuts "Update location" automation. Throttled to `minPostInterval` so a
+///   burst of updates doesn't spam the endpoint.
+///
+/// `AppDelegate` touches `.shared` on every launch to re-attach the delegate and
+/// resume both. Off unless the user opts in (`AppConfig.locationEnabled`), which
+/// also gates the Always-location prompt.
 final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     static let shared = LocationMonitor()
 
     private let manager = CLLocationManager()
     private static let homeName = "home"
     private static let maxRegions = 18   // CoreLocation caps at 20 per app
+
+    /// Minimum seconds between significant-change position posts, so a cluster of
+    /// updates doesn't spam `/webhooks/location`. The cadence becomes
+    /// web-configurable in #565; this is the default floor. Stored in the App
+    /// Group so the throttle survives a terminated-state relaunch by the OS.
+    private static let minPostInterval: TimeInterval = 300
+    private static let lastPostKey = "lastLocationPostAt"
 
     private override init() {
         super.init()
@@ -26,17 +39,21 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     /// Called on launch: resume monitoring if the user previously opted in.
     func startIfEnabled() {
         guard SharedStore.locationEnabled else { return }
+        manager.startMonitoringSignificantLocationChanges()
         refreshRegions()
     }
 
-    /// Turn monitoring on — prompts for Always-location, then monitors places.
+    /// Turn monitoring on — prompts for Always-location, then monitors places
+    /// and the significant-change position feed.
     func enable() {
         manager.requestAlwaysAuthorization()
+        manager.startMonitoringSignificantLocationChanges()
         refreshRegions()
     }
 
-    /// Turn monitoring off and drop every region.
+    /// Turn monitoring off: stop the position feed and drop every region.
     func disable() {
+        manager.stopMonitoringSignificantLocationChanges()
         for region in manager.monitoredRegions { manager.stopMonitoring(for: region) }
     }
 
@@ -97,6 +114,28 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         guard let fix = manager.location else { return }
+        Task {
+            try? await withAPI {
+                try await $0.postLocation(
+                    lat: fix.coordinate.latitude, lon: fix.coordinate.longitude,
+                    accuracy: fix.horizontalAccuracy
+                )
+            }
+        }
+    }
+
+    /// Significant-location-change updates — the coarse position feed (#562).
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard SharedStore.locationEnabled,
+              let fix = locations.last,
+              fix.horizontalAccuracy >= 0  // negative = invalid fix
+        else { return }
+        // Throttle across launches: SLC can relaunch us from terminated, so the
+        // last-post time lives in the App Group rather than in memory.
+        let now = Date().timeIntervalSince1970
+        let last = SharedStore.defaults.double(forKey: Self.lastPostKey)
+        guard now - last >= Self.minPostInterval else { return }
+        SharedStore.defaults.set(now, forKey: Self.lastPostKey)
         Task {
             try? await withAPI {
                 try await $0.postLocation(

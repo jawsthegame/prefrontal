@@ -7,6 +7,16 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS significant-location-change feed** ✅ (#562, epic #569) — `LocationMonitor`
+  now runs `startMonitoringSignificantLocationChanges` alongside the #469
+  geofences, so coarse (~500 m / cell-tower) position updates keep
+  `/webhooks/location` fresh **between** curated places — what departure
+  travel-time and trip stop-detection need — replacing the Shortcuts "Update
+  location" automation. Battery-cheap and wakes the app from terminated; posts
+  are throttled to a 5-minute floor (App-Group-persisted so the throttle survives
+  a relaunch; becomes web-configurable under #565). Same Always-location opt-in,
+  off by default. Client-only; build on a Mac.
+
 - **Fix: stale "Recent nudges" (legacy NULL-expiry rows)** ✅ — `recent_nudges`
   kept rows with a NULL `expires_at` eligible forever, so nudges predating the
   expiry default (`DEFAULT_NUDGE_TTL_HOURS`) lingered on the iOS Today card and
