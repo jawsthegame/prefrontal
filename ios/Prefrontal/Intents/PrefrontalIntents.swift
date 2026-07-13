@@ -194,6 +194,10 @@ struct CaptureImpulseIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let client = try prefrontalClient()
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            // Whitespace-only voice/typing would 422 server-side; catch it here.
+            return .result(dialog: "Nothing to capture — say the impulse and try again.")
+        }
         let captured = try await client.captureImpulse(raw)
         reloadWidgets()
         let line = captured.confirmation.isEmpty ? "Parked “\(captured.title)”." : captured.confirmation
@@ -250,6 +254,11 @@ struct LogTripIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let client = try prefrontalClient()
         let what = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !what.isEmpty else {
+            // This intent only ever sends label/reflection, so a blank label would
+            // 422 ("provide at least one of …"); ask for it instead of failing.
+            return .result(dialog: "What was the trip? Give it a label and try again.")
+        }
         let note = reflection?.trimmingCharacters(in: .whitespacesAndNewlines)
         let result = try await client.tripRetro(label: what, reflection: (note?.isEmpty ?? true) ? nil : note)
         reloadWidgets()
