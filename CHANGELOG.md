@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS: `CLVisit` monitoring — arrivals/departures at arbitrary venues** ✅
+  (#564, epic #569) — `LocationMonitor` now runs `startMonitoringVisits`
+  alongside the #469 geofences and the #562 significant-change feed, so a stop at
+  a venue beyond the ≤18 curated `/places` still feeds `/webhooks/location`
+  (battery-cheap, wakes from terminated). Both edges post the visit coordinate;
+  closing an outing stays home-only (the home ring, #563) — an arbitrary-venue
+  arrival just refreshes position and lets the server decide. All three
+  `/webhooks/location` feeds now share a `postLocationDeduped` guard (App-Group
+  persisted, ~150 m / 120 s) so a `CLVisit` coinciding with a curated-place
+  geofence crossing doesn't double-post. Client-only (build on a Mac); reuses the
+  existing endpoint, no server change.
+
 - **iOS: native arrival home closes the active outing** ✅ (#563, epic #569) —
   restores the Tier-1 "I'm back" Shortcut natively. `POST /webhooks/location`
   only *stores* the phone's fix; the server's passive home-return close runs on
