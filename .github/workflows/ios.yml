@@ -1,0 +1,52 @@
+name: iOS
+
+# Lint + compile gate for the Swift app under ios/. Separate from the Python CI
+# (ci.yml) and pinned to a macOS runner, so it only runs when iOS sources or
+# this workflow change — Python-only PRs don't spend macOS minutes.
+#
+# Scope (first cut): SwiftLint (non-strict — only error-severity fails; see
+# ios/.swiftlint.yml) plus the lightweight `swiftc -typecheck` compile check
+# documented in ios/README.md. A full `xcodebuild` build + an XCTest unit-test
+# target are the intended fast-follow (they need the heavier CoreSimulator
+# setup); see the issue that tracks iOS test coverage.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Lint (SwiftLint)
+        working-directory: ios
+        # Non-strict: warnings annotate but don't fail; only error-severity rules
+        # gate. Tighten to `--strict` once a clean baseline is confirmed.
+        run: swiftlint lint --reporter github-actions-logging
+
+      - name: Compile check (swiftc -typecheck)
+        working-directory: ios/Prefrontal
+        # The no-build sanity check from ios/README.md: typecheck the app target's
+        # sources against the iOS 17 SDK. Catches build-breaking changes without
+        # the CoreSimulator install a full xcodebuild needs.
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          find . -name '*.swift' -print0 \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck

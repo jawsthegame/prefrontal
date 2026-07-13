@@ -87,6 +87,22 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
 ```
 
+## Linting
+
+[SwiftLint](https://github.com/realm/SwiftLint) is configured in
+[`.swiftlint.yml`](.swiftlint.yml). Run it from `ios/`:
+
+```sh
+brew install swiftlint   # once
+cd ios && swiftlint
+```
+
+CI runs the same lint plus the compile check above on every change under `ios/`
+(`.github/workflows/ios.yml`, macOS runner). It's non-strict for now — only
+error-severity rules fail the build — so a first pass can land green; tighten to
+`swiftlint --strict` once the baseline is clean. A full `xcodebuild` build and an
+XCTest unit-test target are the intended fast-follow.
+
 ## Run on your iPhone
 
 The widget uses an **App Group** and a **shared Keychain access group** (for the
