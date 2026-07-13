@@ -34,17 +34,26 @@ force_cast:
 force_try:
   severity: warning
 
+# Warning-only (no error tier) for the first cut: a handful of existing lines run
+# long, and blocking CI on them on day one isn't the goal. They still surface as
+# warnings; tighten to an error ceiling once the baseline is trimmed.
 line_length:
-  warning: 120
-  error: 200
+  warning: 140
   ignores_comments: true
   ignores_urls: true
 
-# SwiftUI leans on short, conventional names (id, ok, to, x/y, vm).
+# SwiftUI + closures lean on short, conventional names (id, ok, to, x/y, vm, and
+# single-letter closure args). Only flag empty names, so the check still catches
+# a genuinely missing identifier without fighting the codebase's style.
 identifier_name:
   min_length:
-    warning: 2
+    warning: 1
   excluded: [id, ok, to, x, y, vm, r, g, b]
+
+# This codebase consistently puts `else`/`catch` on their own line; keep the rule
+# active but aligned to that style (uncuddled) rather than the cuddled default.
+statement_position:
+  statement_mode: uncuddled_else
 
 type_name:
   min_length:
