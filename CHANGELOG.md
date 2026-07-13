@@ -7,6 +7,16 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Docs: retire the Shortcuts location automations for native-app users** ✅
+  (#567, epic #569 capstone) — with the native CoreLocation feeds all shipped
+  (#562/#469/#563/#564), `deploy/ios-shortcut.md` now leads with a banner + table
+  mapping each of the four location Shortcuts ("Update location", "Leaving Home",
+  "I'm back" arrival, coarse departure-by-location) — plus the Home Assistant
+  Tier-2 continuous gating — to its native equivalent, and each of those sections
+  carries a "native app: not needed" note. The Shortcuts stack stays documented
+  for **web / ntfy-only** users (no app). `ios/README.md` now states the app fully
+  replaces the location Shortcut automations. Docs-only.
+
 - **iOS: location permission UX hardening** ✅ (#566, epic #569) — enabling
   location used to fire a bare `requestAlwaysAuthorization()` with no handling of
   what came back. The Settings "Location automations" section is now a dedicated
