@@ -7,6 +7,14 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Fix: stale "Recent nudges" (legacy NULL-expiry rows)** ✅ — `recent_nudges`
+  kept rows with a NULL `expires_at` eligible forever, so nudges predating the
+  expiry default (`DEFAULT_NUDGE_TTL_HOURS`) lingered on the iOS Today card and
+  the widget indefinitely — the card read as "all things from long ago." NULL rows
+  now fall back to the same TTL measured from `created_at`, so an ancient legacy
+  nudge ages out like any other while active nudges (all of which carry an expiry)
+  are unaffected. Covered by `tests/test_departure.py`.
+
 - **iOS self-care local notifications** ✅ (#474, follow-up) — completes the
   offline-tolerant local nudges. `GET /self-care` now returns a per-check
   **`next_due`** (UTC) — the next future local time that check wants a nudge,

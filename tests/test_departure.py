@@ -685,6 +685,26 @@ def test_record_nudge_preserves_explicit_expiry(store):
     assert store.recent_nudges()[0]["expires_at"] == start
 
 
+def test_recent_nudges_ages_out_legacy_null_expiry(store):
+    """A legacy NULL-expiry nudge ages out on the default TTL from its created_at.
+
+    Regression for the "Recent nudges card shows only ancient items" bug: rows
+    predating the expiry default have a NULL expires_at, and they used to stay
+    eligible forever. Now they fall back to the same TTL measured from created_at.
+    """
+    uid = store._uid()
+    for message, created in (("ancient", _utc(-180)), ("recent-legacy", _utc(-10))):
+        store.conn.execute(
+            "INSERT INTO nudges (user_id, kind, level, message, created_at, expires_at) "
+            "VALUES (?, 'outing', 'soft', ?, ?, NULL)",
+            (uid, message, created),
+        )
+    store.conn.commit()
+    messages = [n["message"] for n in store.recent_nudges()]
+    assert "ancient" not in messages          # 3h old, past the 2h TTL → gone
+    assert "recent-legacy" in messages        # 10 min old → still eligible
+
+
 def test_close_outing_expires_its_nudge(store):
     """Closing an outing clears its "still on track?" nudge immediately.
 
