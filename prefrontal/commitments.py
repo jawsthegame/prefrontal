@@ -528,6 +528,7 @@ def expand_recurrences(
     horizon_hours: float = RECUR_HORIZON_HOURS,
     back_hours: float = 1.0,
     default_tz: str = "UTC",
+    min_occurrences: int = 0,
 ) -> list[dict[str, Any]]:
     """Expand ``RRULE`` master events into concrete near-term occurrences.
 
@@ -552,6 +553,13 @@ def expand_recurrences(
         horizon_hours: How far ahead to generate occurrences.
         back_hours: How far back to include a just-started occurrence.
         default_tz: Home zone for naive timestamps with no ``tzid``.
+        min_occurrences: A per-series backstop. If the ``horizon`` window holds
+            fewer than this many *future* occurrences of a series, expansion
+            reaches past the horizon until it has this many — so a long-interval
+            event (monthly/quarterly/annual) whose next instance falls beyond the
+            horizon stays visible without widening the horizon for *every* series
+            (which would materialize daily/weekly runs 100+ days out). ``0``
+            (default) disables the backstop, leaving pure horizon behavior.
 
     Returns:
         A new event list with masters replaced by their occurrences.
@@ -566,6 +574,11 @@ def expand_recurrences(
         now = now.replace(tzinfo=timezone.utc)
     window_start = now - timedelta(hours=back_hours)
     window_end = now + timedelta(hours=horizon_hours)
+    # Enforce the "0 disables" contract: a misconfigured negative
+    # PREFRONTAL_CALENDAR_MIN_OCCURRENCES would otherwise read as "already
+    # satisfied" the moment we pass the window — same as 0, but silently. Clamp so
+    # the knob's floor is explicit rather than an emergent quirk of the comparison.
+    min_occurrences = max(0, min_occurrences)
 
     # Original start instants a modified instance already covers, keyed by bare
     # UID. dateutil generates occurrences at those original times, so we skip
@@ -587,7 +600,10 @@ def expand_recurrences(
             out.append(e)  # one-off, or an already-concrete modified instance
             continue
         out.extend(
-            _expand_master(e, rule_text, window_start, window_end, overrides, default_tz)
+            _expand_master(
+                e, rule_text, now, window_start, window_end, overrides,
+                default_tz, min_occurrences,
+            )
         )
     return out
 
@@ -595,28 +611,55 @@ def expand_recurrences(
 def _expand_master(
     master: dict[str, Any],
     rule_text: str,
+    now: datetime,
     window_start: datetime,
     window_end: datetime,
     overrides: dict[str, set[datetime]],
     default_tz: str,
+    min_occurrences: int = 0,
 ) -> list[dict[str, Any]]:
-    """Generate the in-window occurrences of one ``RRULE`` master event."""
+    """Generate the in-window occurrences of one ``RRULE`` master event.
+
+    Also honors the ``min_occurrences`` backstop: if the horizon window holds
+    fewer than that many *future* occurrences, expansion continues past the
+    window until it has collected that many, so a long-interval series whose next
+    instance falls beyond the horizon still surfaces.
+    """
     tzid = master.get("tzid")
     dtstart = _aware(master.get("start_at") or "", tzid, default_tz)
     if dtstart is None:
         return []
+
+    # Occurrences suppressed by an EXDATE or already covered by a moved instance.
+    # Built before expansion so a suppressed occurrence never counts toward the
+    # min_occurrences backstop — we want that many *real* future occurrences, not
+    # that many holes.
+    now_utc = now.astimezone(timezone.utc)
+    skip = set(overrides.get(_bare_uid(master.get("external_id") or ""), set()))
+    for raw in master.get("exdate") or []:
+        for part in str(raw).split(","):
+            d = _aware(part, tzid, default_tz)
+            if d is not None:
+                skip.add(d.astimezone(timezone.utc))
+
     try:
         rule = rrulestr(rule_text.replace("RRULE:", "", 1), dtstart=dtstart)
         # Iterate lazily (xafter) rather than materializing rule.between(...): a
         # high-frequency RRULE over the horizon can yield millions of occurrences,
-        # and list(between) builds them all before we can bound them. Walk in order,
-        # stop at window_end, and hard-cap the count so a hostile feed can't exhaust
-        # memory (see MAX_RECURRENCE_OCCURRENCES).
+        # and list(between) builds them all before we can bound them. Walk in order:
+        # keep everything up to window_end, then keep going only while the series
+        # still owes us future occurrences for the backstop, and hard-cap the count
+        # so a hostile feed can't exhaust memory (see MAX_RECURRENCE_OCCURRENCES).
         occurrences: list[datetime] = []
+        future_kept = 0
         for occ in rule.xafter(window_start, inc=True):
-            if occ > window_end:
+            past_window = occ > window_end
+            if past_window and future_kept >= min_occurrences:
                 break
             occurrences.append(occ)
+            occ_utc = occ.astimezone(timezone.utc)
+            if occ_utc >= now_utc and occ_utc not in skip:
+                future_kept += 1
             if len(occurrences) >= MAX_RECURRENCE_OCCURRENCES:
                 logger.warning(
                     "RRULE for %r hit the %d-occurrence cap within the horizon; "
@@ -632,13 +675,6 @@ def _expand_master(
     end0 = _aware(master.get("end_at") or "", master.get("end_tzid") or tzid, default_tz)
     if end0 is not None and end0 > dtstart:
         duration = end0 - dtstart
-
-    skip = set(overrides.get(_bare_uid(master.get("external_id") or ""), set()))
-    for raw in master.get("exdate") or []:
-        for part in str(raw).split(","):
-            d = _aware(part, tzid, default_tz)
-            if d is not None:
-                skip.add(d.astimezone(timezone.utc))
 
     base_id = master.get("external_id")
     results: list[dict[str, Any]] = []
@@ -675,6 +711,7 @@ def sync_calendar(
     default_tz: str = "UTC",
     now: datetime | None = None,
     recur_horizon_hours: float = RECUR_HORIZON_HOURS,
+    recur_min_occurrences: int = 0,
 ) -> SyncSummary:
     """Idempotently sync a batch of calendar events into ``commitments``.
 
@@ -697,6 +734,11 @@ def sync_calendar(
         recur_horizon_hours: How far ahead to materialize recurring occurrences
             (default :data:`RECUR_HORIZON_HOURS`, 30 days). One-off events are
             unaffected — they carry no horizon.
+        recur_min_occurrences: Per-series backstop passed to
+            :func:`expand_recurrences` — the minimum number of future occurrences
+            to keep for a series even when its next instance falls beyond the
+            horizon (so a monthly/quarterly meeting stays visible). ``0`` (default)
+            keeps pure horizon behavior.
 
     Returns:
         A :class:`SyncSummary`. An event that fails validation (missing title,
@@ -711,6 +753,7 @@ def sync_calendar(
     events = expand_recurrences(
         events, now=now or utcnow(), default_tz=default_tz,
         horizon_hours=recur_horizon_hours,
+        min_occurrences=recur_min_occurrences,
     )
     # Validate each event independently: a single malformed VEVENT (missing
     # title, unparseable time) is skipped and logged rather than rejecting the

@@ -344,6 +344,92 @@ def test_sync_expands_recurring_end_to_end(store):
     assert got["start_at"] == "2026-08-05 11:30:00"  # 07:30 EDT → 11:30 UTC
 
 
+# A quarterly master (every 3 months on the 2nd Monday) whose cadence is longer
+# than the 30-day horizon — the shape (the "QBR") that vanished between occurrences.
+_QUARTERLY_QBR = {
+    "title": "QBR: Vistar Marketplace",
+    "start_at": "2024-07-08T12:00:00",
+    "end_at": "2024-07-08T13:30:00",
+    "tzid": "America/New_York",
+    "external_id": "work:qbr@google.com",
+    "rrule": "FREQ=MONTHLY;INTERVAL=3;BYDAY=2MO",
+}
+
+
+def test_expand_min_occurrences_surfaces_long_interval_series():
+    """A quarterly series whose next instance is past the horizon still surfaces.
+
+    With only a 30-day horizon, once today's instance is >1h old the next one is
+    ~3 months out (beyond the window) and the meeting disappears entirely. The
+    min_occurrences backstop reaches past the horizon so the next occurrences
+    stay visible.
+    """
+    # 14:30 ET on the day of the 12:00 instance — today's has passed the 1h
+    # look-back, and the next is October (well beyond a 30-day horizon).
+    now = datetime(2026, 7, 13, 18, 30, tzinfo=timezone.utc)
+    horizon = 30 * 24
+
+    # Pure horizon: nothing survives — this is the bug.
+    assert expand_recurrences(
+        [_QUARTERLY_QBR], now=now, horizon_hours=horizon, default_tz="America/New_York"
+    ) == []
+
+    # Backstop of 2: the next two occurrences are materialized despite the horizon.
+    out = expand_recurrences(
+        [_QUARTERLY_QBR], now=now, horizon_hours=horizon,
+        default_tz="America/New_York", min_occurrences=2,
+    )
+    starts = sorted(normalize_event(e, default_tz="America/New_York")["start_at"] for e in out)
+    assert starts == ["2026-10-12 16:00:00", "2027-01-11 17:00:00"]  # Oct (EDT), Jan (EST)
+
+
+def test_expand_min_occurrences_negative_is_clamped_to_zero():
+    """A misconfigured negative backstop is treated as 0 (disabled), not "always on"."""
+    now = datetime(2026, 7, 13, 18, 30, tzinfo=timezone.utc)  # today's QBR already past
+    out = expand_recurrences(
+        [_QUARTERLY_QBR], now=now, horizon_hours=30 * 24,
+        default_tz="America/New_York", min_occurrences=-5,
+    )
+    assert out == []  # same as min_occurrences=0, no reaching past the horizon
+
+
+def test_expand_min_occurrences_does_not_bloat_frequent_series():
+    """The backstop only reaches past the horizon when the window is under-full.
+
+    A weekly series already has plenty of future occurrences inside a 30-day
+    window, so min_occurrences must not tack on extra beyond-horizon rows.
+    """
+    base = expand_recurrences(
+        [_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York"
+    )
+    backstopped = expand_recurrences(
+        [_WEEKLY_WED], now=_wed_noon(7), default_tz="America/New_York", min_occurrences=2,
+    )
+    assert len(backstopped) == len(base) == 5  # unchanged — no beyond-horizon bloat
+
+
+def test_sync_min_occurrences_end_to_end(store):
+    """The full sync path keeps a long-interval series' next occurrence visible."""
+    now = datetime(2026, 7, 13, 18, 30, tzinfo=timezone.utc)  # today's QBR already past
+    summary = sync_calendar(
+        store, [dict(_QUARTERLY_QBR)], default_tz="America/New_York", now=now,
+        recur_horizon_hours=30 * 24, recur_min_occurrences=2,
+    )
+    assert summary.added == 2
+    rows = [c["start_at"] for c in store.upcoming_commitments()
+            if c["title"] == "QBR: Vistar Marketplace"]
+    assert rows == ["2026-10-12 16:00:00", "2027-01-11 17:00:00"]
+
+
+def test_calendar_min_occurrences_setting_default_and_env(monkeypatch, tmp_path):
+    """The backstop is a config knob: defaults to 2, overridable via env."""
+    from prefrontal.config import load_settings
+
+    assert Settings().calendar_min_occurrences == 2  # dataclass default
+    monkeypatch.setenv("PREFRONTAL_CALENDAR_MIN_OCCURRENCES", "0")
+    assert load_settings(str(tmp_path / "nope.env")).calendar_min_occurrences == 0
+
+
 def test_normalize_event_requires_title_and_start():
     """Missing required fields raise ValueError."""
     with pytest.raises(ValueError):
