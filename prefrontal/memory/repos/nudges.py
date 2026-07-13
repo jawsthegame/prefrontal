@@ -64,8 +64,9 @@ class NudgesRepo(Repo):
         "leave now" nudge expires at its meeting's start, and every other nudge
         gets a ``DEFAULT_NUDGE_TTL_HOURS`` default at record time, so a stale
         reminder never lingers on a surface (the widget). A row with a NULL
-        ``expires_at`` (only legacy rows predating the default) is always
-        eligible.
+        ``expires_at`` (only legacy rows predating the default) falls back to the
+        same TTL measured from ``created_at`` — so an ancient legacy nudge ages out
+        the same way rather than surfacing on the card forever.
 
         Args:
             limit: Maximum number of nudges to return.
@@ -76,9 +77,11 @@ class NudgesRepo(Repo):
         """
         return self._query_all(
             "SELECT id, kind, level, message, created_at, expires_at FROM nudges "
-            "WHERE user_id = ? AND (expires_at IS NULL OR expires_at > datetime('now')) "
-            "ORDER BY created_at DESC, id DESC LIMIT ?",
-            (self._uid(), limit),
+            "WHERE user_id = ? AND ("
+            "  expires_at > datetime('now')"
+            "  OR (expires_at IS NULL AND created_at > datetime('now', ?))"
+            ") ORDER BY created_at DESC, id DESC LIMIT ?",
+            (self._uid(), f"-{DEFAULT_NUDGE_TTL_HOURS} hours", limit),
         )
 
     def expire_nudges(self, kind: str) -> int:

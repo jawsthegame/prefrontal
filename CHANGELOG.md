@@ -7,6 +7,28 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Fix: stale "Recent nudges" (legacy NULL-expiry rows)** ✅ — `recent_nudges`
+  kept rows with a NULL `expires_at` eligible forever, so nudges predating the
+  expiry default (`DEFAULT_NUDGE_TTL_HOURS`) lingered on the iOS Today card and
+  the widget indefinitely — the card read as "all things from long ago." NULL rows
+  now fall back to the same TTL measured from `created_at`, so an ancient legacy
+  nudge ages out like any other while active nudges (all of which carry an expiry)
+  are unaffected. Covered by `tests/test_departure.py`.
+
+- **iOS self-care local notifications** ✅ (#474, follow-up) — completes the
+  offline-tolerant local nudges. `GET /self-care` now returns a per-check
+  **`next_due`** (UTC) — the next future local time that check wants a nudge,
+  computed from its start hour + cadence with the same pace model as the
+  overdue/"behind" flag, capped to the check's window (its end hour, else the
+  responsive-hours end) so nothing schedules overnight
+  (`prefrontal/modules/self_care.py:_next_due`). The iOS app schedules a local
+  `UNNotificationRequest` per due check on each Today refresh
+  (`LocalNotifications.reconcileSelfCare`), so meal/water/meds/wind-down/movement
+  nudges still fire off the tailnet; open-ended bio breaks (no fixed clock time)
+  are excluded, and requests reconcile each refresh so a satisfied/off check drops
+  out. Server side covered by `tests/test_self_care.py`; the client is Swift
+  (build on a Mac).
+
 - **iOS morning briefing — rendered Markdown** ✅ — the Today briefing card showed
   the server's raw Markdown (`## headers`, `- bullets`, `**bold**`) because
   SwiftUI's `Text` only parses Markdown from string *literals*, not a runtime

@@ -70,12 +70,12 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.clock import parse_ts as _parse_ts
-from prefrontal.coaching import CoachContext, Cue, last_fired
+from prefrontal.coaching import DEFAULT_RESPONSIVE_END, CoachContext, Cue, last_fired
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -500,6 +500,50 @@ def _is_overdue(
     return count < expected
 
 
+def _next_due(
+    *,
+    enabled: bool,
+    done: bool,
+    open_ended: bool,
+    target: int,
+    count: int,
+    start_hour: int,
+    end_hour: int | None,
+    interval: int,
+    local: datetime,
+    responsive_end: int,
+) -> str | None:
+    """The next *future* local instant this check wants a nudge, or ``None``.
+
+    Returned as UTC ``TS_FMT`` text — the same format the iOS app parses — so the
+    app can schedule an **offline-tolerant local notification** against it (#474),
+    a self-care companion to the departure "leave by" local nudge. Mirrors the
+    pace model in :func:`_is_overdue`: a once-a-day check is due at its start hour;
+    a recurring quota paces one nudge per ``interval`` minutes from the start hour.
+
+    Only a **future** time inside the check's window is returned — a local
+    notification can't fire in the past, and nothing is scheduled at/after the
+    window end (``end_hour``, else the responsive-hours end) so there are no
+    overnight buzzes. Off, already-``done``, and open-ended checks return ``None``
+    (an open-ended reminder has no fixed schedule — it's an interval since your
+    last action, not a clock time). Note ``count`` is unused for now but kept so the
+    signature reads as "everything the pace depends on."
+    """
+    if not enabled or done or open_ended:
+        return None
+    window_end = end_hour if end_hour is not None else responsive_end
+    start = local.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    if target <= 1 or local <= start:
+        due = start
+    else:
+        minutes_since = (local - start).total_seconds() / 60.0
+        steps = int(minutes_since // interval) + 1
+        due = start + timedelta(minutes=steps * interval)
+    if due <= local or due.hour >= window_end:
+        return None
+    return due.astimezone(timezone.utc).replace(tzinfo=None).strftime(TS_FMT)
+
+
 def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, Any]:
     """Today's self-care state for the read-only surfaces (the dashboard card).
 
@@ -516,6 +560,7 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
     """
     local = local_datetime(now, tz)
     today = local.strftime("%Y-%m-%d")
+    responsive_end = store.get_hour("responsive_hours_end", DEFAULT_RESPONSIVE_END)
     checks: list[dict[str, Any]] = []
     for check in CHECKS:
         count = day_count(store, check, today)
@@ -582,6 +627,15 @@ def self_care_status(store: MemoryStore, now: datetime, tz: str) -> dict[str, An
                 # open-ended check (bio breaks) it means a reminder is due right now.
                 "overdue": overdue,
                 "interval_minutes": interval,
+                # The next future local time this check wants a nudge (UTC text),
+                # so the iOS app can schedule an offline local notification for it
+                # (#474). None when off/done/open-ended or nothing's left today.
+                "next_due": _next_due(
+                    enabled=enabled, done=done, open_ended=check.open_ended,
+                    target=target, count=count, start_hour=start_hour,
+                    end_hour=end_hour, interval=interval, local=local,
+                    responsive_end=responsive_end,
+                ),
             }
         )
     return {
