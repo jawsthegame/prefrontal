@@ -106,6 +106,63 @@ def test_all_modules_enabled_ignores_packs():
     assert {m.key for m in enabled_modules(s)} == {m.key for m in enabled_modules(Settings())}
 
 
+# -- focus-balance seeding guard ---------------------------------------------
+
+
+def test_focus_balance_seeding_gap_flags_inert_config():
+    """A pack that seeds the focus-balance config without its module is flagged."""
+    from prefrontal.packs.registry import _REGISTRY, focus_balance_seeding_gap
+
+    gap_pack = register(
+        Pack(
+            key="_test_balance_gap",
+            title="Gap",
+            coaching_defaults=MappingProxyType(
+                {"focus_balance_nudge": "1", "focus_target:home": "120"}
+            ),
+        )
+    )
+    # A pack whose defaults are unrelated to focus balance — enabled below to prove
+    # the guard doesn't false-positive on any pack, only ones that seed the guardrail.
+    plain_pack = register(
+        Pack(
+            key="_test_plain",
+            title="Plain",
+            coaching_defaults=MappingProxyType({"todo_window:admin": "09:00-17:00"}),
+        )
+    )
+    try:
+        # Explicit module list without trip_tracking → seeded config is inert.
+        gap = Settings(modules=("impulsivity",), packs=("_test_balance_gap",))
+        assert focus_balance_seeding_gap(gap) == ["_test_balance_gap"]
+        # trip_tracking in the module list closes the gap.
+        ok = Settings(modules=("impulsivity", "trip_tracking"), packs=("_test_balance_gap",))
+        assert focus_balance_seeding_gap(ok) == []
+        # Blank module list (all modules on) also closes it.
+        assert focus_balance_seeding_gap(Settings(modules=(), packs=("_test_balance_gap",))) == []
+        # An *enabled* pack that seeds no focus-balance keys is never flagged, even
+        # with trip_tracking off — the guard keys on the seeded config, not presence.
+        assert focus_balance_seeding_gap(
+            Settings(modules=("impulsivity",), packs=("_test_plain",))
+        ) == []
+        # Mixed: only the balance-seeding pack is named, not the plain one alongside.
+        assert focus_balance_seeding_gap(
+            Settings(modules=("impulsivity",), packs=("_test_plain", "_test_balance_gap"))
+        ) == ["_test_balance_gap"]
+    finally:
+        _REGISTRY.pop(gap_pack.key, None)
+        _REGISTRY.pop(plain_pack.key, None)
+
+
+def test_builtin_packs_have_no_focus_balance_gap():
+    """The shipped parent/caregiver packs bundle trip_tracking, so even on an
+    explicit module list they never strand their seeded focus-balance config."""
+    from prefrontal.packs.registry import focus_balance_seeding_gap
+
+    s = Settings(modules=("impulsivity",), packs=("parent", "caregiver"))
+    assert focus_balance_seeding_gap(s) == []
+
+
 # -- vocabulary merge + precedence -------------------------------------------
 
 

@@ -23,6 +23,7 @@ from prefrontal.packs.base import Pack, PackVocabulary
 from prefrontal.packs.registry import (
     available,
     enabled_packs,
+    focus_balance_seeding_gap,
     get,
     is_enabled,
     pack_module_keys,
@@ -35,6 +36,7 @@ __all__ = [
     "PackVocabulary",
     "available",
     "enabled_packs",
+    "focus_balance_seeding_gap",
     "get",
     "is_enabled",
     "pack_module_keys",

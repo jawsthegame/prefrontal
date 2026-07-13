@@ -89,6 +89,48 @@ def pack_module_keys(settings: Settings | None = None) -> list[str]:
     return out
 
 
+#: Coaching-state keys that arm the focus-balance guardrail — the weekly nudge
+#: flag and any per-domain target. The guardrail itself (passive trip detection +
+#: the "light on <sphere>" nudge) lives entirely in the ``trip_tracking`` module,
+#: so a pack seeding these without that module enabled leaves them inert. Kept as
+#: literals here (not imported from :mod:`prefrontal.focus_balance`) to keep the
+#: packs layer dependency-free.
+_FOCUS_BALANCE_SEED_KEYS = ("focus_balance_nudge",)
+_FOCUS_BALANCE_SEED_PREFIXES = ("focus_target:",)
+
+
+def focus_balance_seeding_gap(settings: Settings | None = None) -> list[str]:
+    """Enabled packs that seed the focus-balance guardrail while its module is off.
+
+    The focus-balance feature — the weekly ``focus_target:<domain>`` aims, the
+    ``focus_balance_nudge`` heads-up, and the passive closed-loop trip detection it
+    measures — lives entirely in the ``trip_tracking`` module. A pack that seeds
+    those coaching defaults *without* ``trip_tracking`` enabled leaves the config
+    inert: no trips are ever detected and the weekly nudge never fires. Returns the
+    keys of the offending enabled packs (empty when there's no gap), so the app can
+    warn once at startup — the shape of the bug the built-in packs used to ship
+    with (targets seeded, module off).
+
+    Args:
+        settings: Settings to read the pack/module lists from. Defaults to
+            :func:`prefrontal.config.get_settings`.
+    """
+    # Lazy import: the modules layer already cross-imports the packs registry, so
+    # a top-level import here would risk a cycle at package-init time.
+    from prefrontal.modules.registry import is_enabled as module_is_enabled
+
+    if module_is_enabled("trip_tracking", settings):
+        return []
+    offenders: list[str] = []
+    for pack in enabled_packs(settings):
+        if any(
+            key in _FOCUS_BALANCE_SEED_KEYS or key.startswith(_FOCUS_BALANCE_SEED_PREFIXES)
+            for key in pack.coaching_defaults
+        ):
+            offenders.append(pack.key)
+    return offenders
+
+
 def resolve_pack_vocabulary(settings: Settings | None = None) -> PackVocabulary:
     """Merge the vocabulary of all enabled packs.
 

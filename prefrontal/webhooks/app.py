@@ -109,6 +109,25 @@ def create_app(
             "agent and are ignored. Check the spelling against the known agents.",
             ", ".join(sorted(unknown_agents)),
         )
+    # Surface an inert focus-balance guardrail: a Context Pack that seeds the
+    # feature's config (weekly focus_target:* / the focus_balance_nudge flag) while
+    # the module that actually runs it (trip_tracking) is disabled. Left unwarned,
+    # this silently produces "no trips tracked" and an empty/one-sphere balance —
+    # the config is seeded but nothing populates or nudges it. Warn once so the
+    # cause isn't a mystery (this is the shape of a bug the built-in packs once
+    # shipped with; caught here if a module list or custom pack reintroduces it).
+    from prefrontal.packs import focus_balance_seeding_gap
+
+    balance_gap_packs = focus_balance_seeding_gap(resolved_settings)
+    if balance_gap_packs:
+        get_logger(__name__).warning(
+            "Context pack(s) %s seed the focus-balance guardrail (focus_target/"
+            "focus_balance_nudge) but the trip_tracking module is disabled — the "
+            "weekly targets and nudge will be inert and no closed-loop trips will be "
+            "tracked. Enable trip_tracking (add it to PREFRONTAL_MODULES, or leave "
+            "the list blank to enable all modules).",
+            ", ".join(sorted(balance_gap_packs)),
+        )
     # Forward-geocoder for commitment destinations. Built from settings unless
     # injected (tests pass a stub). Only consulted when the runtime
     # ``geocoding_enabled`` flag is on — see ``_run_geocode`` below.
