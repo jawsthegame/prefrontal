@@ -454,7 +454,12 @@ def apply_reflection(
 
 
 def suggest_trip_labeling(
-    store: Any, trip: dict[str, Any], *, radius_m: float | None = None
+    store: Any,
+    trip: dict[str, Any],
+    *,
+    radius_m: float | None = None,
+    places: list[dict[str, Any]] | None = None,
+    waypoints: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Reverse-match a completed trip's stops to a curated place — a label/domain guess.
 
@@ -474,31 +479,43 @@ def suggest_trip_labeling(
     reverse-geocode): ``None`` when the trip has no stops, no places are curated, or
     no stop lands within the match radius.
 
+    Reads are ordered cheapest-signal-first and every input is prefetchable, so a
+    caller annotating many trips per tick (the ``/trips`` list, the label-ask cue)
+    can avoid an N+1: waypoints are checked *before* places/radius, so a
+    no-stop trip costs nothing further, and ``places``/``radius_m``/``waypoints`` can
+    each be passed in to reuse a single read across the batch.
+
     Args:
         store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
         trip: The completed trip dict (needs ``id``).
         radius_m: Match radius in metres; defaults to the ``place_match_radius_m``
             coaching key, then :data:`~prefrontal.geo.DEFAULT_PLACE_MATCH_RADIUS_M`.
+        places: Preloaded curated places to match against; ``None`` reads them from
+            the store (pass the shared list when annotating several trips at once).
+        waypoints: Preloaded stops for this trip; ``None`` reads them from the store
+            (pass them to reuse a read the caller already did, e.g. for a stop count).
 
     Returns:
         ``{"place", "label", "domain", "distance_m"}`` for the best match (``domain``
         may be ``None`` if the place carries no sphere), or ``None``.
     """
-    places = store.places()
-    if not places:
+    # Cheapest signal first: no stops → nothing to match, and we skip the places/
+    # radius reads entirely (the common short trip that never dwelt anywhere).
+    raw_waypoints = waypoints if waypoints is not None else store.trip_waypoints(trip["id"])
+    if not raw_waypoints:
+        return None
+    resolved_places = places if places is not None else store.places()
+    if not resolved_places:
         return None
     if radius_m is None:
         radius_m = store.get_float("place_match_radius_m", DEFAULT_PLACE_MATCH_RADIUS_M)
     # Destination-first: the farthest stop from home is the most informative label.
-    stops = sorted(
-        store.trip_waypoints(trip["id"]),
-        key=lambda w: -(w.get("distance_m") or 0),
-    )
+    stops = sorted(raw_waypoints, key=lambda w: -(w.get("distance_m") or 0))
     for stop in stops:
         lat, lon = stop.get("lat"), stop.get("lon")
         if lat is None or lon is None:
             continue
-        match = nearest_place(places, lat, lon, radius_m=radius_m)
+        match = nearest_place(resolved_places, lat, lon, radius_m=radius_m)
         if match is not None:
             place, dist = match
             return {

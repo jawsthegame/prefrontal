@@ -282,6 +282,25 @@ def test_suggest_trip_labeling_none_when_no_match(store):
     assert suggest_trip_labeling(store, store.get_trip(bare)) is None
 
 
+def test_suggest_trip_labeling_accepts_prefetched_inputs(store):
+    """Preloaded places/waypoints/radius reuse one read across a batch of trips."""
+    store.set_home(*HOME)
+    trip = _completed_trip_with_stop(store, FAR, dist_m=7000)
+    places = [{"name": "costco", "label": "Costco", "lat": FAR[0], "lon": FAR[1], "domain": "shop"}]
+    wps = store.trip_waypoints(trip["id"])
+    sugg = suggest_trip_labeling(store, trip, places=places, radius_m=200, waypoints=wps)
+    assert sugg["label"] == "Costco" and sugg["domain"] == "shop"
+
+
+def test_suggest_trip_labeling_short_circuits_without_stops(store):
+    """A stopless trip returns None from prefetched waypoints without touching places."""
+    store.set_home(*HOME)
+    tid = store.open_trip(departed_at=_ts(0))
+    store.close_trip(tid)
+    # Passing empty waypoints proves the no-stop early-out needs no places lookup.
+    assert suggest_trip_labeling(store, store.get_trip(tid), waypoints=[]) is None
+
+
 def test_trip_label_prompt_leads_with_suggestion():
     plain = trip_label_prompt({"actual_minutes": 30})
     assert "what was it" in plain.lower()

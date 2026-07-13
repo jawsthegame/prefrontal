@@ -24,6 +24,7 @@ from prefrontal.focus_balance import (
     build_focus_balance,
     normalize_focus_domain,
 )
+from prefrontal.geo import DEFAULT_PLACE_MATCH_RADIUS_M
 from prefrontal.log import get_logger
 from prefrontal.mail import (
     ingest_messages,
@@ -342,8 +343,19 @@ def build_router(services: RouterServices) -> APIRouter:
         rollup buckets time-out by — both for the label form.
         """
         memory = ctx.store
+        # Prefetch the curated places + match radius once, not per trip (each
+        # suggestion still reads its own trip's waypoints — those differ per trip).
+        places = memory.places()
+        radius_m = memory.get_float(
+            "place_match_radius_m", DEFAULT_PLACE_MATCH_RADIUS_M
+        )
         unlabeled = [
-            {**trip, "suggestion": suggest_trip_labeling(memory, trip)}
+            {
+                **trip,
+                "suggestion": suggest_trip_labeling(
+                    memory, trip, places=places, radius_m=radius_m
+                ),
+            }
             for trip in memory.unlabeled_trips(limit=20)
         ]
         return {

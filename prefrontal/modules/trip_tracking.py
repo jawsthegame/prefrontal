@@ -96,6 +96,7 @@ class ClosedLoopTripModule(Module):
         # Imported lazily: prefrontal.trips depends on this module's package, so a
         # top-level import here would be a cycle at package-init time.
         from prefrontal.focus_balance import resolve_quick_domains
+        from prefrontal.geo import DEFAULT_PLACE_MATCH_RADIUS_M
         from prefrontal.trips import suggest_trip_labeling, trip_label_prompt
 
         # Resolve the user's one-tap quick-file domains once per tick and stamp them
@@ -103,6 +104,10 @@ class ClosedLoopTripModule(Module):
         # native client) build the same per-user buttons off the cue without a
         # second store read (ntfy caps them at 3 — see notify.trip_label_actions).
         quick_domains = resolve_quick_domains(store)
+        # Curated places + match radius are the same for every trip this tick — read
+        # them once and pass them into each suggestion (no per-trip re-read).
+        places = store.places()
+        radius_m = store.get_float("place_match_radius_m", DEFAULT_PLACE_MATCH_RADIUS_M)
         cues: list[Cue] = []
         for trip in store.unlabeled_trips(limit=MAX_LABEL_ASKS):
             # recent/unlabeled rows don't carry a computed actual_minutes; derive
@@ -113,12 +118,16 @@ class ClosedLoopTripModule(Module):
                 minutes_between(trip.get("departed_at"), trip.get("returned_at")),
             )
             # How many intermediate stops the passive detector split out, so the ask
-            # can invite a per-leg label when it was a chained errand run.
-            enriched["stop_count"] = len(store.trip_waypoints(trip["id"]))
+            # can invite a per-leg label when it was a chained errand run. Read the
+            # waypoints once and reuse them for both the count and the suggestion.
+            waypoints = store.trip_waypoints(trip["id"])
+            enriched["stop_count"] = len(waypoints)
             # Reverse-match the trip's stops to a curated place so the ask can lead
             # with a one-tap "looks like <place>?" instead of a cold prompt, and
             # pre-file the sphere when the place carries one.
-            suggestion = suggest_trip_labeling(store, trip)
+            suggestion = suggest_trip_labeling(
+                store, trip, places=places, radius_m=radius_m, waypoints=waypoints
+            )
             ref = {"trip_id": trip["id"], "quick_domains": quick_domains}
             if suggestion is not None:
                 ref["suggestion"] = suggestion
