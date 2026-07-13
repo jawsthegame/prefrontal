@@ -29,6 +29,9 @@ extension APIClient {
         try await get("nudges", query: ["limit": "\(limit)"], as: Nudges.self).nudges
     }
     func selfCare() async throws -> SelfCare { try await get("self-care", as: SelfCare.self) }
+    func availableHours() async throws -> AvailableHours {
+        try await get("schedule/available-hours", as: AvailableHours.self)
+    }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
 
@@ -57,6 +60,16 @@ extension APIClient {
     // Self-care
     func markSelfCare(key: String, undo: Bool = false) async throws {
         try await post("self-care/mark", json: ["key": key, "undo": undo], queueable: true)
+    }
+
+    // Available hours — a partial write of one or more weekdays; the server
+    // merges over the stored schedule and echoes the fresh seven-day view back.
+    @discardableResult
+    func setAvailableHours(_ days: [String: AvailableHours.Day]) async throws -> AvailableHours {
+        let payload = days.mapValues {
+            ["available": $0.available, "start": $0.start, "end": $0.end] as [String: Any]
+        }
+        return try await post("schedule/available-hours", json: ["days": payload], as: AvailableHours.self)
     }
 
     // Commitment outcome (honest made/missed self-report on an elapsed event).

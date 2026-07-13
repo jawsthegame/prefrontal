@@ -314,6 +314,50 @@ struct SelfCare: Codable {
     }
 }
 
+// MARK: - Available hours (per-weekday availability)
+
+/// The user's per-weekday available hours. Mirrors the server's
+/// `GET/POST /schedule/available-hours` shape — see the contract fixture in
+/// `tests/contracts/available_hours.*` and the drift guard in
+/// `tests/test_contract_available_hours.py`. Keep `Day`'s fields in lockstep
+/// with the Pydantic `DayAvailability` and the web dashboard's `settings.html`.
+struct AvailableHours: Codable {
+    /// Whether these are the user's explicit hours (`true`) or the inherited
+    /// default waking band (`false`, until they first save).
+    let configured: Bool
+    /// Weekday key (`mon`…`sun`) → that day's window.
+    var days: [String: Day]
+
+    struct Day: Codable {
+        var available: Bool
+        var start: String   // local "HH:MM" (24-hour)
+        var end: String     // local "HH:MM"; must be after `start` when available
+    }
+
+    /// Weekday keys in display order, matching the server's `WEEKDAYS`.
+    static let order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    private static let labels = [
+        "mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu",
+        "fri": "Fri", "sat": "Sat", "sun": "Sun",
+    ]
+    static func label(_ key: String) -> String { labels[key] ?? key.capitalized }
+
+    /// `"HH:MM"` → a `Date` on today for a `.hourAndMinute` `DatePicker`.
+    static func date(from hhmm: String) -> Date {
+        let cal = Calendar.current
+        let parts = hhmm.split(separator: ":").compactMap { Int($0) }
+        return cal.date(bySettingHour: parts.first ?? 9,
+                        minute: parts.count > 1 ? parts[1] : 0,
+                        second: 0, of: cal.startOfDay(for: Date())) ?? Date()
+    }
+
+    /// A picked `Date` → the zero-padded `"HH:MM"` the API expects.
+    static func hhmm(from date: Date) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+}
+
 // MARK: - Briefing
 
 struct Briefing: Codable {

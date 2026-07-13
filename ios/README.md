@@ -126,11 +126,14 @@ notifications → done (design: `../docs/design/ios-onboarding.md`). Connect is
 
 Tap **Connect** to verify against `/self-care` before advancing. The URL + token
 live in the App Group so the widget authenticates too; change either later in
-**Me ▸ Settings** (gear icon). That screen also has a read-only **Diagnostics**
-section showing the App Group sharing state — use it if a widget shows "Tap to
-connect" while the app works (that means the App Group capability isn't
-provisioned into the widget target; enable it on both targets, same Team, and
-reinstall).
+**Me ▸ Settings** (gear icon). That screen also has an **Available hours** section
+— a per-weekday toggle + start/end time pickers that write
+`/schedule/available-hours`, so the slot-finder and todo suggestions stay inside
+the hours you're free (an off day is skipped entirely) — and a read-only
+**Diagnostics** section showing the App Group sharing state (use it if a widget
+shows "Tap to connect" while the app works: that means the App Group capability
+isn't provisioned into the widget target; enable it on both targets, same Team,
+and reinstall).
 
 ### Producing the QR (operator)
 

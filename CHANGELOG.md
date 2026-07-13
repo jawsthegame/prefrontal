@@ -17,8 +17,10 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   shape, so an off day keeps its band for when it's toggled back on); unconfigured
   = the previous flat-band behaviour, so it's a no-op until set. New
   `GET/POST /schedule/available-hours` (partial writes; `AvailableHours` /
-  `DayAvailability` schema). Web dashboard gets an "Available hours" card; the iOS
-  Settings screen follows in a companion change. **Drift guard:** because the
+  `DayAvailability` schema). Editable on the **web dashboard** ("Available hours"
+  card) and in the **iOS** Settings screen (a per-weekday toggle + two time
+  pickers — the app's first server-backed editable preference). **Drift guard:**
+  because the
   contract is hand-mirrored across Pydantic ↔ web JS ↔ Swift, a committed OpenAPI
   snapshot + example fixture (`tests/contracts/available_hours.*`,
   `tests/test_contract_available_hours.py`) fails CI on any structural change
