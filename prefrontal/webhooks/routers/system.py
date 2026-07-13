@@ -51,6 +51,7 @@ from prefrontal.webhooks._common import (
     REVIEW_HTML,
     SETTINGS_HTML,
     STATS_HTML,
+    TRIPS_HTML,
     lens_html,
 )
 from prefrontal.webhooks.deps import (
@@ -281,6 +282,23 @@ def build_router(services: RouterServices) -> APIRouter:
         card is purely "mark what I did today." Shares the unified theme + nav.
         """
         return _page(SETTINGS_HTML)
+
+    @router.get("/trips/board", response_class=HTMLResponse, tags=["system"])
+    def trips_board() -> HTMLResponse:
+        """Serve the **Trips & balance** page — the visual surface for trip tracking.
+
+        Closed-loop trips are otherwise only surfaced through notifications, the
+        briefing, and the raw JSON API; this page renders them: the open trip (if
+        you're out now), the recent history with label/category/outcome, the trips
+        still awaiting a name, and the life-sphere **focus-balance** rollup. Same
+        self-contained, data-less shell as the other web surfaces; reads
+        ``GET /trips`` and ``GET /balance``. Read-only — trips are labeled from the
+        one-tap notification the ``trip_tracking`` module sends.
+
+        Served at ``/trips/board`` because the bare ``/trips`` path is the JSON list
+        endpoint (same split as ``/projects/board`` vs ``/projects``).
+        """
+        return _page(TRIPS_HTML)
 
     @router.get("/guide", response_class=HTMLResponse, tags=["system"])
     def guide_page() -> HTMLResponse:

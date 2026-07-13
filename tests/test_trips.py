@@ -453,6 +453,16 @@ def _auth():
     return {"X-Prefrontal-Token": SECRET}
 
 
+def test_trips_board_serves_html(client):
+    """The /trips/board page is a self-contained, data-less HTML shell (no auth)."""
+    r = client.get("/trips/board")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Trips &amp; balance" in r.text
+    # It reads the JSON API client-side, not server-embedded data.
+    assert "/trips" in r.text and "/balance" in r.text
+
+
 def test_location_endpoint_detects_loop(client):
     """POST /webhooks/home then location pings drive the detection end-to-end."""
     assert client.post("/webhooks/home", json={"lat": HOME[0], "lon": HOME[1]},
