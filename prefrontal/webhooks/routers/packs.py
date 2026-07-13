@@ -34,6 +34,7 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "packs" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
+    provider = services.provider
 
     @router.get("/packs/situations", tags=["packs"])
     def list_situations(
@@ -61,13 +62,15 @@ def build_router(services: RouterServices) -> APIRouter:
         """Run one situation tool against the caller's data — read-only.
 
         The tool computes a result from the store (e.g. the school-run leave-by
-        from the departure engine) and writes nothing. Unknown tools and tools
-        behind a disabled pack both 404 — a tool you can't currently reach should
-        look the same as one that doesn't exist.
+        from the departure engine) and writes nothing. A model client is resolved
+        and passed through for tools that compose an LLM lever (the pack-the-bag
+        checklist decomposes each event); deterministic tools ignore it. Unknown
+        tools and tools behind a disabled pack both 404 — a tool you can't
+        currently reach should look the same as one that doesn't exist.
         """
         situation = get_situation(tool, resolved_settings)
         if situation is None:
             raise HTTPException(status_code=404, detail=f"Unknown situation tool: {tool!r}")
-        return situation.handler(ctx.store)
+        return situation.handler(ctx.store, client=provider.client("assistant"))
 
     return router
