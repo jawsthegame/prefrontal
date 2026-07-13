@@ -4,14 +4,22 @@ Mixin for :class:`prefrontal.memory.store.MemoryStore`; not used standalone.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from prefrontal.clock import parse_hour
+from prefrontal.clock import parse_hour, parse_ts, utcnow
 from prefrontal.memory._helpers import (
     _row_to_dict,
     sha256_hex,
 )
 from prefrontal.memory.repos._base import Repo
+
+#: How long a last-known fix stays "fresh" before travel-time and outing gating
+#: treat it as absent (#568). Generous by default (60 min) — a stationary user's
+#: old fix is still correct, so this only guards against acting on a coordinate
+#: from hours ago once the significant-change feed has gone quiet. Overridable via
+#: the ``location_staleness_seconds`` coaching key.
+DEFAULT_LOCATION_TTL_SECONDS = 3600.0
 
 
 class StateRepo(Repo):
@@ -194,6 +202,69 @@ class StateRepo(Repo):
             "accuracy_m": float(accuracy) if accuracy else None,
             "at": row["last_updated"],
         }
+
+    def location_age_seconds(self, *, now: datetime | None = None) -> float | None:
+        """Seconds since the last-known fix was recorded, or ``None``.
+
+        ``None`` when no fix exists or its ``at`` stamp can't be parsed. Lets a
+        reader (e.g. ``GET /location``) surface freshness so the app/dashboard can
+        show it. ``now`` may be injected for deterministic tests; defaults to the
+        wall clock.
+        """
+        loc = self.get_location()
+        if loc is None:
+            return None
+        stamped = parse_ts(loc.get("at"))
+        if stamped is None:
+            return None
+        return max(0.0, ((now or utcnow()) - stamped).total_seconds())
+
+    def fresh_location(
+        self, *, max_age_seconds: float | None = None, now: datetime | None = None
+    ) -> dict[str, Any] | None:
+        """The last-known fix, but only if it's fresher than the staleness window.
+
+        The staleness guard for travel-time and outing gating (#568): with the
+        native significant-change feed a long-stationary stretch can leave a fix
+        hours old, and using it for a travel estimate is worse than falling back to
+        the static lead. Returns ``None`` when there's no fix, when it can't be
+        dated, or when it's older than ``max_age_seconds`` (else the
+        ``location_staleness_seconds`` coaching key, else
+        :data:`DEFAULT_LOCATION_TTL_SECONDS`). Callers that want the raw fix
+        regardless of age keep calling :meth:`get_location`.
+        """
+        loc = self.get_location()
+        if loc is None:
+            return None
+        stamped = parse_ts(loc.get("at"))
+        if stamped is None:
+            return None  # undatable → treat as stale (safer than trusting it)
+        ttl = (
+            max_age_seconds
+            if max_age_seconds is not None
+            else self.get_float("location_staleness_seconds", DEFAULT_LOCATION_TTL_SECONDS)
+        )
+        age = max(0.0, ((now or utcnow()) - stamped).total_seconds())
+        return loc if age <= ttl else None
+
+    def location_freshness(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """The stored fix plus its freshness, in a single read — for ``GET /location``.
+
+        Returns ``{"location", "age_seconds", "stale"}``. ``stale`` is ``True`` when
+        a fix exists but is older than the window *or* can't be dated — matching what
+        :meth:`fresh_location` treats as absent — and ``False`` when there's no fix at
+        all (nothing to be stale). The raw fix is always included so a client can show
+        it regardless and decide for itself.
+        """
+        loc = self.get_location()
+        if loc is None:
+            return {"location": None, "age_seconds": None, "stale": False}
+        stamped = parse_ts(loc.get("at"))
+        if stamped is None:
+            return {"location": loc, "age_seconds": None, "stale": True}
+        ttl = self.get_float("location_staleness_seconds", DEFAULT_LOCATION_TTL_SECONDS)
+        age = max(0.0, ((now or utcnow()) - stamped).total_seconds())
+        return {"location": loc, "age_seconds": age, "stale": age > ttl}
 
     def set_home(self, lat: float, lon: float) -> None:
         """Record the user's home coordinate — the anchor for trip detection.

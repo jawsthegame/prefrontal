@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Server: last-known-location staleness guard** ✅ (#568, epic #569) — with the
+  native significant-change feed a long-stationary stretch can leave the stored
+  fix hours old, and `get_location()` had no TTL. Added `at`-based freshness on the
+  store: `location_age_seconds()` and `fresh_location()` (older than
+  `location_staleness_seconds`, default 60 min, → treated as absent). Departure
+  travel-time and outing return-gating now read `fresh_location()`, so a stale
+  coordinate falls back to the static lead / elapsed-time escalation instead of
+  driving a wrong leave-by or a false "you're home". `GET /location` now returns
+  `age_seconds` + `stale` alongside the raw fix — it's never hidden, so a client
+  can show "last seen N min ago" and a stationary user's old-but-correct fix still
+  shows. Covered by `tests/test_location_staleness.py`.
+
 - **Web-configurable location settings** ✅ (#565, epic #569) — the location
   **tunables** now live on the web dashboard, keeping the phone's Settings to just
   the master on/off (only it can trigger the OS "Always" prompt). New

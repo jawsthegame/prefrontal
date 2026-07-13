@@ -295,9 +295,17 @@ def build_router(services: RouterServices) -> APIRouter:
     def location_get(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Return the last-known position (or ``{"location": null}`` if unset)."""
-        memory = ctx.store
-        return {"location": memory.get_location()}
+        """Return the last-known position with its freshness.
+
+        ``{"location": {...} | null, "age_seconds": float | null, "stale": bool}``.
+        ``age_seconds`` is how long ago the fix was recorded; ``stale`` is ``true``
+        once that exceeds the staleness window (``location_staleness_seconds``, else
+        :data:`~prefrontal.memory.repos.state.DEFAULT_LOCATION_TTL_SECONDS`) — the
+        same window travel-time and outing gating treat as absent (#568). The raw
+        fix is still returned regardless, so a client can show "last seen N min ago"
+        and decide for itself; a stationary user's old-but-correct fix isn't hidden.
+        """
+        return ctx.store.location_freshness()
 
     # -- Closed-loop trip tracking -------------------------------------------
 

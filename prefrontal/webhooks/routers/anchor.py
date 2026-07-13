@@ -237,9 +237,12 @@ def build_router(services: RouterServices) -> APIRouter:
         cur_lon = body.get("current_lon")
         # Fall back to the phone's last-known position (POSTed to
         # /webhooks/location) when the poll body carries no explicit coordinates
-        # — so location-gating works without a Home Assistant feed.
+        # — so location-gating works without a Home Assistant feed. Only a *fresh*
+        # fix counts (#568): gating an outing on a coordinate from hours ago could
+        # wrongly suppress a nudge (or claim you're home when you aren't), so a
+        # stale fix falls through to elapsed-time-only escalation.
         if cur_lat is None or cur_lon is None:
-            last = memory.get_location()
+            last = memory.fresh_location()
             if last is not None:
                 cur_lat, cur_lon = last["lat"], last["lon"]
         name = ctx.user.get("display_name") or ""

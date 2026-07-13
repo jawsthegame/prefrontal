@@ -747,7 +747,10 @@ def plan_upcoming_departures(
         store's soonest-first order.
     """
     if current_lat is None or current_lon is None:
-        last = store.get_location()
+        # Only a *fresh* fix earns a travel estimate — a stale coordinate (the
+        # significant-change feed goes quiet when you're stationary) would compute
+        # a wrong leave-by, worse than falling back to the static lead (#568).
+        last = store.fresh_location()
         if last is not None:
             current_lat, current_lon = last["lat"], last["lon"]
     dismissed = store.dismissed_departures()
@@ -779,7 +782,8 @@ def evaluate_departure_check(
     parsing and any one-tap link decoration.
     """
     if current_lat is None or current_lon is None:
-        last = store.get_location()
+        # Fresh fixes only, so a stale coordinate doesn't drive a wrong leave-by (#568).
+        last = store.fresh_location()
         if last is not None:
             current_lat, current_lon = last["lat"], last["lon"]
 
