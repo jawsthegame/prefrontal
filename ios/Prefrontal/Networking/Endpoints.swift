@@ -137,6 +137,25 @@ extension APIClient {
         try await post("webhooks/outing/start", json: body)
     }
     func returnOuting() async throws { try await post("webhooks/outing/return") }
+
+    // Impulsivity — park an impulse as a todo, and the reflective-pause on the
+    // pull to switch off the active focus block (the native replacements for the
+    // capture / reflective-pause Shortcuts).
+    func captureImpulse(_ text: String, priority: Int = 1) async throws -> ImpulseCaptured {
+        try await post("webhooks/impulse/capture",
+                       json: ["impulse_text": text, "priority": priority],
+                       as: ImpulseCaptured.self)
+    }
+    func focusSwitch() async throws -> SwitchPause {
+        try await post("webhooks/focus/switch", as: SwitchPause.self)
+    }
+
+    // Trip retro — close out the newest unlabeled trip in one call (label + note).
+    func tripRetro(label: String, reflection: String?) async throws -> TripRetroResult {
+        var body: [String: Any] = ["label": label]
+        if let reflection, !reflection.isEmpty { body["reflection"] = reflection }
+        return try await post("webhooks/trip/retro", json: body, as: TripRetroResult.self)
+    }
 }
 
 /// Convenience: build a client on the main actor, then run an async call.
