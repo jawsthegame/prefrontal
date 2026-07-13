@@ -22,6 +22,7 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import local_datetime, utcnow
+from prefrontal.integrations.nominatim import GeocoderError
 from prefrontal.modules import enabled_modules
 from prefrontal.modules.self_care import (
     apply_self_care_config,
@@ -60,11 +61,13 @@ from prefrontal.webhooks.deps import (
 )
 from prefrontal.webhooks.schemas import (
     ApnsTokenRegistration,
+    GeocodingToggle,
     GuideProgress,
     SelfCareConfig,
     SelfCareMark,
     SmtpConfig,
 )
+from prefrontal.webhooks.schemas.ingestion import HomeSet
 from prefrontal.webhooks.services import RouterServices
 
 #: The web-surface HTML shells are read into memory at import and change only on
@@ -437,6 +440,78 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         _write_guide_seen(ctx.store, set())
         return _guide_payload(ctx.store, services.settings)
+
+    def _home_payload(store: Any) -> dict[str, Any]:
+        """The home coordinate + whether external address lookup is opted in."""
+        return {
+            "home": store.get_home(),
+            "geocoding_enabled": store.get_bool("geocoding_enabled", False),
+        }
+
+    @router.get("/home", tags=["system"])
+    def home_get(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's home coordinate (or null) + geocoding opt-in state.
+
+        Backs the Settings "Home location" card and lets the Trips page tell whether
+        trip detection is armed (it stays dormant until a home coordinate is set).
+        """
+        return _home_payload(ctx.store)
+
+    @router.post("/home", tags=["system"])
+    def home_set(
+        payload: HomeSet,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set the home coordinate from the web UI (same store as ``POST /webhooks/home``).
+
+        The web counterpart to the iOS ``/webhooks/home`` — arms closed-loop trip
+        detection. The coordinate can come from the browser's own geolocation, a
+        picked address (see ``GET /geocode/search``), or a manual lat/lon. Returns
+        the fresh payload so the card re-renders from it.
+        """
+        ctx.store.set_home(payload.lat, payload.lon)
+        return _home_payload(ctx.store)
+
+    @router.post("/home/geocoding", tags=["system"])
+    def set_geocoding(
+        payload: GeocodingToggle,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Opt in/out of external address lookup (the ``geocoding_enabled`` flag).
+
+        Address search sends the typed text off-host to the configured geocoder, so
+        it's off by default; the card's checkbox flips it here. Returns the fresh
+        home payload.
+        """
+        ctx.store.set_state(
+            "geocoding_enabled", "true" if payload.enabled else "false", source="explicit"
+        )
+        return _home_payload(ctx.store)
+
+    @router.get("/geocode/search", tags=["system"])
+    def geocode_search(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        q: str = "",
+    ) -> dict[str, Any]:
+        """Resolve a typed address to a list of real-place candidates (for the picker).
+
+        A deliberate, user-initiated lookup (Search button, not as-you-type) so it
+        respects the geocoder's usage policy. Gated on the ``geocoding_enabled``
+        opt-in — when off, returns ``{"enabled": false, "results": []}`` and never
+        touches the network. Each result is ``{display_name, lat, lon}``.
+        """
+        if not ctx.store.get_bool("geocoding_enabled", False):
+            return {"enabled": False, "results": []}
+        query = q.strip()
+        if not query:
+            return {"enabled": True, "results": []}
+        try:
+            results = services.geocoder.search(query, limit=5)
+        except GeocoderError as exc:
+            raise HTTPException(status_code=502, detail=f"Address lookup failed: {exc}") from exc
+        return {"enabled": True, "results": results}
 
     @router.post("/route/apns-token", tags=["system"])
     def register_apns_token(

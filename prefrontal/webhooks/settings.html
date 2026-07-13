@@ -77,6 +77,28 @@
   .dep-pad { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; }
   .saved { color: var(--good); font-size: 13px; min-height: 16px; margin-top: 10px; }
 
+  /* ── Home location card ──────────────────────────────────────────────────── */
+  .home-cur { font-size: 14px; margin: 4px 0 14px; }
+  .home-cur .pin { color: var(--accent); font-weight: 650; }
+  .home-cur .none { color: var(--muted); font-style: italic; }
+  .home-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+  .home-search { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+  .home-search-row { display: flex; gap: 8px; margin-top: 4px; }
+  .home-search-row input { flex: 1; min-width: 0; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 9px; background: var(--bg); color: var(--fg); font: inherit; }
+  .home-search-row input:disabled { opacity: .5; }
+  .addr-results { margin-top: 10px; display: flex; flex-direction: column; gap: 0; }
+  .addr-results .r { text-align: left; width: 100%; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; margin-top: 8px; color: var(--fg); font: inherit;
+    font-size: 13.5px; cursor: pointer; }
+  .addr-results .r:hover { border-color: var(--accent); }
+  .addr-results .msg { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .sc-num.wide { width: 110px; }
+  .home-manual { margin-top: 14px; }
+  .home-manual summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+  .home-manual-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin-top: 10px; }
+  .home-manual-row .btn { margin-top: 0; }
+
   /* ── SMTP (outbound email) form ──────────────────────────────────────────── */
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
   .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
@@ -143,6 +165,47 @@
 </header>
 
 <div class="wrap" id="wrap" data-collapse-key="prefrontal_settings_layout" style="display:none">
+  <section class="card" id="c-home">
+    <h2>Home location</h2>
+    <p class="sub">The anchor for <b>closed-loop trip tracking</b> — leaving this
+      spot and returning is what gets logged as a trip. Until it's set, trip
+      tracking stays dormant. Nothing here changes your calendar; it's just the
+      point trips are measured from.</p>
+    <div class="home-cur" id="home-cur"></div>
+
+    <div class="home-actions">
+      <button class="btn" id="home-here" type="button">📍 Use my current location</button>
+      <span class="sc-hint" id="home-here-note"></span>
+    </div>
+
+    <div class="home-search">
+      <p class="label">Search for an address</p>
+      <label class="sc-master" style="margin-bottom:8px">
+        <input type="checkbox" id="geo-enabled"/>
+        <span>Allow address lookup <span class="sc-hint">(sends what you type to
+          OpenStreetMap — off by default)</span></span></label>
+      <div class="home-search-row">
+        <input type="text" id="addr-q" placeholder="e.g. 1600 Amphitheatre Pkwy, Mountain View"
+          autocomplete="off" disabled />
+        <button class="btn" id="addr-go" type="button" disabled>Search</button>
+      </div>
+      <div class="addr-results" id="addr-results"></div>
+    </div>
+
+    <details class="home-manual">
+      <summary>Enter coordinates manually</summary>
+      <div class="home-manual-row">
+        <label class="sc-field">lat <input class="sc-num wide" type="number" id="home-lat"
+          step="0.0001" inputmode="decimal" placeholder="40.0000" /></label>
+        <label class="sc-field">lon <input class="sc-num wide" type="number" id="home-lon"
+          step="0.0001" inputmode="decimal" placeholder="-73.0000" /></label>
+        <button class="btn" id="home-manual-set" type="button">Set</button>
+      </div>
+    </details>
+
+    <div class="saved" id="home-saved"></div>
+  </section>
+
   <section class="card" id="c-selfcare">
     <h2>Self-care checks</h2>
     <p class="sub">Meal, water, meds, bio-break, and wind-down nudges. Turn the whole
@@ -598,6 +661,85 @@ $("#smtp-list").addEventListener("click", async (ev) => {
   }
 });
 
+// ── Home location ──────────────────────────────────────────────────────────
+function homeSaved(msg, ok = true) {
+  const el = $("#home-saved");
+  el.style.color = ok ? "var(--good)" : "var(--danger)";
+  el.textContent = msg;
+}
+function renderHome(d) {
+  const cur = $("#home-cur");
+  if (d.home) {
+    cur.innerHTML = `<span class="pin">📍 Home set</span> at `
+      + `${d.home.lat.toFixed(5)}, ${d.home.lon.toFixed(5)}. Trip tracking is armed.`;
+  } else {
+    cur.innerHTML = `<span class="none">No home location set — trip tracking is off until you set one.</span>`;
+  }
+  const on = !!d.geocoding_enabled;
+  $("#geo-enabled").checked = on;
+  $("#addr-q").disabled = !on;
+  $("#addr-go").disabled = !on;
+  if (!on) $("#addr-results").innerHTML = "";
+}
+async function loadHome() {
+  try { renderHome(await api("/home")); }
+  catch (e) { if (e.code === 401) throw e; }
+}
+async function setHome(lat, lon, label) {
+  try {
+    renderHome(await api("/home", { method: "POST", body: JSON.stringify({ lat, lon }) }));
+    homeSaved(`Saved${label ? " — " + label : ""}. ✓`);
+    $("#addr-results").innerHTML = "";
+  } catch (e) {
+    if (e.code === 401) return gate("Session expired — sign in again.");
+    homeSaved("Couldn't save — " + e.message, false);
+  }
+}
+$("#geo-enabled").onchange = async (e) => {
+  try { renderHome(await api("/home/geocoding", { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) })); }
+  catch (err) { if (err.code === 401) gate("Session expired — sign in again."); }
+};
+$("#home-here").onclick = () => {
+  if (!navigator.geolocation) { homeSaved("This browser can't share a location.", false); return; }
+  homeSaved("Locating…");
+  navigator.geolocation.getCurrentPosition(
+    (pos) => setHome(pos.coords.latitude, pos.coords.longitude, "current location"),
+    (err) => homeSaved("Location unavailable — " + (err.message || "permission denied"), false),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+};
+async function runAddrSearch() {
+  const q = $("#addr-q").value.trim();
+  const box = $("#addr-results");
+  if (!q) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="msg">Searching…</div>`;
+  let d;
+  try { d = await api("/geocode/search?q=" + encodeURIComponent(q)); }
+  catch (e) {
+    if (e.code === 401) return gate("Session expired — sign in again.");
+    box.innerHTML = `<div class="msg">Search failed — ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!d.enabled) { box.innerHTML = `<div class="msg">Turn on "Allow address lookup" first.</div>`; return; }
+  if (!d.results.length) { box.innerHTML = `<div class="msg">No matches for that address.</div>`; return; }
+  box.innerHTML = "";
+  d.results.forEach((r) => {
+    const b = document.createElement("button");
+    b.className = "r"; b.type = "button"; b.textContent = r.display_name;
+    b.onclick = () => setHome(r.lat, r.lon, r.display_name.split(",")[0]);
+    box.appendChild(b);
+  });
+}
+$("#addr-go").onclick = runAddrSearch;
+$("#addr-q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runAddrSearch(); } });
+$("#home-manual-set").onclick = () => {
+  const lat = parseFloat($("#home-lat").value), lon = parseFloat($("#home-lon").value);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    homeSaved("Enter a valid lat (−90…90) and lon (−180…180).", false); return;
+  }
+  setHome(lat, lon, "manual coordinates");
+};
+
 async function load() {
   $("#status").textContent = "loading…";
   let data;
@@ -614,6 +756,7 @@ async function load() {
   if (!$("#selfcare").contains(document.activeElement)) {
     $("#selfcare").innerHTML = renderSelfCare(data);
   }
+  await loadHome();
   await loadTodos();
   await loadDeparture();
   await loadHours();

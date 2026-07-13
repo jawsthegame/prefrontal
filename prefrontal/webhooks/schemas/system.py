@@ -81,6 +81,19 @@ class GuideProgress(BaseModel):
     )
 
 
+class GeocodingToggle(BaseModel):
+    """Body of ``POST /home/geocoding`` — opt in/out of external address lookup.
+
+    Address search (used by the "set home from an address" picker) sends the typed
+    text to the configured Nominatim geocoder — the one place Prefrontal reaches
+    off-host — so it's gated behind this per-user flag, off by default. Toggling it
+    here writes the same ``geocoding_enabled`` coaching-state the enrichment pass
+    reads.
+    """
+
+    enabled: bool = Field(description="True to allow external address lookup, false to disable it.")
+
+
 class ApnsTokenRegistration(BaseModel):
     """Body of ``POST /route/apns-token`` — register this device for native push.
 

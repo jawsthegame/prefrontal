@@ -90,3 +90,53 @@ class NominatimGeocoder:
             return float(top["lat"]), float(top["lon"])
         except (KeyError, TypeError, ValueError) as exc:
             raise GeocoderError(f"Geocoder result missing lat/lon: {exc}") from exc
+
+    def search(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+        """Resolve free text to a ranked list of candidate places (for an address picker).
+
+        Unlike :meth:`geocode` (top-1 ``(lat, lon)`` for the enrichment pass), this
+        returns several matches *with their human-readable names* so a user can pick
+        the right one — e.g. setting a home location from a typed address. This is a
+        deliberate, user-initiated single lookup (a Search button, not as-you-type
+        autocomplete), which respects Nominatim's usage policy.
+
+        Args:
+            query: A free-text address or place description.
+            limit: Maximum candidates to return (clamped to 1–10).
+
+        Returns:
+            A list of ``{"display_name": str, "lat": float, "lon": float}`` dicts,
+            best match first. Empty when the service returned no results.
+
+        Raises:
+            GeocoderError: On transport failure, a non-2xx status, or a malformed
+                response body — distinct from a clean "no match" (empty list).
+        """
+        params = {"q": query, "format": "json", "limit": str(max(1, min(limit, 10)))}
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self._transport) as client:
+                resp = client.get(
+                    self.url, params=params, headers={"User-Agent": self.user_agent}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            raise GeocoderError(f"Geocoder request failed: {exc}") from exc
+        except ValueError as exc:  # JSON decode
+            raise GeocoderError(f"Geocoder returned a non-JSON body: {exc}") from exc
+
+        if not isinstance(data, list):
+            raise GeocoderError("Geocoder returned a non-list body.")
+        results: list[dict[str, object]] = []
+        for item in data:
+            try:
+                results.append(
+                    {
+                        "display_name": str(item["display_name"]),
+                        "lat": float(item["lat"]),
+                        "lon": float(item["lon"]),
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                continue  # skip a malformed row rather than fail the whole lookup
+        return results
