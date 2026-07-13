@@ -914,8 +914,8 @@ def build_router(services: RouterServices) -> APIRouter:
         memory = ctx.store
         if not pack_enabled("caregiver", resolved_settings):
             return {"enabled": False, "appointments": [], "todos": []}
-        pack = get_pack("caregiver")
-        care_categories = set(pack.categories) if pack is not None else set()
+        # Enabled implies registered, so get_pack never raises here.
+        care_categories = set(get_pack("caregiver").categories)
         appointments = [
             {
                 "id": c["id"],

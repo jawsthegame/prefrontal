@@ -156,7 +156,13 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   });
 })();
 
-function gate(msg) { $("#gate").style.display = "flex"; if (msg) $("#gate-err").textContent = msg; }
+function gate(msg) {
+  // Clear the bad token so it isn't replayed on reload (matches calendar.html /
+  // lens.html); the sign-in gate then takes over.
+  token = null; try { localStorage.removeItem(KEY); } catch (e) {}
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
 
 async function api(path) {
   const headers = token ? { "X-Prefrontal-Token": token } : {};
