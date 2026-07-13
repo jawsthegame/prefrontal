@@ -35,18 +35,23 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
 
     /// Minimum seconds between significant-change position posts, so a cluster of
     /// updates doesn't spam `/webhooks/location`. The cadence becomes
-    /// web-configurable in #565; this is the default floor. Stored in the App
-    /// Group so the throttle survives a terminated-state relaunch by the OS.
+    /// web-configurable in #565; this is the default floor.
     private static let minPostInterval: TimeInterval = 300
+    /// The significant-change feed's *own* throttle timestamp — advanced only by
+    /// that feed, so an unrelated geofence/visit post never delays it. Stored in
+    /// the App Group so the throttle survives a terminated-state relaunch.
+    private static let lastSlcPostKey = "lastSlcPostAt"
+
+    /// Shared de-dupe record for `/webhooks/location`: the coordinate + time of the
+    /// last accepted post from *any* feed (geofence, visit, or significant-change).
+    /// A fix within `dedupeRadius` of it, within `dedupeWindow`, is dropped —
+    /// collapsing the double-post when a `CLVisit` and the curated-place geofence
+    /// both fire at one venue (the home ring especially; a visit is detected
+    /// minutes after arrival, once the geofence entry has already posted that
+    /// coordinate). App-Group stored, so it holds across a terminated relaunch.
     private static let lastPostKey = "lastLocationPostAt"
     private static let lastPostLatKey = "lastLocationPostLat"
     private static let lastPostLonKey = "lastLocationPostLon"
-
-    /// De-dupe window for `/webhooks/location`: a fix within `dedupeRadius` of the
-    /// last posted one, this recently, is dropped. Collapses the double-post when
-    /// a `CLVisit` and the curated-place geofence both fire at one venue (the home
-    /// ring especially) — a visit is detected minutes after arrival, by which time
-    /// the immediate geofence entry has already posted the same coordinate (#564).
     private static let dedupeWindow: TimeInterval = 120
     private static let dedupeRadius: CLLocationDistance = 150
 
@@ -110,9 +115,8 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
         _ client: APIClient, lat: Double, lon: Double, accuracy: Double?
     ) async throws {
         let d = SharedStore.defaults
-        let now = Date().timeIntervalSince1970
         let lastAt = d.double(forKey: Self.lastPostKey)
-        if lastAt > 0, now - lastAt < Self.dedupeWindow {
+        if lastAt > 0, Date().timeIntervalSince1970 - lastAt < Self.dedupeWindow {
             let prev = CLLocation(
                 latitude: d.double(forKey: Self.lastPostLatKey),
                 longitude: d.double(forKey: Self.lastPostLonKey)
@@ -122,7 +126,9 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
             }
         }
         try await client.postLocation(lat: lat, lon: lon, accuracy: accuracy)
-        d.set(now, forKey: Self.lastPostKey)
+        // Stamp the record *after* delivery, so a slow POST can't back-date the
+        // window and let a near-duplicate slip through.
+        d.set(Date().timeIntervalSince1970, forKey: Self.lastPostKey)
         d.set(lat, forKey: Self.lastPostLatKey)
         d.set(lon, forKey: Self.lastPostLonKey)
     }
@@ -198,12 +204,15 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
               let fix = locations.last,
               fix.horizontalAccuracy >= 0  // negative = invalid fix
         else { return }
-        // Throttle across launches: SLC can relaunch us from terminated, so the
-        // last-post time lives in the App Group rather than in memory. The post
-        // goes through the shared de-dupe, which records the accepted time there.
+        // Throttle across launches on the feed's own key: SLC can relaunch us
+        // from terminated, so the last-post time lives in the App Group rather
+        // than in memory. Advance it up front (matching the original optimistic
+        // throttle) so this stays independent of geofence/visit posts; the post
+        // itself still runs through the shared de-dupe below.
         let now = Date().timeIntervalSince1970
-        let last = SharedStore.defaults.double(forKey: Self.lastPostKey)
+        let last = SharedStore.defaults.double(forKey: Self.lastSlcPostKey)
         guard now - last >= Self.minPostInterval else { return }
+        SharedStore.defaults.set(now, forKey: Self.lastSlcPostKey)
         Task {
             try? await withAPI {
                 try await self.postLocationDeduped(
