@@ -22,18 +22,25 @@ closeout, consolidation, and a few net-new surfaces.
    causal check** — after a state proposal is accepted, did the downstream numeric
    calibration actually improve? — which stays design-blocked on the
    broader-allowlist / generalized-check question, so last.
-3. **Finish the Shortcuts → native migration** (see
-   [`docs/shortcuts-to-native.md`](docs/shortcuts-to-native.md)). The native app
-   already replaces most Shortcuts (App Intents, APNs, geofencing, Live
-   Activities, widgets, offline queue); what's left is closing the intent gaps
-   (`CaptureImpulse`, `TripRetro`, the reflective pause), mirroring self-care
-   fire-times into local notifications, a native location cadence
-   (significant-change / `CLVisit`), and retiring Shortcuts from onboarding —
-   keeping them as the free-signing fallback. The one case that can't go native
-   is the **Set Alarm** deep-link (no public alarm API pre-AlarmKit/iOS 26).
+3. **Close the last Shortcuts → native intent gaps** (see
+   [`docs/shortcuts-to-native.md`](docs/shortcuts-to-native.md)). The native
+   **location pipeline is now complete** (epic #569 — see "Recently closed out"),
+   and self-care fire-times already mirror into local notifications (#474), so what
+   remains are the non-location App Intents still missing a native equivalent —
+   `CaptureImpulse`, `TripRetro`, and the reflective pause — plus retiring the
+   remaining Shortcuts from onboarding for app users, keeping them as the
+   free-signing fallback. The one case that can't go native is the **Set Alarm**
+   deep-link (no public alarm API pre-AlarmKit/iOS 26).
 
 **Recently closed out:**
 
+- **Native-CoreLocation location pipeline (epic #569)** — the location half of the
+  Shortcuts → native migration. Shipped: the significant-location-change position
+  feed (#562), native arrival → outing-return (#563), `CLVisit` arbitrary-venue
+  monitoring (#564), permission-UX hardening (#566), and the docs retiring the four
+  location Shortcuts for app users (#567); web-configurable location tunables (#565)
+  and a server last-known-location staleness guard (#568) are in final review. A
+  native-app user needs **no** location Shortcuts. See `CHANGELOG.md`.
 - **Focus-balance follow-ups** — all three shipped: the **Trip retro** combined
   endpoint + Shortcut (`POST /webhooks/trip/retro`), **configurable quick-file
   domains** (`trip_quick_domains`), and **domain-at-declaration** for outings
