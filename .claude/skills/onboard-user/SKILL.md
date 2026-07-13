@@ -3,30 +3,33 @@ name: onboard-user
 description: >-
   Onboard a person onto a Prefrontal deployment end-to-end — provision their
   user (or mint a household invite code for a co-parent), then hand them a
-  personalized setup sheet for ntfy notifications, iOS Shortcuts, and the
-  home-screen widget — and optionally connects their own email (IMAP) and calendar
-  (private ICS feed) sources. Use when asked to "invite a user", "add someone",
-  "onboard a co-parent", "set up a new phone/user", or "get <name> onto
-  Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar` CLI and
-  fills the new person's handle, token, base URL, and ntfy topic into the client
-  instructions.
+  personalized setup sheet for the native iOS app (connect QR, App Intents /
+  Action Button, home-screen widget) and ntfy notifications, with iOS Shortcuts
+  as the free-signing fallback — and optionally connects their own email (IMAP)
+  and calendar (private ICS feed) sources. Use when asked to "invite a user",
+  "add someone", "onboard a co-parent", "set up a new phone/user", or "get <name>
+  onto Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar` CLI
+  and fills the new person's handle, token, base URL, and ntfy topic into the
+  client instructions.
 ---
 
 # Onboard a Prefrontal user
 
 Take a new person from "not on the system" to "phone set up and receiving
 nudges". Two things happen: **membership** (a user account, optionally joined to
-a household) and **client setup** (ntfy, Shortcuts, the widget, filled in with
-their real values).
+a household) and **client setup** (the native iOS app, ntfy, and the widget —
+with Shortcuts as the free-signing fallback — filled in with their real values).
 
 The canonical setup docs are the source of truth — do **not** duplicate their
 steps into the repo, cite them:
 
-- `deploy/ios-shortcut.md` — every iOS Shortcut
-- `ios/README.md` — the native app + its Home/Lock Screen widget
+- `ios/README.md` — the native app: connect QR, App Intents (Siri / Action
+  Button / Spotlight), and its Home/Lock Screen widget. **The primary client.**
 - `docs/deployment.md` (§"Configure once") — ntfy env vars + the token credential
 - `docs/multi-tenant.md` — the per-user token / household model
 - `docs/design/per-user-sources.md` — per-user email (IMAP) + calendar (ICS) sources
+- `deploy/ios-shortcut.md` — the iOS Shortcut catalog, kept as the **free-signing
+  fallback** (no paid Apple Developer account → no App Intents/widget)
 
 ## Step 0 — figure out which flow this is
 
@@ -128,7 +131,7 @@ subscribes their phone to a topic; the deployment publishes to it.
   so setting this is required, not optional — until you do, their nudges go
   nowhere rather than to the wrong device.
 
-Then **verify delivery end-to-end before touching the phone shortcuts** — this
+Then **verify delivery end-to-end before setting up the phone client** — this
 is the fastest way to catch a bad topic/token:
 
 ```sh
@@ -201,9 +204,11 @@ prefrontal user connect-link <handle> --qr --rotate    # needs `pip install 'pre
 ```
 
 Put that QR (or the `prefrontal://connect?…` link) at the top of the sheet. It's
-as sensitive as the token — don't commit it or paste it anywhere shared. The
-Shortcuts + widget steps below still apply for one-tap logging and the
-lock-screen glance.
+as sensitive as the token — don't commit it or paste it anywhere shared. Once the
+app is connected, one-tap logging is **native** (App Intents on Siri / the Action
+Button / widgets — nothing to paste) and the widget step below adds the glance.
+Only a free-signing install (no paid dev account) falls back to the Shortcuts
+appendix.
 
 Deliver it as this template (replace the placeholders — don't leave them
 literal):
@@ -221,16 +226,23 @@ it with the Camera app and tap "Open in Prefrontal"). No app yet? Enter
 2. Subscribe to topic **`<ntfy-topic>`** on server **`<ntfy-server>`**.
 3. You should already have gotten a test push — if not, tell the operator.
 
-**3. iOS Shortcuts (one-tap logging)**
-Every shortcut is a **Get Contents of URL** → `POST <base-url>/…` with headers
-`X-Prefrontal-Token: <token>` and `Content-Type: application/json`. Start with
-these three, then add the rest from `deploy/ios-shortcut.md`:
-- **Add Todo** → `POST <base-url>/todos`, body `{ "title": "Provided Input" }`
-- **Panic** → `GET <base-url>/panic`, show the `headline` field
-- **Made it / Missed it** → `POST <base-url>/webhooks/shortcut`, body
-  `{ "action": "made_it", "episode_type": "departure", "channel": "notification" }`
+**3. One-tap logging (native — no URLs to paste)**
+The app ships **App Intents** that authenticate off the shared token and drive the
+same endpoints. Log todos, panic, "made it / missed it", going out / I'm back, and
+start / end focus from **Siri** ("Hey Siri, add a Prefrontal todo…"), the **Action
+Button**, **Spotlight**, or the Home/Lock-Screen widgets — all without opening the
+app. Assign your most-used action to the Action Button in **Settings ▸ Action
+Button ▸ Shortcut ▸ Prefrontal**. Details: `ios/README.md`.
 
-Full catalog (outings, focus, capture, location, departure): `deploy/ios-shortcut.md`.
+> **No paid Apple Developer account?** A free-signing install has no App Intents
+> or widget, so it falls back to **iOS Shortcuts** for one-tap logging. Each is a
+> **Get Contents of URL** → `POST <base-url>/…` with headers
+> `X-Prefrontal-Token: <token>` and `Content-Type: application/json`. Start with
+> **Add Todo** (`POST <base-url>/todos`, body `{ "title": "Provided Input" }`),
+> **Panic** (`GET <base-url>/panic`, show the `headline`), and **Made it / Missed
+> it** (`POST <base-url>/webhooks/shortcut`, body `{ "action": "made_it",
+> "episode_type": "departure", "channel": "notification" }`). Full catalog
+> (outings, focus, capture, location, departure): `deploy/ios-shortcut.md`.
 
 **4. Home/Lock Screen widget (glance)**
 Once the app is connected (step 1) the widget reads the same token — no separate

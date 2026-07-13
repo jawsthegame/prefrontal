@@ -6,10 +6,13 @@ surface of the web dashboard: a **Today** glance, interactive **Todos**, a
 focus/outing controls, and settings — plus a **Panic** sheet.
 
 It talks to the same FastAPI service as everything else, over Tailscale, using
-the `X-Prefrontal-Token` header. It does **not** replace ntfy or the iOS
-Shortcuts — those still handle push and one-tap logging. This app is the
-foreground client. See `../ROADMAP.md` (and the GitHub project) for the native
-features planned next (background refresh, native notification actions).
+the `X-Prefrontal-Token` header. Its **App Intents** (Siri / Action Button /
+widgets) give one-tap logging with nothing to paste, and it receives push via
+**APNs** — so on a paid-tier install it is the **primary** client, superseding the
+iOS Shortcuts and ntfy paths. Those remain the **free-signing fallback** (no paid
+Apple Developer account → no App Intents / widget / APNs). See
+`../docs/shortcuts-to-native.md` for the full migration map and `../ROADMAP.md`
+for what's next.
 
 It ships a **WidgetKit extension** (`PrefrontalWidgets`) — Home Screen
 (small/medium) and Lock Screen (rectangular/circular/inline) glances showing

@@ -40,7 +40,7 @@ The nudges that are *supposed* to interrupt. In deep focus you forget to eat or 
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
 
 **Low-friction capture**
-iOS Shortcuts integration for one-tap logging. The system meets you where you are rather than requiring you to go somewhere.
+The native iOS app's App Intents (Siri / Action Button / widgets) give one-tap logging with nothing to paste; iOS Shortcuts remain a free-signing fallback. The system meets you where you are rather than requiring you to go somewhere.
 
 ---
 
@@ -78,7 +78,7 @@ modules --tutorial`.
 Prefrontal is a system of small, focused agents rather than a single monolithic assistant. Each agent does one thing well and passes context to the next.
 
 ```
-iOS Shortcuts / Webhooks
+Native iOS app (App Intents / geofence / push) · Shortcuts (fallback) · Webhooks
         ↓
   Ingestion Layer       ← location triggers, mail polling, calendar sync
         ↓
@@ -110,7 +110,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Commitment geocoding | `prefrontal/geocode.py` | ✅ Places aliases → cache → opt-in Nominatim, for travel-time estimates |
 | Impact analysis | `prefrontal/impact.py` | ✅ Predicts at-risk commitments when running behind; surfaced in the nudge |
 | Morning briefing | `prefrontal/briefing.py` | ✅ Daily digest (today, conflicts, slips, coaching note); closes with a day-shaped encouragement line when the layer's on (packed/rough reassurance, open-day relax-vs-accomplish choice); `prefrontal briefing` |
-| Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one-tap Shortcut) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
+| Panic mode | `prefrontal/panic.py` | ✅ Overwhelm triage — ranks live pressures (calendar/todos/mail) + one first step. On-demand (`prefrontal panic`, `GET /panic`, dashboard/family button, one tap from the phone) **and** proactive (`POST /webhooks/panic/check` — nudges when the plate tips into overwhelm) |
 | Coaching agent | `prefrontal/coaching.py` | ✅ Tick engine — fans over every module's `evaluate()`, picks channel (urgency floor → learned bump), suppresses on quiet hours + debounce; `prefrontal coach`, `POST /webhooks/coach/check` |
 | Encouragement & recovery | `prefrontal/encouragement.py` | ✅ Rough-day tone shift — scores today's signals, builds a recovery plan (re-fit / defer / one small step); opt-in, once/day. Also woven into the morning brief as a day-shaped closing line (`briefing_note`). `prefrontal encourage` / `open-day`, `GET /encouragement`, `POST /briefing/open-day` |
 | Freeform calendar assistant | `prefrontal/availability.py` · `webhooks/routers/assistant.py` | ✅ "Find me a time" from free text: parses duration + timeframe + who's-involved (LLM with an offline-heuristic fallback), asks one clarifying question when the ask is too vague, then finds open slots over `find_slots`. **Participant-aware** — a partner's FYI events ("where someone else will be") block only when the plan involves them, so "just me" ignores items that are only your wife's. `POST /assistant/find-time`, `prefrontal find-time "…"` |
@@ -118,7 +118,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
 | Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — the detection sweep runs on the coaching tick (`sweep_ambiguous_items`), with `POST /clarifications/check` as the on-demand twin, plus `GET /clarifications`, resolve/dismiss, and a `prefrontal clarify check/list/resolve/dismiss/guide/localize` CLI. Guides for the recognized task types (tax filing, passport, DMV/license, vehicle registration, insurance claim, home repair, finding a provider, appointments) **localize to your home ZIP** when you opt in — from the dashboard's clarify card or `prefrontal clarify localize on` (both write `POST /clarifications/localization`) |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
-| Webhook listener (iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging |
+| Webhook listener (native app / iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging (App Intents primary; Shortcuts fallback) |
 | Behavioral insights UI | `prefrontal/stats.py` · `webhooks/stats.html` | ✅ `GET /stats` — time-estimation bias, follow-through + streak, channel responsiveness; inline SVG/CSS charts over your episodes (shared light/dark theme + nav) |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | LLM-as-sensor | `prefrontal/sensor.py` | ✅ Free text → *candidate* structured updates (allowlisted, `source=llm_inferred`), held pending until you accept; `prefrontal note` / `proposals` |
@@ -216,12 +216,13 @@ prefrontal modules --tutorial            # every enabled module
 prefrontal modules --tutorial hyperfocus # just one
 ```
 
-To run it always-on on a Mac mini and wire up Ollama, n8n, iOS Shortcuts, and
-Pushover/Ntfy, follow [`docs/deployment.md`](docs/deployment.md). The glue files
-(launchd service, importable n8n workflow, iOS Shortcut recipe) live in
+To run it always-on on a Mac mini and wire up Ollama, n8n, the native iOS app
+(with iOS Shortcuts as the free-signing fallback), and Pushover/Ntfy, follow
+[`docs/deployment.md`](docs/deployment.md). The glue files (launchd service,
+importable n8n workflow, iOS Shortcut fallback recipe) live in
 [`deploy/`](deploy/).
 
-Send a one-tap-style outcome the way an iOS Shortcut would:
+Send a one-tap-style outcome the way the app's App Intent (or a fallback Shortcut) would:
 
 ```bash
 curl -X POST http://localhost:8000/webhooks/shortcut \
@@ -243,7 +244,7 @@ Interactive API docs are available at `http://localhost:8000/docs` while the ser
 | Ollama | Local model inference |
 | SQLite | Behavioral memory |
 | Google Apps Script | Work email digest (stays within Google) — *planned, not yet implemented* |
-| iOS Shortcuts | Location triggers, one-tap logging |
+| Native iOS app (Shortcuts fallback) | App Intents, geofences, widgets, push; one-tap logging (Shortcuts on free-signing installs) |
 | ntfy (Pushover optional) | Notification delivery — one-tap action buttons |
 | Tailscale | Remote access |
 
@@ -255,7 +256,7 @@ LLM inference uses a local model via Ollama for routing and triage. Heavier reas
 
 **Local first.** Your behavioral data doesn't leave your network. API calls are optional and explicit.
 
-**Low friction or it doesn't work.** Every capture mechanism is one tap or one shortcut. If logging an outcome is harder than ignoring it, the system fails.
+**Low friction or it doesn't work.** Every capture mechanism is one tap — an App Intent (Siri / Action Button / widget) or, on a free-signing install, a Shortcut. If logging an outcome is harder than ignoring it, the system fails.
 
 **Escalation is not optional.** A single notification is easy to miss. Every time-critical reminder has an escalation path — notification → sound → voice — that continues until acknowledged.
 

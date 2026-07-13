@@ -13,12 +13,14 @@ for the deeper design of individual agents see the specs linked from
 ## How it fits together (30 seconds)
 
 ```
-iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
-   iOS app +   ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
-    widget    ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
+  iOS app     ─┐                         ┌─ ntfy / Pushover / Twilio
+  App Intents  ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
+  widget/geo  ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
                      ▼
               Prefrontal API (FastAPI, :8000)  ──►  SQLite (your data, on-box)
 ```
+
+(iOS Shortcuts remain the free-signing fallback, hitting the same endpoints.)
 
 - **Prefrontal** is the brain: a FastAPI app over a SQLite database. Nothing
   leaves the machine unless you wire an outbound step.
@@ -28,8 +30,9 @@ iOS Shortcuts ─┐                         ┌─ ntfy / Pushover / Twilio
 - **Ollama** is optional local inference for nicer phrasing and triage; every
   feature has a deterministic fallback when it's down. Heavier-reasoning agents
   can optionally use **Claude** instead — see "Inference providers" below.
-- You interact via **iOS Shortcuts**, the **dashboard**, a **home-screen
-  widget**, or the **CLI**.
+- You interact via the **native iOS app** (App Intents on Siri / Action Button,
+  the **home-screen widget**), the **dashboard**, or the **CLI** — with **iOS
+  Shortcuts** as the free-signing fallback.
 
 Examples below assume two shell variables:
 
@@ -65,9 +68,10 @@ pull you back before the errand quietly stretches.
 
 **Solves:** Losing track of time on "quick" errands.
 
-**How:** An iOS "Going out" Shortcut posts to `/webhooks/outing/start`; n8n polls
-`/webhooks/outing/check` every minute and delivers the nudge. "I'm back" closes
-it (or coming home does, if you feed location).
+**How:** The app's "Going out" App Intent (or a fallback Shortcut) posts to
+`/webhooks/outing/start`; n8n polls `/webhooks/outing/check` every minute and
+delivers the nudge. "I'm back" closes it (or coming home does, if you feed
+location).
 
 ```bash
 # Leave — the window is parsed from the text, or inferred if you don't say one
@@ -298,8 +302,9 @@ fires while a focus session is active.
 itself friction at the worst moment. So `intended_task` is optional — POST an
 empty body and Prefrontal infers the task from your **top open todo**
 (most-avoided first, carrying its estimate as the planned length), falling back
-to a generic block when nothing's open. Wire it to a home-screen / lock-screen /
-Apple Watch Shortcut so dropping into focus is a single tap:
+to a generic block when nothing's open. Trigger it from the **StartFocus** App
+Intent (Siri / Action Button / widget / Apple Watch) — or a fallback Shortcut —
+so dropping into focus is a single tap:
 
 ```bash
 # one tap → "start focus on whatever I've been avoiding"
@@ -560,8 +565,8 @@ Two ways to authenticate, used by different clients:
   button, approve Google's consent once, and a signed session cookie carries you
   after that (no token to paste). Only emails in the `GOOGLE_OAUTH_ALLOWED`
   allowlist may sign in, each mapped to a user handle.
-- **Automations** (n8n, iOS Shortcuts, the widget) — the per-user
-  `X-Prefrontal-Token` header, unchanged. They can't do an interactive login, so
+- **Automations** (n8n, the app's App Intents / widget, and fallback iOS
+  Shortcuts) — the per-user `X-Prefrontal-Token` header, unchanged. They can't do an interactive login, so
   tokens stay for them. `resolve_user` accepts **either** a session cookie or a token.
 
 Google sign-in is optional and off until configured. To enable it:
