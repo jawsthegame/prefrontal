@@ -7,6 +7,24 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Self-Care: end-of-day gap review** ✅ — the self-care checks already *log*
+  every Ate / Drank / Went click as a timestamped `self_care` episode; this reads
+  those clicks back at day's end as a **timeline** and names the gaps a raw tally
+  hides. Three findings beyond "did you hit the target": **late first** (you drank
+  all six glasses, but the first wasn't until 3pm — flagged even when the quota was
+  met, because *when* matters), **long gap** (six hours between two bio breaks vs. a
+  2h cadence), and **shortfall** (a quota that finished the day short) — plus a
+  plain **none** for an enabled check with nothing logged, and a "what went well"
+  line so it's never pure scolding. The analysis is a pure read
+  (`prefrontal/self_care_review.py`) shared by three surfaces: `prefrontal
+  self-care review` (CLI) and `GET /self-care/review` (JSON) are always-available
+  pulls, and an **opt-in evening push** (`self_care_review_enabled`, off by default
+  like meds/wind-down; from `self_care_review_hour`, default 21:00) fires once at
+  day's end — but only when there's a gap worth naming, so a clean day stays
+  silent. Like wind-down it leans on the engine's responsive-hours gate to not
+  buzz past bedtime. Declared as the `self_care_review` intervention; covered by
+  `tests/test_self_care_review.py`.
+
 - **Docs: retire the Shortcuts location automations for native-app users** ✅
   (#567, epic #569 capstone) — with the native CoreLocation feeds all shipped
   (#562/#469/#563/#564), `deploy/ios-shortcut.md` now leads with a banner + table

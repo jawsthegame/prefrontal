@@ -30,6 +30,7 @@ from prefrontal.modules.self_care import (
     apply_self_care_unmark,
     self_care_status,
 )
+from prefrontal.self_care_review import self_care_review
 from prefrontal.sources import (
     SMTP_ACCOUNT,
     delete_smtp_source,
@@ -347,6 +348,19 @@ def build_router(services: RouterServices) -> APIRouter:
         common "why am I not getting nudges?" cause) and where today stands.
         """
         return self_care_status(ctx.store, utcnow(), services.settings.timezone)
+
+    @router.get("/self-care/review", tags=["system"])
+    def self_care_review_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Today's end-of-day self-care **gap** analysis for the signed-in user.
+
+        The pull twin of the opt-in evening push: reads today's confirms back as a
+        timeline and surfaces the gaps a raw count hides — a late first glass of
+        water, a long stretch between bio breaks, a quota finished short — plus
+        what went well. A pure read (no writes), safe to poll any time.
+        """
+        return self_care_review(ctx.store, utcnow(), services.settings.timezone)
 
     @router.post("/self-care", tags=["system"])
     def set_self_care(

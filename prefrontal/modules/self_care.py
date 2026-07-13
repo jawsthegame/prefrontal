@@ -63,6 +63,15 @@ rhythm for free. Confirms and snoozes are plain coaching-state cursors
 change. Every confirm/snooze also logs a ``self_care`` episode so a later
 learning pass can adapt cadence (see ROADMAP — including the honesty check on
 reflexive instant-yeses).
+
+Those logged confirms are also the raw material for an **end-of-day gap review**:
+an opt-in evening push (``self_care_review_enabled``) that reads the day's clicks
+back as a *timeline* and names the gaps a raw count can't see — you hit six
+glasses but your first wasn't until 3pm, or six hours passed between two bio
+breaks. The analysis is a pure read living in
+:mod:`prefrontal.self_care_review`; this module just fires it once in the evening
+(and only when there's a gap worth naming). The same review backs
+``prefrontal self-care review`` and ``GET /self-care/review``.
 """
 
 from __future__ import annotations
@@ -146,6 +155,17 @@ DEFAULT_MOVEMENT_START_HOUR = 7
 DEFAULT_MOVEMENT_REASK_MINUTES = 45
 DEFAULT_MOVEMENT_SNOOZE_MINUTES = 30
 DEFAULT_MOVEMENT_DAILY_TARGET = 1
+#: End-of-day **gap review** defaults. Not a basic-needs *check* — it's a single
+#: evening push that reads the day's confirms back as a timeline and names the
+#: gaps a raw tally hides (a late first glass, a long stretch between bio breaks;
+#: see :mod:`prefrontal.self_care_review`). Off even when self_care is on — a daily
+#: recap is a personal-preference nudge, like meds/winddown — opt in via
+#: ``self_care_review_enabled``. Fires once, in the evening from
+#: ``self_care_review_hour``, and only when there's a gap worth naming (a clean day
+#: stays silent). Like wind-down it leans on the engine's responsive-hours gate to
+#: not fire past bedtime, so a deployment whose ``responsive_hours_end`` is early
+#: should widen it to actually receive the evening recap.
+DEFAULT_REVIEW_HOUR = 21
 
 #: Meal snooze cursor (UTC "YYYY-MM-DD HH:MM:SS"), kept for external references.
 SNOOZED_UNTIL_KEY = "meal_snoozed_until"
@@ -1224,6 +1244,12 @@ class SelfCareModule(Module):
         "movement_reask_minutes": str(DEFAULT_MOVEMENT_REASK_MINUTES),
         "movement_snooze_minutes": str(DEFAULT_MOVEMENT_SNOOZE_MINUTES),
         "movement_daily_target": str(DEFAULT_MOVEMENT_DAILY_TARGET),
+        # End-of-day gap review: a single evening push summarizing the day's
+        # self-care *timing* (see prefrontal/self_care_review.py). Off even when
+        # self_care is on (a recap is a personal-preference nudge, like
+        # meds/winddown) — opt in via self_care_review_enabled.
+        "self_care_review_enabled": "off",
+        "self_care_review_hour": str(DEFAULT_REVIEW_HOUR),
     }
 
     def interventions(self) -> list[Intervention]:
@@ -1298,7 +1324,58 @@ class SelfCareModule(Module):
                 trigger="from your movement hour, until you confirm you've moved",
                 status="active",
             ),
+            Intervention(
+                name="self_care_review",
+                description=(
+                    "An opt-in evening recap that reads the day's self-care clicks "
+                    "back as a timeline and names the gaps a raw count hides — a "
+                    "late first glass of water, a long stretch between bio breaks, "
+                    "a quota that finished short. From self_care_review_hour, once, "
+                    "and only when there's a gap worth naming (a clean day stays "
+                    "silent). Off unless self_care_review_enabled — a daily recap "
+                    "is personal. No buttons; a plain informational push."
+                ),
+                trigger="evening, once, when the day's clicks show a gap",
+                status="active",
+            ),
         ]
+
+    def _eod_review_cue(
+        self, store: MemoryStore, ctx: CoachContext, local: datetime, today: str
+    ) -> Cue | None:
+        """The opt-in end-of-day gap-review cue, or ``None`` if it shouldn't fire.
+
+        ``None`` unless the review is opted in, it's the evening (>= the review
+        hour), it hasn't already fired today, and the day's clicks actually show a
+        gap worth naming (:func:`~prefrontal.self_care_review.review_message`). The
+        cue is informational — its ``context_key`` isn't in the delivery button map,
+        so it goes out as a plain push with no one-tap actions. Imported locally to
+        avoid a module-import cycle (the review module reads this module's metadata).
+        """
+        if (store.get_state("self_care_review_enabled", "off") or "off") != "on":
+            return None
+        review_hour = store.get_hour("self_care_review_hour", DEFAULT_REVIEW_HOUR)
+        if local.hour < review_hour:
+            return None
+        dedup_key = f"self_care_review:{today}"
+        if last_fired(store, dedup_key) is not None:
+            return None
+
+        from prefrontal.self_care_review import review_message, self_care_review
+
+        review = self_care_review(store, ctx.now, ctx.timezone)
+        body = review_message(review, ctx.display_name)
+        if not body:
+            return None
+        return Cue(
+            module=self.key,
+            intervention="self_care_review",
+            urgency="nudge",
+            text=body,
+            context_key="self_care_review",
+            dedup_key=dedup_key,
+            suggested_channel="push",
+        )
 
     def evaluate(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """Fire the single most-overdue basic-needs check due right now.
@@ -1321,6 +1398,16 @@ class SelfCareModule(Module):
         local = local_datetime(ctx.now, ctx.timezone)
         today = local.strftime("%Y-%m-%d")
         minute_of_day = local.hour * 60 + local.minute
+
+        # End-of-day gap review (opt-in): the priority at day's end. Fires once,
+        # from the review hour, and only when the day's clicks actually show a gap —
+        # so it takes precedence over any lingering check but never buzzes on a
+        # clean day. Returning it alone is fine: the tick runs often, so once this
+        # has fired (dedup), a still-due winddown/etc. trickles out next tick, the
+        # same "one cue per tick" trickle the checks already rely on.
+        review_cue = self._eod_review_cue(store, ctx, local, today)
+        if review_cue is not None:
+            return [review_cue]
 
         due: list[tuple[int, int, Cue]] = []
         for index, check in enumerate(CHECKS):
