@@ -4,7 +4,7 @@ description: >-
   Onboard a person onto a Prefrontal deployment end-to-end — provision their
   user (or mint a household invite code for a co-parent), then hand them a
   personalized setup sheet for ntfy notifications, iOS Shortcuts, and the
-  Scriptable widget — and optionally connects their own email (IMAP) and calendar
+  home-screen widget — and optionally connects their own email (IMAP) and calendar
   (private ICS feed) sources. Use when asked to "invite a user", "add someone",
   "onboard a co-parent", "set up a new phone/user", or "get <name> onto
   Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar` CLI and
@@ -16,14 +16,14 @@ description: >-
 
 Take a new person from "not on the system" to "phone set up and receiving
 nudges". Two things happen: **membership** (a user account, optionally joined to
-a household) and **client setup** (ntfy, Shortcuts, Scriptable, filled in with
+a household) and **client setup** (ntfy, Shortcuts, the widget, filled in with
 their real values).
 
 The canonical setup docs are the source of truth — do **not** duplicate their
 steps into the repo, cite them:
 
 - `deploy/ios-shortcut.md` — every iOS Shortcut
-- `deploy/scriptable/README.md` — the home/lock-screen widget
+- `ios/README.md` — the native app + its Home/Lock Screen widget
 - `docs/deployment.md` (§"Configure once") — ntfy env vars + the token credential
 - `docs/multi-tenant.md` — the per-user token / household model
 - `docs/design/per-user-sources.md` — per-user email (IMAP) + calendar (ICS) sources
@@ -202,7 +202,7 @@ prefrontal user connect-link <handle> --qr --rotate    # needs `pip install 'pre
 
 Put that QR (or the `prefrontal://connect?…` link) at the top of the sheet. It's
 as sensitive as the token — don't commit it or paste it anywhere shared. The
-Shortcuts + Scriptable steps below still apply for one-tap logging and the
+Shortcuts + widget steps below still apply for one-tap logging and the
 lock-screen glance.
 
 Deliver it as this template (replace the placeholders — don't leave them
@@ -232,11 +232,12 @@ these three, then add the rest from `deploy/ios-shortcut.md`:
 
 Full catalog (outings, focus, capture, location, departure): `deploy/ios-shortcut.md`.
 
-**4. Scriptable widget (home/lock screen glance)**
-1. Install **Scriptable**, tap **+**, paste in `deploy/scriptable/prefrontal-widget.js`.
-2. Set `TOKEN = "<token>"` and `BASE_URL = "<base-url>"` at the top.
-3. Run once to preview, then add a **Scriptable** widget to the Home Screen
-   (Medium) and/or a Lock Screen slot. Details: `deploy/scriptable/README.md`.
+**4. Home/Lock Screen widget (glance)**
+Once the app is connected (step 1) the widget reads the same token — no separate
+setup. Long-press the Home Screen → **+** → **Prefrontal** → add the Medium
+widget (your next departure, the one todo to start now, next commitment,
+tap-to-log self-care). For a Lock Screen glance, edit the Lock Screen → tap a
+slot → **Prefrontal**. Details: `ios/README.md`.
 
 **Connectivity note:** every tap crosses Tailscale from the phone — make sure the
 phone is on the tailnet. Quick check: open `<base-url>/health` in Safari.

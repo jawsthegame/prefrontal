@@ -50,7 +50,7 @@ prefrontal/
 │   ├── departure.py           # travel-aware "when to leave" reminders
 │   └── geocode.py             # places -> cache -> opt-in Nominatim resolution
 ├── docs/                      # schema.md, whitepaper.md, household-sheet.md + design specs; brand/
-├── deploy/                    # launchd plist, n8n workflows, iOS Shortcuts, Scriptable widget
+├── deploy/                    # launchd plist, n8n workflows, iOS Shortcuts
 ├── tests/                     # pytest suite (memory, webhooks, modules, ...)
 ├── pyproject.toml             # build, dependencies, tooling config
 └── .env.example               # all configuration, with safe defaults

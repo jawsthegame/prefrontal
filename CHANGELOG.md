@@ -19,6 +19,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   `/webhooks/location` (arbitrary venues are #564's `CLVisit` job). Client-only
   (build on a Mac); reuses existing endpoints, no server change.
 
+- **iOS widget: a concrete "right now", and goodbye Scriptable** ✅ — the native
+  WidgetKit medium widget's right column read "3 fit 45m" — a cryptic count under
+  a "RIGHT NOW" heading that also doubled as "what's next". It now shows the one
+  todo the server suggests starting (`todos/now.suggestion`), e.g. *Reply to
+  landlord · ~15 min · 45m free* — the same initiation nudge the Today tab's
+  "Right now" card gives. The next commitment moved to its own full-width
+  **Next: … · 3:40 PM** footer, so the heading means one thing. Same concrete
+  suggestion now backs the small widget and the Lock Screen rectangular/inline
+  accessories, which lets the widget drop its extra `todos/fit` request (the
+  suggestion already rides in the `todos/now` payload). Client-only (build on a
+  Mac). Retired the legacy **Scriptable** widget (`deploy/scriptable/`) — the
+  native app widget + Live Activity supersede it.
+
 - **iOS: swipe to hide a "Did you make it?" item** ✅ — the calendar's
   recently-elapsed list assumed every past event wants a made/missed answer, but
   some were only FYIs or things you never had to go to. A left-swipe on any

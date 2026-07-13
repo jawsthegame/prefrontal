@@ -1,7 +1,7 @@
 """Google sign-in for the web surfaces (dashboard / family view).
 
 This is *browser* login only. The automated clients — n8n, iOS Shortcuts, the
-Scriptable widget — stay on per-user ``X-Prefrontal-Token`` tokens, because they
+iOS app/widget — stay on per-user ``X-Prefrontal-Token`` tokens, because they
 can't do an interactive OAuth redirect. So this layers a signed session cookie
 beside the token auth: a human signs in with Google once, the cookie carries them
 after that, and :func:`prefrontal.webhooks.app.resolve_user` accepts either.

@@ -87,7 +87,7 @@ else
 fi
 
 # 4) Deploy artifacts: the n8n workflows are pushed by update.sh's `n8n push`,
-#    and the Scriptable widget + iOS Shortcut are static files (nothing to
-#    build), so there's nothing to re-package here.
+#    and the iOS Shortcut is a static file (nothing to build), so there's
+#    nothing to re-package here.
 
 log "complete"

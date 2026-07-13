@@ -12,8 +12,13 @@ struct Glance {
     var depLeaveBy: Date?
     var depLevel: String?
     var freeMinutes = 0
-    var fits = 0
+    /// The single todo the server suggests starting right now (`todos/now`) —
+    /// the concrete initiation nudge, in place of a bare "N fit" count.
+    var suggestionTitle: String?
+    var suggestionMinutes: Int?
     var nextTitle: String?
+    /// Start time of the next commitment, for the "Next: … · 3:40 PM" footer.
+    var nextAt: Date?
     var meal: (Int, Int)?
     var water: (Int, Int)?
     /// Every enabled self-care check, keyed by its `key` (count, target) — so the
@@ -25,7 +30,7 @@ struct Glance {
 
     static let sample = Glance(
         depTitle: "Dentist", depLeaveBy: Date().addingTimeInterval(45 * 60), depLevel: "soon",
-        freeMinutes: 45, fits: 3,
+        freeMinutes: 45, suggestionTitle: "Reply to landlord", suggestionMinutes: 15,
         meal: (2, 3), water: (3, 6)
     )
 
@@ -54,9 +59,13 @@ struct Glance {
         if let now {
             g.freeMinutes = Int(now.freeMinutes ?? 0)
             g.nextTitle = now.nextCommitment?.title
-        }
-        if g.freeMinutes > 0 {
-            g.fits = (try? await client.todosFit(minutes: g.freeMinutes))?.fits.count ?? 0
+            g.nextAt = PFDate.parse(now.nextCommitment?.startAt)
+            // Prefer the server's concrete "you can do this now" pick over a count;
+            // it's already in this payload, so no extra request (dropped todosFit).
+            if let s = now.suggestion, let t = s.title {
+                g.suggestionTitle = t
+                g.suggestionMinutes = s.estimateMinutes.map { Int($0) }
+            }
         }
         if let checks = sc?.checks {
             for c in checks where c.enabled { g.selfCareChecks[c.key] = (c.count, c.target) }
@@ -181,9 +190,13 @@ struct PrefrontalWidgetView: View {
             Text("Leave").font(.caption).foregroundStyle(Color.wMuted)
             Text(leave, style: .time).font(.title3.weight(.bold)).foregroundStyle(levelColor(g.depLevel))
             Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(2)
+        } else if let task = g.suggestionTitle {
+            Text("DO NOW").font(.caption2).foregroundStyle(Color.wMuted)
+            Text(task).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+            Text(rightNowSub).font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
         } else if g.freeMinutes > 0 {
-            Text("\(g.fits) todo\(g.fits == 1 ? "" : "s")").font(.title2.weight(.bold)).foregroundStyle(Color.wInk)
-            Text("fit \(g.freeMinutes) min free").font(.caption).foregroundStyle(Color.wMuted)
+            Text("\(g.freeMinutes) min").font(.title2.weight(.bold)).foregroundStyle(Color.wInk)
+            Text("free — nothing queued").font(.caption).foregroundStyle(Color.wMuted)
         } else {
             Text("All clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
             if let t = g.nextTitle { Text("next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(2) }
@@ -201,7 +214,7 @@ struct PrefrontalWidgetView: View {
                 Spacer(minLength: 0)
                 selfCareLine
             } else {
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("LEAVE BY").font(.caption2).foregroundStyle(Color.wMuted)
                         if let leave = g.depLeaveBy {
@@ -209,23 +222,61 @@ struct PrefrontalWidgetView: View {
                             Text(g.depTitle ?? "").font(.caption).foregroundStyle(Color.wInk).lineLimit(1)
                         } else {
                             Text("—").font(.title3.weight(.bold)).foregroundStyle(Color.wMuted)
+                            Text("no travel today").font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Divider()
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("RIGHT NOW").font(.caption2).foregroundStyle(Color.wMuted)
-                        if g.freeMinutes > 0 {
-                            Text("\(g.fits) fit \(g.freeMinutes)m").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
-                        } else if let t = g.nextTitle {
-                            Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
-                        } else {
-                            Text("clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
-                        }
-                    }
-                    Spacer(minLength: 0)
+                    rightNowColumn
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                nextRow
                 Spacer(minLength: 0)
                 selfCareLine
+            }
+        }
+    }
+
+    // The "RIGHT NOW" column: the one concrete thing to start, from the server's
+    // suggestion — a real initiation nudge, not a "N fit" count. Falls back to the
+    // open window, then a calm all-clear. The next commitment lives in `nextRow`
+    // below, so this heading always means the same thing.
+    @ViewBuilder private var rightNowColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("RIGHT NOW").font(.caption2).foregroundStyle(Color.wMuted)
+            if let task = g.suggestionTitle {
+                Text(task).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+                Text(rightNowSub).font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
+            } else if g.freeMinutes > 0 {
+                Text("\(g.freeMinutes)m free").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
+                Text("nothing queued").font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
+            } else {
+                Text("All clear").font(.title3.weight(.bold)).foregroundStyle(Color.wInk)
+                Text(g.nextTitle == nil ? "nothing scheduled" : "you're on top of it")
+                    .font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
+            }
+        }
+    }
+
+    // "~15 min · 45m free" — the estimate to start it, and the window it fits into.
+    private var rightNowSub: String {
+        var parts: [String] = []
+        if let m = g.suggestionMinutes { parts.append("~\(m) min") }
+        if g.freeMinutes > 0 { parts.append("\(g.freeMinutes)m free") }
+        return parts.isEmpty ? "you can start now" : parts.joined(separator: " · ")
+    }
+
+    // Full-width "Next: … · 3:40 PM" footer — the upcoming commitment, kept out of
+    // the RIGHT NOW column so that heading doesn't double as "what's next".
+    @ViewBuilder private var nextRow: some View {
+        if let t = g.nextTitle {
+            HStack(spacing: 5) {
+                Image(systemName: "calendar").font(.caption2).foregroundStyle(Color.wMuted)
+                Text("Next: \(t)").font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
+                Spacer(minLength: 4)
+                if let at = g.nextAt {
+                    Text(at, style: .time).font(.caption).foregroundStyle(Color.wMuted)
+                }
             }
         }
     }
@@ -294,9 +345,12 @@ struct PrefrontalWidgetView: View {
             } else if let leave = g.depLeaveBy {
                 Text("Leave \(leave.formatted(date: .omitted, time: .shortened))").font(.headline)
                 Text(g.depTitle ?? "").font(.caption).lineLimit(1)
+            } else if let task = g.suggestionTitle {
+                Text(task).font(.headline).lineLimit(1)
+                Text(g.suggestionMinutes.map { "~\($0) min" } ?? "\(g.freeMinutes) min free").font(.caption).lineLimit(1)
             } else if g.freeMinutes > 0 {
-                Text("\(g.fits) todos fit").font(.headline)
-                Text("\(g.freeMinutes) min free").font(.caption)
+                Text("\(g.freeMinutes) min free").font(.headline)
+                if let t = g.nextTitle { Text("next: \(t)").font(.caption).lineLimit(1) }
             } else {
                 Text("All clear").font(.headline)
                 if let t = g.nextTitle { Text("next: \(t)").font(.caption).lineLimit(1) }
@@ -312,8 +366,10 @@ struct PrefrontalWidgetView: View {
         Group {
             if let leave = g.depLeaveBy {
                 Label("Leave \(leave.formatted(date: .omitted, time: .shortened))", systemImage: "figure.walk")
+            } else if let task = g.suggestionTitle {
+                Label(task, systemImage: "checklist")
             } else if g.freeMinutes > 0 {
-                Label("\(g.fits) todos fit \(g.freeMinutes)m", systemImage: "checklist")
+                Label("\(g.freeMinutes)m free", systemImage: "checklist")
             } else {
                 Label("Prefrontal: all clear", systemImage: "checkmark")
             }
@@ -329,7 +385,7 @@ struct PrefrontalWidget: Widget {
             PrefrontalWidgetView(entry: entry)
         }
         .configurationDisplayName("Prefrontal")
-        .description("Your next departure, what fits now, and tap-to-log self-care.")
+        .description("Your next departure, the one thing to do now, and tap-to-log self-care.")
         .supportedFamilies([.systemSmall, .systemMedium,
                             .accessoryRectangular, .accessoryInline])
     }
