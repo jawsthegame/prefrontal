@@ -67,6 +67,7 @@ from prefrontal.departure import (
 )
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
 from prefrontal.focus_balance import normalize_focus_domain
+from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.geocode import (
     normalize_query,
 )
@@ -136,6 +137,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentOutcome,
     CommitmentPrepared,
     ConflictDismiss,
+    LocationSettings,
     PlaceCreate,
     RescheduleRequest,
     TravelPadding,
@@ -820,6 +822,72 @@ def build_router(services: RouterServices) -> APIRouter:
             }
         memory.set_state(STATE_AVAILABLE_HOURS_KEY, json.dumps(stored), source="explicit")
         return _available_hours_payload(memory)
+
+    # -- Location settings (tunables on web; the phone keeps only the opt-in) --
+    #
+    # Stored as individual coaching-state keys (not a JSON blob) so the existing
+    # `home_radius_m` key — already read by outing gating and trip detection —
+    # stays authoritative and shared, per the issue's "consolidate where sensible".
+    STATE_GEOFENCE_RADIUS_KEY = "geofence_radius_m"
+    STATE_LOCATION_POST_INTERVAL_KEY = "location_post_interval_s"
+    STATE_VISITS_ENABLED_KEY = "location_visits_enabled"
+
+    def _location_settings_payload(store: Any) -> dict[str, Any]:
+        """The four location tunables, with defaults applied for unset keys."""
+        return {
+            "home_radius_m": store.get_float("home_radius_m", DEFAULT_HOME_RADIUS_M),
+            "geofence_radius_m": store.get_float(STATE_GEOFENCE_RADIUS_KEY, 120.0),
+            "post_interval_s": int(store.get_float(STATE_LOCATION_POST_INTERVAL_KEY, 300)),
+            "visits_enabled": store.get_bool(STATE_VISITS_ENABLED_KEY, True),
+        }
+
+    @router.get("/schedule/location-settings", tags=["schedule"])
+    def get_location_settings(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The native app's location tunables (radii, feed cadence, `CLVisit` on/off).
+
+        The web-configurable knobs the iOS app reads on refresh and applies to its
+        CoreLocation monitoring. The **master opt-in** is deliberately absent — it
+        must live on the phone (only it can trigger the OS "Always Allow" prompt).
+        `home_radius_m` is the same key outing return-gating and trip detection
+        already read, surfaced here so all the location tunables sit in one place.
+        """
+        return _location_settings_payload(ctx.store)
+
+    @router.post("/schedule/location-settings", tags=["schedule"])
+    def set_location_settings(
+        payload: LocationSettings,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set one or more location tunables from the web dashboard.
+
+        A **partial** write: only the fields present in the body are updated (the
+        rest keep their stored value), each stored as an explicit user choice so a
+        learner never overwrites it. Bounds are schema-enforced (422 on out-of-range).
+        Echoes the fresh full settings back so the client re-renders from the response.
+        """
+        memory = ctx.store
+        provided = payload.model_dump(exclude_unset=True)
+        if "home_radius_m" in provided:
+            memory.set_state("home_radius_m", f"{provided['home_radius_m']:g}", source="explicit")
+        if "geofence_radius_m" in provided:
+            memory.set_state(
+                STATE_GEOFENCE_RADIUS_KEY, f"{provided['geofence_radius_m']:g}", source="explicit"
+            )
+        if "post_interval_s" in provided:
+            memory.set_state(
+                STATE_LOCATION_POST_INTERVAL_KEY,
+                str(int(provided["post_interval_s"])),
+                source="explicit",
+            )
+        if "visits_enabled" in provided:
+            memory.set_state(
+                STATE_VISITS_ENABLED_KEY,
+                "1" if provided["visits_enabled"] else "0",
+                source="explicit",
+            )
+        return _location_settings_payload(memory)
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(

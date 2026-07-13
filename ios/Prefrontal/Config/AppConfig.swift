@@ -51,6 +51,29 @@ enum SharedStore {
     /// Opt-in geofencing flag, read from the plain defaults so the (nonisolated)
     /// `LocationMonitor` can check it without touching the `@MainActor` AppConfig.
     static var locationEnabled: Bool { defaults.bool(forKey: "locationEnabled") }
+
+    // Web-configured location tunables (#565): cached in the App Group by
+    // `LocationMonitor.syncLocationSettings()` from `/schedule/location-settings`
+    // so the nonisolated monitor reads them synchronously, with a sensible default
+    // until the first sync. Keys match the server's response fields.
+    static let geofenceRadiusKey = "geofence_radius_m"
+    static let locationPostIntervalKey = "location_post_interval_s"
+    static let visitsEnabledKey = "location_visits_enabled"
+
+    /// Curated-place geofence radius (m); default 120 until first synced.
+    static var geofenceRadiusM: Double {
+        let v = defaults.double(forKey: geofenceRadiusKey)
+        return v > 0 ? v : 120
+    }
+    /// Significant-change post floor (s); default 300 until first synced.
+    static var locationPostIntervalS: Double {
+        let v = defaults.double(forKey: locationPostIntervalKey)
+        return v > 0 ? v : 300
+    }
+    /// Whether `CLVisit` monitoring runs; default on (absent key → true).
+    static var visitsEnabled: Bool {
+        defaults.object(forKey: visitsEnabledKey) == nil ? true : defaults.bool(forKey: visitsEnabledKey)
+    }
 }
 
 @MainActor

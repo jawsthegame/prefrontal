@@ -219,6 +219,27 @@ struct Slots: Codable {
     }
 }
 
+// MARK: - Location settings
+
+/// The web-configurable location tunables (`GET /schedule/location-settings`) the
+/// app applies to `LocationMonitor` on refresh. Mirrors the server contract in
+/// `tests/contracts/location_settings.*`; the drift guard is
+/// `tests/test_contract_location_settings.py`. The master opt-in is NOT here — it
+/// stays in Me ▸ Settings because only it can trigger the OS "Always" prompt.
+struct LocationSettings: Codable {
+    let homeRadiusM: Double
+    let geofenceRadiusM: Double
+    let postIntervalS: Int
+    let visitsEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case homeRadiusM = "home_radius_m"
+        case geofenceRadiusM = "geofence_radius_m"
+        case postIntervalS = "post_interval_s"
+        case visitsEnabled = "visits_enabled"
+    }
+}
+
 // MARK: - Departure
 
 struct DepartureNext: Codable {

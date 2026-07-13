@@ -14,8 +14,8 @@ import CoreLocation
 /// - **Significant-location-change feed (#562).** Coarse (~500 m / cell-tower)
 ///   position updates keep `/webhooks/location` fresh *between* curated places —
 ///   what departure travel-time and trip stop-detection need — replacing the
-///   Shortcuts "Update location" automation. Throttled to `minPostInterval` so a
-///   burst of updates doesn't spam the endpoint.
+///   Shortcuts "Update location" automation. Throttled to a web-configurable floor
+///   (`SharedStore.locationPostIntervalS`, #565) so a burst doesn't spam the endpoint.
 /// - **`CLVisit` monitoring (#564).** Arrivals/departures at *arbitrary* venues
 ///   (not just the ≤18 curated places) post their coordinate to
 ///   `/webhooks/location`, so a stop somewhere new is still visible natively.
@@ -40,10 +40,6 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     private static let homeName = "home"
     private static let maxRegions = 18   // CoreLocation caps at 20 per app
 
-    /// Minimum seconds between significant-change position posts, so a cluster of
-    /// updates doesn't spam `/webhooks/location`. The cadence becomes
-    /// web-configurable in #565; this is the default floor.
-    private static let minPostInterval: TimeInterval = 300
     /// The significant-change feed's *own* throttle timestamp — advanced only by
     /// that feed, so an unrelated geofence/visit post never delays it. Stored in
     /// the App Group so the throttle survives a terminated-state relaunch.
@@ -78,6 +74,7 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             startMonitoring()
+            Task { await syncLocationSettings() }
         default:
             break
         }
@@ -88,15 +85,37 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     func enable() {
         manager.requestAlwaysAuthorization()
         startMonitoring()
+        Task { await syncLocationSettings() }
     }
 
     /// Start the three feeds. Safe to call before a grant resolves — CoreLocation
     /// only delivers once authorized, and the authorization callback refreshes
-    /// regions then.
+    /// regions then. Reads the web-configured tunables (#565) from the App Group:
+    /// `CLVisit` runs only when enabled, and the geofence radius is applied in
+    /// `monitor(_:)`.
     private func startMonitoring() {
         manager.startMonitoringSignificantLocationChanges()
-        manager.startMonitoringVisits()
+        if SharedStore.visitsEnabled {
+            manager.startMonitoringVisits()
+        } else {
+            manager.stopMonitoringVisits()
+        }
         refreshRegions()
+    }
+
+    /// Pull the web-configured location tunables (#565) into the App Group, then
+    /// re-apply them. `LocationSection`'s master opt-in stays on the phone; these
+    /// are just the knobs (radii, feed cadence, `CLVisit` on/off). Best-effort — a
+    /// failed fetch leaves the last-synced values (or defaults) in place.
+    private func syncLocationSettings() async {
+        guard let s = try? await withAPI({ try await $0.locationSettings() }) else { return }
+        let d = SharedStore.defaults
+        d.set(s.geofenceRadiusM, forKey: SharedStore.geofenceRadiusKey)
+        d.set(Double(s.postIntervalS), forKey: SharedStore.locationPostIntervalKey)
+        d.set(s.visitsEnabled, forKey: SharedStore.visitsEnabledKey)
+        // Re-apply with the fresh values (visit on/off + geofence radius); the
+        // significant-change floor is read live on each update.
+        startMonitoring()
     }
 
     /// Re-request Always after a While-Using grant — the one upgrade prompt iOS
@@ -121,11 +140,13 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     private func monitor(_ places: [Place]) {
+        // Web-configured geofence radius (#565), default 120 m until first synced.
+        let radius = SharedStore.geofenceRadiusM
         for region in manager.monitoredRegions { manager.stopMonitoring(for: region) }
         for place in places.prefix(Self.maxRegions) {
             let region = CLCircularRegion(
                 center: CLLocationCoordinate2D(latitude: place.lat, longitude: place.lon),
-                radius: 120,
+                radius: radius,
                 identifier: place.name
             )
             region.notifyOnEntry = true
@@ -258,7 +279,8 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
         // last-post time lives in the App Group rather than in memory.
         let now = Date().timeIntervalSince1970
         let last = SharedStore.defaults.double(forKey: Self.lastSlcPostKey)
-        guard now - last >= Self.minPostInterval else { return }
+        // The floor is web-configurable (#565); default 300 s until first synced.
+        guard now - last >= SharedStore.locationPostIntervalS else { return }
         Task {
             try? await withAPI {
                 try await self.postLocationDeduped(
