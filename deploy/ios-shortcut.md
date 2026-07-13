@@ -3,6 +3,24 @@
 Two one-tap shortcuts for outcome logging, plus an optional location automation.
 All of them POST to Prefrontal's `/webhooks/shortcut` endpoint with your token.
 
+> **📍 Using the native iOS app? You don't need the location automations below.**
+> The app now covers every location-driven behavior with native CoreLocation
+> (opt-in under **Me ▸ Settings ▸ Location automations**), so a native-app user
+> can skip the four location Shortcuts entirely. They stay documented here for
+> **web / ntfy-only** setups (no app). Native equivalents:
+>
+> | Shortcuts location automation | Native replacement |
+> |---|---|
+> | "Update location" (periodic feed) | significant-location-change feed (#562) |
+> | "Leaving Home" departure log | `CLCircularRegion` home-exit geofence (#469) |
+> | "I'm back" arrival → return (Tier 1) | native arrival→return on the home geofence (#563) |
+> | coarse departure-by-location | `CLVisit` departure signal (#564) |
+> | Home Assistant Tier-2 continuous gating | the native feed's live-ish coordinates (#562) — HA now optional/legacy |
+>
+> The one-tap **outcome** shortcuts ("Made it" / "Missed it") and the **manual**
+> "Going out" / "I'm back" taps aren't location automations — keep them, or use
+> the app's App Intents of the same name.
+
 **Base URL:** use your Mac mini's Tailscale name or IP, e.g.
 `http://mac-mini.tail-scale.ts.net:8000` (see `docs/deployment.md` step 5).
 
@@ -63,6 +81,10 @@ is free text the summarizer can later bucket on.
 ---
 
 ## Automation: log a departure trigger by location
+
+> **Native app: not needed** — the native home-exit geofence (#469) and the
+> `CLVisit` departure signal (#564) cover this. Use this only on a web / ntfy-only
+> setup.
 
 1. Shortcuts → **Automation** → **+** → **Leave** a location (e.g. Home).
 2. Action **Get Contents of URL**, same URL/headers as above, body:
@@ -366,6 +388,10 @@ Shortcut's input. So this Shortcut just needs to turn that text into an alarm:
 
 ## Shortcut: "Update location" (the simplest location source)
 
+> **Native app: not needed** — replaced by the app's significant-location-change
+> feed (#562), which keeps `/webhooks/location` fresh between places on its own.
+> Use this only on a web / ntfy-only setup.
+
 A single automation that tells Prefrontal where you are. It's the one source of
 "where am I now" for everything location-aware: it lets the coffee-shop nudge
 stop once you're home **without Home Assistant**, and it powers the departure
@@ -431,6 +457,10 @@ Tune the estimate with the `travel_speed_kmh`, `travel_road_factor`,
 
 ### Automation: "Leaving Home" (did you actually leave on time?)
 
+> **Native app: not needed** — the app's home-exit geofence posts
+> `/webhooks/departure/left` natively (#469). Use this only on a web / ntfy-only
+> setup.
+
 The reminder above is the *prediction*; this captures the *outcome* — so
 Prefrontal finally learns whether you leave on time, the way it already learns
 from outings, todos, and mail. It's the exact mirror of the "I'm back" arrival
@@ -458,6 +488,11 @@ weren't heading to anything, it records nothing rather than inventing an episode
 ---
 
 ## Location source (passive return & gating)
+
+> **Native app: not needed** — Tier 1 (arrival → return) runs natively on the
+> app's home geofence (#563), and Tier 2's continuous gating is superseded by the
+> native significant-change feed's live-ish coordinates (#562), so Home Assistant
+> is now optional/legacy. Both tiers below are for web / ntfy-only setups.
 
 Location is **optional** — without it the anchor escalates purely on elapsed
 time. Wiring it in lets Prefrontal stop nudging once you're actually home. The

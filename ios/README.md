@@ -220,9 +220,11 @@ for **Always** location and monitors your curated places (`GET /places`) with
 place named **home** posts `/webhooks/departure/left` — the native replacement
 for the "when I leave Home" Shortcut automation — and any enter/exit posts the
 current position to `/webhooks/location`, feeding departure-timing and outing
-distance without a tap. Region monitoring is battery-cheap (the OS wakes the app
-only on a crossing, even from terminated; `AppDelegate` re-attaches the delegate
-on launch). Add places with `prefrontal place add <name> <lat> <lon>`.
+distance without a tap. Arriving **home** with an outing active posts
+`/webhooks/outing/return` to close it tap-free (#563), the native replacement for
+the "I'm back" arrival automation. Region monitoring is battery-cheap (the OS
+wakes the app only on a crossing, even from terminated; `AppDelegate` re-attaches
+the delegate on launch). Add places with `prefrontal place add <name> <lat> <lon>`.
 
 Alongside the geofences it also runs a **significant-location-change** feed
 (#562) — coarse (~500 m / cell-tower) position updates that keep
@@ -230,6 +232,19 @@ Alongside the geofences it also runs a **significant-location-change** feed
 and trip stop-detection need), replacing the Shortcuts "Update location"
 automation. Same Always-location opt-in; also battery-cheap and terminated-state
 capable. Posts are throttled (default 5 min floor; web-configurable under #565).
+
+A **`CLVisit`** feed (#564) covers arrivals/departures at *arbitrary* venues
+beyond the ≤18 curated places, posting their coordinate to `/webhooks/location`
+too. All three feeds share a de-dupe guard so a `CLVisit` coinciding with a
+curated-place geofence crossing doesn't double-post. Permission handling is
+hardened (#566): the Settings section primes before the one-shot prompt, shows
+the live authorization state, offers an "upgrade to Always" path from
+While-Using, and points to iOS Settings when denied.
+
+Together these **fully replace the location Shortcut automations** — a native-app
+user needs none of them. `deploy/ios-shortcut.md` keeps the Shortcuts stack
+documented for **web / ntfy-only** users (no app), with the native equivalents
+mapped at the top.
 
 ## Siri / Shortcuts / Action Button (App Intents)
 
