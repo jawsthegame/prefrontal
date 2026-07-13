@@ -3330,6 +3330,8 @@ def _cmd_packs(args: argparse.Namespace) -> int:
                 print(f"          commitment kinds: {', '.join(pack.commitment_kinds)}")
             for key, value in pack.coaching_defaults.items():
                 print(f"          seeds {key} = {value}")
+            for tool in pack.situations:
+                print(f"          situation {tool.key} — {tool.description}")
     return 0
 
 

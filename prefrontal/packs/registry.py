@@ -13,7 +13,7 @@ life-context pack is an explicit opt-in ("I'm managing kids"), so an unset
 from __future__ import annotations
 
 from prefrontal.config import Settings, get_settings
-from prefrontal.packs.base import Pack, PackVocabulary
+from prefrontal.packs.base import Pack, PackVocabulary, SituationTool
 
 #: Insertion-ordered map of pack key -> pack instance.
 _REGISTRY: dict[str, Pack] = {}
@@ -129,6 +129,40 @@ def focus_balance_seeding_gap(settings: Settings | None = None) -> list[str]:
         ):
             offenders.append(pack.key)
     return offenders
+
+
+def enabled_situations(settings: Settings | None = None) -> list[SituationTool]:
+    """Situation tools contributed by the enabled packs, in configured order.
+
+    The registry side of the ``/packs/situations`` surface: only tools whose
+    owning pack is enabled are returned, so a disabled pack's tools are invisible.
+    First-seen wins if two enabled packs somehow declare the same tool ``key``.
+
+    Args:
+        settings: Settings to read the pack list from. Defaults to
+            :func:`prefrontal.config.get_settings`.
+    """
+    out: list[SituationTool] = []
+    seen: set[str] = set()
+    for pack in enabled_packs(settings):
+        for tool in pack.situations:
+            if tool.key not in seen:
+                seen.add(tool.key)
+                out.append(tool)
+    return out
+
+
+def get_situation(key: str, settings: Settings | None = None) -> SituationTool | None:
+    """Return an enabled situation tool by key, or ``None`` if unknown/disabled.
+
+    ``None`` covers both "no such tool" and "its pack is off" — the caller (the
+    router) turns either into a 404, since a tool behind a disabled pack should
+    look the same as one that doesn't exist.
+    """
+    for tool in enabled_situations(settings):
+        if tool.key == key:
+            return tool
+    return None
 
 
 def resolve_pack_vocabulary(settings: Settings | None = None) -> PackVocabulary:

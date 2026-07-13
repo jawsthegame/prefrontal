@@ -12,9 +12,70 @@ seeds parent vocabulary, and sets sensible time windows for parent categories.
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
 
-from prefrontal.packs.base import Pack
+from prefrontal.packs.base import Pack, SituationTool
 from prefrontal.packs.registry import register
+
+if TYPE_CHECKING:
+    from prefrontal.memory.store import MemoryStore
+
+
+def _school_run_situation(store: MemoryStore) -> dict[str, Any]:
+    """When to leave for the kids' upcoming things — the school-run leave-by.
+
+    Composes the departure primitive (:func:`plan_upcoming_departures`), the same
+    engine behind the standing departure nudge, and narrows it to the parent's
+    ``child`` commitments — a kid's school event, lesson, or appointment. Read-only:
+    it plans from the store's last *fresh* fix (falling back to each commitment's
+    static lead) and never fires or records a nudge, so a parent can ask "when do I
+    leave?" on demand without arming the reminder.
+
+    Returns a ``headline`` (the most urgent leave-by phrased for a push, empty when
+    nothing is pressing) plus every upcoming child departure with its leave-by.
+    """
+    from prefrontal.commitments import KIND_CHILD
+    from prefrontal.departure import (
+        build_departure_message,
+        next_departure,
+        plan_upcoming_departures,
+    )
+
+    runs = [
+        plan
+        for plan in plan_upcoming_departures(store)
+        if plan.commitment.get("kind") == KIND_CHILD
+    ]
+    top = next_departure(runs)
+    return {
+        "tool": "school_run",
+        "title": "School run",
+        "headline": build_departure_message(top) if top is not None else "",
+        "departures": [
+            {
+                "commitment_id": plan.commitment["id"],
+                "title": plan.commitment.get("title"),
+                "location": plan.commitment.get("location"),
+                "start_at": plan.commitment.get("start_at"),
+                "leave_by": plan.leave_by,
+                "minutes_until_leave": plan.minutes_until_leave,
+                "travel_minutes": plan.travel_minutes,
+                "basis": plan.basis,
+                "level": plan.level,
+                "message": build_departure_message(plan),
+            }
+            for plan in runs
+        ],
+    }
+
+
+#: The Parent pack's one situation tool: the school-run leave-by (see the handler).
+SCHOOL_RUN_TOOL = SituationTool(
+    key="school_run",
+    title="School run",
+    description="When to leave for the kids' upcoming school events and appointments.",
+    handler=_school_run_situation,
+)
 
 #: The Parent pack. Enable with ``PREFRONTAL_PACKS=parent``.
 PARENT_PACK = Pack(
@@ -58,6 +119,8 @@ PARENT_PACK = Pack(
             "focus_target:personal": "120",
         }
     ),
+    # The on-demand situations this pack answers from live data (read-only).
+    situations=(SCHOOL_RUN_TOOL,),
 )
 
 register(PARENT_PACK)
