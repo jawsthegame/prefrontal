@@ -5,7 +5,9 @@ wires up the integrations from the README stack:
 
 - **Ollama** — local model inference (orchestrated by n8n)
 - **n8n** — workflow orchestration and notification delivery
-- **iOS Shortcuts** — one-tap outcome logging and location triggers
+- **Native iOS app** — one-tap outcome logging (App Intents) and location
+  triggers (geofences / significant-change), with **iOS Shortcuts** as the
+  free-signing fallback
 - **ntfy** (Pushover optional) — notification delivery, with one-tap action buttons
 - **Tailscale** — secure remote access from your phone
 
@@ -13,12 +15,12 @@ wires up the integrations from the README stack:
 webhook* core. It stores episodes, derives the behavioral profile, and serves it
 over HTTP. **n8n does the orchestration**: it fetches the profile, calls Ollama
 to compose a reminder, delivers it via ntfy (Pushover optional), and logs the result back
-into Prefrontal. Outcome capture ("Made it" / "Missed it") goes straight from an
-iOS Shortcut to Prefrontal.
+into Prefrontal. Outcome capture ("Made it" / "Missed it") goes straight from the
+app's App Intent (or a fallback Shortcut) to Prefrontal.
 
 ```
-iOS Shortcut (one-tap) ─────────────► POST /webhooks/shortcut ─► episodes
-                                                                     │
+App Intent (one-tap) ───────────────► POST /webhooks/shortcut ─► episodes
+  (Shortcut on free-signing installs)                                │
 n8n schedule ─► GET /profile ─► Ollama ─► ntfy ─► POST /webhooks/n8n
 ```
 
@@ -214,18 +216,25 @@ tailscale ip -4          # note the 100.x.y.z address; or use the MagicDNS name
 ```
 
 Your phone (with the Tailscale app, same tailnet) can now reach
-`http://<mac-mini-tailscale-name>:8000`. Use this host in the iOS Shortcut.
+`http://<mac-mini-tailscale-name>:8000`. Use this host when connecting the app
+(the `prefrontal://connect` QR embeds it) — or in a fallback Shortcut.
 
 > Keep `PREFRONTAL_WEBHOOK_SECRET` set. Tailscale limits *who* can connect; the
 > token authenticates *what* connects. Use both.
 
 ---
 
-## 6. iOS Shortcuts (one-tap capture)
+## 6. iOS client (one-tap capture)
 
-Build the "Made it" / "Missed it" shortcuts and the optional location automation
-following [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md). They POST to
-`/webhooks/shortcut` with your token. Quick test from the Mac first:
+The **native app** is the primary client: install it (`ios/README.md`), scan the
+`prefrontal://connect` QR to fill in the host + token, and one-tap logging comes
+from its App Intents (Siri / Action Button / widgets) and geofences — nothing to
+paste. Generate the QR with `prefrontal user connect-link <handle> --qr --rotate`.
+
+**Free-signing fallback (no paid Apple Developer account):** build the "Made it" /
+"Missed it" shortcuts and the optional location automation following
+[`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md). Native and fallback both
+POST to `/webhooks/shortcut` with your token. Quick test from the Mac first:
 
 ```bash
 source .env 2>/dev/null
@@ -321,8 +330,10 @@ calendar feed URLs, Twilio SID/number/phone — since those aren't Prefrontal's.
 4. **Execute Workflow** once to test, then toggle it **Active**.
 
 > **For a *travel-time* estimate** (rather than the static `lead_minutes`
-> fallback), Prefrontal needs two things: the phone's recent location (set up the
-> "Update location" shortcut in `deploy/ios-shortcut.md`) and destination
+> fallback), Prefrontal needs two things: the phone's recent location (the app
+> feeds this from its geofences + significant-location-change monitoring; a
+> free-signing install uses the "Update location" shortcut in
+> `deploy/ios-shortcut.md`) and destination
 > coordinates on commitments (`dest_lat`/`dest_lon`, populated by the calendar
 > sync or a manual `POST /commitments`). Without them the reminder still fires —
 > it just leans on each commitment's `lead_minutes`.
@@ -355,12 +366,13 @@ releases, so adjust any node n8n flags on import.
 The escalation logic lives in Prefrontal; n8n polls and delivers. Flow:
 
 ```
-"Going out" Shortcut ─► POST /webhooks/outing/start   (logs intention + window)
-n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
+"Going out" App Intent ─► POST /webhooks/outing/start (logs intention + window)
+n8n (every minute)     ─► POST /webhooks/outing/check (returns due nudges)
                           ├─ level soft (50%)  ─► ntfy
                           ├─ level firm (100%) ─► ntfy (high priority)
                           └─ level call (150%) ─► Twilio voice call
-"I'm back" Shortcut  ─► POST /webhooks/outing/return  (logs actual vs stated)
+"I'm back" App Intent  ─► POST /webhooks/outing/return (logs actual vs stated)
+   (fallback: the matching Shortcuts from deploy/ios-shortcut.md)
 ```
 
 > **`outing/check` is deprecated** in favor of the unified coaching tick
@@ -400,9 +412,11 @@ n8n (every minute)   ─► POST /webhooks/outing/check   (returns due nudges)
    `sqlite3 prefrontal.db "UPDATE coaching_state SET value='Tom' WHERE key='user_name';"`
 6. **Execute Workflow** to test, then toggle **Active**.
 
-**c. Build the iOS shortcuts**
+**c. Trigger going-out / I'm-back**
 
-"Going out" and "I'm back" — see
+Use the app's **GoingOut** / **ImBack** App Intents (Siri / Action Button /
+Control Center). On a free-signing install, build the equivalent "Going out" and
+"I'm back" Shortcuts instead — see
 [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md).
 
 **c2. (Optional) Location-gating**
@@ -451,7 +465,7 @@ curl -s -X POST http://localhost:8000/webhooks/outing/return \
    → your behavioral profile in Markdown.
 3. Run the n8n workflow manually → an ntfy notification arrives on your
    phone, and a new row appears: `sqlite3 prefrontal.db 'SELECT * FROM episodes ORDER BY id DESC LIMIT 3;'`
-4. Tap "Made it" in the iOS Shortcut → another episode row lands.
+4. Tap "Made it" (the app's App Intent / widget, or a fallback Shortcut) → another episode row lands.
 5. `prefrontal profile` → confirm preferences/patterns read as expected.
 
 ---
@@ -561,9 +575,11 @@ and mail — into already-behind / bearing-down-soon / piling-up, and hands back
 - Preview it now: `prefrontal panic` (add `--llm` for Ollama prose).
 - **On the dashboard / family view:** the "😮‍💨 Panic" / "Feeling overwhelmed?"
   button opens a focused overlay backed by `GET /panic`. Nothing to configure.
-- **One tap from your phone:** add the **"Panic"** shortcut (see
+- **One tap from your phone:** trigger the **Panic** App Intent (Siri / Action
+  Button / Control Center), which speaks the `headline` (grounding + first step).
+  A free-signing install uses the **"Panic"** shortcut instead (see
   [`../deploy/ios-shortcut.md`](../deploy/ios-shortcut.md)) — it `GET /panic`s and
-  reads back the `headline` (grounding + first step) in one tap.
+  reads back the same `headline`.
 - **Proactive nudge:** import
   [`../deploy/n8n/panic-check.workflow.json`](../deploy/n8n/panic-check.workflow.json)
   (token credential + `$env` from *Configure once*). It polls `POST /webhooks/panic/check`
@@ -673,8 +689,8 @@ prefrontal user list                           # never prints tokens
 prefrontal user rotate sam                      # new token; the old one stops working
 ```
 
-Each person pastes their own token into their Shortcuts / widget, and the server
-scopes every request to that user. Solo installs can skip this — the single
+Each person connects the app with their own token (or pastes it into a fallback
+Shortcut), and the server scopes every request to that user. Solo installs can skip this — the single
 `PREFRONTAL_WEBHOOK_SECRET` (or `PREFRONTAL_DEFAULT_USER`) keeps the one-user path
 working. The `/admin/users` endpoints do the same over HTTP for an operator token.
 

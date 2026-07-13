@@ -22,7 +22,10 @@ What remains is three buckets:
 2. **Hard cases** — things iOS won't let a third-party app do natively at all
    (system alarms), where a Shortcut or a surrogate is the only option.
 3. **The paper cut** — docs, the `onboard-user` skill, and server self-
-   description still tell users to build Shortcuts. That's the last mile.
+   description still tell users to build Shortcuts. That's the last mile. *(The
+   `onboard-user` skill and the user-facing docs — README, deployment, guide, the
+   iOS README — have since been repointed at the native app with Shortcuts as the
+   documented fallback; only the server self-description / `source` enum remains.)*
 
 The end state is **not** "delete Shortcuts." It's "native is the default path;
 Shortcuts remain a documented fallback for free-signing installs" (see
@@ -192,7 +195,8 @@ Small, independently-shippable steps; each leaves the app working:
    location" shortcut.
 5. **Alarm decision** — keep the Shortcut (option 1); file an AlarmKit follow-up.
 6. **Retire Shortcuts from onboarding** (below) — the actual "migration" from the
-   user's point of view.
+   user's point of view. ✅ Done for the `onboard-user` skill and the user-facing
+   docs; the server self-description / `source` enum is the remaining sliver.
 
 Steps 1–4 are additive and low-risk. Step 6 is the one users notice.
 
@@ -200,18 +204,19 @@ Steps 1–4 are additive and low-risk. Step 6 is the one users notice.
 
 The last mile is documentation, not code:
 
-- **`onboard-user` skill** (`.claude/skills/onboard-user/SKILL.md`, step 5) hands
-  new users the three starter shortcuts. Repoint it at: install the app → scan
-  the `prefrontal://connect` QR → enable the App Intents / Action Button. Keep a
-  "no paid dev account? use these Shortcuts" appendix.
-- **`docs/deployment.md`, `README.md`, `docs/guide.md`** — reframe iOS Shortcuts
-  as the fallback path, native app as primary. Update the data-flow diagrams
-  (`iOS Shortcut → POST …` becomes `App Intent / geofence / push → POST …`).
+- ✅ **`onboard-user` skill** (`.claude/skills/onboard-user/SKILL.md`) — Step 5's
+  handoff now leads with the native app: connect via the `prefrontal://connect`
+  QR, one-tap logging through App Intents (Siri / Action Button / widgets), with a
+  "no paid dev account? use these Shortcuts" fallback appendix.
+- ✅ **`README.md`, `docs/deployment.md`, `docs/guide.md`, `ios/README.md`** —
+  iOS Shortcuts reframed as the free-signing fallback, native app as primary; the
+  data-flow diagrams now read `App Intent / geofence → POST …` with the Shortcut as
+  the fallback lane.
 - **Server self-description** — `prefrontal/__init__.py`, `webhooks/app.py`
   endpoint summaries, and the `source="shortcut"` provenance tag. The endpoints
   don't change (the app hits the same ones), so this is wording plus, optionally,
   a richer `source` enum (`app_intent`, `geofence`) if we want provenance to
-  distinguish native from Shortcut writes.
+  distinguish native from Shortcut writes. **Still open** — the remaining sliver.
 
 Nothing in `deploy/ios-shortcut.md` needs deleting — it becomes the fallback
 reference, not the primary setup.
