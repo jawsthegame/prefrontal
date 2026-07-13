@@ -1020,19 +1020,27 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         memory = ctx.store
         # Recompute the current conflicts and find the pair by its dismissal key —
-        # the same identity the conflicts list and dismiss endpoint use.
+        # the same identity the conflicts list and dismiss endpoint use. Reschedule
+        # applies only to *firm* double-bookings (two real events): a soft
+        # "possible" conflict is a placeholder/hold overlapping a real event, which
+        # has no genuine other party to email, so it's rejected explicitly below
+        # rather than silently drafted against a "Busy" block.
         hard, possible = partition_conflicts(
             find_conflicts(memory.upcoming_commitments()), memory.dismissed_conflicts()
         )
         match = next(
-            (
-                c
-                for c in [*hard, *possible]
-                if conflict_dismissal_key(c) == payload.key
-            ),
-            None,
+            (c for c in hard if conflict_dismissal_key(c) == payload.key), None
         )
         if match is None:
+            if any(conflict_dismissal_key(c) == payload.key for c in possible):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        "that overlap is a soft possible-conflict (a placeholder/hold "
+                        "block), not a firm double-booking; reschedule applies only to "
+                        "firm double-bookings"
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="no such active conflict (it may have been resolved or dismissed)",

@@ -341,6 +341,33 @@ def test_http_reschedule_unknown_key_404s(http):
     assert r.status_code == 404
 
 
+def test_http_reschedule_rejects_a_possible_conflict(http):
+    """A soft possible-conflict (a placeholder/hold overlap) is not reschedulable."""
+    http.post(
+        "/commitments",
+        json={"title": "Design review", "start_at": "2026-07-15T14:00:00Z",
+              "end_at": "2026-07-15T15:00:00Z"},
+        headers=_headers(),
+    )
+    # A generic "Busy" hold overlapping the real event → a *possible* conflict.
+    http.post(
+        "/commitments",
+        json={"title": "Busy", "start_at": "2026-07-15T14:30:00Z",
+              "end_at": "2026-07-15T15:00:00Z"},
+        headers=_headers(),
+    )
+    possible = http.get(
+        "/commitments/conflicts", headers=_headers()
+    ).json()["possible_conflicts"]
+    assert possible, "expected a soft possible-conflict"
+    r = http.post(
+        "/commitments/conflicts/reschedule",
+        json={"key": possible[0]["key"]}, headers=_headers(),
+    )
+    assert r.status_code == 422
+    assert "firm double-booking" in r.json()["detail"]
+
+
 def test_http_reschedule_offers_open_slots(http):
     key = _make_conflict(http)
     r = http.post(
