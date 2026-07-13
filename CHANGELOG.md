@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS: swipe to hide a "Did you make it?" item** ✅ — the calendar's
+  recently-elapsed list assumed every past event wants a made/missed answer, but
+  some were only FYIs or things you never had to go to. A left-swipe on any
+  "Did you make it?" row now hides it (a full swipe fires outright; a short one
+  reveals a **Hide** button) via the existing `POST /commitments/{id}/hidden` —
+  which `previous_commitments()` already excludes, so the row clears immediately
+  and stays gone across a calendar re-sync (and out of every upcoming surface).
+  Added a reusable `SwipeToReveal` container in
+  `ios/Prefrontal/Views/Shared.swift` (the card layout has no `List`, so no
+  `.swipeActions`); it uses a simultaneous gesture so vertical scrolling still
+  works over a swipeable row. Client-only (build on a Mac); the server endpoint
+  is covered by `tests/test_commitments.py`.
+
 - **iOS significant-location-change feed** ✅ (#562, epic #569) — `LocationMonitor`
   now runs `startMonitoringSignificantLocationChanges` alongside the #469
   geofences, so coarse (~500 m / cell-tower) position updates keep
