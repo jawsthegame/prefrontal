@@ -153,6 +153,97 @@ struct FlowRow: Layout {
     }
 }
 
+/// Lightweight Markdown renderer for the server's digests (e.g. the morning
+/// briefing, which is `render_briefing` output: `##` section headers, `-`
+/// bullets, `**bold**`, blank-line-separated blocks).
+///
+/// SwiftUI's `Text` only parses Markdown from *string literals*, not a runtime
+/// `String`, and `AttributedString(markdown:)` handles only **inline** syntax
+/// (bold/italic/links/code) — not block-level headers or lists. So this splits
+/// into lines, classifies each block, and renders inline emphasis per line via
+/// `AttributedString`. A leading `# …` title is dropped (the card supplies its
+/// own heading). `lineLimit` caps the number of rendered content lines (for a
+/// collapsed "Show more" preview); `nil` renders all.
+struct MarkdownText: View {
+    let text: String
+    var lineLimit: Int? = nil
+
+    private enum Kind { case h2, h3, body, bullet }
+    private struct Block { let content: AttributedString; let kind: Kind }
+
+    var body: some View {
+        let blocks = Self.blocks(from: text, limit: lineLimit)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
+                switch b.kind {
+                case .h2:
+                    Text(b.content).font(.headline).foregroundStyle(Brand.nearWhite)
+                        .padding(.top, 2)
+                case .h3:
+                    Text(b.content).font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Brand.nearWhite)
+                case .body:
+                    Text(b.content).font(.subheadline).foregroundStyle(Brand.nearWhite)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bullet:
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("•").font(.subheadline).foregroundStyle(Brand.muted)
+                        Text(b.content).font(.subheadline).foregroundStyle(Brand.nearWhite)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Number of rendered content lines (blank lines and a leading `#` title
+    /// excluded) — used to decide whether a "Show more" toggle is warranted. A
+    /// lightweight scan: it applies the same filtering as `blocks(from:)` but
+    /// skips the per-line `AttributedString` Markdown parse, which is wasted work
+    /// for a count that runs on every render.
+    static func lineCount(_ text: String) -> Int { contentLines(from: text, limit: nil).count }
+
+    private static func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(s)
+    }
+
+    /// Classify a trimmed, non-empty line into its block kind and the text after
+    /// any marker — no inline parsing, so it's cheap enough for `lineCount`.
+    private static func classify(_ line: String) -> (kind: Kind, text: String) {
+        if line.hasPrefix("### ") { return (.h3, String(line.dropFirst(4))) }
+        if line.hasPrefix("## ") { return (.h2, String(line.dropFirst(3))) }
+        if line.hasPrefix("# ") { return (.h2, String(line.dropFirst(2))) }
+        if line.hasPrefix("- ") || line.hasPrefix("* ") { return (.bullet, String(line.dropFirst(2))) }
+        return (.body, line)
+    }
+
+    /// The content lines to render, blank lines and a leading `#` title dropped.
+    /// Trims with `.whitespacesAndNewlines` so a trailing `\r` from CRLF server
+    /// text doesn't survive into the content or break the prefix checks.
+    private static func contentLines(from text: String, limit: Int?) -> [(kind: Kind, text: String)] {
+        var out: [(kind: Kind, text: String)] = []
+        var sawContent = false
+        for raw in text.components(separatedBy: "\n") {
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty { continue }  // blank lines → uniform VStack spacing
+            // Drop a leading H1 title; the card already shows "Morning briefing".
+            if !sawContent, t.hasPrefix("# ") { continue }
+            sawContent = true
+            out.append(classify(t))
+            if let limit, out.count >= limit { break }
+        }
+        return out
+    }
+
+    private static func blocks(from text: String, limit: Int?) -> [Block] {
+        contentLines(from: text, limit: limit).map { Block(content: inline($0.text), kind: $0.kind) }
+    }
+}
+
 extension View {
     /// Standard scroll screen on the paper background.
     func brandScreen() -> some View {

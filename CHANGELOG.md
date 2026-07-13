@@ -7,6 +7,15 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS morning briefing — rendered Markdown** ✅ — the Today briefing card showed
+  the server's raw Markdown (`## headers`, `- bullets`, `**bold**`) because
+  SwiftUI's `Text` only parses Markdown from string *literals*, not a runtime
+  `String`. Added a small `MarkdownText` view (`ios/Prefrontal/Views/Shared.swift`)
+  that splits the digest into blocks, renders section headers/bullets, and parses
+  inline emphasis via `AttributedString` — dropping the leading `# Morning briefing`
+  title (the card already shows it). "Show more/less" now truncates by rendered
+  line count. Client-only.
+
 - **Trips & balance page — a visual surface for closed-loop trips** ✅ — closed-loop
   trips were tracked and surfaced through notifications, the briefing, and the JSON
   API, but nowhere to *look at*. This adds a read-only `/trips/board` page (in the
