@@ -9,6 +9,8 @@ struct TodayView: View {
     @State private var activeFocus: FocusState.Session?
     @State private var nudges: [Nudges.Nudge] = []
     @State private var briefing: Briefing?
+    /// Held only to feed `LocalNotifications.reconcileSelfCare` (not rendered here).
+    @State private var selfCareForNotifs: SelfCare?
     @State private var briefingExpanded = false
     @State private var briefingVote: Bool?
     @State private var error: String?
@@ -224,6 +226,9 @@ struct TodayView: View {
             async let foc = client.focus()
             async let nud = client.nudges(limit: 8)
             async let brief = client.briefing()
+            // Fetched only to refresh the offline self-care local notifications
+            // (not shown on Today — the Me tab renders the self-care card).
+            async let care = client.selfCare()
 
             self.now = try? await now
             let d = try? await dep
@@ -232,14 +237,16 @@ struct TodayView: View {
             self.activeFocus = (try? await foc)?.active.first
             self.nudges = (try? await nud) ?? []
             self.briefing = try? await brief
+            self.selfCareForNotifs = try? await care
             self.error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         queuedOffline = OfflineQueue.count
-        // Schedule a local "leave by" as an off-tailnet fallback (replaced each
-        // refresh from current state). No-op unless notifications are authorized.
+        // Schedule local nudges as an off-tailnet fallback (replaced each refresh
+        // from current state). No-op unless notifications are authorized.
         await LocalNotifications.reconcileDeparture(departure)
+        await LocalNotifications.reconcileSelfCare(selfCareForNotifs)
         // Keep the outing/focus Live Activity in sync with the active session.
         await LiveActivityManager.sync(outing: activeOuting, focus: activeFocus)
         loaded = true

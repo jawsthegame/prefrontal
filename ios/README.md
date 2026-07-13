@@ -169,10 +169,12 @@ actually landed), which is acceptable for todos/self-care.
 
 The reverse case — nudges that can't reach you off-tailnet — is covered by
 **local notifications** (`Notifications/LocalNotifications.swift`): each Today
-refresh schedules a local "leave by" alert for the next departure, which fires
-at that time even after the phone leaves the tailnet (where ntfy/APNs can't). It
-reconciles each refresh (a moved departure replaces the pending one) and no-ops
-unless notifications were authorized during onboarding.
+refresh schedules a local "leave by" alert for the next departure **and** a
+next-due alert for each self-care check (from `/self-care`'s `next_due`), which
+fire at those times even after the phone leaves the tailnet (where ntfy/APNs
+can't). Both reconcile each refresh (a moved departure or a satisfied check
+replaces/drops the pending one) and no-op unless notifications were authorized
+during onboarding.
 
 ## What maps to what
 

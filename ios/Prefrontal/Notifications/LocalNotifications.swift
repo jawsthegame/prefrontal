@@ -2,22 +2,21 @@ import Foundation
 import UserNotifications
 
 /// Offline-tolerant local notifications (#474). While the app has network it
-/// schedules a local `UNNotificationRequest` for the next departure's *leave-by*
-/// time; the alert then fires at that time **even if the phone has since gone
-/// off the tailnet**, where server push (ntfy/APNs) can't reach it. On each
-/// refresh the pending request is replaced from current server state, so a
-/// moved/cancelled departure updates rather than double-fires.
+/// schedules local `UNNotificationRequest`s for known upcoming nudges — the next
+/// departure's *leave-by* time, and each self-care check's *next-due* time — so
+/// the alert still fires **even if the phone has since gone off the tailnet**,
+/// where server push (ntfy/APNs) can't reach it. On each refresh the pending
+/// requests are replaced from current server state, so a moved/cancelled
+/// departure or a satisfied check updates rather than double-fires.
 ///
-/// Scoped to departures for now — the one nudge with a concrete fire time in the
-/// API (`/departure/next` → `leave_by`). Self-care checks have no explicit
-/// next-due timestamp to schedule against yet; that's a follow-up.
-///
-/// Note: on the tailnet this can overlap a server departure nudge. That's an
-/// accepted tradeoff for an off-network safety net — a duplicate "leave by" is
-/// cheap; a missed departure isn't. It only schedules when notifications are
+/// Note: on the tailnet this can overlap a server nudge. That's an accepted
+/// tradeoff for an off-network safety net — a duplicate is cheap; a missed
+/// departure or self-care nudge isn't. It only schedules when notifications are
 /// already authorized (asked during onboarding); otherwise it's a no-op.
 enum LocalNotifications {
     static let departureID = "prefrontal.local.departure"
+    /// Prefix for the per-check self-care local requests (`…selfcare.water`).
+    static let selfCarePrefix = "prefrontal.local.selfcare."
 
     @discardableResult
     static func reconcileDeparture(_ departure: DepartureNext.Departure?) async -> Bool {
@@ -48,5 +47,50 @@ enum LocalNotifications {
         let request = UNNotificationRequest(identifier: departureID, content: content, trigger: trigger)
         do { try await center.add(request); return true }
         catch { return false }
+    }
+
+    /// Schedule an offline local nudge for each self-care check that has a future
+    /// `next_due`, replacing any previously-scheduled self-care locals. A check
+    /// that's gone off/done/open-ended/out-of-window simply isn't re-added.
+    static func reconcileSelfCare(_ selfCare: SelfCare?) async {
+        let center = UNUserNotificationCenter.current()
+
+        // Clear all prior self-care locals up front (one id per check key), so a
+        // now-quiet check drops out rather than lingering.
+        let pending = await center.pendingNotificationRequests()
+        let stale = pending.map(\.identifier).filter { $0.hasPrefix(selfCarePrefix) }
+        if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: stale) }
+
+        guard await center.notificationSettings().authorizationStatus == .authorized,
+              let selfCare, selfCare.enabled else { return }
+
+        for check in selfCare.checks {
+            guard check.enabled, !check.openEnded, !check.done,
+                  let due = check.nextDue.flatMap(PFDate.parse), due > Date()
+            else { continue }
+            let copy = selfCareCopy(check.key)
+            let content = UNMutableNotificationContent()
+            content.title = copy.title
+            content.body = copy.body
+            content.sound = .default
+            let comps = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute], from: due)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: selfCarePrefix + check.key, content: content, trigger: trigger)
+            try? await center.add(request)
+        }
+    }
+
+    /// Notification copy per self-care check key (mirrors the app's SC_META).
+    private static func selfCareCopy(_ key: String) -> (title: String, body: String) {
+        switch key {
+        case "meal": return ("🍽️ Have you eaten?", "A quick meal check.")
+        case "water": return ("💧 Hydration check", "Time for some water.")
+        case "meds": return ("💊 Meds check", "Time to take your meds.")
+        case "winddown": return ("🌙 Wind-down", "Time to start winding down.")
+        case "movement": return ("🧘 Movement", "Time to stretch or move.")
+        default: return ("Self-care check", "A gentle nudge from Prefrontal.")
+        }
     }
 }

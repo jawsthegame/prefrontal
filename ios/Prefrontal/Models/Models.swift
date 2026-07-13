@@ -306,10 +306,15 @@ struct SelfCare: Codable {
         let openEnded: Bool
         let satisfied: Bool
         let overdue: Bool
+        /// Next future local nudge time as the server's UTC "yyyy-MM-dd HH:mm:ss"
+        /// text, or nil when off/done/open-ended or nothing's left today. Drives
+        /// the offline local notification (#474).
+        let nextDue: String?
         var id: String { key }
         enum CodingKeys: String, CodingKey {
             case key, enabled, count, target, done, satisfied, overdue
             case openEnded = "open_ended"
+            case nextDue = "next_due"
         }
     }
 }

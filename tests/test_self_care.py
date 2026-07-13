@@ -22,6 +22,7 @@ from prefrontal.modules.self_care import (
     SELF_CARE_EPISODE,
     SNOOZED_UNTIL_KEY,
     SelfCareModule,
+    _next_due,
     adapt_self_care,
     adapt_self_care_interval,
     apply_self_care_action,
@@ -1151,3 +1152,79 @@ def test_before_collect_runs_auto_satisfy(store):
     # Meal count is now at target for today.
     today = utcnow().strftime("%Y-%m-%d")
     assert store.get_state("meal_count") == f"{today}|1"
+
+
+# -- next_due: the offline local-notification schedule hint (#474) -----------
+
+from datetime import timezone as _tz  # noqa: E402
+
+
+def _local(h: int, m: int = 0) -> datetime:
+    """A tz-aware local instant (UTC zone, so local hour == this hour)."""
+    return datetime(2026, 7, 2, h, m, tzinfo=_tz.utc)
+
+
+def test_next_due_once_a_day_is_start_hour_then_gone():
+    # target<=1: due at the start hour while it's still ahead…
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=1, count=0,
+        start_hour=8, end_hour=None, interval=60, local=_local(7), responsive_end=22,
+    ) == "2026-07-02 08:00:00"
+    # …and no future local nudge once the start hour has passed (server owns "now").
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=1, count=0,
+        start_hour=8, end_hour=None, interval=60, local=_local(9), responsive_end=22,
+    ) is None
+
+
+def test_next_due_recurring_paces_from_start():
+    # target>1: one nudge per interval from the start hour. At 09:00 with an 08:00
+    # start and a 180-min interval, the next boundary is 11:00.
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=3, count=1,
+        start_hour=8, end_hour=None, interval=180, local=_local(9), responsive_end=22,
+    ) == "2026-07-02 11:00:00"
+    # Before the start hour, the first nudge is the start hour itself.
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=3, count=0,
+        start_hour=8, end_hour=None, interval=180, local=_local(6), responsive_end=22,
+    ) == "2026-07-02 08:00:00"
+
+
+def test_next_due_never_past_the_window_or_off():
+    # A boundary at/after the window end → nothing scheduled (no overnight buzz).
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=8, count=6,
+        start_hour=8, end_hour=None, interval=120, local=_local(21, 30), responsive_end=22,
+    ) is None
+    # end_hour caps it tighter than the responsive end.
+    assert _next_due(
+        enabled=True, done=False, open_ended=False, target=8, count=1,
+        start_hour=8, end_hour=10, interval=180, local=_local(9), responsive_end=22,
+    ) is None
+    # Off / done / open-ended all decline to schedule.
+    for kwargs in (
+        {"enabled": False, "done": False, "open_ended": False},
+        {"enabled": True, "done": True, "open_ended": False},
+        {"enabled": True, "done": False, "open_ended": True},
+    ):
+        assert _next_due(
+            target=3, count=0, start_hour=8, end_hour=None, interval=180,
+            local=_local(7), responsive_end=22, **kwargs,
+        ) is None
+
+
+def test_status_exposes_next_due_for_an_enabled_check(store):
+    store.set_state("self_care", "on")
+    # A 6am "now" so most checks' start hours are still ahead → a future next_due.
+    status = self_care_status(store, datetime(2026, 7, 2, 6, 0, 0), "UTC")
+    assert status["enabled"] is True
+    # Every enabled, non-open-ended check carries a parseable future UTC next_due.
+    for c in status["checks"]:
+        assert "next_due" in c
+        if c["enabled"] and not c["open_ended"] and not c["done"] and c["next_due"]:
+            assert c["next_due"] > "2026-07-02 06:00:00"
+    # And the master switch off zeroes them out.
+    store.set_state("self_care", "off")
+    off = self_care_status(store, datetime(2026, 7, 2, 6, 0, 0), "UTC")
+    assert off["enabled"] is False
