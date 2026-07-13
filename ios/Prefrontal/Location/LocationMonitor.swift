@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import CoreLocation
 
@@ -26,8 +27,14 @@ import CoreLocation
 /// `AppDelegate` touches `.shared` on every launch to re-attach the delegate and
 /// resume all three. Off unless the user opts in (`AppConfig.locationEnabled`),
 /// which also gates the Always-location prompt.
-final class LocationMonitor: NSObject, CLLocationManagerDelegate {
+final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationMonitor()
+
+    /// The live CoreLocation authorization, mirrored for SwiftUI (the Settings
+    /// location section observes it to show the true state and the right recovery
+    /// affordance). Updated from `locationManagerDidChangeAuthorization`, which the
+    /// singleton (created on the main thread) receives on the main thread.
+    @Published private(set) var authorization: CLAuthorizationStatus = .notDetermined
 
     private let manager = CLLocationManager()
     private static let homeName = "home"
@@ -58,6 +65,7 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     private override init() {
         super.init()
         manager.delegate = self
+        authorization = manager.authorizationStatus
     }
 
     /// Called on launch: resume monitoring if the user previously opted in.
@@ -75,6 +83,12 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
         manager.startMonitoringSignificantLocationChanges()
         manager.startMonitoringVisits()
         refreshRegions()
+    }
+
+    /// Re-request Always after a While-Using grant — the one upgrade prompt iOS
+    /// allows (subsequent asks are Settings-only). Drives the Settings upgrade row.
+    func requestAlways() {
+        manager.requestAlwaysAuthorization()
     }
 
     /// Turn monitoring off: stop the position feed and visits, drop every region.
@@ -145,9 +159,15 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     // MARK: - CLLocationManagerDelegate
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        authorization = manager.authorizationStatus
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             if SharedStore.locationEnabled { refreshRegions() }
+        case .denied, .restricted:
+            // Permission is gone — stop the now-silent monitoring. The Settings
+            // section reconciles the stored opt-in (flips the toggle off) so the
+            // in-app state matches reality.
+            disable()
         default:
             break
         }

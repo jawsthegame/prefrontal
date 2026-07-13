@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS: location permission UX hardening** ✅ (#566, epic #569) — enabling
+  location used to fire a bare `requestAlwaysAuthorization()` with no handling of
+  what came back. The Settings "Location automations" section is now a dedicated
+  `LocationSection` that observes `LocationMonitor`'s live `authorization`:
+  always-on **priming** text explains what the one-shot system prompt is for; a
+  **Permission** status row shows the true state (Always / While Using / Denied /
+  …); a **While-Using** grant surfaces an "Upgrade to Always" button (the one
+  re-prompt iOS allows), since background auto-logging needs Always; and a
+  **denied/restricted** state shows an "Open iOS Settings" affordance. The opt-in
+  toggle is reconciled against reality — a denial or a revoke made in the Settings
+  app flips it off (monitoring stops) rather than leaving a silent no-op on.
+  Client-only (build on a Mac); no server change.
+
 - **iOS: `CLVisit` monitoring — arrivals/departures at arbitrary venues** ✅
   (#564, epic #569) — `LocationMonitor` now runs `startMonitoringVisits`
   alongside the #469 geofences and the #562 significant-change feed, so a stop at
