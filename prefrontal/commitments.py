@@ -160,7 +160,13 @@ KIND_FYI = "fyi"
 #: (docs/household-sheet.md §3.7) — the sheet surfaces the upcoming ones so both
 #: co-parents see them and "who's on pickup" is legible.
 KIND_CHILD = "child"
-KINDS = (KIND_SELF, KIND_FYI, KIND_CHILD)
+#: An appointment for an adult the user cares *for* — an aging parent, ill partner,
+#: or disabled family member — that the user arranges or attends on their behalf
+#: (e.g. "Mom's cardiology"). The care-recipient counterpart to ``child``: like
+#: ``self``/``child`` it's a real, attendable obligation (it can clash), not FYI.
+#: Declared by the Caregiver context pack (``prefrontal/packs/caregiver.py``).
+KIND_CARE = "care"
+KINDS = (KIND_SELF, KIND_FYI, KIND_CHILD, KIND_CARE)
 
 #: Commitment ``outcome`` — the user's honest self-report on a *past* commitment,
 #: set from the "I made it / missed it" affordance the dashboard shows on recently

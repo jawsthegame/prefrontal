@@ -234,6 +234,9 @@
   /* A kid's appointment (kind=child) — outlined in the accent so it reads as
      distinct from the filled FYI pill, in both themes. */
   .pill.kid { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  /* A care appointment (kind=care) — outlined in warn so it reads as distinct
+     from the kid pill (accent) and the filled FYI pill, in both themes. */
+  .pill.care { background: transparent; border: 1px solid var(--warn); color: var(--warn); }
   /* Account/calendar pill: names the mail inbox a todo came from, or the
      calendar a commitment belongs to. Solid color + dark text so a bright
      configured color (orange, magenta, blue) reads clearly. */
@@ -1955,22 +1958,28 @@ function renderCommitments(list, conflicts, cascade) {
   html += c.map((x) => {
     const fyi = x.kind === "fyi";
     const kid = x.kind === "child";
+    const care = x.kind === "care";
     const cal = calPill(x.calendar_key, x.calendar);
-    // Kind badge: FYI (someone else will be there) or a kid's appointment (which
-    // also shows on the household sheet). A plain "self" commitment gets no badge.
+    // Kind badge: FYI (someone else will be there), a kid's appointment (which
+    // also shows on the household sheet), or a care appointment (for an adult you
+    // look after). A plain "self" commitment gets no badge.
     const kindBadge = fyi
       ? ' <span class="pill fyi" title="Where someone will be — never a conflict">FYI</span>'
       : kid
       ? ' <span class="pill kid" title="Kid’s appointment — also shown on the household sheet">kid</span>'
+      : care
+      ? ' <span class="pill care" title="Care appointment — for an adult you look after">care</span>'
       : "";
     const dbl = (!fyi && ids.has(x.id)) ? ' <span class="pill conflict">double-booked</span>' : "";
-    // Reclassify button: your own (self) ⇄ FYI, and a kid appt goes straight to
-    // "Mine" (self). The server marks it kind_source=user, so a later calendar
+    // Reclassify button: your own (self) ⇄ FYI, and a kid/care appt goes straight
+    // to "Mine" (self). The server marks it kind_source=user, so a later calendar
     // sync won't re-classify it back.
     const kindTarget = x.kind === "self" ? "fyi" : "self";
     const kindLabel = x.kind === "self" ? "FYI" : "Mine";
     const kindTitle = kid
       ? "Not a kid’s appointment — mark as your own"
+      : care
+      ? "Not a care appointment — mark as your own"
       : fyi
       ? "Not FYI — mark as your own commitment"
       : "Mark FYI (where someone will be — never a conflict)";

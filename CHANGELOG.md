@@ -7,6 +7,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Context Packs: the `care` commitment kind** ✅ — the first of the Context-Pack
+  "surface tailoring" slices. Added `care` to `commitments.KINDS` — the
+  care-recipient counterpart to `child` (an appointment for an aging parent / ill
+  partner the user arranges or attends), a real *attendable* obligation that can
+  clash (unlike `fyi`). The classifier learns it (a CARE branch in the few-shot
+  prompt + `parse_kind_reply`), it validates through `POST /commitments/{id}/kind`,
+  and the dashboard renders a distinct **care** pill (warn-outlined, vs the kid
+  pill's accent). The **Caregiver** pack now declares `commitment_kinds=("care",)`
+  instead of the deferred empty tuple. LLM-text classification for now; a
+  care-recipient names roster (mirroring `child_names`) and the caregiver `/care`
+  surface are follow-up slices. Covered by `tests/test_classify.py`,
+  `tests/test_packs.py`, and `tests/test_commitments.py`.
+
 - **iOS: native App Intents for the last three Shortcuts gaps** ✅ — closes the
   non-location half of the Shortcuts → native migration. Added **Capture Impulse**
   (`POST /webhooks/impulse/capture` — park a thought as a todo), **Reflective

@@ -45,7 +45,7 @@ def test_caregiver_pack_is_registered_with_expected_composition():
     # Leans on appointment timing, dreaded admin, and — distinctively — self-care.
     assert set(care.modules) == {"time_blindness", "task_paralysis", "self_care"}
     assert set(care.categories) == {"medical", "admin", "caregiving"}
-    assert care.commitment_kinds == ()  # a dedicated `care` kind is a later slice
+    assert care.commitment_kinds == ("care",)  # the dedicated care-recipient kind
     # Arms the self-care checks and protects personal time; keeps admin in hours.
     assert care.coaching_defaults["self_care"] == "on"
     assert care.coaching_defaults["todo_window:admin"] == "09:00-17:00"

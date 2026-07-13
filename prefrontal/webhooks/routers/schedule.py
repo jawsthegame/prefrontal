@@ -1211,7 +1211,7 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: CommitmentKind,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Correct a commitment's kind (``self``, ``child``, or ``fyi``).
+        """Correct a commitment's kind (``self``, ``child``, ``care``, or ``fyi``).
 
         Covers every miscategorization: your own commitment mistaken for FYI (or
         vice versa), and — driven from the household sheet's "Upcoming

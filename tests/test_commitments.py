@@ -1129,6 +1129,10 @@ def test_set_commitment_kind_endpoint_records_feedback(client):
     assert r.status_code == 200
     assert r.json()["commitment"]["kind"] == "fyi"
     assert r.json()["commitment"]["kind_source"] == "user"
+    # The `care` kind (Caregiver pack) is accepted like any other valid kind.
+    r = client.post(f"/commitments/{cid}/kind", headers=_auth(), json={"kind": "care"})
+    assert r.status_code == 200
+    assert r.json()["commitment"]["kind"] == "care"
     # Bad kind → 422; unknown id → 404.
     assert client.post(f"/commitments/{cid}/kind", headers=_auth(),
                        json={"kind": "nope"}).status_code == 422
