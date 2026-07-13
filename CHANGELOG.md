@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **iOS: native arrival home closes the active outing** ✅ (#563, epic #569) —
+  restores the Tier-1 "I'm back" Shortcut natively. `GET /webhooks/location`
+  only *stores* the phone's fix; the server's passive home-return close runs on
+  a coach tick and is confirmation-prompt + grace gated, so for a Shortcut-free
+  native user arriving home neither closed the outing off the location post nor
+  promptly. `LocationMonitor.didEnterRegion` now, on entering the **home** region
+  with an outing active, posts `/webhooks/outing/return` to close it tap-free —
+  gated on a read-only `GET /outings` check so a routine arrival home with no
+  outing never posts a spurious return. Non-home arrivals still just refresh
+  `/webhooks/location` (arbitrary venues are #564's `CLVisit` job). Client-only
+  (build on a Mac); reuses existing endpoints, no server change.
+
 - **iOS: swipe to hide a "Did you make it?" item** ✅ — the calendar's
   recently-elapsed list assumed every past event wants a made/missed answer, but
   some were only FYIs or things you never had to go to. A left-swipe on any
