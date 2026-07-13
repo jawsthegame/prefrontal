@@ -207,6 +207,15 @@ for the release note); the descriptions below are kept as the design of record.
   nudge projection (`location_anchor.evaluate` + `/webhooks/outing/check`) resolves
   `activity="outing"` (falling back to global). See the Pattern-computation pass
   entry above. Covered by `tests/test_patterns.py`.
+- **Web UI to name saved locations** — curated places (the `/places` a geofence and
+  departure travel-time match against) are still add-only via the CLI
+  (`prefrontal place add <name> <lat> <lon>`). Add a web dashboard surface to
+  **name/label, edit, and remove** them — a "Places" card next to the Location
+  tunables (#565), backed by a small CRUD around the existing `GET/POST /places`
+  (plus a delete route). So a user can rename "home"/"gym"/"dentist office" and fix
+  a coordinate without shelling into the box, and the friendly label flows through
+  to nudges. Naturally pairs with letting the phone name a just-visited `CLVisit`
+  venue into a curated place.
 
 ## Focus balance — follow-ups
 
