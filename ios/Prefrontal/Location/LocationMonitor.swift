@@ -4,10 +4,12 @@ import CoreLocation
 /// Opt-in location monitoring. Two battery-cheap CoreLocation mechanisms feed
 /// Prefrontal without any Shortcut, both waking the app even from terminated:
 ///
-/// - **Geofences (#469).** Curated places (`/places`) as `CLCircularRegion`s:
+/// - **Geofences (#469, #563).** Curated places (`/places`) as `CLCircularRegion`s:
 ///   leaving the place named **home** posts `/webhooks/departure/left` (the
-///   native replacement for the "when I leave Home" automation), and any
-///   enter/exit posts the current position to `/webhooks/location`.
+///   native replacement for the "when I leave Home" automation); arriving **home**
+///   with an outing active posts `/webhooks/outing/return` to close it tap-free
+///   (replacing the Tier-1 "I'm back" Shortcut); and any enter/exit posts the
+///   current position to `/webhooks/location`.
 /// - **Significant-location-change feed (#562).** Coarse (~500 m / cell-tower)
 ///   position updates keep `/webhooks/location` fresh *between* curated places —
 ///   what departure travel-time and trip stop-detection need — replacing the
@@ -113,13 +115,33 @@ final class LocationMonitor: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        guard let fix = manager.location else { return }
+        let fix = manager.location
+        let arrivedHome = region.identifier.lowercased() == Self.homeName
+        // Nothing to do for a non-home entry with no fix — skip building a client
+        // and hopping to the main actor for a call we'd never make. Home arrivals
+        // still proceed without a fix (the outing return needs no coordinates).
+        guard fix != nil || arrivedHome else { return }
         Task {
-            try? await withAPI {
-                try await $0.postLocation(
-                    lat: fix.coordinate.latitude, lon: fix.coordinate.longitude,
-                    accuracy: fix.horizontalAccuracy
-                )
+            try? await withAPI { client in
+                if let fix {
+                    try await client.postLocation(
+                        lat: fix.coordinate.latitude, lon: fix.coordinate.longitude,
+                        accuracy: fix.horizontalAccuracy
+                    )
+                }
+                // Arriving home is the native replacement for the Tier-1 "I'm
+                // back" Shortcut (#563): close the active outing with no tap.
+                // /webhooks/location only *stores* the fix — the server's passive
+                // home-return close runs on a coach tick and is confirmation-
+                // prompt + grace gated, so it neither fires off the location post
+                // nor closes promptly. An explicit return on the (debounced,
+                // 120 m) home-region entry restores the instant close. Gated on an
+                // actually-active outing so a routine arrival home never posts a
+                // spurious return (the endpoint 404s on none; this keeps it quiet).
+                if arrivedHome {
+                    let active = try await client.outings().active
+                    if !active.isEmpty { try await client.returnOuting() }
+                }
             }
         }
     }
