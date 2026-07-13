@@ -43,8 +43,8 @@ closeout, consolidation, and a few net-new surfaces.
   Shortcuts → native migration. Shipped: the significant-location-change position
   feed (#562), native arrival → outing-return (#563), `CLVisit` arbitrary-venue
   monitoring (#564), permission-UX hardening (#566), and the docs retiring the four
-  location Shortcuts for app users (#567); web-configurable location tunables (#565)
-  and a server last-known-location staleness guard (#568) are in final review. A
+  location Shortcuts for app users (#567); web-configurable location tunables (#565),
+  and a server last-known-location staleness guard (#568) all shipped. A
   native-app user needs **no** location Shortcuts. See `CHANGELOG.md`.
 - **Focus-balance follow-ups** — all three shipped: the **Trip retro** combined
   endpoint + Shortcut (`POST /webhooks/trip/retro`), **configurable quick-file

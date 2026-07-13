@@ -13,14 +13,17 @@ for the deeper design of individual agents see the specs linked from
 ## How it fits together (30 seconds)
 
 ```
-  iOS app     ─┐                         ┌─ ntfy / Pushover / Twilio
-  App Intents  ├─► n8n (every 1–15 min) ─►│   (notifications, calls)
-  widget/geo  ─┘     │  polls + delivers  └─ Ollama (local LLM, optional)
-                     ▼
-              Prefrontal API (FastAPI, :8000)  ──►  SQLite (your data, on-box)
+iOS app (App Intents / geofence / widget) ─┐
+Shortcuts (free-signing fallback) ─────────┴─►  Prefrontal API (FastAPI, :8000)  ─►  SQLite (on-box)
+                                                         ▲
+                                                         │  polls every 1–15 min
+                       ntfy / Pushover / Twilio  ◄──  n8n  ──►  Ollama (local LLM, optional)
+                       (notifications, calls)
 ```
 
-(iOS Shortcuts remain the free-signing fallback, hitting the same endpoints.)
+Your phone's clients (App Intents, geofences, or a fallback Shortcut) **POST
+directly** to the Prefrontal API; **n8n** independently polls the API on a
+schedule, composes nudges with Ollama, and delivers them out.
 
 - **Prefrontal** is the brain: a FastAPI app over a SQLite database. Nothing
   leaves the machine unless you wire an outbound step.

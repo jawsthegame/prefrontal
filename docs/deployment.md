@@ -19,7 +19,7 @@ into Prefrontal. Outcome capture ("Made it" / "Missed it") goes straight from th
 app's App Intent (or a fallback Shortcut) to Prefrontal.
 
 ```
-App Intent / geofence (one-tap) ────► POST /webhooks/shortcut ─► episodes
+App Intent (one-tap) ───────────────► POST /webhooks/shortcut ─► episodes
   (Shortcut on free-signing installs)                                │
 n8n schedule ─► GET /profile ─► Ollama ─► ntfy ─► POST /webhooks/n8n
 ```
