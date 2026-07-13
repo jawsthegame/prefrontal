@@ -7,6 +7,18 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
 
 ## Recently shipped
 
+- **Trips & balance page — a visual surface for closed-loop trips** ✅ — closed-loop
+  trips were tracked and surfaced through notifications, the briefing, and the JSON
+  API, but nowhere to *look at*. This adds a read-only `/trips/board` page (in the
+  shared nav as **Trips**): the open trip if you're out now, the recent history with
+  duration / distance / category / life-sphere / self-reported outcome + the honest
+  reflection note, the trips still awaiting a label, and the **focus-balance** rollup
+  — horizontal bars per life-sphere (shop/work/home/kids/personal) with a weekly-aim
+  marker and an amber "light on this" flag when a targeted sphere runs under half its
+  aim, over a 7- or 30-day window. Same self-contained shell as the other web
+  surfaces; reads `GET /trips` and `GET /balance` client-side. Labeling still happens
+  from the one-tap trip notification. Covered by `tests/test_trips.py`.
+
 - **iOS token hardening — shared Keychain** ✅ (#496) — the bearer token moves out
   of App Group `UserDefaults` (unencrypted in the container and in backups) into a
   shared **Keychain access group** both the app and the widget carry

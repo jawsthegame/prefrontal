@@ -22,6 +22,15 @@ closeout, consolidation, and a few net-new surfaces.
    causal check** — after a state proposal is accepted, did the downstream numeric
    calibration actually improve? — which stays design-blocked on the
    broader-allowlist / generalized-check question, so last.
+3. **Finish the Shortcuts → native migration** (see
+   [`docs/shortcuts-to-native.md`](docs/shortcuts-to-native.md)). The native app
+   already replaces most Shortcuts (App Intents, APNs, geofencing, Live
+   Activities, widgets, offline queue); what's left is closing the intent gaps
+   (`CaptureImpulse`, `TripRetro`, the reflective pause), mirroring self-care
+   fire-times into local notifications, a native location cadence
+   (significant-change / `CLVisit`), and retiring Shortcuts from onboarding —
+   keeping them as the free-signing fallback. The one case that can't go native
+   is the **Set Alarm** deep-link (no public alarm API pre-AlarmKit/iOS 26).
 
 **Recently closed out:**
 

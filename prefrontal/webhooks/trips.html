@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Trips</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /dashboard, /household, /stats, /review) ─ */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  header { max-width: 760px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .card h2 { font-size: 18px; margin: 0 0 2px; font-weight: 660; }
+  .card .head { display: flex; align-items: baseline; gap: 10px; }
+  .card .head .sp { flex: 1; }
+  .sub { color: var(--muted); font-size: 14px; margin: 2px 0 0; }
+  .empty { color: var(--muted); font-style: italic; }
+
+  /* ── Focus-balance bars ──────────────────────────────────────────────────── */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { background: var(--card); color: var(--muted); border: 0; padding: 5px 11px;
+    font: inherit; font-size: 13px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); font-weight: 650; }
+  .bal-summary { color: var(--fg); font-size: 14px; margin: 12px 0 2px; }
+  .bars { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .brow { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 10px; }
+  .brow .dn { font-size: 13.5px; white-space: nowrap; }
+  .track { position: relative; height: 12px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .track > .fill { position: absolute; inset: 0 auto 0 0; height: 100%; background: var(--accent);
+    border-radius: 999px; transition: width .35s ease; }
+  .track > .fill.under { background: var(--warn); }
+  .track > .tgt { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--fg); opacity: .45; }
+  .brow .amt { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .flag { color: var(--warn); font-size: 12.5px; margin-top: 2px; }
+
+  /* ── Trip list ─────────────────────────────────────────────────────────── */
+  .trip { display: flex; gap: 12px; padding: 13px 0; border-top: 1px solid var(--line); }
+  .trip:first-child { border-top: 0; }
+  .trip .when { flex: none; width: 92px; color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+  .trip .when b { display: block; color: var(--fg); font-size: 13px; font-weight: 640; }
+  .trip .main { flex: 1; min-width: 0; }
+  .trip .name { font-size: 15px; font-weight: 620; }
+  .trip .name.unl { color: var(--muted); font-weight: 500; font-style: italic; }
+  .trip .tags { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+  .chip.dom { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--fg); }
+  .chip.good { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--fg); }
+  .chip.warn { background: color-mix(in srgb, var(--warn) 24%, transparent); color: var(--fg); }
+  .chip.miss { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--fg); }
+  .trip .refl { margin-top: 5px; color: var(--muted); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
+
+  .active-trip { display: flex; align-items: center; gap: 12px; }
+  .active-trip .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--warn);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 22%, transparent); flex: none; }
+  .active-trip .txt { font-size: 15px; }
+  .active-trip .txt .s { color: var(--muted); font-size: 13px; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/household">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/projects/board">Projects</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/trips/board" aria-current="page">Trips</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+    <a href="/guide">Guide</a>
+    <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>🚗 Trips &amp; balance</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card" id="c-active">
+    <h2>Right now</h2>
+    <div id="active"></div>
+  </section>
+
+  <section class="card" id="c-balance">
+    <div class="head">
+      <h2>Focus balance</h2>
+      <span class="sp"></span>
+      <div class="seg" id="seg" role="group" aria-label="Time window">
+        <button type="button" data-days="7" aria-pressed="true">7 days</button>
+        <button type="button" data-days="30" aria-pressed="false">30 days</button>
+      </div>
+    </div>
+    <p class="sub">Where your out-of-home time went, by life-sphere. The marker on
+      each bar is your weekly aim (set in the household pack); an amber bar is running
+      under half of it.</p>
+    <div class="bal-summary" id="bal-summary"></div>
+    <div class="bars" id="bars"></div>
+  </section>
+
+  <section class="card" id="c-unlabeled" style="display:none">
+    <h2>Needs a label</h2>
+    <p class="hint">Completed trips still waiting to be named. Tap the buttons on the
+      "what was that trip?" notification on your phone to file them.</p>
+    <div id="unlabeled"></div>
+  </section>
+
+  <section class="card" id="c-recent">
+    <h2>Recent trips</h2>
+    <div id="recent"></div>
+  </section>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+let days = 7;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const DOMAIN_LABEL = { shop: "🛒 Shop", work: "💼 Work", home: "🏠 Home", kids: "🧒 Kids", personal: "🙋 Me" };
+const OUTCOME = { success: ["good", "went well"], partial: ["warn", "mixed"], miss: ["miss", "rough"] };
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path, opts) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  if (opts && opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { ...(opts || {}), headers });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+// SQLite timestamps are naive UTC ("YYYY-MM-DD HH:MM:SS"); tag as UTC to localize.
+function asDate(s) { return s ? new Date(String(s).replace(" ", "T") + "Z") : null; }
+function fmtDur(mins) {
+  if (mins == null) return "";
+  const m = Math.round(mins);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+function fmtWhen(iso) {
+  const d = asDate(iso);
+  if (!d) return { day: "", time: "" };
+  return {
+    day: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    time: d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+  };
+}
+function durationOf(t) {
+  if (t.actual_minutes != null) return t.actual_minutes;
+  const a = asDate(t.departed_at), b = asDate(t.returned_at);
+  return a && b ? (b - a) / 60000 : null;
+}
+function km(m) { return m == null ? "" : (m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m"); }
+
+// ── Focus balance ─────────────────────────────────────────────────────────
+function renderBalance(bal) {
+  $("#bal-summary").textContent = bal.summary || "";
+  const doms = bal.domains || [];
+  const max = Math.max(1, ...doms.map((d) => Math.max(d.minutes || 0, d.target_minutes || 0)));
+  const rows = doms.map((d) => {
+    const w = Math.round(((d.minutes || 0) / max) * 100);
+    const tgt = d.target_minutes ? Math.round((d.target_minutes / max) * 100) : null;
+    const flag = d.underserved
+      ? `<div class="flag">light on ${esc(d.domain)} — under half your aim</div>` : "";
+    return `<div>
+      <div class="brow">
+        <span class="dn">${esc(DOMAIN_LABEL[d.domain] || d.domain)}</span>
+        <div class="track">
+          <div class="fill${d.underserved ? " under" : ""}" style="width:${w}%"></div>
+          ${tgt != null ? `<div class="tgt" style="left:${Math.min(tgt, 100)}%"></div>` : ""}
+        </div>
+        <span class="amt">${fmtDur(d.minutes)}${d.count ? ` · ${d.count}×` : ""}</span>
+      </div>${flag}
+    </div>`;
+  }).join("");
+  $("#bars").innerHTML = doms.length
+    ? rows
+    : `<p class="empty">No out-of-home time recorded in this window yet.</p>`;
+}
+
+// ── Trips ──────────────────────────────────────────────────────────────────
+function tripRow(t) {
+  const w = fmtWhen(t.departed_at);
+  const dur = durationOf(t);
+  const name = t.label
+    ? `<div class="name">${esc(t.label)}</div>`
+    : `<div class="name unl">Unlabeled trip</div>`;
+  const tags = [];
+  if (dur != null) tags.push(`<span class="chip">${fmtDur(dur)} out</span>`);
+  if (t.max_distance_m) tags.push(`<span class="chip">${km(t.max_distance_m)} away</span>`);
+  if (t.category) tags.push(`<span class="chip">${esc(t.category)}</span>`);
+  if (t.domain) tags.push(`<span class="chip dom">${esc(DOMAIN_LABEL[t.domain] || t.domain)}</span>`);
+  if (t.reflection_outcome && OUTCOME[t.reflection_outcome]) {
+    const [cls, word] = OUTCOME[t.reflection_outcome];
+    tags.push(`<span class="chip ${cls}">${word}</span>`);
+  }
+  const refl = t.reflection ? `<div class="refl">“${esc(t.reflection)}”</div>` : "";
+  return `<div class="trip">
+    <div class="when"><b>${esc(w.day)}</b>${esc(w.time)}</div>
+    <div class="main">${name}<div class="tags">${tags.join("")}</div>${refl}</div>
+  </div>`;
+}
+
+function renderActive(t) {
+  if (!t) { $("#active").innerHTML = `<p class="empty">You're home — no trip in progress.</p>`; return; }
+  const w = fmtWhen(t.departed_at);
+  const dur = t.elapsed_minutes != null ? t.elapsed_minutes : durationOf(t);
+  const bits = [];
+  if (dur != null) bits.push(`${fmtDur(dur)} so far`);
+  if (t.max_distance_m) bits.push(`${km(t.max_distance_m)} from home`);
+  $("#active").innerHTML = `<div class="active-trip">
+    <span class="dot"></span>
+    <div class="txt">Out since ${esc(w.time)}, ${esc(w.day)}
+      <div class="s">${esc(bits.join(" · "))}</div></div>
+  </div>`;
+}
+
+function render(trips, bal) {
+  renderActive(trips.active);
+  renderBalance(bal);
+
+  const recent = (trips.recent || []).filter((t) => t.status === "completed");
+  $("#recent").innerHTML = recent.length
+    ? recent.map(tripRow).join("")
+    : `<p class="empty">No completed trips yet. Once a home coordinate is set, leaving and returning is logged automatically.</p>`;
+
+  const unl = trips.unlabeled || [];
+  $("#c-unlabeled").style.display = unl.length ? "" : "none";
+  if (unl.length) $("#unlabeled").innerHTML = unl.map(tripRow).join("");
+
+  const done = recent.length;
+  $("#status").textContent = trips.active
+    ? "Out now · " + done + " completed recently"
+    : done + (done === 1 ? " completed trip recently" : " completed trips recently");
+}
+
+async function load() {
+  try {
+    const [trips, bal] = await Promise.all([api("/trips"), api("/balance?days=" + days)]);
+    $("#gate").style.display = "none";
+    $("#wrap").style.display = "";
+    render(trips, bal);
+  } catch (e) {
+    if (e.code === 401) gate();
+    else $("#status").textContent = "Couldn't load trips — " + e.message;
+  }
+}
+
+async function reloadBalance() {
+  try { renderBalance(await api("/balance?days=" + days)); }
+  catch (e) { if (e.code === 401) gate(); }
+}
+
+$("#seg").querySelectorAll("button").forEach((b) => {
+  b.onclick = () => {
+    days = parseInt(b.getAttribute("data-days"), 10);
+    $("#seg").querySelectorAll("button").forEach((x) =>
+      x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    reloadBalance();
+  };
+});
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; try { localStorage.setItem(KEY, v); } catch (e) {}
+  load();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+load();
+</script>
+</body>
+</html>

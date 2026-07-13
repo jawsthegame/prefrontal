@@ -152,6 +152,9 @@ SETTINGS_HTML = _with_shortcuts(_with_card_layout(_shell("settings.html")))
 #: The new-user Guide — a per-module walkthrough for someone just getting started.
 #: Reads GET /guide/data; marks progress via POST /guide/seen and /guide/reset.
 GUIDE_HTML = _with_shortcuts(_shell("guide.html"))
+#: The Trips & balance page — surfaces closed-loop trips (active/recent/unlabeled)
+#: and the life-sphere focus-balance rollup. Reads GET /trips and GET /balance.
+TRIPS_HTML = _with_shortcuts(_shell("trips.html"))
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.
