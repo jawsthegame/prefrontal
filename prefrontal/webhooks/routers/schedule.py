@@ -130,6 +130,7 @@ from prefrontal.webhooks.notify import (
 from prefrontal.webhooks.schemas import (
     AvailableHours,
     CalendarSync,
+    CareRecipients,
     CommitmentCreate,
     CommitmentDomain,
     CommitmentHardness,
@@ -175,14 +176,19 @@ def build_router(services: RouterServices) -> APIRouter:
         # sheet as 'child' even with Ollama down; we build the classifier whenever
         # either signal is available.
         child_names = memory.child_names()
+        care_names = memory.care_recipient_names()
         llm = ollama_client if ollama_client.available() else None
         examples = memory.kind_feedback_examples() if llm is not None else None
         classify = None
-        if llm is not None or child_names:
+        if llm is not None or child_names or care_names:
 
             def classify(title: str) -> tuple[str, str]:
                 return classify_kind(
-                    title, client=llm, examples=examples, child_names=child_names
+                    title,
+                    client=llm,
+                    examples=examples,
+                    child_names=child_names,
+                    care_names=care_names,
                 )
 
         try:
@@ -962,6 +968,44 @@ def build_router(services: RouterServices) -> APIRouter:
             if t.get("category") in care_categories
         ]
         return {"enabled": True, "appointments": appointments, "todos": todos}
+
+    @router.get("/care/recipients", tags=["schedule"])
+    def get_care_recipients(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The user's care-recipient names roster (the adults they look after).
+
+        The per-user roster that drives the deterministic ``care`` classification
+        pass — the caregiver counterpart to the household kids' roster. Gated on the
+        **Caregiver context pack** (like ``/care/sheet``); when the pack is off,
+        ``enabled`` is ``false`` and ``names`` is empty so the ``/care`` editor can
+        prompt to turn it on. The names themselves still classify calendar events
+        regardless of the pack — the gate is on this management surface, not on
+        classification.
+        """
+        if not pack_enabled("caregiver", resolved_settings):
+            return {"enabled": False, "names": []}
+        return {"enabled": True, "names": ctx.store.care_recipient_names()}
+
+    @router.post("/care/recipients", tags=["schedule"])
+    def set_care_recipients(
+        payload: CareRecipients,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Replace the care-recipient roster (whole-list write).
+
+        The body's ``names`` replace the roster wholesale; an empty list clears it.
+        The server normalizes — trimming blanks and dropping case-insensitive
+        duplicates — and returns the stored ``names``. Gated on the Caregiver pack
+        so it matches the ``/care`` surface it's edited from.
+        """
+        if not pack_enabled("caregiver", resolved_settings):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The Caregiver context pack is off (PREFRONTAL_PACKS=caregiver).",
+            )
+        stored = ctx.store.set_care_recipient_names(payload.names)
+        return {"enabled": True, "names": stored}
 
     @router.get("/impact/cascade", tags=["schedule"])
     def impact_cascade(

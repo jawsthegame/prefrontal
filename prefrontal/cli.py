@@ -2883,13 +2883,17 @@ def _cmd_calendar(args: argparse.Namespace) -> int:
             # still lands on the shared sheet as 'child' even when Ollama is down;
             # build the classifier whenever either signal is available.
             child_names = store.child_names()
+            care_names = store.care_recipient_names()
             examples = store.kind_feedback_examples() if ollama_up else None
             classify = None
-            if ollama_up or child_names:
+            if ollama_up or child_names or care_names:
 
                 def classify(title, _c=ollama if ollama_up else None,
-                             _ex=examples, _names=child_names):
-                    return classify_kind(title, client=_c, examples=_ex, child_names=_names)
+                             _ex=examples, _names=child_names, _care=care_names):
+                    return classify_kind(
+                        title, client=_c, examples=_ex,
+                        child_names=_names, care_names=_care,
+                    )
 
             try:
                 summary = sync_calendar(
@@ -3295,6 +3299,45 @@ def _cmd_modules(args: argparse.Namespace) -> int:
         if args.verbose:
             for iv in module.interventions():
                 print(f"          - {iv.name} ({iv.status}): {iv.description}")
+    return 0
+
+
+def _cmd_care_recipient(args: argparse.Namespace) -> int:
+    """Manage the care-recipient names roster (adults the user looks after).
+
+    The per-user roster that drives the deterministic ``care`` calendar
+    classification — the caregiver counterpart to household kids' names. ``list``
+    prints the current roster; ``set`` replaces it; ``add`` / ``remove`` edit it
+    incrementally. All writes go through the same normalization (trim blanks,
+    de-duplicate case-insensitively) the classifier reads.
+
+    Args:
+        args: Parsed arguments; ``care_action`` plus ``names`` / ``--user``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as store:
+        scoped = _resolve_user_store(store, args.user)
+        current = scoped.care_recipient_names()
+        action = args.care_action
+        if action == "list":
+            pass  # fall through to the shared print
+        elif action == "set":
+            current = scoped.set_care_recipient_names(args.names)
+        elif action == "add":
+            current = scoped.set_care_recipient_names(current + args.names)
+        elif action == "remove":
+            drop = {n.strip().lower() for n in args.names}
+            current = scoped.set_care_recipient_names(
+                [n for n in current if n.lower() not in drop]
+            )
+        if current:
+            print("Care recipients: " + ", ".join(current))
+        else:
+            print("No care recipients set.")
     return 0
 
 
@@ -4266,6 +4309,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fan out over every active user (each user's own feeds).",
     )
     p_cal.set_defaults(func=_cmd_calendar)
+
+    p_care = sub.add_parser(
+        "care-recipient",
+        help="Manage the care-recipient names roster (drives 'care' classification).",
+    )
+    p_care.add_argument("--db-path", default=None, help="Override the database path.")
+    p_care.add_argument("--user", default=None, help="Handle of the user to scope to.")
+    care_sub = p_care.add_subparsers(dest="care_action", required=True)
+    care_sub.add_parser("list", help="Print the current care-recipient roster.")
+    c_set = care_sub.add_parser("set", help="Replace the roster with these names.")
+    c_set.add_argument("names", nargs="*", help="Care-recipient names (empty clears the roster).")
+    c_add = care_sub.add_parser("add", help="Add names to the roster.")
+    c_add.add_argument("names", nargs="+", help="Care-recipient names to add.")
+    c_rm = care_sub.add_parser("remove", help="Remove names from the roster.")
+    c_rm.add_argument("names", nargs="+", help="Care-recipient names to remove.")
+    p_care.set_defaults(func=_cmd_care_recipient)
 
     p_packs = sub.add_parser("packs", help="List Context Packs and their status.")
     p_packs.add_argument(

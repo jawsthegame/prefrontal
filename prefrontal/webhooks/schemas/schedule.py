@@ -307,6 +307,27 @@ class LocationSettings(BaseModel):
     )
 
 
+class CareRecipients(BaseModel):
+    """Body/response of ``/care/recipients`` — the care-recipient names roster.
+
+    The adults the user looks after (an aging parent, ill partner). A per-user
+    list — the caregiver counterpart to the household kids' roster — that drives
+    the deterministic ``care`` classification pass so "Mom — cardiology" reliably
+    reaches the ``/care`` surface. Stored comma-separated in ``coaching_state``;
+    the server normalizes (trim blanks, de-duplicate case-insensitively), so the
+    ``names`` a read returns are the stored, cleaned list.
+    """
+
+    names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Care-recipient names (e.g. ['Mom', 'Dad']). A write replaces the whole "
+            "roster; an empty list clears it. Blanks and case-insensitive duplicates "
+            "are dropped server-side."
+        ),
+    )
+
+
 class DayAvailability(BaseModel):
     """One weekday's availability in ``GET/POST /schedule/available-hours``.
 
