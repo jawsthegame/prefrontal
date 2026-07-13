@@ -51,6 +51,9 @@ __all__ = [
     "format_minutes",
     "balance_summary_line",
     "underserved_nudge_text",
+    "STALE_LOCATION_HINT_DAYS",
+    "UNASSIGNED_HINT_SHARE",
+    "balance_hint",
 ]
 
 #: The canonical life-spheres the rollup buckets time-out by. Free text is still
@@ -440,3 +443,96 @@ def underserved_nudge_text(balance: FocusBalance) -> str | None:
         f"({format_minutes(second.minutes)} vs {format_minutes(second.target_minutes or 0)}) "
         "this week — worth carving out a little time for each."
     )
+
+
+#: Days without a location ping before the balance flags "detection probably isn't
+#: receiving pings". A quiet day or two is normal (you were home, or drove nowhere);
+#: a stretch this long is a strong sign the phone's location automation stopped
+#: rather than the user simply staying in.
+STALE_LOCATION_HINT_DAYS = 3
+
+#: When at least this share of in-window out-of-home time landed in ``unassigned``,
+#: the balance is data-rich but sphere-poor — worth nudging the user to tag trips
+#: rather than leaving the life-sphere view dominated by an untagged blob.
+UNASSIGNED_HINT_SHARE = 0.5
+
+
+def balance_hint(
+    store: Any,
+    balance: FocusBalance,
+    *,
+    trip_tracking_enabled: bool,
+    now: datetime | None = None,
+) -> str | None:
+    """A one-line reason the focus balance looks empty or lopsided, or ``None``.
+
+    Read-only diagnostics for ``GET /balance``: when the rollup is thin or skewed,
+    name the most likely cause from the same state that gates trip detection, so an
+    empty or single-sphere balance explains *itself* instead of just looking broken
+    (the "why are no trips tracked / why only one sphere?" question this whole
+    feature's plumbing can otherwise leave a mystery).
+
+    Checks run most-fundamental first — each precondition gates the ones below it:
+
+    1. **trip_tracking disabled** — nothing detects passive trips, so the balance
+       reflects only declared outings. Surfaced only when the user actually expects
+       the guardrail (a weekly target or the nudge flag is set), so a user who
+       simply doesn't use trips isn't nagged.
+    2. **no home set** — detection is dormant (no radius to cross).
+    3. **no / stale location pings** — the phone isn't posting positions, so no loop
+       can close (:data:`STALE_LOCATION_HINT_DAYS`).
+    4. **a large ``unassigned`` slice** — trips *are* landing but untagged, so the
+       life-sphere view is thin (:data:`UNASSIGNED_HINT_SHARE`).
+
+    Returns ``None`` when the balance has healthy, mostly-assigned data — the common
+    case, so a well-configured user sees no hint at all.
+
+    Args:
+        store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        balance: The rollup already computed for this window.
+        trip_tracking_enabled: Whether the ``trip_tracking`` module is enabled for
+            this deployment (passed in so this pure core needn't import the module
+            registry).
+        now: Naive-UTC "now" for the freshness check; defaults to
+            :func:`prefrontal.clock.utcnow`.
+    """
+    if not trip_tracking_enabled:
+        if nudge_enabled(store) or read_targets(store):
+            return (
+                "Trip tracking is off, so no round trips are being detected — this "
+                "balance reflects only declared outings. Enable the trip_tracking "
+                "module to populate it."
+            )
+        return None
+
+    if store.get_home() is None:
+        return (
+            "No home location is set, so trip detection is dormant — set one "
+            "(POST /webhooks/home) and leaving/returning starts logging automatically."
+        )
+
+    fresh = store.location_freshness(now=now)
+    if fresh.get("location") is None:
+        return (
+            "No location pings received yet — trips are detected from your phone "
+            "posting its position, so add the 'log location' automation to start."
+        )
+    age = fresh.get("age_seconds")
+    if age is not None and age > STALE_LOCATION_HINT_DAYS * 86400:
+        # Round, don't floor: 3d23h should read "4 days", not a misleading "3".
+        days = round(age / 86400)
+        return (
+            f"No location ping in {days} days — the balance can't see recent trips "
+            "until your phone resumes posting its position."
+        )
+
+    if balance.has_data:
+        unassigned = next(
+            (d.minutes for d in balance.domains if d.domain == "unassigned"), 0.0
+        )
+        if unassigned > 0 and unassigned >= UNASSIGNED_HINT_SHARE * balance.total_minutes:
+            return (
+                "Much of your out-of-home time is unassigned — tag those trips with a "
+                "life-sphere (shop/work/home/kids/personal) to sharpen the balance."
+            )
+    return None

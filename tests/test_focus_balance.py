@@ -205,6 +205,64 @@ def test_nudge_text_none_when_balanced(store):
     assert underserved_nudge_text(build_focus_balance(store)) is None
 
 
+# -- balance diagnostics (hint) ----------------------------------------------
+
+
+def _hint(store, *, enabled=True, now=None):
+    from prefrontal.focus_balance import balance_hint
+
+    return balance_hint(
+        store, build_focus_balance(store, now=now), trip_tracking_enabled=enabled, now=now
+    )
+
+
+def test_hint_trip_tracking_off_only_when_guardrail_expected(store):
+    # Module off and no focus-balance config → stay quiet (user doesn't use it).
+    assert _hint(store, enabled=False) is None
+    # Once a target/flag is set, the user expects a balance → name the cause.
+    store.set_state("focus_target:kids", "300")
+    hint = _hint(store, enabled=False)
+    assert hint is not None and "trip tracking is off" in hint.lower()
+
+
+def test_hint_no_home_when_enabled(store):
+    store.set_state("focus_balance_nudge", "1")
+    hint = _hint(store)  # enabled, but no home set
+    assert hint is not None and "home" in hint.lower()
+
+
+def test_hint_no_location_pings(store):
+    store.set_home(*HOME)
+    hint = _hint(store)  # home set, but no location ever pinged
+    assert hint is not None and "location ping" in hint.lower()
+
+
+def test_hint_stale_location(store):
+    store.set_home(*HOME)
+    store.set_location(*HOME)
+    # Freshness is judged against `now`; a week on, the fix reads as stale.
+    future = datetime.utcnow() + timedelta(days=7)
+    hint = _hint(store, now=future)
+    assert hint is not None and "no location ping in 7 days" in hint.lower()
+
+
+def test_hint_unassigned_dominates(store):
+    store.set_home(*HOME)
+    store.set_location(*HOME)
+    _trip(store, 120)               # no domain/category → unassigned
+    _trip(store, 20, domain="shop")  # a small assigned slice
+    hint = _hint(store)
+    assert hint is not None and "unassigned" in hint.lower()
+
+
+def test_hint_none_when_healthy(store):
+    store.set_home(*HOME)
+    store.set_location(*HOME)
+    _trip(store, 60, domain="shop")
+    _trip(store, 45, domain="home")
+    assert _hint(store) is None
+
+
 # -- state helpers -----------------------------------------------------------
 
 
@@ -373,6 +431,8 @@ def test_balance_endpoint(client, store):
     assert round(domains["shop"]["minutes"]) == 60
     assert domains["shop"]["count"] == 1
     assert body["summary"] and "shop" in body["summary"]
+    # The diagnostics field is always present; here no home is set, so it fires.
+    assert "hint" in body and body["hint"] and "home" in body["hint"].lower()
 
 
 # -- declared outings fold into the rollup -----------------------------------
