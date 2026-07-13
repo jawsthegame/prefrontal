@@ -383,6 +383,16 @@ def test_expand_min_occurrences_surfaces_long_interval_series():
     assert starts == ["2026-10-12 16:00:00", "2027-01-11 17:00:00"]  # Oct (EDT), Jan (EST)
 
 
+def test_expand_min_occurrences_negative_is_clamped_to_zero():
+    """A misconfigured negative backstop is treated as 0 (disabled), not "always on"."""
+    now = datetime(2026, 7, 13, 18, 30, tzinfo=timezone.utc)  # today's QBR already past
+    out = expand_recurrences(
+        [_QUARTERLY_QBR], now=now, horizon_hours=30 * 24,
+        default_tz="America/New_York", min_occurrences=-5,
+    )
+    assert out == []  # same as min_occurrences=0, no reaching past the horizon
+
+
 def test_expand_min_occurrences_does_not_bloat_frequent_series():
     """The backstop only reaches past the horizon when the window is under-full.
 

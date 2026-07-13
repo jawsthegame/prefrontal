@@ -574,6 +574,11 @@ def expand_recurrences(
         now = now.replace(tzinfo=timezone.utc)
     window_start = now - timedelta(hours=back_hours)
     window_end = now + timedelta(hours=horizon_hours)
+    # Enforce the "0 disables" contract: a misconfigured negative
+    # PREFRONTAL_CALENDAR_MIN_OCCURRENCES would otherwise read as "already
+    # satisfied" the moment we pass the window — same as 0, but silently. Clamp so
+    # the knob's floor is explicit rather than an emergent quirk of the comparison.
+    min_occurrences = max(0, min_occurrences)
 
     # Original start instants a modified instance already covers, keyed by bare
     # UID. dateutil generates occurrences at those original times, so we skip
