@@ -99,6 +99,7 @@ from prefrontal.webhooks.schemas.schedule import (
     CommitmentPrepared,
     ConflictDismiss,
     PlaceCreate,
+    RescheduleRequest,
     TravelPadding,
 )
 from prefrontal.webhooks.schemas.sensor import (
@@ -188,6 +189,7 @@ __all__ = [
     "ProjectReorder",
     "ProjectUpdate",
     "PromptConfig",
+    "RescheduleRequest",
     "RoutineEnabled",
     "RoutineSet",
     "SelfCareCheckConfig",
