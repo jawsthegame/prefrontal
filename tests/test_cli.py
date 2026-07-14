@@ -360,7 +360,7 @@ def test_briefing_deliver_exit_1_without_route(tmp_path, capsys):
     assert main(["briefing", "--db-path", str(db), "--user", "tester", "--deliver"]) == 1
 
 
-def test_focus_arm_cli_arms_live_block(tmp_path, capsys):
+def test_focus_arm_cli_arms_live_block(tmp_path, capsys, monkeypatch):
     """`focus arm` auto-starts a session from a live calendar focus block — the
     native twin of POST /webhooks/focus/arm (no n8n poll)."""
     from datetime import timedelta
@@ -374,7 +374,13 @@ def test_focus_arm_cli_arms_live_block(tmp_path, capsys):
     assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
     capsys.readouterr()
 
-    now = utcnow()
+    # Pin the arm path's clock to a fixed midday. `focus arm` (arm_focus_session)
+    # reads prefrontal.impact.utcnow and scopes candidate blocks to *today's local
+    # day*; anchored to the real clock, a block created in the minutes around local
+    # midnight has its start roll into yesterday and drop out of today's window — a
+    # spurious flake unrelated to the behavior under test (issue #604).
+    now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr("prefrontal.impact.utcnow", lambda: now)
     with MemoryStore.open(str(db)) as raw:
         scoped = _resolve_user_store(raw, "tester")
         scoped.upsert_commitment(
