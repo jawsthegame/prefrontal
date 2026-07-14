@@ -80,35 +80,43 @@ struct TodoRow: View {
     @State private var showEdit = false
 
     var body: some View {
-        Card {
-            HStack(alignment: .top, spacing: 10) {
-                AsyncButton {
-                    try await withAPI { try await $0.closeTodo(todo.id, done: true) }
-                    await reload()
-                } label: {
-                    Image(systemName: "circle").font(.title3).foregroundStyle(Brand.teal)
-                } onError: { onError($0) }
+        SwipeToReveal(label: "Drop", systemImage: "trash", tint: Brand.danger, cornerRadius: 12) {
+            await drop()
+        } content: {
+            Card {
+                HStack(alignment: .top, spacing: 10) {
+                    AsyncButton {
+                        try await withAPI { try await $0.closeTodo(todo.id, done: true) }
+                        await reload()
+                    } label: {
+                        Image(systemName: "circle").font(.title3).foregroundStyle(Brand.teal)
+                    } onError: { onError($0) }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(todo.title).font(.subheadline.weight(.medium)).foregroundStyle(Brand.nearWhite)
-                    FlowRow(spacing: 6) {
-                        if todo.isStarted { Chip(text: "in progress", color: Brand.good) }
-                        if let p = todo.priority, p >= 2 { Chip(text: priorityLabel(p), color: priorityColor(p)) }
-                        if let d = todo.deadline, let short = deadlineShort(d) { Chip(text: short, color: Brand.warn) }
-                        if let m = todo.estimateMinutes { Chip(text: "~\(Int(m))m") }
-                        if let dom = todo.domain, !dom.isEmpty { DomainPill(text: dom) }
-                        if let c = todo.category, c != todo.domain { Chip(text: c) }
-                        if let g = todo.delegation { Chip(text: g.label, color: delegColor(g.status)) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(todo.title).font(.subheadline.weight(.medium)).foregroundStyle(Brand.nearWhite)
+                        FlowRow(spacing: 6) {
+                            if todo.isStarted { Chip(text: "in progress", color: Brand.good) }
+                            if let p = todo.priority, p >= 2 { Chip(text: priorityLabel(p), color: priorityColor(p)) }
+                            if let d = todo.deadline, let short = deadlineShort(d) { Chip(text: short, color: Brand.warn) }
+                            if let m = todo.estimateMinutes { Chip(text: "~\(Int(m))m") }
+                            if let dom = todo.domain, !dom.isEmpty { DomainPill(text: dom) }
+                            if let c = todo.category, c != todo.domain { Chip(text: c) }
+                            if let g = todo.delegation { Chip(text: g.label, color: delegColor(g.status)) }
+                        }
+                        if expanded { detail }
                     }
-                    if expanded { detail }
-                }
-                Spacer(minLength: 0)
-                Button { withAnimation { expanded.toggle() } } label: {
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.caption).foregroundStyle(Brand.muted)
+                    Spacer(minLength: 0)
+                    Button { withAnimation { expanded.toggle() } } label: {
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
                 }
             }
         }
+        // Card's own shadow is a halo outside the radius-12 silhouette, so the
+        // SwipeToReveal clip removes it; recreate it here, outside the clip, to
+        // match every other Card.
+        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
         .sheet(isPresented: $showDelegate) {
             DelegateSheet(todoId: todo.id, reload: reload)
         }
@@ -250,6 +258,17 @@ struct TodoRow: View {
     }
 
     private func priorityColor(_ p: Int) -> Color { p >= 3 ? Brand.danger : (p == 2 ? Brand.warn : Brand.muted) }
+
+    /// Discard a todo without completing it — the same `POST /todos/{id}/drop`
+    /// as the detail "Drop" button, wired to the swipe-left gesture.
+    private func drop() async {
+        do {
+            try await withAPI { try await $0.closeTodo(todo.id, done: false) }
+            await reload()
+        } catch {
+            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
 }
 
 struct AddTodoSheet: View {
