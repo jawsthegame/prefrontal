@@ -69,7 +69,8 @@ struct SituationsCard: View {
             ForEach(Array((r.pressing ?? []).enumerated()), id: \.offset) { _, p in
                 line(p.title, sub: p.startAt.map { PFDate.dayTime($0) })
             }
-            // Sick-day's single first step (when it isn't already covered by a list).
+            // Sick-day's single first step. Shown alongside its `pressing` list, but
+            // suppressed when a departures/checklists tool already leads with steps.
             if let fs = r.firstStep, !fs.isEmpty,
                (r.departures?.isEmpty ?? true), (r.checklists?.isEmpty ?? true) {
                 Text("First step: \(fs)").font(.footnote).foregroundStyle(Brand.fg)
@@ -111,7 +112,10 @@ struct SituationsCard: View {
     }
 
     private func leaveSub(_ d: SituationResult.Item) -> String? {
-        if let lb = d.leaveBy, !PFDate.time(lb).isEmpty { return "leave by \(PFDate.time(lb))" }
+        if let lb = d.leaveBy {
+            let t = PFDate.time(lb)
+            if !t.isEmpty { return "leave by \(t)" }
+        }
         return d.location
     }
 

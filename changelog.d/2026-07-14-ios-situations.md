@@ -7,5 +7,5 @@
   tapping **Check** runs one (`POST /packs/situations/{tool}`) and renders its
   tool-specific result inline — the school-run departures, the pack-the-bag
   get-ready checklists, or the sick-day pressing items + first step. New
-  `SituationsView.swift`, `SituationTool`/`SituationResult` models, and
+  `SituationsCard.swift`, `SituationTool`/`SituationResult` models, and
   `APIClient.situations()` / `.runSituation(tool:)`.
