@@ -36,12 +36,16 @@ closeout, consolidation, and a few net-new surfaces.
    App Intents (`CaptureImpulse`, `TripRetro`, reflective pause) **shipped**, the
    **onboarding + user-facing docs are repointed** at the native app (skill,
    README, deployment, guide, iOS README — Shortcuts kept as the free-signing
-   fallback), and the **server self-description + `source` provenance enum**
-   (`app_intent`/`geofence`/`shortcut` on `POST /webhooks/shortcut`) **shipped**.
-   What's left is only the one case that can't go native — the **Set Alarm**
-   deep-link (no public alarm API pre-AlarmKit/iOS 26; keep the Shortcut, file an
-   AlarmKit follow-up) — plus the client-side nicety of having the iOS App Intents
-   actually send `source: "app_intent"` so the provenance is populated.
+   fallback), and the **`source` provenance enum end to end** — the server
+   self-description + the `app_intent`/`geofence`/`shortcut` enum on
+   `POST /webhooks/shortcut`, *and* the iOS App Intents now sending
+   `source: "app_intent"` so native taps are tagged distinctly from fallback
+   Shortcuts on `/stats` — **shipped**. And the last hard case, **Set Alarm**, has
+   now gone native too: **AlarmKit** (iOS 26+) sets a real system alarm from the
+   morning-prep nudge (`ios/.../AlarmScheduler.swift`), with the Shortcut deep-link
+   kept as the pre-iOS-26 fallback. This item is effectively **done**; the only
+   residue is retiring that Shortcut fallback once the app's minimum target reaches
+   iOS 26.
 
 **Recently closed out:**
 

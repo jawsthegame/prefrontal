@@ -314,3 +314,28 @@ to the Action Button under **Controls**). Input actions (Add Todo, Going Out,
 Start Focus) stay in Siri/Shortcuts, which can prompt for their values. The
 action intents live in `Intents/PrefrontalIntents.swift`, compiled into both the
 app (for Siri) and the widget extension (for the controls).
+
+## System alarms (AlarmKit, iOS 26)
+
+The evening **morning-prep** nudge (Time Blindness) suggests a wake time and
+carries a **⏰ Set alarm** button. Tapping it sets a real, silent-mode-piercing
+system alarm natively via **AlarmKit** (`Notifications/AlarmScheduler.swift`) —
+the one touchpoint iOS historically gave no public API for, so it was the last
+thing still delegated to a hand-built "Set Alarm" Shortcut (`deploy/ios-shortcut.md`;
+see the "hard case" in `docs/shortcuts-to-native.md`).
+
+- **iOS 26+**: the tap schedules a one-off alarm at the next occurrence of the
+  suggested `HH:MM` via `AlarmManager`, prompting once for AlarmKit authorization
+  (the `NSAlarmKitUsageDescription` string in `project.yml`). The action opens the
+  app (it's registered `.foreground`, so the first-run permission prompt has
+  somewhere to appear), but no Shortcut is involved and no wake time is typed by
+  hand — the alarm is set for you.
+- **Older iOS / AlarmKit unavailable or denied**: it falls back to opening the
+  `shortcuts://run-shortcut?name=Set%20Alarm&text=<HH:MM>` deep link the server
+  already sends — the pre-AlarmKit path — so nothing regresses.
+
+The server side is unchanged: the nudge still ships the same `shortcuts://` view
+action (`notify.alarm_actions`); the client reads the wake time out of that URL's
+`text` and decides native-vs-Shortcut. All AlarmKit code sits behind
+`#if canImport(AlarmKit)` + `@available(iOS 26.0, *)`, so the app still builds and
+runs on the iOS 17 deployment target (the button just opens the Shortcut there).
