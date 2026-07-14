@@ -485,16 +485,23 @@ misuse clinical terms like "RSD" or "object permanence," and the kids' star
 charts are earn-only/no-punishment, which *matches* the child behavioral-
 intervention evidence.)
 
-1. **The deployment model fights the audience.** *(highest severity.)* Setup
-   burden and ongoing maintenance are the **#1 abandonment cause** for ADHD users
-   ("the app became another thing to maintain"). Yet the tool asks its user to run
-   a Mac mini, Ollama, n8n, Tailscale, IMAP/ICS config, and launchd jobs, driven
-   by a **341-line [`.env.example`](../.env.example)**. "Adults with ADHD who can
-   self-host" is close to a contradiction: the population least able to sustain
-   configuration is asked to operate a server stack. Defensible *today* (a
-   personal, daily-use tool) — but the product path runs through a **hosted /
-   one-tap onboarding** option, or the thesis ("the system carries the load")
-   leaks back out through the deploy step. *(Cuts against commandment 7.)*
+1. **The deployment model fights the audience.** *(partial — the join-an-existing-
+   deployment path is now near-zero-friction; the operator/self-host burden is
+   designed-away but not yet built.)* Setup burden and ongoing maintenance are the
+   **#1 abandonment cause** for ADHD users ("the app became another thing to
+   maintain"). The *user-joining* half has largely closed: native iOS onboarding
+   with a scan-and-go QR / deep-link connect-link, a shared-Keychain token, per-user
+   source setup, and **native-push-only delivery** (ntfy/Shortcuts retired as the
+   primary path) mean a person joining an existing deployment no longer touches
+   config. What remains is the *operator* half — the tool still asks whoever runs it
+   to stand up a Mac mini, Ollama, n8n, Tailscale, IMAP/ICS config, and launchd jobs
+   (a sprawling [`.env.example`](../.env.example) of hundreds of lines). "Adults
+   with ADHD who can self-host" is close to a contradiction, so the product path
+   runs through a
+   **hosted, no-self-host** option — now specced in
+   [`docs/design/hosted-onboarding.md`](design/hosted-onboarding.md) but not yet
+   stood up. Defensible *today* (a personal, daily-use tool); the hosted backend is
+   the open remainder. *(Cuts against commandment 7.)*
 2. **~~Emotion regulation is under-built relative to its centrality.~~** ✅
    **First cut shipped** (`emotion_regulation` module + `prefrontal/emotion_regulation.py`).
    Emotional dysregulation is a *core* feature (Hedges' *g* ≈ 1.17, the "fourth core
