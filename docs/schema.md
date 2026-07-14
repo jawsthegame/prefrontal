@@ -160,6 +160,17 @@ also defines:
   the focus-balance rollup alongside passive trips (`prefrontal/focus_balance.py`);
   set at declaration or via `POST /webhooks/outing/domain`, and inferred from the
   free-text `intention` when unset.
+- **`implementation_intentions`** — *if-then plans* for the Implementation
+  Intentions module (`prefrontal/modules/implementation_intention.py`): a `cue_text`
+  (the trigger in the user's words) paired with a tiny pre-decided `action_text`,
+  cued on a curated `cue_place` (matched by proximity via `geo.nearest_place`)
+  and/or a `cue_window` local time-of-day band (`"HH:MM-HH:MM"`) — an AND over
+  whichever is set. The coaching tick surfaces the action the moment its cue is
+  detected (delivery *at the trigger*, not on a clock); `last_fired_at` is an
+  advisory "last surfaced" stamp (the engine's debounce, not it, prevents
+  re-firing). `status` is `active`/`archived` — retiring a plan is a neutral
+  archive, never a broken streak. Captured in one utterance through the NL
+  assistant (`add_if_then`).
 - **`trips`** — closed-loop round trips detected *passively* from location pings
   crossing the home radius (`prefrontal/trips.py`, the Closed-Loop Trip Tracking
   module). Unlike an outing, nothing is declared up front: `departed_at` is when

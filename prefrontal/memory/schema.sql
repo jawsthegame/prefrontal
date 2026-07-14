@@ -13,6 +13,7 @@
 --
 -- Plus feature tables backing the modules and ingestion paths:
 --   outings              Location-Aware Task Anchor blocks (intention + window)
+--   implementation_intentions  if-then plans: a cue (place/time) → a pre-decided step
 --   trips                closed-loop trips auto-detected from location crossings
 --   focus_sessions       Hyperfocus deep-work blocks (protect / interrupt)
 --   commitments          synced/manual schedule items (impact + double-booking)
@@ -165,6 +166,38 @@ CREATE TABLE IF NOT EXISTS outings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outings_user_status ON outings (user_id, status);
+
+-- Implementation intentions ("if-then plans") — the single most strongly-evidenced
+-- ADHD self-regulation technique (Gollwitzer & Sheeran 2006). Each row pairs a
+-- concrete *cue* with a tiny, pre-decided *action*, so task initiation is offloaded
+-- from impaired executive function onto an external trigger ("If I sit down at my
+-- desk after lunch, then I open the tax form and set a 5-min timer"). The coaching
+-- tick surfaces the pre-committed action the moment its cue is detected — the whole
+-- point is delivery *at the trigger*, not on a clock.
+--
+-- The cue is an AND over whatever constraints are set (at least one required):
+--   cue_place   a curated places.name (matched by proximity via geo.nearest_place)
+--   cue_window  a local time-of-day band "HH:MM-HH:MM" (scheduling.parse_window)
+-- so "at my desk after lunch" is place='desk' AND window='12:30-14:00'. cue_text is
+-- the user's own phrasing of the trigger, shown back verbatim. action_text is the
+-- pre-decided step, stored as stated (the technique depends on it being tiny and
+-- committed in advance — we don't rewrite it). last_fired_at drives a light "when
+-- did I last surface this" read; the engine's debounce keeps it from nagging.
+CREATE TABLE IF NOT EXISTS implementation_intentions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    cue_text      TEXT    NOT NULL,           -- the trigger, in the user's words
+    cue_place     TEXT,                       -- curated places.name (proximity cue)
+    cue_window    TEXT,                       -- "HH:MM-HH:MM" local band (time cue)
+    action_text   TEXT    NOT NULL,           -- the tiny pre-decided first step
+    todo_id       INTEGER REFERENCES todos(id),  -- optional linked todo
+    status        TEXT    NOT NULL DEFAULT 'active',  -- active | archived
+    last_fired_at DATETIME,                    -- last time its cue surfaced the plan
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_impl_intentions_user_status
+    ON implementation_intentions (user_id, status);
 
 -- Closed-loop "trips": a leave-home → return-home round trip detected *passively*
 -- from location pings crossing the home radius (no declared intention or window,

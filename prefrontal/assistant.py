@@ -178,6 +178,20 @@ ASSISTANT_SYSTEM = (
     '- {"op":"rename_outing","outing_id":int,"intention":str}\n'
     '- {"op":"set_outing_window","outing_id":int,"time_window_minutes":number}\n'
     '- {"op":"set_outing_start","outing_id":int,"start_at":"YYYY-MM-DD HH:MM"}\n\n'
+    "An if-then plan (implementation intention) pairs a CUE the user will run into "
+    "with a tiny PRE-DECIDED action, and Prefrontal re-shows the action the moment "
+    "the cue is detected — the most effective way to actually start a stalled task. "
+    "Use add_if_then when the user says \"when/if X, (then) I'll Y\" (\"when I sit "
+    "down at my desk after lunch, I'll open the tax form\", \"if I get to the gym, "
+    "start with 10 pushups\"). cue_text is their trigger in their own words; "
+    "action_text is the small action, kept AS THEY SAID IT (don't expand it — the "
+    "technique needs it pre-committed and tiny). Give a cue the tick can detect: a "
+    "\"place\" (a short location name like \"desk\", \"gym\", \"kitchen\") and/or a "
+    "\"time_window\" local band \"HH:MM-HH:MM\" (\"after lunch\"≈\"12:30-14:00\", "
+    "\"in the morning\"≈\"08:00-11:00\"). At least one of place/time_window is "
+    "required; set both when the cue is both (\"at my desk after lunch\"):\n"
+    '- {"op":"add_if_then","cue_text":str,"action_text":str,"place":str?,'
+    '"time_window":"HH:MM-HH:MM"?}\n\n'
     "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
     "If (and ONLY if) the snapshot has a \"household\" object, these shared "
     "co-parent sheet ops are also available. Resolve a kid's name to an id from "
@@ -958,6 +972,39 @@ def _v_set_outing_start(
     )
 
 
+def _v_add_if_then(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    """Validate an if-then plan capture — cue phrasing + tiny action + a detectable cue.
+
+    ``action_text`` is stored as stated (the implementation-intention technique
+    depends on the action being pre-committed and tiny — we don't rewrite it here).
+    A plan needs a cue the coaching tick can actually detect, so at least one of
+    ``place`` (normalized to a curated-place match key, the same way places are
+    stored) or ``time_window`` (a valid ``"HH:MM-HH:MM"`` band) is required — a plan
+    with neither could never fire.
+    """
+    from prefrontal.geocode import normalize_query
+    from prefrontal.scheduling import parse_window
+
+    cue_text = _nonblank(action.get("cue_text"), "cue_text")
+    action_text = _nonblank(action.get("action_text"), "action_text")
+    params: dict[str, Any] = {"cue_text": cue_text, "action_text": action_text}
+    place = action.get("place")
+    if place is not None and str(place).strip():
+        normalized = normalize_query(str(place))
+        if normalized:
+            params["cue_place"] = normalized
+    window = action.get("time_window")
+    if window is not None and str(window).strip():
+        if parse_window(str(window)) is None:
+            raise _ActionError('time_window must be a "HH:MM-HH:MM" band')
+        params["cue_window"] = str(window).strip()
+    if "cue_place" not in params and "cue_window" not in params:
+        raise _ActionError("an if-then plan needs a place and/or a time window as its cue")
+    return ValidatedAction(
+        op, params, f"Add if-then plan: when {cue_text}, then {action_text}"
+    )
+
+
 def _v_fact(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     household = _require_household(snapshot)
     child_id, who = _resolve_child(action, household)
@@ -1274,6 +1321,7 @@ _VALIDATORS: dict[
     "rename_outing": _v_rename_outing,
     "set_outing_window": _v_set_outing_window,
     "set_outing_start": _v_set_outing_start,
+    "add_if_then": _v_add_if_then,
     "set_fact": _v_fact,
     "clear_fact": _v_fact,
     "set_agreement": _v_set_agreement,
@@ -1503,6 +1551,14 @@ def _execute_one(
         elif op == "set_outing_start":
             start_at = to_utc(p["start_at"], default_tz=tz)
             result["ok"] = memory.set_outing_departure(p["outing_id"], start_at) is not None
+        elif op == "add_if_then":
+            pid = memory.add_implementation_intention(
+                cue_text=p["cue_text"],
+                action_text=p["action_text"],
+                cue_place=p.get("cue_place"),
+                cue_window=p.get("cue_window"),
+            )
+            result.update(ok=True, detail=f"plan #{pid}")
         elif op == "set_fact":
             # updated_by is the acting (scoped) user — never model-supplied — so
             # every LLM-driven edit is attributed (the raw material for the digest).
