@@ -73,6 +73,11 @@ MIN_TARGET_SAMPLES = 3
 #: declining. ``0.34`` ≈ rejected two times out of three or worse.
 LOW_PRECISION_ACCEPT_RATE = 0.34
 
+#: Minimum distinct accepted *state* keys the durability check needs before it
+#: reports a verdict — below this, "held up vs reversed" is noise (mirrors the
+#: precision sample gate).
+MIN_DURABILITY_SAMPLES = 3
+
 #: coaching_state keys the calibration pass persists. The verdict is surfaced in
 #: the behavioral profile; ``SENSOR_REJECTED_KEY`` (a comma-joined list of flagged
 #: ``kind:name`` targets) also feeds back into the extraction prompt so the sensor
@@ -81,6 +86,15 @@ LOW_PRECISION_ACCEPT_RATE = 0.34
 SENSOR_ACCEPT_RATE_KEY = "sensor_accept_rate"
 SENSOR_SAMPLES_KEY = "sensor_calibration_samples"
 SENSOR_REJECTED_KEY = "sensor_rejected_targets"
+
+#: coaching_state keys the *durability* check persists — the post-acceptance
+#: outcome half of learning §2. ``SENSOR_DURABILITY_RATE_KEY`` is the fraction of
+#: accepted state settings still standing; ``SENSOR_REVERSED_KEY`` a comma-joined
+#: list of ``state:<key>`` targets the user later changed away. Surfaced in the
+#: profile; a *diagnostic*, not (yet) an auto-act (see ``compute_proposal_durability``).
+SENSOR_DURABILITY_RATE_KEY = "sensor_durability_rate"
+SENSOR_DURABILITY_SAMPLES_KEY = "sensor_durability_samples"
+SENSOR_REVERSED_KEY = "sensor_reversed_targets"
 
 SENSOR_SYSTEM_PROMPT = (
     "You are a careful note-reader for an ADHD assistant. You turn a free-text "
@@ -453,6 +467,131 @@ def recompute_sensor_calibration(store: MemoryStore) -> SensorCalibration:
         store.set_state(SENSOR_SAMPLES_KEY, str(calibration.resolved), source="inferred")
         store.set_state(SENSOR_REJECTED_KEY, ",".join(calibration.flagged), source="inferred")
     return calibration
+
+
+@dataclass(frozen=True)
+class ProposalDurability:
+    """Did accepted proposals actually *hold up*? (learning §2, the outcome half.)
+
+    Sensor **precision** (:class:`SensorCalibration`) asks whether a proposal was
+    accepted *at review time*. Durability asks the follow-on, in-hindsight question:
+    of the settings a human accepted (written ``source="llm_inferred"``), how many
+    are **still standing**, versus later changed away by an explicit user edit? A
+    setting accepted in the moment and then reverted is a quality miss precision
+    can't see — the closest honest analog, on the sensor's non-numeric allowlist, to
+    §4's "did the adaptation actually help?" walk-forward.
+
+    Scope and honesty (deliberately narrow, so the number means what it says):
+
+    - **State proposals only.** An accepted *episode* proposal is a one-off log, not
+      a setting, so it can't be "reversed" — episodes are covered by precision alone.
+    - **Coaching state keeps no history** (``coaching_state`` upserts in place), so
+      this compares each key's *current* value against the *latest* accepted proposal
+      for it — one bit per key, a snapshot, not a timeline. It therefore can't tell a
+      chronically-reversed key from a once-reversed one, which is exactly why the
+      flagged list is **surfaced as a diagnostic and not auto-fed** into
+      :func:`avoided_state_keys` (unlike precision's ``flagged``): there isn't enough
+      signal to justify suppressing a key on this basis. Left as-is, the way §4
+      leaves drift a surfaced diagnostic rather than an adaptation.
+    - Confounds are real (the user may change a setting for reasons unrelated to
+      whether the sensor was right), so this is reported, never acted on silently.
+
+    ``status="insufficient"`` (not an exception) below :data:`MIN_DURABILITY_SAMPLES`
+    evaluated keys, so callers can say "not enough data yet".
+    """
+
+    status: str  # "ok" | "insufficient"
+    evaluated: int  # distinct accepted state keys checked
+    held_up: int = 0
+    reversed: int = 0
+    durability_rate: float | None = None
+    reversed_targets: tuple[str, ...] = ()  # ``state:<key>`` later changed away
+
+
+def compute_proposal_durability(
+    resolved_proposals: list[dict[str, Any]],
+    current_state: dict[str, dict[str, Any]],
+    *,
+    min_samples: int = MIN_DURABILITY_SAMPLES,
+) -> ProposalDurability:
+    """Measure whether accepted state settings still hold (pure, no store).
+
+    For each distinct state key an *accepted* proposal set, compares the key's
+    current coaching-state value against the **latest** accepted value for it: equal
+    ⇒ *held up*; different or gone ⇒ *reversed* (a later explicit edit moved it).
+    Grouping by the latest accepted proposal means the sensor revising its own
+    earlier suggestion isn't counted as a reversal — only a change *after* the most
+    recent acceptance is. See :class:`ProposalDurability` for scope and caveats.
+
+    Args:
+        resolved_proposals: Resolved proposal dicts (accepted + rejected;
+            oldest-first, as :meth:`all_resolved_proposals` returns). Only accepted
+            ``state`` rows are considered.
+        current_state: ``key -> row`` map (``all_state()``), read for the live value.
+        min_samples: Minimum distinct keys before a verdict is reported.
+
+    Returns:
+        A :class:`ProposalDurability`.
+    """
+    # Latest accepted value per state key (oldest-first input ⇒ last write wins).
+    latest_accepted: dict[str, str] = {}
+    for p in resolved_proposals:
+        if p.get("status") != "accepted" or p.get("kind") != "state":
+            continue
+        payload = p.get("payload") or {}
+        key = payload.get("key")
+        if key in PROPOSABLE_STATE_KEYS and "value" in payload:
+            latest_accepted[key] = str(payload["value"])
+
+    evaluated = len(latest_accepted)
+    if evaluated < min_samples:
+        return ProposalDurability(status="insufficient", evaluated=evaluated)
+
+    held, reversed_keys = 0, []
+    for key, accepted_value in sorted(latest_accepted.items()):
+        current = current_state.get(key)
+        if current is not None and str(current.get("value")) == accepted_value:
+            held += 1
+        else:
+            reversed_keys.append(f"state:{key}")
+
+    n_reversed = len(reversed_keys)
+    return ProposalDurability(
+        status="ok",
+        evaluated=evaluated,
+        held_up=held,
+        reversed=n_reversed,
+        durability_rate=round(held / evaluated, 2),
+        reversed_targets=tuple(reversed_keys),
+    )
+
+
+def recompute_proposal_durability(store: MemoryStore) -> ProposalDurability:
+    """Measure accepted-proposal durability and persist the verdict (learning §2).
+
+    The post-acceptance-outcome counterpart to
+    :func:`recompute_sensor_calibration`, run in the same learning pass. Reads the
+    resolved-proposal history and the live coaching state, computes how many
+    accepted settings still stand, and persists a compact verdict —
+    :data:`SENSOR_DURABILITY_RATE_KEY`, :data:`SENSOR_DURABILITY_SAMPLES_KEY`, and
+    :data:`SENSOR_REVERSED_KEY` (the reversed ``state:<key>`` list) — with
+    ``source='inferred'``. Surfaced in the profile; below the sample gate it
+    persists nothing. Returns the full result for CLI use.
+    """
+    durability = compute_proposal_durability(
+        store.all_resolved_proposals(), store.all_state()
+    )
+    if durability.status == "ok":
+        store.set_state(
+            SENSOR_DURABILITY_RATE_KEY, str(durability.durability_rate), source="inferred"
+        )
+        store.set_state(
+            SENSOR_DURABILITY_SAMPLES_KEY, str(durability.evaluated), source="inferred"
+        )
+        store.set_state(
+            SENSOR_REVERSED_KEY, ",".join(durability.reversed_targets), source="inferred"
+        )
+    return durability
 
 
 def avoided_state_keys(store: MemoryStore) -> frozenset[str]:
