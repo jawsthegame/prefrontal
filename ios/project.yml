@@ -165,7 +165,9 @@ targets:
     deploymentTarget: "10.0"
     sources:
       - path: PrefrontalWatchWidgets
-      - path: Prefrontal/Models
+      # Just Models.swift, NOT the whole Models/ dir — SessionActivity.swift
+      # imports ActivityKit, which watchOS lacks (matches the watch app target).
+      - path: Prefrontal/Models/Models.swift
       - path: Prefrontal/Watch/WatchProtocol.swift
     info:
       path: PrefrontalWatchWidgets/Info.plist

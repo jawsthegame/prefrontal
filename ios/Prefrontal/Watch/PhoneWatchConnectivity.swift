@@ -105,6 +105,7 @@ final class PhoneWatchConnectivity: NSObject, WCSessionDelegate {
         case .addTodo:
             guard let title = message[WatchMessageKey.title] as? String, !title.isEmpty else { return empty }
             try await client.addTodo(title: title)
+            reloadWatchGlanceSoon()   // a new todo may change the "do now" glance
             return empty
         case .imBack:
             try await client.returnOuting()
