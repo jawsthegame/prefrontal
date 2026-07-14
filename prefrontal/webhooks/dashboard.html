@@ -996,11 +996,17 @@ function briefingFeedbackHTML() {
 // the 👍/👎 feedback row. Refresh re-fetches GET /briefing (fast + model-free) so
 // the digest reflects the latest todos/calendar/coaching signals without a
 // full-board reload. Shared by the initial load and the targeted refresh action.
+function briefingRefreshHTML() {
+  return `<div class="brief-actions"><button class="btn-sm" data-action="brief-refresh"
+    title="Rebuild today's briefing from the latest data">↻ Refresh</button></div>`;
+}
 function renderBriefingBody(text) {
-  return md(text || "")
-    + `<div class="brief-actions"><button class="btn-sm" data-action="brief-refresh"
-        title="Rebuild today's briefing from the latest data">↻ Refresh</button></div>`
-    + briefingFeedbackHTML();
+  return md(text || "") + briefingRefreshHTML() + briefingFeedbackHTML();
+}
+// Shown when the briefing can't be fetched — keeps the Refresh control present so
+// a transient failure is retryable in place (no full-board reload needed).
+function briefingUnavailableHTML() {
+  return `<div class="err">unavailable</div>` + briefingRefreshHTML();
 }
 
 function gate(msg) {
@@ -2598,7 +2604,7 @@ async function load() {
     : `<div class="err">unavailable</div>`;
   $("#c-briefing .body").innerHTML = briefing.status === "fulfilled"
     ? renderBriefingBody(briefing.value.text)
-    : `<div class="err">unavailable</div>`;
+    : briefingUnavailableHTML();
   if (profile.status === "fulfilled") {
     $("#c-profile .body").innerHTML = md(profile.value.text);
     $("#profile-updated").textContent = profile.value.generatedAt
@@ -3389,7 +3395,7 @@ document.addEventListener("click", async (e) => {
         const b = await api("/briefing");
         $("#c-briefing .body").innerHTML = renderBriefingBody(b && b.text);
       } catch (_) {
-        $("#c-briefing .body").innerHTML = `<div class="err">unavailable</div>`;
+        $("#c-briefing .body").innerHTML = briefingUnavailableHTML();  // keep Refresh so a transient failure is retryable
       }
       updateSummaries();  // keep the collapsed-card preview in sync
       return;
