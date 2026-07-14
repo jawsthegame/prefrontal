@@ -973,7 +973,13 @@ function renderHome(d) {
 }
 async function loadHome() {
   try { renderHome(await api("/home")); }
-  catch (e) { if (e.code === 401) throw e; }
+  catch (e) {
+    if (e.code === 401) throw e;
+    // Don't leave the card silently blank on a transient 5xx / network failure —
+    // show the state and the reason (homeSaved sets textContent, so it's safe).
+    $("#home-cur").innerHTML = `<span class="none">Couldn't load your home location.</span>`;
+    homeSaved("Couldn't load home location — " + e.message, false);
+  }
 }
 async function setHome(lat, lon, label) {
   try {

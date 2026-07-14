@@ -94,8 +94,12 @@ def test_geocoding_toggle_off_again():
     client, store, _ = _app()
     with client:
         client.post("/home/geocoding", json={"enabled": True}, headers=_auth())
+        # Stored as the codebase-standard "1"/"0" (seed default + tests use these),
+        # not "true"/"false" — consistent with docs and manual DB edits.
+        assert store.get_state("geocoding_enabled") == "1"
         data = client.post("/home/geocoding", json={"enabled": False}, headers=_auth()).json()
         assert data["geocoding_enabled"] is False
+        assert store.get_state("geocoding_enabled") == "0"
         assert store.get_bool("geocoding_enabled", True) is False
 
 

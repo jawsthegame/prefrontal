@@ -604,8 +604,11 @@ def build_router(services: RouterServices) -> APIRouter:
         it's off by default; the card's checkbox flips it here. Returns the fresh
         home payload.
         """
+        # Stored as "1"/"0" to match the rest of the codebase — the seed default
+        # (_helpers.py) and tests use 1/0, and manual DB edits expect it — even
+        # though get_bool() would also accept true/false.
         ctx.store.set_state(
-            "geocoding_enabled", "true" if payload.enabled else "false", source="explicit"
+            "geocoding_enabled", "1" if payload.enabled else "0", source="explicit"
         )
         return _home_payload(ctx.store)
 
