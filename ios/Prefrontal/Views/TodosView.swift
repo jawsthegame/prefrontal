@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodosView: View {
     @State private var todos: [Todo] = []
+    @State private var clarifyCount = 0
     @State private var error: String?
     @State private var loaded = false
     @State private var showAdd = false
@@ -10,6 +11,7 @@ struct TodosView: View {
         ScrollView {
             VStack(spacing: 12) {
                 if let error { ErrorBanner(message: error) }
+                if clarifyCount > 0 { clarifyBanner }
                 if todos.isEmpty && loaded && error == nil {
                     Text("No open todos. Nice.").foregroundStyle(Brand.muted).padding(.top, 40)
                 }
@@ -22,7 +24,8 @@ struct TodosView: View {
         .brandScreen()
         .navigationTitle("Todos")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink { ClarifyView() } label: { Image(systemName: "questionmark.bubble") }
                 Button { showAdd = true } label: { Image(systemName: "plus") }
             }
         }
@@ -31,10 +34,32 @@ struct TodosView: View {
         .sheet(isPresented: $showAdd) { AddTodoSheet { await load() } }
     }
 
+    /// Appears when the ambiguity sweep has queued questions — a nudge into the
+    /// Clarify screen to hone the vague items into startable steps.
+    private var clarifyBanner: some View {
+        NavigationLink { ClarifyView() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "questionmark.bubble").foregroundStyle(Brand.accent)
+                Text("\(clarifyCount) to clarify — hone vague todos into a first step")
+                    .font(.footnote).foregroundStyle(Brand.fg)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+            }
+            .padding(10)
+            .background(Brand.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.accent.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+    }
+
     private func load() async {
         do {
-            let items = try await withAPI { try await $0.todos() }
-            todos = items.filter { $0.status == "open" }
+            let client = try await MainActor.run { try APIClient() }
+            async let items = client.todos()
+            async let clar = client.clarifications()
+            todos = (try await items).filter { $0.status == "open" }
+            // Best-effort: the clarify banner is a nicety, not worth failing the list.
+            clarifyCount = (try? await clar)?.clarifications.count ?? 0
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

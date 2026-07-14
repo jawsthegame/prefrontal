@@ -52,6 +52,33 @@ extension APIClient {
         try await get("balance", query: ["days": "\(days)"], as: FocusBalance.self)
     }
 
+    // Clarifications — hone vague todos/commitments into startable items.
+    func clarifications() async throws -> ClarificationList {
+        try await get("clarifications", as: ClarificationList.self)
+    }
+    /// Run the ambiguity sweep now; returns how many new questions were filed.
+    @discardableResult
+    func runClarificationSweep() async throws -> Int {
+        try await post("clarifications/check", as: SweepResult.self).created
+    }
+    /// Answer a clarification by picking an offered reading (`optionIndex`) or with
+    /// free text. Returns the honed reading plus a `playbook` when one applies.
+    func resolveClarification(_ id: Int, optionIndex: Int? = nil,
+                              answer: String? = nil) async throws -> ClarificationResolveResult {
+        var body: [String: Any] = [:]
+        if let optionIndex { body["option_index"] = optionIndex }
+        if let answer, !answer.isEmpty { body["answer"] = answer }
+        return try await post("clarifications/\(id)/resolve", json: body, as: ClarificationResolveResult.self)
+    }
+    /// Dismiss a clarification ("not ambiguous") — the sweep won't re-ask it.
+    func dismissClarification(_ id: Int) async throws {
+        try await post("clarifications/\(id)/dismiss")
+    }
+    /// Re-fetch a task type's guided walkthrough (localized when opted in).
+    func playbook(taskType: String) async throws -> Playbook {
+        try await get("clarifications/playbooks/\(taskType)", as: Playbook.self)
+    }
+
     // Todo writes
     func addTodo(title: String) async throws { try await post("todos", json: ["title": title], queueable: true) }
     func startTodo(_ id: Int) async throws { try await post("todos/\(id)/start") }
