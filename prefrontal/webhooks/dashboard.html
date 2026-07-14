@@ -288,6 +288,16 @@
   .pri-2 { background: var(--firm-bg); color: var(--firm); }
   .conflict { background: var(--call-bg); color: var(--call); }
   .possible { background: var(--soft-bg); color: var(--soft); }
+  /* Reschedule popover: preview of the "ask the other side to move" email. */
+  .cat-menu .resched-preview { flex-basis: 100%; border-top: 1px solid var(--line);
+    margin-top: 4px; padding-top: 6px; }
+  .resched-move { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .resched-subj { font-weight: 600; font-size: 13px; color: var(--fg); margin-bottom: 4px; }
+  .resched-body { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 inherit;
+    color: var(--fg); background: var(--raise); border-radius: 6px; padding: 8px; margin: 0;
+    max-height: 220px; overflow: auto; }
+  .resched-slots { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .cat-menu .resched-status { flex-basis: 100%; font-size: 11px; color: var(--muted); }
   /* Impact cascade: when you're running behind, the domino chain of upcoming
      commitments that get pushed late. Soft rows are amber; a hard one that gets
      toppled is the red "call" treatment (a real deadline is at stake). */
@@ -1423,6 +1433,90 @@ function openDelegateMenu(anchor, id) {
   placePillMenu(menu, anchor);
 }
 
+// Reschedule popover: resolve a double-booking by asking the other party to move
+// one appointment. Confirm-first — "Preview draft" (send:false) shows the drafted
+// note; "Send" (send:true, needs an email) mails it over your SMTP and, on
+// success, dismisses the conflict. Reuses the .cat-menu shell + POST pattern.
+function openRescheduleMenu(anchor, key) {
+  closePillMenu();
+  const menu = document.createElement("div");
+  menu.className = "cat-menu";
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.textContent = "Ask the other party to move one appointment. Preview first — nothing sends until you hit Send.";
+  menu.appendChild(lead);
+
+  const nameInp = document.createElement("input");
+  nameInp.type = "text";
+  nameInp.placeholder = "Their name (optional)";
+  menu.appendChild(nameInp);
+  const toInp = document.createElement("input");
+  toInp.type = "email";
+  toInp.placeholder = "their@email.com (needed to send)";
+  menu.appendChild(toInp);
+  const noteBox = document.createElement("textarea");
+  noteBox.className = "deleg-context";
+  noteBox.placeholder = "Optional note folded into the request…";
+  menu.appendChild(noteBox);
+
+  const preview = document.createElement("div");
+  preview.className = "resched-preview";
+  preview.style.display = "none";
+  menu.appendChild(preview);
+  const statusEl = document.createElement("div");
+  statusEl.className = "resched-status";
+  menu.appendChild(statusEl);
+
+  const bodyFor = (send) => {
+    const b = { key, send };
+    const to = toInp.value.trim(); if (to) b.to = to;
+    const nm = nameInp.value.trim(); if (nm) b.recipient_name = nm;
+    const nt = noteBox.value.trim(); if (nt) b.note = nt;
+    return b;
+  };
+  const renderResult = (r) => {
+    preview.style.display = "";
+    const slots = (r.slots && r.slots.length)
+      ? `<div class="resched-slots">Offering: ${r.slots.map(esc).join(" · ")}</div>` : "";
+    preview.innerHTML =
+      `<div class="resched-move">Move <b>${esc(r.moved.title)}</b> · keep <b>${esc(r.kept.title)}</b></div>` +
+      `<div class="resched-subj">${esc(r.subject || "")}</div>` +
+      `<pre class="resched-body">${esc(r.body || "")}</pre>` + slots;
+  };
+
+  const preBtn = document.createElement("button");
+  preBtn.className = "cat-act";
+  preBtn.textContent = "Preview draft";
+  preBtn.onclick = async () => {
+    statusEl.textContent = "Drafting…";
+    try {
+      const r = await post("/commitments/conflicts/reschedule", bodyFor(false));
+      renderResult(r);
+      statusEl.textContent = r.offline ? "Draft written offline (basic wording)." : "";
+      sendBtn.disabled = false;
+    } catch (e) { statusEl.textContent = "Couldn't draft the note."; }
+  };
+  menu.appendChild(preBtn);
+
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "cat-act";
+  sendBtn.textContent = "Send";
+  sendBtn.disabled = true;
+  sendBtn.onclick = async () => {
+    if (!toInp.value.trim()) { statusEl.textContent = "Add their email to send."; return; }
+    statusEl.textContent = "Sending…";
+    try {
+      const r = await post("/commitments/conflicts/reschedule", bodyFor(true));
+      if (r.status === "forwarded") { closePillMenu(); load(); }
+      else { renderResult(r); statusEl.textContent = r.detail || "Couldn't send — draft kept, send it yourself."; }
+    } catch (e) { statusEl.textContent = "Couldn't send the note."; }
+  };
+  menu.appendChild(sendBtn);
+
+  placePillMenu(menu, anchor);
+  nameInp.focus();
+}
+
 const SC_META = {
   meal: { icon: "🍽️", label: "Meals" },
   water: { icon: "💧", label: "Water" },
@@ -1950,7 +2044,9 @@ function renderCommitments(list, conflicts, cascade) {
       <div class="main"><span class="badge conflict">conflict</span>
         <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span>
         <div class="sub">${fmt(conflictWhen(p))}</div></div>
-      <div class="acts"><button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}"
+      <div class="acts"><button class="btn-sm" data-action="reschedule-conflict" data-key="${esc(p.key)}"
+        title="Ask the other party to move one of these — drafts a polite email, sends only when you confirm">Reschedule…</button>
+        <button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}"
         title="I know these overlap — stop flagging it (resurfaces if either event moves)">Dismiss</button></div>
     </div>`;
   });
@@ -3162,6 +3258,7 @@ document.addEventListener("click", async (e) => {
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
+    else if (act === "reschedule-conflict") { openRescheduleMenu(el, el.dataset.key); return; }
     else if (act === "commitment-kind") { await post(`/commitments/${id}/kind`, { kind: el.dataset.kind }); }
     else if (act === "commitment-hardness") { await post(`/commitments/${id}/hardness`, { hardness: el.dataset.hardness }); }
     else if (act === "commitment-hide") { await post(`/commitments/${id}/hidden`, { hidden: true }); }
