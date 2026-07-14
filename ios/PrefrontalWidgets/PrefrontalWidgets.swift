@@ -337,8 +337,11 @@ struct PrefrontalWidgetView: View {
     }
 
     private func scButton(key: String, icon: String, count: Int, target: Int) -> some View {
+        // At the target, a tap wraps the count back to zero (meal/water are both
+        // quota checks) — the tap-at-max cycle the Me tab and web dashboard use,
+        // rather than overshooting past the daily target.
         let done = count >= target
-        return Button(intent: MarkSelfCareIntent(key: key)) {
+        return Button(intent: MarkSelfCareIntent(key: key, reset: done)) {
             HStack(spacing: 4) {
                 Image(systemName: done ? "checkmark" : icon)
                 Text("\(count)/\(target)").monospacedDigit()

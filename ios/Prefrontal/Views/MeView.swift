@@ -36,7 +36,13 @@ struct MeView: View {
                 Text("Tap to log").font(.caption2).foregroundStyle(Brand.muted)
                 ForEach(sc.checks.filter { $0.enabled }) { check in
                     AsyncButton {
-                        try await withAPI { try await $0.markSelfCare(key: check.key) }
+                        // Mirror the web dashboard: a quota check that's reached its
+                        // target wraps back to zero on the next tap (touch has no
+                        // shift-click to rewind a mis-tap), otherwise log one. An
+                        // open-ended check (bio breaks) never wraps — a tap always
+                        // just logs one.
+                        let atMax = !check.openEnded && check.target > 0 && check.count >= check.target
+                        try await withAPI { try await $0.markSelfCare(key: check.key, reset: atMax) }
                         await load()
                     } label: {
                         ProgressChip(icon: icon(check.key), label: label(check.key),
@@ -44,7 +50,6 @@ struct MeView: View {
                                      satisfied: check.satisfied, overdue: check.overdue)
                     } onError: { error = $0 }
                     .buttonStyle(.plain)
-                    .disabled(check.satisfied)
                 }
             } else if selfCare != nil {
                 Text("Self-care checks are off. Enable them in the web settings.")

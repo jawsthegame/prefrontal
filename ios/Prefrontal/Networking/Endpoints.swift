@@ -64,9 +64,12 @@ extension APIClient {
     }
     func returnDelegation(_ id: Int) async throws { try await post("todos/\(id)/delegate/return") }
 
-    // Self-care
-    func markSelfCare(key: String, undo: Bool = false) async throws {
-        try await post("self-care/mark", json: ["key": key, "undo": undo], queueable: true)
+    // Self-care. `reset` wraps a quota check that's at its target back to zero
+    // (the mobile tap-at-max cycle — touch has no shift-click to rewind); `undo`
+    // rewinds one. `reset` takes precedence over `undo` server-side.
+    func markSelfCare(key: String, undo: Bool = false, reset: Bool = false) async throws {
+        try await post("self-care/mark",
+                       json: ["key": key, "undo": undo, "reset": reset], queueable: true)
     }
 
     // Available hours — a partial write of one or more weekdays; the server

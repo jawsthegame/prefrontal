@@ -17,12 +17,18 @@ struct MarkSelfCareIntent: AppIntent {
     @Parameter(title: "Check")
     var key: String
 
+    /// Wrap a quota check that's already at its target back to zero instead of
+    /// logging another (the tap-at-max cycle), matching the Me tab and web
+    /// dashboard. Set by the widget button when the check is done.
+    @Parameter(title: "Reset", default: false)
+    var reset: Bool
+
     init() {}
-    init(key: String) { self.key = key }
+    init(key: String, reset: Bool = false) { self.key = key; self.reset = reset }
 
     func perform() async throws -> some IntentResult {
         let client = try APIClient(shared: ())
-        try await client.markSelfCare(key: key)
+        try await client.markSelfCare(key: key, reset: reset)
         return .result()
     }
 
