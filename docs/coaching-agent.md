@@ -269,9 +269,17 @@ already a `cta-debounce` track in flight). `suppressed(store, cue, ctx)`:
   `urgent` to "hold until the window opens" — *except* `critical`, which always
   goes through (a missed hard commitment at 6am still warrants the call). This is
   the inverse of the briefing already honoring `preferred_briefing_format`.
-- **Rate ceiling** — a per-tick and per-day cap on non-critical cues so a bad day
-  (many avoided todos + slips) doesn't produce a barrage; overflow folds into the
-  next briefing as `ambient`. Cap lives in a coaching key.
+- **Rate ceiling / dosage cap (M3, ✅ shipped)** — `_apply_dosage_cap` in `decide`:
+  a per-day cap on *interrupting, non-critical* deliveries so a bad day (many
+  avoided todos + slips) can't become a barrage (JITAI: a nudge's effect decays
+  with dosage). When the day's budget is spent the highest-urgency cues take what
+  remains (ties broken by `dedup_key`) and the overflow is held, re-offered next
+  tick — nothing lost, just spaced. `critical` is never capped and `digest`/ambient
+  never counts (it folds into the briefing anyway). The tally is one self-resetting
+  `coach_nudge_day` state key (`"YYYY-MM-DD|count"`), bumped in `record_fired` off
+  the tick's own clock so it's testable with a pinned `now`. Cap: `coach_daily_nudge_cap`
+  (default 10 — a generous backstop that only catches a flood; `0` disables). This is
+  the frequency complement to the receptivity gate's "they've stopped answering."
 - **Receptivity gate (M3, ✅ shipped)** — `receptive(store, ctx)`, consulted once
   per tick in `decide`: after a run of *consecutive ignored* coach nudges the user
   isn't answering, so hold every non-critical cue rather than pile on (pushing
