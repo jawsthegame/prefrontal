@@ -131,6 +131,12 @@ struct ProgressChip: View {
 /// the familiar "swipe to delete" idiom. Vertical drags fall through to the
 /// enclosing `ScrollView` untouched (the gesture only engages once horizontal
 /// movement dominates), so scrolling still works over a swipeable row.
+///
+/// The drag's `minimumDistance` must stay comfortably above the enclosing
+/// `ScrollView`'s own pan threshold (~12–15pt). At 12pt the two recognizers
+/// activate together and this simultaneous gesture starves the scroll pan — the
+/// list stops scrolling entirely. 20pt lets the ScrollView claim a vertical drag
+/// first, then this gesture's horizontal guard keeps it from hijacking the pan.
 struct SwipeToReveal<Content: View>: View {
     var label: String = "Hide"
     var systemImage: String = "eye.slash.fill"
@@ -184,7 +190,7 @@ struct SwipeToReveal<Content: View>: View {
     }
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: 12)
+        DragGesture(minimumDistance: 20)
             .onChanged { v in
                 if !engaged {
                     // Only take over once the swipe is clearly horizontal; a
