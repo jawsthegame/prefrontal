@@ -129,6 +129,19 @@ final class BiometricLockTests: XCTestCase {
         XCTAssertNil(lock.lastError, "a user cancel isn't surfaced as an error")
     }
 
+    func testUserFallbackDoesNotRetry() {
+        // Choosing "Use Passcode" is a deliberate action, not an interruption.
+        let fake = FakeEvaluator()
+        fake.scripted = [(false, .userFallback, "Fallback selected.")]
+        let lock = makeLock(fake: fake)
+
+        lock.authenticate()
+
+        XCTAssertEqual(fake.calls, 1, "an explicit fallback choice shouldn't re-prompt")
+        XCTAssertFalse(lock.isUnlocked)
+        XCTAssertNil(lock.lastError, "fallback isn't surfaced as an error")
+    }
+
     func testAuthenticationFailureSurfacesErrorWithoutRetry() {
         let fake = FakeEvaluator()
         fake.scripted = [(false, .authenticationFailed, "Face not recognized.")]

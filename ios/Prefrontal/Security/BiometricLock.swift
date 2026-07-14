@@ -171,12 +171,20 @@ final class BiometricLock: ObservableObject {
         authenticating = true
         lastError = nil
         evaluator(reason) { [weak self] success, code, message in
-            // The evaluator guarantees this runs on the main actor (the production
-            // one marshals there before calling back; tests invoke it on main).
-            // Assert that so the state updates — and the synchronous auto-retry —
-            // happen inline rather than being deferred to a later run-loop turn.
-            MainActor.assumeIsolated {
-                self?.finish(reason: reason, success: success, code: code, message: message)
+            guard let self else { return }
+            // The production evaluator delivers on the main actor; the `Evaluator`
+            // type can't *enforce* that, so stay defensive. When already on main
+            // (production's hop, and every test), run inline — keeping the state
+            // updates and the synchronous auto-retry on the same turn; otherwise
+            // hop to the main actor rather than crash `assumeIsolated`.
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self.finish(reason: reason, success: success, code: code, message: message)
+                }
+            } else {
+                Task { @MainActor in
+                    self.finish(reason: reason, success: success, code: code, message: message)
+                }
             }
         }
     }
@@ -192,16 +200,20 @@ final class BiometricLock: ObservableObject {
             canAutoRetry = true
             return
         }
-        // Nil out cancel-class outcomes' noisy messages; keep real errors.
-        let isCancel = code == .userCancel || code == .appCancel || code == .systemCancel
-        lastError = isCancel ? nil : message
-        // Self-heal once from anything that isn't a *deliberate* user cancel or a
+        // Deliberate user actions (cancel, or choosing the passcode fallback) and
+        // system interruptions aren't errors worth surfacing; keep real errors.
+        let quiet = code == .userCancel || code == .userFallback
+            || code == .appCancel || code == .systemCancel
+        lastError = quiet ? nil : message
+        // Self-heal once from anything that isn't a *deliberate* user action or a
         // genuine biometric mismatch: the first-launch consent round-trip, an
         // app-switch/system interruption, or a denied/locked-out biometry that
-        // should fall through to the passcode. `.userCancel` is respected — the
-        // "Unlock" button is the manual retry — and `.authenticationFailed` shows
-        // the error rather than immediately re-scanning in a loop.
-        let recoverable = code != .userCancel && code != .authenticationFailed
+        // should fall through to the passcode. A `.userCancel` (the "Unlock" button
+        // is the manual retry) or `.userFallback` (the user chose passcode) is
+        // respected, and `.authenticationFailed` shows the error rather than
+        // immediately re-scanning in a loop.
+        let recoverable = code != .userCancel && code != .userFallback
+            && code != .authenticationFailed
         if !isUnlocked, canAuthenticate, canAutoRetry, recoverable {
             canAutoRetry = false
             authenticate(reason: reason)
