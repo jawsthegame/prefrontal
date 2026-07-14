@@ -108,8 +108,10 @@ Unit tests live in `PrefrontalTests/` and run on a simulator:
 
 ```sh
 cd ios && xcodegen generate
-xcodebuild test -project Prefrontal.xcodeproj -scheme Prefrontal \
-  -destination 'platform=iOS Simulator,name=iPhone 16'   # any installed iPhone sim
+# Pick any installed iPhone simulator by UDID (robust to device-name churn) —
+# the same selection CI uses.
+UDID=$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1)
+xcodebuild test -project Prefrontal.xcodeproj -scheme Prefrontal -destination "id=$UDID"
 ```
 
 CI runs the same via `xcodebuild test` (it picks an available simulator by UDID).

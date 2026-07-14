@@ -77,8 +77,10 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate
+          # `|| true`: under `set -e` a no-match grep would abort the step before
+          # the empty-UDID check below could print the helpful device list.
           UDID=$(xcrun simctl list devices available \
-            | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1)
+            | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1 || true)
           if [ -z "$UDID" ]; then
             echo 'No iPhone simulator available on this runner:' >&2
             xcrun simctl list devices available >&2
