@@ -44,7 +44,11 @@ final class BiometricLockTests: XCTestCase {
                           fake: FakeEvaluator) -> BiometricLock {
         BiometricLock(appLockEnabled: enabled,
                       canAuthenticate: { canAuthenticate },
-                      evaluator: fake.evaluate)
+                      evaluator: fake.evaluate,
+                      // Run the retry synchronously and disable the wall-clock
+                      // watchdog so the state machine stays deterministic in tests.
+                      scheduleRetry: { work in MainActor.assumeIsolated { work() } },
+                      watchdogSeconds: 0)
     }
 
     // MARK: initial state
