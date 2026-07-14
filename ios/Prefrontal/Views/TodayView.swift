@@ -33,6 +33,7 @@ struct TodayView: View {
                 if let o = activeOuting { outingCard(o) }
                 if let f = activeFocus { focusCard(f) }
                 if !nudges.isEmpty { nudgesCard }
+                SituationsCard()
 
                 if loaded && error == nil { Spacer(minLength: 8) }
             }

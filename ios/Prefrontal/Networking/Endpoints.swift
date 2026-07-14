@@ -64,6 +64,14 @@ extension APIClient {
     /// Read-only mail snapshot: messages awaiting action + a recent feed. Safe
     /// to poll (no side effects). Empty lists when mail monitoring is unconfigured.
     func mail() async throws -> MailInbox { try await get("mail", as: MailInbox.self) }
+    /// On-demand situation tools the enabled Context Packs contribute (empty if none). Pure read.
+    func situations() async throws -> [SituationTool] {
+        try await get("packs/situations", as: SituationList.self).situations
+    }
+    /// Run one situation tool against your live data (read-only); returns its result.
+    func runSituation(tool: String) async throws -> SituationResult {
+        try await post("packs/situations/\(tool)", as: SituationResult.self)
+    }
     /// Aggregated behavioral insights (estimates, follow-through, channels, …). Pure read.
     func stats() async throws -> Stats { try await get("stats/data", as: Stats.self) }
     /// Focus-balance rollup — out-of-home time per life-domain over `days`. Pure read.
