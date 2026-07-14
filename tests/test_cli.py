@@ -79,6 +79,35 @@ def test_build_parser_registers_expected_commands():
         assert hasattr(args, "func"), f"{command} did not bind a handler"
 
 
+def test_proposals_stats_shows_durability_even_when_precision_insufficient(tmp_path, capsys):
+    """Durability has its own (lower) sample gate, so `proposals stats` must surface
+    it even when there aren't enough resolved proposals to judge precision — a
+    regression guard for the early-return that used to hide it."""
+    from tests.conftest import scoped_default
+
+    db = tmp_path / "prefrontal.db"
+    assert main(["init-db", "--db-path", str(db)]) == 0
+    # Three accepted state settings: below the 5-proposal precision gate, but at
+    # the 3-key durability gate. One is later reverted by an explicit edit.
+    with MemoryStore.open(str(db)) as raw:
+        store = scoped_default(raw)  # provisions the "tester" operator
+        for key, value in (
+            ("self_care", "on"),
+            ("encouragement", "on"),
+            ("responsive_hours_end", "23"),
+        ):
+            pid = store.add_proposal(kind="state", payload={"key": key, "value": value})
+            store.set_proposal_status(pid, "accepted")
+            store.set_state(key, value, source="llm_inferred")
+        store.set_state("responsive_hours_end", "22", source="explicit")
+
+    assert main(["proposals", "--db-path", str(db), "--user", "tester", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "Not enough resolved proposals" in out  # precision below its gate
+    assert "Sensor durability: 2/3 accepted settings still standing" in out
+    assert "state:responsive_hours_end: reversed since accepting" in out
+
+
 def test_care_recipient_roster_cli_roundtrip(tmp_path, capsys):
     """`care-recipient set/add/remove/list` wire through and normalize the roster."""
     db = tmp_path / "prefrontal.db"

@@ -2286,22 +2286,28 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
                     print(f"      ↳ {p['rationale']}")
             return 0
         if action == "stats":
-            cal = compute_sensor_calibration(store.all_resolved_proposals())
-            if cal.status != "ok":
+            resolved = store.all_resolved_proposals()
+            # Precision (accept-rate) and durability (do accepted settings stick?)
+            # have independent sample gates — durability can be ready on fewer
+            # resolved proposals than precision — so print each on its own terms.
+            cal = compute_sensor_calibration(resolved)
+            if cal.status == "ok":
+                print(
+                    f"Sensor precision: {cal.accepted}/{cal.resolved} accepted ({cal.accept_rate})."
+                )
+                for tp in cal.by_target:
+                    flag = "  ⚠ chronically rejected" if tp.target in cal.flagged else ""
+                    print(
+                        f"  {tp.target}: {tp.accepted}/{tp.resolved} "
+                        f"({round(tp.accept_rate, 2)}){flag}"
+                    )
+            else:
                 print(
                     f"Not enough resolved proposals yet ({cal.resolved}; "
                     f"need {MIN_SENSOR_CALIBRATION_SAMPLES}) to judge sensor precision."
                 )
-                return 0
-            print(f"Sensor precision: {cal.accepted}/{cal.resolved} accepted ({cal.accept_rate}).")
-            for tp in cal.by_target:
-                flag = "  ⚠ chronically rejected" if tp.target in cal.flagged else ""
-                print(
-                    f"  {tp.target}: {tp.accepted}/{tp.resolved} "
-                    f"({round(tp.accept_rate, 2)}){flag}"
-                )
             # Post-acceptance durability: did accepted settings stick or get reversed?
-            dur = compute_proposal_durability(store.all_resolved_proposals(), store.all_state())
+            dur = compute_proposal_durability(resolved, store.all_state())
             if dur.status == "ok":
                 print(
                     f"Sensor durability: {dur.held_up}/{dur.evaluated} accepted settings "

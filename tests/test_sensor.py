@@ -450,7 +450,7 @@ def test_avoid_keys_surface_in_the_extraction_prompt():
 
 
 def _state(value: str, source: str = "llm_inferred") -> dict:
-    """A minimal coaching_state row, the shape all_state()/compute_durability reads."""
+    """A minimal coaching_state row, the shape all_state()/compute_proposal_durability reads."""
     return {"value": value, "source": source}
 
 
