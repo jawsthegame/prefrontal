@@ -80,7 +80,7 @@ struct TodoRow: View {
     @State private var showEdit = false
 
     var body: some View {
-        SwipeToReveal(label: "Drop", systemImage: "trash", tint: Brand.danger) {
+        SwipeToReveal(label: "Drop", systemImage: "trash", tint: Brand.danger, cornerRadius: 12) {
             await drop()
         } content: {
             Card {
@@ -113,6 +113,10 @@ struct TodoRow: View {
                 }
             }
         }
+        // Card's own shadow is a halo outside the radius-12 silhouette, so the
+        // SwipeToReveal clip removes it; recreate it here, outside the clip, to
+        // match every other Card.
+        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
         .sheet(isPresented: $showDelegate) {
             DelegateSheet(todoId: todo.id, reload: reload)
         }

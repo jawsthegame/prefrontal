@@ -138,6 +138,9 @@ struct SwipeToReveal<Content: View>: View {
     /// Card fill the sliding content sits on, so it fully masks the button when
     /// closed. Defaults to the standard card surface.
     var surface: Color = Brand.card
+    /// Corner radius of the clip masking the reveal. Match the wrapped content's
+    /// radius so its corners aren't reshaped — `Card` is 12, a bare row is 10.
+    var cornerRadius: CGFloat = 10
     let action: () async -> Void
     @ViewBuilder var content: Content
 
@@ -159,7 +162,7 @@ struct SwipeToReveal<Content: View>: View {
                 .frame(width: revealWidth)
                 .frame(maxHeight: .infinity)
                 .background(tint)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
             .buttonStyle(.plain)
             .opacity(offset < -1 ? 1 : 0)
@@ -177,7 +180,7 @@ struct SwipeToReveal<Content: View>: View {
                 // the swipe is clearly horizontal (see `engaged`).
                 .simultaneousGesture(drag)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     private var drag: some Gesture {
