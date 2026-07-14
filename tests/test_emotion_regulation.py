@@ -18,6 +18,8 @@ from prefrontal.emotion_regulation import (
     CRISIS_MESSAGE,
     LAST_SKILL_STATE_KEY,
     SKILLS,
+    SUPPORT_CONTEXT_PREFIX,
+    SUPPORT_CRISIS_KEY,
     build_support,
     infer_state,
     looks_like_crisis,
@@ -159,6 +161,24 @@ def test_record_support_logs_checkin_and_rotates(memory):
     # The next request for the same state rotates off the last skill.
     r2 = build_support(memory, "I'm overwhelmed")
     assert r2.skill_key != r1.skill_key
+
+
+def test_support_checkin_context_is_the_wire_format_the_gate_reads(memory):
+    """The check-in context binds to the exported constants, not a loose literal.
+
+    The coaching vulnerability gate filters ``checkin`` episodes on
+    ``SUPPORT_CONTEXT_PREFIX`` and distinguishes a crisis by the ``SUPPORT_CRISIS_KEY``
+    suffix. Pin both the ordinary and crisis writer paths to those exact strings so
+    the reader and writer can't drift apart.
+    """
+    record_support(memory, build_support(memory, "I'm overwhelmed"))
+    record_support(memory, build_support(memory, "I want to kill myself"))  # crisis screen
+    contexts = [c.get("context") for c in memory.episodes_by_type("checkin")]
+    assert f"{SUPPORT_CONTEXT_PREFIX}overwhelm" in contexts
+    assert f"{SUPPORT_CONTEXT_PREFIX}{SUPPORT_CRISIS_KEY}" in contexts
+    # Every support check-in shares the prefix the gate filters on.
+    support = [c for c in contexts if c and c.startswith(SUPPORT_CONTEXT_PREFIX)]
+    assert len(support) == 2
 
 
 def test_one_tap_no_text_yields_a_generic_skill(memory):

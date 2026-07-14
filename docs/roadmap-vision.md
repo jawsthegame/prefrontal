@@ -268,8 +268,15 @@ outcome for this population. *(Design commandments 5, 6, 8, 9.)*
 **What to build (on the coaching tick):**
 - **Adopt the JITAI six-component model as the data model** for the existing
   coaching engine (`coaching.py`): decision points, intervention options,
-  tailoring variables, decision rules, and — the two Prefrontal doesn't yet model
-  explicitly — **states of vulnerability** and **states of receptivity.**
+  tailoring variables, decision rules, and the two Prefrontal didn't originally
+  model explicitly — **states of receptivity** and **states of vulnerability** —
+  both now modeled (receptivity below; vulnerability next). *(Vulnerability gate
+  ✅ shipped: `coaching.vulnerable` holds non-critical cues for a bounded cooldown
+  after the user reaches for in-the-moment emotional support — the honest,
+  already-logged "state where a nudge could do harm" — with a longer hold after a
+  crisis screen. Same contract as the receptivity gate: `critical` always passes,
+  pure, fail-open, tunable via `coach_vulnerability_minutes` /
+  `coach_vulnerability_crisis_minutes`.)*
 - **Learn interruptibility per user.** Extend the already-shipped
   `channel_response` learning into a receptivity model: *when* is this person
   reachable, and when is silence correct? Default to silence when receptivity is
@@ -564,10 +571,13 @@ intervention evidence.)
    (hour / weekday / channel / recent dosage) that supersedes the fixed-threshold
    rules gate — but **only** once `receptivity_calibration` (walk-forward) shows it
    beats the pooled baseline on that user's own history, exactly the honesty bar the
-   §4 bias/channel checks set; dormant-until-earned on sparse data. What remains is
-   the *vulnerability* half of JITAI's model (states where a nudge could do harm),
-   and richer context (calendar gaps, wearables). *(M3's closing reach, mostly
-   closed.)*
+   §4 bias/channel checks set; dormant-until-earned on sparse data. The
+   *vulnerability* half of JITAI's model has now landed too (`coaching.vulnerable`:
+   hold non-critical cues for a bounded cooldown after the user reaches for
+   emotional support — the honest "state where a nudge could do harm" — longer after
+   a crisis screen, `critical` exempt, fail-open). What remains is richer *proactive*
+   context (wearable sleep/HRV via HealthKit — the M3 anchor's ~1–2yr reach; calendar
+   gaps already feed the open-window offer). *(M3's closing reach, mostly closed.)*
 
 **Already well-aligned** (so the audit is calibrated): local-first/privacy;
 miss-as-data *for the system*; the encouragement/panic/recovery layer; one-tap
