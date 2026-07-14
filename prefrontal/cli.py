@@ -2026,9 +2026,11 @@ def _cmd_notify(args: argparse.Namespace) -> int:
     Exercises the real delivery stack end-to-end — the same
     :class:`~prefrontal.integrations.delivery.DeliveryClient` and per-user
     :func:`~prefrontal.integrations.delivery.resolve_route` the coaching tick uses
-    — so it confirms native APNs push is wired up (device token + signing creds)
-    before you rely on a nudge landing. Prints where it routed and the transport's
-    result; a plain push (no action buttons), so no signing config is needed.
+    — so it confirms native APNs push is wired up (device token + APNS_* signing
+    creds) before you rely on a nudge landing. Prints where it routed and the
+    transport's result. It sends a plain push (no action buttons), so the
+    *button*-signing config (``OAUTH_BASE_URL``/``SESSION_SECRET``) isn't needed —
+    but the APNs creds above still are.
 
     Args:
         args: Parsed arguments; uses ``db_path``, ``user``, ``message``, ``channel``.
