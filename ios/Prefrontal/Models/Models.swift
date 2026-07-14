@@ -782,13 +782,12 @@ struct SweepResult: Codable { let created: Int }
 /// A task you keep bailing on (`GET /todos/stuck`) — repeated misses on the same
 /// title. Carries a tiny first step and a body-double ("start together")
 /// suggestion, the Task-Paralysis intervention a plain reminder won't fix.
-struct StuckTodo: Codable, Identifiable {
+struct StuckTodo: Codable {
     let title: String
     let misses: Int
     let attempts: Int
     let firstStep: String?
     let suggestion: String?
-    var id: String { title }
 
     enum CodingKeys: String, CodingKey {
         case title, misses, attempts, suggestion

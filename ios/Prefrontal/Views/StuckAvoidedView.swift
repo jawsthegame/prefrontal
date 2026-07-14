@@ -76,7 +76,7 @@ struct StuckAvoidedView: View {
             CardLabel(text: "Stuck — try a body-double")
             Text("Tasks you keep bailing on. A solo start isn't working — starting alongside someone helps.")
                 .font(.caption).foregroundStyle(Brand.muted)
-            ForEach(Array(stuck.enumerated()), id: \.element.id) { idx, s in
+            ForEach(Array(stuck.enumerated()), id: \.offset) { idx, s in
                 if idx > 0 { Divider().overlay(Brand.line) }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(s.title).font(.subheadline.weight(.medium)).foregroundStyle(Brand.nearWhite)
@@ -106,11 +106,15 @@ struct StuckAvoidedView: View {
     private func load() async {
         do {
             let client = try await MainActor.run { try APIClient() }
-            async let a = client.avoidedTodos()
-            async let s = client.stuckTodos()
-            avoided = try await a
-            stuck = try await s
-            error = nil
+            async let aRes = client.avoidedTodos()
+            async let sRes = client.stuckTodos()
+            // Best-effort + independent: a partial outage still shows the half
+            // that loaded; only surface an error when both reads fail.
+            let a = try? await aRes
+            let s = try? await sRes
+            avoided = a ?? []
+            stuck = s ?? []
+            error = (a == nil && s == nil) ? "Couldn't load stuck & avoided right now." : nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
