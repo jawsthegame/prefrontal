@@ -38,6 +38,7 @@ from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.modules import get
 from prefrontal.receptivity import (
+    COACH_NUDGE_CONTEXT_PREFIX,
     ReceptivityModel,
     context_cell,
     observations_from_episodes,
@@ -1291,3 +1292,80 @@ def test_gate_fails_open_when_model_read_raises():
     # ignore history) → the nudge fires rather than being silenced.
     decisions = decide(store, [_cue("nudge", dedup="n")], _ctx())
     assert [d.cue.dedup_key for d in decisions] == ["n"]
+
+
+# --- Open Window (M3 calendar-gap nudge) flows through the engine ------------
+
+_GAP_NOON = datetime(2026, 7, 2, 12, 0, 0)  # inside the default responsive window
+
+
+def _tick_store_with_open_window():
+    """An unscoped store whose user has an avoided todo and a real 45-min gap before
+    the next commitment at ``_GAP_NOON`` — the open_window trigger shape."""
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "tester", display_name="T", token=SECRET, is_operator=True)
+    scoped = unscoped.scoped(unscoped.get_user("tester")["id"])
+    scoped.set_state("responsive_hours_start", "0", source="explicit")
+    scoped.set_state("responsive_hours_end", "0", source="explicit")
+    tid = scoped.add_todo("File the reimbursement form", estimate_minutes=20.0, priority=2)
+    created = (_GAP_NOON - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+    scoped.conn.execute("UPDATE todos SET created_at = ? WHERE id = ?", (created, tid))
+    start = (_GAP_NOON + timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S")
+    end = (_GAP_NOON + timedelta(minutes=75)).strftime("%Y-%m-%d %H:%M:%S")
+    scoped.upsert_commitment(title="Team sync", start_at=start, end_at=end, source="manual")
+    scoped.conn.commit()
+    return conn, unscoped, tid
+
+
+def test_run_coaching_tick_fires_open_window_as_a_gated_push():
+    """A full tick surfaces the gap offer as a non-critical push, coordinates the
+    task_paralysis stand-down, and records the fire so a second tick is held."""
+    from prefrontal.coaching import run_coaching_tick
+
+    conn, unscoped, tid = _tick_store_with_open_window()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        settings = Settings(timezone="UTC")
+        result = run_coaching_tick(
+            store, settings=settings, ollama=_offline_ollama(settings), now=_GAP_NOON
+        )
+        ow = [d for d in result.decisions if d.cue.context_key == "open_window"]
+        assert len(ow) == 1
+        d = ow[0]
+        assert d.cue.module == "open_window"
+        assert d.cue.urgency == "nudge"   # never critical
+        assert d.channel == "push"        # nudge floor, not the critical voice call
+        assert d.fire is True
+        assert d.cue.ref["todo_id"] == tid
+        # Option A: no other module double-nudged the same todo this tick.
+        assert all(
+            dec.cue.module == "open_window" or dec.cue.ref.get("todo_id") != tid
+            for dec in result.decisions
+        )
+        # record_fired ran inside the tick → the identical offer is held next tick.
+        second = run_coaching_tick(
+            store, settings=settings, ollama=_offline_ollama(settings), now=_GAP_NOON
+        )
+        assert [dec for dec in second.decisions if dec.cue.context_key == "open_window"] == []
+    finally:
+        conn.close()
+
+
+def test_open_window_cue_is_receptivity_gated_like_any_nudge():
+    """The gap offer is an ordinary non-critical cue, so decide()'s receptivity gate
+    holds it after a run of ignored nudges and lets it through when receptive."""
+    cue = Cue(
+        module="open_window", intervention="gap_offer", urgency="nudge",
+        text="~30 min free before your 2pm — knock out the form?",
+        context_key="open_window", dedup_key="open_window:7", ref={"todo_id": 7},
+    )
+    # Three straight ignored coach nudges → not receptive → the offer is held.
+    ignored = _FakeStore()
+    for _ in range(3):
+        ignored.log_episode(
+            "reminder", context=f"{COACH_NUDGE_CONTEXT_PREFIX} open_window", outcome="miss"
+        )
+    assert decide(ignored, [cue], _ctx()) == []
+    # A receptive store lets the very same cue through as a push.
+    assert [d.channel for d in decide(_FakeStore(), [cue], _ctx())] == ["push"]

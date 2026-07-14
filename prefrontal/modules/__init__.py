@@ -10,6 +10,8 @@ assistant. Each module targets one challenge:
 - :mod:`prefrontal.modules.impulsivity` — friction before impulsive switches.
 - :mod:`prefrontal.modules.location_anchor` — escalating nudges back to a stated
   intention as its time window elapses (the "Coffee Shop Nudge").
+- :mod:`prefrontal.modules.open_window` — offers a real free window before your
+  next commitment for an avoided todo that fits (the proactive twin of /todos/now).
 - :mod:`prefrontal.modules.implementation_intention` — surfaces a pre-committed
   if-then plan (cue → tiny action) the moment its cue is detected.
 - :mod:`prefrontal.modules.trip_tracking` — passively tracks undeclared round
@@ -37,6 +39,7 @@ from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after
     implementation_intention,
     impulsivity,
     location_anchor,
+    open_window,
     projects,
     self_care,
     task_paralysis,

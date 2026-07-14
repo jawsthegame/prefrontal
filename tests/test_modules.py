@@ -599,3 +599,175 @@ def test_morning_routine_parses_real_departure_notes(store):
     result = adapt_morning_routine(store)
     assert result["changed"] is True
     assert result["routine"] > DEFAULT_MORNING_ROUTINE_MINUTES
+
+
+# --- Open Window (calendar-gap-aware proactive nudge, M3) --------------------
+#
+# The module gates on work_window_now(ctx.now, tz), so every test pins ``now`` to a
+# fixed midday instant rather than the wall clock — otherwise a suite run at 3am
+# would flake on the waking-hours check.
+
+_GAP_NOON = datetime(2026, 7, 2, 12, 0, 0)  # inside the default 06:00–22:00 waking band (UTC)
+
+
+def _gap_ctx(now=_GAP_NOON):
+    """A coaching context pinned to midday UTC, so the waking-hours bound is stable."""
+    return CoachContext(now=now, timezone="UTC")
+
+
+def _avoided_fitting_todo(
+    store, *, title="File the reimbursement form", estimate_minutes=20.0,
+    priority=2, days_open=5.0, now=_GAP_NOON,
+):
+    """An open todo old + important enough to read as avoided, sized to fit a gap."""
+    tid = store.add_todo(title, estimate_minutes=estimate_minutes, priority=priority)
+    created = (now - timedelta(days=days_open)).strftime("%Y-%m-%d %H:%M:%S")
+    store.conn.execute("UPDATE todos SET created_at = ? WHERE id = ?", (created, tid))
+    store.conn.commit()
+    return tid
+
+
+def _commitment_in(store, minutes_ahead, *, minutes_long=30.0, title="Team sync", now=_GAP_NOON):
+    """An active commitment starting ``minutes_ahead`` of the pinned now."""
+    start = (now + timedelta(minutes=minutes_ahead)).strftime("%Y-%m-%d %H:%M:%S")
+    end = (now + timedelta(minutes=minutes_ahead + minutes_long)).strftime("%Y-%m-%d %H:%M:%S")
+    store.upsert_commitment(title=title, start_at=start, end_at=end, source="manual")
+
+
+def test_open_window_offers_avoided_todo_in_a_real_gap(store):
+    """A genuine free window + an avoided todo that fits → one open_window nudge."""
+    tid = _avoided_fitting_todo(store)
+    _commitment_in(store, 45)  # 45 min free before the next thing
+    cues = get("open_window").evaluate(store, _gap_ctx())
+    assert len(cues) == 1
+    cue = cues[0]
+    assert cue.module == "open_window"
+    assert cue.intervention == "gap_offer"
+    assert cue.urgency == "nudge"  # never critical
+    assert cue.context_key == "open_window"
+    assert cue.dedup_key == f"open_window:{tid}"
+    assert cue.ref["todo_id"] == tid
+    assert cue.ref["gap_minutes"] == 45
+    assert "File the reimbursement form" in cue.text
+    assert "45 min" in cue.text
+
+
+def test_open_window_silent_when_busy_now(store):
+    """A commitment in progress (available_now == 0) → no offer."""
+    _avoided_fitting_todo(store)
+    _commitment_in(store, -10, minutes_long=60)  # started 10 min ago, still running
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
+def test_open_window_silent_during_in_progress_multiday_commitment(store):
+    """An all-day / multi-day block still in progress — but whose start_at predates
+    the commitment lookback — must still read as busy, not a free window.
+
+    Regression: ``commitments_between`` filters by ``start_at``, so a lookback too
+    short to reach the block's start would miss it and wrongly fire an offer while
+    the user is actually busy (the exact mistimed-nudge failure this feature avoids).
+    """
+    _avoided_fitting_todo(store)
+    # A 4-day conference: started 2 days ago, ends 2 days from now — well before any
+    # short lookback, but the user is busy the whole time (available_now == 0).
+    start = (_GAP_NOON - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    end = (_GAP_NOON + timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    store.upsert_commitment(title="DevConf", start_at=start, end_at=end, source="manual")
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
+def test_open_window_silent_when_gap_below_minimum(store):
+    """A gap shorter than coach_gap_min_minutes (default 15) → no offer."""
+    _avoided_fitting_todo(store)
+    _commitment_in(store, 10)  # only 10 min free
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
+def test_open_window_silent_without_an_avoided_fitting_todo(store):
+    """A real gap but only a fresh (not-yet-avoided) todo → nothing worth pushing.
+
+    ``pick_now`` would return it as a plain ``"fits"`` best-guess; the proactive push
+    fires only for a genuinely *avoided* pick, so this stays quiet.
+    """
+    store.add_todo("Skim the newsletter", estimate_minutes=10.0, priority=1)
+    _commitment_in(store, 60)
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
+def test_open_window_silent_outside_waking_hours(store):
+    """Outside the waking band work_window_now says "not within" → no offer."""
+    night = datetime(2026, 7, 2, 3, 0, 0)  # 03:00 UTC, inside the default off-zone
+    _avoided_fitting_todo(store, now=night)
+    _commitment_in(store, 45, now=night)
+    assert get("open_window").evaluate(store, _gap_ctx(night)) == []
+
+
+def test_open_window_silent_when_todo_window_excludes_now(store):
+    """A todo whose own suggestion window excludes now is filtered out (todo_allowed_at)."""
+    tid = _avoided_fitting_todo(store)
+    # Pin the todo to an early-morning-only window; at midday it's not suggestible.
+    store.set_todo_window(tid, "06:00-09:00")
+    _commitment_in(store, 45)
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
+def test_open_window_claims_todo_so_task_paralysis_stands_down(store):
+    """Option A: when open_window offers a todo into a gap, task_paralysis must not
+    also nudge that same todo this tick — the gap-anchored cue takes precedence."""
+    tid = _avoided_fitting_todo(store)
+    _commitment_in(store, 45)
+    ctx = _gap_ctx()
+
+    # Sanity: with no claim, task_paralysis would fire for that very avoided todo.
+    solo = get("task_paralysis").evaluate(store, _gap_ctx())
+    assert [c.ref["todo_id"] for c in solo] == [tid]
+
+    # before_collect runs before any evaluate in a real tick and fills the shared
+    # claim set, so the stand-down is order-independent.
+    get("open_window").before_collect(store, ctx)
+    assert tid in ctx.claimed_todo_ids
+
+    assert [c.ref["todo_id"] for c in get("open_window").evaluate(store, ctx)] == [tid]
+    # task_paralysis now skips the claimed todo — and it was the only avoided one, so
+    # it stands down entirely.
+    assert get("task_paralysis").evaluate(store, ctx) == []
+
+
+def test_open_window_suppresses_identical_reoffer(store):
+    """After an offer fires, the same (todo, next commitment) pitch is held next tick,
+    so a long free afternoon doesn't re-fire every tick (beyond the debounce)."""
+    from prefrontal.coaching import Decision
+
+    _avoided_fitting_todo(store)
+    _commitment_in(store, 45)
+    ctx = _gap_ctx()
+    mod = get("open_window")
+    cues = mod.evaluate(store, ctx)
+    assert len(cues) == 1
+    # Simulate the engine committing the fire → the after_fire marker write.
+    mod.after_fire(store, [Decision(cue=cues[0], channel="push", text=cues[0].text)], ctx)
+    # Identical situation on the next tick → held.
+    assert mod.evaluate(store, ctx) == []
+
+
+def test_open_window_after_fire_ignores_a_todo_idless_ref(store):
+    """Defensive: a decision whose ref lacks a todo_id never stamps the anti-spam
+    marker — a "None:…" signature would wedge the gate shut for every future offer."""
+    from prefrontal.coaching import Cue, Decision
+    from prefrontal.modules.open_window import _LAST_OFFER_KEY
+
+    mod = get("open_window")
+    bogus = Cue(
+        module="open_window", intervention="gap_offer", urgency="nudge", text="x",
+        context_key="open_window", dedup_key="open_window:0", ref={},  # no todo_id
+    )
+    mod.after_fire(store, [Decision(cue=bogus, channel="push", text="x")], ctx=_gap_ctx())
+    assert store.get_state(_LAST_OFFER_KEY) is None
+
+
+def test_open_window_seeds_its_gap_minimum(store):
+    """Enabling the module seeds the coach_gap_min_minutes tunable (non-clobbering)."""
+    from prefrontal.modules.open_window import COACH_GAP_MIN_KEY
+
+    get("open_window").seed(store)
+    assert store.get_state(COACH_GAP_MIN_KEY) == "15"

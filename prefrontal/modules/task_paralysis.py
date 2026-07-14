@@ -303,10 +303,18 @@ class TaskParalysisModule(Module):
         Any note the user attached to the target todo is folded onto the end
         (:func:`~prefrontal.coaching.note_hint`), so the context they left rides
         along. Quiet hours + debounce are applied downstream by the coaching engine.
+
+        **Precedence:** a todo another producer has already claimed this tick
+        (``ctx.claimed_todo_ids`` — today the gap-anchored ``open_window`` offer,
+        which is strictly more informative) is skipped here, so the same todo is
+        never double-nudged in one tick. The claim is filled by ``open_window``'s
+        ``before_collect``, which runs before any ``evaluate``, so this sees it
+        regardless of module collection order.
         """
+        claimed = ctx.claimed_todo_ids
         open_todos = store.open_todos(exclude_delegated=True)
         conflict = focus_conflict(open_todos, ctx.now)
-        if conflict is not None:
+        if conflict is not None and conflict["instead"]["id"] not in claimed:
             working = conflict["working_on"]
             instead = conflict["instead"]
             text = (
@@ -326,7 +334,10 @@ class TaskParalysisModule(Module):
                 )
             ]
 
-        avoided = avoided_todos(open_todos, ctx.now)
+        avoided = [
+            a for a in avoided_todos(open_todos, ctx.now)
+            if a["todo"]["id"] not in claimed
+        ]
         if not avoided:
             return []
         top = avoided[0]
