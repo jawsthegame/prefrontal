@@ -2381,7 +2381,15 @@ $("#c-situations").addEventListener("click", async (ev) => {
   const label = btn.textContent;
   btn.disabled = true; btn.textContent = "…";
   try {
-    result.innerHTML = renderSituationResult(await post("/packs/situations/" + encodeURIComponent(btn.dataset.tool)));
+    // A local fetch rather than the shared post() helper: post() pops a blocking
+    // alert() on any non-2xx, which would double up with the inline error line
+    // this card already shows (e.g. a tool disabled between list and tap → 404).
+    const r = await fetch("/packs/situations/" + encodeURIComponent(btn.dataset.tool), {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: "{}",
+    });
+    if (r.status === 401) { gate("That token was rejected."); return; }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    result.innerHTML = renderSituationResult(await r.json());
   } catch (e) {
     result.innerHTML = `<div class="err">couldn't run — retry</div>`;
   } finally {
