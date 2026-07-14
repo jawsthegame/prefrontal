@@ -318,10 +318,16 @@ def test_summarize_panic_falls_back_on_non_ollama_provider_error(store):
     assert fb.source == "heuristic" and "Panic mode" in fb.text
 
 
-def test_panic_endpoint(store, noon):
+def test_panic_endpoint(store, noon, monkeypatch):
     """GET /panic returns structured buckets + rendered text, token-guarded."""
+    # Pin the endpoint's "now" to the fixed midday fixture — the route calls
+    # build_panic() with no now, so it reads prefrontal.panic.utcnow. Without this
+    # the commitment is anchored to the real clock and, in the last few minutes
+    # before UTC midnight, start (now + 5 min) rolls into tomorrow and drops out of
+    # today's panic window — a spurious flake unrelated to the behavior under test.
+    monkeypatch.setattr("prefrontal.panic.utcnow", lambda: noon)
     store.upsert_commitment(
-        title="Dentist", start_at=_at(utcnow() + timedelta(minutes=5)),
+        title="Dentist", start_at=_at(noon + timedelta(minutes=5)),
         lead_minutes=60, external_id="personal:1", hardness="hard",
     )
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET))
