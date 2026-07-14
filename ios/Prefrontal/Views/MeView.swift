@@ -15,6 +15,7 @@ struct MeView: View {
                 selfCareCard
                 if let r = review, r.enabled, r.hasContent { reviewCard(r) }
                 actionsCard
+                insightsLink
             }
             .padding(16)
         }
@@ -93,6 +94,28 @@ struct MeView: View {
                 }
             }
         }
+    }
+
+    /// Navigates to the behavioral Insights screen (stats + focus balance).
+    private var insightsLink: some View {
+        NavigationLink {
+            InsightsView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "chart.bar.xaxis").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Insights").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Estimates, follow-through, and balance over time")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var actionsCard: some View {

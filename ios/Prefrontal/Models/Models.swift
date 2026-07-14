@@ -559,5 +559,127 @@ struct MailInbox: Codable {
     }
 }
 
+// MARK: - Insights (behavioral stats + focus balance)
+
+/// Aggregated behavioral insights (`GET /stats/data`, `prefrontal/stats.py`) —
+/// the "it gets better the longer you use it" story rolled up from the learning
+/// loop's episodes. A lean subset of the full payload (the estimate scatter
+/// `points` and per-feature rows are dropped; the glanceable summaries stay).
+/// Pure read. All fields are safe/zeroed on an empty history.
+struct Stats: Codable {
+    let timeEstimation: TimeEstimation
+    let followThrough: FollowThrough
+    let channels: [Channel]
+    let selfCare: [SelfCareStat]
+    let featureUsage: FeatureUsage
+    let counts: EpisodeCounts
+
+    enum CodingKeys: String, CodingKey {
+        case channels, counts
+        case timeEstimation = "time_estimation"
+        case followThrough = "follow_through"
+        case selfCare = "self_care"
+        case featureUsage = "feature_usage"
+    }
+
+    struct EpisodeCounts: Codable { let episodes: Int }
+
+    /// Estimate-vs-actual bias: `ratio` is the median actual/predicted multiplier
+    /// ("~1.4× over"); `direction` is over / under / on; `n` the sample size.
+    struct TimeEstimation: Codable {
+        let n: Int
+        let ratio: Double?
+        let direction: String?
+        let contexts: [Context]
+
+        struct Context: Codable, Identifiable {
+            let context: String
+            let n: Int
+            let ratio: Double?
+            let direction: String?
+            var id: String { context }
+        }
+    }
+
+    /// Outcomes over time: success `rate`, current success `streak`, the
+    /// success/partial/miss `split`, and a recent chronological `series`.
+    struct FollowThrough: Codable {
+        let n: Int
+        let counts: Split
+        let rate: Double?
+        let streak: Int
+        let series: [String]
+
+        struct Split: Codable { let success: Int; let partial: Int; let miss: Int }
+    }
+
+    /// Acknowledgement rate for one delivery channel ("which channel you answer").
+    struct Channel: Codable, Identifiable {
+        let channel: String
+        let n: Int
+        let acked: Int
+        let rate: Double?
+        var id: String { channel }
+    }
+
+    /// Per basic-needs check: typical-day adherence, response rate, and nudge→tap latency.
+    struct SelfCareStat: Codable, Identifiable {
+        let key: String
+        let enabled: Bool
+        let n: Int
+        let confirmed: Int
+        let target: Int
+        let avgPerDay: Double
+        let responseRate: Double?
+        let avgLatencySeconds: Double?
+        var id: String { key }
+
+        enum CodingKeys: String, CodingKey {
+            case key, enabled, n, confirmed, target
+            case avgPerDay = "avg_per_day"
+            case responseRate = "response_rate"
+            case avgLatencySeconds = "avg_latency_seconds"
+        }
+    }
+
+    /// Which features you lean on vs. ignore vs. never touch — summary counts only.
+    struct FeatureUsage: Codable {
+        let summary: Summary
+        struct Summary: Codable { let using: Int; let ignored: Int; let dormant: Int; let muted: Int }
+    }
+}
+
+/// Focus-balance rollup (`GET /balance`) — out-of-home time per life-domain over
+/// a window, with each sphere's weekly target and an underserved flag. `hint`
+/// explains a lopsided/empty view; `summary` is the one-line digest.
+struct FocusBalance: Codable {
+    let days: Int
+    /// Minutes are floats server-side (rounded to 1dp), and `target_minutes` is
+    /// null for an untargeted domain — hence `Double` / `Double?`.
+    let totalMinutes: Double
+    let summary: String?
+    let hint: String?
+    let domains: [Domain]
+
+    enum CodingKeys: String, CodingKey {
+        case days, summary, hint, domains
+        case totalMinutes = "total_minutes"
+    }
+
+    struct Domain: Codable, Identifiable {
+        let domain: String
+        let minutes: Double
+        let count: Int
+        let targetMinutes: Double?
+        let underserved: Bool
+        var id: String { domain }
+
+        enum CodingKeys: String, CodingKey {
+            case domain, minutes, count, underserved
+            case targetMinutes = "target_minutes"
+        }
+    }
+}
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}

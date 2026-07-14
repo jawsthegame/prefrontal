@@ -45,6 +45,12 @@ extension APIClient {
     /// Read-only mail snapshot: messages awaiting action + a recent feed. Safe
     /// to poll (no side effects). Empty lists when mail monitoring is unconfigured.
     func mail() async throws -> MailInbox { try await get("mail", as: MailInbox.self) }
+    /// Aggregated behavioral insights (estimates, follow-through, channels, …). Pure read.
+    func stats() async throws -> Stats { try await get("stats/data", as: Stats.self) }
+    /// Focus-balance rollup — out-of-home time per life-domain over `days`. Pure read.
+    func focusBalance(days: Int = 7) async throws -> FocusBalance {
+        try await get("balance", query: ["days": "\(days)"], as: FocusBalance.self)
+    }
 
     // Todo writes
     func addTodo(title: String) async throws { try await post("todos", json: ["title": title], queueable: true) }

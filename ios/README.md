@@ -3,7 +3,8 @@
 A native SwiftUI client for the Prefrontal API. It mirrors the daily-driver
 surface of the web dashboard: a **Today** glance, interactive **Todos**, a
 **Mail** triage inbox, a **Calendar** week view + free-slot finder, and a **Me**
-tab for self-care, focus/outing controls, and settings — plus a **Panic** sheet.
+tab for self-care, focus/outing controls, settings, and a behavioral **Insights**
+screen — plus a **Panic** sheet.
 
 It talks to the same FastAPI service as everything else, over Tailscale, using
 the `X-Prefrontal-Token` header. Its **App Intents** (Siri / Action Button /
@@ -205,6 +206,7 @@ during onboarding.
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
 | Me | `/self-care` + `/self-care/mark`, `/self-care/review` (end-of-day gap recap); `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
+| Insights | `/stats/data` (estimate bias, follow-through, channels, self-care, feature usage), `/balance` (focus balance) — reached from **Me** |
 | Panic | `/panic` |
 
 ## Native push (APNs)
