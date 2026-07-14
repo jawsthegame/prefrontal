@@ -425,15 +425,17 @@ def receptive(store: Any, ctx: CoachContext) -> bool:
     if streak <= 0:
         return True
     try:
-        episodes = store.episodes_by_type("reminder", limit=_BACKOFF_SCAN_LIMIT)
+        # Filter to coaching outcomes *in SQL* (not post-hoc over a fixed window),
+        # so a burst of other `reminder` episodes — e.g. ingestion reminders — can't
+        # crowd the most-recent coach nudges out of the scan and mask the streak.
+        recent = store.episodes_by_type(
+            "reminder",
+            limit=max(streak, _BACKOFF_SCAN_LIMIT),
+            context_prefix=_COACH_NUDGE_CONTEXT_PREFIX,
+        )
     except Exception:  # noqa: BLE001 — a missing/failed read must never silence a nudge
         logger.debug("receptivity read failed; treating user as receptive", exc_info=True)
         return True
-    recent = [
-        e
-        for e in episodes
-        if str(e.get("context") or "").startswith(_COACH_NUDGE_CONTEXT_PREFIX)
-    ]
     if len(recent) < streak:
         return True  # not enough recent coaching outcomes to justify backing off
     # episodes_by_type returns newest-first, so the first `streak` are the latest.

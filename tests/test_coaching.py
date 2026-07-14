@@ -81,9 +81,18 @@ class _FakeStore:
         self.episodes.append({"episode_type": episode_type, **kw})
         return len(self.episodes)
 
-    def episodes_by_type(self, episode_type, limit=100):
-        # Newest-first, like the real store (which orders by timestamp/id desc).
-        matching = [e for e in self.episodes if e.get("episode_type") == episode_type]
+    def episodes_by_type(self, episode_type, limit=100, *, context_prefix=None):
+        # Newest-first, like the real store (which orders by timestamp/id desc),
+        # with the same SQL-level context-prefix filter applied before the limit.
+        matching = [
+            e
+            for e in self.episodes
+            if e.get("episode_type") == episode_type
+            and (
+                context_prefix is None
+                or str(e.get("context") or "").startswith(context_prefix)
+            )
+        ]
         return list(reversed(matching))[:limit]
 
 
@@ -207,6 +216,16 @@ def test_receptive_ignores_non_coach_reminder_episodes():
     store = _FakeStore()
     store.episodes = [_nudge_outcome(False, context="departure reminder") for _ in range(5)]
     assert receptive(store, _ctx()) is True
+
+
+def test_receptive_backoff_not_masked_by_interleaved_non_coach_reminders():
+    # Three ignored coach nudges, then a burst of unrelated reminders. A fixed
+    # scan-then-filter window would let the burst crowd the coach misses out of
+    # view (falsely receptive); the SQL context-prefix filter still sees them.
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]
+    store.episodes += [_nudge_outcome(False, context="ingest reminder") for _ in range(20)]
+    assert receptive(store, _ctx()) is False
 
 
 def test_receptive_disabled_by_zero_threshold():
