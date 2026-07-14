@@ -438,13 +438,16 @@ These advance in parallel with every milestone and continue the existing
 - **Invisible-load / household.** Keep the shared surface *neutral and equally
   visible* (commandment 10). Provenance makes mental load legible; the delta
   digest balances it. Never let it become a nagging proxy.
-- **Emotion regulation as a first-class concern.** ED is a core, large-effect
-  ADHD feature and there is *no validated ER app for ADHD adults* — a real gap.
-  The encouragement/recovery layer is the seed; ACT (accept + act on values) and
-  DBT distress-tolerance micro-skills, delivered momentarily when context flags a
-  hard moment, are the evidence-matched next step. Handle "RSD" as a
-  lived-experience framing grounded in the validated emotional-dysregulation
-  construct, not as settled science.
+- **Emotion regulation as a first-class concern.** *(First cut ✅ shipped — the
+  `emotion_regulation` module.)* ED is a core, large-effect ADHD feature and there
+  is *no validated ER app for ADHD adults* — a real gap. The encouragement/recovery
+  layer was the seed; the module now delivers ACT (accept + act on values) and DBT
+  distress-tolerance micro-skills **on demand** in a hard moment (`POST /emotion/support`),
+  with self-compassion framing for rejection-sensitive moments — "RSD" as lived
+  experience, not settled science — and a crisis-language screen that routes to
+  resources rather than a skill. Next on this track: **proactive** acute-moment
+  detection (context flags the moment, not just the user), a wider skill library,
+  and outcome-learning on which skills land for whom.
 
 ---
 
@@ -492,14 +495,19 @@ intervention evidence.)
    personal, daily-use tool) — but the product path runs through a **hosted /
    one-tap onboarding** option, or the thesis ("the system carries the load")
    leaks back out through the deploy step. *(Cuts against commandment 7.)*
-2. **Emotion regulation is under-built relative to its centrality.** Emotional
-   dysregulation is a *core* feature (Hedges' *g* ≈ 1.17, the "fourth core
-   symptom") and no validated ER app exists for ADHD adults — a gap to own. But
-   it isn't a first-class module: [`prefrontal/modules/`](../prefrontal/modules/)
-   is all cognitive-EF (time_blindness, task_paralysis, hyperfocus, impulsivity,
-   location_anchor, self_care, trip_tracking, delegation_checkin, projects). ED is
-   handled only *indirectly* via encouragement/panic/recovery. The taxonomy
-   under-weights the highest-effect-size symptom. *(Addressed by the §6 emotion-
+2. **~~Emotion regulation is under-built relative to its centrality.~~** ✅
+   **First cut shipped** (`emotion_regulation` module + `prefrontal/emotion_regulation.py`).
+   Emotional dysregulation is a *core* feature (Hedges' *g* ≈ 1.17, the "fourth core
+   symptom") and no validated ER app exists for ADHD adults — a gap to own. It's now
+   a first-class module rather than handled only *indirectly* via encouragement/panic/
+   recovery: on demand (`POST /emotion/support`, one tap or a few words) it offers one
+   brief, evidence-matched micro-skill — ACT acceptance, a DBT distress-tolerance move
+   (paced breathing / grounding / cold reset / radical acceptance), or self-compassion
+   framing for the rejection-sensitive moments — fitted to the feeling, with a gentle
+   acceptance line optionally folded into the rough-day recovery. **General-wellness
+   support, not therapy:** crisis language is screened first and answered with
+   resources, never a coping skill. Remaining reach (per the §6 track): proactive
+   acute-moment detection, and a wider skill library. *(Delivered by the §6 emotion-
    regulation track.)*
 3. **~~The stats screen reintroduces a shame vector the rest of the app avoids.~~**
    ✅ **Resolved** (PR #628). [`prefrontal/stats.py`](../prefrontal/stats.py) had

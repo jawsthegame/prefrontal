@@ -16,6 +16,9 @@ assistant. Each module targets one challenge:
   trips (leave home → return), then asks for a label, category, and honest note.
 - :mod:`prefrontal.modules.self_care` — basic-needs check (v1: "have you eaten?")
   that deliberately pierces a focus block; opt-in.
+- :mod:`prefrontal.modules.emotion_regulation` — on-demand, evidence-matched
+  micro-skills (ACT / DBT distress-tolerance) for a hard emotional moment, with a
+  crisis-safety boundary; the feeling side of overwhelm, not the task or the day.
 
 Importing this package registers all built-in modules with
 :mod:`prefrontal.modules.registry`. Enable a subset via ``PREFRONTAL_MODULES``
@@ -29,6 +32,7 @@ and import it here so it loads.
 # Import built-in modules for their registration side effects.
 from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after registry)
     delegation_checkin,
+    emotion_regulation,
     hyperfocus,
     implementation_intention,
     impulsivity,

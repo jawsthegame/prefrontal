@@ -24,6 +24,10 @@ from prefrontal.coaching import (
     resolve_ack,
     run_coaching_tick,
 )
+from prefrontal.emotion_regulation import (
+    build_support,
+    record_support,
+)
 from prefrontal.encouragement import (
     already_sent_today,
     assess_day,
@@ -297,5 +301,34 @@ def build_router(services: RouterServices) -> APIRouter:
         now = utcnow()
         mark_sent_today(ctx.store, now=now)
         return {"already_sent": True, "date": now.strftime("%Y-%m-%d")}
+
+    @router.post("/emotion/support", tags=["coaching"])
+    def emotion_support(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """In-the-moment emotion-regulation support (on demand, model-free).
+
+        The user reaches for help in a hard moment — one tap (empty body) or a few
+        words (``{"text": "..."}``) — and gets **one** brief, evidence-matched
+        micro-skill (ACT / DBT distress-tolerance / self-compassion) fitted to the
+        feeling. Fast and deterministic; a Shortcut or the app can deliver ``text``
+        directly.
+
+        Safety boundary: the text is screened for crisis language **first**; if it
+        trips, the response is resources and an urge to reach a person — never a
+        coping skill (``kind == "crisis"``). This is general-wellness support, not
+        therapy or crisis intervention.
+        """
+        text = (body or {}).get("text") if isinstance(body, dict) else None
+        response = build_support(ctx.store, text)
+        record_support(ctx.store, response)
+        return {
+            "kind": response.kind,
+            "state": response.state,
+            "skill": response.skill_key,
+            "family": response.family,
+            "text": response.message,
+        }
 
     return router
