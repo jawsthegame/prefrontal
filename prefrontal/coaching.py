@@ -33,6 +33,12 @@ from typing import Any, Protocol
 
 from prefrontal.clock import TS_FMT, local_datetime, local_hour_of, parse_hour
 from prefrontal.clock import parse_ts as _parse_ts
+from prefrontal.emotion_regulation import (
+    SUPPORT_CONTEXT_PREFIX as _SUPPORT_CONTEXT_PREFIX,
+)
+from prefrontal.emotion_regulation import (
+    SUPPORT_CRISIS_KEY as _SUPPORT_CRISIS_KEY,
+)
 from prefrontal.log import get_logger
 from prefrontal.receptivity import (
     COACH_NUDGE_CONTEXT_PREFIX as _COACH_NUDGE_CONTEXT_PREFIX,
@@ -190,6 +196,55 @@ DEFAULT_DAILY_NUDGE_CAP = 10
 #: :func:`decide`), so the count stays internally consistent regardless of the
 #: real wall clock — which is what lets it be tested with a pinned ``now``.
 _DOSAGE_DAY_KEY = "coach_nudge_day"
+
+# --- Vulnerability gate (M3: the "states of vulnerability" JITAI component) ----
+#
+# JITAI (Nahum-Shani et al.) models two states, not one: *receptivity* — can the
+# person take in and act on a nudge? — and *vulnerability* — is this a moment where
+# an intervention could do harm? The gates above cover receptivity and dosage; this
+# is the vulnerability half, the last JITAI component the roadmap named as unmodeled,
+# read here as the guardrail it is: **hold non-critical nudges in a state where one
+# could do harm.**
+#
+# The honest, already-logged signal for such a state is the user reaching for
+# in-the-moment emotional support: :func:`prefrontal.emotion_regulation.record_support`
+# logs a ``checkin`` episode (``context="emotion support: <state|crisis>"``) every
+# time the emotion-regulation surface is used. Right after that — mid-overwhelm, or
+# worse, mid-crisis — an unsolicited "knock out that form you've dodged" is exactly
+# the mistimed interruption that does harm and earns a permanent mute. So for a
+# bounded cooldown after a support reach, the engine holds every **non-critical** cue.
+#
+# Same contract as the receptivity gate: only ever *removes* non-critical cues
+# (``critical`` — a missed hard commitment — always passes), pure, computed once per
+# tick, and **fail-open** (any read failure ⇒ not vulnerable), so a glitch can never
+# wedge delivery shut. Two tiers by severity: an ordinary hard moment holds for
+# :data:`VULNERABILITY_WINDOW_KEY` minutes; a crisis screen for the longer
+# :data:`VULNERABILITY_CRISIS_WINDOW_KEY`.
+
+#: Coaching-state key: minutes after an ordinary emotion-support check-in that the
+#: user is treated as vulnerable, so non-critical cues are held. ``0`` disables this
+#: tier.
+VULNERABILITY_WINDOW_KEY = "coach_vulnerability_minutes"
+
+#: Default hold after an ordinary hard-moment support reach. Two hours: long enough
+#: to let an acute affective spike settle before resuming proactive nudges, short
+#: enough not to silence the rest of the day.
+DEFAULT_VULNERABILITY_MINUTES = 120.0
+
+#: Coaching-state key: minutes after a *crisis* screen (the crisis tier of an
+#: emotion-support check-in) that non-critical cues are held. ``0`` disables this tier.
+VULNERABILITY_CRISIS_WINDOW_KEY = "coach_vulnerability_crisis_minutes"
+
+#: Default hold after a crisis screen. Twelve hours — the one moment where piling a
+#: productivity nudge on is most clearly harmful, so the proactive engine stays well
+#: out of the way past the acute window. (On-demand support and ``critical`` cues are
+#: unaffected; only the engine's own non-critical nudges are held.)
+DEFAULT_VULNERABILITY_CRISIS_MINUTES = 720.0
+
+#: How many recent emotion-support check-ins to scan for the vulnerability read.
+#: Bounded so the per-tick read is cheap, but large enough that a still-active crisis
+#: hold isn't hidden behind a few newer ordinary check-ins in the same window.
+_VULNERABILITY_SCAN_LIMIT = 8
 
 #: Default responsive-hours window (local clock hours) when unset.
 DEFAULT_RESPONSIVE_START = 8
@@ -638,6 +693,61 @@ def receptivity_gate(store: Any, ctx: CoachContext) -> _ReceptivityGate:
     return _ReceptivityGate(needs_channel=False, _predict=lambda _channel: is_receptive)
 
 
+def vulnerable(store: Any, ctx: CoachContext) -> bool:
+    """Whether the user is in a state where a proactive nudge could do harm (JITAI).
+
+    The *vulnerability* half of JITAI's model, read as a guardrail. Right after the
+    user reaches for in-the-moment emotional support
+    (:func:`prefrontal.emotion_regulation.build_support`, whose
+    :func:`~prefrontal.emotion_regulation.record_support` logs a ``checkin`` episode
+    under :data:`~prefrontal.emotion_regulation.SUPPORT_CONTEXT_PREFIX`), an
+    unsolicited productivity nudge is the mistimed interruption most likely to do
+    harm and earn a mute. So for a bounded cooldown after such a reach the engine
+    holds every **non-critical** cue; :func:`decide` consults this once per tick.
+
+    Two tiers by the check-in's severity: a crisis screen (context
+    ``…<SUPPORT_CRISIS_KEY>``) holds for :data:`VULNERABILITY_CRISIS_WINDOW_KEY`
+    minutes, an ordinary hard moment for :data:`VULNERABILITY_WINDOW_KEY`; a tier
+    whose window is ``0`` is disabled. Scans the most recent support check-ins
+    (:data:`_VULNERABILITY_SCAN_LIMIT`) and reports vulnerable if *any* still sits
+    inside its tier's window — so a still-active crisis hold isn't masked by a newer
+    ordinary check-in.
+
+    Like the receptivity gate this only ever *removes* non-critical cues
+    (``critical`` always passes) and is **best-effort**: any read failure returns
+    ``False`` (not vulnerable), so a missing/failed signal can never wedge delivery
+    shut — the same fail-open contract the rest of the engine's reads keep.
+    """
+    distress_window = store.get_float(VULNERABILITY_WINDOW_KEY, DEFAULT_VULNERABILITY_MINUTES)
+    crisis_window = store.get_float(
+        VULNERABILITY_CRISIS_WINDOW_KEY, DEFAULT_VULNERABILITY_CRISIS_MINUTES
+    )
+    if distress_window <= 0 and crisis_window <= 0:
+        return False  # both tiers disabled
+    try:
+        recent = store.episodes_by_type(
+            "checkin",
+            limit=_VULNERABILITY_SCAN_LIMIT,
+            context_prefix=_SUPPORT_CONTEXT_PREFIX,
+        )
+    except Exception:  # noqa: BLE001 — a failed read must never silence a nudge
+        logger.debug("vulnerability read failed; treating user as not vulnerable", exc_info=True)
+        return False
+    crisis_context = f"{_SUPPORT_CONTEXT_PREFIX}{_SUPPORT_CRISIS_KEY}"
+    for e in recent:
+        ts = _parse_ts(e.get("timestamp"))
+        if ts is None:
+            continue
+        elapsed_min = (ctx.now - ts).total_seconds() / 60.0
+        if elapsed_min < 0:
+            continue  # a future-stamped row (clock skew) must not gate delivery
+        is_crisis = str(e.get("context") or "").strip() == crisis_context
+        window = crisis_window if is_crisis else distress_window
+        if window > 0 and elapsed_min < window:
+            return True
+    return False
+
+
 def choose_channel(store: Any, cue: Cue, ctx: CoachContext) -> str:
     """Pick a delivery channel class: urgency floor, then learned bump (spec §5).
 
@@ -814,9 +924,14 @@ def decide(
     rewrite of ``ambient`` cues; both default to off so the deterministic path is
     unchanged.
 
-    Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), two
-    tick-level gates apply — both M3, both leaving ``critical`` untouched:
+    Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), three
+    tick-level gates apply — all M3, all leaving ``critical`` untouched:
 
+    - **vulnerability** (:func:`vulnerable`, computed once): hold every non-critical
+      cue while the user is in a state where a nudge could do harm — a bounded
+      cooldown after they reached for in-the-moment emotional support (longer after a
+      crisis screen). The JITAI "states of vulnerability" component, read as a
+      safety guardrail;
     - **receptivity** (:func:`receptivity_gate`, computed once): hold every
       non-critical cue when the user seems unreachable now ("default to silence when
       receptivity is low"). The rules-based :func:`receptive` by default; the
@@ -835,11 +950,20 @@ def decide(
     # warrants it. The learned gate conditions on the cue's chosen channel, so the
     # channel is picked before the check (a pure read, no side effect).
     gate = receptivity_gate(store, ctx)
+    # Vulnerability (JITAI): in a state where a nudge could do harm — a bounded window
+    # after the user reached for emotional support — hold every non-critical cue. A
+    # channel-independent, once-per-tick verdict like the rules receptivity gate;
+    # ``critical`` still passes (a missed hard commitment warrants it even then).
+    in_vulnerable_state = vulnerable(store, ctx)
     candidates: list[Decision] = []
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
         non_critical = cue.urgency != "critical"
+        # Vulnerability first (cheapest, safety-first): a hard-moment hold short-
+        # circuits the cue before any channel/receptivity work.
+        if non_critical and in_vulnerable_state:
+            continue
         # Rules gate (channel-independent): decide before the per-cue channel pick, so
         # a non-receptive tick drops its cues without N `choose_channel` pattern reads.
         if non_critical and not gate.needs_channel and not gate():

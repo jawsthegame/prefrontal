@@ -210,6 +210,21 @@ _STATE_KEYWORDS: dict[str, tuple[str, ...]] = {
 #: requests rotate rather than repeat the same skill.
 LAST_SKILL_STATE_KEY = "er_last_skill"
 
+#: Prefix stamped on the ``checkin`` episode :func:`record_support` logs for every
+#: in-the-moment support request (``context="emotion support: <state|crisis>"``).
+#: Exported as the single source of truth so the coaching engine's *vulnerability*
+#: gate — which reads these episodes to hold nudges during a hard moment — filters
+#: on the exact wire format the writer uses, and the two can't drift (mirroring how
+#: :data:`~prefrontal.receptivity.COACH_NUDGE_CONTEXT_PREFIX` binds the nudge writer
+#: and the receptivity reads).
+SUPPORT_CONTEXT_PREFIX = "emotion support: "
+
+#: The ``<state>`` slot value for a crisis screen (:func:`looks_like_crisis`), where
+#: a :class:`SupportResponse` carries no emotional ``state`` — so a crisis check-in's
+#: context is ``SUPPORT_CONTEXT_PREFIX + SUPPORT_CRISIS_KEY``. The vulnerability gate
+#: reads this as its more serious tier (a longer hold).
+SUPPORT_CRISIS_KEY = "crisis"
+
 #: Coaching-state key (opt-in, default off) gating whether a gentle acceptance
 #: line is folded into the rough-day encouragement/recovery message.
 RECOVERY_ACCEPTANCE_KEY = "emotion_recovery_acceptance"
@@ -327,7 +342,7 @@ def record_support(store: MemoryStore, response: SupportResponse) -> None:
     support response itself.
     """
     try:
-        context = f"emotion support: {response.state or 'crisis'}"
+        context = f"{SUPPORT_CONTEXT_PREFIX}{response.state or SUPPORT_CRISIS_KEY}"
         store.log_episode("checkin", acknowledged=True, context=context, outcome="success")
         if response.kind == "skill" and response.skill_key:
             store.set_state(LAST_SKILL_STATE_KEY, response.skill_key, source="inferred")

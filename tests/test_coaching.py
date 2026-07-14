@@ -31,6 +31,7 @@ from prefrontal.coaching import (
     suppressed,
     sweep_engagement,
     sweep_stale_nudges,
+    vulnerable,
 )
 from prefrontal.config import Settings
 from prefrontal.impact import utcnow
@@ -263,6 +264,107 @@ def test_decide_holds_non_critical_when_not_receptive_but_lets_critical_through(
 
 def test_decide_fires_normally_when_receptive():
     store = _FakeStore()  # no ignore history
+    cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["a", "b"]
+
+
+# -- vulnerability gate (M3): hold nudges in a state where one could do harm ---
+
+
+def _support_checkin(minutes_ago: float, *, crisis: bool = False, now=NOON) -> dict:
+    """An emotion-support `checkin` episode as record_support writes it.
+
+    ``context`` uses the exact wire format the writer stamps — the same
+    ``"emotion support: <state|crisis>"`` prefix the gate filters on — so a drift in
+    that string breaks these tests, not silently the gate.
+    """
+    ts = (now - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    state = "crisis" if crisis else "overwhelm"
+    return {
+        "episode_type": "checkin",
+        "context": f"emotion support: {state}",
+        "timestamp": ts,
+        "acknowledged": True,
+        "outcome": "success",
+    }
+
+
+def test_not_vulnerable_without_support_history():
+    # No emotion-support check-ins at all → not vulnerable.
+    assert vulnerable(_FakeStore(), _ctx()) is False
+
+
+def test_vulnerable_after_recent_support_checkin():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(10)]  # reached for support 10 min ago
+    assert vulnerable(store, _ctx()) is True
+
+
+def test_vulnerability_expires_after_window():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(200)]  # past the 120-min default hold
+    assert vulnerable(store, _ctx()) is False
+
+
+def test_crisis_holds_past_the_ordinary_window():
+    # 200 min ago: past the 120-min ordinary hold, but well inside the 720-min crisis
+    # hold — the more serious tier keeps gating.
+    store = _FakeStore()
+    store.episodes = [_support_checkin(200, crisis=True)]
+    assert vulnerable(store, _ctx()) is True
+
+
+def test_crisis_expires_after_crisis_window():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(800, crisis=True)]  # past the 720-min hold
+    assert vulnerable(store, _ctx()) is False
+
+
+def test_crisis_not_masked_by_a_newer_ordinary_checkin():
+    # A newer ordinary check-in (150 min ago) has itself expired, but an older crisis
+    # (200 min ago) is still inside its longer window — scanning must find it.
+    store = _FakeStore()
+    store.episodes = [_support_checkin(200, crisis=True), _support_checkin(150)]
+    assert vulnerable(store, _ctx()) is True
+
+
+def test_vulnerability_disabled_by_zero_windows():
+    store = _FakeStore(
+        floats={"coach_vulnerability_minutes": 0, "coach_vulnerability_crisis_minutes": 0}
+    )
+    store.episodes = [_support_checkin(1, crisis=True)]  # just now, would otherwise gate
+    assert vulnerable(store, _ctx()) is False
+
+
+def test_future_stamped_checkin_does_not_gate():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(-30)]  # 30 min in the *future* (clock skew)
+    assert vulnerable(store, _ctx()) is False
+
+
+def test_vulnerable_fails_open_when_read_raises():
+    class _Broken(_FakeStore):
+        def episodes_by_type(self, episode_type, limit=100, *, context_prefix=None):
+            raise RuntimeError("boom")
+
+    store = _Broken()
+    # A failed read must never silence a nudge → treated as not vulnerable.
+    assert vulnerable(store, _ctx()) is False
+
+
+def test_decide_holds_non_critical_when_vulnerable_but_lets_critical_through():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(5)]  # in a hard moment right now
+    cues = [_cue("nudge", dedup="a"), _cue("urgent", dedup="b"), _cue("critical", dedup="c")]
+    decisions = decide(store, cues, _ctx())
+    # Only the critical cue survives the vulnerability gate.
+    assert [d.cue.dedup_key for d in decisions] == ["c"]
+
+
+def test_decide_fires_normally_when_not_vulnerable():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(500)]  # long past any hold
     cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b")]
     decisions = decide(store, cues, _ctx())
     assert [d.cue.dedup_key for d in decisions] == ["a", "b"]
