@@ -38,6 +38,9 @@ extension APIClient {
     }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
+    /// Read-only mail snapshot: messages awaiting action + a recent feed. Safe
+    /// to poll (no side effects). Empty lists when mail monitoring is unconfigured.
+    func mail() async throws -> MailInbox { try await get("mail", as: MailInbox.self) }
 
     // Todo writes
     func addTodo(title: String) async throws { try await post("todos", json: ["title": title], queueable: true) }
