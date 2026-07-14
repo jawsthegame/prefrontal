@@ -371,6 +371,29 @@ struct SelfCare: Codable {
     }
 }
 
+/// Today's end-of-day self-care **gap** analysis — the read twin of the opt-in
+/// evening recap (`GET /self-care/review`, `prefrontal/self_care_review.py`). It
+/// reads the day's confirms back as a timeline and names the gaps a raw tally
+/// hides (a late first glass, a long stretch between breaks, a quota finished
+/// short), plus what went well. A pure read — safe to poll any time.
+struct SelfCareReview: Codable {
+    let date: String?
+    /// The self-care master switch; when off, there's nothing to show.
+    let enabled: Bool
+    /// Flattened "<Title> — <finding>" gap lines, ready to render.
+    let gaps: [String]
+    /// Short "what went well" tokens (e.g. "water 6/6", "meds").
+    let wins: [String]
+    /// True when anything at all was logged or is due today — the visibility gate
+    /// (an enabled-but-idle day stays quiet).
+    let hasContent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case date, enabled, gaps, wins
+        case hasContent = "has_content"
+    }
+}
+
 // MARK: - Available hours (per-weekday availability)
 
 /// The user's per-weekday available hours. Mirrors the server's
