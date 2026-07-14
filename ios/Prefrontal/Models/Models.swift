@@ -681,5 +681,101 @@ struct FocusBalance: Codable {
     }
 }
 
+// MARK: - Clarifications (ambiguity → honed, startable items)
+
+/// One pending clarifying question about a vague todo/commitment
+/// (`GET /clarifications`, `prefrontal/clarify.py`). Answering it hones the item
+/// into something startable — the task-initiation lever of the task-paralysis
+/// module. `options` are the candidate readings, in the order the server offers
+/// them (the index is what `resolve` takes as `option_index`).
+struct Clarification: Codable, Identifiable {
+    let id: Int
+    let targetType: String?
+    let targetId: Int?
+    let title: String
+    let question: String
+    let options: [Option]
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, question, options
+        case targetType = "target_type"
+        case targetId = "target_id"
+    }
+
+    struct Option: Codable {
+        let label: String?
+        let taskType: String?
+        /// Whether choosing this reading unlocks a built-in guided playbook.
+        let hasPlaybook: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case taskType = "task_type"
+            case hasPlaybook = "has_playbook"
+        }
+    }
+}
+
+/// A recently-resolved clarification whose chosen reading maps to a playbook, so
+/// the walkthrough can be re-opened.
+struct GuidedClarification: Codable, Identifiable {
+    let id: Int
+    let title: String
+    let answer: String?
+    let taskType: String?
+    let playbookTitle: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, answer
+        case taskType = "task_type"
+        case playbookTitle = "playbook_title"
+    }
+}
+
+/// The `/clarifications` payload: the pending review queue plus resolved items
+/// that unlocked a guide.
+struct ClarificationList: Codable {
+    let clarifications: [Clarification]
+    let guided: [GuidedClarification]
+}
+
+/// An ordered guided walkthrough for a recognized task type (the payload of
+/// `GET /clarifications/playbooks/{task_type}`, and the `playbook` on a resolve).
+struct Playbook: Codable, Identifiable {
+    let taskType: String
+    let title: String
+    let intro: String
+    let steps: [Step]
+    var id: String { taskType }
+
+    enum CodingKeys: String, CodingKey {
+        case title, intro, steps
+        case taskType = "task_type"
+    }
+
+    struct Step: Codable {
+        let title: String
+        let detail: String
+    }
+}
+
+/// The result of resolving a clarification — the honed reading, and a `playbook`
+/// when the chosen task type has a built-in guide.
+struct ClarificationResolveResult: Codable {
+    let id: Int
+    let status: String
+    let answer: String?
+    let taskType: String?
+    let playbook: Playbook?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, answer, playbook
+        case taskType = "task_type"
+    }
+}
+
+/// The `POST /clarifications/check` sweep result.
+struct SweepResult: Codable { let created: Int }
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}
