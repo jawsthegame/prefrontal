@@ -875,5 +875,70 @@ struct RescheduleResult: Codable {
     let dismissed: String?
 }
 
+// MARK: - Context Pack situation tools
+
+/// One on-demand situation tool an enabled Context Pack contributes
+/// (`GET /packs/situations`) — e.g. the Parent pack's School run. Empty list
+/// when no pack that has tools is enabled.
+struct SituationTool: Codable, Identifiable {
+    let tool: String
+    let title: String
+    let description: String?
+    var id: String { tool }
+}
+
+struct SituationList: Codable { let situations: [SituationTool] }
+
+/// The result of running a situation tool (`POST /packs/situations/{tool}`).
+/// Payloads are tool-specific; this decodes the common `headline`/`first_step`
+/// plus the known collections each built-in tool returns (school-run
+/// `departures`, pack-the-bag `checklists`, sick-day `pressing`). Unknown keys
+/// are ignored, so a new tool degrades to its headline.
+struct SituationResult: Codable {
+    let tool: String?
+    let title: String?
+    let headline: String?
+    let firstStep: String?
+    let firstStepFor: String?
+    let departures: [Item]?
+    let pressing: [Item]?
+    let checklists: [Checklist]?
+
+    enum CodingKeys: String, CodingKey {
+        case tool, title, headline, departures, pressing, checklists
+        case firstStep = "first_step"
+        case firstStepFor = "first_step_for"
+    }
+
+    /// A school-run departure or a sick-day pressing item (fields optional per tool).
+    struct Item: Codable {
+        let title: String?
+        let message: String?
+        let location: String?
+        let startAt: String?
+        let leaveBy: String?
+
+        enum CodingKeys: String, CodingKey {
+            case title, message, location
+            case startAt = "start_at"
+            case leaveBy = "leave_by"
+        }
+    }
+
+    /// A pack-the-bag get-ready checklist for one upcoming kid event.
+    struct Checklist: Codable {
+        let title: String?
+        let firstStep: String?
+        let steps: [String]?
+        let startAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case title, steps
+            case firstStep = "first_step"
+            case startAt = "start_at"
+        }
+    }
+}
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}

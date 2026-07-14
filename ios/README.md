@@ -218,7 +218,7 @@ during onboarding.
 
 | Screen | Endpoints |
 |---|---|
-| Today | `/todos/now`, `/departure/next`, `/outings`, `/focus`, `/nudges`, `/briefing`; Add → `POST /todos`; briefing 👍/👎 → `POST /briefing/feedback`; Panic |
+| Today | `/todos/now`, `/departure/next`, `/outings`, `/focus`, `/nudges`, `/briefing`; Add → `POST /todos`; briefing 👍/👎 → `POST /briefing/feedback`; Panic; **Situations** → `/packs/situations`, run → `POST /packs/situations/{tool}` (shown only when a Context Pack contributes tools) |
 | Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done`; Edit → `/todos/{id}/deadline` · `/notes`; Delegate → `/todos/delegate-recipients`, `/todos/{id}/delegate` · `/delegate/return`; Stuck & avoided → `/todos/stuck`, `/todos/avoided` |
 | Clarify | `/clarifications`; resolve → `POST /clarifications/{id}/resolve`, dismiss → `POST /clarifications/{id}/dismiss`, sweep → `POST /clarifications/check`, guide → `/clarifications/playbooks/{task_type}` — reached from **Todos** |
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
