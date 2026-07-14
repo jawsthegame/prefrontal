@@ -128,15 +128,16 @@ def test_plan_degrades_when_models_unreachable(store):
     assert plan.candidates == []
 
 
-def test_plan_empty_text_yields_nothing(store):
+def test_plan_empty_text_short_circuits_without_model_call(store):
+    # A client that fails if touched — blank input must not call either model.
     plan = plan_braindump(
         "   ",
         store,
-        assistant_client=_FakeClient(_ASSISTANT_REPLY),
-        sensor_client=_FakeClient(_SENSOR_REPLY),
+        assistant_client=_FakeClient(error=True),
+        sensor_client=_FakeClient(error=True),
     )
-    # Blank text short-circuits the sensor; the assistant likewise finds nothing.
-    assert plan.candidates == []
+    assert plan.reply == ""
+    assert plan.actions == [] and plan.candidates == []
 
 
 # --- endpoint: POST /braindump ---------------------------------------------
@@ -192,6 +193,8 @@ def test_braindump_previews_actions_and_records_proposals(app_store, user_store)
         assert body["actions"][0]["op"] == "add_todo"
         assert len(body["proposals"]) == 1
         assert body["proposals"][0]["status"] == "pending"
+        # The two halves report their provider independently (they can diverge).
+        assert set(body["provider"]) == {"assistant", "sensor"}
 
         # The actionable half wrote nothing yet…
         assert user_store.open_todos() == []

@@ -141,8 +141,11 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Provide a non-empty 'text'.",
             )
-        assistant_client, provider_name = provider.select("assistant")
-        sensor_client = provider.client("sensor")
+        # The two halves are independently provider-selectable agents, so they can
+        # resolve to different providers (Claude for one, local Ollama for the
+        # other); report each rather than one misleading label.
+        assistant_client, assistant_provider = provider.select("assistant")
+        sensor_client, sensor_provider = provider.select("sensor")
         result = plan_braindump(
             payload.text,
             memory,
@@ -157,14 +160,14 @@ def build_router(services: RouterServices) -> APIRouter:
         # Actions stay a preview (applied via /assistant/apply); the sensor
         # candidates are recorded pending here, exactly as POST /observe does, so
         # they land in the same review queue and apply via /proposals/{id}/accept.
-        ids = record_candidates(memory, result.candidates)
-        created = [p for p in memory.list_proposals("pending") if p["id"] in set(ids)]
+        ids = set(record_candidates(memory, result.candidates))
+        created = [p for p in memory.list_proposals("pending") if p["id"] in ids]
         return {
             "reply": result.reply,
             "actions": [a.to_wire() for a in result.actions],
             "errors": result.errors,
             "proposals": [describe_proposal(p) for p in created],
-            "provider": provider_name,
+            "provider": {"assistant": assistant_provider, "sensor": sensor_provider},
         }
 
     @router.post("/assistant/find-time", tags=["assistant"])

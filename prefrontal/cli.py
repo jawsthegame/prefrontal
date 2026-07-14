@@ -2405,11 +2405,14 @@ def _cmd_braindump(args: argparse.Namespace) -> int:
             # Close the sensor's calibration loop (see `prefrontal note`).
             avoid_keys=avoided_state_keys(store),
         )
-        if plan.reply:
-            print(plan.reply)
-
-        # Actionable half — a preview unless --apply.
+        # Actionable half — a preview unless --apply. The reply describes *this*
+        # half ("I'll add a todo…"), so print it only alongside actions:
+        # assistant.plan always fills a default reply ("I didn't find anything to
+        # change"), which would be noise — and misleading when the sensor half did
+        # find something — if shown on its own.
         if plan.actions:
+            if plan.reply:
+                print(plan.reply)
             if args.apply:
                 results = execute_actions(
                     store, plan.actions, timezone=settings.timezone,
@@ -2428,9 +2431,6 @@ def _cmd_braindump(args: argparse.Namespace) -> int:
                 )
                 for a in plan.actions:
                     print(f"  • {a.summary}")
-        elif not plan.candidates and not plan.reply:
-            # Nothing on either half and the model gave no reply (usually offline).
-            print("Nothing to capture (or the model was unreachable).")
         for err in plan.errors:
             print(f"  (skipped: {err})", file=sys.stderr)
 
@@ -2445,6 +2445,10 @@ def _cmd_braindump(args: argparse.Namespace) -> int:
                 print(f"  #{pid}  {summarize_candidate(c.kind, c.payload)}")
                 if c.rationale:
                     print(f"        ↳ {c.rationale}")
+
+        # Nothing on either half (an empty dump, or the model was unreachable).
+        if not plan.actions and not plan.candidates:
+            print("Nothing to capture (or the model was unreachable).")
     return 0
 
 

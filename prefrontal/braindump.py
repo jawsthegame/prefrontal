@@ -105,12 +105,14 @@ def plan_braindump(
             feedback loop; see :func:`prefrontal.sensor.avoided_state_keys`).
 
     Returns:
-        A :class:`BrainDumpPlan`. Empty/whitespace text yields the assistant's
-        graceful empty reply and no candidates.
+        A :class:`BrainDumpPlan`. Empty/whitespace text short-circuits to an empty
+        plan (no reply, no actions, no candidates) without a model call.
     """
+    if not text or not text.strip():
+        return BrainDumpPlan(reply="")
     ap = _assistant_plan(text, memory, client=assistant_client, now=now, tz=tz)
     candidates: list[Candidate] = []
-    if sensor_client is not None and text and text.strip():
+    if sensor_client is not None:
         candidates = extract_candidates(
             text, client=sensor_client, avoid_keys=avoid_keys
         )
