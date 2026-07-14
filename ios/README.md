@@ -304,6 +304,15 @@ fallback and a failed biometric scan can't lock you out. Needs
 `project.yml`). No paid-tier capability required — this one works under free
 signing.
 
+The auto-prompt is fired from one-shot UI edges (`RootView.onAppear`,
+`scenePhase → .active`), so `authenticate()` **self-heals once per locked
+session**: an attempt that ends without unlocking through no deliberate user
+action — most notably the first-launch Face ID *consent* round-trip, whose
+evaluation returns without ever scanning — retries automatically rather than
+stranding the lock screen. A real `.userCancel` (the manual button is the retry)
+or `.authenticationFailed` (shows the error) doesn't retry, so it can't loop. The
+`LocalAuthentication` seams are injectable for the hermetic `BiometricLockTests`.
+
 ## Siri / Shortcuts / Action Button (App Intents)
 
 `Intents/PrefrontalIntents.swift` exposes the core one-tap actions as **App
