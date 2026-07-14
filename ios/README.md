@@ -100,8 +100,23 @@ cd ios && swiftlint
 CI runs the same lint plus the compile check above on every change under `ios/`
 (`.github/workflows/ios.yml`, macOS runner). It's non-strict for now — only
 error-severity rules fail the build — so a first pass can land green; tighten to
-`swiftlint --strict` once the baseline is clean. A full `xcodebuild` build and an
-XCTest unit-test target are the intended fast-follow.
+`swiftlint --strict` once the baseline is clean.
+
+## Tests
+
+Unit tests live in `PrefrontalTests/` and run on a simulator:
+
+```sh
+cd ios && xcodegen generate
+xcodebuild test -project Prefrontal.xcodeproj -scheme Prefrontal \
+  -destination 'platform=iOS Simulator,name=iPhone 16'   # any installed iPhone sim
+```
+
+CI runs the same via `xcodebuild test` (it picks an available simulator by UDID).
+The first cut covers the pure/logic seams that need no device or live server —
+`ConnectPayload` deep-link parsing to start; `APIClient` request-building and the
+offline queue are the natural next additions (they need a small testable init /
+URLProtocol stub on `APIClient`).
 
 ## Run on your iPhone
 

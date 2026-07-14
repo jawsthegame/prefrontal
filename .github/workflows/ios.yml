@@ -4,11 +4,10 @@ name: iOS
 # (ci.yml) and pinned to a macOS runner, so it only runs when iOS sources or
 # this workflow change — Python-only PRs don't spend macOS minutes.
 #
-# Scope (first cut): SwiftLint (non-strict — only error-severity fails; see
-# ios/.swiftlint.yml) plus the lightweight `swiftc -typecheck` compile check
-# documented in ios/README.md, run for both the app and the widget extension. A
-# full `xcodebuild` build + an XCTest unit-test target are the intended
-# fast-follow (they need the heavier CoreSimulator setup); see #602.
+# Scope: SwiftLint (non-strict — only error-severity fails; see
+# ios/.swiftlint.yml), the lightweight `swiftc -typecheck` compile check
+# documented in ios/README.md (fast early signal, app + widget), and the
+# XCTest unit-test target run via `xcodebuild test` on a simulator (#602).
 
 on:
   push:
@@ -36,8 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SwiftLint
-        run: brew install swiftlint
+      - name: Install SwiftLint + XcodeGen
+        run: brew install swiftlint xcodegen
 
       - name: Lint (SwiftLint)
         working-directory: ios
@@ -68,3 +67,26 @@ jobs:
             | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck \
                 Prefrontal/Intents/WidgetActionIntents.swift \
                 Prefrontal/Intents/PrefrontalIntents.swift
+
+      - name: Unit tests (xcodebuild test on a simulator)
+        working-directory: ios
+        # Generate the Xcode project from project.yml, pick any available iPhone
+        # simulator by UDID (robust to Xcode's device-name churn across runner
+        # images), and run the PrefrontalTests bundle. A simulator unit-test run
+        # needs no code signing (CODE_SIGNING_ALLOWED=NO).
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          UDID=$(xcrun simctl list devices available \
+            | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1)
+          if [ -z "$UDID" ]; then
+            echo 'No iPhone simulator available on this runner:' >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Testing on simulator $UDID"
+          xcodebuild test \
+            -project Prefrontal.xcodeproj \
+            -scheme Prefrontal \
+            -destination "id=$UDID" \
+            CODE_SIGNING_ALLOWED=NO

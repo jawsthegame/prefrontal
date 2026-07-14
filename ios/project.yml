@@ -67,6 +67,22 @@ targets:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
 
+  PrefrontalTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PrefrontalTests
+    # Hosted by the app target (XcodeGen wires TEST_HOST/BUNDLE_LOADER), so the
+    # tests can `@testable import Prefrontal`. Runs on a simulator via
+    # `xcodebuild test` — no signing needed for a simulator unit-test bundle.
+    dependencies:
+      - target: Prefrontal
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        CODE_SIGNING_ALLOWED: "NO"
+
   PrefrontalWidgets:
     type: app-extension
     platform: iOS
@@ -99,3 +115,16 @@ targets:
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+
+# An explicit scheme so `xcodebuild -scheme Prefrontal test` can run the unit
+# tests headless in CI — Xcode auto-creates schemes only on GUI open, so a
+# committed one is needed for the generated (git-ignored) project.
+schemes:
+  Prefrontal:
+    build:
+      targets:
+        Prefrontal: all
+        PrefrontalTests: [test]
+    test:
+      targets:
+        - PrefrontalTests
