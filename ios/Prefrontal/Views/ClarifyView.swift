@@ -43,7 +43,7 @@ struct ClarifyView: View {
             _ = try await withAPI { try await $0.runClarificationSweep() }
             await load()
         } label: {
-            Label("Check for ambiguous todos", systemImage: "sparkles")
+            Label("Check for ambiguous items", systemImage: "sparkles")
                 .frame(maxWidth: .infinity).padding(.vertical, 10)
         } onError: { error = $0 }
         .buttonStyle(.bordered).tint(Brand.accent)
@@ -147,6 +147,7 @@ private struct ClarificationCard: View {
                     } label: {
                         Image(systemName: "arrow.up.circle.fill").font(.title3)
                     } onError: { onError($0) }
+                    .accessibilityLabel("Send answer")
                     .tint(Brand.accent)
                     .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
                 }

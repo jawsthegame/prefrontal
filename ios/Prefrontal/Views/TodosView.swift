@@ -26,6 +26,7 @@ struct TodosView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 NavigationLink { ClarifyView() } label: { Image(systemName: "questionmark.bubble") }
+                    .accessibilityLabel("Clarify")
                 Button { showAdd = true } label: { Image(systemName: "plus") }
             }
         }
@@ -40,7 +41,7 @@ struct TodosView: View {
         NavigationLink { ClarifyView() } label: {
             HStack(spacing: 10) {
                 Image(systemName: "questionmark.bubble").foregroundStyle(Brand.accent)
-                Text("\(clarifyCount) to clarify — hone vague todos into a first step")
+                Text("\(clarifyCount) to clarify — hone vague items into a first step")
                     .font(.footnote).foregroundStyle(Brand.fg)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)

@@ -220,7 +220,7 @@ during onboarding.
 |---|---|
 | Today | `/todos/now`, `/departure/next`, `/outings`, `/focus`, `/nudges`, `/briefing`; Add → `POST /todos`; briefing 👍/👎 → `POST /briefing/feedback`; Panic |
 | Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done`; Delegate → `/todos/delegate-recipients`, `/todos/{id}/delegate` · `/delegate/return` |
-| Clarify | `/clarifications`; resolve → `POST /clarifications/{id}/resolve`, dismiss → `.../dismiss`, sweep → `POST /clarifications/check`, guide → `/clarifications/playbooks/{task_type}` — reached from **Todos** |
+| Clarify | `/clarifications`; resolve → `POST /clarifications/{id}/resolve`, dismiss → `POST /clarifications/{id}/dismiss`, sweep → `POST /clarifications/check`, guide → `/clarifications/playbooks/{task_type}` — reached from **Todos** |
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
 | Me | `/self-care` + `/self-care/mark`, `/self-care/review` (end-of-day gap recap); `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
