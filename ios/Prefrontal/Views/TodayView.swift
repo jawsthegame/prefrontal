@@ -29,6 +29,7 @@ struct TodayView: View {
                 if let b = briefing, let text = b.text, !text.isEmpty { briefingCard(b, text) }
 
                 nowCard
+                BlockersCard()
                 if departure != nil { departureCard }
                 if let o = activeOuting { outingCard(o) }
                 if let f = activeFocus { focusCard(f) }

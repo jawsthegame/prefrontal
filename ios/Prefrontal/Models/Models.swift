@@ -831,6 +831,36 @@ struct AvoidedTodo: Codable, Identifiable {
 
 struct AvoidedList: Codable { let avoided: [AvoidedTodo] }
 
+// MARK: - Blockers (who's waiting on you)
+
+/// Someone *else* is blocked on you — the mirror of a todo (`GET /blockers`).
+/// `person` is who's waiting, `what` is what they need from you; `blockingSince`
+/// drives the "waiting N days" aging that feeds prioritization.
+struct Blocker: Codable, Identifiable, Hashable {
+    let id: Int
+    let person: String
+    let what: String
+    let priority: Int?
+    let deadline: String?
+    let blockingSince: String?
+    let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, person, what, priority, deadline, status
+        case blockingSince = "blocking_since"
+    }
+
+    /// Whole days since they started waiting, floored at 0 — mirrors the server's
+    /// `prefrontal.blockers.waiting_days` (floor of elapsed seconds / 86400), so
+    /// the phone's "waiting Nd" matches the briefing and web dashboard.
+    var waitingDays: Int {
+        guard let since = PFDate.parse(blockingSince) else { return 0 }
+        return max(0, Int(Date().timeIntervalSince(since) / 86_400))
+    }
+}
+
+struct BlockerList: Codable { let blockers: [Blocker] }
+
 // MARK: - Schedule conflicts (double-bookings) + reschedule
 
 /// One side of an overlapping pair (`/commitments/conflicts`).

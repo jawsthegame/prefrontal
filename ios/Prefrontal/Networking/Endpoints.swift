@@ -157,6 +157,25 @@ extension APIClient {
     }
     func returnDelegation(_ id: Int) async throws { try await post("todos/\(id)/delegate/return") }
 
+    // Blockers — who's waiting on you (the ball's in your court). Feeds
+    // prioritization; mirrors prefrontal/webhooks/routers/blockers.py.
+    func blockers(includeResolved: Bool = false) async throws -> [Blocker] {
+        try await get(
+            "blockers",
+            query: includeResolved ? ["include_resolved": "true"] : [:],
+            as: BlockerList.self
+        ).blockers
+    }
+    func addBlocker(person: String, what: String, priority: Int = 1) async throws {
+        try await post(
+            "blockers",
+            json: ["person": person, "what": what, "priority": priority],
+            queueable: true
+        )
+    }
+    func resolveBlocker(_ id: Int) async throws { try await post("blockers/\(id)/resolve") }
+    func reopenBlocker(_ id: Int) async throws { try await post("blockers/\(id)/reopen") }
+
     // Self-care. `reset` wraps a quota check that's at its target back to zero
     // (the mobile tap-at-max cycle — touch has no shift-click to rewind); `undo`
     // rewinds one. `reset` takes precedence over `undo` server-side.

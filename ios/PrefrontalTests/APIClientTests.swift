@@ -57,6 +57,21 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(value, Echo(ok: true))
     }
 
+    func testBlockersDecodeAndWaitingDays() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { _ in
+            (200, Data(#"{"blockers":[{"id":1,"person":"Sam","what":"the numbers","priority":3,"blocking_since":"2020-01-01 00:00:00","status":"open"}]}"#.utf8))
+        }
+        let list = try await client().blockers()
+        XCTAssertEqual(list.count, 1)
+        XCTAssertEqual(list[0].person, "Sam")
+        XCTAssertEqual(list[0].what, "the numbers")
+        XCTAssertEqual(list[0].priority, 3)
+        // 2020 → now is well over 100 days; the floor-of-elapsed/86400 math matches
+        // the server's waiting_days helper.
+        XCTAssertGreaterThan(list[0].waitingDays, 100)
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
