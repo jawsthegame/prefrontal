@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @EnvironmentObject var config: AppConfig
@@ -47,7 +48,13 @@ struct RootView: View {
         guard config.appLockEnabled else { return }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard config.appLockEnabled else { return }
+            // Re-check after the delay: only prompt while the app is actually in the
+            // foreground. If it backgrounded during the wait, presenting the system
+            // biometric UI now would just bounce back `.appCancel` / `.systemCancel`;
+            // the next `.active` transition re-arms this. (`applicationState` is the
+            // live value — the captured `scenePhase` would be stale here.)
+            guard config.appLockEnabled,
+                  UIApplication.shared.applicationState == .active else { return }
             lock.authenticate()
         }
     }

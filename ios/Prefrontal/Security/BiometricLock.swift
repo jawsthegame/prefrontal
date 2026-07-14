@@ -74,7 +74,7 @@ final class BiometricLock: ObservableObject {
     /// disables it (tests).
     private let watchdogSeconds: Double
     /// The pending wedge-watchdog, cancelled the moment a real result arrives.
-    private var watchdog: DispatchWorkItem?
+    private var watchdog: Task<Void, Never>?
 
     /// One automatic retry, refreshed on every (re-)lock. Reserved for an attempt
     /// that ended without unlocking through no deliberate user action — above all
@@ -261,23 +261,22 @@ final class BiometricLock: ObservableObject {
     private func armWatchdog() {
         watchdog?.cancel()
         guard watchdogSeconds > 0 else { watchdog = nil; return }
-        let item = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.authenticating, !self.isUnlocked else { return }
-                Self.log("watchdog — no callback after \(self.watchdogSeconds)s; resetting so the user can retry")
-                self.authenticating = false
-                self.lastError = "Face ID didn’t respond. Tap to try again."
-            }
+        let seconds = watchdogSeconds
+        watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.authenticating, !self.isUnlocked else { return }
+            Self.log("watchdog — no callback after \(seconds)s; resetting so the user can retry")
+            self.authenticating = false
+            self.lastError = "Face ID didn’t respond. Tap to try again."
         }
-        watchdog = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + watchdogSeconds, execute: item)
     }
 
-    /// Production retry scheduler: defer briefly onto the main queue rather than
+    /// Production retry scheduler: defer briefly onto the main actor rather than
     /// re-entering synchronously from inside the previous evaluation's callback.
     nonisolated static func scheduleRetrySoon(_ work: @escaping @MainActor () -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            MainActor.assumeIsolated { work() }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            work()
         }
     }
 
