@@ -19,11 +19,16 @@ closeout, consolidation, and a few net-new surfaces.
    situation-tool set is now complete**: the **sick-day replan** (`sick_day`, panic
    triage + a hard/soft split of today) and the **pack-the-bag checklist**
    (`pack_the_bag`, `decompose_task` over the kids' next events) join the school-run
-   tool in the `packs` router. What remains is breadth on the same seams for *other*
-   packs: **situation tools beyond Parent** (a Caregiver surface), **more packs**
-   (Grad student / New job), and **more tailored surfaces** — plus the smaller
-   `/care` follow-up of a conditional nav link (revealed when the pack is on,
-   mirroring the operator Admin link).
+   tool in the `packs` router. The **Caregiver pack's situation-tool set now ships
+   too** — **care run** (`care_run`, departure over `care` commitments),
+   **paperwork** (`paperwork`, `decompose_task` over open `admin` todos), and
+   **respite** (`respite`, self-care skipped-basics + panic triage) — so situation
+   tools now span both shipped packs. What remains is breadth on the same seams:
+   **more packs** (Grad student / New job), the **caregiver *surface*** (a
+   care-recipient facts sheet / shared-with-siblings care log, the counterpart of
+   the Parent pack's household sheet and `/kids`), and **more tailored surfaces** —
+   plus the smaller `/care` follow-up of a conditional nav link (revealed when the
+   pack is on, mirroring the operator Admin link).
 2. **Close the learning loop's remaining causal check** (see "Learning &
    adaptation" §2). ✅ The sensor's post-acceptance outcome check now ships as a
    **proposal-durability** measure: of the settings a human accepted (written
@@ -735,8 +740,15 @@ ordered by leverage; each is independent but builds on denser capture.
   split of today's commitments into must-cover vs. can-drop). To let a tool reach an
   LLM lever, the `SituationTool` handler now takes an optional `client`
   (`handler(store, *, client=None)`), resolved by the router; deterministic tools
-  ignore it. Still open: situation tools for *other* packs (a Caregiver surface),
-  more packs (Grad student / New job), and more tailored surfaces.)*
+  ignore it. **The Caregiver pack now carries its full situation-tool set too**
+  (`prefrontal/packs/caregiver.py`), the caregiver mirror of Parent's: **care run**
+  (`care_run`, the departure engine over `care` commitments), **paperwork**
+  (`paperwork`, `decompose_task` over open `admin` todos), and — the pack's
+  distinctive one — **respite** (`respite`, `self_care_status` skipped-basics paired
+  with the `build_panic` "one thing that needs you", the self-neglect counterweight).
+  Still open: **more packs** (Grad student / New job), the **caregiver *surface***
+  (a care-recipient facts sheet / shared-with-siblings care log, the counterpart of
+  the Parent pack's household sheet and `/kids`), and more tailored surfaces.)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
   ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; `prefrontal household …`) — kept here for the

@@ -254,3 +254,148 @@ def test_run_tool_behind_disabled_pack_is_404(store):
     with _client(store) as c:
         r = c.post("/packs/situations/school_run", headers=_auth())
     assert r.status_code == 404
+
+
+# -- the Caregiver pack ------------------------------------------------------
+
+
+def test_caregiver_pack_declares_its_situation_tools():
+    from prefrontal.packs import get as get_pack
+
+    care = get_pack("caregiver")
+    assert [t.key for t in care.situations] == ["care_run", "paperwork", "respite"]
+
+
+def test_caregiver_situations_visible_only_when_enabled():
+    on = Settings(packs=("caregiver",))
+    assert [t.key for t in enabled_situations(on)] == ["care_run", "paperwork", "respite"]
+    # Off with no pack; and the Parent pack doesn't expose the Caregiver tools.
+    assert get_situation("care_run", Settings(packs=())) is None
+    assert get_situation("respite", Settings(packs=("parent",))) is None
+
+
+def test_care_run_plans_care_departures_and_ignores_the_rest(store):
+    # The care recipient's appointment (care) — should plan; a self commitment and
+    # a kid's event (child) — must not (this is the caregiver's run, not theirs).
+    care_id, _ = store.upsert_commitment(title="Mom's cardiology", start_at=_in(20))
+    store.set_commitment_kind(care_id, "care", "user")
+    store.upsert_commitment(title="My standup", start_at=_in(20))  # self, excluded
+    kid_id, _ = store.upsert_commitment(title="School run", start_at=_in(20))
+    store.set_commitment_kind(kid_id, "child", "user")
+
+    tool = get_situation("care_run", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+
+    assert result["tool"] == "care_run"
+    assert [d["title"] for d in result["departures"]] == ["Mom's cardiology"]
+    only = result["departures"][0]
+    assert only["commitment_id"] == care_id
+    assert only["leave_by"]  # a leave-by was computed
+    assert only["level"] != "none"  # soon enough to be reminder-worthy
+    assert result["headline"] == only["message"]
+
+
+def test_care_run_headline_empty_when_nothing_pressing(store):
+    far_id, _ = store.upsert_commitment(title="Annual review", start_at="2099-01-01 09:00:00")
+    store.set_commitment_kind(far_id, "care", "user")
+
+    tool = get_situation("care_run", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+    assert [d["title"] for d in result["departures"]] == ["Annual review"]
+    assert result["departures"][0]["level"] == "none"
+    assert result["headline"] == ""
+
+
+def test_paperwork_decomposes_open_admin_todos_only(store):
+    # Two admin todos (the pile), a non-admin todo (excluded), and a delegated admin
+    # todo (off your plate → excluded). No model client → deterministic first steps.
+    store.add_todo("Appeal the insurance denial", category="admin", priority=2)
+    store.add_todo("Submit the benefits renewal", category="admin", priority=1)
+    store.add_todo("Buy groceries", category="caregiving")  # not admin, excluded
+    handed_off = store.add_todo("Have the lawyer file the POA", category="admin")
+    store.set_delegation(handed_off, handler="human", status="forwarded")
+
+    tool = get_situation("paperwork", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+
+    assert result["tool"] == "paperwork"
+    # Priority-ordered, admin-only, delegated one dropped.
+    titles = [c["title"] for c in result["checklists"]]
+    assert titles == ["Appeal the insurance denial", "Submit the benefits renewal"]
+    first = result["checklists"][0]
+    assert first["first_step"]
+    assert first["source"] == "heuristic"  # no client → deterministic fallback
+    assert result["headline"] == f"Admin pile — start here: {first['first_step']}"
+
+
+def test_paperwork_caps_the_pile(store):
+    from prefrontal.packs.caregiver import MAX_PAPERWORK_TODOS
+
+    for i in range(MAX_PAPERWORK_TODOS + 2):
+        store.add_todo(f"Admin task {i}", category="admin")
+
+    tool = get_situation("paperwork", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+    assert len(result["checklists"]) == MAX_PAPERWORK_TODOS
+
+
+def test_paperwork_empty_when_no_admin_pile(store):
+    store.add_todo("Refill the prescription", category="medical")  # not admin
+    tool = get_situation("paperwork", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+    assert result["checklists"] == []
+    assert result["headline"] == ""
+
+
+def test_respite_flags_skipped_basics_next_to_the_pressing_thing(store):
+    # Arm self-care and force the meal check overdue regardless of the wall-clock
+    # hour the suite runs at: start hour 0 (always past it) with a once-a-day target
+    # and no confirms today. A pressing overdue todo gives the panic side a first step.
+    store.set_state("self_care", "on")
+    store.set_state("meal_start_hour", "0")
+    store.set_state("meal_daily_target", "1")
+    store.add_todo("Call the pharmacy about the refill", deadline="2000-01-01")
+
+    tool = get_situation("respite", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+
+    assert result["tool"] == "respite"
+    assert result["self_care_on"] is True
+    assert "meal" in [s["key"] for s in result["skipped"]]
+    assert result["pressing"] >= 1
+    assert result["first_step"]
+    assert result["first_step_for"] == "Call the pharmacy about the refill"
+    # The headline pairs the skipped basics with the one thing that needs you.
+    assert "behind on" in result["headline"]
+    assert "meals" in result["headline"]
+    assert "the one thing that truly needs you: Call the pharmacy" in result["headline"]
+    assert "Take five for yourself." in result["headline"]
+
+
+def test_respite_points_at_the_switch_when_self_care_is_off(store):
+    # Master switch off (the module default): there's no "skipped" signal to give, so
+    # respite surfaces the load counterweight and points at the switch. Deterministic
+    # regardless of the hour.
+    store.set_state("self_care", "off")
+    store.add_todo("Chase the specialist referral", deadline="2000-01-01")
+
+    tool = get_situation("respite", Settings(packs=("caregiver",)))
+    result = tool.handler(store)
+
+    assert result["self_care_on"] is False
+    assert result["skipped"] == []
+    assert result["headline"].startswith("Turn self-care checks on")
+    assert "the one thing that truly needs you: Chase the specialist referral" in result["headline"]
+
+
+def test_caregiver_situations_run_through_the_router(store):
+    care_id, _ = store.upsert_commitment(title="Dad's dialysis", start_at=_in(20))
+    store.set_commitment_kind(care_id, "care", "user")
+    with _client(store, packs=("caregiver",)) as c:
+        listed = c.get("/packs/situations", headers=_auth()).json()
+        assert [s["tool"] for s in listed["situations"]] == ["care_run", "paperwork", "respite"]
+        r = c.post("/packs/situations/care_run", headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tool"] == "care_run"
+    assert [d["title"] for d in body["departures"]] == ["Dad's dialysis"]
