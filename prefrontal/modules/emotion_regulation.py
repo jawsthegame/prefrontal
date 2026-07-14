@@ -83,11 +83,12 @@ class EmotionRegulationModule(Module):
 
     def profile_section(self, store: MemoryStore) -> str | None:
         """Honestly surface recent reaches for in-the-moment support (no judgment)."""
-        checkins = store.episodes_by_type("checkin", limit=100)
-        moments = [
-            c for c in checkins
-            if str(c.get("context") or "").startswith(_SUPPORT_CONTEXT_PREFIX)
-        ]
+        # Filter to emotion-support check-ins in SQL (not post-hoc over a fixed
+        # window), so interleaved check-ins of other kinds can't crowd recent
+        # emotion moments out of the `limit` and make this wrongly return None.
+        moments = store.episodes_by_type(
+            "checkin", limit=100, context_prefix=_SUPPORT_CONTEXT_PREFIX
+        )
         if not moments:
             return None
         states = Counter(

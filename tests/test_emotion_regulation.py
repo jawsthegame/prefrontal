@@ -55,6 +55,7 @@ def memory():
         "I want to kill myself",
         "thinking about suicide",
         "I want to end my life",
+        "I just want to end it all",
         "I'd be better off dead",
         "I don't want to be here anymore",
         "I've been hurting myself",
@@ -74,6 +75,8 @@ def test_looks_like_crisis_positive(text):
         "work is killing me but I'll survive",  # figurative, not self-directed
         "I'm furious at my manager",
         "everything feels like too much today",
+        "I need to end my meeting early",  # "end my …" must not trip the screen
+        "let's end my day and go home",
     ],
 )
 def test_looks_like_crisis_negative(text):
@@ -203,6 +206,18 @@ def test_module_profile_section_summarizes_moments(memory):
     assert section is not None
     assert "3 time(s)" in section
     assert "overwhelm" in section  # most common state surfaced
+
+
+def test_module_profile_section_not_crowded_out_by_other_checkins(memory):
+    # An emotion moment logged first, then a flood of unrelated check-ins beyond the
+    # 100-row window: the SQL context-prefix filter must still find it (a Python
+    # filter over the newest 100 would miss it and wrongly return None).
+    record_support(memory, build_support(memory, "I'm overwhelmed"))
+    for _ in range(120):
+        memory.log_episode("checkin", acknowledged=True, context="care: water", outcome="success")
+    section = EmotionRegulationModule().profile_section(memory)
+    assert section is not None
+    assert "1 time(s)" in section
 
 
 def test_module_seeds_recovery_optout_and_is_registered():

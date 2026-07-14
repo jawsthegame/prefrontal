@@ -59,7 +59,9 @@ _CRISIS_PATTERNS = tuple(
         r"\bkill(ing)?\s+my\s?self\b",
         r"\bkill\s+me\b",
         r"\bsuicid",
-        r"\bend(ing)?\s+(my|it|my\s+life)\b",
+        # Explicit self-harm phrasings only — a standalone "end my …" would trip on
+        # "end my meeting/day", so match "end it all" / "end it" / "end my life".
+        r"\bend(ing)?\s+(it\s+all|it|my\s+life)\b",
         r"\bwant\s+to\s+die\b",
         r"\bwant\s+to\s+be\s+dead\b",
         r"\bbetter\s+off\s+dead\b",
