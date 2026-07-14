@@ -177,7 +177,8 @@ def _follow_through(episodes: list[dict[str, Any]]) -> dict[str, Any]:
         if e.get("outcome") in OUTCOMES
     ]
     outs = [o for _ts, o in rows]
-    counts = {o: outs.count(o) for o in OUTCOMES}
+    tally = Counter(outs)
+    counts = {o: tally[o] for o in OUTCOMES}  # every OUTCOME present, zero when unseen
     total = len(outs)
     rate = round(counts["success"] / total, 2) if total else None
 
@@ -201,9 +202,13 @@ def _follow_through(episodes: list[dict[str, Any]]) -> dict[str, Any]:
 
     # Return-after-lapse: within the recent window, did a >= gap-day break sit
     # between two logged outcomes? If so the later one is a comeback worth marking.
+    # Compare *calendar* days (not the wall-clock delta, whose ``.days`` floors a
+    # 3d23h gap to 3 and would miss a genuine lapse) — matching how the rest of the
+    # codebase thresholds day counts.
     recent_ts = [ts for ts, _o in rows[-FOLLOW_RECENT_WINDOW:]]
     returned = any(
-        a is not None and b is not None and (b - a).days >= FOLLOW_LAPSE_GAP_DAYS
+        a is not None and b is not None
+        and (b.date() - a.date()).days >= FOLLOW_LAPSE_GAP_DAYS
         for a, b in zip(recent_ts, recent_ts[1:], strict=False)
     )
 

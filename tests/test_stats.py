@@ -231,6 +231,15 @@ def test_follow_through_returns_after_a_lapse(scoped):
     assert ft["returned"] is True
 
 
+def test_follow_through_lapse_counts_calendar_days(scoped):
+    """A gap of 4 *calendar* days counts even when it's under 96 wall-clock hours —
+    a floored timedelta (3d23h ⇒ .days == 3) would wrongly miss the comeback."""
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-01 09:00:00")
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-05 08:00:00")
+    ft = build_stats(scoped)["follow_through"]
+    assert ft["returned"] is True
+
+
 def test_follow_through_no_return_without_a_gap(scoped):
     """Back-to-back days (no lapse) ⇒ `returned` stays False."""
     scoped.log_episode("task", outcome="success", timestamp="2026-07-01 09:00:00")
