@@ -215,6 +215,23 @@ def test_list_situations_reflects_enabled_pack(store):
     assert body["situations"][0]["title"] == "School run"
 
 
+def test_run_decomposing_tool_falls_back_when_the_model_is_unreachable(store):
+    # The router hands the tool the local Ollama client. With no Ollama running
+    # (as in CI), decompose_task's generate() raises OllamaError and the tool must
+    # fall back to the heuristic — the endpoint returns 200, never a 500. Guards
+    # against re-introducing an Anthropic client here, whose AnthropicError
+    # (sibling of OllamaError) decompose_task does not catch.
+    kid_id, _ = store.upsert_commitment(title="Swim meet", start_at=_in(90))
+    store.set_commitment_kind(kid_id, "child", "user")
+    with _client(store, packs=("parent",)) as c:
+        r = c.post("/packs/situations/pack_the_bag", headers=_auth())
+    assert r.status_code == 200
+    checklists = r.json()["checklists"]
+    assert [c["title"] for c in checklists] == ["Swim meet"]
+    assert checklists[0]["source"] == "heuristic"
+    assert checklists[0]["first_step"]
+
+
 def test_run_situation_returns_the_computed_result(store):
     kid_id, _ = store.upsert_commitment(title="Recital", start_at=_in(20))
     store.set_commitment_kind(kid_id, "child", "user")

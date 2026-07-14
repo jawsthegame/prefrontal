@@ -34,7 +34,12 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "packs" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-    provider = services.provider
+    # The local Ollama client — deliberately *not* the per-agent provider client.
+    # A situation tool's only LLM lever today is decompose_task, which (like every
+    # snappy in-loop inference: window/title/kind) stays local by design, and which
+    # catches only OllamaError — handing it an Anthropic client would let an
+    # AnthropicError escape as a 500 instead of falling back to the heuristic.
+    decompose_client = services.ollama
 
     @router.get("/packs/situations", tags=["packs"])
     def list_situations(
@@ -62,15 +67,16 @@ def build_router(services: RouterServices) -> APIRouter:
         """Run one situation tool against the caller's data — read-only.
 
         The tool computes a result from the store (e.g. the school-run leave-by
-        from the departure engine) and writes nothing. A model client is resolved
-        and passed through for tools that compose an LLM lever (the pack-the-bag
-        checklist decomposes each event); deterministic tools ignore it. Unknown
-        tools and tools behind a disabled pack both 404 — a tool you can't
-        currently reach should look the same as one that doesn't exist.
+        from the departure engine) and writes nothing. The local Ollama client is
+        passed through for tools that compose an LLM lever (the pack-the-bag
+        checklist decomposes each event, falling back to a heuristic when it's
+        unavailable); deterministic tools ignore it. Unknown tools and tools behind
+        a disabled pack both 404 — a tool you can't currently reach should look the
+        same as one that doesn't exist.
         """
         situation = get_situation(tool, resolved_settings)
         if situation is None:
             raise HTTPException(status_code=404, detail=f"Unknown situation tool: {tool!r}")
-        return situation.handler(ctx.store, client=provider.client("assistant"))
+        return situation.handler(ctx.store, client=decompose_client)
 
     return router
