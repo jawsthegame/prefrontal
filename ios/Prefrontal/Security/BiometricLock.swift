@@ -35,6 +35,14 @@ final class BiometricLock: ObservableObject {
     /// attempt explains itself and offers a retry.
     @Published private(set) var lastError: String?
 
+    /// Holds the `LAContext` for the lifetime of an in-flight `evaluatePolicy`
+    /// call. A local context is deallocated as soon as `authenticate()` returns,
+    /// and `LocalAuthentication` invalidates the evaluation when its context dies
+    /// — the system prompt never appears and the reply block never fires, so
+    /// `authenticating` sticks at `true` (the lock screen spinner spins forever
+    /// and the button stays disabled). Kept alive here until the callback returns.
+    private var authContext: LAContext?
+
     private init() {
         let enabled = SharedStore.appLockEnabled
         // Can't reference instance members before `self` is initialized, so inline
@@ -120,10 +128,15 @@ final class BiometricLock: ObservableObject {
         authenticating = true
         lastError = nil
         let ctx = LAContext()
+        // Retain the context until the reply block runs; a local-only reference
+        // would be released the moment this method returns, cancelling the
+        // evaluation before the prompt ever appears.
+        authContext = ctx
         ctx.localizedFallbackTitle = "Use Passcode"
         ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { [weak self] success, error in
             Task { @MainActor in
                 guard let self else { return }
+                self.authContext = nil
                 self.authenticating = false
                 if success {
                     self.isUnlocked = true
