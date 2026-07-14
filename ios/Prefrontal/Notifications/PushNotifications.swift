@@ -68,9 +68,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
               let urlString = match["url"] as? String,
               let url = URL(string: urlString)
         else { return }
-        // The URL is self-authenticating (a signed /nudge/act token), so a plain
-        // GET does the one-tap action — no header needed.
-        _ = try? await URLSession.shared.data(from: url)
+
+        // Server nudge buttons are signed /nudge/act HTTP(S) URLs: self-
+        // authenticating, so a plain background GET performs the one-tap action.
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            _ = try? await URLSession.shared.data(from: url)
+            return
+        }
+
+        // A non-HTTP action is a client-side deep link. The only one today is the
+        // evening "⏰ Set alarm" view button (shortcuts://run-shortcut?…&text=HH:MM):
+        // set a real system alarm natively via AlarmKit (iOS 26+), and fall back to
+        // opening the Set Alarm Shortcut when AlarmKit isn't available/authorized.
+        if let wake = AlarmScheduler.wakeTime(from: url),
+           await AlarmScheduler.scheduleWake(hour: wake.hour, minute: wake.minute) {
+            return
+        }
+        await MainActor.run { UIApplication.shared.open(url) }
     }
 }
 
@@ -105,14 +119,25 @@ enum PushCategories {
         "checkin": ["Felt light 🙂", "Balanced ⚖️", "Carried a lot 🫠"],
         "digest": ["Caught up 👍"],
         "chore": ["✓ Done"],
+        // The evening morning-prep heads-up: one tap sets a real wake alarm
+        // (AlarmKit on iOS 26+, else the Set Alarm Shortcut). See AppDelegate.
+        "morning_prep": ["⏰ Set alarm"],
     ]
+
+    /// Categories whose (single) action opens the app rather than running in the
+    /// background. The "Set alarm" tap needs the foreground so AlarmKit can show
+    /// its first-run authorization prompt (and, on older iOS, so the Shortcut can
+    /// launch); every other action is a silent one-tap `/nudge/act` GET.
+    static let foregroundCategories: Set<String> = ["morning_prep"]
 
     static var all: Set<UNNotificationCategory> {
         Set(buttons.map { category, titles in
-            UNNotificationCategory(
+            let options: UNNotificationActionOptions =
+                foregroundCategories.contains(category) ? [.foreground] : []
+            return UNNotificationCategory(
                 identifier: category,
                 actions: titles.map {
-                    UNNotificationAction(identifier: $0, title: $0, options: [])
+                    UNNotificationAction(identifier: $0, title: $0, options: options)
                 },
                 intentIdentifiers: [],
                 options: []

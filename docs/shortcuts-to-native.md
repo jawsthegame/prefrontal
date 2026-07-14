@@ -19,8 +19,10 @@ What remains is three buckets:
 
 1. **Gaps** — touchpoints with no native equivalent yet (trip-retro intent,
    self-care local notifications, location cadence).
-2. **Hard cases** — things iOS won't let a third-party app do natively at all
-   (system alarms), where a Shortcut or a surrogate is the only option.
+2. **Hard cases** — things iOS historically wouldn't let a third-party app do
+   natively (system alarms). *(Now largely closed: **AlarmKit** (iOS 26) schedules
+   a real alarm natively; the Shortcut remains the pre-iOS-26 fallback — see the
+   [Set Alarm](#the-hard-case-set-alarm) section.)*
 3. **The paper cut** — docs, the `onboard-user` skill, and server self-
    description still tell users to build Shortcuts. That's the last mile. *(Now
    closed: the `onboard-user` skill and the user-facing docs — README, deployment,
@@ -81,7 +83,7 @@ Each row is a shortcut from `deploy/ios-shortcut.md` and its native destination.
 | Leaving Home (departure) | `POST /webhooks/departure/left` | `LocationMonitor` `didExitRegion` for "home" | ✅ Done |
 | Arrive Home (close outing) | `POST /webhooks/outing/return` | `LocationMonitor` `didEnterRegion` posts location; auto-close is server-side | ✅ Done |
 | Departure reminder (leave-by) | n8n polls `/webhooks/departure/check` | `LocalNotifications.reconcileDeparture` schedules the next leave-by locally | ✅ Done (next-departure only) |
-| Set Alarm (evening prep) | client-side `shortcuts://` deep-link | **no public native alarm API** | ⛔ Hard — see below |
+| Set Alarm (evening prep) | client-side `shortcuts://` deep-link | **AlarmKit** (`AlarmScheduler.swift`) on iOS 26+; Shortcut deep-link below that | ✅ Done (26+) / ⚠️ fallback |
 
 ---
 
@@ -141,24 +143,32 @@ first:
 The evening `morning_prep` nudge (Time Blindness) carries a **⏰ Set alarm**
 button that opens `shortcuts://run-shortcut?name=Set%20Alarm&input=text&text=<HH:MM>`
 (`prefrontal/webhooks/notify.py` `alarm_actions()`; `DEFAULT_ALARM_SHORTCUT`).
-**iOS exposes no public API to create a system Clock alarm** — the Shortcuts
-"Create Alarm" action is the only sanctioned path, and only Shortcuts can call
-it. So this one cannot fully go native. Options, honest about the trade-off:
+Pre-iOS-26, **iOS exposed no public API to create a system Clock alarm** — the
+Shortcuts "Create Alarm" action was the only sanctioned path — so this was the
+one touchpoint that couldn't go native. The options weighed at the time:
 
-1. **Keep the Shortcut** for the alarm specifically. Everything else migrates;
-   the app deep-links to a single well-known shortcut. Lowest effort, and the
-   `alarm_shortcut_name` config already supports it. *Recommended.*
+1. **Keep the Shortcut** for the alarm specifically. Lowest effort, and the
+   `alarm_shortcut_name` config already supports it.
 2. **Surrogate wake via a critical/time-sensitive local notification** at the
    wake time (`UNTimeIntervalNotificationTrigger`, interruption level
    `.timeSensitive` or `.critical` with entitlement). It *alerts* but doesn't
    *ring like an alarm* through silent mode without the critical entitlement —
    weaker than a real alarm.
-3. **`AlarmKit`** (introduced iOS 26) — if the deployment can target it, this is
-   the first native alarm-scheduling framework and would make option 1 obsolete.
-   Gate on the deployment target; keep option 1 as the fallback below it.
+3. **`AlarmKit`** (introduced iOS 26) — the first native alarm-scheduling
+   framework, ringing through silent mode / Focus like the system alarm.
 
-Recommendation: **option 1 now**, adopt **option 3** when the minimum iOS target
-allows, keeping the Shortcut as the pre-AlarmKit fallback.
+**✅ Shipped (option 3 + option 1 as the fallback).** `AlarmScheduler.swift`
+schedules the alarm natively via `AlarmManager` on iOS 26+, prompting once for
+AlarmKit authorization (`NSAlarmKitUsageDescription`). The "Set alarm" tap is
+handled in `AppDelegate` (`PushNotifications.swift`): it reads the suggested
+`HH:MM` from the action's `shortcuts://…&text=` URL and, on iOS 26+, sets a
+one-off system alarm; on older iOS — or if AlarmKit is unavailable/denied — it
+falls back to **opening that same Shortcut deep link** (option 1). All AlarmKit
+code sits behind `#if canImport(AlarmKit)` + `@available(iOS 26.0, *)`, so the
+iOS 17 deployment target is unchanged. **The server side didn't move**: the nudge
+still ships the same `shortcuts://` view action; the client decides native-vs-
+Shortcut. The only thing left here is retiring the Shortcut fallback entirely once
+the minimum target reaches iOS 26.
 
 ---
 
@@ -195,7 +205,8 @@ Small, independently-shippable steps; each leaves the app working:
    route is simpler and reuses `_NUDGE_BUTTONS`.
 4. **Significant-location-change / `CLVisit`** — retire the periodic "Update
    location" shortcut.
-5. **Alarm decision** — keep the Shortcut (option 1); file an AlarmKit follow-up.
+5. **Alarm decision** — ✅ done: AlarmKit (iOS 26+) sets a native alarm, with the
+   Shortcut deep link kept as the pre-iOS-26 fallback (`AlarmScheduler.swift`).
 6. **Retire Shortcuts from onboarding** (below) — the actual "migration" from the
    user's point of view. ✅ Done: the `onboard-user` skill, the user-facing docs,
    the server self-description / `source` provenance enum, and the iOS App Intents

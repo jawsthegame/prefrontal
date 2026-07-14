@@ -42,6 +42,10 @@ targets:
         BGTaskSchedulerPermittedIdentifiers: [com.morningstatic.prefrontal.refresh]
         # Live Activities (outing/focus countdown on Lock Screen + Dynamic Island).
         NSSupportsLiveActivities: true
+        # AlarmKit (iOS 26+) authorization prompt copy — shown once when the user
+        # first taps "Set alarm" on the evening morning-prep nudge. Required for
+        # AlarmManager.requestAuthorization; harmless on older systems.
+        NSAlarmKitUsageDescription: "Prefrontal sets a wake-up alarm when you tap Set alarm on the evening get-ready nudge."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal
