@@ -237,7 +237,8 @@ so awarding is a plain insert. The **goal-crossing** logic is pure and lives in
 total from `before < n` to `>= n`. When one or more goals are reached, the write
 layer congratulates and pushes to **both** co-parents at once via
 `deliver_to_household()` (`prefrontal/integrations/delivery.py`), which resolves
-each member's own `Route` (their ntfy topic / Pushover key). This is the first
+each member's own `Route` (their registered APNs device token, or an ntfy
+dev-shim topic on a free-signing build). This is the first
 concrete slice of the "push the delta to the *other* parent" idea in §7 — a goal
 hit is never something only the tracking parent knows.
 

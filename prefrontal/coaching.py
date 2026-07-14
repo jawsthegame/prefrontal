@@ -46,7 +46,7 @@ logger = get_logger(__name__)
 URGENCY_LADDER = ("ambient", "nudge", "urgent", "critical")
 
 #: Delivery channel classes, quietest → most interrupting. The agent picks a
-#: *class*; the delivery layer maps it to a concrete target (Pushover/Ntfy/TTS).
+#: *class*; the delivery layer maps it to a concrete transport (APNs/Twilio/TTS).
 CHANNEL_LADDER = ("digest", "push", "sound", "voice")
 
 #: The channel each urgency starts at before any learned bump (spec §2 table).

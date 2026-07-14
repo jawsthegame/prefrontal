@@ -427,7 +427,7 @@ declared intervention, `switch_rate_feedback`, attached to the day's check-in.
 
 **n8n (optional).** No new poller is required. An optional
 `deploy/n8n/focus-end-of-day.workflow.json` cron can call a `GET /focus/digest`
-(or read the briefing) and Pushover the switch-rate line in the evening — purely
+(or read the briefing) and push the switch-rate line in the evening — purely
 additive, off by default.
 
 **Dashboard.** `/dashboard` gains an "In focus" card when a session is active

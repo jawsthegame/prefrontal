@@ -35,7 +35,7 @@ prefrontal/
 │   │   ├── registry.py        # register / available / enabled_modules
 │   │   └── *.py               # time_blindness, task_paralysis, hyperfocus, impulsivity, location_anchor, self_care, trip_tracking
 │   ├── mail/                  # mail ingestion: normalize -> triage -> surface as todos (incl. imap.py)
-│   ├── integrations/          # external systems: n8n, ollama, anthropic, nominatim, delivery (ntfy/Pushover/TTS)
+│   ├── integrations/          # external systems: n8n, ollama, anthropic, nominatim, delivery (APNs/TTS/Twilio; ntfy dev-shim)
 │   ├── coaching.py            # the coaching tick engine (fans over modules' evaluate())
 │   ├── encouragement.py       # rough-day tone shift + recovery plan
 │   ├── panic.py               # overwhelm triage: what's on fire + one first step

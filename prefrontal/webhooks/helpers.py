@@ -105,10 +105,10 @@ def _switch_resolved_confirmation(action: str, task: str, title: str | None) -> 
     return f"Switched off “{task}.” Logged it — go do the new thing."
 
 
-#: Per-user delivery routing keys read from coaching state and returned to n8n
-#: so a nudge reaches the right user's phone (the credentials stay global in
-#: n8n; only the destination is per-user). See docs/multi-tenant.md §6.5.
-_DELIVERY_KEYS = ("pushover_user_key", "twilio_to", "twilio_from", "ntfy_topic")
+#: Per-user delivery routing keys read from coaching state (the destination for a
+#: nudge; the signing/account creds stay global). ``apns_token`` is the product
+#: push target; ``ntfy_topic`` feeds the dev-only shim. See docs/multi-tenant.md §6.5.
+_DELIVERY_KEYS = ("apns_token", "twilio_to", "twilio_from", "ntfy_topic")
 
 
 def _delivery_fields(memory: MemoryStore) -> dict[str, Any]:

@@ -224,7 +224,9 @@ def test_user_route_sets_and_clears_per_user_ntfy_topic(tmp_path, capsys):
 
 def test_user_connect_link_builds_deep_link_with_route(tmp_path, capsys):
     """`user connect-link` emits a prefrontal://connect URL carrying the base URL
-    and the user's ntfy route, so a new phone can onboard by scanning a QR."""
+    and handle, so a new phone can onboard by scanning a QR. Native APNs push is
+    the product path (the app registers its own device token on launch), so the
+    link carries NO ntfy hints even when a dev-shim topic happens to be set."""
     from urllib.parse import parse_qs, urlsplit
 
     db = tmp_path / "prefrontal.db"
@@ -236,7 +238,7 @@ def test_user_connect_link_builds_deep_link_with_route(tmp_path, capsys):
     capsys.readouterr()
 
     # No token by default (it's shown once at provisioning, not re-readable):
-    # the link still carries URL + ntfy topic + handle, and flags the omission.
+    # the link still carries URL + handle, and flags the omission.
     assert main([
         "user", "--db-path", str(db), "connect-link", "sam",
         "--base-url", "https://agent-1.tail8b0a.ts.net/",
@@ -247,7 +249,7 @@ def test_user_connect_link_builds_deep_link_with_route(tmp_path, capsys):
     assert parts.scheme == "prefrontal" and parts.netloc == "connect"
     q = parse_qs(parts.query)
     assert q["url"] == ["https://agent-1.tail8b0a.ts.net"]  # trailing slash trimmed
-    assert q["ntfy_topic"] == ["prefrontal-sam-9f2q"]
+    assert "ntfy_topic" not in q                            # native push — no ntfy in the QR
     assert q["handle"] == ["sam"] and q["name"] == ["Sam"]
     assert "token" not in q
     assert "no token embedded" in out
@@ -319,9 +321,14 @@ def _local_ntfy_server():
     return srv, f"http://127.0.0.1:{srv.server_address[1]}", received
 
 
-def test_notify_delivers_through_configured_route(tmp_path, capsys):
+def test_notify_delivers_through_configured_route(tmp_path, capsys, monkeypatch):
     """`notify` publishes a test push via the real delivery client to the user's
-    route (here a per-user ntfy topic pointed at a local receiver)."""
+    route (here a per-user ntfy topic pointed at a local receiver). Native APNs is
+    the product path; the dev shim (PREFRONTAL_NTFY_DEV) makes ntfy observable."""
+    from prefrontal.config import get_settings
+
+    monkeypatch.setenv("PREFRONTAL_NTFY_DEV", "1")
+    get_settings.cache_clear()
     db = tmp_path / "prefrontal.db"
     assert main(["init-db", "--db-path", str(db)]) == 0
     assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
@@ -349,11 +356,17 @@ def test_notify_delivers_through_configured_route(tmp_path, capsys):
     assert received and received[0]["message"] == "hello mini"
     assert received[0]["topic"] == "test-topic"
     assert received[0]["priority"] == 4  # sound → priority 4
+    get_settings.cache_clear()
 
 
-def test_briefing_deliver_publishes_through_route(tmp_path, capsys):
+def test_briefing_deliver_publishes_through_route(tmp_path, capsys, monkeypatch):
     """`briefing --deliver` publishes the digest as a push to the user's own route —
-    the native twin of the morning-briefing n8n workflow."""
+    the native twin of the morning-briefing n8n workflow. The dev shim
+    (PREFRONTAL_NTFY_DEV) makes the ntfy transport observable in-test."""
+    from prefrontal.config import get_settings
+
+    monkeypatch.setenv("PREFRONTAL_NTFY_DEV", "1")
+    get_settings.cache_clear()
     db = tmp_path / "prefrontal.db"
     assert main(["init-db", "--db-path", str(db)]) == 0
     assert main(["user", "--db-path", str(db), "add", "tester", "--operator"]) == 0
@@ -377,6 +390,7 @@ def test_briefing_deliver_publishes_through_route(tmp_path, capsys):
     assert received and received[0]["topic"] == "briefing-topic"
     assert received[0]["priority"] == 3  # push → normal priority
     assert received[0]["message"]  # the rendered briefing text rode along
+    get_settings.cache_clear()
 
 
 def test_briefing_deliver_exit_1_without_route(tmp_path, capsys):
@@ -459,7 +473,9 @@ def test_deliver_panic_publishes_when_overwhelmed(tmp_path, capsys):
             now = utcnow()
             for t in ("A", "B", "C"):  # three overdue todos → overwhelmed
                 scoped.add_todo(t, deadline=(now - timedelta(days=1)).strftime("%Y-%m-%d"))
-            _deliver_panic(raw, scoped, Settings(), now)
+            # ntfy_dev=True: exercise delivery via the mock ntfy receiver (native
+            # APNs needs real creds); the test asserts routing, not the transport.
+            _deliver_panic(raw, scoped, Settings(ntfy_dev=True), now)
     finally:
         srv.shutdown()
 

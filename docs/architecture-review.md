@@ -56,7 +56,7 @@ n8n / Shortcuts ──┘   (coaching tick, briefing, │   deps.resolve_user �
                                                  ▼
                        SQLite (WAL, per-thread connections, 39 tables)
 
-           integrations/ (Generator protocol → Ollama | Anthropic; ntfy/Pushover/TTS/Twilio delivery)
+           integrations/ (Generator protocol → Ollama | Anthropic; native APNs push/TTS/Twilio delivery, ntfy dev-only shim)
 ```
 
 Two entry points (CLI and HTTP) converge on the **same** domain services — most importantly

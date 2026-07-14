@@ -340,7 +340,7 @@ No new credentials: mail access lives in n8n/Apps Script, never in `.env`.
 | `prefrontal/config.py` + `.env.example` | `triage_use_llm`, `triage_drop_threshold` |
 | `prefrontal/briefing.py` | Pull `route == "surface"` items into the briefing's "needs attention" section |
 | `prefrontal/webhooks/dashboard.html` | A "Triage" panel showing recent decisions + reasons |
-| `deploy/n8n/` | A mail-poll → `POST /triage` workflow; a `triage.urgent` → Pushover workflow |
+| `deploy/n8n/` | A mail-poll → `POST /triage` workflow; a `triage.urgent` → push workflow |
 | `ROADMAP.md` | Collapse the "Triage agent" bullet to "shipped — see `docs/triage-agent.md`" |
 
 The pure cores it reuses — `augment_todo`, `heuristic_deadline`,

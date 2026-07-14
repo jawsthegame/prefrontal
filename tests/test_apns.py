@@ -148,13 +148,26 @@ def test_deliver_prefers_apns_when_token_and_configured():
     assert ntfy.calls == 0                              # APNs landed → ntfy untouched
 
 
-def test_deliver_falls_back_to_ntfy_when_apns_fails():
+def test_deliver_falls_back_to_ntfy_shim_when_apns_fails():
+    # Only on a dev box (the ntfy shim enabled) — a stale APNs token there falls
+    # through to ntfy rather than black-holing the nudge.
+    apns = _FakeApns(delivered=False)
+    ntfy = _RecordingNtfy()
+    client = DeliveryClient(ntfy=ntfy, apns=apns, ntfy_dev=True)  # type: ignore[arg-type]
+    result = client.deliver(_decision(), Route(apns_token="stale", ntfy_topic="me"))
+    assert apns.calls and ntfy.calls == 1
+    assert result.transport == "ntfy"                   # fell through
+
+
+def test_deliver_no_ntfy_fallback_on_product_build_when_apns_fails():
+    # Product build (shim off): a stale APNs token yields a clean no-op, never a
+    # cross-transport fallback.
     apns = _FakeApns(delivered=False)
     ntfy = _RecordingNtfy()
     client = DeliveryClient(ntfy=ntfy, apns=apns)  # type: ignore[arg-type]
     result = client.deliver(_decision(), Route(apns_token="stale", ntfy_topic="me"))
-    assert apns.calls and ntfy.calls == 1
-    assert result.transport == "ntfy"                   # fell through
+    assert apns.calls and ntfy.calls == 0
+    assert result.transport == "none"
 
 
 def test_register_apns_token_endpoint_stores_and_clears():

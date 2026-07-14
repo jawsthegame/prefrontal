@@ -199,9 +199,9 @@ Document all three in `.env.example`.
 - ✅ `coach --all-users` (+ `_coach_tick` extracted so the tick is per-user); the
   `com.prefrontal-coach` job runs `coach --deliver --all-users`, so one job covers
   the household. **Delivery is safe multi-user:** `resolve_route` gives a user
-  with no own ntfy/Pushover target an empty target on a multi-user box (no leak to
-  the operator's device), so source-less/demo users are computed but not delivered
-  to.
+  with no registered APNs device token (nor ntfy dev-shim target) an empty target
+  on a multi-user box (no leak to the operator's device), so source-less/demo
+  users are computed but not delivered to.
 - ✅ **Mail `--all-users` env-fallback gate** — under a fan-out the global
   `MAIL_IMAP_*` env is NOT used as a fallback (it's one mailbox; inheriting it for
   every source-less user would fetch that inbox into everyone's scope). A user

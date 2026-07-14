@@ -253,41 +253,13 @@ private struct NotificationsStep: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Turn on notifications")
                     .font(.title.weight(.bold)).foregroundStyle(Brand.fg)
-                Text("Nudges reach your phone through the free **ntfy** app. Subscribe it to your topic, and allow Prefrontal to post alerts.")
+                Text("Nudges arrive as native notifications. Allow Prefrontal to send them — that's the whole setup.")
                     .font(.callout).foregroundStyle(Brand.muted)
             }
 
             Card {
-                CardLabel(text: "Step 1 — install & subscribe ntfy")
-                if !config.ntfyTopic.isEmpty {
-                    LabeledValue(label: "Server", value: config.ntfyServer)
-                    LabeledValue(label: "Topic", value: config.ntfyTopic)
-                    Button {
-                        UIPasteboard.general.string = config.ntfyTopic
-                        copied = true
-                    } label: { Label(copied ? "Copied" : "Copy topic", systemImage: copied ? "checkmark" : "doc.on.doc") }
-                        .font(.subheadline).tint(Brand.accent)
-                } else {
-                    Text("Your topic is on your setup sheet — subscribe ntfy to it.")
-                        .font(.footnote).foregroundStyle(Brand.muted)
-                }
-                HStack(spacing: 10) {
-                    Button("Get ntfy") { openURL(URL(string: "https://apps.apple.com/app/ntfy/id1625396347")!) }
-                        .buttonStyle(.bordered).tint(Brand.accent)
-                    if !config.ntfyTopic.isEmpty {
-                        Button("Open in ntfy") {
-                            let s = config.ntfyServer.replacingOccurrences(of: "https://", with: "")
-                                .replacingOccurrences(of: "http://", with: "")
-                            openURL(URL(string: "https://\(s)/\(config.ntfyTopic)")!)
-                        }
-                        .buttonStyle(.bordered).tint(Brand.accent)
-                    }
-                }
-            }
-
-            Card {
-                CardLabel(text: "Step 2 — allow Prefrontal alerts")
-                Text("Lets the app show native alerts as they arrive.")
+                CardLabel(text: "Allow Prefrontal alerts")
+                Text("Lets Prefrontal push a nudge to your phone — one-tap actions right on the notification.")
                     .font(.footnote).foregroundStyle(Brand.muted)
                 AsyncButton {
                     granted = await model.requestNotifications()
@@ -301,6 +273,33 @@ private struct NotificationsStep: View {
                 if granted == false {
                     Text("You said no for now — you can turn these on later in iOS Settings.")
                         .font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+
+            // Free-signing dev builds (no APNs entitlement) can't receive native
+            // push, so the server's dev-only ntfy shim delivers instead. This card
+            // only appears when the connect payload carried an ntfy topic — which
+            // it does only on such a dev box; a product build never shows it.
+            if !config.ntfyTopic.isEmpty {
+                Card {
+                    CardLabel(text: "Dev build — subscribe ntfy")
+                    LabeledValue(label: "Server", value: config.ntfyServer)
+                    LabeledValue(label: "Topic", value: config.ntfyTopic)
+                    Button {
+                        UIPasteboard.general.string = config.ntfyTopic
+                        copied = true
+                    } label: { Label(copied ? "Copied" : "Copy topic", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                        .font(.subheadline).tint(Brand.accent)
+                    HStack(spacing: 10) {
+                        Button("Get ntfy") { openURL(URL(string: "https://apps.apple.com/app/ntfy/id1625396347")!) }
+                            .buttonStyle(.bordered).tint(Brand.accent)
+                        Button("Open in ntfy") {
+                            let s = config.ntfyServer.replacingOccurrences(of: "https://", with: "")
+                                .replacingOccurrences(of: "http://", with: "")
+                            openURL(URL(string: "https://\(s)/\(config.ntfyTopic)")!)
+                        }
+                        .buttonStyle(.bordered).tint(Brand.accent)
+                    }
                 }
             }
 

@@ -342,27 +342,25 @@ def _cmd_user(args: argparse.Namespace) -> int:
             # written source="explicit" so the coaching learner never overwrites a
             # deliberately-set route.
             fields = {
+                "apns_token": args.apns_token,
+                # ntfy targets feed the dev-only shim (PREFRONTAL_NTFY_DEV); on a
+                # product build they're inert.
                 "ntfy_topic": args.ntfy_topic,
                 "ntfy_server": args.ntfy_server,
                 "ntfy_token": args.ntfy_token,
-                "pushover_user_key": args.pushover_user_key,
-                "pushover_token": args.pushover_token,
-                "apns_token": args.apns_token,
             }
             changed = {k: v for k, v in fields.items() if v is not None}
             for key, value in changed.items():
                 scoped.set_state(key, value.strip(), source="explicit")
             route = resolve_route(scoped, settings)
             shown = lambda s: "set" if s else "—"  # noqa: E731 — never print secret values
-            topic = route.ntfy_topic or "(none — nudges go nowhere)"
             print(f"Delivery route for '{args.handle}':")
-            print(f"  ntfy        {route.ntfy_server}/{topic}")
-            print(f"  ntfy token  {shown(route.ntfy_token)}")
             print(
-                f"  pushover    user_key {shown(route.pushover_user_key)} · "
-                f"token {shown(route.pushover_token)}"
+                f"  apns        device token {shown(route.apns_token)}  "
+                "(native push — the product transport)"
             )
-            print(f"  apns        device token {shown(route.apns_token)}")
+            topic = route.ntfy_topic or "(unset)"
+            print(f"  ntfy (dev)  {route.ntfy_server}/{topic} · token {shown(route.ntfy_token)}")
             if changed:
                 print(
                     f"Updated: {', '.join(sorted(changed))}. "
@@ -388,11 +386,15 @@ def _cmd_user(args: argparse.Namespace) -> int:
             # it the link carries no token and the user pastes theirs in-app.
             token = store.rotate_user_token(args.handle) if args.rotate else None
             route = resolve_route(store.scoped(user["id"]), settings)
+            # Native APNs push is the product path (the app registers its device
+            # token on first launch), so the connect QR carries no ntfy hints —
+            # except on a dev box running the ntfy shim, where they prefill the
+            # free-signing notifications step.
             link = build_connect_link(
                 base_url,
                 token=token,
-                ntfy_server=route.ntfy_server or None,
-                ntfy_topic=route.ntfy_topic or None,
+                ntfy_server=route.ntfy_server if settings.ntfy_dev and route.ntfy_topic else None,
+                ntfy_topic=route.ntfy_topic if settings.ntfy_dev else None,
                 handle=user["handle"],
                 display_name=user["display_name"] or None,
             )
@@ -1438,7 +1440,7 @@ def _cmd_usage(args: argparse.Namespace) -> int:
                 verb, tail = "Delivered", " Reply Mute/Keep on the push."
             elif args.deliver:
                 verb = "Tried to nudge"
-                tail = " (no push went out — check your ntfy/Pushover route.)"
+                tail = " (no push went out — check your APNs route.)"
             else:
                 verb, tail = "Would nudge", " (dry run — pass --deliver to send.)"
             print(
@@ -2010,7 +2012,7 @@ def _cmd_notify(args: argparse.Namespace) -> int:
     Exercises the real delivery stack end-to-end — the same
     :class:`~prefrontal.integrations.delivery.DeliveryClient` and per-user
     :func:`~prefrontal.integrations.delivery.resolve_route` the coaching tick uses
-    — so it confirms ntfy/Pushover is wired up (server/topic/token or credentials)
+    — so it confirms native APNs push is wired up (device token + signing creds)
     before you rely on a nudge landing. Prints where it routed and the transport's
     result; a plain push (no action buttons), so no signing config is needed.
 
@@ -2051,10 +2053,10 @@ def _cmd_notify(args: argparse.Namespace) -> int:
             handle=handle,
         )
 
-    if route.ntfy_topic:
-        dest = f"ntfy → {route.ntfy_server}/{route.ntfy_topic}"
-    elif route.pushover_token and route.pushover_user_key:
-        dest = "pushover"
+    if route.apns_token and client.apns.configured:
+        dest = "apns → device token (native push)"
+    elif settings.ntfy_dev and route.ntfy_topic:
+        dest = f"ntfy [dev shim] → {route.ntfy_server}/{route.ntfy_topic}"
     else:
         dest = "(no transport configured)"
     print(f"route:   {dest}")
@@ -2066,9 +2068,11 @@ def _cmd_notify(args: argparse.Namespace) -> int:
     if not result.delivered:
         if result.transport == "none":
             print(
-                "\nNothing was sent — no transport is configured for this user. Set "
-                "NTFY_TOPIC (and NTFY_SERVER/NTFY_TOKEN) or Pushover credentials in "
-                "the environment, or a per-user ntfy_topic in coaching_state.",
+                "\nNothing was sent — no transport is configured for this user. "
+                "Register the device's APNs token (the app does this on first launch, "
+                "or `prefrontal user route <handle> --apns-token …`) and set the "
+                "APNS_* signing creds in the environment. For a free-signing dev "
+                "build, enable the ntfy shim with PREFRONTAL_NTFY_DEV=1.",
                 file=sys.stderr,
             )
         return 1
@@ -3474,32 +3478,28 @@ def build_parser() -> argparse.ArgumentParser:
     u_disable.add_argument("handle", help="The user's handle.")
     u_route = user_sub.add_parser(
         "route",
-        help="Set/show a user's per-user delivery route (their own ntfy topic, etc.).",
+        help="Set/show a user's per-user delivery route (their APNs device token).",
     )
     u_route.add_argument("handle", help="The user's handle.")
-    u_route.add_argument(
-        "--ntfy-topic",
-        default=None,
-        help="Their own ntfy topic, so nudges hit THEIR phone (pass '' to clear).",
-    )
-    u_route.add_argument(
-        "--ntfy-server", default=None, help="Override the ntfy server (pass '' to clear)."
-    )
-    u_route.add_argument(
-        "--ntfy-token",
-        default=None,
-        help="ntfy access token for a protected topic (pass '' to clear).",
-    )
-    u_route.add_argument(
-        "--pushover-user-key", default=None, help="Pushover user key (pass '' to clear)."
-    )
-    u_route.add_argument(
-        "--pushover-token", default=None, help="Pushover app token (pass '' to clear)."
-    )
     u_route.add_argument(
         "--apns-token",
         default=None,
         help="Their iOS device's APNs token (usually registered by the app; pass '' to clear).",
+    )
+    # ntfy flags feed the dev-only shim (PREFRONTAL_NTFY_DEV) for free-signing
+    # builds; inert on a product build.
+    u_route.add_argument(
+        "--ntfy-topic",
+        default=None,
+        help="[dev shim] ntfy topic for a free-signing build (pass '' to clear).",
+    )
+    u_route.add_argument(
+        "--ntfy-server", default=None, help="[dev shim] ntfy server override (pass '' to clear)."
+    )
+    u_route.add_argument(
+        "--ntfy-token",
+        default=None,
+        help="[dev shim] ntfy access token for a protected topic (pass '' to clear).",
     )
     u_link = user_sub.add_parser(
         "connect-link",
@@ -3923,7 +3923,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_coach.add_argument(
         "--deliver",
         action="store_true",
-        help="Actually publish each fired decision via ntfy/Pushover/TTS (else just print).",
+        help="Actually publish each fired decision via APNs/Twilio/TTS (else just print).",
     )
     p_coach.set_defaults(func=_cmd_coach)
 
@@ -3967,7 +3967,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_notify = sub.add_parser(
         "notify",
-        help="Send a test notification through the configured route (ntfy/Pushover).",
+        help="Send a test notification through the configured route (native APNs push).",
     )
     p_notify.add_argument(
         "--test",

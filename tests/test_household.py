@@ -992,7 +992,9 @@ def test_deliver_to_household_reaches_every_member(store):
         sent.append(json.loads(request.read())["topic"])
         return httpx.Response(200, json={"id": "x"})
 
-    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
     hid = store.get_user("dana")["household_id"]
     results = deliver_to_household(
         store, hid, household_notice("🌟 goal!"), settings=Settings(), client=client
@@ -1228,7 +1230,9 @@ def test_prompt_notice_carries_signed_star_buttons(store):
         bodies.append(json.loads(request.read()))
         return httpx.Response(200, json={"id": "x"})
 
-    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
     hid = store.get_user("dana")["household_id"]
     deliver_to_household(
         store, hid, household_prompt_notice("Did Sam earn a star?", 42),
@@ -1384,7 +1388,9 @@ def test_checkin_notice_carries_three_signed_self_report_buttons(store):
         bodies.append(json.loads(request.read()))
         return httpx.Response(200, json={"id": "x"})
 
-    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
     hid = store.get_user("dana")["household_id"]
     deliver_to_household(
         store, hid, household_checkin_notice("How did it feel?"),
@@ -1519,7 +1525,9 @@ def test_digest_notice_carries_signed_caught_up_button(store):
         bodies.append(json.loads(request.read()))
         return httpx.Response(200, json={"id": "x"})
 
-    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
     deliver_to_member(
         dana, household_digest_notice("here's what changed"),
         handle="dana", settings=Settings(), client=client, base_url=BASE, secret=SIGNING,

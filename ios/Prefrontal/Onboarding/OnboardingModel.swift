@@ -49,10 +49,10 @@ final class OnboardingModel: ObservableObject {
         incoming = nil
     }
 
-    /// Ask iOS for notification authorization. The heavy lifting today is done
-    /// by ntfy, but requesting here means native alerts (background refresh,
-    /// action buttons — see the ROADMAP) light up without a second prompt later.
-    /// Returns whether the user granted it; a denial is not an error.
+    /// Ask iOS for notification authorization. Prefrontal is iOS-only and
+    /// delivers via native APNs push, so granting here is what lets nudges (with
+    /// their one-tap action buttons) arrive. Registration for the device token
+    /// follows on grant. Returns whether the user granted it; a denial is not an error.
     func requestNotifications() async -> Bool {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()

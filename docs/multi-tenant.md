@@ -265,20 +265,24 @@ operator can provision over Tailscale or on the box.
 
 ### 6.5 Delivery routing (per-user)
 
-**Delivery identifiers live in per-user `coaching_state`**, set by the operator
-with `prefrontal user route`: `ntfy_topic`/`ntfy_server`/`ntfy_token` and
-`pushover_user_key`/`pushover_token`. Delivery is now **native**, not driven by an
-n8n response: `prefrontal coach --deliver --all-users` (the `com.prefrontal-coach`
+**The per-user delivery target is the device's `apns_token`** (native push),
+registered automatically by the app on first launch via `POST /route/apns-token`
+— so for the product path there's no operator `user route` step at all. The
+`ntfy_topic`/`ntfy_server`/`ntfy_token` keys in per-user `coaching_state` (set by
+`prefrontal user route`) remain **only for the ntfy dev shim** (`PREFRONTAL_NTFY_DEV=1`,
+free-signing builds with no APNs). Delivery is **native**, not driven by an n8n
+response: `prefrontal coach --deliver --all-users` (the `com.prefrontal-coach`
 launchd job — see [`docs/deployment.md`](deployment.md) §19) resolves each user's
-route server-side via `resolve_route` and publishes directly, so a nudge reaches
-that user's own device. The Twilio/Pushover/ntfy *credentials* (API tokens) can be
-global; only the *destination* is per-user. (`twilio_to`/`twilio_from` are not part
-of `user route` — the Twilio number is a global operator setting.)
+target server-side via `resolve_route` and publishes directly, so a nudge reaches
+that user's own device. The APNs/Twilio/ntfy *credentials* (signing key, API
+tokens) are global; only the *destination* (the device token, or the dev-shim
+topic) is per-user. (`twilio_to`/`twilio_from` are not part of `user route` — the
+Twilio number is a global operator setting.)
 
-A user with no route of their own is *computed* but not delivered to, so nudges
-never land on someone else's device; the dashboard can warn on an unconfigured
-route. The legacy alternative — n8n reading `delivery: {…}` fields off the check
-responses — is superseded by the native path above.
+A user with no registered device token (nor dev-shim target) is *computed* but not
+delivered to, so nudges never land on someone else's device; the dashboard can warn
+on an unconfigured route. The legacy alternative — n8n reading `delivery: {…}`
+fields off the check responses — is superseded by the native path above.
 
 ---
 

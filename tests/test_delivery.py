@@ -1,8 +1,10 @@
 """Tests for the native delivery client (integrations/delivery.py).
 
 The HTTP transports are exercised with an ``httpx.MockTransport`` so no real
-ntfy/Pushover server is contacted, matching ``test_summarizer``'s Ollama tests.
-Covers: payload shape per transport, the local-first no-op when nothing is
+server is contacted, matching ``test_summarizer``'s Ollama tests. Native APNs is
+the product push path (covered in ``test_apns.py``); the ntfy transport here is
+the dev-only shim, so its routing tests construct the client with
+``ntfy_dev=True``. Covers: payload shape, the local-first no-op when nothing is
 configured, per-user routing over operator defaults, and the channel→transport
 routing (including held digests, action-button attachment, and voice→TTS).
 """
@@ -18,7 +20,6 @@ from prefrontal.integrations.delivery import (
     DeliveryClient,
     DeliveryResult,
     NtfyClient,
-    PushoverClient,
     Route,
     TwilioVoiceClient,
     resolve_route,
@@ -146,90 +147,42 @@ def test_ntfy_transport_error_is_reported_not_raised():
     assert "failed" in result.detail
 
 
-# -- PushoverClient -----------------------------------------------------------
-
-
-def test_pushover_publish_posts_form_and_supplementary_url():
-    captured: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["url"] = str(request.url)
-        captured["body"] = request.read().decode()
-        return httpx.Response(200, json={"status": 1})
-
-    client = PushoverClient(transport=httpx.MockTransport(handler))
-    result = client.publish(
-        "app-tok", "user-key",
-        title="Prefrontal", message="hi", priority=1,
-        url=f"{BASE}/nudge/act?t=x", url_title="I'm back",
-    )
-
-    assert result.delivered is True
-    assert result.transport == "pushover"
-    assert captured["url"] == PushoverClient.API_URL
-    assert "token=app-tok" in captured["body"]
-    assert "user=user-key" in captured["body"]
-    assert "priority=1" in captured["body"]
-    assert "url_title=I%27m+back" in captured["body"]
-
-
-def test_pushover_no_op_without_credentials():
-    called = False
-
-    def handler(request):
-        nonlocal called
-        called = True
-        return httpx.Response(200)
-
-    client = PushoverClient(transport=httpx.MockTransport(handler))
-    assert client.publish("", "user", title="t", message="m").delivered is False
-    assert client.publish("tok", "", title="t", message="m").delivered is False
-    assert called is False
-
-
 # -- resolve_route ------------------------------------------------------------
 
 
 def test_resolve_route_uses_operator_defaults(store):
-    settings = Settings(
-        ntfy_topic="op-topic", ntfy_server="https://ntfy.example", pushover_token="op-tok"
-    )
+    settings = Settings(ntfy_topic="op-topic", ntfy_server="https://ntfy.example")
     route = resolve_route(store, settings)
     assert route.ntfy_topic == "op-topic"
     assert route.ntfy_server == "https://ntfy.example"
-    assert route.pushover_token == "op-tok"
     assert route.tts_enabled is False
 
 
 def test_resolve_route_per_user_overrides_operator(store):
     store.set_state("ntfy_topic", "tom-private", source="explicit")
-    store.set_state("pushover_user_key", "tom-key", source="explicit")
+    store.set_state("apns_token", "tom-device", source="explicit")
     store.set_state("tts_enabled", "on", source="explicit")
-    settings = Settings(ntfy_topic="op-topic", pushover_user_key="op-key")
+    settings = Settings(ntfy_topic="op-topic")
     route = resolve_route(store, settings)
     assert route.ntfy_topic == "tom-private"       # per-user wins
-    assert route.pushover_user_key == "tom-key"
+    assert route.apns_token == "tom-device"        # native-push target, per-user
     assert route.tts_enabled is True               # coaching-state bool honored
 
 
 def test_resolve_route_withholds_operator_target_in_multi_user(store):
     # A second active user makes this a multi-user box: the operator's default
-    # topic/key is one person's device, so an unprovisioned user must NOT inherit
-    # it (that would send their private nudges to someone else). Server/icon —
-    # not a device target — still default.
+    # topic is one person's device, so an unprovisioned user must NOT inherit it
+    # (that would send their private nudges to someone else). Server/icon — not a
+    # device target — still default.
     store.create_user("second", display_name="Second")
     settings = Settings(
         ntfy_topic="op-topic",
         ntfy_server="https://ntfy.example",
         ntfy_icon="https://op.example/icon.png",
-        pushover_token="op-tok",
-        pushover_user_key="op-key",
     )
     route = resolve_route(store, settings)
     assert route.ntfy_topic == ""            # withheld — no cross-account fallback
     assert route.ntfy_token == ""
-    assert route.pushover_token == ""
-    assert route.pushover_user_key == ""
     assert route.ntfy_server == "https://ntfy.example"      # not a target — kept
     assert route.ntfy_icon == "https://op.example/icon.png"  # not a target — kept
 
@@ -294,11 +247,14 @@ def test_deliver_title_carries_brand_emoji():
 
 
 def _mock_client(handler) -> DeliveryClient:
+    # ntfy_dev=True so these tests exercise the ntfy dev shim (the only path that
+    # renders the captured JSON body / action buttons); native APNs is covered in
+    # test_apns.py.
     transport = httpx.MockTransport(handler)
     return DeliveryClient(
         ntfy=NtfyClient(transport=transport),
-        pushover=PushoverClient(transport=transport),
         voice=TwilioVoiceClient(transport=transport),
+        ntfy_dev=True,
     )
 
 
@@ -310,7 +266,7 @@ def test_digest_channel_is_held_not_sent():
     assert result.detail == "held for digest"
 
 
-def test_push_prefers_ntfy_and_stamps_channel_and_priority():
+def test_dev_shim_push_uses_ntfy_and_stamps_channel_and_priority():
     captured: dict = {}
 
     def handler(request):
@@ -439,25 +395,6 @@ def test_morning_prep_cue_attaches_set_alarm_button():
     assert actions[0]["url"] == (
         "shortcuts://run-shortcut?name=Set%20Alarm&input=text&text=06%3A15"
     )
-
-
-def test_falls_back_to_pushover_when_no_ntfy_topic():
-    captured: dict = {}
-
-    def handler(request):
-        captured["url"] = str(request.url)
-        captured["body"] = request.read().decode()
-        return httpx.Response(200)
-
-    client = _mock_client(handler)
-    route = Route(pushover_token="tok", pushover_user_key="key")
-    decision = _decision("push", context_key="outing", ref={"outing_id": 7})
-    result = client.deliver(decision, route, base_url=BASE, secret=SIGNING, handle="tom")
-
-    assert result.transport == "pushover"
-    assert captured["url"] == PushoverClient.API_URL
-    # No inline buttons on Pushover — the first action rides as a supplementary URL.
-    assert "url=" in captured["body"] and "nudge%2Fact" in captured["body"]
 
 
 def test_no_transport_configured_is_a_clean_no_op():

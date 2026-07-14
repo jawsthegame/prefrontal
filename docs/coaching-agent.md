@@ -32,7 +32,7 @@ this file wins.
         ↓
   Coaching Agent        ← THIS SPEC: decides what to say, when, on which channel
         ↓
-  Delivery Layer        ← ntfy (default) / Pushover / TTS / Twilio
+  Delivery Layer        ← native APNs push / TTS / Twilio (ntfy dev-only shim)
 ```
 
 ---
@@ -64,7 +64,7 @@ replace them):
 **Non-goals (v1).**
 
 - **No new delivery transport.** Delivery stays in n8n (poll an endpoint, read a
-  `message`/`channel`, send via Pushover/Ntfy/Twilio). A first-class Python
+  `message`/`channel`, send via ntfy/Twilio). A first-class Python
   delivery layer remains "beyond v1" in the roadmap. The coaching agent *chooses*
   the channel; n8n still *sends*.
   *(Update: the first-class Python delivery layer has since shipped —
@@ -128,7 +128,7 @@ notion of "level":
 | urgency | meaning | default channel floor |
 |---|---|---|
 | `ambient` | nice to know, never interrupts | digest only (folded into briefing) |
-| `nudge` | a normal reminder | push (ntfy/Pushover) |
+| `nudge` | a normal reminder | push (native APNs) |
 | `urgent` | time-critical, must be seen | push, escalates to sound |
 | `critical` | will be missed otherwise | voice (Twilio), bypasses quiet hours |
 
@@ -226,7 +226,7 @@ def decide(store, cues, ctx) -> list[Decision]:
    ignore after 3pm" made real.
 3. Respect a `critical` cue's right to escalate to voice regardless.
 4. Honor explicit per-user routing fields when present (the multi-tenant spec's
-   `pushover_user_key`/`twilio_to`/`ntfy_topic` in `coaching_state`,
+   `apns_token`/`twilio_to`/`ntfy_topic` dev-shim key in `coaching_state`,
    [`docs/multi-tenant.md`](multi-tenant.md) §6.5) — the agent emits the *channel
    class*; the delivery fields say *where*.
 

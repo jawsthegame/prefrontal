@@ -1,8 +1,9 @@
 """Twilio SMS — text a household invite link to a co-parent.
 
 A tiny, credential-free-at-construction transport in the same shape as the
-delivery-layer clients (:class:`~prefrontal.integrations.delivery.NtfyClient` /
-``PushoverClient``): an ``httpx``-based POST to Twilio's REST API, no SDK
+delivery-layer clients (:class:`~prefrontal.integrations.delivery.TwilioVoiceClient`
+/ :class:`~prefrontal.integrations.delivery.NtfyClient`): an ``httpx``-based POST
+to Twilio's REST API, no SDK
 dependency, tests inject a transport. Local-first, like every other integration
 client — with nothing configured it runs in **no-op/log mode** and nothing
 leaves the host, and transport errors are caught and returned as an

@@ -2,47 +2,51 @@
 
 The coaching agent (:mod:`prefrontal.coaching`) decides *what to say, when, and
 on which channel class* (``digest``/``push``/``sound``/``voice`` — see
-:data:`~prefrontal.coaching.CHANNEL_LADDER`). Until now the actual publish was
-done by an n8n node that read the ``actions`` a nudge endpoint returned and
-POSTed them to ntfy. This module is the native Python replacement: given a
-:class:`~prefrontal.coaching.Decision` and the acting user's per-user *routing*
-(their ntfy topic / Pushover key), it maps the channel class to a concrete
-transport and publishes — with ntfy's inline ``http`` action buttons attached so
-a nudge stays one background tap.
+:data:`~prefrontal.coaching.CHANNEL_LADDER`). This module is the native publisher:
+given a :class:`~prefrontal.coaching.Decision` and the acting user's per-user
+*routing* (their APNs device token), it maps the channel class to a concrete
+transport and publishes — with the inline action buttons attached so a nudge
+stays one tap.
+
+Prefrontal is **iOS-only**, so the product push transport is **native APNs**
+(rendered with real ``UNNotificationCategory`` action buttons). ntfy is retained
+only as a **dev-only shim** (off unless ``PREFRONTAL_NTFY_DEV`` is set) so a
+free-signing build — which can't carry the ``aps-environment`` entitlement — can
+still receive server-driven pushes during development. Pushover has been removed.
 
 Local-first, like every other integration client (:mod:`prefrontal.integrations`):
-a transport with nothing configured (no ntfy topic, no Pushover credentials)
-runs in **no-op/log mode** and nothing leaves the host. Errors are caught and
-reported as a :class:`DeliveryResult`, never raised — a down transport must not
-sink the coaching tick, exactly as :class:`~prefrontal.integrations.n8n.N8nClient`
-swallows transport errors on the capture path.
+a transport with nothing configured (no APNs device token/creds) runs in
+**no-op/log mode** and nothing leaves the host. Errors are caught and reported as
+a :class:`DeliveryResult`, never raised — a down transport must not sink the
+coaching tick, exactly as :class:`~prefrontal.integrations.n8n.N8nClient` swallows
+transport errors on the capture path.
 
 Channel classes map to transports as:
 
 ===========  ==================================================================
 ``digest``   held — folds into the morning briefing, never interrupts (no send)
-``push``     ntfy (default priority) or Pushover
-``sound``    ntfy (high priority) or Pushover (high)
+``push``     APNs (default priority); ntfy in the dev shim
+``sound``    APNs (active); ntfy (high) in the dev shim
 ``voice``    local TTS when enabled, then a Twilio phone call when configured,
-             else ntfy (max/urgent) / Pushover (high)
+             else a time-sensitive APNs push (ntfy max/urgent in the dev shim)
 ===========  ==================================================================
 
 The Twilio call is what lets the box place the outing 150% escalation (a
 ``critical`` cue → ``voice`` channel) **natively** — the last thing the n8n
 delivery workflows still owned. It uses inline TwiML (``<Say>``) so no public
 callback URL is needed; the account credentials are the operator's and the
-recipient number (``twilio_to``) is per-user, like an ntfy topic.
+recipient number (``twilio_to``) is per-user, like the APNs device token.
 
 **Suppression and debounce are not re-done here.** The engine's
 :func:`~prefrontal.coaching.suppressed` already gated the ``Decision`` (quiet
 hours + per-``dedup_key`` debounce) and :func:`~prefrontal.coaching.record_fired`
 stamps it. This layer only *routes and sends*. Per-user routing identifiers live
-in ``coaching_state`` (``ntfy_topic``/``pushover_user_key``/… — the multi-tenant
-spec's §6.5 delivery fields), falling back to the operator defaults in
-:class:`~prefrontal.config.Settings` so a single-user box needs no per-user setup.
-On a multi-user / household box that fallback is withheld for the *targeting*
-fields (see :func:`resolve_route`), so an unprovisioned user's private nudges are
-never delivered to the operator's shared device.
+in ``coaching_state`` (``apns_token``/``twilio_to``/… — the multi-tenant spec's
+§6.5 delivery fields), with the operator-shared signing creds in
+:class:`~prefrontal.config.Settings`. The APNs device token is a per-user
+*targeting* field withheld on a multi-user / household box (see
+:func:`resolve_route`), so an unprovisioned user's private nudges are never
+delivered to another user's device.
 """
 
 from __future__ import annotations
@@ -79,12 +83,8 @@ logger = get_logger(__name__)
 _TITLE = "🧠 Prefrontal"
 
 #: Channel class → ntfy priority (1 min … 5 max/urgent). ``digest`` is quiet.
+#: Used only by the dev-only ntfy shim (see the module docstring).
 NTFY_PRIORITY = {"digest": 2, "push": 3, "sound": 4, "voice": 5}
-
-#: Channel class → Pushover priority (-2 … 2). Capped at ``1`` (high): emergency
-#: (2) requires ``retry``/``expire`` params, and ``voice`` really wants TTS/a
-#: call, not a louder push — so we never send a malformed emergency alert.
-PUSHOVER_PRIORITY = {"digest": -1, "push": 0, "sound": 1, "voice": 1}
 
 #: Channel class → APNs ``interruption-level`` (iOS 15+). ``time-sensitive``
 #: breaks through Focus/Do-Not-Disturb (the app needs the Time Sensitive
@@ -139,12 +139,12 @@ class Route:
     through to the next one (or no-ops).
     """
 
+    # ntfy targeting — used only by the dev-only shim (``PREFRONTAL_NTFY_DEV``);
+    # empty on a product build, where APNs is the sole push transport.
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
     ntfy_token: str = ""
     ntfy_icon: str = ""
-    pushover_token: str = ""
-    pushover_user_key: str = ""
     tts_enabled: bool = False
     # Twilio voice-call transport for the ``voice`` channel. The account creds +
     # caller-ID (``twilio_from``) are the operator's (shared); ``twilio_to`` is the
@@ -166,8 +166,9 @@ class DeliveryResult:
     Attributes:
         channel: The :class:`~prefrontal.coaching.Decision` channel class this
             was for (``push``/``sound``/…), stamped by the router.
-        transport: Which transport handled it — ``"ntfy"``/``"pushover"``/
-            ``"tts"``, or ``"none"`` when nothing was configured / it was held.
+        transport: Which transport handled it — ``"apns"``/``"twilio"``/
+            ``"tts"`` (``"ntfy"`` in the dev shim), or ``"none"`` when nothing
+            was configured / it was held.
         delivered: ``True`` only if a send actually succeeded.
         status_code: HTTP status from the transport, or ``None`` (TTS / no send).
         detail: Human-readable note for logs and the CLI.
@@ -184,13 +185,14 @@ def resolve_route(store: Any, settings: Settings | None = None) -> Route:
     """Resolve a user's :class:`Route`: per-user ``coaching_state`` over operator defaults.
 
     Each identifier is read from the (scoped) store's ``coaching_state``. The
-    *targeting* fields (ntfy topic/token, Pushover token/user key) fall back to
-    the matching :class:`~prefrontal.config.Settings` default **only on a
-    single-user box** — on a multi-user / household deployment the operator
-    default is one person's device, so an unset target stays empty rather than
-    delivering an unprovisioned user's private nudges to someone else (multi-tenant
-    §6.5). Non-targeting fields (``ntfy_server``, ``ntfy_icon``) always default —
-    they set where ntfy lives and how the push looks, not whose device it reaches.
+    *targeting* fields (the APNs device token, Twilio recipient number, and — for
+    the dev shim — the ntfy topic/token) fall back to the matching
+    :class:`~prefrontal.config.Settings` default **only on a single-user box** —
+    on a multi-user / household deployment the operator default is one person's
+    device, so an unset target stays empty rather than delivering an
+    unprovisioned user's private nudges to someone else (multi-tenant §6.5).
+    Non-targeting fields (``ntfy_server``, ``ntfy_icon``) always default — they
+    set where ntfy lives and how the push looks, not whose device it reaches.
     """
     resolved = settings or get_settings()
 
@@ -217,8 +219,6 @@ def resolve_route(store: Any, settings: Settings | None = None) -> Route:
         ntfy_topic=_target("ntfy_topic", resolved.ntfy_topic),
         ntfy_token=_target("ntfy_token", resolved.ntfy_token),
         ntfy_icon=store.get_state("ntfy_icon") or resolved.ntfy_icon,
-        pushover_token=_target("pushover_token", resolved.pushover_token),
-        pushover_user_key=_target("pushover_user_key", resolved.pushover_user_key),
         tts_enabled=store.get_bool("tts_enabled", resolved.tts_enabled),
         # Twilio account creds + caller-ID are the operator's — non-targeting, so
         # they always default (like ntfy_server). Only the recipient number
@@ -303,63 +303,6 @@ class NtfyClient:
             delivered=resp.is_success,
             status_code=resp.status_code,
             detail=f"ntfy responded {resp.status_code}",
-        )
-
-
-class PushoverClient:
-    """Publish a notification to Pushover.
-
-    Pushover has no inline action buttons — the router passes a single tap URL as
-    the message's *supplementary URL* instead, so a Pushover user still gets a
-    (one-hop) way to act.
-    """
-
-    API_URL = "https://api.pushover.net/1/messages.json"
-
-    def __init__(self, timeout: float = 10.0, transport: httpx.BaseTransport | None = None) -> None:
-        self.timeout = timeout
-        self._transport = transport
-
-    def publish(
-        self,
-        token: str,
-        user_key: str,
-        *,
-        title: str,
-        message: str,
-        priority: int = 0,
-        url: str = "",
-        url_title: str = "",
-    ) -> DeliveryResult:
-        """POST a message to the Pushover API.
-
-        No-ops (nothing sent) unless both ``token`` and ``user_key`` are set.
-        """
-        if not token or not user_key:
-            return DeliveryResult(
-                transport="pushover", detail="pushover: no credentials configured"
-            )
-        data: dict[str, Any] = {
-            "token": token,
-            "user": user_key,
-            "title": title,
-            "message": message,
-            "priority": priority,
-        }
-        if url:
-            data["url"] = url
-            data["url_title"] = url_title or "Open"
-        try:
-            with httpx.Client(timeout=self.timeout, transport=self._transport) as client:
-                resp = client.post(self.API_URL, data=data)
-        except httpx.HTTPError as exc:
-            logger.warning("pushover delivery failed: %s", exc)
-            return DeliveryResult(transport="pushover", detail=f"pushover request failed: {exc}")
-        return DeliveryResult(
-            transport="pushover",
-            delivered=resp.is_success,
-            status_code=resp.status_code,
-            detail=f"pushover responded {resp.status_code}",
         )
 
 
@@ -469,7 +412,7 @@ class TwilioVoiceClient:
 def _actions_for_cue(
     cue: Any, *, base_url: str, secret: str, handle: str
 ) -> list[dict[str, Any]]:
-    """Build the ntfy action buttons for a cue, or ``[]`` when none apply.
+    """Build the one-tap action buttons for a cue, or ``[]`` when none apply.
 
     Maps the cue's ``context_key`` to a :mod:`~prefrontal.webhooks.notify` nudge
     *kind* and pulls the button's target id from ``cue.ref``; an unmapped context
@@ -505,8 +448,8 @@ class ApnsClient:
     (operator-shared); the device token is per-user (:attr:`Route.apns_token`).
     Like every transport here it returns a :class:`DeliveryResult` and never
     raises. Needs HTTP/2 (APNs requires it) — the ``prefrontal[apns]`` extra
-    installs ``h2``; without it this reports unavailable and delivery falls back
-    to ntfy.
+    installs ``h2``; without it this reports unavailable and the nudge no-ops
+    (or falls to the dev-only ntfy shim, if enabled).
     """
 
     def __init__(self, settings: Settings, *, timeout: float = 10.0,
@@ -593,27 +536,29 @@ class ApnsClient:
 class DeliveryClient:
     """Route a :class:`~prefrontal.coaching.Decision` to a transport and publish.
 
-    Composes the three transports; :meth:`deliver` picks one from the channel
-    class and the user's :class:`Route`, preferring **ntfy** (it can render the
-    inline action buttons) and falling back to Pushover, with local TTS for
-    ``voice`` when enabled. Construct with :meth:`from_settings` (tests pass an
-    ``httpx`` transport that both HTTP clients share).
+    Composes the transports; :meth:`deliver` picks one from the channel class and
+    the user's :class:`Route`, sending native **APNs** push (the product path,
+    with real notification-action buttons) and using local TTS / a Twilio call for
+    ``voice`` when enabled. The **ntfy** transport is a dev-only shim, tried only
+    when ``ntfy_dev`` is set (``PREFRONTAL_NTFY_DEV``). Construct with
+    :meth:`from_settings` (tests pass an ``httpx`` transport the HTTP clients share).
     """
 
     def __init__(
         self,
         *,
         ntfy: NtfyClient | None = None,
-        pushover: PushoverClient | None = None,
         tts: TTSClient | None = None,
         voice: TwilioVoiceClient | None = None,
         apns: ApnsClient | None = None,
+        ntfy_dev: bool = False,
     ) -> None:
         self.ntfy = ntfy or NtfyClient()
-        self.pushover = pushover or PushoverClient()
         self.tts = tts or TTSClient()
         self.voice = voice or TwilioVoiceClient()
         self.apns = apns or ApnsClient(get_settings())
+        #: Enable the dev-only ntfy shim (free-signing builds); off in production.
+        self.ntfy_dev = ntfy_dev
 
     @classmethod
     def from_settings(
@@ -623,10 +568,10 @@ class DeliveryClient:
         resolved = settings or get_settings()
         return cls(
             ntfy=NtfyClient(transport=transport),
-            pushover=PushoverClient(transport=transport),
             tts=TTSClient(),
             voice=TwilioVoiceClient(transport=transport),
             apns=ApnsClient(resolved, transport=transport),
+            ntfy_dev=resolved.ntfy_dev,
         )
 
     def deliver(
@@ -680,11 +625,11 @@ class DeliveryClient:
             else _actions_for_cue(decision.cue, base_url=base_url, secret=secret, handle=handle)
         )
 
-        # Native iOS push first when this user registered a device token and APNs
-        # is configured — it renders real notification-action buttons (via the
-        # `category`) rather than ntfy's http buttons. If it doesn't land, fall
-        # through to ntfy/Pushover, so a token that's gone stale never black-holes
-        # a nudge. ntfy stays the default for everyone who hasn't opted in.
+        # Native iOS push — the product transport. Delivers when this user
+        # registered a device token and the APNs signing creds are configured; it
+        # renders real notification-action buttons (via the `category`). If it
+        # doesn't land, fall through to the dev-only ntfy shim (if enabled), so a
+        # stale token doesn't black-hole a nudge on a dev box.
         if route.apns_token and self.apns.configured:
             apns_result = self.apns.publish(
                 route.apns_token,
@@ -697,7 +642,10 @@ class DeliveryClient:
             if apns_result.delivered:
                 return replace(apns_result, channel=channel)
 
-        if route.ntfy_topic:
+        # Dev-only ntfy shim: free-signing builds have no APNs entitlement, so this
+        # keeps server-driven push working during development. Never fires on a
+        # product build (``ntfy_dev`` defaults off, and no ntfy topic is set).
+        if self.ntfy_dev and route.ntfy_topic:
             result = self.ntfy.publish(
                 route.ntfy_server,
                 route.ntfy_topic,
@@ -722,20 +670,6 @@ class DeliveryClient:
                 click=(
                     "" if actions else (f"{base_url}/dashboard" if base_url else "")
                 ),
-            )
-            return replace(result, channel=channel)
-
-        if route.pushover_token and route.pushover_user_key:
-            url = actions[0]["url"] if actions else ""
-            url_title = actions[0]["label"] if actions else ""
-            result = self.pushover.publish(
-                route.pushover_token,
-                route.pushover_user_key,
-                title=_TITLE,
-                message=message,
-                priority=PUSHOVER_PRIORITY.get(channel, 0),
-                url=url,
-                url_title=url_title,
             )
             return replace(result, channel=channel)
 
@@ -915,8 +849,8 @@ def deliver_to_household(
     """Deliver one decision to **every** member of a household (both co-parents).
 
     Enumerates the household's members, resolves each member's *own* :class:`Route`
-    (their per-user ntfy topic / Pushover key over the operator defaults), and
-    publishes to each. This is how a shared-sheet event — a reward goal reached —
+    (their per-user APNs device token over the operator defaults), and publishes
+    to each. This is how a shared-sheet event — a reward goal reached —
     reaches both parents at once, and it is the reusable seam the v2 delta digest
     will push through too.
 

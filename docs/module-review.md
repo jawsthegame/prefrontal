@@ -549,8 +549,9 @@ A one-line shared `ProviderError(RuntimeError)`.
   terminal failure. A `retryable: bool` attribute would let the summarizer retry once before degrading.
 
 ### `integrations/delivery.py`
-Native delivery: maps a `Decision`'s channel class to ntfy → Pushover → TTS → Twilio with signed
-buttons; never raises; `resolve_route` withholds operator-default targeting on a multi-user box.
+Native delivery: maps a `Decision`'s channel class to native APNs push → TTS → Twilio with signed
+buttons (ntfy is a dev-only shim behind `PREFRONTAL_NTFY_DEV=1`); never raises; `resolve_route`
+withholds operator-default targeting on a multi-user box.
 - ⚡ `resolve_route` runs `store.each_user(status="active")` on **every** delivery (`delivery.py:195`)
   just to compute `multi_user`; the household/chore sweeps call it in loops. Pass the known member
   count / memoize the flag.
