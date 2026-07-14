@@ -137,6 +137,8 @@ ASSISTANT_SYSTEM = (
     '- {"op":"rename_todo","todo_id":int,"title":str}\n'
     '- {"op":"set_deadline","todo_id":int,"deadline":"YYYY-MM-DD" or null}\n'
     '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
+    '- {"op":"add_blocker","person":str,"what":str,"priority":0-3?,'
+    '"deadline":"YYYY-MM-DD"?,"notes":str?}\n'
     '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email",'
     '"destination":str?,"context":str?,"note":str?}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
@@ -150,6 +152,13 @@ ASSISTANT_SYSTEM = (
     "nudge or reminder about that item, so use set_todo_notes / "
     "set_commitment_notes when the user wants to remember something *about* a "
     'task or event (notes:null clears it).\n'
+    "A blocker is when someone ELSE is waiting on YOU for something — the ball is "
+    "in your court. Use add_blocker when the user says \"Sam's blocked on me for "
+    "X\", \"my boss is waiting on the report\", \"I owe Priya the numbers\", or "
+    "\"they need X from me\": \"person\" is who's waiting, \"what\" is what they "
+    "need. It is NOT a todo (a todo is the user's own open loop) — reach for "
+    "add_blocker whenever the pressure is that someone else is held up until the "
+    "user delivers.\n"
     "Delegating hands a todo to an assistant to do the PREP/follow-up (it does NOT "
     "mark it done): use delegate_todo when the user says \"have the assistant "
     "handle/prep X\", \"get my VA on X\", \"draft the email for X\". "
@@ -766,6 +775,26 @@ def _v_add_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> Va
     return ValidatedAction(op, params, f"Add todo: “{title}”{detail}")
 
 
+def _v_add_blocker(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
+    person = _nonblank(action.get("person"), "person")
+    what = _nonblank(action.get("what"), "what")
+    params: dict[str, Any] = {"person": person, "what": what}
+    extras = []
+    if action.get("priority") is not None:
+        params["priority"] = _as_priority(action["priority"])
+        extras.append(_PRIORITY_NAMES[params["priority"]])
+    if action.get("deadline") is not None:
+        params["deadline"] = _nonblank(action.get("deadline"), "deadline")
+        extras.append(f"by {params['deadline']}")
+    notes = str(action.get("notes") or "").strip()
+    if notes:
+        params["notes"] = notes
+    detail = f" ({', '.join(extras)})" if extras else ""
+    return ValidatedAction(
+        op, params, f"Log that {person} is waiting on you: “{what}”{detail}"
+    )
+
+
 def _v_todo_status(op: str, action: dict[str, Any], snapshot: dict[str, Any]) -> ValidatedAction:
     tid, title = _require_todo(action, snapshot)
     verb = "Complete" if op == "complete_todo" else "Drop"
@@ -1324,6 +1353,7 @@ _VALIDATORS: dict[
     "rename_todo": _v_rename_todo,
     "set_deadline": _v_set_deadline,
     "set_todo_notes": _v_set_todo_notes,
+    "add_blocker": _v_add_blocker,
     "add_commitment": _v_add_commitment,
     "cancel_commitment": _v_cancel_commitment,
     "set_commitment_notes": _v_set_commitment_notes,
@@ -1499,6 +1529,16 @@ def _execute_one(
             result["ok"] = memory.update_todo_deadline(p["todo_id"], deadline)
         elif op == "set_todo_notes":
             result["ok"] = memory.set_todo_notes(p["todo_id"], p.get("notes"))
+        elif op == "add_blocker":
+            deadline = _to_utc_or_none(p.get("deadline"), tz)
+            bid = memory.add_blocker(
+                p["person"],
+                p["what"],
+                priority=p.get("priority", 1),
+                deadline=deadline,
+                notes=p.get("notes"),
+            )
+            result.update(ok=True, detail=f"blocker #{bid}")
         elif op == "delegate_todo":
             todo = memory.get_todo(p["todo_id"])
             if todo is None or todo.get("status") != "open":

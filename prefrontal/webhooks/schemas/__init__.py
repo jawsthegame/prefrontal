@@ -23,6 +23,10 @@ from prefrontal.webhooks.schemas.assistant import (
     AssistantMessage,
     FindTimeMessage,
 )
+from prefrontal.webhooks.schemas.blockers import (
+    BlockerCreate,
+    BlockerUpdate,
+)
 from prefrontal.webhooks.schemas.clarify import (
     ClarificationLocalization,
     ClarificationResolve,
@@ -141,6 +145,8 @@ __all__ = [
     "FindTimeMessage",
     "AutoDecomposeConfig",
     "BalanceConfig",
+    "BlockerCreate",
+    "BlockerUpdate",
     "CalendarEvent",
     "CalendarSync",
     "CaptureImpulse",

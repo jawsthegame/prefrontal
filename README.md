@@ -36,6 +36,15 @@ The counterweight to a system whose job is nudging. When a day genuinely goes ro
 **Self-care checks**
 The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** action buttons on the native push, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in. At day's end it can read those taps back as a *timeline* and name the gaps a raw tally hides — you drank all six glasses, but your first wasn't until 3pm; six hours passed between two bio breaks — as an opt-in evening recap (and on demand via `prefrontal self-care review` / `GET /self-care/review`).
 
+**Blocked-on-me tracker**
+The mirror image of a todo: capture, in one line, when someone *else* is blocked
+until you do a thing ("Sam's waiting on the budget numbers"). It's not busywork —
+it feeds prioritization directly. Panic mode ranks who's waiting alongside your
+own fires (a person past-due on you edges out your own overdue todo), and the
+morning briefing leads with **🙋 Waiting on you**, longest wait first. The
+counterweight to shiny-object syndrome: before you chase the new thing, you see
+whose day is stalled until you move.
+
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
 
@@ -119,6 +128,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Freeform calendar assistant | `prefrontal/availability.py` · `webhooks/routers/assistant.py` | ✅ "Find me a time" from free text: parses duration + timeframe + who's-involved (LLM with an offline-heuristic fallback), asks one clarifying question when the ask is too vague, then finds open slots over `find_slots`. **Participant-aware** — a partner's FYI events ("where someone else will be") block only when the plan involves them, so "just me" ignores items that are only your wife's. `POST /assistant/find-time`, `prefrontal find-time "…"` |
 | Todos + time-fitting | `prefrontal/scheduling.py` | ✅ Open loops fitted into free windows; `prefrontal todo` / `fit`, woven into the briefing. Honest prioritization: surfaces the important todo you keep skipping, pins in-progress todos to the top, and flags when you're mid-task on something less important than what you're avoiding (`focus_conflict`) |
 | Todo decomposition | `prefrontal/todos.py` | ✅ Breaks a stall-prone todo into a tiny first step + remaining steps |
+| Blockers (who's waiting on you) | `prefrontal/blockers.py` · `webhooks/routers/blockers.py` | ✅ Capture when someone else is blocked on you (one line / `POST /blockers` / NL `add_blocker`); feeds prioritization — panic buckets it above the equivalent todo, the briefing leads with "🙋 Waiting on you". Resolved not deleted; `prefrontal blocked add/list/resolve/reopen` |
 | Ambiguity clarification | `prefrontal/clarify.py` · `webhooks/routers/clarify.py` | ✅ A vague todo/commitment ("Tax", "Mom") that stalls because it can't be *named* gets one inline clarifying question in the dashboard (candidate readings, LLM-phrased with a heuristic fallback); answering hones it in, and a reading that maps to a recognized task type (e.g. tax filing) opens a step-by-step guided overlay. A Task-Paralysis initiation lever — the detection sweep runs on the coaching tick (`sweep_ambiguous_items`), with `POST /clarifications/check` as the on-demand twin, plus `GET /clarifications`, resolve/dismiss, and a `prefrontal clarify check/list/resolve/dismiss/guide/localize` CLI. Guides for the recognized task types (tax filing, passport, DMV/license, vehicle registration, insurance claim, home repair, finding a provider, appointments) **localize to your home ZIP** when you opt in — from the dashboard's clarify card or `prefrontal clarify localize on` (both write `POST /clarifications/localization`) |
 | Mail ingestion + triage | `prefrontal/mail/` | ✅ Normalize → triage (Ollama + heuristic) → surface as action items; `prefrontal mail`, `POST /webhooks/mail/sync` |
 | Webhook listener (native app / iOS Shortcuts) | `prefrontal/webhooks/` | ✅ Implemented — FastAPI, one-tap logging (App Intents primary; Shortcuts fallback) |
@@ -189,6 +199,11 @@ prefrontal panic
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
 prefrontal fit 20      # "with 20 min free, you could knock out…"
+
+# Capture when someone else is blocked on YOU (feeds panic + briefing priorities)
+prefrontal blocked add "Sam" "the budget numbers" --priority 2
+prefrontal blocked list           # who's waiting, longest wait first
+prefrontal blocked resolve 1      # you delivered — clear the wait
 
 # Find a time from free text (the calendar assistant). Parses how long, when, and
 # who's involved; asks one question if the ask is too vague to answer.

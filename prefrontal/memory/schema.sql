@@ -385,6 +385,35 @@ CREATE TABLE IF NOT EXISTS todos (
 
 CREATE INDEX IF NOT EXISTS idx_todos_user_status ON todos (user_id, status);
 
+-- Blockers — someone ELSE is waiting on YOU. A record that the ball is in your
+-- court: another person is blocked until you do a specific thing. Deliberately
+-- separate from `todos` (a todo is *your* open loop; a blocker also names the
+-- person waiting and, via `blocking_since`, how long they've waited) — it exists
+-- to feed prioritization. Panic mode and the morning briefing surface who's
+-- waiting on you so an unblock can outrank a shiny new thing (the whole point:
+-- fighting shiny-object syndrome). `person` is who's blocked, `what` is the thing
+-- they need; `priority` 0=low…3=urgent; `deadline` is an optional "needs it by";
+-- `blocking_since` drives the "waiting N days" aging. Resolved when you've
+-- delivered (status='resolved', never deleted — the history stays), and an
+-- optional `todo_id` links the open loop that clears it.
+CREATE TABLE IF NOT EXISTS blockers (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    person         TEXT    NOT NULL,                            -- who is blocked / waiting on you
+    what           TEXT    NOT NULL,                            -- the thing they need from you
+    notes          TEXT,                                        -- optional free-text detail
+    priority       INTEGER NOT NULL DEFAULT 1,                  -- 0 low | 1 normal | 2 high | 3 urgent
+    deadline       DATETIME,                                    -- optional "needs it by" (UTC)
+    blocking_since DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- when they started waiting (drives the aging)
+    todo_id        INTEGER REFERENCES todos(id),                -- optional link to the open loop that clears it
+    status         TEXT    NOT NULL DEFAULT 'open',             -- open | resolved
+    resolved_at    DATETIME,                                    -- when you delivered (NULL while open)
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_blockers_user_status ON blockers (user_id, status);
+
 -- Dismissed "possible conflicts" — soft double-bookings (a generic Busy/Block/
 -- Hold overlapping a real event) the user has waved off. Keyed by a signature
 -- of the event pair (external_id + start + title), so a dismissal sticks across
