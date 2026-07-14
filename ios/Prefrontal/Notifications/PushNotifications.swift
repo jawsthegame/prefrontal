@@ -43,7 +43,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        // Non-fatal — delivery falls back to ntfy on the server side.
+        // Non-fatal — without a device token this user just isn't an APNs
+        // recipient (e.g. a free-signing dev build, which uses the server's
+        // dev-only ntfy shim instead).
     }
 
     // Show the alert even while the app is foreground.
