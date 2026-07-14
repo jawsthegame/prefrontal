@@ -220,8 +220,9 @@ def _respite_situation(
     Putting them side by side answers "am I running myself into the ground?" with
     the honest counterweight: the one thing that truly needs you, so stepping back
     for five minutes is a decision made against the real load, not guilt. Read-only,
-    and deterministic apart from the panic first step's optional decomposition (the
-    ``client`` flows through to it; it falls back to the heuristic without one).
+    and fully deterministic — :func:`~prefrontal.panic.build_panic` is model-free
+    (its first step uses the heuristic ``decompose_task`` internally, no ``client``),
+    so the ``client`` here is accepted only for the uniform tool contract and unused.
 
     Returns the skipped basics, the panic first step + pressing count, whether the
     self-care checks are even armed, and a one-line ``headline`` for the push.
