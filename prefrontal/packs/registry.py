@@ -12,6 +12,8 @@ life-context pack is an explicit opt-in ("I'm managing kids"), so an unset
 
 from __future__ import annotations
 
+from typing import Any
+
 from prefrontal.config import Settings, get_settings
 from prefrontal.packs.base import Pack, PackVocabulary, SituationTool
 
@@ -72,6 +74,76 @@ def is_enabled(key: str, settings: Settings | None = None) -> bool:
     """Return whether the pack ``key`` is registered and enabled."""
     resolved = settings or get_settings()
     return key in _REGISTRY and key in resolved.packs
+
+
+#: Coaching-state key prefix for the per-user pack on/off overlay (the Settings
+#: "Features" toggles). A value of ``"off"`` hides that pack's user-facing
+#: surfaces — its situation tools and the ``/care`` lens — for this user only.
+#: This is the **surfaces** overlay (P1): a pack's vocabulary and domain
+#: classification stay deployment-wide, so "off" is cosmetic, not structural.
+PACK_ENABLED_PREFIX = "pack_enabled:"
+
+
+def user_disabled_pack_keys(store: Any) -> set[str]:
+    """Pack keys the signed-in user has turned **off** for themselves.
+
+    The per-user pack overlay — the pack twin of the module overlay. Scans every
+    registered pack's override so an operator enabling a pack later still honors a
+    prior user "off". Best-effort: a store without the state repo reports none
+    disabled, so the overlay can never hard-fail a surface.
+    """
+    out: set[str] = set()
+    try:
+        for pack in available():
+            if (store.get_state(f"{PACK_ENABLED_PREFIX}{pack.key}") or "").strip().lower() == "off":
+                out.add(pack.key)
+    except Exception:  # noqa: BLE001 — the overlay is a convenience, never a hard gate
+        return set()
+    return out
+
+
+def user_pack_enabled(store: Any, key: str, settings: Settings | None = None) -> bool:
+    """Deployment-enabled **and** not turned off by this user (surfaces P1)."""
+    return is_enabled(key, settings) and key not in user_disabled_pack_keys(store)
+
+
+def user_enabled_packs(store: Any, settings: Settings | None = None) -> list[Pack]:
+    """Deployment-enabled packs minus the ones this user turned off."""
+    off = user_disabled_pack_keys(store)
+    return [p for p in enabled_packs(settings) if p.key not in off]
+
+
+def user_enabled_situations(
+    store: Any, settings: Settings | None = None
+) -> list[SituationTool]:
+    """Situation tools from the packs this user hasn't turned off (per-user P1).
+
+    The per-user counterpart to :func:`enabled_situations`: a tool whose owning
+    pack the user disabled disappears from their ``/packs/situations`` list, just
+    as a deployment-disabled pack's tools never appear at all.
+    """
+    out: list[SituationTool] = []
+    seen: set[str] = set()
+    for pack in user_enabled_packs(store, settings):
+        for tool in pack.situations:
+            if tool.key not in seen:
+                seen.add(tool.key)
+                out.append(tool)
+    return out
+
+
+def user_get_situation(
+    store: Any, key: str, settings: Settings | None = None
+) -> SituationTool | None:
+    """An enabled situation tool by key, respecting the user's pack overlay.
+
+    ``None`` covers "no such tool", "its pack is off deployment-wide", and "the
+    user turned its pack off" — the router turns any of them into a 404.
+    """
+    for tool in user_enabled_situations(store, settings):
+        if tool.key == key:
+            return tool
+    return None
 
 
 def pack_module_keys(settings: Settings | None = None) -> list[str]:

@@ -31,6 +31,8 @@ from prefrontal.modules.self_care import (
     apply_self_care_unmark,
     self_care_status,
 )
+from prefrontal.packs.registry import PACK_ENABLED_PREFIX, enabled_packs, user_disabled_pack_keys
+from prefrontal.packs.registry import available as available_packs
 from prefrontal.self_care_review import self_care_review
 from prefrontal.sources import (
     SMTP_ACCOUNT,
@@ -100,6 +102,23 @@ def _guide_seen(store: Any) -> set[str]:
 def _write_guide_seen(store: Any, keys: set[str]) -> None:
     """Persist the marked-read set (sorted, deduped) back to coaching state."""
     store.set_state(_GUIDE_SEEN_KEY, ",".join(sorted(keys)), source="explicit")
+
+
+def _apply_overrides(
+    store: Any, overrides: dict[str, bool], known: set[str], prefix: str
+) -> None:
+    """Write per-user on/off overrides for the given keys (Settings "Features").
+
+    ``True`` clears the override (back to the deployment default); ``False`` sets
+    ``<prefix><key> = "off"``. Keys not in ``known`` (unregistered) are skipped.
+    """
+    for key, on in overrides.items():
+        if key not in known:
+            continue
+        if on:
+            store.delete_state(f"{prefix}{key}")
+        else:
+            store.set_state(f"{prefix}{key}", "off", source="explicit")
 
 
 def _guide_payload(store: Any, settings: Any) -> dict[str, Any]:
@@ -379,35 +398,46 @@ def build_router(services: RouterServices) -> APIRouter:
         return self_care_review(ctx.store, utcnow(), services.settings.timezone)
 
     def _features_view(store: Any) -> dict[str, Any]:
-        """The signed-in user's per-module on/off state, for the Settings toggles.
+        """The signed-in user's per-module and per-pack on/off state.
 
-        Lists every **deployment-enabled** module (the set the user can turn off
-        for themselves) with its title, one-line ``challenge``, and whether it's
-        currently on for them. Read-only.
+        Lists every **deployment-enabled** module and pack (the sets the user can
+        turn off for themselves), each with its title, a one-line blurb, and
+        whether it's currently on for them. Turning a pack off is a *surfaces*
+        overlay (its situation tools + ``/care`` lens). Read-only.
         """
-        off = user_disabled_module_keys(store)
+        mod_off = user_disabled_module_keys(store)
+        pack_off = user_disabled_pack_keys(store)
         return {
             "modules": [
                 {
                     "key": m.key,
                     "title": m.title,
                     "challenge": m.challenge,
-                    "enabled": m.key not in off,
+                    "enabled": m.key not in mod_off,
                 }
                 for m in enabled_modules(services.settings)
-            ]
+            ],
+            "packs": [
+                {
+                    "key": p.key,
+                    "title": p.title,
+                    "description": p.description,
+                    "enabled": p.key not in pack_off,
+                }
+                for p in enabled_packs(services.settings)
+            ],
         }
 
     @router.get("/settings/features", tags=["system"])
     def get_features(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Per-user feature toggles — which modules the signed-in user has on.
+        """Per-user feature toggles — which modules and packs the user has on.
 
         The read side of the Settings "Features" control: the deployment-enabled
-        modules, each flagged with whether this user has turned it off. Turning a
-        module off is a per-user overlay (``module_enabled:<key>`` coaching state);
-        deployment config (``PREFRONTAL_MODULES``) is never changed. Read-only.
+        modules and packs, each flagged with whether this user has turned it off.
+        A per-user overlay (``module_enabled:<key>`` / ``pack_enabled:<key>``
+        coaching state); deployment config is never changed. Read-only.
         """
         return _features_view(ctx.store)
 
@@ -416,26 +446,22 @@ def build_router(services: RouterServices) -> APIRouter:
         payload: FeatureToggle,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """Turn modules on/off for the signed-in user (Settings "Features").
+        """Turn modules/packs on/off for the signed-in user (Settings "Features").
 
         For each ``{key: on}`` pair: ``true`` clears the override (back to the
-        deployment default), ``false`` disables that module for this user only —
-        it then offers no cues and no protection in the coaching tick. Only
-        registered module keys take effect (others are ignored). Returns the fresh
-        feature view so the caller re-renders from the response.
+        deployment default), ``false`` disables it for this user only — a disabled
+        module offers no cues or protection in the coaching tick; a disabled pack
+        hides its situation tools and ``/care`` lens. Only registered keys take
+        effect (others are ignored). Returns the fresh feature view.
         """
-        # Accept any *registered* module key (matches the docstrings and the
-        # resolver, which scans the full registry): storing an override for a
-        # deployment-disabled module is harmless — it stays inert until/unless the
-        # operator enables that module, at which point the user's prior choice holds.
-        known = {m.key for m in available()}
-        for key, on in payload.modules.items():
-            if key not in known:
-                continue
-            if on:
-                ctx.store.delete_state(f"{MODULE_ENABLED_PREFIX}{key}")
-            else:
-                ctx.store.set_state(f"{MODULE_ENABLED_PREFIX}{key}", "off", source="explicit")
+        # Accept any *registered* key (matches the resolvers, which scan the full
+        # registry): storing an override for a deployment-disabled module/pack is
+        # inert until/unless the operator enables it, at which point the user's
+        # prior choice holds.
+        _apply_overrides(ctx.store, payload.modules, {m.key for m in available()},
+                         MODULE_ENABLED_PREFIX)
+        _apply_overrides(ctx.store, payload.packs, {p.key for p in available_packs()},
+                         PACK_ENABLED_PREFIX)
         return _features_view(ctx.store)
 
     @router.post("/self-care", tags=["system"])

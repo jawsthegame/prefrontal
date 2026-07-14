@@ -169,8 +169,10 @@ Tap **Connect** to verify against `/self-care` before advancing. The base URL
 lives in the App Group and the token in a shared Keychain group, so the widget
 authenticates too; change either later in
 **Me ▸ Settings** (gear icon). That screen also has a **Features** section — a
-per-user toggle for each enabled module (`/settings/features`), so you can turn
-off support behaviors you don't want without changing the deployment default —
+per-user toggle for each enabled module **and Context pack** (`/settings/features`),
+so you can turn off support behaviors you don't want without changing the
+deployment default (turning a pack off hides its situation tools + care surface
+for you) —
 an **Available hours** section — a per-weekday toggle + start/end time pickers
 that write `/schedule/available-hours`, so the slot-finder and todo suggestions
 stay inside the hours you're free (an off day is skipped entirely) — and a

@@ -960,17 +960,36 @@ struct SituationResult: Codable {
 struct FeatureModule: Codable, Identifiable {
     let key: String
     let title: String
+    /// Modules carry `challenge` (what they address); packs carry `detail`
+    /// (the JSON `description`). `blurb` is whichever is present.
     let challenge: String?
+    let detail: String?
     let enabled: Bool
     var id: String { key }
 
+    var blurb: String? {
+        if let c = challenge, !c.isEmpty { return c }
+        if let d = detail, !d.isEmpty { return d }
+        return nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case key, title, challenge, enabled
+        case detail = "description"
+    }
+
     /// A copy with `enabled` flipped — for an optimistic toggle before the write lands.
     func setting(enabled: Bool) -> FeatureModule {
-        FeatureModule(key: key, title: title, challenge: challenge, enabled: enabled)
+        FeatureModule(key: key, title: title, challenge: challenge, detail: detail, enabled: enabled)
     }
 }
 
-struct FeatureList: Codable { let modules: [FeatureModule] }
+/// The `/settings/features` payload: the deployment-enabled modules and Context
+/// packs the user can toggle for themselves.
+struct FeatureList: Codable {
+    let modules: [FeatureModule]
+    let packs: [FeatureModule]
+}
 
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}
