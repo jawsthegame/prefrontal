@@ -49,15 +49,20 @@ class SituationTool:
             ``/packs/situations/{tool}`` path (e.g. ``school_run``).
         title: Human-readable name (e.g. "School run").
         description: One sentence on what the tool answers.
-        handler: The read-only computation. Takes the caller's scoped
-            :class:`~prefrontal.memory.store.MemoryStore` and returns a
-            JSON-serializable dict — it must never write.
+        handler: The read-only computation. Called as ``handler(store, *,
+            client=None)`` with the caller's scoped
+            :class:`~prefrontal.memory.store.MemoryStore` and an optional model
+            :class:`~prefrontal.integrations.Generator` (the router resolves one;
+            a tool that composes an LLM lever like
+            :func:`prefrontal.todos.decompose_task` uses it, and a purely
+            deterministic tool ignores it). Returns a JSON-serializable dict — it
+            must never write.
     """
 
     key: str
     title: str
     description: str
-    handler: Callable[[MemoryStore], dict[str, Any]]
+    handler: Callable[..., dict[str, Any]]
 
 
 @dataclass(frozen=True)

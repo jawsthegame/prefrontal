@@ -15,10 +15,14 @@ closeout, consolidation, and a few net-new surfaces.
    **Caregiver** pack, the dedicated `care` commitment kind, the `/care` surface,
    the **situation-tool registry** (with the Parent pack's school-run tool), and the
    **care-recipient names roster** (the caregiver mirror of `child_names`, driving
-   deterministic `care` classification) have now shipped. What remains is breadth on
-   the same seams: **more situation tools** (sick-day replan, pack-the-bag checklist)
-   slotting into the `packs` router, and **more tailored surfaces** — plus the
-   smaller `/care` follow-up of a conditional nav link (revealed when the pack is on,
+   deterministic `care` classification) have now shipped — and the **Parent pack's
+   situation-tool set is now complete**: the **sick-day replan** (`sick_day`, panic
+   triage + a hard/soft split of today) and the **pack-the-bag checklist**
+   (`pack_the_bag`, `decompose_task` over the kids' next events) join the school-run
+   tool in the `packs` router. What remains is breadth on the same seams for *other*
+   packs: **situation tools beyond Parent** (a Caregiver surface), **more packs**
+   (Grad student / New job), and **more tailored surfaces** — plus the smaller
+   `/care` follow-up of a conditional nav link (revealed when the pack is on,
    mirroring the operator Admin link).
 2. **Close the learning loop's remaining causal check** (see "Learning &
    adaptation" §2). The channel-signal auto-act shipped (§4 now damps a
@@ -694,10 +698,15 @@ ordered by leverage; each is independent but builds on denser capture.
   pack situation-tool registry have now shipped too** — `Pack.situations` carries
   read-only `SituationTool`s (a store→dict handler over an existing primitive),
   surfaced/run through the `packs` router (`GET`+`POST /packs/situations[/{tool}]`)
-  gated on the owning pack, seeded with the **Parent** pack's **school-run** tool
-  (the departure engine narrowed to `child` commitments). Still open: more packs
-  (Grad student / New job), more situation tools (sick-day replan, pack-the-bag
-  checklist), and more tailored surfaces.)*
+  gated on the owning pack. The **Parent** pack now carries its **full** tool set:
+  **school-run** (the departure engine narrowed to `child` commitments),
+  **pack-the-bag** (`decompose_task` broken over the kids' next events into a
+  get-ready checklist), and **sick-day replan** (`build_panic` triage + a hard/soft
+  split of today's commitments into must-cover vs. can-drop). To let a tool reach an
+  LLM lever, the `SituationTool` handler now takes an optional `client`
+  (`handler(store, *, client=None)`), resolved by the router; deterministic tools
+  ignore it. Still open: situation tools for *other* packs (a Caregiver surface),
+  more packs (Grad student / New job), and more tailored surfaces.)*
 - **Shared household sheet — co-parent facts, agreements & load-balancing.**
   ✅ **Shipped** (`prefrontal/household.py`, `webhooks/routers/household.py`,
   `memory/repos/household.py`; `prefrontal household …`) — kept here for the
