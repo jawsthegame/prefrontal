@@ -28,7 +28,11 @@ struct PrefrontalApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active:      Task { await Self.flushQueue() }   // reconnect → drain captures
+            case .active:
+                Task { await Self.flushQueue() }   // reconnect → drain captures
+                // Keep the watch's connected-state fresh (config may have changed
+                // while backgrounded, e.g. just after onboarding).
+                PhoneWatchConnectivity.shared.pushStatus()
             case .background:  Self.scheduleAppRefresh()
             default:           break
             }

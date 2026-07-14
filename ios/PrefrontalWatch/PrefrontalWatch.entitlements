@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Watch-local App Group the watch app shares with its complication
+	     extension, so the extension reads the cached WatchGlance. Distinct from
+	     the phone's group (a different device). No Keychain group and no token:
+	     the watch relays through the phone and holds no credential. Requires a
+	     paid team, like the phone widget's App Group. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.morningstatic.prefrontal.watch</string>
+	</array>
+</dict>
+</plist>

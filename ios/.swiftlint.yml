@@ -10,6 +10,8 @@
 included:
   - Prefrontal
   - PrefrontalWidgets
+  - PrefrontalWatch
+  - PrefrontalWatchWidgets
 
 # The XcodeGen-generated project and any local signing override never ship
 # sources to lint.

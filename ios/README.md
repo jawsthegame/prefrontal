@@ -51,16 +51,72 @@ ios/
     Notifications/         # LocalNotifications + AppDelegate (APNs, categories)
     Location/              # LocationMonitor (opt-in geofences over /places)
     Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
+    Watch/                 # WatchProtocol (shared wire types) + PhoneWatchConnectivity (relay)
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
     PrefrontalWidgets.swift
     PrefrontalWidgets.entitlements  # same App Group + shared Keychain group
+  PrefrontalWatch/         # watchOS companion app (relays through the phone)
+    PrefrontalWatchApp.swift, WatchConnectivityClient, WatchModel, Watch*View
+  PrefrontalWatchWidgets/  # watch-face complications (WidgetKit accessory families)
 ```
 
 The widget target re-uses the app's `Config/`, `Networking/`, `Models/`,
 `Theme/` sources (compiled into the extension too) and reads config from the
 shared App Group (base URL) and shared Keychain group (token), so it
 authenticates without you entering the token twice.
+
+## Apple Watch companion
+
+`PrefrontalWatch/` is a native watchOS app — a thin, glanceable client for the
+wrist. Because the API is **Tailscale-only** and a standalone Apple Watch usually
+isn't on the tailnet, the watch **relays every request through the paired
+iPhone** over **WatchConnectivity** (`WCSession`) rather than talking to the
+server itself:
+
+```
+Watch  ──sendMessage(kind, params)──▶  iPhone (PhoneWatchConnectivity)
+  │  decode with shared Models              │  APIClient(shared:) → Endpoints
+  └──────────  JSON reply  ◀────────────────┘
+```
+
+So the watch **holds no token and makes no network calls** — the phone (which
+already has the token in its Keychain and is on the tailnet) runs the matching
+`APIClient` call and relays the JSON back. The watch reuses only the phone's
+`Models/Models.swift` (pure Foundation) plus the shared wire types in
+`Prefrontal/Watch/WatchProtocol.swift`. The phone pushes a lightweight
+**connection status** (`updateApplicationContext`) so the watch can show
+"open Prefrontal on your iPhone" until it's set up — the token deliberately never
+leaves the phone.
+
+Surfaces (a vertical-paging `TabView`):
+
+- **Today** — the next departure's leave-by (colored by escalation level), the one
+  thing to do now, or free time; an active outing/focus shows its one-tap end.
+- **Self-care** — a row per enabled check with `count/target`; tap to log, tap at
+  the target to wrap back to zero (the tap-at-max cycle, like the phone/widget).
+- **Actions** — **I'm back** / **Wrap up focus** (only while active), **Panic**
+  (shows the headline + first step), and a dictated **Add todo**.
+
+**Complications** (`PrefrontalWatchWidgets/`, WidgetKit accessory families —
+inline / circular / rectangular) render from the last glance the watch app cached
+to a watch-local App Group; the app reloads them on each refresh.
+
+Offline behavior mirrors the phone: **capture writes** (self-care, add todo) that
+can't reach the phone fall back to `transferUserInfo` (queued, at-least-once);
+**lifecycle writes** (I'm back / wrap up) require reachability and are never
+queued (a stale replay would be wrong). The phone re-runs capture writes through
+the same `queueable` endpoints, so they land in its own `OfflineQueue` if it too
+is off-tailnet — durable end to end.
+
+> **Paid tier for the complication.** The complication's App Group
+> (`group.com.morningstatic.prefrontal.watch`) needs a paid team, like the phone
+> widget's. The watch app itself relays through the phone and needs no capability,
+> so it runs under free signing.
+
+The watch app is embedded in the phone app (XcodeGen wires the Embed Watch Content
+phase), so installing Prefrontal on the iPhone installs the watch app too. Build
+it standalone with `xcodebuild -scheme PrefrontalWatch` (a committed scheme).
 
 The `.xcodeproj` is **generated** and git-ignored. Regenerate any time with:
 

@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Re-attach the geofence delegate so a boundary-crossing relaunch (even
         // from terminated) is received; no-op unless the user opted in.
         LocationMonitor.shared.startIfEnabled()
+        // Activate the Apple Watch relay (no-op without a paired watch) so the
+        // watch can send requests and receive connection status.
+        PhoneWatchConnectivity.shared.activate()
         // If the user already granted notifications on a past launch, refresh the
         // APNs token now (tokens can rotate); the didRegister callback re-posts it.
         Task {

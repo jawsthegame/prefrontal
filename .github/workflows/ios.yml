@@ -68,6 +68,23 @@ jobs:
                 Prefrontal/Intents/WidgetActionIntents.swift \
                 Prefrontal/Intents/PrefrontalIntents.swift
 
+      - name: Compile check — watchOS companion (swiftc -typecheck)
+        working-directory: ios
+        # Typecheck the watch app and its complication extension against the
+        # watchOS SDK. Each has its own @main, so they're typechecked in separate
+        # invocations (same reason the app/widget checks above are split). Both
+        # reuse the phone's Models + the shared Watch/WatchProtocol.swift.
+        run: |
+          SDK=$(xcrun --sdk watchos --show-sdk-path)
+          # Only Models.swift from Models/ — SessionActivity.swift imports
+          # ActivityKit, which watchOS doesn't have.
+          find PrefrontalWatch -name '*.swift' -print0 \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-watchos10.0 -typecheck \
+                Prefrontal/Models/Models.swift Prefrontal/Watch/WatchProtocol.swift
+          find PrefrontalWatchWidgets -name '*.swift' -print0 \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-watchos10.0 -typecheck \
+                Prefrontal/Models/Models.swift Prefrontal/Watch/WatchProtocol.swift
+
       - name: Unit tests (xcodebuild test on a simulator)
         working-directory: ios
         # Generate the Xcode project from project.yml, pick any available iPhone
