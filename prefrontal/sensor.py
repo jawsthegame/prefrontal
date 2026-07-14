@@ -619,6 +619,23 @@ def summarize_candidate(kind: str, payload: dict[str, Any]) -> str:
     return "log episode: " + " · ".join(bits)
 
 
+def describe_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
+    """A compact, review-ready view of a stored proposal row (no raw-payload noise).
+
+    Shared by every surface that lists proposals for review — ``GET /proposals``,
+    ``POST /observe``, and the ``POST /braindump`` fan-out — so they present a
+    pending candidate identically.
+    """
+    return {
+        "id": proposal["id"],
+        "kind": proposal["kind"],
+        "summary": summarize_candidate(proposal["kind"], proposal["payload"]),
+        "rationale": proposal.get("rationale") or "",
+        "status": proposal["status"],
+        "created_at": proposal.get("created_at"),
+    }
+
+
 def apply_proposal(store: MemoryStore, proposal: dict[str, Any]) -> str:
     """Apply an accepted proposal to the store, stamped ``source='llm_inferred'``.
 

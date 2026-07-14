@@ -182,12 +182,14 @@ Prefrontal's local-first stance. Multimodal vision attacks the ADHD experience o
 visual clutter directly. *(Design commandments 1, 2, 7.)*
 
 **What to build (on existing primitives):**
-- **Voice brain-dump → structured items.** Speak an unstructured ramble; the
-  existing NL-assistant (`assistant.py` `ALLOWED_OPS`, already preview-before-
-  write) plus the sensor path (`sensor.py`, propose→accept) turn it into todos,
-  commitments, household facts, and shopping items. Route through the on-device
-  Foundation Model for the cheap/private extraction; escalate to the opt-in cloud
-  agent only for hard reasoning.
+- **Voice brain-dump → structured items.** ✅ *Server side shipped* —
+  `braindump.py` fans one unstructured ramble out to the NL-assistant
+  (`assistant.py` `ALLOWED_OPS`, preview-before-write) for todos, commitments,
+  household facts and shopping *and* the sensor path (`sensor.py`, propose→accept)
+  for behavioral asides, merged into a single review (`POST /braindump`,
+  `prefrontal braindump`). Still ahead: route the extraction through the on-device
+  Foundation Model for cheap/private/offline parse (the native app feeds the same
+  endpoint), escalating to the opt-in cloud agent only for hard reasoning.
 - **"Photograph the chaos."** A photo of a whiteboard, a mail pile, a scrawled
   sticky note, or a messy desk → structured tasks via multimodal vision. Wires
   into the same triage → propose → accept path.

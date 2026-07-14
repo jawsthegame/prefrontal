@@ -125,6 +125,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Behavioral insights UI | `prefrontal/stats.py` · `webhooks/stats.html` | ✅ `GET /stats` — time-estimation bias, follow-through + streak, channel responsiveness; inline SVG/CSS charts over your episodes (shared light/dark theme + nav) |
 | Profile summarizer | `prefrontal/memory/summarizer.py` | ✅ Structured profile + cached LLM (Ollama) summary with heuristic fallback, served by `GET /profile` |
 | LLM-as-sensor | `prefrontal/sensor.py` | ✅ Free text → *candidate* structured updates (allowlisted, `source=llm_inferred`), held pending until you accept; `prefrontal note` / `proposals` |
+| Voice brain-dump → structured items | `prefrontal/braindump.py` | ✅ One rambling voice/free-text dump fanned out to **both** capture paths — the NL assistant (actionable items → a previewable action list) *and* the sensor (behavioral asides → pending proposals) — merged into one review. Nothing writes on capture (apply via `/assistant/apply` and `/proposals/{id}/accept`). `POST /braindump`, `prefrontal braindump "…"` (`--file`/stdin, `--apply`) |
 | n8n integration | `prefrontal/integrations/n8n.py` | 🧩 Outbound client works; inbound event router still a documented stub |
 | Ollama inference client | `prefrontal/integrations/ollama.py` | ✅ Implemented — local generate + availability check |
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 7 modules, all wired end-to-end (5 EF challenges + closed-loop trip tracking + an opt-in Self-Care meal/water check) |
