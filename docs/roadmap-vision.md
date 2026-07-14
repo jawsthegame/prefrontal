@@ -275,7 +275,11 @@ outcome for this population. *(Design commandments 5, 6, 8, 9.)*
   reachable, and when is silence correct? Default to silence when receptivity is
   low. Log every fired/held decision (the tick already does) and graduate from
   heuristics toward a contextual bandit (start heuristic, log everything — the
-  HeartSteps/Oralytics playbook).
+  HeartSteps/Oralytics playbook). *(First rules-based cut ✅ shipped:
+  `coaching.receptive` holds non-critical cues after a run of consecutive ignored
+  nudges — "default to silence when not receptive" — reusing the `coach nudge`
+  outcome episodes, forgiving on a single ack, `critical` exempt. The learned
+  bandit and the per-day dosage cap are the next increments on the same signal.)*
 - **Fuse if-then plans with the trigger moment.** Surface the user's pre-set
   implementation intention *at* its cue (the best-evidenced technique meeting the
   best-timed delivery). This is a small, cheap, deeply-evidenced feature.
@@ -516,13 +520,16 @@ intervention evidence.)
    genuinely are time-anchored), but the dominant model is the weaker one for this
    population. More cue-triggering, less clock-triggering. *(Relates to #4 and
    commandment 5.)*
-6. **Escalation cadence vs. habituation/receptivity.** *(partial — mostly
-   mitigated.)* "Escalation is not optional" is well-justified for genuinely
-   time-critical events, and quiet hours + debounce + channel-response learning
-   mitigate well. The residual gap: JITAI shows nudge effects **decay with
-   dosage** and receptivity says **default to silence when low**, but the engine
-   models *channel* and *quiet hours*, not an explicit *receptivity/vulnerability
-   state*. A "known, roadmapped" gap — exactly what **M3** closes.
+6. **Escalation cadence vs. habituation/receptivity.** *(partial — receptivity
+   now modeled; dosage next.)* "Escalation is not optional" is well-justified for
+   genuinely time-critical events, and quiet hours + debounce + channel-response
+   learning mitigate well. JITAI shows nudge effects **decay with dosage** and
+   receptivity says **default to silence when low** — the latter is now an explicit
+   engine gate (`coaching.receptive`: hold non-critical cues after a run of ignored
+   nudges, `critical` exempt, forgiving on a single ack), the first cut of the M3
+   receptivity model. The residual gap is the *dosage/vulnerability* half — an
+   explicit per-day nudge cap and a vulnerability state — the natural next
+   increment on the same signal. *(M3 closes the remainder.)*
 
 **Already well-aligned** (so the audit is calibrated): local-first/privacy;
 miss-as-data *for the system*; the encouragement/panic/recovery layer; one-tap
