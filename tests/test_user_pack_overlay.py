@@ -79,6 +79,22 @@ def test_situations_endpoint_empty_when_user_disables_pack(store):
 # -- /settings/features lists packs + round-trips ----------------------------
 
 
+def test_care_surface_disabled_when_user_turns_caregiver_off(store):
+    """With the caregiver pack on deployment-wide, a user's `pack_enabled:caregiver
+    = "off"` disables the /care surfaces for them (sheet + roster report off; POST
+    409s) — the deployment default stays on for everyone else."""
+    with _client(store, packs=("caregiver",)) as c:
+        assert c.get("/care/sheet", headers=_auth()).json()["enabled"] is True
+        assert c.get("/care/recipients", headers=_auth()).json()["enabled"] is True
+
+        c.post("/settings/features", json={"packs": {"caregiver": False}}, headers=_auth())
+
+        assert c.get("/care/sheet", headers=_auth()).json()["enabled"] is False
+        assert c.get("/care/recipients", headers=_auth()).json()["enabled"] is False
+        r = c.post("/care/recipients", json={"names": ["Mom"]}, headers=_auth())
+        assert r.status_code == 409
+
+
 def test_features_lists_packs_and_toggles_back_on(store):
     with _client(store, packs=("parent",)) as c:
         got = c.get("/settings/features", headers=_auth())

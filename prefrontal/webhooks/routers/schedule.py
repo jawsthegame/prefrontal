@@ -1002,7 +1002,10 @@ def build_router(services: RouterServices) -> APIRouter:
         if not user_pack_enabled(ctx.store, "caregiver", resolved_settings):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="The Caregiver context pack is off (PREFRONTAL_PACKS=caregiver).",
+                detail=(
+                    "The Caregiver context pack is off — either deployment-wide "
+                    "(PREFRONTAL_PACKS=caregiver) or turned off for you in Settings ▸ Features."
+                ),
             )
         stored = ctx.store.set_care_recipient_names(payload.names)
         return {"enabled": True, "names": stored}

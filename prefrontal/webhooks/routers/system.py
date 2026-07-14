@@ -458,10 +458,12 @@ def build_router(services: RouterServices) -> APIRouter:
         # registry): storing an override for a deployment-disabled module/pack is
         # inert until/unless the operator enables it, at which point the user's
         # prior choice holds.
-        _apply_overrides(ctx.store, payload.modules, {m.key for m in available()},
-                         MODULE_ENABLED_PREFIX)
-        _apply_overrides(ctx.store, payload.packs, {p.key for p in available_packs()},
-                         PACK_ENABLED_PREFIX)
+        _apply_overrides(
+            ctx.store, payload.modules, {m.key for m in available()}, MODULE_ENABLED_PREFIX
+        )
+        _apply_overrides(
+            ctx.store, payload.packs, {p.key for p in available_packs()}, PACK_ENABLED_PREFIX
+        )
         return _features_view(ctx.store)
 
     @router.post("/self-care", tags=["system"])
