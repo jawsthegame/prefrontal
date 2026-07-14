@@ -67,11 +67,35 @@ struct Glance {
                 g.suggestionMinutes = s.estimateMinutes.map { Int($0) }
             }
         }
-        if let checks = sc?.checks {
-            for c in checks where c.enabled { g.selfCareChecks[c.key] = (c.count, c.target) }
-            g.meal = g.selfCareChecks["meal"]
-            g.water = g.selfCareChecks["water"]
-        }
+        g.applySelfCare(sc?.checks)
+        return g
+    }
+
+    /// Fold the enabled self-care checks — plus the `meal`/`water` aliases the
+    /// widgets read directly — into this glance. Shared by `fetch()` and
+    /// `fetchSelfCare()` so the payload mapping lives in exactly one place.
+    mutating func applySelfCare(_ checks: [SelfCare.Check]?) {
+        guard let checks else { return }
+        for c in checks where c.enabled { selfCareChecks[c.key] = (c.count, c.target) }
+        meal = selfCareChecks["meal"]
+        water = selfCareChecks["water"]
+    }
+
+    /// Self-care-only fetch for the configurable Lock Screen ring, which renders
+    /// nothing but `selfCareChecks`. The full `fetch()` fires five parallel
+    /// requests (departure, todos/now, self-care, outings, focus); the ring uses
+    /// only one of them, so calling `fetch()` woke the radio for four responses it
+    /// threw away — once per reload, per pinned ring (a user can add several). This
+    /// hits just `/self-care`. Falls back to a `notConfigured` glance when the app
+    /// isn't set up, matching `fetch()`.
+    @MainActor
+    static func fetchSelfCare() async -> Glance {
+        let client: APIClient
+        do { client = try APIClient(shared: ()) }
+        catch { return Glance(notConfigured: true) }
+
+        var g = Glance()
+        g.applySelfCare((try? await client.selfCare())?.checks)
         return g
     }
 }
