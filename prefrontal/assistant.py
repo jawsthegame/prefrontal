@@ -186,12 +186,16 @@ ASSISTANT_SYSTEM = (
     "start with 10 pushups\"). cue_text is their trigger in their own words; "
     "action_text is the small action, kept AS THEY SAID IT (don't expand it — the "
     "technique needs it pre-committed and tiny). Give a cue the tick can detect: a "
-    "\"place\" (a short location name like \"desk\", \"gym\", \"kitchen\") and/or a "
+    "\"place\" (a short location name like \"desk\", \"gym\", \"kitchen\"), a "
     "\"time_window\" local band \"HH:MM-HH:MM\" (\"after lunch\"≈\"12:30-14:00\", "
-    "\"in the morning\"≈\"08:00-11:00\"). At least one of place/time_window is "
-    "required; set both when the cue is both (\"at my desk after lunch\"):\n"
+    "\"in the morning\"≈\"08:00-11:00\"), and/or an \"event\" — use "
+    "\"arrive_home\" when the trigger is coming home (\"when I get home\", \"once "
+    "I'm back\") and \"leave_home\" when it's heading out (\"when I leave the "
+    "house\", \"on my way out\"). At least one of place/time_window/event is "
+    "required; combine them when the cue is compound (\"at my desk after lunch\" = "
+    "place+time_window; \"when I get home in the evening\" = event+time_window):\n"
     '- {"op":"add_if_then","cue_text":str,"action_text":str,"place":str?,'
-    '"time_window":"HH:MM-HH:MM"?}\n\n'
+    '"time_window":"HH:MM-HH:MM"?,"event":"arrive_home"|"leave_home"?}\n\n'
     "priority: 0 low, 1 normal, 2 high, 3 urgent.\n\n"
     "If (and ONLY if) the snapshot has a \"household\" object, these shared "
     "co-parent sheet ops are also available. Resolve a kid's name to an id from "
@@ -979,10 +983,12 @@ def _v_add_if_then(op: str, action: dict[str, Any], snapshot: dict[str, Any]) ->
     depends on the action being pre-committed and tiny — we don't rewrite it here).
     A plan needs a cue the coaching tick can actually detect, so at least one of
     ``place`` (normalized to a curated-place match key, the same way places are
-    stored) or ``time_window`` (a valid ``"HH:MM-HH:MM"`` band) is required — a plan
-    with neither could never fire.
+    stored), ``time_window`` (a valid ``"HH:MM-HH:MM"`` band), or ``event`` (a
+    transition in :data:`~prefrontal.modules.implementation_intention.CUE_EVENTS`)
+    is required — a plan with none could never fire.
     """
     from prefrontal.geocode import normalize_query
+    from prefrontal.modules.implementation_intention import CUE_EVENTS
     from prefrontal.scheduling import parse_window
 
     cue_text = _nonblank(action.get("cue_text"), "cue_text")
@@ -998,8 +1004,14 @@ def _v_add_if_then(op: str, action: dict[str, Any], snapshot: dict[str, Any]) ->
         if parse_window(str(window)) is None:
             raise _ActionError('time_window must be a "HH:MM-HH:MM" band')
         params["cue_window"] = str(window).strip()
-    if "cue_place" not in params and "cue_window" not in params:
-        raise _ActionError("an if-then plan needs a place and/or a time window as its cue")
+    event = action.get("event")
+    if event is not None and str(event).strip():
+        normalized_event = str(event).strip().lower()
+        if normalized_event not in CUE_EVENTS:
+            raise _ActionError(f"event must be one of {', '.join(CUE_EVENTS)}")
+        params["cue_event"] = normalized_event
+    if not ({"cue_place", "cue_window", "cue_event"} & params.keys()):
+        raise _ActionError("an if-then plan needs a place, time window, or event as its cue")
     return ValidatedAction(
         op, params, f"Add if-then plan: when {cue_text}, then {action_text}"
     )
@@ -1557,6 +1569,7 @@ def _execute_one(
                 action_text=p["action_text"],
                 cue_place=p.get("cue_place"),
                 cue_window=p.get("cue_window"),
+                cue_event=p.get("cue_event"),
             )
             result.update(ok=True, detail=f"plan #{pid}")
         elif op == "set_fact":

@@ -178,8 +178,13 @@ CREATE INDEX IF NOT EXISTS idx_outings_user_status ON outings (user_id, status);
 -- The cue is an AND over whatever constraints are set (at least one required):
 --   cue_place   a curated places.name (matched by proximity via geo.nearest_place)
 --   cue_window  a local time-of-day band "HH:MM-HH:MM" (scheduling.parse_window)
--- so "at my desk after lunch" is place='desk' AND window='12:30-14:00'. cue_text is
--- the user's own phrasing of the trigger, shown back verbatim. action_text is the
+--   cue_event   a tick-detected transition ('arrive_home' | 'leave_home') — the
+--               strongest prospective-memory channel is event/cue-based, not clock
+--               ("when I get home, take out the recycling"). Detected by the module
+--               via edge detection against the last-known home presence.
+-- so "at my desk after lunch" is place='desk' AND window='12:30-14:00', and "when I
+-- get home in the evening" is event='arrive_home' AND window='17:00-21:00'. cue_text
+-- is the user's own phrasing of the trigger, shown back verbatim. action_text is the
 -- pre-decided step, stored as stated (the technique depends on it being tiny and
 -- committed in advance — we don't rewrite it). last_fired_at drives a light "when
 -- did I last surface this" read; the engine's debounce keeps it from nagging.
@@ -189,6 +194,7 @@ CREATE TABLE IF NOT EXISTS implementation_intentions (
     cue_text      TEXT    NOT NULL,           -- the trigger, in the user's words
     cue_place     TEXT,                       -- curated places.name (proximity cue)
     cue_window    TEXT,                       -- "HH:MM-HH:MM" local band (time cue)
+    cue_event     TEXT,                       -- 'arrive_home' | 'leave_home' (transition cue)
     action_text   TEXT    NOT NULL,           -- the tiny pre-decided first step
     todo_id       INTEGER REFERENCES todos(id),  -- optional linked todo
     status        TEXT    NOT NULL DEFAULT 'active',  -- active | archived

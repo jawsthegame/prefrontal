@@ -515,14 +515,17 @@ intervention evidence.)
    idea), but there's no explicit "if [cue], then [tiny action]" builder. Low-
    cost, deeply-evidenced, and it fuses with the coaching tick. *(The missing
    primitive behind commandment 5; feeds M3.)*
-5. **The scheduling core is time-based, but the evidence favors cue-based.** The
-   flagship planning path fits todos into free *time windows*
+5. **The scheduling core is time-based, but the evidence favors cue-based.**
+   *(narrowing — cue-based if-then now spans place, time, and home-crossing events.)*
+   The flagship planning path still fits todos into free *time windows*
    ([`prefrontal/scheduling.py`](../prefrontal/scheduling.py); `/todos/now`,
-   `/todos/fit`) and pads *departure times*. But **time-based prospective memory
-   is the weakest channel** — event/cue-based is stronger. Not wrong (departures
-   genuinely are time-anchored), but the dominant model is the weaker one for this
-   population. More cue-triggering, less clock-triggering. *(Relates to #4 and
-   commandment 5.)*
+   `/todos/fit`) and pads *departure times*, and **time-based prospective memory is
+   the weakest channel** — event/cue-based is stronger. The if-then module now
+   offers the stronger channel directly: a plan can cue on a curated place, a
+   home-crossing **event** (`arrive_home`/`leave_home`, edge-detected on the tick),
+   or a time band — "when I get home, take out the recycling" fires *at* the
+   crossing, not on a clock. The residual gap is the *todo-fitting* path itself,
+   still purely clock-windowed. *(Relates to #4 and commandment 5.)*
 6. **Escalation cadence vs. habituation/receptivity.** *(largely closed — rules-based
    receptivity + dosage both shipped; a learned model is the remaining reach.)*
    "Escalation is not optional" is well-justified for genuinely time-critical events,

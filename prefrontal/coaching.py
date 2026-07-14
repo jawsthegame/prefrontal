@@ -567,7 +567,10 @@ def dosage_cap(store: Any) -> int:
 
 
 def dosage_count_today(store: Any, now: datetime) -> int:
-    """Interrupting non-critical nudges already delivered on ``now``'s day.
+    """Interrupting non-critical nudges already fired on ``now``'s day.
+
+    "Fired" as in :func:`record_fired`: recorded when the tick commits to sending,
+    not on confirmed delivery — the tally the cap reads is a count of nudges offered.
 
     Reads the single self-resetting :data:`_DOSAGE_DAY_KEY` tally: a stored date
     other than ``now``'s (or a missing/garbled value) reads as ``0`` — the day has
@@ -583,6 +586,19 @@ def dosage_count_today(store: Any, now: datetime) -> int:
         return max(0, int(parts[1]))
     except (TypeError, ValueError):
         return 0
+
+
+def _urgency_rank(urgency: str) -> int:
+    """Dosage-priority rank for an urgency; unknown values rank lowest (dropped first).
+
+    Mirrors the rest of the engine's defensiveness about unexpected urgency strings
+    (e.g. :func:`choose_channel`'s ``URGENCY_FLOOR.get(..., "push")``): a stray value
+    must never crash the tick, so it simply loses the budget contest instead.
+    """
+    try:
+        return URGENCY_LADDER.index(urgency)
+    except ValueError:
+        return -1
 
 
 def _counts_against_dosage(urgency: str, channel: str) -> bool:
@@ -612,7 +628,7 @@ def _apply_dosage_cap(store: Any, candidates: list[Decision], ctx: CoachContext)
     if len(capped) <= budget:
         return candidates
     ranked = sorted(
-        capped, key=lambda d: (-URGENCY_LADDER.index(d.cue.urgency), d.cue.dedup_key)
+        capped, key=lambda d: (-_urgency_rank(d.cue.urgency), d.cue.dedup_key)
     )
     keep = {id(d) for d in ranked[:budget]}
     return [
@@ -679,11 +695,11 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
     sink the tick, exactly as the nudge log itself is fire-and-forget).
     """
     stamp = now.strftime(TS_FMT)
-    delivered_capped = 0
+    fired_capped = 0
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
         if _counts_against_dosage(d.cue.urgency, d.channel):
-            delivered_capped += 1
+            fired_capped += 1
         try:
             store.record_feature_event(
                 d.cue.module,
@@ -694,14 +710,14 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
             )
         except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
             logger.debug("record_feature_event(offered) failed", exc_info=True)
-    # Advance the day's dosage tally by the interrupting non-critical deliveries, so
+    # Advance the day's dosage tally by the interrupting non-critical nudges fired, so
     # the next tick's cap read reflects them. Best-effort like the telemetry above —
     # a failed bump only makes the cap slightly permissive, never sinks the tick.
-    if delivered_capped:
+    if fired_capped:
         try:
             current = dosage_count_today(store, now)
             store.set_state(
-                _DOSAGE_DAY_KEY, f"{_dosage_day(now)}|{current + delivered_capped}",
+                _DOSAGE_DAY_KEY, f"{_dosage_day(now)}|{current + fired_capped}",
                 source="inferred",
             )
         except Exception:  # noqa: BLE001 — dosage accounting must never sink the tick

@@ -345,6 +345,18 @@ def test_dosage_cap_accumulates_across_ticks():
     assert len(d2) == 1
 
 
+def test_dosage_cap_ranking_tolerates_unknown_urgency():
+    # An unexpected urgency string must not crash the budget contest (it just ranks
+    # lowest and loses); a known nudge wins the single slot over it.
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 1},
+        state={"coach_nudge_day": _capday(NOON, 0)},
+    )
+    cues = [_cue("nudge", dedup="known"), _cue("weird", dedup="unknown")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["known"]
+
+
 # -- outcome loop: channel_response learning (spec §8) ------------------------
 
 
