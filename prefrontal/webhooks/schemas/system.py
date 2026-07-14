@@ -8,16 +8,21 @@ from pydantic import BaseModel, Field
 
 
 class FeatureToggle(BaseModel):
-    """Body of ``POST /settings/features`` — per-user module on/off overlay.
+    """Body of ``POST /settings/features`` — per-user module/pack on/off overlay.
 
-    ``modules`` maps a module ``key`` to whether it should be on for the signed-in
-    user. ``true`` clears any override (back to the deployment default); ``false``
-    disables that module for this user only. Keys that aren't registered modules
-    are ignored. Deployment config (``PREFRONTAL_MODULES``) is untouched.
+    ``modules`` / ``packs`` map a ``key`` to whether it should be on for the
+    signed-in user. ``true`` clears any override (back to the deployment default);
+    ``false`` disables it for this user only. Keys that aren't registered are
+    ignored. Deployment config (``PREFRONTAL_MODULES`` / ``PREFRONTAL_PACKS``) is
+    untouched. Turning a pack off is a **surfaces** overlay — it hides the pack's
+    situation tools and ``/care`` lens, leaving its vocabulary/classification.
     """
 
     modules: dict[str, bool] = Field(
         default_factory=dict, description="Module key → enabled for this user."
+    )
+    packs: dict[str, bool] = Field(
+        default_factory=dict, description="Pack key → surfaces enabled for this user."
     )
 
 

@@ -71,6 +71,9 @@
   .sc-num:disabled { opacity: .5; }
   .sc-check-off { opacity: .6; }
   .feat-desc { flex-basis: 100%; color: var(--muted); font-size: 12px; margin-top: -2px; }
+  .feat-group { font-size: 12px; text-transform: uppercase; letter-spacing: .4px;
+    color: var(--muted); margin: 10px 0 4px; }
+  .feat-group:first-child { margin-top: 0; }
   .hr-time { padding: 6px 6px; border: 1px solid var(--line); border-radius: 8px;
     background: var(--bg); color: var(--fg); font: inherit;
     font-variant-numeric: tabular-nums; }
@@ -158,8 +161,9 @@
     <h2>Features</h2>
     <p class="sub">Turn off any support behaviors you don't want — everyone's ADHD is
       different, and fewer, focused nudges beat a pile of them. This is per-person and
-      doesn't change anyone else (the deployment default is set with
-      <code>PREFRONTAL_MODULES</code>).</p>
+      doesn't change anyone else (deployment defaults are set with
+      <code>PREFRONTAL_MODULES</code> / <code>PREFRONTAL_PACKS</code>). Turning a
+      context pack off hides its situation tools and care surface for you.</p>
     <div id="features"></div>
     <div class="saved" id="feat-saved"></div>
   </section>
@@ -412,17 +416,34 @@ $("#selfcare").addEventListener("change", async (e) => {
   }
 });
 
-// ── Features: per-user module on/off overlay (GET/POST /settings/features) ───
-// Each deployment-enabled module with a checkbox; unchecking one disables it for
-// this user only (module_enabled:<key> coaching state), leaving config untouched.
+// ── Features: per-user module/pack on/off overlay (GET/POST /settings/features) ─
+// Each deployment-enabled module (and any enabled Context pack) with a checkbox;
+// unchecking one disables it for this user only (module_enabled:/pack_enabled:
+// coaching state), leaving deployment config untouched. Turning a pack off hides
+// its situation tools + /care lens (a surfaces overlay), not its vocabulary.
+function featRow(item, attr) {
+  const blurb = item.challenge || item.description || "";
+  return `<div class="sc-check${item.enabled ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" ${attr}="${esc(item.key)}"${item.enabled ? " checked" : ""}/> <b>${esc(item.title)}</b></label>
+    <span class="feat-desc">${esc(blurb)}</span>
+  </div>`;
+}
 function renderFeatures(d) {
   const mods = (d && d.modules) || [];
-  if (!mods.length) return `<span class="sc-hint">No modules are enabled on this deployment.</span>`;
-  return `<div class="sc-controls">` + mods.map((m) => `
-    <div class="sc-check${m.enabled ? "" : " sc-check-off"}">
-      <label class="sc-en"><input type="checkbox" data-feat-key="${esc(m.key)}"${m.enabled ? " checked" : ""}/> <b>${esc(m.title)}</b></label>
-      <span class="feat-desc">${esc(m.challenge || "")}</span>
-    </div>`).join("") + `</div>`;
+  const packs = (d && d.packs) || [];
+  if (!mods.length && !packs.length) {
+    return `<span class="sc-hint">No modules or packs are enabled on this deployment.</span>`;
+  }
+  let html = "";
+  if (packs.length) {
+    html += `<div class="feat-group">Context packs</div><div class="sc-controls">`
+      + packs.map((p) => featRow(p, "data-feat-pack-key")).join("") + `</div>`;
+  }
+  if (mods.length) {
+    html += `<div class="feat-group">Modules</div><div class="sc-controls">`
+      + mods.map((m) => featRow(m, "data-feat-key")).join("") + `</div>`;
+  }
+  return html;
 }
 
 async function loadFeatures() {
@@ -439,12 +460,14 @@ function flashFeat() {
 }
 
 $("#features").addEventListener("change", async (e) => {
-  const inp = e.target.closest("input[data-feat-key]");
+  const inp = e.target.closest("input[data-feat-key], input[data-feat-pack-key]");
   if (!inp) return;
-  const key = inp.dataset.featKey;
+  const isPack = inp.hasAttribute("data-feat-pack-key");
+  const key = isPack ? inp.dataset.featPackKey : inp.dataset.featKey;
+  const body = isPack ? { packs: { [key]: inp.checked } } : { modules: { [key]: inp.checked } };
   try {
     const fresh = await api("/settings/features", {
-      method: "POST", body: JSON.stringify({ modules: { [key]: inp.checked } }),
+      method: "POST", body: JSON.stringify(body),
     });
     $("#features").innerHTML = renderFeatures(fresh);
     flashFeat();

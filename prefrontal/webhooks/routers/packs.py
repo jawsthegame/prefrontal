@@ -22,7 +22,7 @@ from fastapi import (
     HTTPException,
 )
 
-from prefrontal.packs.registry import enabled_situations, get_situation
+from prefrontal.packs.registry import user_enabled_situations, user_get_situation
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -55,7 +55,7 @@ def build_router(services: RouterServices) -> APIRouter:
         return {
             "situations": [
                 {"tool": t.key, "title": t.title, "description": t.description}
-                for t in enabled_situations(resolved_settings)
+                for t in user_enabled_situations(ctx.store, resolved_settings)
             ]
         }
 
@@ -74,7 +74,7 @@ def build_router(services: RouterServices) -> APIRouter:
         a disabled pack both 404 — a tool you can't currently reach should look the
         same as one that doesn't exist.
         """
-        situation = get_situation(tool, resolved_settings)
+        situation = user_get_situation(ctx.store, tool, resolved_settings)
         if situation is None:
             raise HTTPException(status_code=404, detail=f"Unknown situation tool: {tool!r}")
         return situation.handler(ctx.store, client=decompose_client)

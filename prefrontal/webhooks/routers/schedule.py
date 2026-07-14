@@ -91,7 +91,7 @@ from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
 from prefrontal.packs.registry import get as get_pack
-from prefrontal.packs.registry import is_enabled as pack_enabled
+from prefrontal.packs.registry import user_pack_enabled
 from prefrontal.panic import (
     build_panic,
     evaluate_panic_check,
@@ -940,7 +940,7 @@ def build_router(services: RouterServices) -> APIRouter:
           exists to make legible.
         """
         memory = ctx.store
-        if not pack_enabled("caregiver", resolved_settings):
+        if not user_pack_enabled(ctx.store, "caregiver", resolved_settings):
             return {"enabled": False, "appointments": [], "todos": []}
         # Enabled implies registered, so get_pack never raises here.
         care_categories = set(get_pack("caregiver").categories)
@@ -983,7 +983,7 @@ def build_router(services: RouterServices) -> APIRouter:
         regardless of the pack — the gate is on this management surface, not on
         classification.
         """
-        if not pack_enabled("caregiver", resolved_settings):
+        if not user_pack_enabled(ctx.store, "caregiver", resolved_settings):
             return {"enabled": False, "names": []}
         return {"enabled": True, "names": ctx.store.care_recipient_names()}
 
@@ -999,10 +999,13 @@ def build_router(services: RouterServices) -> APIRouter:
         duplicates — and returns the stored ``names``. Gated on the Caregiver pack
         so it matches the ``/care`` surface it's edited from.
         """
-        if not pack_enabled("caregiver", resolved_settings):
+        if not user_pack_enabled(ctx.store, "caregiver", resolved_settings):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="The Caregiver context pack is off (PREFRONTAL_PACKS=caregiver).",
+                detail=(
+                    "The Caregiver context pack is off — either deployment-wide "
+                    "(PREFRONTAL_PACKS=caregiver) or turned off for you in Settings ▸ Features."
+                ),
             )
         stored = ctx.store.set_care_recipient_names(payload.names)
         return {"enabled": True, "names": stored}

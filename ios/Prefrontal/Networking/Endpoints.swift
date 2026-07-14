@@ -55,14 +55,16 @@ extension APIClient {
     func availableHours() async throws -> AvailableHours {
         try await get("schedule/available-hours", as: AvailableHours.self)
     }
-    /// Per-user feature toggles: the deployment-enabled modules + whether this user has each on.
-    func features() async throws -> [FeatureModule] {
-        try await get("settings/features", as: FeatureList.self).modules
+    /// Per-user feature toggles: the deployment-enabled modules + Context packs,
+    /// each flagged with whether this user has it on.
+    func features() async throws -> FeatureList {
+        try await get("settings/features", as: FeatureList.self)
     }
-    /// Turn one module on/off for this user (a per-user overlay). Returns the fresh list.
+    /// Turn one feature on/off for this user (`kind` is "modules" or "packs").
+    /// Returns the fresh list.
     @discardableResult
-    func setFeature(key: String, enabled: Bool) async throws -> [FeatureModule] {
-        try await post("settings/features", json: ["modules": [key: enabled]], as: FeatureList.self).modules
+    func setFeature(kind: String, key: String, enabled: Bool) async throws -> FeatureList {
+        try await post("settings/features", json: [kind: [key: enabled]], as: FeatureList.self)
     }
     /// The web-configured location tunables the app applies to `LocationMonitor`.
     func locationSettings() async throws -> LocationSettings {
