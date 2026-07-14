@@ -50,6 +50,7 @@ from prefrontal.memory.repos.household import HouseholdRepo
 from prefrontal.memory.repos.mail import MailRepo
 from prefrontal.memory.repos.nudges import NudgesRepo
 from prefrontal.memory.repos.patterns import PatternsRepo
+from prefrontal.memory.repos.plans import PlansRepo
 from prefrontal.memory.repos.projects import ProjectsRepo
 from prefrontal.memory.repos.proposals import ProposalsRepo
 from prefrontal.memory.repos.schedule import ScheduleRepo
@@ -82,6 +83,7 @@ class MemoryStore(
     PatternsRepo,
     StateRepo,
     SessionsRepo,
+    PlansRepo,
     TripsRepo,
     ScheduleRepo,
     TodosRepo,
