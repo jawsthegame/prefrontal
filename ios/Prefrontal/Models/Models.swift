@@ -470,5 +470,71 @@ struct Panic: Codable {
     }
 }
 
+// MARK: - Mail
+
+/// One triaged message from the mail-monitoring pipeline, a lean subset of the
+/// server's `mail_messages` row (`prefrontal/memory/repos/mail.py`). Booleans
+/// come back as SQLite 0/1 integers, so `unread`/`needs_action` decode as `Int?`.
+struct MailMessage: Codable, Identifiable, Hashable {
+    let id: Int
+    let account: String?
+    let senderName: String?
+    let senderEmail: String?
+    let subject: String?
+    let receivedAt: String?
+    let snippet: String?
+    /// The triage classifier's one-line gist, when present.
+    let summary: String?
+    /// One of low / normal / high / urgent (`mail/triage.py`).
+    let urgency: String?
+    /// One of reply / meeting / fyi / newsletter / notification / other.
+    let category: String?
+    /// Free-text "who is waiting on you", or nil.
+    let waitingOn: String?
+    let unread: Int?
+    let needsAction: Int?
+    /// The open todo this message spawned, if triage created one.
+    let todoId: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, account, subject, snippet, summary, urgency, category, unread
+        case senderName = "sender_name"
+        case senderEmail = "sender_email"
+        case receivedAt = "received_at"
+        case waitingOn = "waiting_on"
+        case needsAction = "needs_action"
+        case todoId = "todo_id"
+    }
+
+    var isUnread: Bool { (unread ?? 0) != 0 }
+    var flaggedAction: Bool { (needsAction ?? 0) != 0 }
+
+    /// Best available display name for the sender.
+    var senderDisplay: String {
+        if let n = senderName, !n.isEmpty { return n }
+        if let e = senderEmail, !e.isEmpty { return e }
+        return "Unknown sender"
+    }
+
+    /// Prefer the triage summary; fall back to the raw snippet.
+    var gist: String? {
+        if let s = summary, !s.isEmpty { return s }
+        if let s = snippet, !s.isEmpty { return s }
+        return nil
+    }
+}
+
+/// The `/mail` read-only snapshot: messages still awaiting action, plus a recent
+/// feed for a dashboard glance.
+struct MailInbox: Codable {
+    let needsAction: [MailMessage]
+    let recent: [MailMessage]
+
+    enum CodingKeys: String, CodingKey {
+        case needsAction = "needs_action"
+        case recent
+    }
+}
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}

@@ -2,8 +2,8 @@
 
 A native SwiftUI client for the Prefrontal API. It mirrors the daily-driver
 surface of the web dashboard: a **Today** glance, interactive **Todos**, a
-**Calendar** week view + free-slot finder, and a **Me** tab for self-care,
-focus/outing controls, and settings — plus a **Panic** sheet.
+**Mail** triage inbox, a **Calendar** week view + free-slot finder, and a **Me**
+tab for self-care, focus/outing controls, and settings — plus a **Panic** sheet.
 
 It talks to the same FastAPI service as everything else, over Tailscale, using
 the `X-Prefrontal-Token` header. Its **App Intents** (Siri / Action Button /
@@ -202,6 +202,7 @@ during onboarding.
 |---|---|
 | Today | `/todos/now`, `/departure/next`, `/outings`, `/focus`, `/nudges`, `/briefing`; Add → `POST /todos`; briefing 👍/👎 → `POST /briefing/feedback`; Panic |
 | Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done`; Delegate → `/todos/delegate-recipients`, `/todos/{id}/delegate` · `/delegate/return` |
+| Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
 | Me | `/self-care` + `/self-care/mark`; `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Panic | `/panic` |

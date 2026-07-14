@@ -22,6 +22,8 @@ struct MainTabs: View {
                 .tabItem { Label("Today", systemImage: "sun.max") }
             NavigationStack { TodosView() }
                 .tabItem { Label("Todos", systemImage: "checklist") }
+            NavigationStack { MailView() }
+                .tabItem { Label("Mail", systemImage: "envelope") }
             NavigationStack { CalendarView() }
                 .tabItem { Label("Calendar", systemImage: "calendar") }
             NavigationStack { MeView() }
