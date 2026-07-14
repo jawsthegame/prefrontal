@@ -10,17 +10,23 @@ import LocalAuthentication
 ///
 /// App-target only: it imports `LocalAuthentication` and lives under `Security/`,
 /// which the widget extension doesn't compile (the widget pulls only
-/// `Config/Networking/Models/Theme`). Authentication uses
-/// `.deviceOwnerAuthentication`, so a user who fails biometrics still has the
-/// device-passcode fallback and never gets locked out.
+/// `Config/Networking/Models/Theme`).
+///
+/// **Two policies, on purpose.** `isAvailable` (biometrics enrolled) gates only
+/// whether the *Settings toggle* is offered — you set up "Require Face ID" when
+/// Face ID works. Every *runtime* decision (initial lock, re-lock, overlay,
+/// prompt) is gated on `canAuthenticate`, which uses `.deviceOwnerAuthentication`
+/// (biometrics **or** device passcode). That matters during **biometry lockout**
+/// (too many failed scans): biometrics become unevaluatable, but the passcode
+/// fallback can still unlock — so the gate must stay engaged, not disappear.
 @MainActor
 final class BiometricLock: ObservableObject {
     static let shared = BiometricLock()
 
     /// `true` when the gate is satisfied (or not required). `RootView` reveals the
     /// app only when this is `true`. Starts locked at init if the lock is enabled
-    /// and the device can evaluate biometrics, so no content renders before the
-    /// first prompt.
+    /// and the device can authenticate, so no content renders before the first
+    /// prompt.
     @Published private(set) var isUnlocked: Bool
     /// `true` while a system biometric/passcode prompt is in flight — guards
     /// against presenting two prompts at once.
@@ -31,15 +37,16 @@ final class BiometricLock: ObservableObject {
 
     private init() {
         let enabled = SharedStore.appLockEnabled
-        // Can't reference `isAvailable` before `self` is initialized, so inline the
-        // same capability check here.
+        // Can't reference instance members before `self` is initialized, so inline
+        // the same `.deviceOwnerAuthentication` check `canAuthenticate` uses.
         var err: NSError?
-        let available = LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err)
-        isUnlocked = !(enabled && available)
+        let canAuth = LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &err)
+        isUnlocked = !(enabled && canAuth)
     }
 
-    /// The device's enrolled biometry, or `.none` when biometrics are unavailable
-    /// or not enrolled. A fresh `LAContext` each call reflects current enrollment.
+    /// The device's enrolled biometry, or `.none` when biometrics can't currently
+    /// be evaluated (unenrolled, or locked out). A fresh `LAContext` each call
+    /// reflects current state.
     var biometryType: LABiometryType {
         let ctx = LAContext()
         var err: NSError?
@@ -47,7 +54,7 @@ final class BiometricLock: ObservableObject {
         return ctx.biometryType
     }
 
-    /// Whether the lock can actually run here — the toggle is only offered when so.
+    /// Whether biometrics are enrolled and usable — gates *offering* the toggle.
     var isAvailable: Bool {
         switch biometryType {
         case .faceID, .touchID, .opticID: return true
@@ -55,29 +62,43 @@ final class BiometricLock: ObservableObject {
         }
     }
 
-    /// Human label for the enrolled biometry, for UI copy ("Require Face ID").
+    /// Whether the device can authenticate at all — biometrics **or** passcode.
+    /// This, not `isAvailable`, gates every runtime lock decision so a biometry
+    /// lockout falls through to the passcode prompt instead of disengaging the
+    /// lock. False only when no passcode is set (then nothing can gate the app).
+    var canAuthenticate: Bool {
+        var err: NSError?
+        return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &err)
+    }
+
+    /// Label for what a tap will actually use: the enrolled biometry when usable,
+    /// else "Passcode" — because during lockout `.deviceOwnerAuthentication` prompts
+    /// for the passcode, so "Unlock with Face ID" would be a lie.
     var biometryName: String {
         switch biometryType {
         case .faceID:  return "Face ID"
         case .touchID: return "Touch ID"
         case .opticID: return "Optic ID"
-        default:       return "biometrics"
+        default:       return "Passcode"
         }
     }
 
-    /// SF Symbol matching the enrolled biometry, for the lock screen glyph.
+    /// SF Symbol matching what a tap will use: the biometry glyph when usable, else
+    /// a generic lock (the prompt will be the passcode, not a biometric scan).
     var symbolName: String {
         switch biometryType {
+        case .faceID:  return "faceid"
         case .touchID: return "touchid"
         case .opticID: return "opticid"
-        default:       return "faceid"
+        default:       return "lock.fill"
         }
     }
 
-    /// Reconcile the lock state after the toggle changes: disabling (or losing
-    /// biometrics) unlocks immediately; enabling with biometrics available locks.
+    /// Reconcile the lock state after the toggle changes: disabling (or a device
+    /// that can't authenticate at all) unlocks; enabling while the device can
+    /// authenticate locks.
     func settingChanged(enabled: Bool) {
-        if enabled, isAvailable {
+        if enabled, canAuthenticate {
             isUnlocked = false
         } else {
             isUnlocked = true
@@ -86,9 +107,9 @@ final class BiometricLock: ObservableObject {
     }
 
     /// Re-lock on backgrounding, so the next foreground requires a fresh unlock.
-    /// A no-op when the lock is off or unavailable.
+    /// A no-op when the lock is off or the device can't authenticate.
     func lock(enabled: Bool) {
-        guard enabled, isAvailable else { isUnlocked = true; return }
+        guard enabled, canAuthenticate else { isUnlocked = true; return }
         isUnlocked = false
     }
 

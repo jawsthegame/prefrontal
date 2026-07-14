@@ -17,8 +17,11 @@ struct RootView: View {
         // The lock cover shows whenever the gate isn't satisfied, and also while
         // the scene isn't active — so backgrounding hides content in the app
         // switcher snapshot without triggering a re-auth (only `.active` prompts).
+        // Gated on `canAuthenticate` (biometrics OR passcode), so a biometry
+        // lockout still shows the cover and prompts for passcode rather than
+        // silently exposing content.
         .overlay {
-            if config.appLockEnabled, lock.isAvailable, !lock.isUnlocked || scenePhase != .active {
+            if config.appLockEnabled, lock.canAuthenticate, (!lock.isUnlocked || scenePhase != .active) {
                 LockView().transition(.opacity)
             }
         }
