@@ -485,15 +485,21 @@ intervention evidence.)
    handled only *indirectly* via encouragement/panic/recovery. The taxonomy
    under-weights the highest-effect-size symptom. *(Addressed by the §6 emotion-
    regulation track.)*
-3. **The stats screen reintroduces a shame vector the rest of the app avoids.**
-   [`prefrontal/stats.py`](../prefrontal/stats.py) computes a **"current success
-   streak"** (trailing consecutive successes) plus a success rate and miss/partial
-   split. This is exactly the metric shape the abandonment research singles out:
-   streak-loss triggers the "what the hell" spiral (loss-forgiving designs saw
-   ~32% higher reactivation than loss-based). It's descriptive, not punitive — so
-   moderate — but it *contradicts the app's own forgiveness ethos* (encouragement,
-   recovery, "design for the return"). Reframe toward **return-after-lapse and
-   trend**, not consecutive-success. *(Cuts against commandment 4.)*
+3. **~~The stats screen reintroduces a shame vector the rest of the app avoids.~~**
+   ✅ **Resolved** (PR #628). [`prefrontal/stats.py`](../prefrontal/stats.py) had
+   computed a **"current success streak"** (trailing consecutive successes) — the
+   exact metric shape the abandonment research singles out, since streak-loss
+   triggers the "what the hell" spiral (loss-forgiving designs saw ~32% higher
+   reactivation than loss-based). It was descriptive, not punitive, but it
+   *contradicted the app's own forgiveness ethos* (encouragement, recovery, "design
+   for the return"). The follow-through view now drops the streak entirely in favor
+   of loss-forgiving signals a single miss can't zero out — **`recent_rate`**
+   ("lately"), **`trend`** (up/steady/down), **`returned`** (came back after a
+   ≥4-day lapse — the comeback, surfaced exactly where a streak would have broken),
+   and **`best_rate`** (a personal best that's never lost). The iOS and web cards
+   show a badge that only ever celebrates (`💚 Back at it` › `📈 Building momentum`
+   › `Best stretch yet`) and nothing otherwise — never a "you lost it" moment.
+   *(Now upholds commandment 4.)*
 4. **The single best-evidenced technique is absent as a primitive.**
    Implementation intentions / if-then planning is the most strongly-evidenced
    ADHD self-regulation *technique* (Gollwitzer & Sheeran *d* ≈ 0.65; Gawrilow &
