@@ -565,6 +565,8 @@
   .brief-fb { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     color: var(--muted); font-size: 13px; }
+  /* Right-aligned "regenerate" control above the feedback row. */
+  .brief-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
 
   /* dashboard assistant — natural-language edits with a review-then-apply step */
   #c-assistant .addrow { margin-bottom: 0; }
@@ -989,6 +991,22 @@ function briefingFeedbackHTML() {
   return `<div class="brief-fb"><span>Did this help?</span>
     <button class="btn-sm" data-action="brief-fb-yes" title="This briefing helped — keep this shape">👍 Yes</button>
     <button class="btn-sm" data-action="brief-fb-no" title="This briefing missed — tighten it up">👎 No</button></div>`;
+}
+// The briefing card body: the rendered digest, a small "regenerate" control, then
+// the 👍/👎 feedback row. Refresh re-fetches GET /briefing (fast + model-free) so
+// the digest reflects the latest todos/calendar/coaching signals without a
+// full-board reload. Shared by the initial load and the targeted refresh action.
+function briefingRefreshHTML() {
+  return `<div class="brief-actions"><button class="btn-sm" data-action="brief-refresh"
+    title="Rebuild today's briefing from the latest data">↻ Refresh</button></div>`;
+}
+function renderBriefingBody(text) {
+  return md(text || "") + briefingRefreshHTML() + briefingFeedbackHTML();
+}
+// Shown when the briefing can't be fetched — keeps the Refresh control present so
+// a transient failure is retryable in place (no full-board reload needed).
+function briefingUnavailableHTML() {
+  return `<div class="err">unavailable</div>` + briefingRefreshHTML();
 }
 
 function gate(msg) {
@@ -2585,8 +2603,8 @@ async function load() {
       )
     : `<div class="err">unavailable</div>`;
   $("#c-briefing .body").innerHTML = briefing.status === "fulfilled"
-    ? md(briefing.value.text || "") + briefingFeedbackHTML()
-    : `<div class="err">unavailable</div>`;
+    ? renderBriefingBody(briefing.value.text)
+    : briefingUnavailableHTML();
   if (profile.status === "fulfilled") {
     $("#c-profile .body").innerHTML = md(profile.value.text);
     $("#profile-updated").textContent = profile.value.generatedAt
@@ -3370,6 +3388,17 @@ document.addEventListener("click", async (e) => {
       const row = $("#c-briefing .body .brief-fb");
       if (row) row.outerHTML = briefingFeedbackHTML();  // swap buttons → "thanks" in place
       return;  // no full reload — keep the acknowledgement visible
+    }
+    else if (act === "brief-refresh") {
+      // Rebuild just today's briefing from the latest data — no full-board reload.
+      try {
+        const b = await api("/briefing");
+        $("#c-briefing .body").innerHTML = renderBriefingBody(b && b.text);
+      } catch (_) {
+        $("#c-briefing .body").innerHTML = briefingUnavailableHTML();  // keep Refresh so a transient failure is retryable
+      }
+      updateSummaries();  // keep the collapsed-card preview in sync
+      return;
     }
     else if (act === "triage-forget") { await post("/mail/triage/learned/forget", { id: Number(id) }); }
     else if (act === "triage-clear") { if (!confirm("Forget all learned triage corrections? This resets triage to the base prompt.")) return; await post("/mail/triage/learned/clear"); }
