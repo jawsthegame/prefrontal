@@ -271,6 +271,10 @@ class RecoveryPlan:
     refit: list[dict[str, Any]]      # {start, minutes, suggestion, todo_id}
     defer: list[dict[str, Any]]      # {title, commitment_id, reason}
     first_step: dict[str, Any] | None  # {todo_id, title, step, minutes}
+    # A gentle self-compassion line meeting the *feeling* of a rough day, above the
+    # practical plan. Opt-in (Emotion Regulation module's RECOVERY_ACCEPTANCE_KEY);
+    # None when not opted in, so the recovery message is unchanged by default.
+    acceptance: str | None = None
 
 
 _EMPTY_PLAN = RecoveryPlan(refit=[], defer=[], first_step=None)
@@ -359,7 +363,16 @@ def build_recovery(
             "step": decomp.first_step,
             "minutes": decomp.first_step_minutes,
         }
-    return RecoveryPlan(refit=refit, defer=defer, first_step=first_step)
+    # Optionally meet the feeling, not just the schedule: a single opt-in
+    # self-compassion line (Emotion Regulation module) above the practical plan.
+    from prefrontal.emotion_regulation import recovery_acceptance_line
+
+    return RecoveryPlan(
+        refit=refit,
+        defer=defer,
+        first_step=first_step,
+        acceptance=recovery_acceptance_line(store),
+    )
 
 
 # --- Rendering ---------------------------------------------------------------
@@ -386,6 +399,11 @@ def render_encouragement(
     else:
         lines.append("**Today ran rough.** Here's what still fits and where to restart.")
     lines.append("")
+
+    # Meet the feeling before the plan, when the user opted the acceptance fold-in on.
+    if plan.acceptance:
+        lines.append(plan.acceptance)
+        lines.append("")
 
     if plan.first_step:
         fs = plan.first_step

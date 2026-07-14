@@ -177,6 +177,7 @@ declares the interventions it provides.
 | Prospective memory, in the field | **Location-Aware Task Anchor** | Escalating nudges (soft → firm → voice call) back to a stated intention as its window elapses, gated by actually being on-site. |
 | Task initiation, pre-committed | **Implementation Intentions** | Pairs a concrete cue (a place and/or time-of-day band) with a tiny pre-decided action and re-shows it the moment the cue is detected — the strongest-evidenced ADHD self-regulation technique (Gollwitzer & Sheeran), delivered at the trigger rather than on a clock. Forgiving: no streak, no guilt. |
 | Basic needs, dropped in flow | **Self-Care** | Opt-in "have you eaten? / had water?" checks that pierce a focus block — not an EF dysfunction itself but a downstream casualty of one; adaptive cadence to a daily target. |
+| Emotional dysregulation | **Emotion Regulation** | The feeling side of a hard moment — a core, large-effect ADHD symptom. On demand, offers one brief, evidence-matched micro-skill (ACT acceptance, DBT distress-tolerance, self-compassion) fitted to the feeling. General-wellness support, not therapy: crisis language is met with resources, never a coping skill. |
 | Undeclared trips & out-of-home balance | **Closed-Loop Trip Tracking** | Captures a round trip you didn't declare, asks for a one-tap label + honest reflection, and flags when out-of-home time skews away from a life-sphere you've set a target for. |
 
 *(See [`docs/one-sheet.pdf`](one-sheet.pdf) for the reader-facing version of
