@@ -296,9 +296,15 @@ struct RescheduleSheet: View {
                     Button { Task { await run(send: true) } } label: {
                         Label("Send request", systemImage: "paperplane")
                     }
-                    .disabled(busy || email.trimmingCharacters(in: .whitespaces).isEmpty)
+                    // Confirm-first: Send needs a current preview (and a recipient).
+                    .disabled(busy || draft == nil || email.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            // Editing any field invalidates the shown draft, so Send re-locks until
+            // you preview again — you never send a note you haven't just previewed.
+            .onChange(of: name) { _, _ in draft = nil }
+            .onChange(of: email) { _, _ in draft = nil }
+            .onChange(of: note) { _, _ in draft = nil }
             .brandScreen()
             .navigationTitle("Reschedule")
             .navigationBarTitleDisplayMode(.inline)
