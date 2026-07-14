@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prefrontal — Strategic Roadmap</title>
+</head>
+<body>
+<style>
+  :root {
+    --ground: #F3F4F9;
+    --surface: #FFFFFF;
+    --surface-2: #ECEEF7;
+    --ink: #181B29;
+    --ink-soft: #454962;
+    --muted: #797D93;
+    --line: #DDE0EC;
+    --line-soft: #E9EBF3;
+    --indigo: #4A4FC4;
+    --indigo-tint: #EBECFB;
+    --brand: #D9663F;
+    --brand-tint: #FBECE4;
+    --st-now: #1C9A88;
+    --st-near: #4A4FC4;
+    --st-gated: #B9852B;
+    --st-far: #7C8097;
+    --shadow: 0 1px 2px rgba(24,27,41,.04), 0 8px 28px rgba(24,27,41,.06);
+    --shadow-lift: 0 2px 6px rgba(24,27,41,.06), 0 18px 46px rgba(24,27,41,.10);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, "SF Pro Text", BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0E101A;
+      --surface: #171A27;
+      --surface-2: #1E2130;
+      --ink: #EBECF4;
+      --ink-soft: #B7BACD;
+      --muted: #888CA1;
+      --line: #2A2E42;
+      --line-soft: #23273A;
+      --indigo: #868AEC;
+      --indigo-tint: #23263C;
+      --brand: #EA8560;
+      --brand-tint: #2C2016;
+      --st-now: #33BBA6;
+      --st-near: #868AEC;
+      --st-gated: #D6A542;
+      --st-far: #969AB1;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+      --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 20px 50px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #F3F4F9; --surface: #FFFFFF; --surface-2: #ECEEF7;
+    --ink: #181B29; --ink-soft: #454962; --muted: #797D93;
+    --line: #DDE0EC; --line-soft: #E9EBF3;
+    --indigo: #4A4FC4; --indigo-tint: #EBECFB; --brand: #D9663F; --brand-tint: #FBECE4;
+    --st-now: #1C9A88; --st-near: #4A4FC4; --st-gated: #B9852B; --st-far: #7C8097;
+    --shadow: 0 1px 2px rgba(24,27,41,.04), 0 8px 28px rgba(24,27,41,.06);
+    --shadow-lift: 0 2px 6px rgba(24,27,41,.06), 0 18px 46px rgba(24,27,41,.10);
+  }
+  :root[data-theme="dark"] {
+    --ground: #0E101A; --surface: #171A27; --surface-2: #1E2130;
+    --ink: #EBECF4; --ink-soft: #B7BACD; --muted: #888CA1;
+    --line: #2A2E42; --line-soft: #23273A;
+    --indigo: #868AEC; --indigo-tint: #23263C; --brand: #EA8560; --brand-tint: #2C2016;
+    --st-now: #33BBA6; --st-near: #868AEC; --st-gated: #D6A542; --st-far: #969AB1;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+    --shadow-lift: 0 2px 6px rgba(0,0,0,.35), 0 20px 50px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  .page {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    font-size: 16px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  p { margin: 0; }
+  a { color: var(--indigo); }
+
+  /* ---- eyebrow / labels ---- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  /* ---- hero ---- */
+  .hero { padding: 84px 0 40px; }
+  .hero .kicker {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 26px;
+  }
+  .hero .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-tint); }
+  .hero h1 {
+    font-family: var(--sans);
+    font-weight: 680;
+    font-size: clamp(2.1rem, 5.4vw, 3.5rem);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    margin-bottom: 24px;
+  }
+  .hero h1 em {
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    color: var(--brand); letter-spacing: -0.01em;
+  }
+  .thesis {
+    font-family: var(--serif);
+    font-size: clamp(1.12rem, 2.3vw, 1.4rem);
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40ch;
+    border-left: 2px solid var(--brand);
+    padding-left: 20px;
+  }
+  .hero .meta {
+    margin-top: 34px; display: flex; flex-wrap: wrap; gap: 10px 26px;
+    font-size: 13.5px; color: var(--muted); font-family: var(--mono);
+  }
+  .hero .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---- section scaffolding ---- */
+  section { padding: 30px 0; }
+  .sec-head { margin-bottom: 30px; max-width: 60ch; }
+  .sec-head .eyebrow { display: block; margin-bottom: 12px; }
+  .sec-head h2 {
+    font-size: clamp(1.4rem, 3vw, 1.9rem); font-weight: 660;
+    letter-spacing: -0.02em; line-height: 1.12; margin-bottom: 12px;
+  }
+  .sec-head p { color: var(--ink-soft); font-size: 15.5px; max-width: 56ch; }
+
+  .divider { height: 1px; background: var(--line); margin: 12px 0; border: 0; }
+
+  /* ---- through-lines strip ---- */
+  .findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .finding { background: var(--surface); padding: 22px 20px; }
+  .finding .n { font-family: var(--mono); font-size: 12px; color: var(--brand); letter-spacing: .1em; }
+  .finding h3 { font-size: 15px; font-weight: 640; margin: 8px 0 6px; letter-spacing: -0.01em; }
+  .finding p { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+
+  /* ---- commandments ---- */
+  .cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .cmd { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: flex; gap: 14px; align-items: baseline; box-shadow: var(--shadow); }
+  .cmd .num { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--indigo); min-width: 20px; }
+  .cmd b { font-weight: 640; font-size: 14.5px; letter-spacing: -0.01em; }
+  .cmd span { display: block; color: var(--ink-soft); font-size: 13px; margin-top: 3px; line-height: 1.45; }
+
+  /* ---- legend ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 26px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+  .legend .li { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-family: var(--mono); letter-spacing: .04em; color: var(--ink-soft); }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; }
+
+  /* ---- timeline ---- */
+  .timeline { position: relative; padding-left: 34px; }
+  .timeline::before { content: ""; position: absolute; left: 9px; top: 8px; bottom: 8px; width: 2px; background: linear-gradient(var(--st-now), var(--st-near) 55%, var(--st-far)); border-radius: 2px; opacity: .5; }
+  .ms { position: relative; margin-bottom: 16px; }
+  .ms::before { content: ""; position: absolute; left: -34px; top: 24px; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); border: 2px solid var(--st, var(--st-near)); box-shadow: 0 0 0 5px var(--ground); }
+  .ms.flag::before { background: var(--brand); border-color: var(--brand); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; box-shadow: var(--shadow); transition: box-shadow .25s ease, transform .25s ease; }
+  .card:hover { box-shadow: var(--shadow-lift); }
+  .ms.flag .card { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
+
+  .ms-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .ms-id { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--st, var(--st-near)); letter-spacing: .05em; }
+  .ms-title { font-size: clamp(1.15rem, 2.4vw, 1.42rem); font-weight: 660; letter-spacing: -0.02em; line-height: 1.1; flex: 1 1 auto; min-width: 200px; }
+  .pill { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; white-space: nowrap; color: var(--st, var(--st-near)); background: color-mix(in srgb, var(--st, var(--st-near)) 13%, transparent); border: 1px solid color-mix(in srgb, var(--st, var(--st-near)) 32%, transparent); }
+  .flag-tag { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--brand); }
+
+  .advance { display: flex; gap: 10px; align-items: baseline; margin: 14px 0 4px; padding: 11px 14px; background: var(--surface-2); border-radius: 10px; font-size: 13.5px; }
+  .advance .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+  .advance .val { color: var(--ink); font-weight: 500; }
+
+  .rows { margin-top: 14px; display: grid; gap: 11px; }
+  .row { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: baseline; }
+  .row .rl { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 1px; }
+  .row .rv { font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+  .row .rv b { color: var(--ink); font-weight: 620; }
+  .row.trap .rv { color: var(--ink-soft); }
+  .row.trap .rl { color: var(--st-gated); }
+
+  /* ---- guardrails ---- */
+  .guards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .guard { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--st-gated); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .guard .gt { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--st-gated); margin-bottom: 9px; }
+  .guard h3 { font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 7px; }
+  .guard p { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 13.5px; }
+  thead th { text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 14px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  tbody td { padding: 14px 16px; border-bottom: 1px solid var(--line-soft); color: var(--ink-soft); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { background: var(--surface); }
+  td .mid { font-weight: 640; color: var(--ink); }
+  .rdy { font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .rdy.now { color: var(--st-now); } .rdy.near { color: var(--st-near); } .rdy.gated { color: var(--st-gated); } .rdy.far { color: var(--st-far); }
+
+  /* ---- footer ---- */
+  .foot { padding: 40px 0 72px; color: var(--muted); font-size: 13px; }
+  .foot p { max-width: 68ch; line-height: 1.6; margin-bottom: 10px; }
+  .foot code { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
+
+  /* ---- divergences ---- */
+  .diverge { display: grid; gap: 10px; }
+  .dv { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--sev, var(--st-far)); border-radius: 12px; padding: 16px 18px 16px 20px; box-shadow: var(--shadow); }
+  .dv-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .dv-num { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--muted); }
+  .dv h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; flex: 1 1 auto; min-width: 180px; }
+  .sev { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); border: 1px solid color-mix(in srgb, var(--sev) 32%, transparent); white-space: nowrap; }
+  .dv p { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+  .dv p .fix { color: var(--ink); font-weight: 560; }
+  .aligned { margin-top: 12px; padding: 15px 18px; border-radius: 12px; background: color-mix(in srgb, var(--st-now) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--st-now) 26%, var(--line)); font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+  .aligned b { color: var(--st-now); font-weight: 640; }
+
+  :focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .ms { animation: rise .6s cubic-bezier(.2,.7,.3,1) both; }
+    .ms:nth-child(1){animation-delay:.02s}.ms:nth-child(2){animation-delay:.08s}.ms:nth-child(3){animation-delay:.14s}.ms:nth-child(4){animation-delay:.20s}.ms:nth-child(5){animation-delay:.26s}.ms:nth-child(6){animation-delay:.32s}.ms:nth-child(7){animation-delay:.38s}
+    @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  }
+  @media (max-width: 560px) {
+    .row { grid-template-columns: 1fr; gap: 3px; }
+    .hero { padding: 56px 0 30px; }
+  }
+</style>
+
+<div class="page">
+  <div class="wrap">
+
+    <!-- HERO -->
+    <header class="hero">
+      <div class="kicker"><span class="dot"></span> Prefrontal · Strategic Roadmap · 2026–2029</div>
+      <h1>The regulatory load belongs to the system,<br><em>not the person carrying it.</em></h1>
+      <p class="thesis">ADHD is a performance disorder, not a knowledge disorder. You know what to do — the gap is doing it at the point of performance. Every milestone here acts there, and each is anchored to a real capability unlock, not a wish.</p>
+      <div class="meta">
+        <span><b>Grounding:</b> clinical science · tool landscape · lived experience · tech frontier · HCI literature</span>
+        <span><b>Companion to:</b> whitepaper (thesis) · ROADMAP.md (closeout)</span>
+      </div>
+    </header>
+
+    <!-- THROUGH-LINES -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">What the research settled</span>
+        <h2>Five through-lines the roadmap is built on</h2>
+        <p>Consistent across every stream: the science says externalize; the graveyard says friction and shame kill tools; the field says retention — not capability — is the unsolved problem.</p>
+      </div>
+      <div class="findings">
+        <div class="finding"><div class="n">01</div><h3>Act at the point of performance</h3><p>Teaching fails; cueing, scaffolding and externalizing at the moment of behavior works (Barkley). Prefrontal's founding thesis, and it's correct.</p></div>
+        <div class="finding"><div class="n">02</div><h3>If-then is the best-evidenced technique</h3><p>Implementation intentions restored Go/No-Go inhibition to non-ADHD levels in children with ADHD (Gawrilow &amp; Gollwitzer). Cheap to build, deep evidence.</p></div>
+        <div class="finding"><div class="n">03</div><h3>The graveyard has a cause</h3><p>Tools fail by demanding consistency, memory and maintenance the ADHD brain can't supply — then shaming the lapse. ~80% abandoned in two weeks.</p></div>
+        <div class="finding"><div class="n">04</div><h3>Survivors share a signature</h3><p>Low-friction, always-visible, forgiving, and they externalize the work. Novelty is a depreciating asset — never the load-bearing motivator.</p></div>
+        <div class="finding"><div class="n">05</div><h3>Retention is the real problem</h3><p>LLMs already plan well; JITAI trials show 82.6% dropout. No validated executive-function tool exists for ADHD adults — a gap to own.</p></div>
+      </div>
+    </section>
+
+    <!-- COMMANDMENTS -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">The constraints</span>
+        <h2>Ten commandments that bind every milestone</h2>
+        <p>A feature that breaks one of these gets abandoned no matter how advanced. They already describe much of Prefrontal's ethos — the roadmap keeps them load-bearing.</p>
+      </div>
+      <div class="cmd-grid">
+        <div class="cmd"><span class="num">1</span><div><b>Externalize everything</b><span>Memory, time, intention. If it isn't visible, it doesn't exist.</span></div></div>
+        <div class="cmd"><span class="num">2</span><div><b>Activation energy → zero</b><span>One tap or one utterance. The next action is pre-decided and tiny. No forms.</span></div></div>
+        <div class="cmd"><span class="num">3</span><div><b>Visible beats powerful</b><span>If the user must remember to open it, it has already lost.</span></div></div>
+        <div class="cmd"><span class="num">4</span><div><b>Design for the return</b><span>Misses are the norm and are the data. No streaks, no guilt UI. Re-entry is a clean slate.</span></div></div>
+        <div class="cmd"><span class="num">5</span><div><b>Cue-based, not time-based</b><span>"If cue, then tiny action" beats "remember at 3pm."</span></div></div>
+        <div class="cmd"><span class="num">6</span><div><b>Reinforce, never punish</b><span>Immediate and varied. Punitive gamification triggers the shame spiral.</span></div></div>
+        <div class="cmd"><span class="num">7</span><div><b>No maintenance burden</b><span>Value on day one, zero setup. Upkeep &gt; payoff means it's gone.</span></div></div>
+        <div class="cmd"><span class="num">8</span><div><b>Recruit interest deliberately</b><span>Engagement is a lever, not a moral failing — but novelty can't be the engine.</span></div></div>
+        <div class="cmd"><span class="num">9</span><div><b>Silence is a feature</b><span>Default to not interrupting when receptivity is low. A muted tool is dead.</span></div></div>
+        <div class="cmd"><span class="num">10</span><div><b>Don't automate nagging</b><span>Household load is a shared, neutral, equally-visible surface — never surveillance.</span></div></div>
+      </div>
+    </section>
+
+    <!-- TIMELINE -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">The milestones · anchored to advances</span>
+        <h2>From ready-now to horizon</h2>
+        <p>Each milestone names the advance that unlocks it, the mechanism it serves, what it builds on, the abandonment trap it dodges, and a signal the learning loop can measure.</p>
+      </div>
+
+      <div class="legend" aria-label="Readiness legend">
+        <span class="li"><span class="swatch" style="background:var(--st-now)"></span> Ready now</span>
+        <span class="li"><span class="swatch" style="background:var(--st-near)"></span> ~1–2 years</span>
+        <span class="li"><span class="swatch" style="background:var(--st-gated)"></span> Gated / if unblocked</span>
+        <span class="li"><span class="swatch" style="background:var(--st-far)"></span> 3+ years · watch</span>
+        <span class="li"><span class="swatch" style="background:var(--brand)"></span> Flagship</span>
+      </div>
+
+      <div class="timeline">
+
+        <!-- M0 -->
+        <article class="ms" style="--st:var(--st-now)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M0</span>
+              <h3 class="ms-title">The assistant that carries the load</h3>
+              <span class="pill">Shipped · baseline</span>
+            </div>
+            <div class="advance"><span class="lbl">Foundation</span><span class="val">The full capture→triage→memory→coaching→delivery pipeline, all seven challenge modules, the honest learning loop, native iOS, and the Parent &amp; Caregiver packs — already a genuinely differentiated tool.</span></div>
+          </div>
+        </article>
+
+        <!-- M1 -->
+        <article class="ms" style="--st:var(--st-now)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M1</span>
+              <h3 class="ms-title">Capture at the speed of thought</h3>
+              <span class="pill">Ready now</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Streaming voice ASR + on-device LLM (Apple Foundation Models, iOS 26) + frontier multimodal vision — all shipping in 2026.</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Mechanism</span><span class="rv">Capture friction is the <b>#1 cause of abandonment</b>. If logging a thought is harder than losing it, the thought is lost and the learning loop starves.</span></div>
+              <div class="row"><span class="rl">Build</span><span class="rv">Voice brain-dump → structured items via the existing sensor + NL-assistant path; <b>"photograph the chaos"</b> (whiteboard, mail pile, sticky) via vision; on-device parse keeps it private, instant, offline.</span></div>
+              <div class="row trap"><span class="rl">Trap dodged</span><span class="rv">No forms, no setup, no maintenance. Rambling, imperfect input is the expected input.</span></div>
+              <div class="row"><span class="rl">Signal</span><span class="rv">Capture-to-first-action latency; share of captures that reach a completed or consciously-dropped item.</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- M2 -->
+        <article class="ms" style="--st:var(--st-now)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M2</span>
+              <h3 class="ms-title">The always-visible external brain</h3>
+              <span class="pill">Now → maturing</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Mature iOS glanceable surfaces — Live Activities, Dynamic Island, interactive widgets — plus owning the longitudinal behavioral model (not a chatbot's built-in "memory").</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Mechanism</span><span class="rv">Out-of-sight-out-of-mind is neurological reality; <b>time blindness</b> is the most consistent deficit a tool can visibly counter. Visible beats powerful.</span></div>
+              <div class="row"><span class="rl">Build</span><span class="rv">Persistent time-externalization ("22 min on this") on the Lock Screen; one <b>honest</b> next thing as a widget; a glanceable visual day-shape; a queryable behavioral model ("you've rescheduled this four times").</span></div>
+              <div class="row trap"><span class="rl">Trap dodged</span><span class="rv">Read-mostly and forgiving — no streak, no overdue-red. Re-entry shows today, not a backlog of failures.</span></div>
+              <div class="row"><span class="rl">Signal</span><span class="rv">Glance frequency; do always-visible surfaces cut missed departures vs. push-only?</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- M3 -->
+        <article class="ms flag" style="--st:var(--st-near)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M3</span>
+              <h3 class="ms-title">The right nudge at the right moment</h3>
+              <span class="flag-tag">◆ Flagship</span>
+              <span class="pill">~1–2 years</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Genuinely learned proactive timing — the JITAI framework (Nahum-Shani) fed by newly-cheap context: calendar gaps, location transitions, phone-idle, wearable sleep/HRV as gentle context.</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Mechanism</span><span class="rv">Turns a passive reminder box (which users forget to open) into an assistant that <b>surfaces the right thing at the right moment</b> — the highest-value unlock for ADHD.</span></div>
+              <div class="row"><span class="rl">Build</span><span class="rv">Adopt JITAI's six components — including states of <b>vulnerability</b> and <b>receptivity</b> — over the coaching tick; learn interruptibility per user; surface the if-then plan <b>at</b> its cue; wearables adjust tone, never a clinical claim.</span></div>
+              <div class="row trap"><span class="rl">Trap dodged</span><span class="rv">Habituation and mistiming. Nudge effects decay with dosage — hard frequency guardrails and receptivity-gated silence from day one. A mistimed nudge gets the tool permanently muted.</span></div>
+              <div class="row"><span class="rl">Signal</span><span class="rv">Ack-rate <b>without</b> a rise in mutes; proximal effect measured as a micro-randomized trial would.</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- M4 -->
+        <article class="ms" style="--st:var(--st-near)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M4</span>
+              <h3 class="ms-title">It does the thing, not just reminds</h3>
+              <span class="pill">~1–2 years</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Reliable scoped agentic execution via structured tool-calling / MCP — a bounded, verifiable action space. Not open-ended computer-use agents.</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Mechanism</span><span class="rv">The dreaded multi-step admin is a pure <b>task-initiation wall</b>. Reminding doesn't move it; doing it (with confirmation) removes the wall.</span></div>
+              <div class="row"><span class="rl">Build</span><span class="rv">Promote delegation from "drafts" to "does" — book the event, send the drafted email, fill a known form — each previewed and confirmed. Communication translation (decode/soften work email) as a first-class tool.</span></div>
+              <div class="row trap"><span class="rl">Trap dodged</span><span class="rv">Over-reach. Never an open browser agent (~1/3 success). One wrong autonomous send costs the trust the product runs on.</span></div>
+              <div class="row"><span class="rl">Signal</span><span class="rv">Count of avoided-admin items actually completed through the assistant.</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- M5 -->
+        <article class="ms" style="--st:var(--st-gated)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M5</span>
+              <h3 class="ms-title">The in-the-moment focus guard</h3>
+              <span class="pill">Gated · if unblocked</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Apple fixing the Screen Time API (memory limit, adult authorization, iOS-26 regressions). Outside our control.</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Mechanism</span><span class="rv">Response inhibition and wrong-target hyperfocus — a gentle nudge when the user drifts off a <b>declared</b> focus block.</span></div>
+              <div class="row"><span class="rl">Build</span><span class="rv">Opt-in, dismissible focus guard. Phone-usage signal first (unlocks, app launches — AUROC ~0.83, on-device, no camera). Any focus score is a noisy nudge, never truth (lab 70–90% → field 55–65%).</span></div>
+              <div class="row trap"><span class="rl">Trap dodged</span><span class="rv">Becoming shaming surveillance. Stays opt-in, self-directed, dismissible, framed as help. Don't build the core loop on an unreliable platform.</span></div>
+              <div class="row"><span class="rl">Signal</span><span class="rv">Focus-block completion; interventions accepted vs. dismissed-with-annoyance.</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- M6 -->
+        <article class="ms" style="--st:var(--st-far)">
+          <div class="card">
+            <div class="ms-top">
+              <span class="ms-id">M6</span>
+              <h3 class="ms-title">Anticipatory · ambient · fully offline</h3>
+              <span class="pill">3+ years · watch</span>
+            </div>
+            <div class="advance"><span class="lbl">Advance</span><span class="val">Digital phenotyping; LLM-upgraded ambient home devices; on-device frontier-grade reasoning. Genuine research frontiers — watch, don't stake milestones on them.</span></div>
+            <div class="rows">
+              <div class="row"><span class="rl">Bets</span><span class="rv">Predict a rough executive-function day <b>before</b> it lands and pre-empt it; hands-free whole-room verbal body-doubling; the entire assistant — including sensitive reasoning — running private and offline.</span></div>
+              <div class="row"><span class="rl">Note</span><span class="rv">Body doubling is the most-requested, best-evidenced mechanic in the scan — a virtual/recorded double is buildable well before the ambient-hardware version.</span></div>
+              <div class="row trap"><span class="rl">Caution</span><span class="rv">Poor commercial track record (Mindstrong, 2023) and iOS privacy limits starve the signal. Research bets, not commitments.</span></div>
+            </div>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- GUARDRAILS -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">The non-goals</span>
+        <h2>Three traps to stay out of</h2>
+        <p>Staying out of these is as important as any milestone — each is backed by a cautionary tale in the research.</p>
+      </div>
+      <div class="guards">
+        <div class="guard">
+          <div class="gt">Regulatory</div>
+          <h3>Stay consumer wellness — not a medical device</h3>
+          <p>Akili's prescription game got FDA clearance and still collapsed (~$34M fire-sale, 2024). Disease-treatment claims mean an unsolved LLM-clearance path. Keep claims in EF-support territory and ship freely.</p>
+        </div>
+        <div class="guard">
+          <div class="gt">Platform</div>
+          <h3>Don't build a core loop on Screen Time — yet</h3>
+          <p>FamilyControls is unreliable for a self-directed adult app: a 6 MB memory limit that crashes, adult-auth quirks, unaddressed iOS-26 regressions. High value, shaky foundation, partly outside our control.</p>
+        </div>
+        <div class="guard">
+          <div class="gt">Scope</div>
+          <h3>Don't promise open-ended agentic autonomy</h3>
+          <p>Computer-use agents fail ~2 of 3 real tasks. Do scoped, verifiable, API/MCP actions with confirmation — never drive a browser to "book my dentist."</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- MAP TABLE -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">At a glance</span>
+        <h2>Milestones × advances</h2>
+        <p>The direct answer to "milestones set on major advances" — read top-to-bottom as ready-now → horizon.</p>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Milestone</th><th>Anchoring advance</th><th>Readiness</th><th>Mechanism served</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="mid">M1</span> · Capture at the speed of thought</td><td>Voice ASR + on-device LLM + multimodal vision</td><td><span class="rdy now">NOW</span></td><td>Activation energy; capture friction</td></tr>
+            <tr><td><span class="mid">M2</span> · Always-visible external brain</td><td>iOS Live Activities / widgets + owned memory</td><td><span class="rdy now">NOW →</span></td><td>Time blindness; out-of-sight-out-of-mind</td></tr>
+            <tr><td><span class="mid">M3</span> · Right nudge at the right moment ◆</td><td>Learned proactive timing (JITAI) + wearable context</td><td><span class="rdy near">~1–2 YR</span></td><td>Prospective memory; the passive-box failure</td></tr>
+            <tr><td><span class="mid">M4</span> · It does the thing</td><td>Scoped agentic execution (API / MCP)</td><td><span class="rdy near">~1–2 YR</span></td><td>Task-initiation wall (dreaded admin)</td></tr>
+            <tr><td><span class="mid">M5</span> · In-the-moment focus guard</td><td>Apple fixing the Screen Time API</td><td><span class="rdy gated">GATED</span></td><td>Response inhibition; wrong-target hyperfocus</td></tr>
+            <tr><td><span class="mid">M6</span> · Anticipatory / ambient / offline</td><td>Digital phenotyping; ambient home LLM; on-device reasoning</td><td><span class="rdy far">3+ YR</span></td><td>Dysregulation pre-emption; body doubling; privacy</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CONTINUOUS + FOOTER -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">Running underneath</span>
+        <h2>Cross-cutting tracks</h2>
+      </div>
+      <div class="cmd-grid">
+        <div class="cmd"><span class="num">↻</span><div><b>Deepen the learning loop</b><span>More context-conditioned patterns; honesty checks stay visible, never silently asserted.</span></div></div>
+        <div class="cmd"><span class="num">↻</span><div><b>Context Pack breadth</b><span>Caregiver tools, Grad student, New job — the cheap, shareable extension point.</span></div></div>
+        <div class="cmd"><span class="num">↻</span><div><b>Invisible-load / household</b><span>A neutral, equally-visible shared surface. Never a nagging proxy.</span></div></div>
+        <div class="cmd"><span class="num">↻</span><div><b>Emotion regulation, first-class</b><span>ACT / DBT micro-skills delivered in the hard moment — a real, unfilled gap.</span></div></div>
+      </div>
+    </section>
+
+    <!-- DIVERGENCES -->
+    <section>
+      <div class="sec-head">
+        <span class="eyebrow">Honest audit</span>
+        <h2>Where the app and the evidence diverge today</h2>
+        <p>The current build measured against the research — verified in code, ranked by severity, each tied to the fix that closes it.</p>
+      </div>
+      <div class="diverge">
+        <div class="dv" style="--sev:var(--brand)">
+          <div class="dv-top"><span class="dv-num">01</span><h3>The deployment model fights the audience</h3><span class="sev">High</span></div>
+          <p>Setup and maintenance are the #1 abandonment cause — yet the tool asks its ADHD user to run a Mac mini, Ollama, n8n and Tailscale off a 341-line env file. <span class="fix">Fix: a hosted / one-tap onboarding path</span>, or the "system carries the load" thesis leaks out through the deploy step.</p>
+        </div>
+        <div class="dv" style="--sev:var(--brand)">
+          <div class="dv-top"><span class="dv-num">02</span><h3>Emotion regulation is under-built</h3><span class="sev">High</span></div>
+          <p>Emotional dysregulation is a core feature (<i>g</i>≈1.17) with no validated ADHD-adult app — yet it isn't a first-class module; all seven are cognitive-EF. It's handled only indirectly via encouragement/recovery. <span class="fix">Fix: the emotion-regulation cross-cutting track.</span></p>
+        </div>
+        <div class="dv" style="--sev:var(--brand)">
+          <div class="dv-top"><span class="dv-num">03</span><h3>The best-evidenced technique is missing</h3><span class="sev">High</span></div>
+          <p>If-then implementation intentions (Gollwitzer <i>d</i>≈0.65; restored inhibition to non-ADHD levels) have <b>no representation in the codebase</b>. The location anchor is cue-shaped, but there's no "if [cue], then [tiny action]" builder. <span class="fix">Fix: a first-class if-then primitive; feeds M3.</span></p>
+        </div>
+        <div class="dv" style="--sev:var(--st-gated)">
+          <div class="dv-top"><span class="dv-num">04</span><h3>The stats screen reintroduces a shame vector</h3><span class="sev">Moderate</span></div>
+          <p>The insights screen surfaces a "current success streak" + success rate — the exact loss-based shape the research ties to the abandonment spiral, and it contradicts the app's own forgiveness ethos. <span class="fix">Fix: reframe toward return-after-lapse and trend.</span></p>
+        </div>
+        <div class="dv" style="--sev:var(--st-gated)">
+          <div class="dv-top"><span class="dv-num">05</span><h3>Scheduling is time-based, evidence favors cue-based</h3><span class="sev">Moderate</span></div>
+          <p>The flagship path fits todos into free time windows and pads clock times — but time-based prospective memory is the weakest channel; event/cue-based is stronger. <span class="fix">Fix: more cue-triggering, less clock-triggering (relates to #03).</span></p>
+        </div>
+        <div class="dv" style="--sev:var(--st-far)">
+          <div class="dv-top"><span class="dv-num">06</span><h3>Escalation cadence vs. habituation</h3><span class="sev">Partial · mitigated</span></div>
+          <p>Escalation is well-justified for time-critical events and quiet-hours/debounce/channel-learning mitigate well. The residual gap: the engine models channel &amp; quiet hours, not an explicit receptivity/vulnerability state. <span class="fix">Fix: exactly what M3 closes.</span></p>
+        </div>
+      </div>
+      <div class="aligned"><b>Already well-aligned</b> — so the audit is calibrated: local-first / privacy · miss-as-data for the system · the encouragement / panic / recovery layer · one-tap App-Intent capture · cue-based location anchors · earn-only kids' star charts. The founding thesis — act at the point of performance — is exactly right.</div>
+    </section>
+
+    <footer class="foot">
+      <hr class="divider" />
+      <p><b style="color:var(--ink-soft)">North star:</b> the field's lesson is that the core risk is engagement, not capability — so the metrics are retention-shaped: durable use past the 2-week novelty window, return-after-lapse, and miss-informed improvement over months. An optional waitlist-controlled study (Inflow's playbook, N=154) would put Prefrontal ahead of every competitor with published outcomes — a credibility asset, not a regulatory obligation.</p>
+      <p>Source of record: <code>docs/roadmap-vision.md</code>. Companion to <code>docs/whitepaper.md</code> (thesis) and <code>ROADMAP.md</code> (tactical closeout). Community stream drawn from ADHD-authored essays and clinical syntheses; Reddit was not directly crawlable, so a verbatim-quote pass remains a worthwhile follow-up.</p>
+    </footer>
+
+  </div>
+</div>
+</body>
+</html>
