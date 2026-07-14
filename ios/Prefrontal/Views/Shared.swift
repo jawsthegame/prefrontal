@@ -352,6 +352,17 @@ func selfCareLabel(_ key: String) -> String {
      "winddown": "Wind-down", "movement": "Movement"][key] ?? key.capitalized
 }
 
+/// A todo priority (0–3) as a short label — shared by the Todos list and the
+/// stuck/avoided review so they read the same.
+func priorityLabel(_ p: Int) -> String { ["someday", "low", "med", "high"][max(0, min(3, p))] }
+
+/// "due MMM d" for a server deadline string, or nil when unparseable.
+func deadlineShort(_ s: String) -> String? {
+    guard let d = PFDate.parse(s) else { return nil }
+    let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("MMM d")
+    return "due " + f.string(from: d)
+}
+
 extension View {
     /// Standard scroll screen on the paper background.
     func brandScreen() -> some View {

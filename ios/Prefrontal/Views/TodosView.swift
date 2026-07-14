@@ -25,6 +25,8 @@ struct TodosView: View {
         .navigationTitle("Todos")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink { StuckAvoidedView() } label: { Image(systemName: "tray.full") }
+                    .accessibilityLabel("Stuck and avoided")
                 NavigationLink { ClarifyView() } label: { Image(systemName: "questionmark.bubble") }
                     .accessibilityLabel("Clarify")
                 Button { showAdd = true } label: { Image(systemName: "plus") }
@@ -75,6 +77,7 @@ struct TodoRow: View {
     let onError: (String) -> Void
     @State private var expanded = false
     @State private var showDelegate = false
+    @State private var showEdit = false
 
     var body: some View {
         Card {
@@ -109,10 +112,20 @@ struct TodoRow: View {
         .sheet(isPresented: $showDelegate) {
             DelegateSheet(todoId: todo.id, reload: reload)
         }
+        .sheet(isPresented: $showEdit) {
+            EditTodoSheet(todo: todo, onSaved: reload)
+        }
     }
 
     @ViewBuilder private var detail: some View {
         Divider().overlay(Brand.line)
+        if let n = todo.notes, !n.isEmpty {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "note.text").font(.caption2).foregroundStyle(Brand.muted)
+                Text(n).font(.footnote).foregroundStyle(Brand.muted)
+                Spacer(minLength: 0)
+            }
+        }
         if let dec = todo.decomposition, !dec.allSteps.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(dec.allSteps, id: \.index) { step in
@@ -145,6 +158,10 @@ struct TodoRow: View {
             if todo.decomposition == nil {
                 actionBtn("Break down", "list.bullet.indent") { try await withAPI { try await $0.decomposeTodo(todo.id) } }
             }
+            Button { showEdit = true } label: {
+                Label("Edit", systemImage: "pencil").font(.caption).lineLimit(1)
+            }
+            .buttonStyle(.bordered).tint(Brand.teal)
             Button { showDelegate = true } label: {
                 Label(todo.delegation == nil ? "Delegate" : "Re-delegate", systemImage: "person.wave.2")
                     .font(.caption).lineLimit(1)
@@ -232,14 +249,7 @@ struct TodoRow: View {
         .tint(role == .destructive ? Brand.danger : Brand.teal)
     }
 
-    private func priorityLabel(_ p: Int) -> String { ["someday", "low", "med", "high"][max(0, min(3, p))] }
     private func priorityColor(_ p: Int) -> Color { p >= 3 ? Brand.danger : (p == 2 ? Brand.warn : Brand.muted) }
-
-    private func deadlineShort(_ s: String) -> String? {
-        guard let d = PFDate.parse(s) else { return nil }
-        let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("MMM d")
-        return "due " + f.string(from: d)
-    }
 }
 
 struct AddTodoSheet: View {
@@ -277,6 +287,77 @@ struct AddTodoSheet: View {
         saving = true; defer { saving = false }
         do {
             try await withAPI { try await $0.addTodo(title: title.trimmingCharacters(in: .whitespaces)) }
+            await onSaved()
+            dismiss()
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+/// Edit an open todo's **deadline** and **notes** — the plans-drift adjustments
+/// (`POST /todos/{id}/deadline` · `/notes`). The deadline is sent as an
+/// offset-aware ISO-8601 string so the server times it correctly; clearing the
+/// toggle removes it. Blank notes clear.
+struct EditTodoSheet: View {
+    let todo: Todo
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var hasDeadline: Bool
+    @State private var deadline: Date
+    @State private var notes: String
+    @State private var error: String?
+    @State private var saving = false
+
+    init(todo: Todo, onSaved: @escaping () async -> Void) {
+        self.todo = todo
+        self.onSaved = onSaved
+        let parsed = PFDate.parse(todo.deadline)
+        _hasDeadline = State(initialValue: parsed != nil)
+        _deadline = State(initialValue: parsed ?? Date())
+        _notes = State(initialValue: todo.notes ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Deadline") {
+                    Toggle("Has a deadline", isOn: $hasDeadline.animation())
+                    if hasDeadline {
+                        DatePicker("Due", selection: $deadline)
+                    }
+                }
+                Section("Notes") {
+                    TextField("Context to carry with this todo…", text: $notes, axis: .vertical)
+                        .lineLimit(1...5)
+                } footer: {
+                    Text("Notes ride along on this todo's nudges — e.g. \"needs the account number\".")
+                }
+                if let error { Section { Text(error).foregroundStyle(Brand.danger).font(.footnote) } }
+            }
+            .brandScreen()
+            .navigationTitle("Edit todo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }.disabled(saving)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func save() async {
+        saving = true; defer { saving = false }
+        let iso = hasDeadline ? ISO8601DateFormatter().string(from: deadline) : nil
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await withAPI { client in
+                try await client.setTodoDeadline(todo.id, deadlineISO: iso)
+                try await client.setTodoNotes(todo.id, notes: trimmed.isEmpty ? nil : trimmed)
+            }
             await onSaved()
             dismiss()
         } catch {

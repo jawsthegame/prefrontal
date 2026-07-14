@@ -777,5 +777,48 @@ struct ClarificationResolveResult: Codable {
 /// The `POST /clarifications/check` sweep result.
 struct SweepResult: Codable { let created: Int }
 
+// MARK: - Stuck / avoided todos (honest prioritization)
+
+/// A task you keep bailing on (`GET /todos/stuck`) — repeated misses on the same
+/// title. Carries a tiny first step and a body-double ("start together")
+/// suggestion, the Task-Paralysis intervention a plain reminder won't fix.
+struct StuckTodo: Codable, Identifiable {
+    let title: String
+    let misses: Int
+    let attempts: Int
+    let firstStep: String?
+    let suggestion: String?
+    var id: String { title }
+
+    enum CodingKeys: String, CodingKey {
+        case title, misses, attempts, suggestion
+        case firstStep = "first_step"
+    }
+}
+
+struct StuckList: Codable { let stuck: [StuckTodo] }
+
+/// An important todo that's been sitting open, worst-avoided first
+/// (`GET /todos/avoided`). `daysOpen`/`score` are floats server-side.
+struct AvoidedTodo: Codable, Identifiable {
+    let todoId: Int
+    let title: String
+    let daysOpen: Double
+    let score: Double?
+    let priority: Int?
+    let estimateMinutes: Double?
+    let deadline: String?
+    var id: Int { todoId }
+
+    enum CodingKeys: String, CodingKey {
+        case title, score, priority, deadline
+        case todoId = "todo_id"
+        case daysOpen = "days_open"
+        case estimateMinutes = "estimate_minutes"
+    }
+}
+
+struct AvoidedList: Codable { let avoided: [AvoidedTodo] }
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}
