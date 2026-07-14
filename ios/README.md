@@ -266,6 +266,24 @@ user needs none of them. `deploy/ios-shortcut.md` keeps the Shortcuts stack
 documented for **web / ntfy-only** users (no app), with the native equivalents
 mapped at the top.
 
+## App lock (Face ID / Touch ID)
+
+Off by default. Enabled in **Me ▸ Settings ▸ App Lock** (the toggle only appears
+when the device has enrolled biometrics), it gates the whole app behind **Face ID**
+— or Touch ID / Optic ID — on launch and whenever the app returns from the
+background. The token lives in the Keychain and the tabs show personal schedule,
+todo, and panic data, so this keeps a borrowed unlocked phone from exposing them.
+
+`Security/BiometricLock.swift` (app-target only — it imports `LocalAuthentication`,
+which the widget doesn't need) owns the lock state; `RootView` covers the app with
+`Views/LockView.swift` while locked. The cover also shows whenever the scene isn't
+active, so it doubles as the app-switcher privacy shield. Authentication uses
+`LAPolicy.deviceOwnerAuthentication`, so the **device passcode** is the built-in
+fallback and a failed biometric scan can't lock you out. Needs
+`NSFaceIDUsageDescription` (set via `INFOPLIST_KEY_NSFaceIDUsageDescription` in
+`project.yml`). No paid-tier capability required — this one works under free
+signing.
+
 ## Siri / Shortcuts / Action Button (App Intents)
 
 `Intents/PrefrontalIntents.swift` exposes the core one-tap actions as **App

@@ -62,6 +62,7 @@ struct SettingsView: View {
 
             if !isOnboarding {
                 AvailableHoursSection()
+                AppLockSection()
                 LocationSection()
                 diagnostics
             }
@@ -104,6 +105,31 @@ struct SettingsView: View {
         } catch {
             ok = false
             status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+/// Opt-in biometric app lock. Only rendered when the device actually has
+/// enrolled biometrics (`BiometricLock.isAvailable`) — otherwise the toggle would
+/// be a dead control. Flipping it on locks immediately (and the next launch /
+/// foreground prompts); off unlocks. Wording adapts to Face ID vs Touch ID.
+struct AppLockSection: View {
+    @EnvironmentObject var config: AppConfig
+    @ObservedObject private var lock = BiometricLock.shared
+
+    var body: some View {
+        if lock.isAvailable {
+            Section("App lock") {
+                Toggle("Require \(lock.biometryName)", isOn: Binding(
+                    get: { config.appLockEnabled },
+                    set: { on in
+                        config.appLockEnabled = on
+                        lock.settingChanged(enabled: on)
+                    }
+                ))
+                Text("Locks Prefrontal behind \(lock.biometryName) on launch and when it returns from the background. Your device passcode still works as a fallback.")
+                    .font(.caption).foregroundStyle(Brand.muted)
+            }
         }
     }
 }

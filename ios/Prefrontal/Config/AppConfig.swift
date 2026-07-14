@@ -52,6 +52,12 @@ enum SharedStore {
     /// `LocationMonitor` can check it without touching the `@MainActor` AppConfig.
     static var locationEnabled: Bool { defaults.bool(forKey: "locationEnabled") }
 
+    /// Opt-in biometric app lock (Face ID / Touch ID). App-only — the widget never
+    /// reads it — but stored in the App Group defaults like the other flags. Read
+    /// standalone here so `BiometricLock.init` can decide the initial lock state
+    /// without touching the `@MainActor` AppConfig.
+    static var appLockEnabled: Bool { defaults.bool(forKey: "appLockEnabled") }
+
     // Web-configured location tunables (#565): cached in the App Group by
     // `LocationMonitor.syncLocationSettings()` from `/schedule/location-settings`
     // so the nonisolated monitor reads them synchronously, with a sensible default
@@ -107,6 +113,11 @@ final class AppConfig: ObservableObject {
     @Published var locationEnabled: Bool {
         didSet { SharedStore.defaults.set(locationEnabled, forKey: "locationEnabled") }
     }
+    /// Opt-in: gate the app behind Face ID / Touch ID on launch and on return from
+    /// the background (`BiometricLock`). Off by default.
+    @Published var appLockEnabled: Bool {
+        didSet { SharedStore.defaults.set(appLockEnabled, forKey: "appLockEnabled") }
+    }
 
     private init() {
         // Move a pre-#496 plaintext token into the Keychain before the first read.
@@ -117,6 +128,7 @@ final class AppConfig: ObservableObject {
         ntfyTopic = SharedStore.ntfyTopic
         displayName = SharedStore.displayName
         locationEnabled = SharedStore.defaults.bool(forKey: "locationEnabled")
+        appLockEnabled = SharedStore.appLockEnabled
     }
 
     var isConfigured: Bool { !token.isEmpty && URL(string: baseURLString) != nil }
