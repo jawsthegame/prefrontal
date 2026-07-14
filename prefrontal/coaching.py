@@ -323,6 +323,15 @@ class CoachContext:
     # module declares this via ``pierces_protection``); computed once per tick so
     # the suppression gate never names a module. Empty means nothing pierces.
     pierce_keys: frozenset[str] = frozenset()
+    # Per-tick cross-module scratchpad: todo ids a higher-precedence producer has
+    # already claimed this tick, so a lower-precedence one stands down rather than
+    # double-nudge the same todo. ``open_window`` adds the todo it's offering into a
+    # calendar gap (its ``before_collect``); ``task_paralysis`` skips a todo listed
+    # here (the gap-anchored offer is strictly more informative). The dataclass is
+    # frozen, but this set is *mutated in place* during collection — the field
+    # reference never changes, only its contents — so it's a shared tick-local
+    # channel without a store round-trip. Empty when nothing has claimed anything.
+    claimed_todo_ids: set[int] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
