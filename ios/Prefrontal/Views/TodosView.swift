@@ -328,9 +328,11 @@ struct EditTodoSheet: View {
                         DatePicker("Due", selection: $deadline)
                     }
                 }
-                Section("Notes") {
+                Section {
                     TextField("Context to carry with this todo…", text: $notes, axis: .vertical)
                         .lineLimit(1...5)
+                } header: {
+                    Text("Notes")
                 } footer: {
                     Text("Notes ride along on this todo's nudges — e.g. \"needs the account number\".")
                 }
