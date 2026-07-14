@@ -188,8 +188,7 @@ for the release note); the descriptions below are kept as the design of record.
   Settings "Places" card, not just `prefrontal place add`. New
   `DELETE /places/{name}` + `ScheduleRepo.delete_place`; add/relabel/fix-coords
   reuse the upserting `POST /places` (a rename is add-new + delete-old client-side).
-  See `CHANGELOG.md`. *(Next: let the phone name a just-visited `CLVisit` venue
-  straight into a curated place.)*
+  See `CHANGELOG.md`. *(Next: the iOS `CLVisit` → curated-place flow below.)*
 - **Location-gating the escalation** ✅ — when a location check places the user
   within the home radius (`home_radius_m`), `/webhooks/outing/check` suppresses
   the nudge and passively closes the outing as returned, so coming home early (or
@@ -207,15 +206,13 @@ for the release note); the descriptions below are kept as the design of record.
   nudge projection (`location_anchor.evaluate` + `/webhooks/outing/check`) resolves
   `activity="outing"` (falling back to global). See the Pattern-computation pass
   entry above. Covered by `tests/test_patterns.py`.
-- **Web UI to name saved locations** — curated places (the `/places` a geofence and
-  departure travel-time match against) are still add-only via the CLI
-  (`prefrontal place add <name> <lat> <lon>`). Add a web dashboard surface to
-  **name/label, edit, and remove** them — a "Places" card next to the Location
-  tunables (#565), backed by a small CRUD around the existing `GET/POST /places`
-  (plus a delete route). So a user can rename "home"/"gym"/"dentist office" and fix
-  a coordinate without shelling into the box, and the friendly label flows through
-  to nudges. Naturally pairs with letting the phone name a just-visited `CLVisit`
-  venue into a curated place.
+- **Name a just-visited venue into a curated place (iOS)** — the web "Places" card
+  now covers naming/editing/removing curated places (shipped, above), but the phone
+  can't yet turn a place it *detected* into one. Let iOS promote a recent `CLVisit`
+  venue into a named curated place — pre-fill the coordinate, prompt for a label —
+  so a recurring stop ("gym", "dentist office") becomes a geofence/travel-time
+  anchor without typing coordinates or shelling into the box. Backed by the same
+  upserting `POST /places`, and the friendly label flows through to nudges.
 
 ## Focus balance — follow-ups
 
