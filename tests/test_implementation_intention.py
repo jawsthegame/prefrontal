@@ -19,8 +19,11 @@ from prefrontal.coaching import CoachContext, decide, record_fired
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.implementation_intention import (
+    HOME_PRESENCE_STATE_KEY,
     ImplementationIntentionModule,
     build_plan_message,
+    detect_events,
+    home_presence,
     plan_cue_active,
     within_window,
 )
@@ -30,6 +33,9 @@ from .conftest import scoped_default
 # The plan's place cue matches this curated place; a point far away doesn't.
 _DESK_LAT, _DESK_LON = 40.700000, -73.900000
 _FAR_LAT, _FAR_LON = 41.000000, -74.300000
+# Home coordinate for event-cue (arrive/leave) tests, and a point well outside it.
+_HOME_LAT, _HOME_LON = 40.000000, -75.000000
+_AWAY_LAT, _AWAY_LON = 40.050000, -75.050000
 
 
 @pytest.fixture()
@@ -218,6 +224,90 @@ def test_after_fire_stamps_last_fired(memory):
     assert memory.get_implementation_intention(pid)["last_fired_at"] is not None
 
 
+# --- event cues (arrive/leave home) ------------------------------------------
+
+
+def test_detect_events_edges_only():
+    assert detect_events("away", "home") == frozenset({"arrive_home"})
+    assert detect_events("home", "away") == frozenset({"leave_home"})
+    # No baseline, unchanged, or unknown-now → no event (level, not edge).
+    assert detect_events(None, "home") == frozenset()
+    assert detect_events("home", "home") == frozenset()
+    assert detect_events("home", None) == frozenset()
+
+
+def test_home_presence_known_and_unknown():
+    at_home = _ctx(lat=_HOME_LAT, lon=_HOME_LON)
+    away = _ctx(lat=_AWAY_LAT, lon=_AWAY_LON)
+    home = {"lat": _HOME_LAT, "lon": _HOME_LON}
+    assert home_presence(at_home, home, radius_m=150) == "home"
+    assert home_presence(away, home, radius_m=150) == "away"
+    # Unknown when either the fix or the stored home is missing.
+    assert home_presence(_ctx(lat=None, lon=None), home, radius_m=150) is None
+    assert home_presence(at_home, None, radius_m=150) is None
+
+
+def _seed_home_event_plan(store, *, cue_event="arrive_home", cue_window=None):
+    store.set_home(_HOME_LAT, _HOME_LON)
+    return store.add_implementation_intention(
+        cue_text="I get home",
+        action_text="take the recycling to the curb",
+        cue_event=cue_event,
+        cue_window=cue_window,
+    )
+
+
+def test_arrive_home_fires_only_on_the_crossing_tick(memory):
+    pid = _seed_home_event_plan(memory)
+    module = ImplementationIntentionModule()
+
+    # Baseline: away. No prior state → no transition, records the baseline.
+    away = _ctx(lat=_AWAY_LAT, lon=_AWAY_LON)
+    assert module.evaluate(memory, away) == []
+    module.after_fire(memory, [], away)
+    assert memory.get_state(HOME_PRESENCE_STATE_KEY) == "away"
+
+    # Now arrive home → away→home edge fires the plan.
+    home = _ctx(lat=_HOME_LAT, lon=_HOME_LON)
+    cues = module.evaluate(memory, home)
+    assert [c.ref["plan_id"] for c in cues] == [pid]
+    module.after_fire(memory, [], home)
+    assert memory.get_state(HOME_PRESENCE_STATE_KEY) == "home"
+
+    # Still home next tick (no new crossing) → silent.
+    assert module.evaluate(memory, home) == []
+
+
+def test_arrive_home_does_not_fire_a_leave_plan(memory):
+    _seed_home_event_plan(memory, cue_event="leave_home")
+    module = ImplementationIntentionModule()
+    memory.set_state(HOME_PRESENCE_STATE_KEY, "away", source="inferred")  # baseline away
+    # Arriving home is not a leave_home event.
+    assert module.evaluate(memory, _ctx(lat=_HOME_LAT, lon=_HOME_LON)) == []
+
+
+def test_event_and_window_are_anded(memory):
+    _seed_home_event_plan(memory, cue_event="arrive_home", cue_window="17:00-21:00")
+    module = ImplementationIntentionModule()
+    memory.set_state(HOME_PRESENCE_STATE_KEY, "away", source="inferred")
+    # Arrive home during the window → fires.
+    assert len(module.evaluate(memory, _ctx(hour=18, lat=_HOME_LAT, lon=_HOME_LON))) == 1
+    # Arrive home outside the window → held (the AND fails).
+    memory.set_state(HOME_PRESENCE_STATE_KEY, "away", source="inferred")
+    assert module.evaluate(memory, _ctx(hour=9, lat=_HOME_LAT, lon=_HOME_LON)) == []
+
+
+def test_unknown_location_does_not_reset_presence_baseline(memory):
+    _seed_home_event_plan(memory)
+    module = ImplementationIntentionModule()
+    memory.set_state(HOME_PRESENCE_STATE_KEY, "away", source="inferred")
+    # A tick with no fix must not overwrite the baseline (a GPS gap isn't a crossing).
+    no_fix = _ctx(lat=None, lon=None)
+    assert module.evaluate(memory, no_fix) == []
+    module.after_fire(memory, [], no_fix)
+    assert memory.get_state(HOME_PRESENCE_STATE_KEY) == "away"
+
+
 # --- coaching-engine integration --------------------------------------------
 
 
@@ -273,6 +363,38 @@ def test_assistant_captures_if_then_plan(memory):
     plans = memory.active_implementation_intentions()
     assert len(plans) == 1
     assert plans[0]["action_text"] == "open the tax form and set a 5-min timer"
+
+
+def test_assistant_captures_event_cue_plan(memory):
+    raw = [
+        {
+            "op": "add_if_then",
+            "cue_text": "I get home",
+            "action_text": "take the recycling to the curb",
+            "event": "arrive_home",
+        }
+    ]
+    actions, errors = assistant.validate_actions(raw, assistant.build_snapshot(memory))
+    assert errors == []
+    assert actions[0].params["cue_event"] == "arrive_home"
+    assistant.execute_actions(memory, actions)
+    assert memory.active_implementation_intentions()[0]["cue_event"] == "arrive_home"
+
+
+def test_assistant_rejects_unknown_event():
+    actions, errors = assistant.validate_actions(
+        [
+            {
+                "op": "add_if_then",
+                "cue_text": "later",
+                "action_text": "x",
+                "event": "when_i_feel_it",
+            }
+        ],
+        {},
+    )
+    assert actions == []
+    assert errors and "event" in errors[0]
 
 
 def test_assistant_requires_a_detectable_cue():

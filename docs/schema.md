@@ -163,10 +163,12 @@ also defines:
 - **`implementation_intentions`** — *if-then plans* for the Implementation
   Intentions module (`prefrontal/modules/implementation_intention.py`): a `cue_text`
   (the trigger in the user's words) paired with a tiny pre-decided `action_text`,
-  cued on a curated `cue_place` (matched by proximity via `geo.nearest_place`)
-  and/or a `cue_window` local time-of-day band (`"HH:MM-HH:MM"`) — an AND over
-  whichever is set. The coaching tick surfaces the action the moment its cue is
-  detected (delivery *at the trigger*, not on a clock); `last_fired_at` is an
+  cued on a curated `cue_place` (matched by proximity via `geo.nearest_place`), a
+  `cue_window` local time-of-day band (`"HH:MM-HH:MM"`), and/or a `cue_event`
+  home-crossing transition (`arrive_home`/`leave_home`, edge-detected on the tick
+  against the stored home presence) — an AND over whichever are set. The coaching
+  tick surfaces the action the moment its cue is detected (delivery *at the
+  trigger*, not on a clock); `last_fired_at` is an
   advisory "last surfaced" stamp (the engine's debounce, not it, prevents
   re-firing). `status` is `active`/`archived` — retiring a plan is a neutral
   archive, never a broken streak. Captured in one utterance through the NL

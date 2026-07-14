@@ -18,6 +18,7 @@ from prefrontal.coaching import (
     choose_channel,
     collect_cues,
     decide,
+    dosage_count_today,
     in_quiet_hours,
     note_delivered,
     phrase,
@@ -256,6 +257,104 @@ def test_decide_fires_normally_when_receptive():
     cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b")]
     decisions = decide(store, cues, _ctx())
     assert [d.cue.dedup_key for d in decisions] == ["a", "b"]
+
+
+# -- dosage cap (M3): the frequency half of the habituation guardrail ---------
+
+
+def _capday(now, count):
+    """A `coach_nudge_day` tally value for `now`'s day."""
+    return f"{now.strftime('%Y-%m-%d')}|{count}"
+
+
+def test_dosage_cap_holds_overflow_when_budget_exhausted():
+    # Cap 3, already 2 fired today → budget 1; three fresh nudges due, one fires.
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 3},
+        state={"coach_nudge_day": _capday(NOON, 2)},
+    )
+    cues = [_cue("nudge", dedup=f"k{i}") for i in range(3)]
+    decisions = decide(store, cues, _ctx())
+    assert len(decisions) == 1
+
+
+def test_dosage_cap_highest_urgency_wins_the_budget():
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 1},  # room for exactly one
+        state={"coach_nudge_day": _capday(NOON, 0)},
+    )
+    cues = [_cue("nudge", dedup="low"), _cue("urgent", dedup="high")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["high"]
+
+
+def test_dosage_cap_never_holds_critical_or_digest():
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 1},
+        state={"coach_nudge_day": _capday(NOON, 5)},  # already way over
+    )
+    cues = [_cue("nudge", dedup="n"), _cue("critical", dedup="c"), _cue("ambient", dedup="a")]
+    decisions = decide(store, cues, _ctx())
+    keys = {d.cue.dedup_key for d in decisions}
+    # The nudge is over-cap and held; critical and ambient (digest) always go.
+    assert keys == {"c", "a"}
+
+
+def test_dosage_cap_zero_disables():
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 0},
+        state={"coach_nudge_day": _capday(NOON, 99)},
+    )
+    cues = [_cue("nudge", dedup=f"k{i}") for i in range(4)]
+    assert len(decide(store, cues, _ctx())) == 4
+
+
+def test_dosage_cap_tally_resets_on_a_new_day():
+    # A tally from yesterday must not count against today's budget.
+    yesterday = NOON - timedelta(days=1)
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 2},
+        state={"coach_nudge_day": _capday(yesterday, 2)},
+    )
+    assert dosage_count_today(store, NOON) == 0
+    cues = [_cue("nudge", dedup=f"k{i}") for i in range(2)]
+    assert len(decide(store, cues, _ctx())) == 2
+
+
+def test_record_fired_advances_dosage_tally_only_for_interrupting_noncritical():
+    store = _FakeStore(floats={"coach_daily_nudge_cap": 10})
+    decisions = [
+        Decision(cue=_cue("nudge", dedup="n"), channel="push", text="x"),
+        Decision(cue=_cue("critical", dedup="c"), channel="voice", text="x"),
+        Decision(cue=_cue("ambient", dedup="a"), channel="digest", text="x"),
+    ]
+    record_fired(store, decisions, NOON)
+    # Only the push nudge counts; critical and digest don't.
+    assert dosage_count_today(store, NOON) == 1
+
+
+def test_dosage_cap_accumulates_across_ticks():
+    store = _FakeStore(floats={"coach_daily_nudge_cap": 2})
+    # Tick 1: one nudge fires and is recorded.
+    d1 = decide(store, [_cue("nudge", dedup="a")], _ctx())
+    record_fired(store, d1, NOON)
+    # Tick 2 (a bit later, past debounce is irrelevant — different keys): two due,
+    # only one budget left.
+    later = _ctx(now=NOON + timedelta(minutes=1))
+    d2 = decide(store, [_cue("nudge", dedup="b"), _cue("nudge", dedup="c")], later)
+    assert len(d2) == 1
+
+
+def test_dosage_cap_ranking_tolerates_unknown_urgency():
+    # An unexpected urgency string must not crash the budget contest (it just ranks
+    # lowest and loses); a known nudge wins the single slot over it.
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 1},
+        state={"coach_nudge_day": _capday(NOON, 0)},
+    )
+    cues = [_cue("nudge", dedup="known"), _cue("weird", dedup="unknown")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["known"]
 
 
 # -- outcome loop: channel_response learning (spec §8) ------------------------

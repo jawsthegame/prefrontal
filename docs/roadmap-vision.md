@@ -279,7 +279,10 @@ outcome for this population. *(Design commandments 5, 6, 8, 9.)*
   `coaching.receptive` holds non-critical cues after a run of consecutive ignored
   nudges — "default to silence when not receptive" — reusing the `coach nudge`
   outcome episodes, forgiving on a single ack, `critical` exempt. The learned
-  bandit and the per-day dosage cap are the next increments on the same signal.)*
+  bandit is the next increment.)* *(Dosage cap ✅ shipped: `_apply_dosage_cap` in
+  `decide` holds interrupting non-critical overflow past `coach_daily_nudge_cap`/day
+  — highest-urgency wins the budget, the rest re-offer next tick — so a bad day
+  can't barrage. `critical`/`digest` exempt.)*
 - **Fuse if-then plans with the trigger moment.** Surface the user's pre-set
   implementation intention *at* its cue (the best-evidenced technique meeting the
   best-timed delivery). This is a small, cheap, deeply-evidenced feature.
@@ -512,24 +515,28 @@ intervention evidence.)
    idea), but there's no explicit "if [cue], then [tiny action]" builder. Low-
    cost, deeply-evidenced, and it fuses with the coaching tick. *(The missing
    primitive behind commandment 5; feeds M3.)*
-5. **The scheduling core is time-based, but the evidence favors cue-based.** The
-   flagship planning path fits todos into free *time windows*
+5. **The scheduling core is time-based, but the evidence favors cue-based.**
+   *(narrowing — cue-based if-then now spans place, time, and home-crossing events.)*
+   The flagship planning path still fits todos into free *time windows*
    ([`prefrontal/scheduling.py`](../prefrontal/scheduling.py); `/todos/now`,
-   `/todos/fit`) and pads *departure times*. But **time-based prospective memory
-   is the weakest channel** — event/cue-based is stronger. Not wrong (departures
-   genuinely are time-anchored), but the dominant model is the weaker one for this
-   population. More cue-triggering, less clock-triggering. *(Relates to #4 and
-   commandment 5.)*
-6. **Escalation cadence vs. habituation/receptivity.** *(partial — receptivity
-   now modeled; dosage next.)* "Escalation is not optional" is well-justified for
-   genuinely time-critical events, and quiet hours + debounce + channel-response
-   learning mitigate well. JITAI shows nudge effects **decay with dosage** and
-   receptivity says **default to silence when low** — the latter is now an explicit
-   engine gate (`coaching.receptive`: hold non-critical cues after a run of ignored
-   nudges, `critical` exempt, forgiving on a single ack), the first cut of the M3
-   receptivity model. The residual gap is the *dosage/vulnerability* half — an
-   explicit per-day nudge cap and a vulnerability state — the natural next
-   increment on the same signal. *(M3 closes the remainder.)*
+   `/todos/fit`) and pads *departure times*, and **time-based prospective memory is
+   the weakest channel** — event/cue-based is stronger. The if-then module now
+   offers the stronger channel directly: a plan can cue on a curated place, a
+   home-crossing **event** (`arrive_home`/`leave_home`, edge-detected on the tick),
+   or a time band — "when I get home, take out the recycling" fires *at* the
+   crossing, not on a clock. The residual gap is the *todo-fitting* path itself,
+   still purely clock-windowed. *(Relates to #4 and commandment 5.)*
+6. **Escalation cadence vs. habituation/receptivity.** *(largely closed — rules-based
+   receptivity + dosage both shipped; a learned model is the remaining reach.)*
+   "Escalation is not optional" is well-justified for genuinely time-critical events,
+   and quiet hours + debounce + channel-response learning mitigate well. JITAI's two
+   levers are now both explicit engine gates: **default to silence when low**
+   (`coaching.receptive`: hold non-critical cues after a run of ignored nudges,
+   forgiving on a single ack) and **cap the dosage** (`_apply_dosage_cap`: hold
+   interrupting non-critical overflow past `coach_daily_nudge_cap`/day, highest-urgency
+   first, `critical` exempt). What remains is the *learned* form — a per-user
+   receptivity/vulnerability model (contextual bandit) replacing the fixed thresholds,
+   gated behind a walk-forward win. *(M3's closing reach.)*
 
 **Already well-aligned** (so the audit is calibrated): local-first/privacy;
 miss-as-data *for the system*; the encouragement/panic/recovery layer; one-tap

@@ -106,6 +106,40 @@ _BACKOFF_SCAN_LIMIT = 12
 #: coaching nudges — not other ``reminder`` episodes — count toward the streak.
 _COACH_NUDGE_CONTEXT_PREFIX = "coach nudge:"
 
+# --- Dosage cap (M3: the frequency half of the habituation guardrail) ---------
+#
+# JITAI is blunt that a nudge's effect *decays with dosage* — the more you fired
+# recently, the less the next one lands, and past a point it's pure noise that
+# earns a mute. The receptivity gate above handles "they've stopped answering";
+# this handles the complementary "too many already today", so a genuinely bad day
+# (a pile of avoided todos + slips all coming due) can't turn into a barrage. It
+# is the "rate ceiling" the coaching-agent spec (§6) called for.
+#
+# Deliberately a *generous backstop*, not a tight throttle: the default catches a
+# pathological flood, never normal use. It counts only **interrupting, non-critical**
+# deliveries (``critical`` is never capped — a missed hard commitment always goes;
+# ``digest``/ambient never interrupts, so it's uncapped and folds into the briefing
+# anyway). When the cap bites, the highest-urgency cues win the remaining budget
+# (ties broken by ``dedup_key`` for determinism); the rest are held and re-offered
+# next tick, so nothing is lost — just spaced out.
+
+#: Coaching-state key: max interrupting non-critical coaching nudges per day.
+#: ``0`` disables the cap.
+DOSAGE_CAP_KEY = "coach_daily_nudge_cap"
+
+#: Default daily cap. High enough to be invisible in ordinary use and only ever
+#: catch a barrage (the bad-day pile-up §6 names); tune down for a gentler touch,
+#: set ``0`` to disable.
+DEFAULT_DAILY_NUDGE_CAP = 10
+
+#: Single self-resetting coaching-state key holding the day's delivered-nudge
+#: tally as ``"YYYY-MM-DD|count"``. One key (no per-day cruft, no scan): a read on
+#: a new day sees a stale date and treats the count as 0. Keyed off the *tick's*
+#: clock (the ``now`` passed to :func:`record_fired`, matching ``ctx.now`` in
+#: :func:`decide`), so the count stays internally consistent regardless of the
+#: real wall clock — which is what lets it be tested with a pinned ``now``.
+_DOSAGE_DAY_KEY = "coach_nudge_day"
+
 #: Default responsive-hours window (local clock hours) when unset.
 DEFAULT_RESPONSIVE_START = 8
 DEFAULT_RESPONSIVE_END = 22
@@ -519,6 +553,91 @@ def phrase(
     ).text
 
 
+def _dosage_day(now: datetime) -> str:
+    """The dosage-tally day key (``YYYY-MM-DD``) for a tick's clock."""
+    return now.strftime("%Y-%m-%d")
+
+
+def dosage_cap(store: Any) -> int:
+    """The configured per-day interrupting-nudge cap (:data:`DOSAGE_CAP_KEY`), 0 = off."""
+    try:
+        return int(store.get_float(DOSAGE_CAP_KEY, DEFAULT_DAILY_NUDGE_CAP))
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_NUDGE_CAP
+
+
+def dosage_count_today(store: Any, now: datetime) -> int:
+    """Interrupting non-critical nudges already fired on ``now``'s day.
+
+    "Fired" as in :func:`record_fired`: recorded when the tick commits to sending,
+    not on confirmed delivery — the tally the cap reads is a count of nudges offered.
+
+    Reads the single self-resetting :data:`_DOSAGE_DAY_KEY` tally: a stored date
+    other than ``now``'s (or a missing/garbled value) reads as ``0`` — the day has
+    rolled over. Clamped non-negative.
+    """
+    raw = store.get_state(_DOSAGE_DAY_KEY)
+    if not raw:
+        return 0
+    parts = str(raw).split("|", 1)
+    if len(parts) != 2 or parts[0] != _dosage_day(now):
+        return 0
+    try:
+        return max(0, int(parts[1]))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _urgency_rank(urgency: str) -> int:
+    """Dosage-priority rank for an urgency; unknown values rank lowest (dropped first).
+
+    Mirrors the rest of the engine's defensiveness about unexpected urgency strings
+    (e.g. :func:`choose_channel`'s ``URGENCY_FLOOR.get(..., "push")``): a stray value
+    must never crash the tick, so it simply loses the budget contest instead.
+    """
+    try:
+        return URGENCY_LADDER.index(urgency)
+    except ValueError:
+        return -1
+
+
+def _counts_against_dosage(urgency: str, channel: str) -> bool:
+    """Whether a decision is governed by the dosage cap.
+
+    Only *interrupting, non-critical* deliveries: ``critical`` is never capped (a
+    missed hard commitment always goes through) and ``digest``/ambient never
+    interrupts (it folds into the briefing), so neither consumes budget.
+    """
+    return urgency != "critical" and channel != "digest"
+
+
+def _apply_dosage_cap(store: Any, candidates: list[Decision], ctx: CoachContext) -> list[Decision]:
+    """Hold interrupting non-critical decisions that would exceed the day's cap.
+
+    When more capped decisions are due than the remaining budget allows, the
+    highest-urgency ones win the budget (ties broken by ``dedup_key`` for a
+    deterministic order); the rest are dropped for this tick and re-offered next.
+    Critical and digest decisions are always kept. Survivors stay in their original
+    order. A cap of ``0`` (or budget ≥ demand) is a no-op.
+    """
+    cap = dosage_cap(store)
+    if cap <= 0:
+        return candidates
+    capped = [d for d in candidates if _counts_against_dosage(d.cue.urgency, d.channel)]
+    budget = max(0, cap - dosage_count_today(store, ctx.now))
+    if len(capped) <= budget:
+        return candidates
+    ranked = sorted(
+        capped, key=lambda d: (-_urgency_rank(d.cue.urgency), d.cue.dedup_key)
+    )
+    keep = {id(d) for d in ranked[:budget]}
+    return [
+        d
+        for d in candidates
+        if not _counts_against_dosage(d.cue.urgency, d.channel) or id(d) in keep
+    ]
+
+
 def decide(
     store: Any,
     cues: list[Cue],
@@ -533,13 +652,19 @@ def decide(
     rewrite of ``ambient`` cues; both default to off so the deterministic path is
     unchanged.
 
-    Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), a
-    tick-level **receptivity** gate (:func:`receptive`, computed once here) holds
-    every non-critical cue when the user has stopped answering — the M3 "default to
-    silence when receptivity is low" discipline. ``critical`` always goes through.
+    Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), two
+    tick-level gates apply — both M3, both leaving ``critical`` untouched:
+
+    - **receptivity** (:func:`receptive`, computed once): hold every non-critical
+      cue when the user has stopped answering ("default to silence when receptivity
+      is low");
+    - **dosage cap** (:func:`_apply_dosage_cap`): once the day's interrupting
+      non-critical deliveries hit :data:`DOSAGE_CAP_KEY`, hold the overflow — the
+      highest-urgency cues take the remaining budget, the rest re-offer next tick —
+      so a bad day can't become a barrage.
     """
     is_receptive = receptive(store, ctx)
-    decisions: list[Decision] = []
+    candidates: list[Decision] = []
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
@@ -548,14 +673,14 @@ def decide(
         # delivery. Critical is exempt — a missed hard commitment still warrants it.
         if not is_receptive and cue.urgency != "critical":
             continue
-        decisions.append(
+        candidates.append(
             Decision(
                 cue=cue,
                 channel=choose_channel(store, cue, ctx),
                 text=phrase(store, cue, ctx, client=client, profile=profile),
             )
         )
-    return decisions
+    return _apply_dosage_cap(store, candidates, ctx)
 
 
 def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
@@ -570,8 +695,11 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
     sink the tick, exactly as the nudge log itself is fire-and-forget).
     """
     stamp = now.strftime(TS_FMT)
+    fired_capped = 0
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
+        if _counts_against_dosage(d.cue.urgency, d.channel):
+            fired_capped += 1
         try:
             store.record_feature_event(
                 d.cue.module,
@@ -582,6 +710,18 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
             )
         except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
             logger.debug("record_feature_event(offered) failed", exc_info=True)
+    # Advance the day's dosage tally by the interrupting non-critical nudges fired, so
+    # the next tick's cap read reflects them. Best-effort like the telemetry above —
+    # a failed bump only makes the cap slightly permissive, never sinks the tick.
+    if fired_capped:
+        try:
+            current = dosage_count_today(store, now)
+            store.set_state(
+                _DOSAGE_DAY_KEY, f"{_dosage_day(now)}|{current + fired_capped}",
+                source="inferred",
+            )
+        except Exception:  # noqa: BLE001 — dosage accounting must never sink the tick
+            logger.debug("dosage tally bump failed", exc_info=True)
 
 
 # --- Outcome loop: learn which channels actually land (spec §8) --------------
