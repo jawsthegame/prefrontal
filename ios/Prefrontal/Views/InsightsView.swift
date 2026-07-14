@@ -84,7 +84,7 @@ struct InsightsView: View {
             CardLabel(text: "Follow-through")
             HStack(alignment: .firstTextBaseline) {
                 Text(ft.rate != nil ? "\(pct(ft.rate))%" : "—")
-                    .font(.title.weight(.bold)).foregroundStyle(Brand.good)
+                    .font(.title.weight(.bold)).foregroundStyle(rateColor(ft.rate))
                 Text("follow-through").font(.subheadline).foregroundStyle(Brand.muted)
                 Spacer()
                 if ft.streak > 0 {
@@ -236,11 +236,6 @@ struct InsightsView: View {
 
     private func latencyText(_ seconds: Double) -> String {
         seconds < 90 ? "~\(Int(seconds.rounded()))s" : "~\(Int((seconds / 60).rounded()))m"
-    }
-
-    private func selfCareLabel(_ key: String) -> String {
-        ["meal": "Meals", "water": "Water", "meds": "Meds", "biobreak": "Breaks",
-         "winddown": "Wind-down", "movement": "Movement"][key] ?? key.capitalized
     }
 
     private func directionColor(_ direction: String?) -> Color {

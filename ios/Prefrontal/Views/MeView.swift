@@ -48,7 +48,7 @@ struct MeView: View {
                         try await withAPI { try await $0.markSelfCare(key: check.key, reset: atMax) }
                         await load()
                     } label: {
-                        ProgressChip(icon: icon(check.key), label: label(check.key),
+                        ProgressChip(icon: icon(check.key), label: selfCareLabel(check.key),
                                      count: check.count, target: check.target,
                                      satisfied: check.satisfied, overdue: check.overdue)
                     } onError: { error = $0 }
@@ -134,10 +134,6 @@ struct MeView: View {
         }
     }
 
-    private func label(_ key: String) -> String {
-        ["meal": "Meals", "water": "Water", "meds": "Meds", "biobreak": "Breaks",
-         "winddown": "Wind-down", "movement": "Movement"][key] ?? key.capitalized
-    }
     private func icon(_ key: String) -> String {
         ["meal": "🍽️", "water": "💧", "meds": "💊", "biobreak": "🚻",
          "winddown": "🌙", "movement": "🚶"][key] ?? "•"
