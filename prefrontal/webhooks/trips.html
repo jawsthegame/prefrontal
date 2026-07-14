@@ -334,7 +334,7 @@ function render(trips, bal) {
   const recent = (trips.recent || []).filter((t) => t.status === "completed");
   $("#recent").innerHTML = recent.length
     ? recent.map(tripRow).join("")
-    : `<p class="empty">No completed trips yet. Once a home coordinate is set, leaving and returning is logged automatically.</p>`;
+    : `<p class="empty">No completed trips yet. Set your <a href="/settings#c-home">home location in Settings</a>, and leaving and returning is logged automatically.</p>`;
 
   const unl = trips.unlabeled || [];
   $("#c-unlabeled").style.display = unl.length ? "" : "none";

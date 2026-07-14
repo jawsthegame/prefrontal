@@ -256,6 +256,19 @@ Entries are moved verbatim from the old roadmap, so a few inline "see below" /
   title (the card already shows it). "Show more/less" now truncates by rendered
   line count. Client-only.
 
+- **Set your home location from the web** ✅ — closed-loop trip tracking stays
+  dormant until a home coordinate is set, but there was no way to set one except
+  `POST /webhooks/home` by hand. Adds a **Home location** card to Settings (linked
+  from the Trips empty-state) with three ways to set it: **use my current
+  location** (the browser's own geolocation — nothing leaves your network), an
+  **address search** that returns a dropdown of real matches, and a **manual
+  lat/lon** field. Address search is a deliberate, user-initiated lookup (a Search
+  button, not as-you-type — respecting Nominatim's usage policy) and is gated
+  behind the `geocoding_enabled` opt-in, off by default, since it's the one place
+  a typed address leaves the box. New `GET`/`POST /home`, `POST /home/geocoding`,
+  and `GET /geocode/search`; a `NominatimGeocoder.search()` returning named
+  candidates. Covered by `tests/test_home_geocode.py` + `tests/test_geocode.py`.
+
 - **Trips & balance page — a visual surface for closed-loop trips** ✅ — closed-loop
   trips were tracked and surfaced through notifications, the briefing, and the JSON
   API, but nowhere to *look at*. This adds a read-only `/trips/board` page (in the
