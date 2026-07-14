@@ -408,6 +408,15 @@
   .btn-go:hover { border-color: var(--good); color: var(--good); }
   .btn-x:hover { border-color: var(--call); color: var(--call); }
 
+  /* Situations card: one row per enabled pack's on-demand tool. */
+  .sit-tool { padding: 10px 0; border-top: 1px solid var(--line); }
+  .sit-tool:first-child { border-top: none; padding-top: 0; }
+  .sit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sit-title { font-weight: 600; }
+  .sit-desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .sit-result { margin-top: 8px; }
+  .sit-result .sit-line { padding: 3px 0; }
+
   .addrow { display: flex; gap: 8px; margin-bottom: 12px; }
   .addrow input {
     flex: 1; min-width: 0; padding: 9px 11px; border-radius: 8px; min-height: 38px;
@@ -769,6 +778,7 @@
 <div class="banners">
   <section class="card" id="c-outings"><h2>Outings — active</h2><div class="body"></div></section>
   <section class="card" id="c-selfcare" style="display:none"><h2>Self-care — today</h2><div class="body"></div></section>
+  <section class="card" id="c-situations" style="display:none"><h2>Situations</h2><div class="body"></div></section>
   <section class="card" id="c-assistant">
     <h2>Assistant — ask for changes</h2>
     <div class="addrow">
@@ -2334,6 +2344,51 @@ async function openGuideByType(taskType) {
   } catch (_) { /* api() already surfaced the error */ }
 }
 
+// ── Situations: on-demand, read-only questions the enabled Context Packs answer ─
+// GET /packs/situations lists the enabled packs' tools (empty → the card stays
+// hidden); POST /packs/situations/{tool} runs one and returns a tool-specific
+// result. Read-only — running a tool writes nothing, so it's safe to re-check.
+function renderSituations(d) {
+  const tools = (d && d.situations) || [];
+  return tools.map((t) => `
+    <div class="sit-tool" data-tool="${esc(t.tool)}">
+      <div class="sit-head">
+        <span class="sit-title">${esc(t.title)}</span>
+        <button class="btn-sm sit-run" data-tool="${esc(t.tool)}" type="button">Check</button>
+      </div>
+      <div class="sit-desc">${esc(t.description)}</div>
+      <div class="sit-result"></div>
+    </div>`).join("");
+}
+function renderSituationResult(res) {
+  // Payloads are tool-specific; render generically. The school-run tool returns
+  // `departures[]`, each with a pre-phrased `message`, plus a `headline`.
+  const lines = [];
+  for (const it of (res && Array.isArray(res.departures) ? res.departures : [])) {
+    const text = it.message || it.title || "";
+    if (text) lines.push(`<div class="sit-line">${esc(text)}</div>`);
+  }
+  if (lines.length) return lines.join("");
+  if (res && res.headline) return `<div class="sit-line">${esc(res.headline)}</div>`;
+  return `<div class="empty">Nothing to report right now.</div>`;
+}
+// Run a tool on tap and render its result inline under that row (delegated, since
+// the card's rows are re-rendered on every dashboard refresh).
+$("#c-situations").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button.sit-run");
+  if (!btn) return;
+  const result = btn.closest(".sit-tool").querySelector(".sit-result");
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    result.innerHTML = renderSituationResult(await post("/packs/situations/" + encodeURIComponent(btn.dataset.tool)));
+  } catch (e) {
+    result.innerHTML = `<div class="err">couldn't run — retry</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+});
+
 async function load() {
   // Always attempt: a Google session cookie can authenticate even with no token.
   // A 401 below reveals the sign-in gate.
@@ -2344,12 +2399,12 @@ async function load() {
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
     api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
     api("/self-care"), api("/todos/now"), api("/focus"),
-    api("/projects"),
+    api("/projects"), api("/packs/situations"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now, focus, projects] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now, focus, projects, situations] = results;
   // Stash projects first: the todo/commitment pills resolve the project name from
   // this map, and both render below.
   lastProjects = projects.status === "fulfilled" ? projects.value : null;
@@ -2376,6 +2431,19 @@ async function load() {
     $("#c-shopping .body").innerHTML = renderShopping(shopping.value.items);
   } else {
     $("#c-shopping").style.display = "none";
+  }
+  // Situations card: the enabled Context Packs' on-demand tools. Hidden when no
+  // pack contributes any (the common case) or the fetch fails. Don't clobber
+  // mid-interaction — a just-run tool's result lives inside the card.
+  const sitTools = situations.status === "fulfilled" ? (situations.value.situations || []) : [];
+  if (sitTools.length) {
+    const card = $("#c-situations");
+    card.style.display = "";
+    if (!card.contains(document.activeElement)) {
+      card.querySelector(".body").innerHTML = renderSituations(situations.value);
+    }
+  } else {
+    $("#c-situations").style.display = "none";
   }
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
   put("#c-outings", outings, renderOutings);
