@@ -659,6 +659,23 @@ def test_open_window_silent_when_busy_now(store):
     assert get("open_window").evaluate(store, _gap_ctx()) == []
 
 
+def test_open_window_silent_during_in_progress_multiday_commitment(store):
+    """An all-day / multi-day block still in progress — but whose start_at predates
+    the commitment lookback — must still read as busy, not a free window.
+
+    Regression: ``commitments_between`` filters by ``start_at``, so a lookback too
+    short to reach the block's start would miss it and wrongly fire an offer while
+    the user is actually busy (the exact mistimed-nudge failure this feature avoids).
+    """
+    _avoided_fitting_todo(store)
+    # A 4-day conference: started 2 days ago, ends 2 days from now — well before any
+    # short lookback, but the user is busy the whole time (available_now == 0).
+    start = (_GAP_NOON - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    end = (_GAP_NOON + timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    store.upsert_commitment(title="DevConf", start_at=start, end_at=end, source="manual")
+    assert get("open_window").evaluate(store, _gap_ctx()) == []
+
+
 def test_open_window_silent_when_gap_below_minimum(store):
     """A gap shorter than coach_gap_min_minutes (default 15) → no offer."""
     _avoided_fitting_todo(store)
@@ -733,7 +750,24 @@ def test_open_window_suppresses_identical_reoffer(store):
     assert mod.evaluate(store, ctx) == []
 
 
+def test_open_window_after_fire_ignores_a_todo_idless_ref(store):
+    """Defensive: a decision whose ref lacks a todo_id never stamps the anti-spam
+    marker — a "None:…" signature would wedge the gate shut for every future offer."""
+    from prefrontal.coaching import Cue, Decision
+    from prefrontal.modules.open_window import _LAST_OFFER_KEY
+
+    mod = get("open_window")
+    bogus = Cue(
+        module="open_window", intervention="gap_offer", urgency="nudge", text="x",
+        context_key="open_window", dedup_key="open_window:0", ref={},  # no todo_id
+    )
+    mod.after_fire(store, [Decision(cue=bogus, channel="push", text="x")], ctx=_gap_ctx())
+    assert store.get_state(_LAST_OFFER_KEY) is None
+
+
 def test_open_window_seeds_its_gap_minimum(store):
     """Enabling the module seeds the coach_gap_min_minutes tunable (non-clobbering)."""
+    from prefrontal.modules.open_window import COACH_GAP_MIN_KEY
+
     get("open_window").seed(store)
-    assert store.get_state("coach_gap_min_minutes") == "15"
+    assert store.get_state(COACH_GAP_MIN_KEY) == "15"
