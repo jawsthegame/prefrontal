@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Re-attach the geofence delegate so a boundary-crossing relaunch (even
         // from terminated) is received; no-op unless the user opted in.
         LocationMonitor.shared.startIfEnabled()
+        // Activate the Apple Watch relay (no-op without a paired watch) so the
+        // watch can send requests and receive connection status.
+        PhoneWatchConnectivity.shared.activate()
         // If the user already granted notifications on a past launch, refresh the
         // APNs token now (tokens can rotate); the didRegister callback re-posts it.
         Task {
@@ -40,7 +43,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        // Non-fatal — delivery falls back to ntfy on the server side.
+        // Non-fatal — without a device token this user just isn't an APNs
+        // recipient (e.g. a free-signing dev build, which uses the server's
+        // dev-only ntfy shim instead).
     }
 
     // Show the alert even while the app is foreground.
