@@ -177,7 +177,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal.watchkitapp.complication
+        PRODUCT_BUNDLE_IDENTIFIER: com.morningstatic.prefrontal.watchkitapp.comp
         PRODUCT_NAME: PrefrontalWatchWidgets
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: PrefrontalWatchWidgets/PrefrontalWatchWidgets.entitlements
