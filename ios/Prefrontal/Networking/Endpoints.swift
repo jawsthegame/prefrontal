@@ -29,6 +29,10 @@ extension APIClient {
         try await get("nudges", query: ["limit": "\(limit)"], as: Nudges.self).nudges
     }
     func selfCare() async throws -> SelfCare { try await get("self-care", as: SelfCare.self) }
+    /// Today's end-of-day self-care gap analysis (timeline gaps + wins). Pure read.
+    func selfCareReview() async throws -> SelfCareReview {
+        try await get("self-care/review", as: SelfCareReview.self)
+    }
     func availableHours() async throws -> AvailableHours {
         try await get("schedule/available-hours", as: AvailableHours.self)
     }

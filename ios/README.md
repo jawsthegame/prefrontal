@@ -204,7 +204,7 @@ during onboarding.
 | Todos | `/todos`; `POST /todos`, `/todos/{id}/start` · `/unstart` · `/done` · `/drop` · `/decompose` · `/steps/{i}/done`; Delegate → `/todos/delegate-recipients`, `/todos/{id}/delegate` · `/delegate/return` |
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome` |
-| Me | `/self-care` + `/self-care/mark`; `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
+| Me | `/self-care` + `/self-care/mark`, `/self-care/review` (end-of-day gap recap); `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Panic | `/panic` |
 
 ## Native push (APNs)

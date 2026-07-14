@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MeView: View {
     @State private var selfCare: SelfCare?
+    @State private var review: SelfCareReview?
     @State private var error: String?
     @State private var loaded = false
     @State private var showFocus = false
@@ -12,6 +13,7 @@ struct MeView: View {
             VStack(spacing: 16) {
                 if let error { ErrorBanner(message: error) }
                 selfCareCard
+                if let r = review, r.enabled, r.hasContent { reviewCard(r) }
                 actionsCard
             }
             .padding(16)
@@ -60,6 +62,39 @@ struct MeView: View {
         }
     }
 
+    /// End-of-day self-care recap: the gaps a raw tally hides, plus what went
+    /// well. Reads today's confirm timeline back from `/self-care/review`.
+    private func reviewCard(_ r: SelfCareReview) -> some View {
+        Card {
+            HStack {
+                CardLabel(text: "Day review")
+                Spacer()
+                if let d = r.date { Text(d).font(.caption2).foregroundStyle(Brand.muted) }
+            }
+            if r.gaps.isEmpty {
+                Label("No gaps today — nicely spaced.", systemImage: "checkmark.seal")
+                    .font(.subheadline).foregroundStyle(Brand.good)
+            } else {
+                Text("Gaps to notice").font(.footnote).foregroundStyle(Brand.muted)
+                ForEach(Array(r.gaps.enumerated()), id: \.offset) { _, gap in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(Brand.warn).frame(width: 7, height: 7).padding(.top, 6)
+                        Text(gap).font(.subheadline).foregroundStyle(Brand.nearWhite)
+                    }
+                }
+            }
+            if !r.wins.isEmpty {
+                Divider().overlay(Brand.line)
+                Text("On track").font(.caption).foregroundStyle(Brand.muted)
+                FlowRow(spacing: 6, lineSpacing: 6) {
+                    ForEach(Array(r.wins.enumerated()), id: \.offset) { _, win in
+                        Chip(text: win, color: Brand.good)
+                    }
+                }
+            }
+        }
+    }
+
     private var actionsCard: some View {
         Card {
             CardLabel(text: "Start something")
@@ -87,7 +122,13 @@ struct MeView: View {
 
     private func load() async {
         do {
-            selfCare = try await withAPI { try await $0.selfCare() }
+            let client = try await MainActor.run { try APIClient() }
+            async let care = client.selfCare()
+            async let rev = client.selfCareReview()
+            selfCare = try await care
+            // Best-effort: the review is a nicety; a failure there shouldn't blank
+            // the self-care card the tab is built around.
+            review = try? await rev
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
