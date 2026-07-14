@@ -22,12 +22,8 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import local_datetime, utcnow
-from prefrontal.modules import enabled_modules
-from prefrontal.modules.registry import (
-    MODULE_ENABLED_PREFIX,
-    available as available_modules,
-    user_disabled_module_keys,
-)
+from prefrontal.modules import available, enabled_modules
+from prefrontal.modules.registry import MODULE_ENABLED_PREFIX, user_disabled_module_keys
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
@@ -432,7 +428,7 @@ def build_router(services: RouterServices) -> APIRouter:
         # resolver, which scans the full registry): storing an override for a
         # deployment-disabled module is harmless — it stays inert until/unless the
         # operator enables that module, at which point the user's prior choice holds.
-        known = {m.key for m in available_modules()}
+        known = {m.key for m in available()}
         for key, on in payload.modules.items():
             if key not in known:
                 continue
