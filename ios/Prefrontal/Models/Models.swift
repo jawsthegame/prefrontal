@@ -940,5 +940,25 @@ struct SituationResult: Codable {
     }
 }
 
+// MARK: - Per-user feature (module) toggles
+
+/// One deployment-enabled module in the per-user Features control
+/// (`/settings/features`). `enabled` is whether *this user* has it on; turning it
+/// off is a per-user overlay that never changes the deployment default.
+struct FeatureModule: Codable, Identifiable {
+    let key: String
+    let title: String
+    let challenge: String?
+    let enabled: Bool
+    var id: String { key }
+
+    /// A copy with `enabled` flipped — for an optimistic toggle before the write lands.
+    func setting(enabled: Bool) -> FeatureModule {
+        FeatureModule(key: key, title: title, challenge: challenge, enabled: enabled)
+    }
+}
+
+struct FeatureList: Codable { let modules: [FeatureModule] }
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}

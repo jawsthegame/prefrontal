@@ -7,6 +7,20 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class FeatureToggle(BaseModel):
+    """Body of ``POST /settings/features`` — per-user module on/off overlay.
+
+    ``modules`` maps a module ``key`` to whether it should be on for the signed-in
+    user. ``true`` clears any override (back to the deployment default); ``false``
+    disables that module for this user only. Keys that aren't registered modules
+    are ignored. Deployment config (``PREFRONTAL_MODULES``) is untouched.
+    """
+
+    modules: dict[str, bool] = Field(
+        default_factory=dict, description="Module key → enabled for this user."
+    )
+
+
 class SelfCareCheckConfig(BaseModel):
     """One check's settings in ``POST /self-care``. All optional — a partial
     update writes only the fields present, leaving the rest as they were."""

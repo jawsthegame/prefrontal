@@ -61,6 +61,7 @@ struct SettingsView: View {
             }
 
             if !isOnboarding {
+                FeaturesSection()
                 AvailableHoursSection()
                 AppLockSection()
                 LocationSection()
