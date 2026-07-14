@@ -9,7 +9,7 @@ import XCTest
 final class APIClientTests: XCTestCase {
 
     private func client() -> APIClient {
-        APIClient(baseURL: URL(string: "https://h.example")!, token: "tok-123")
+        APIClient(baseURL: URL(string: "https://\(StubURLProtocol.host)")!, token: "tok-123")
     }
 
     // MARK: request building (pure, no network)
@@ -75,16 +75,27 @@ final class APIClientTests: XCTestCase {
 /// GET/decode/error paths run offline. Registered on `URLSession.shared` (which
 /// the client uses) via `URLProtocol.registerClass`.
 final class StubURLProtocol: URLProtocol {
+    /// Only requests to this host are intercepted, so the stub can't accidentally
+    /// swallow an unrelated request during the test run.
+    static let host = "h.example"
     static var responder: ((URLRequest) -> (Int, Data))?
 
-    override class func canInit(with request: URLRequest) -> Bool { responder != nil }
+    override class func canInit(with request: URLRequest) -> Bool {
+        responder != nil && request.url?.host == host
+    }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
     override func startLoading() {
-        let (status, body) = Self.responder?(request) ?? (200, Data())
+        guard let responder = Self.responder else {
+            // Unreachable given canInit, but fail fast rather than risk a live
+            // request if the interception logic ever changes.
+            client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+            return
+        }
+        let (status, body) = responder(request)
         let response = HTTPURLResponse(
-            url: request.url ?? URL(string: "https://invalid")!,
+            url: request.url ?? URL(string: "https://\(Self.host)")!,
             statusCode: status, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)
