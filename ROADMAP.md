@@ -25,11 +25,20 @@ closeout, consolidation, and a few net-new surfaces.
    `/care` follow-up of a conditional nav link (revealed when the pack is on,
    mirroring the operator Admin link).
 2. **Close the learning loop's remaining causal check** (see "Learning &
-   adaptation" §2). The channel-signal auto-act shipped (§4 now damps a
-   non-predictive channel toward pooled); what's left is the harder **sensor
-   causal check** — after a state proposal is accepted, did the downstream numeric
-   calibration actually improve? — which stays design-blocked on the
-   broader-allowlist / generalized-check question, so last.
+   adaptation" §2). ✅ The sensor's post-acceptance outcome check now ships as a
+   **proposal-durability** measure: of the settings a human accepted (written
+   `source="llm_inferred"`), how many are *still standing* vs. later changed away —
+   the honest complement to the accept-rate precision check. The literal
+   "did §4's numeric bias improve?" framing turned out ill-posed (no proposable key
+   or inferred episode feeds the numeric bias), and broadening the allowlist to
+   force one would loosen the sensor's deliberately-conservative write model, so it
+   was declined; durability is the closest honest analog on the sensor's
+   non-numeric allowlist. Surfaced in the profile + `prefrontal proposals stats`;
+   kept a **diagnostic**, not an auto-act, because `coaching_state` keeps no history
+   (one snapshot bit per key — can't tell chronic from one-off reversal). *(Open
+   follow-ups, both bigger swings: a broader proposable allowlist that includes a
+   numeric-affecting key — a safety call — and a state-history table that would let
+   durability become chronic-reversal auto-avoidance.)*
 3. **Close the last Shortcuts → native intent gaps** (see
    [`docs/shortcuts-to-native.md`](docs/shortcuts-to-native.md)). Essentially done:
    the native **location pipeline is complete** (epic #569), the three non-location
@@ -335,11 +344,25 @@ ordered by leverage; each is independent but builds on denser capture.
    extraction prompt (`avoided_state_keys`), so the sensor stops volunteering
    settings the user reliably declines (a soft de-emphasis — the key stays on the
    allowlist and a human still confirms). Surfaced in the profile and
-   `prefrontal proposals stats`; covered by `tests/test_sensor.py`. *(Still open:
-   the harder causal check — after a state proposal is accepted, did the downstream
-   numeric calibration (§4) actually improve? — which is a different question from
-   sensor precision and remains blocked on the broader-allowlist / generalized-check
-   design.)*
+   `prefrontal proposals stats`; covered by `tests/test_sensor.py`. **Sensor
+   durability** ✅ — the post-acceptance *outcome* half, distinct from the precision
+   above. The literal "did the downstream numeric calibration (§4) improve?" check
+   proved ill-posed: none of the proposable state keys (`responsive_hours_*`,
+   `self_care`, `encouragement`, `preferred_briefing_format`) nor the inferred
+   episodes (no predicted/actual numbers, by design) feed §4's numeric bias, so no
+   accepted proposal has a causal path to it — and widening the allowlist to force
+   one would loosen the sensor's conservative write model. So the honest analog that
+   *is* available: `compute_proposal_durability` asks whether an accepted
+   `llm_inferred` setting is **still standing** or was later changed away by an
+   explicit edit (`recompute_proposal_durability` persists `sensor_durability_rate` /
+   `_samples` / `sensor_reversed_targets` each `learn` pass, surfaced in the profile
+   + `prefrontal proposals stats`). Because `coaching_state` keeps no history it's a
+   one-snapshot bit per key, so it's kept a **diagnostic** (not auto-fed into
+   `avoided_state_keys` — can't tell chronic from one-off reversal), the way §4
+   leaves drift a surfaced diagnostic. Covered by `tests/test_sensor.py`. *(Bigger
+   swings left as their own items: a broader proposable allowlist including a
+   numeric-affecting key — a safety call — and a state-history table that would turn
+   durability into chronic-reversal auto-avoidance.)*
 3. **Recency weighting / decay.** ✅ — `compute_patterns()` and `compute_bias()`
    now weigh each episode by an exponential decay on its age (`decay_weight`,
    `0.5 ** (age_days / half_life)`), so a recent shift in behavior moves the

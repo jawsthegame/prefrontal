@@ -202,6 +202,24 @@ def build_profile(
             )
         lines.append("")
 
+    # Sensor durability (learning §2, the post-acceptance *outcome* half): of the
+    # settings you accepted, how many still stand vs. were later changed away — a
+    # diagnostic complement to precision, surfaced independently (a user may have
+    # durability data before enough resolved proposals to judge precision, or vice
+    # versa). Read as literal keys, no sensor import.
+    durability = state.get("sensor_durability_rate", {}).get("value") if state else None
+    if durability:
+        samples = state.get("sensor_durability_samples", {}).get("value") if state else None
+        over = f" of {samples} accepted settings" if samples else ""
+        lines.append("## Sensor durability")
+        lines.append("")
+        lines.append(f"- **{durability}**{over} are still standing (not later reverted).")
+        reversed_raw = state.get("sensor_reversed_targets", {}).get("value") if state else None
+        reverted = [t.split(":", 1)[-1] for t in (reversed_raw or "").split(",") if t]
+        if reverted:
+            lines.append(f"- ↩️ Reverted since accepting: {', '.join(reverted)}.")
+        lines.append("")
+
     # One section per enabled challenge-area module. Modules that have nothing
     # to say (return None/empty) are skipped so the profile stays tight.
     if modules:

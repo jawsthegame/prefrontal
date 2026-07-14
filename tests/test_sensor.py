@@ -16,12 +16,15 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
 from prefrontal.sensor import (
+    MIN_DURABILITY_SAMPLES,
     MIN_SENSOR_CALIBRATION_SAMPLES,
     apply_proposal,
     avoided_state_keys,
+    compute_proposal_durability,
     compute_sensor_calibration,
     extract_candidates,
     extract_candidates_from_transcript,
+    recompute_proposal_durability,
     recompute_sensor_calibration,
     record_candidates,
     render_transcript,
@@ -441,3 +444,106 @@ def test_avoid_keys_surface_in_the_extraction_prompt():
     assert "responsive_hours_end" in prompt
     # No avoid set → no de-emphasis instruction.
     assert "repeatedly declined" not in _sensor_build_prompt("note text")
+
+
+# -- proposal durability (learning §2, the post-acceptance outcome half) ------
+
+
+def _state(value: str, source: str = "llm_inferred") -> dict:
+    """A minimal coaching_state row, the shape all_state()/compute_proposal_durability reads."""
+    return {"value": value, "source": source}
+
+
+def test_durability_insufficient_below_sample_gate():
+    # Fewer distinct accepted state keys than the gate → no verdict.
+    keys = ["self_care", "encouragement", "responsive_hours_start"][: MIN_DURABILITY_SAMPLES - 1]
+    proposals = [_resolved("state", {"key": k, "value": "on"}, "accepted") for k in keys]
+    current = {k: _state("on") for k in keys}
+    dur = compute_proposal_durability(proposals, current)
+    assert dur.status == "insufficient"
+    assert dur.evaluated == MIN_DURABILITY_SAMPLES - 1
+    assert dur.durability_rate is None
+
+
+def test_durability_counts_held_vs_reversed():
+    # Three accepted state keys: two still match, one was changed away by the user.
+    proposals = [
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "encouragement", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "responsive_hours_end", "value": "23"}, "accepted"),
+        _resolved("episode", {"episode_type": "task"}, "accepted"),  # ignored (not a setting)
+        _resolved("state", {"key": "self_care", "value": "off"}, "rejected"),  # rejected: ignored
+    ]
+    current = {
+        "self_care": _state("on"),
+        "encouragement": _state("on"),
+        # user pushed the end hour back out — an explicit override of the accepted 23
+        "responsive_hours_end": _state("22", source="explicit"),
+    }
+    dur = compute_proposal_durability(proposals, current)
+    assert dur.status == "ok"
+    assert (dur.evaluated, dur.held_up, dur.reversed) == (3, 2, 1)
+    assert dur.durability_rate == round(2 / 3, 2)
+    assert dur.reversed_targets == ("state:responsive_hours_end",)
+
+
+def test_durability_uses_latest_accepted_value_per_key():
+    # The sensor revised its own earlier suggestion (10 → 8) and both were accepted;
+    # current value equals the LATEST accepted, so it's "held", not a reversal.
+    proposals = [
+        _resolved("state", {"key": "responsive_hours_start", "value": "10"}, "accepted"),
+        _resolved("state", {"key": "responsive_hours_start", "value": "8"}, "accepted"),
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "encouragement", "value": "on"}, "accepted"),
+    ]
+    current = {
+        "responsive_hours_start": _state("8"),
+        "self_care": _state("on"),
+        "encouragement": _state("on"),
+    }
+    dur = compute_proposal_durability(proposals, current)
+    # Three distinct keys evaluated (not four proposals); all still standing.
+    assert (dur.evaluated, dur.held_up, dur.reversed) == (3, 3, 0)
+    assert dur.durability_rate == 1.0
+    assert dur.reversed_targets == ()
+
+
+def test_durability_treats_a_cleared_key_as_reversed():
+    proposals = [
+        _resolved("state", {"key": "self_care", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "encouragement", "value": "on"}, "accepted"),
+        _resolved("state", {"key": "responsive_hours_end", "value": "23"}, "accepted"),
+    ]
+    current = {"self_care": _state("on"), "encouragement": _state("on")}  # end hour gone
+    dur = compute_proposal_durability(proposals, current)
+    assert (dur.held_up, dur.reversed) == (2, 1)
+    assert dur.reversed_targets == ("state:responsive_hours_end",)
+
+
+def test_recompute_durability_persists_verdict(store):
+    # Accept three settings, then the user reverts one; recompute persists the verdict.
+    for key, value in (
+        ("self_care", "on"),
+        ("encouragement", "on"),
+        ("responsive_hours_end", "23"),
+    ):
+        pid = store.add_proposal(kind="state", payload={"key": key, "value": value})
+        store.set_proposal_status(pid, "accepted")
+        store.set_state(key, value, source="llm_inferred")  # apply, as the accept path does
+    store.set_state("responsive_hours_end", "22", source="explicit")  # user overrides
+
+    dur = recompute_proposal_durability(store)
+    assert dur.status == "ok"
+    assert (dur.evaluated, dur.held_up, dur.reversed) == (3, 2, 1)
+    assert store.get_state("sensor_durability_rate") == str(dur.durability_rate)
+    assert store.get_state("sensor_durability_samples") == "3"
+    assert store.get_state("sensor_reversed_targets") == "state:responsive_hours_end"
+
+
+def test_recompute_durability_persists_nothing_when_insufficient(store):
+    pid = store.add_proposal(kind="state", payload={"key": "self_care", "value": "on"})
+    store.set_proposal_status(pid, "accepted")
+    store.set_state("self_care", "on", source="llm_inferred")
+    dur = recompute_proposal_durability(store)
+    assert dur.status == "insufficient"
+    assert store.get_state("sensor_durability_rate") is None

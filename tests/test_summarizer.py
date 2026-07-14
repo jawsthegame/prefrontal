@@ -235,3 +235,18 @@ def test_profile_surfaces_energy_and_category_bias(store):
     out = build_profile(store, modules=[])
     assert "By energy: high 2.1x, low 1.1x." in out
     assert "By category: creative 1.8x." in out
+
+
+def test_profile_surfaces_sensor_durability_independent_of_precision(store):
+    # Durability data present but no precision verdict (sensor_accept_rate unset) —
+    # the durability section must still render on its own.
+    from prefrontal.memory.summarizer import build_profile
+
+    store.set_state("sensor_durability_rate", "0.67", source="inferred")
+    store.set_state("sensor_durability_samples", "3", source="inferred")
+    store.set_state("sensor_reversed_targets", "state:responsive_hours_end", source="inferred")
+    out = build_profile(store, modules=[])
+    assert "## Sensor durability" in out
+    assert "**0.67** of 3 accepted settings are still standing" in out
+    assert "Reverted since accepting: responsive_hours_end." in out
+    assert "## Sensor precision" not in out  # no precision verdict → no precision section

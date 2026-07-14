@@ -1290,7 +1290,10 @@ def _cmd_learn(args: argparse.Namespace) -> int:
             # Sensor precision (learning §2 feedback): are the LLM sensor's
             # proposals worth keeping? Persists the verdict + flags chronically
             # rejected targets, which the extraction prompt then de-emphasizes.
-            from prefrontal.sensor import recompute_sensor_calibration
+            from prefrontal.sensor import (
+                recompute_proposal_durability,
+                recompute_sensor_calibration,
+            )
 
             sc = recompute_sensor_calibration(s)
             if sc.status == "ok":
@@ -1300,6 +1303,19 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                 print(
                     f"[{label}] sensor precision: {sc.accepted}/{sc.resolved} accepted "
                     f"({sc.accept_rate}){flagged}"
+                )
+            # Post-acceptance outcome (learning §2): did accepted settings stick, or
+            # get reversed? A diagnostic complement to precision above.
+            dur = recompute_proposal_durability(s)
+            if dur.status == "ok":
+                rev = (
+                    f"; reversed: {', '.join(dur.reversed_targets)}"
+                    if dur.reversed_targets
+                    else ""
+                )
+                print(
+                    f"[{label}] sensor durability: {dur.held_up}/{dur.evaluated} settings "
+                    f"still standing ({dur.durability_rate}){rev}"
                 )
             for c in adapt_self_care(s):
                 arrow = "->" if c["changed"] else "="
@@ -2250,6 +2266,7 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
     from prefrontal.sensor import (
         MIN_SENSOR_CALIBRATION_SAMPLES,
         apply_proposal,
+        compute_proposal_durability,
         compute_sensor_calibration,
         summarize_candidate,
     )
@@ -2269,20 +2286,35 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
                     print(f"      ↳ {p['rationale']}")
             return 0
         if action == "stats":
-            cal = compute_sensor_calibration(store.all_resolved_proposals())
-            if cal.status != "ok":
+            resolved = store.all_resolved_proposals()
+            # Precision (accept-rate) and durability (do accepted settings stick?)
+            # have independent sample gates — durability can be ready on fewer
+            # resolved proposals than precision — so print each on its own terms.
+            cal = compute_sensor_calibration(resolved)
+            if cal.status == "ok":
+                print(
+                    f"Sensor precision: {cal.accepted}/{cal.resolved} accepted ({cal.accept_rate})."
+                )
+                for tp in cal.by_target:
+                    flag = "  ⚠ chronically rejected" if tp.target in cal.flagged else ""
+                    print(
+                        f"  {tp.target}: {tp.accepted}/{tp.resolved} "
+                        f"({round(tp.accept_rate, 2)}){flag}"
+                    )
+            else:
                 print(
                     f"Not enough resolved proposals yet ({cal.resolved}; "
                     f"need {MIN_SENSOR_CALIBRATION_SAMPLES}) to judge sensor precision."
                 )
-                return 0
-            print(f"Sensor precision: {cal.accepted}/{cal.resolved} accepted ({cal.accept_rate}).")
-            for tp in cal.by_target:
-                flag = "  ⚠ chronically rejected" if tp.target in cal.flagged else ""
+            # Post-acceptance durability: did accepted settings stick or get reversed?
+            dur = compute_proposal_durability(resolved, store.all_state())
+            if dur.status == "ok":
                 print(
-                    f"  {tp.target}: {tp.accepted}/{tp.resolved} "
-                    f"({round(tp.accept_rate, 2)}){flag}"
+                    f"Sensor durability: {dur.held_up}/{dur.evaluated} accepted settings "
+                    f"still standing ({dur.durability_rate})."
                 )
+                for t in dur.reversed_targets:
+                    print(f"  {t}: reversed since accepting")
             return 0
         # accept / reject
         proposal = store.get_proposal(args.id)
