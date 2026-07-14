@@ -22,6 +22,25 @@ extension APIClient {
     func slots(minutes: Int = 30) async throws -> Slots {
         try await get("calendar/slots", query: ["minutes": "\(minutes)"], as: Slots.self)
     }
+    /// Overlaps among upcoming commitments (firm double-bookings + soft possibles). Pure read.
+    func commitmentConflicts() async throws -> ConflictList {
+        try await get("commitments/conflicts", as: ConflictList.self)
+    }
+    /// Stop flagging an overlap (resurfaces if either event moves).
+    func dismissConflict(key: String) async throws {
+        try await post("commitments/conflicts/dismiss", json: ["key": key])
+    }
+    /// Draft (or, with `send`, email) a polite reschedule request to the other party.
+    /// `send: false` previews the draft; `send: true` requires `to` and, on success,
+    /// dismisses the conflict.
+    func rescheduleConflict(key: String, to: String? = nil, recipientName: String? = nil,
+                            note: String? = nil, send: Bool = false) async throws -> RescheduleResult {
+        var body: [String: Any] = ["key": key, "send": send]
+        if let to, !to.isEmpty { body["to"] = to }
+        if let recipientName, !recipientName.isEmpty { body["recipient_name"] = recipientName }
+        if let note, !note.isEmpty { body["note"] = note }
+        return try await post("commitments/conflicts/reschedule", json: body, as: RescheduleResult.self)
+    }
     func departureNext() async throws -> DepartureNext { try await get("departure/next", as: DepartureNext.self) }
     func outings() async throws -> Outings { try await get("outings", as: Outings.self) }
     func focus() async throws -> FocusState { try await get("focus", as: FocusState.self) }

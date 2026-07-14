@@ -819,5 +819,61 @@ struct AvoidedTodo: Codable, Identifiable {
 
 struct AvoidedList: Codable { let avoided: [AvoidedTodo] }
 
+// MARK: - Schedule conflicts (double-bookings) + reschedule
+
+/// One side of an overlapping pair (`/commitments/conflicts`).
+struct ConflictSide: Codable {
+    let id: Int
+    let title: String
+    let startAt: String?
+    let calendar: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, calendar
+        case startAt = "start_at"
+    }
+}
+
+/// An overlap between two commitments — a firm double-booking or a soft possible.
+/// `key` identifies the pair for dismiss/reschedule.
+struct Conflict: Codable, Identifiable {
+    let a: ConflictSide
+    let b: ConflictSide
+    let overlapMinutes: Double?
+    let key: String
+    var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case a, b, key
+        case overlapMinutes = "overlap_minutes"
+    }
+}
+
+/// The `/commitments/conflicts` payload: firm double-bookings and soft possibles.
+struct ConflictList: Codable {
+    let conflicts: [Conflict]
+    let possibleConflicts: [Conflict]
+
+    enum CodingKeys: String, CodingKey {
+        case conflicts
+        case possibleConflicts = "possible_conflicts"
+    }
+}
+
+/// Result of `POST /commitments/conflicts/reschedule` — the drafted (or sent)
+/// polite "please move one" note. `status` is drafted / forwarded / failed.
+struct RescheduleResult: Codable {
+    let moved: ConflictSide
+    let kept: ConflictSide
+    let status: String
+    let subject: String?
+    let body: String?
+    let recipient: String?
+    let detail: String?
+    let offline: Bool?
+    let slots: [String]
+    let dismissed: String?
+}
+
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}
