@@ -280,19 +280,40 @@ already a `cta-debounce` track in flight). `suppressed(store, cue, ctx)`:
   the tick's own clock so it's testable with a pinned `now`. Cap: `coach_daily_nudge_cap`
   (default 10 — a generous backstop that only catches a flood; `0` disables). This is
   the frequency complement to the receptivity gate's "they've stopped answering."
-- **Receptivity gate (M3, ✅ shipped)** — `receptive(store, ctx)`, consulted once
-  per tick in `decide`: after a run of *consecutive ignored* coach nudges the user
-  isn't answering, so hold every non-critical cue rather than pile on (pushing
-  through a non-receptive stretch is exactly what earns the app a permanent mute —
-  the field's #1 abandonment risk). This is the JITAI *receptivity* component the
-  engine didn't model explicitly, as a rules-based first cut (a learned contextual
-  bandit is the later graduation, gated behind a walk-forward win). It reuses the
-  `coach nudge` channel-outcome episodes the learning loop already logs
-  (`resolve_ack` → success, `sweep_stale_nudges` → miss), is forgiving (a single
-  tap breaks the streak and restores delivery), only ever *removes* nudges, and
-  lets `critical` through (as quiet hours do). Threshold: `coach_ignore_backoff_streak`
-  (default 3; `0` disables). The per-day *dosage* half of the rate ceiling above is
-  the natural next increment on the same read.
+- **Receptivity gate (M3, ✅ shipped)** — `receptivity_gate(store, ctx)`, consulted
+  once per tick in `decide`, returns `gate(channel) -> bool`. Two implementations
+  share one contract (only ever *removes* non-critical cues, `critical` always
+  passes, fails open, forgiving):
+  - **Rules-based `receptive(store, ctx)`** (the default): after a run of
+    *consecutive ignored* coach nudges the user isn't answering, so hold every
+    non-critical cue rather than pile on (pushing through a non-receptive stretch is
+    exactly what earns the app a permanent mute — the field's #1 abandonment risk).
+    Reuses the `coach nudge` channel-outcome episodes the learning loop already logs
+    (`resolve_ack` → success, `sweep_stale_nudges` → miss), forgiving (a single tap
+    breaks the streak), threshold `coach_ignore_backoff_streak` (default 3; `0`
+    disables).
+  - **Learned per-user receptivity model** (`prefrontal/receptivity.py`, ✅ shipped
+    *dormant-until-earned*): the "learned" graduation the roadmap named. A
+    transparent, pure, no-deps **contextual acknowledgement-rate estimator**
+    (empirical-Bayes shrinkage toward the user's pooled rate) over cheap features
+    already at tick time — coarse local-hour bucket, weekday/weekend, channel class,
+    recent dosage. It predicts P(ack) for *this* context and holds a non-critical cue
+    when that falls below `coach_receptivity_min_prob` (default = the same
+    `DEFAULT_IGNORE_ACK_RATE` a channel must clear, 0.34), *before* the user has to
+    ignore three in a row. Trains on the **same** `coach nudge` episodes — no new
+    schema (timestamp → hour/day, channel → channel class, acknowledged → label). It
+    conditions on the cue's chosen channel, so the channel is picked before the gate
+    (a pure read).
+  - **The honesty gate.** The learned model is **off by default** and supersedes the
+    rules gate *only when it has earned it*: the learn pass runs a walk-forward
+    `receptivity_calibration` (the exact twin of `bias_calibration` /
+    `channel_calibration` §4) and persists `receptivity_calibration_helps`; the
+    engine's `learned_receptivity_active` reads that flag (plus a
+    `coach_receptivity_learned=off` kill-switch) and only then lets the model gate.
+    On sparse data the check returns `insufficient` and writes nothing, so the model
+    stays dormant and the rules gate stands — correct, not a bug. The verdict is
+    surfaced honestly in the `learn` CLI output and the profile ("not beating the
+    pooled baseline; rules gate in charge until it does").
 
 ---
 

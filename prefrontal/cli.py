@@ -1289,6 +1289,20 @@ def _cmd_learn(args: argparse.Namespace) -> int:
                     f"[{label}] channel check: error {ccal.baseline_error} -> "
                     f"{ccal.adjusted_error} on {ccal.samples} recent ({cverdict})"
                 )
+            # Learned receptivity model (M3): does conditioning on context predict
+            # acknowledgement better than pooled? The honesty gate — the learned
+            # gate only supersedes the rules gate once this says "helping".
+            rcal = summary.receptivity_calibration
+            if rcal is not None and rcal.status == "ok":
+                rverdict = (
+                    "helping — learned gate active"
+                    if rcal.helps
+                    else "NOT helping — rules gate retained"
+                )
+                print(
+                    f"[{label}] receptivity check: error {rcal.baseline_error} -> "
+                    f"{rcal.adjusted_error} on {rcal.samples} recent ({rverdict})"
+                )
             # Sensor precision (learning §2 feedback): are the LLM sensor's
             # proposals worth keeping? Persists the verdict + flags chronically
             # rejected targets, which the extraction prompt then de-emphasizes.

@@ -936,6 +936,31 @@ def test_recompute_persists_channel_calibration():
         assert store.get_state("channel_calibration_samples") is not None
 
 
+def test_recompute_persists_receptivity_calibration():
+    """The learn pass runs the receptivity walk-forward and persists its verdict.
+
+    The learned model is the honesty gate for M3's receptivity graduation: the
+    engine only lets it gate once this verdict says it beats the pooled baseline.
+    Here, ack depends on time-of-day (a strong context signal), so it helps.
+    """
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+        for w in range(4):  # four weeks of weekday coach nudges
+            for dow in range(5):
+                d = 5 + w * 7 + dow  # 2026-01-05 is a Monday
+                store.log_episode("reminder", channel="push", acknowledged=False,
+                                  context="coach nudge: todo",
+                                  timestamp=f"2026-01-{d:02d} 02:00:00")  # night → ignored
+                store.log_episode("reminder", channel="push", acknowledged=True,
+                                  context="coach nudge: todo",
+                                  timestamp=f"2026-01-{d:02d} 14:00:00")  # afternoon → acked
+        summary = recompute_patterns(store)
+        assert summary.receptivity_calibration.status == "ok"
+        assert summary.receptivity_calibration.helps
+        assert store.get_state("receptivity_calibration_helps") == "true"
+        assert store.get_state("receptivity_calibration_samples") is not None
+
+
 # -- channel-choice auto-act (§4): damp a non-predictive channel signal ------
 
 
