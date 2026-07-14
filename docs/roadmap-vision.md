@@ -275,14 +275,21 @@ outcome for this population. *(Design commandments 5, 6, 8, 9.)*
   reachable, and when is silence correct? Default to silence when receptivity is
   low. Log every fired/held decision (the tick already does) and graduate from
   heuristics toward a contextual bandit (start heuristic, log everything — the
-  HeartSteps/Oralytics playbook). *(First rules-based cut ✅ shipped:
+  HeartSteps/Oralytics playbook). *(Rules-based cut ✅ shipped:
   `coaching.receptive` holds non-critical cues after a run of consecutive ignored
   nudges — "default to silence when not receptive" — reusing the `coach nudge`
-  outcome episodes, forgiving on a single ack, `critical` exempt. The learned
-  bandit is the next increment.)* *(Dosage cap ✅ shipped: `_apply_dosage_cap` in
-  `decide` holds interrupting non-critical overflow past `coach_daily_nudge_cap`/day
-  — highest-urgency wins the budget, the rest re-offer next tick — so a bad day
-  can't barrage. `critical`/`digest` exempt.)*
+  outcome episodes, forgiving on a single ack, `critical` exempt.)* *(Learned model
+  ✅ shipped, dormant-until-earned: `prefrontal/receptivity.py` is a transparent,
+  pure, no-deps contextual acknowledgement-rate estimator over hour bucket /
+  weekday / channel / recent dosage, trained on the same `coach nudge` episodes. It
+  gates non-critical cues by predicted P(ack) — but **only after** a walk-forward
+  `receptivity_calibration` (the honesty twin of `bias_calibration` /
+  `channel_calibration`) shows it beats the pooled baseline on that user's held-out
+  history; until then, and on sparse data, the rules gate stands. This is the
+  "learned" claim earned rather than asserted.)* *(Dosage cap ✅ shipped:
+  `_apply_dosage_cap` in `decide` holds interrupting non-critical overflow past
+  `coach_daily_nudge_cap`/day — highest-urgency wins the budget, the rest re-offer
+  next tick — so a bad day can't barrage. `critical`/`digest` exempt.)*
 - **Fuse if-then plans with the trigger moment.** Surface the user's pre-set
   implementation intention *at* its cue (the best-evidenced technique meeting the
   best-timed delivery). This is a small, cheap, deeply-evidenced feature.
@@ -295,10 +302,12 @@ that nudge effects *decay* and shrink when recent dosage is high — so hard
 frequency/dosage guardrails and receptivity-gated silence are built in from day
 one (Prefrontal's quiet-hours + debounce are the seed).
 
-**Reliability gate:** the *timing* is the gate, not model capability. Ship a
-rules-based version now; earn the "learned" claim only when the receptivity model
-demonstrably beats the pooled baseline on a walk-forward check (the same honesty
-bar `bias_calibration` / `channel_calibration` already set).
+**Reliability gate:** the *timing* is the gate, not model capability. The
+rules-based version shipped first; the learned receptivity model now ships too but
+**earns** the "learned" claim rather than asserting it — it only takes over gating
+once it demonstrably beats the pooled baseline on a walk-forward check
+(`receptivity_calibration`, the same honesty bar `bias_calibration` /
+`channel_calibration` already set). Dormant-until-earned by construction.
 
 **Success signal:** ack-rate on fired nudges *without* a rise in mute/snooze;
 proximal effect (did the nudged action happen more than the un-nudged base
@@ -526,17 +535,24 @@ intervention evidence.)
    or a time band — "when I get home, take out the recycling" fires *at* the
    crossing, not on a clock. The residual gap is the *todo-fitting* path itself,
    still purely clock-windowed. *(Relates to #4 and commandment 5.)*
-6. **Escalation cadence vs. habituation/receptivity.** *(largely closed — rules-based
-   receptivity + dosage both shipped; a learned model is the remaining reach.)*
+6. **Escalation cadence vs. habituation/receptivity.** *(closed for receptivity —
+   rules-based gate, dosage cap, **and** the learned model all shipped; vulnerability
+   modelling remains the open half.)*
    "Escalation is not optional" is well-justified for genuinely time-critical events,
    and quiet hours + debounce + channel-response learning mitigate well. JITAI's two
    levers are now both explicit engine gates: **default to silence when low**
    (`coaching.receptive`: hold non-critical cues after a run of ignored nudges,
    forgiving on a single ack) and **cap the dosage** (`_apply_dosage_cap`: hold
    interrupting non-critical overflow past `coach_daily_nudge_cap`/day, highest-urgency
-   first, `critical` exempt). What remains is the *learned* form — a per-user
-   receptivity/vulnerability model (contextual bandit) replacing the fixed thresholds,
-   gated behind a walk-forward win. *(M3's closing reach.)*
+   first, `critical` exempt). The *learned* form has now landed too:
+   `prefrontal/receptivity.py` is a transparent per-user contextual ack-rate model
+   (hour / weekday / channel / recent dosage) that supersedes the fixed-threshold
+   rules gate — but **only** once `receptivity_calibration` (walk-forward) shows it
+   beats the pooled baseline on that user's own history, exactly the honesty bar the
+   §4 bias/channel checks set; dormant-until-earned on sparse data. What remains is
+   the *vulnerability* half of JITAI's model (states where a nudge could do harm),
+   and richer context (calendar gaps, wearables). *(M3's closing reach, mostly
+   closed.)*
 
 **Already well-aligned** (so the audit is calibrated): local-first/privacy;
 miss-as-data *for the system*; the encouragement/panic/recovery layer; one-tap

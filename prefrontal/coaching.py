@@ -31,9 +31,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from prefrontal.clock import TS_FMT, local_hour_of, parse_hour
+from prefrontal.clock import TS_FMT, local_datetime, local_hour_of, parse_hour
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.log import get_logger
+from prefrontal.receptivity import (
+    COACH_NUDGE_CONTEXT_PREFIX as _COACH_NUDGE_CONTEXT_PREFIX,
+)
+from prefrontal.receptivity import (
+    ReceptivityModel,
+    observations_from_episodes,
+)
 
 logger = get_logger(__name__)
 
@@ -104,7 +111,51 @@ _BACKOFF_SCAN_LIMIT = 12
 #: Prefix the channel-outcome loop stamps on its episodes' ``context`` (see
 #: :func:`record_channel_outcome`); the receptivity read filters on it so only
 #: coaching nudges — not other ``reminder`` episodes — count toward the streak.
-_COACH_NUDGE_CONTEXT_PREFIX = "coach nudge:"
+#: Defined in :mod:`prefrontal.receptivity` (the learned model reads the same wire
+#: format) and imported here so the writer and both gates can't drift.
+
+# --- Learned receptivity model (M3: the "learned" graduation) -----------------
+#
+# The rules gate above answers "have they stopped answering?" with one blunt run of
+# consecutive ignores. The *learned* form (``prefrontal/receptivity.py``) predicts,
+# per user and per context, how likely the next coach nudge is to be acknowledged —
+# hour bucket, weekday/weekend, channel class, recent dosage — and holds a
+# non-critical cue when that probability is low. It is the same contract as the
+# rules gate: only ever *removes* non-critical cues, ``critical`` always passes,
+# fails open on any error, and it does **not** replace the rules gate — it
+# supersedes it *only once it has earned the right* (below).
+#
+# The honesty gate: the model is off by default and takes over gating only when the
+# learn pass's walk-forward :func:`prefrontal.receptivity.receptivity_calibration`
+# finds it beats the pooled baseline on that user's held-out history (the verdict
+# persisted at ``receptivity_calibration_helps``, mirroring bias/channel §4). Until
+# then — and on sparse data, where it stays dormant — ``decide`` keeps using the
+# rules-based :func:`receptive`.
+
+#: Coaching-state key: the learned-model switch. ``"auto"`` (default) lets the model
+#: gate *iff* the walk-forward check earned it; ``"off"`` forces the rules gate even
+#: when calibrated (an operator kill-switch), matching how ``bias_decay_on_miss=0``
+#: disables the bias auto-act.
+RECEPTIVITY_LEARNED_KEY = "coach_receptivity_learned"
+
+#: Coaching-state key the learn pass writes with the walk-forward verdict
+#: (``"true"``/``"false"``) — the gate that lets the learned model take over. The
+#: sibling ``receptivity_calibration_improvement`` / ``_samples`` keys carry the
+#: honest detail the profile/CLI surface.
+RECEPTIVITY_CALIBRATION_HELPS_KEY = "receptivity_calibration_helps"
+
+#: Coaching-state key: predicted ack-probability at/above which the learned model
+#: judges the user *receptive* on this context. Defaults to the same rate a channel
+#: must clear to not count as "ignored" (:data:`DEFAULT_IGNORE_ACK_RATE`) — below it,
+#: a non-critical cue is held. Conservative: it only silences a context the model
+#: genuinely expects to be ignored.
+RECEPTIVITY_MIN_PROB_KEY = "coach_receptivity_min_prob"
+
+#: How many recent ``coach nudge`` episodes to fit the live model from — bounded so
+#: the per-tick fit is cheap and reflects *recent* behaviour (the forgiving property
+#: the rules gate gets from its short scan: a fresh run of acks pulls the estimate
+#: back up).
+_RECEPTIVITY_FIT_LIMIT = 200
 
 # --- Dosage cap (M3: the frequency half of the habituation guardrail) ---------
 #
@@ -476,6 +527,89 @@ def receptive(store: Any, ctx: CoachContext) -> bool:
     return not all(e.get("outcome") == "miss" for e in recent[:streak])
 
 
+def learned_receptivity_active(store: Any) -> bool:
+    """Whether the learned receptivity model has *earned the right* to gate (§4).
+
+    The honesty gate. Returns ``True`` only when the learn pass's walk-forward check
+    persisted a "beats the pooled baseline" verdict
+    (:data:`RECEPTIVITY_CALIBRATION_HELPS_KEY` == ``"true"``) **and** the operator
+    hasn't forced the rules gate via :data:`RECEPTIVITY_LEARNED_KEY` == ``"off"``.
+    Off by default (no verdict yet, and dormant on sparse data). Any read failure
+    returns ``False`` — fall back to the (itself fail-open) rules gate rather than
+    trust an unverified model.
+    """
+    try:
+        if (store.get_state(RECEPTIVITY_LEARNED_KEY, "auto") or "auto").strip().lower() == "off":
+            return False
+        return (store.get_state(RECEPTIVITY_CALIBRATION_HELPS_KEY) or "") == "true"
+    except Exception:  # noqa: BLE001 — an unreadable verdict must not assert the model
+        logger.debug("learned-receptivity activation read failed; using rules", exc_info=True)
+        return False
+
+
+def _fit_receptivity_model(store: Any, timezone: str) -> ReceptivityModel | None:
+    """Fit the live model from recent ``coach nudge`` episodes, or ``None`` on no data.
+
+    Bounded read (:data:`_RECEPTIVITY_FIT_LIMIT`), filtered to coaching outcomes in
+    SQL like :func:`receptive`. Returns ``None`` when there's nothing to condition
+    on so the caller falls back to the rules gate.
+    """
+    try:
+        episodes = store.episodes_by_type(
+            "reminder",
+            limit=_RECEPTIVITY_FIT_LIMIT,
+            context_prefix=_COACH_NUDGE_CONTEXT_PREFIX,
+        )
+    except Exception:  # noqa: BLE001 — a failed read must never silence a nudge
+        logger.debug("receptivity model fit read failed", exc_info=True)
+        return None
+    obs = observations_from_episodes(episodes, timezone)
+    if not obs:
+        return None
+    return ReceptivityModel.fit((cell, ack) for _, cell, ack in obs)
+
+
+def receptivity_gate(store: Any, ctx: CoachContext) -> Any:
+    """Build the per-tick receptivity gate: ``gate(channel: str) -> bool``.
+
+    Computed once per tick by :func:`decide`. When the learned model has earned the
+    right to gate (:func:`learned_receptivity_active`) and there's data to fit,
+    returns a closure that predicts the acknowledgement probability for *this tick's*
+    context (local hour, weekday/weekend, recent dosage) at the candidate ``channel``
+    and reports receptive iff it clears :data:`RECEPTIVITY_MIN_PROB_KEY`. Otherwise
+    — uncalibrated, no data, or any failure — falls back to the rules-based
+    :func:`receptive` (a single per-tick verdict returned for every channel), so the
+    shipped behaviour is unchanged until the model is proven.
+
+    Fails open like the rules gate: a prediction that raises treats the user as
+    receptive, so a modelling glitch can never silence a genuine nudge.
+    """
+    try:
+        if learned_receptivity_active(store):
+            model = _fit_receptivity_model(store, ctx.timezone)
+            if model is not None and model.trials > 0:
+                local_dt = local_datetime(ctx.now, ctx.timezone)
+                dosage = dosage_count_today(store, ctx.now)
+                threshold = store.get_float(RECEPTIVITY_MIN_PROB_KEY, DEFAULT_IGNORE_ACK_RATE)
+
+                def _learned(channel: str) -> bool:
+                    try:
+                        from prefrontal.receptivity import context_cell
+
+                        prob = model.predict(context_cell(local_dt, channel, dosage))
+                        return prob >= threshold
+                    except Exception:  # noqa: BLE001 — fail open, never silence on a glitch
+                        logger.debug("receptivity prediction failed; treating as receptive",
+                                     exc_info=True)
+                        return True
+
+                return _learned
+    except Exception:  # noqa: BLE001 — any gate-build failure falls back to the rules
+        logger.debug("learned receptivity gate build failed; using rules", exc_info=True)
+    is_receptive = receptive(store, ctx)
+    return lambda _channel: is_receptive
+
+
 def choose_channel(store: Any, cue: Cue, ctx: CoachContext) -> str:
     """Pick a delivery channel class: urgency floor, then learned bump (spec §5).
 
@@ -655,28 +789,35 @@ def decide(
     Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), two
     tick-level gates apply — both M3, both leaving ``critical`` untouched:
 
-    - **receptivity** (:func:`receptive`, computed once): hold every non-critical
-      cue when the user has stopped answering ("default to silence when receptivity
-      is low");
+    - **receptivity** (:func:`receptivity_gate`, computed once): hold every
+      non-critical cue when the user seems unreachable now ("default to silence when
+      receptivity is low"). The rules-based :func:`receptive` by default; the
+      *learned* per-context model supersedes it once a walk-forward check has proven
+      it beats the pooled baseline on that user's history (never before);
     - **dosage cap** (:func:`_apply_dosage_cap`): once the day's interrupting
       non-critical deliveries hit :data:`DOSAGE_CAP_KEY`, hold the overflow — the
       highest-urgency cues take the remaining budget, the rest re-offer next tick —
       so a bad day can't become a barrage.
     """
-    is_receptive = receptive(store, ctx)
+    # Receptivity: after a run of ignored nudges (rules gate), or when the *learned*
+    # model predicts a low ack-probability for this context (once it's earned the
+    # right to gate — :func:`receptivity_gate`), stay quiet rather than pile on
+    # (pushing through is what gets the tool muted). A single ack / a fresh run of
+    # acks restores delivery. Critical is exempt — a missed hard commitment still
+    # warrants it. The learned gate conditions on the cue's chosen channel, so the
+    # channel is picked before the check (a pure read, no side effect).
+    gate = receptivity_gate(store, ctx)
     candidates: list[Decision] = []
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
-        # Receptivity: after a run of ignored nudges, stay quiet rather than pile
-        # on (pushing through is what gets the tool muted). A single ack restores
-        # delivery. Critical is exempt — a missed hard commitment still warrants it.
-        if not is_receptive and cue.urgency != "critical":
+        channel = choose_channel(store, cue, ctx)
+        if cue.urgency != "critical" and not gate(channel):
             continue
         candidates.append(
             Decision(
                 cue=cue,
-                channel=choose_channel(store, cue, ctx),
+                channel=channel,
                 text=phrase(store, cue, ctx, client=client, profile=profile),
             )
         )
@@ -775,7 +916,7 @@ def record_channel_outcome(
         "reminder",
         channel=channel,
         acknowledged=acknowledged,
-        context=f"coach nudge: {context}",
+        context=f"{_COACH_NUDGE_CONTEXT_PREFIX} {context}",
         outcome="success" if acknowledged else "miss",
     )
 

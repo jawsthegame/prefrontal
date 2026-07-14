@@ -20,9 +20,11 @@ from prefrontal.coaching import (
     decide,
     dosage_count_today,
     in_quiet_hours,
+    learned_receptivity_active,
     note_delivered,
     phrase,
     receptive,
+    receptivity_gate,
     record_fired,
     resolve_ack,
     stamp_pending_engagement,
@@ -35,6 +37,12 @@ from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.modules import get
+from prefrontal.receptivity import (
+    ReceptivityModel,
+    context_cell,
+    observations_from_episodes,
+    receptivity_calibration,
+)
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
@@ -1057,3 +1065,206 @@ def test_outing_check_is_marked_deprecated_in_the_schema():
         assert spec.get("deprecated") is True
     finally:
         conn.close()
+
+
+# -- learned receptivity model (M3): the "learned" graduation -----------------
+#
+# The learned per-context ack-rate model + its walk-forward honesty gate. The model
+# core is pure; the gate wires into decide() only once the calibration verdict has
+# earned it, otherwise it falls back to the rules-based receptive() above.
+
+
+def _recept_episode(ts: datetime, channel: str = "push", acknowledged: bool = True) -> dict:
+    """A `coach nudge` outcome episode carrying the fields the learned model reads."""
+    return {
+        "episode_type": "reminder",
+        "context": "coach nudge: todo",
+        "channel": channel,
+        "acknowledged": acknowledged,
+        "timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _weekday_series(count: int, hour: int, *, acknowledged: bool, channel: str = "push") -> list:
+    """`count` coach-nudge episodes, one per consecutive weekday at `hour` local UTC.
+
+    One per day keeps the recent-dosage feature at 0 for every observation, so the
+    only varying features are hour-of-day and channel — a clean, testable signal.
+    """
+    eps: list[dict] = []
+    day = datetime(2026, 5, 4, 0, 0, 0)  # a Monday
+    while len(eps) < count:
+        if day.weekday() < 5:  # weekdays only, so the day-of-week cell is stable
+            eps.append(_recept_episode(day.replace(hour=hour), channel, acknowledged))
+        day += timedelta(days=1)
+    return eps
+
+
+# -- the pure model -----------------------------------------------------------
+
+
+def test_model_predicts_seeded_context_and_shrinks_unseen_toward_pooled():
+    # Two cells: one always acked, one never; plus an unseen cell.
+    acked = context_cell(datetime(2026, 5, 4, 14, 0), "push", 0)
+    ignored = context_cell(datetime(2026, 5, 4, 2, 0), "push", 0)
+    obs = [(acked, 1.0)] * 8 + [(ignored, 0.0)] * 8
+    model = ReceptivityModel.fit(obs)
+    # Pooled is the overall rate; a well-seen cell pulls close to its own rate.
+    assert model.pooled == 0.5
+    assert model.predict(acked) > 0.75
+    assert model.predict(ignored) < 0.25
+    # An unseen cell has no evidence, so it defaults to the pooled rate exactly.
+    unseen = context_cell(datetime(2026, 5, 4, 20, 0), "voice", 3)
+    assert model.predict(unseen) == model.pooled
+
+
+def test_model_empty_fit_has_no_trials():
+    model = ReceptivityModel.fit([])
+    assert model.trials == 0
+    assert model.pooled == 0.0
+
+
+def test_observations_reconstruct_recent_dosage_within_a_local_day():
+    # Three nudges the same UTC day → dosage buckets 0, 1, 2 in time order.
+    base = datetime(2026, 5, 4, 9, 0)
+    eps = [
+        _recept_episode(base, "push", True),
+        _recept_episode(base.replace(hour=11), "push", False),
+        _recept_episode(base.replace(hour=13), "push", True),
+        # A different day resets the running count back to 0.
+        _recept_episode(base.replace(day=5, hour=9), "push", True),
+    ]
+    obs = observations_from_episodes(eps, "UTC")
+    dosage_buckets = [cell[3] for _, cell, _ in obs]
+    assert dosage_buckets == [0, 1, 2, 0]
+
+
+def test_observations_ignore_non_coach_and_unresolved_episodes():
+    eps = [
+        _recept_episode(datetime(2026, 5, 4, 9, 0)),
+        {"episode_type": "reminder", "context": "ingest reminder", "channel": "push",
+         "acknowledged": True, "timestamp": "2026-05-04 09:00:00"},  # not a coach nudge
+        {"episode_type": "reminder", "context": "coach nudge: todo", "channel": None,
+         "acknowledged": True, "timestamp": "2026-05-04 09:00:00"},  # no channel
+        {"episode_type": "reminder", "context": "coach nudge: todo", "channel": "push",
+         "acknowledged": None, "timestamp": "2026-05-04 09:00:00"},  # unresolved
+    ]
+    assert len(observations_from_episodes(eps, "UTC")) == 1
+
+
+# -- the walk-forward honesty gate --------------------------------------------
+
+
+def test_calibration_helps_when_context_predicts_acknowledgement():
+    # Night pushes always ignored, afternoon pushes always acked — a strong,
+    # context-conditioned signal the pooled rate can't capture.
+    eps = (
+        _weekday_series(20, hour=2, acknowledged=False)
+        + _weekday_series(20, hour=14, acknowledged=True)
+    )
+    cal = receptivity_calibration(eps, timezone="UTC")
+    assert cal.status == "ok"
+    assert cal.helps is True
+    assert cal.improvement > 0
+
+
+def test_calibration_insufficient_on_sparse_data_stays_dormant():
+    # Below the split floor → insufficient (dormant-until-earned, not a bug).
+    cal = receptivity_calibration(_weekday_series(3, hour=14, acknowledged=True), timezone="UTC")
+    assert cal.status == "insufficient"
+    assert cal.helps is False
+
+
+def test_calibration_does_not_help_when_context_is_noise():
+    # Acks unrelated to context (a fixed alternating pattern across one cell) — the
+    # per-cell rate can't beat pooled on held-out data.
+    eps = _weekday_series(30, hour=14, acknowledged=True)
+    for i in range(0, len(eps), 2):
+        eps[i]["acknowledged"] = False  # ~50/50 within a single cell
+    cal = receptivity_calibration(eps, timezone="UTC")
+    assert cal.status == "ok"
+    assert cal.helps is False
+
+
+# -- activation (honesty gate) ------------------------------------------------
+
+
+def test_learned_model_off_by_default():
+    # No calibration verdict persisted yet → the learned model must not gate.
+    assert learned_receptivity_active(_FakeStore()) is False
+
+
+def test_learned_model_active_only_when_calibration_says_it_helps():
+    assert learned_receptivity_active(
+        _FakeStore(state={"receptivity_calibration_helps": "true"})
+    ) is True
+    assert learned_receptivity_active(
+        _FakeStore(state={"receptivity_calibration_helps": "false"})
+    ) is False
+
+
+def test_learned_model_kill_switch_forces_rules_even_when_calibrated():
+    store = _FakeStore(state={
+        "receptivity_calibration_helps": "true",
+        "coach_receptivity_learned": "off",
+    })
+    assert learned_receptivity_active(store) is False
+
+
+# -- the gate & decide() integration ------------------------------------------
+
+
+def test_gate_falls_back_to_rules_when_uncalibrated():
+    # Uncalibrated + a run of ignores → the rules gate answers "not receptive".
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]
+    gate = receptivity_gate(store, _ctx())
+    assert gate("push") is False  # rules verdict, ignoring the channel arg
+    # And receptive when there's no ignore history.
+    assert receptivity_gate(_FakeStore(), _ctx())("push") is True
+
+
+def test_decide_uses_learned_gate_to_hold_low_probability_context():
+    # Calibrated on: afternoon (NOON = bucket 3) pushes ignored, night acked → the
+    # model predicts a LOW ack-probability for the current context, so a nudge is
+    # held while critical still goes through.
+    store = _FakeStore(state={"receptivity_calibration_helps": "true"})
+    store.episodes = (
+        _weekday_series(10, hour=12, acknowledged=False)   # noon push → ignored
+        + _weekday_series(6, hour=2, acknowledged=True)    # night push → acked
+    )
+    cues = [_cue("nudge", dedup="n"), _cue("critical", dedup="c")]
+    decisions = decide(store, cues, _ctx())  # NOON, a Thursday, inside quiet hours window
+    assert [d.cue.dedup_key for d in decisions] == ["c"]
+
+
+def test_decide_learned_gate_fires_when_context_is_receptive():
+    # Same wiring, inverted signal: noon pushes acked → high probability → fires.
+    store = _FakeStore(state={"receptivity_calibration_helps": "true"})
+    store.episodes = (
+        _weekday_series(10, hour=12, acknowledged=True)
+        + _weekday_series(6, hour=2, acknowledged=False)
+    )
+    cues = [_cue("nudge", dedup="n")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["n"]
+
+
+def test_decide_learned_gate_with_no_history_falls_back_to_rules():
+    # Calibrated flag set but no episodes to fit → fall back to the rules gate,
+    # which (no ignore history) is receptive, so the nudge fires.
+    store = _FakeStore(state={"receptivity_calibration_helps": "true"})
+    decisions = decide(store, [_cue("nudge", dedup="n")], _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["n"]
+
+
+def test_gate_fails_open_when_model_read_raises():
+    class _Broken(_FakeStore):
+        def episodes_by_type(self, episode_type, limit=100, *, context_prefix=None):
+            raise RuntimeError("boom")
+
+    store = _Broken(state={"receptivity_calibration_helps": "true"})
+    # The model read fails → _fit returns None → rules fallback (receptive: no
+    # ignore history) → the nudge fires rather than being silenced.
+    decisions = decide(store, [_cue("nudge", dedup="n")], _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["n"]

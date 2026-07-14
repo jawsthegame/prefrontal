@@ -46,6 +46,7 @@ from prefrontal.clock import local_datetime, local_hour_of
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
+from prefrontal.receptivity import ReceptivityCalibration, receptivity_calibration
 
 #: Smoothing constant for the confidence estimator ``n / (n + k)``. With k=5,
 #: 5 samples ⇒ 0.5, 15 ⇒ 0.75, 45 ⇒ 0.9 — "low until the sample is meaningful".
@@ -359,6 +360,10 @@ class PatternRunSummary:
     calibration: BiasCalibration | None = None
     #: Walk-forward verdict on the channel-choice adaptation (§4).
     channel_calibration: ChannelCalibration | None = None
+    #: Walk-forward verdict on the *learned receptivity* model (M3): does
+    #: conditioning on context predict acknowledgement better than the pooled
+    #: baseline? Until this ``helps``, the coaching engine keeps the rules gate.
+    receptivity_calibration: ReceptivityCalibration | None = None
     #: ``True`` when a "not helping" channel verdict damped the per-channel
     #: ``channel_response`` rates toward pooled this pass (the §4 channel auto-act).
     channel_decayed: bool = False
@@ -1403,6 +1408,29 @@ def recompute_patterns(
             source="inferred",
         )
 
+    # Close the loop on the *learned receptivity* model too (M3, the "learned"
+    # graduation): does conditioning on context (hour / weekday / channel / dosage)
+    # predict acknowledgement better than a pooled rate? The verdict is the engine's
+    # honesty gate — ``coaching.receptivity_gate`` only lets the learned model gate
+    # non-critical cues once ``receptivity_calibration_helps`` is ``true``; until
+    # then (and on sparse data, where the check returns ``insufficient`` and writes
+    # nothing) the rules-based ``coaching.receptive`` stands. Report-only, mirroring
+    # where the bias/channel checks began — the learned gate is a silence decision,
+    # so it earns its keep rather than auto-acting on a noisy signal.
+    receptivity_cal = receptivity_calibration(episodes, timezone=timezone)
+    if receptivity_cal.status == "ok":
+        store.set_state(
+            "receptivity_calibration_helps", "true" if receptivity_cal.helps else "false",
+            source="inferred",
+        )
+        store.set_state(
+            "receptivity_calibration_improvement", str(receptivity_cal.improvement),
+            source="inferred",
+        )
+        store.set_state(
+            "receptivity_calibration_samples", str(receptivity_cal.samples), source="inferred"
+        )
+
     # Learn the Time Blindness morning_prep cutoff (``early_start_threshold``) from
     # late morning departures, so the evening "set an alarm" heads-up covers the
     # mornings this user actually runs late for. Respects a hand-set override (like
@@ -1443,6 +1471,7 @@ def recompute_patterns(
         calibration=calibration,
         channel_calibration=channel_cal,
         channel_decayed=channel_decayed,
+        receptivity_calibration=receptivity_cal,
         band_bias=band_bias,
         type_bias=type_bias,
         energy_bias=energy_bias,

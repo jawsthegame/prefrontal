@@ -220,6 +220,35 @@ def build_profile(
             lines.append(f"- ↩️ Reverted since accepting: {', '.join(reverted)}.")
         lines.append("")
 
+    # Learned receptivity (M3, the "learned" graduation): whether the per-context
+    # ack-rate model has *earned* the right to gate non-critical nudges — a
+    # walk-forward check (like the §4 bias/channel verdicts) must show it beats the
+    # pooled baseline first. Surfaced honestly: dormant until proven, and said so.
+    # Read as literal keys the learn pass writes, no coupling to the coaching engine.
+    recept_helps = state.get("receptivity_calibration_helps", {}).get("value") if state else None
+    if recept_helps is not None:
+        improvement = (
+            state.get("receptivity_calibration_improvement", {}).get("value") if state else None
+        )
+        samples = state.get("receptivity_calibration_samples", {}).get("value") if state else None
+        over = f" on {samples} recent nudges" if samples else ""
+        lines.append("## Receptivity timing")
+        lines.append("")
+        if recept_helps == "true":
+            extra = f" (~{improvement} better than pooled)" if improvement else ""
+            lines.append(
+                f"- The learned per-context receptivity model is improving ack "
+                f"prediction{extra}{over} — it now gates non-critical nudges by *when* "
+                "you're reachable (hour, weekday, channel, recent dosage)."
+            )
+        else:
+            lines.append(
+                f"- The learned receptivity model is **not** beating the pooled "
+                f"baseline{over}; the simpler rules-based gate (back off after a run "
+                "of ignored nudges) is in charge until it does."
+            )
+        lines.append("")
+
     # One section per enabled challenge-area module. Modules that have nothing
     # to say (return None/empty) are skipped so the profile stays tight.
     if modules:
