@@ -5,7 +5,8 @@ Houses the n8n workflow-orchestration integration
 (:mod:`prefrontal.integrations.ollama`), the optional Claude/Anthropic provider
 (:mod:`prefrontal.integrations.anthropic`) used by the dashboard assistant, and
 the native delivery client (:mod:`prefrontal.integrations.delivery`) that
-publishes coaching decisions to Pushover / Ntfy / local TTS.
+publishes coaching decisions via native APNs push / a Twilio voice call / local
+TTS (with a dev-only ntfy shim for free-signing builds).
 
 The delivery client is intentionally **not** re-exported here: it reaches up into
 :mod:`prefrontal.webhooks` and :mod:`prefrontal.coaching`, whereas this package is

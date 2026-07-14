@@ -252,7 +252,7 @@ also defines:
   by a signature of the event pair so a dismissal sticks across calendar re-syncs
   but lapses if either event moves (`prefrontal/commitments.py`).
 - **`dismissed_departures`** — departure reminders waved off via the one-tap
-  "dismiss" link on a Pushover nudge (`GET /nudge/dismiss`), keyed by
+  "dismiss" link on a nudge (`GET /nudge/dismiss`), keyed by
   `commitment_id`. `/webhooks/departure/check` drops these commitments from its
   candidates; a future occurrence is a new id and re-arms on its own. (Outing
   nudges are silenced by pinning `outings.last_level` to its ceiling instead —

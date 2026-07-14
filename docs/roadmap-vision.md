@@ -158,7 +158,7 @@ Impulsivity, Location-Aware Anchor, Self-Care, Closed-Loop Trip Tracking);
 the recency-weighted, context-conditioned learning loop with honest walk-forward
 calibration; the LLM-as-sensor capture path (proposes, human accepts); native
 iOS (App Intents, interactive widgets, Live Activities, CoreLocation, AlarmKit);
-ntfy/Twilio delivery with escalation; encouragement/panic recovery modes; the
+native APNs push / Twilio delivery with escalation; encouragement/panic recovery modes; the
 Parent and Caregiver Context Packs with the shared household sheet.
 
 This is already a genuinely differentiated tool. The milestones below are about

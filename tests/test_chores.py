@@ -119,7 +119,12 @@ def _capture_client():
         sent.append({"topic": body.get("topic", ""), "message": body.get("message", "")})
         return httpx.Response(200, json={"id": "x"})
 
-    client = DeliveryClient.from_settings(Settings(), transport=httpx.MockTransport(handler))
+    # ntfy_dev=True so the mock ntfy transport stays the observable delivery path
+    # (native APNs needs real device tokens/creds); this test cares about *who*
+    # gets notified, not the wire transport.
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
     return client, sent
 
 

@@ -46,12 +46,14 @@ update in place — no duplicates). `update.sh` runs it, so the dashboard **Upda
 button syncs workflows too; it's a clean no-op when the n8n API isn't configured.
 See [`../docs/n8n-sync.md`](../docs/n8n-sync.md).
 
-Delivery goes to **ntfy** by default — each publish node posts to `https://ntfy.sh`
-on the `prefrontal-me` topic (change it, and point at a self-hosted ntfy if you
-run one). Nudges carry the endpoint's signed one-tap **action buttons** so a tap
-fires `GET /nudge/act` in the background — no app switch. (Pushover is still
-supported by the native Python delivery client as a fallback; the n8n templates
-just default to ntfy.)
+On a product build, delivery is **native APNs push** — `prefrontal coach
+--deliver` publishes it directly (no n8n publish node), rendering real
+notification **action buttons**. These n8n templates publish to **ntfy** instead —
+the **dev-only shim** (`PREFRONTAL_NTFY_DEV=1`) for free-signing builds with no
+APNs: each publish node posts to `https://ntfy.sh` on the `prefrontal-me` topic
+(change it, and point at a self-hosted ntfy if you run one). ntfy nudges carry the
+endpoint's signed one-tap **action buttons** so a tap fires `GET /nudge/act` in the
+background — no app switch.
 
 Everything here is safe to commit: the plist and workflows contain **placeholders**
 (`REPLACE_WITH_...`, the `prefrontal-me` topic) — no real secrets. Put real values

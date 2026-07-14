@@ -164,12 +164,12 @@ Closes the active outing and logs intention-vs-actual for learning.
 > shortcut for those. These two shortcuts just open and close the outing.
 
 > **⚠️ Shortcut name must match the deep link.** The Hyperfocus alignment-check
-> Pushover (from `hyperfocus-check.workflow.json`) carries a **"Wrap up (End
+> push (from `hyperfocus-check.workflow.json`) carries a **"Wrap up (End
 > focus)"** action link that runs `shortcuts://run-shortcut?name=End%20focus`.
 > That name has to be the **exact** name of your end-a-focus shortcut (here,
 > **End focus**), URL-encoding spaces as `%20`. If your shortcut is named
 > differently, either rename it to `End focus` or edit the `url` in the
-> workflow's Pushover node to match — otherwise tapping the link does nothing.
+> workflow's publish node to match — otherwise tapping the link does nothing.
 
 ---
 

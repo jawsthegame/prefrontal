@@ -638,6 +638,9 @@ ordered by leverage; each is independent but builds on denser capture.
     fallback (no inline buttons; the first action rides as a tap URL), and the
     `.env.example` documents both. Local-first stays the default (ntfy is
     self-hostable). Covered by `tests/test_delivery.py` + `tests/test_notify.py`.
+    *(Later superseded: now that Prefrontal is iOS-only, native APNs push is the
+    sole product transport — Pushover was removed and ntfy demoted to a dev-only
+    shim behind `PREFRONTAL_NTFY_DEV`. See the changelog.)*
 
   Local-first stays the default (ntfy is self-hostable). Pairs with the
   coaching-agent delivery routing and per-user delivery (multi-tenant) below.

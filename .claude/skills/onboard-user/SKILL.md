@@ -4,28 +4,30 @@ description: >-
   Onboard a person onto a Prefrontal deployment end-to-end — provision their
   user (or mint a household invite code for a co-parent), then hand them a
   personalized setup sheet for the native iOS app (connect QR, App Intents /
-  Action Button, home-screen widget) and ntfy notifications, with iOS Shortcuts
-  as the free-signing fallback — and optionally connects their own email (IMAP)
-  and calendar (private ICS feed) sources. Use when asked to "invite a user",
-  "add someone", "onboard a co-parent", "set up a new phone/user", or "get <name>
-  onto Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar` CLI
-  and fills the new person's handle, token, base URL, and ntfy topic into the
-  client instructions.
+  Action Button, home-screen widget) and native push notifications (APNs), with
+  iOS Shortcuts as the free-signing fallback — and optionally connects their own
+  email (IMAP) and calendar (private ICS feed) sources. Use when asked to "invite
+  a user", "add someone", "onboard a co-parent", "set up a new phone/user", or
+  "get <name> onto Prefrontal". Runs the `prefrontal user`/`household`/`mail`/`calendar`
+  CLI and fills the new person's handle, token, and base URL into the client
+  instructions.
 ---
 
 # Onboard a Prefrontal user
 
 Take a new person from "not on the system" to "phone set up and receiving
 nudges". Two things happen: **membership** (a user account, optionally joined to
-a household) and **client setup** (the native iOS app, ntfy, and the widget —
-with Shortcuts as the free-signing fallback — filled in with their real values).
+a household) and **client setup** (the native iOS app, native push, and the
+widget — with Shortcuts as the free-signing fallback — filled in with their real
+values).
 
 The canonical setup docs are the source of truth — do **not** duplicate their
 steps into the repo, cite them:
 
 - `ios/README.md` — the native app: connect QR, App Intents (Siri / Action
   Button / Spotlight), and its Home/Lock Screen widget. **The primary client.**
-- `docs/deployment.md` (§"Configure once") — ntfy env vars + the token credential
+- `docs/deployment.md` (§6a) — native APNs push setup (the `APNS_*` signing
+  creds); (§"Configure once") the token credential + the ntfy dev-shim env vars
 - `docs/multi-tenant.md` — the per-user token / household model
 - `docs/design/per-user-sources.md` — per-user email (IMAP) + calendar (ICS) sources
 - `deploy/ios-shortcut.md` — the iOS Shortcut catalog, kept as the **free-signing
@@ -106,41 +108,44 @@ The co-parent-only features (weekly check-in, delta digest, load-balance view)
 light up on their own once the household has ≥ 2 active members — nothing extra
 to enable.
 
-## Step 3 — delivery routing (ntfy)
+## Step 3 — delivery routing (native APNs push)
 
-Notifications reach a phone via **ntfy** (Pushover optional). Each person
-subscribes their phone to a topic; the deployment publishes to it.
+Notifications reach a phone via **native APNs push** — the product transport,
+which renders real one-tap notification action buttons. There's **no per-user
+topic to hand out**: the app registers its device token on first launch (`POST
+/route/apns-token`), and delivery resolves to that token automatically.
 
-- **Solo / single-user deploy:** the topic is the `NTFY_TOPIC` env var (with
-  `NTFY_SERVER`, default `https://ntfy.sh`) — see `docs/deployment.md`.
-- **Multi-user deploy:** give this person their **own** topic so their nudges
-  don't land on someone else's phone. Pick a unique topic like
-  `prefrontal-<handle>-<random>` (topics are unguessable-by-obscurity on public
-  ntfy.sh — keep it non-obvious), then set their per-user route:
+- **Ensure the deployment's APNs signing creds are set** (once per deployment,
+  operator step): the `.p8` auth key and `APNS_KEY_ID` / `APNS_TEAM_ID` /
+  `APNS_AUTH_KEY(_PATH)` / `APNS_TOPIC` in `.env`, plus `pip install
+  'prefrontal[apns]'`. Full steps: `docs/deployment.md` §6a. If those are
+  configured, this person needs no per-user route — connecting the app (Step 5)
+  registers their token and their nudges route to their own device.
+- **On a multi-user box**, delivery is still per-user by device token: a user with
+  no registered token is *computed* but not delivered to, so nudges never land on
+  someone else's phone. Getting the app connected (Step 5) is what registers it.
 
-  ```sh
-  prefrontal user route <handle> --ntfy-topic prefrontal-<handle>-<random>
-  #   --ntfy-server / --ntfy-token / --pushover-user-key / --pushover-token also available
-  #   run it with no flags to just show the current route; pass '' to clear a field
-  ```
+> **Free-signing dev build?** A build with no paid Apple Developer account has no
+> `aps-environment` entitlement and can't receive APNs. For development only, the
+> deployment can set `PREFRONTAL_NTFY_DEV=1` and fall back to the **ntfy dev
+> shim** — give the person their own topic (`prefrontal user route <handle>
+> --ntfy-topic prefrontal-<handle>-<random>`; `--ntfy-server` / `--ntfy-token`
+> also available; run with no flags to show the route) and have them subscribe the
+> ntfy app to it. ntfy is off by default and never used on a product build.
 
-  This writes the per-user `coaching_state` route keys (`ntfy_topic` /
-  `ntfy_server` / `ntfy_token`, Pushover: `pushover_user_key` / `pushover_token`)
-  that override the env defaults for that user. On a **multi-user** box an unset
-  target does **not** inherit the operator default (that's someone else's phone),
-  so setting this is required, not optional — until you do, their nudges go
-  nowhere rather than to the wrong device.
-
-Then **verify delivery end-to-end before setting up the phone client** — this
-is the fastest way to catch a bad topic/token:
+Then **verify delivery end-to-end** — this is the fastest way to catch a delivery
+misconfiguration:
 
 ```sh
 prefrontal notify --user <handle>            # test push through the real client
 prefrontal notify --user <handle> --channel sound -m "hello from Prefrontal"
 ```
 
-It prints where it routed (ntfy vs Pushover) and the transport result, and exits
-non-zero if nothing is configured. Have the person confirm the push arrived.
+It prints where it routed (native APNs vs the ntfy dev shim) and the transport
+result, and exits non-zero if nothing is configured. Have the person confirm the
+push arrived. For native APNs this runs **after** the app is connected (Step 5),
+since connecting is what registers the device token — there's nothing to push to
+until then; the ntfy dev shim can be verified before, since it routes to a topic.
 
 ## Step 4 — connect their email + calendars (optional)
 
@@ -192,12 +197,12 @@ already substituted, then point to the full docs for depth. Fill the blanks:
 
 - `<base-url>`  → the deployment origin from Step 0
 - `<token>`    → their token from Step 1 (or the shared secret on a solo deploy)
-- `<ntfy-server>` / `<ntfy-topic>` → from Step 3
+- `<ntfy-server>` / `<ntfy-topic>` → only for a free-signing dev build (Step 3's
+  ntfy dev-shim fallback); omit the ntfy block entirely on a product build
 
 **If they're using the native iOS app**, lead with the QR — it fills in the base
-URL + token by scanning, so they never hand-type the token. Generate it (bundles
-their ntfy route automatically; `--rotate` mints a fresh token to embed since the
-original is shown only once):
+URL + token by scanning, so they never hand-type the token. Generate it (`--rotate`
+mints a fresh token to embed since the original is shown only once):
 
 ```sh
 prefrontal user connect-link <handle> --qr --rotate    # needs `pip install 'prefrontal[qr]'`
@@ -221,10 +226,17 @@ literal):
 it with the Camera app and tap "Open in Prefrontal"). No app yet? Enter
 `<base-url>` and your token by hand in the connect step.
 
-**2. ntfy (notifications)**
-1. Install the **ntfy** app (iOS/Android).
-2. Subscribe to topic **`<ntfy-topic>`** on server **`<ntfy-server>`**.
-3. You should already have gotten a test push — if not, tell the operator.
+**2. Allow notifications (native push)**
+1. On first launch, tap **Allow** when Prefrontal asks to send notifications. That
+   registers your device for **native push** — no second app, no topic to
+   subscribe to. Nudges arrive as normal iOS notifications with one-tap action
+   buttons (Ate / Drank / Made it / …).
+2. You should shortly get a test push — if not, tell the operator.
+
+> **Free-signing build only (no push):** if the operator says this build can't
+> receive native push, install the **ntfy** app, subscribe to topic
+> **`<ntfy-topic>`** on server **`<ntfy-server>`**, and pushes arrive there
+> instead. Skip this on a normal install.
 
 **3. One-tap logging (native — no URLs to paste)**
 The app ships **App Intents** that authenticate off the shared token and drive the

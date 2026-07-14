@@ -167,11 +167,17 @@ class Settings:
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     # Delivery layer — operator *defaults* for the native publishing client
-    # (:mod:`prefrontal.integrations.delivery`). Per-user routing in
-    # ``coaching_state`` (``ntfy_topic``/``pushover_user_key``/… — multi-tenant
-    # §6.5) overrides these; a user with none set falls back here. All empty is
-    # the local-first default: the delivery client no-ops and nothing leaves the
-    # host until a topic/key is configured.
+    # (:mod:`prefrontal.integrations.delivery`). Prefrontal is iOS-only, so the
+    # product push transport is native APNs (below); per-user routing in
+    # ``coaching_state`` (``apns_token``/``twilio_to``/… — multi-tenant §6.5)
+    # overrides these. All empty is the local-first default: the delivery client
+    # no-ops and nothing leaves the host until routing is configured.
+    #
+    # ntfy is a **dev-only shim** — off unless ``PREFRONTAL_NTFY_DEV`` is set — so
+    # a free-signing build (no ``aps-environment`` entitlement, hence no APNs) can
+    # still receive server-driven push in development. The fields below are read
+    # only when that flag is on.
+    ntfy_dev: bool = False
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
     ntfy_token: str = ""
@@ -181,10 +187,8 @@ class Settings:
     # ``{oauth_base_url}/brand/app-icon.png`` — the same origin the phone already
     # reaches for the one-tap action buttons — which works for a private
     # deployment. Set this only to point at a differently-hosted image; a per-user
-    # ``ntfy_icon`` coaching key overrides it per recipient.
+    # ``ntfy_icon`` coaching key overrides it per recipient. (Dev shim only.)
     ntfy_icon: str = ""
-    pushover_token: str = ""
-    pushover_user_key: str = ""
     # Speak ``voice``-channel nudges aloud on the host via macOS ``say``. Off by
     # default (it only helps when you're at the machine); a per-user
     # ``tts_enabled`` coaching key overrides this.
@@ -206,12 +210,13 @@ class Settings:
     # call never rings another's phone). The account creds above are shared; only
     # this recipient number is per-user.
     twilio_to: str = ""
-    # APNs (native iOS push) — an alternative to ntfy for the native-app users
-    # who register a device token (per-user ``apns_token`` in ``coaching_state``).
+    # APNs (native iOS push) — the product push transport. Native-app users
+    # register a device token (per-user ``apns_token`` in ``coaching_state``).
     # Token-based auth: a .p8 key (its PEM contents), its key id, and the team id;
     # ``apns_topic`` is the app bundle id. These are operator/account credentials
     # (shared), like the Twilio account — only the device token is per-user. Empty
-    # ⇒ APNs off, and delivery falls back to ntfy. See docs/multi-tenant.md.
+    # ⇒ APNs off, and the nudge no-ops (or falls to the dev-only ntfy shim, if
+    # ``PREFRONTAL_NTFY_DEV`` is set). See docs/multi-tenant.md.
     apns_key_id: str = ""
     apns_team_id: str = ""
     apns_auth_key: str = ""   # the .p8 private key PEM contents
@@ -509,13 +514,13 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
             "GEOCODER_USER_AGENT",
             "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)",
         ),
+        ntfy_dev=os.environ.get("PREFRONTAL_NTFY_DEV", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         ntfy_server=os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
         or "https://ntfy.sh",
         ntfy_topic=os.environ.get("NTFY_TOPIC", ""),
         ntfy_token=os.environ.get("NTFY_TOKEN", ""),
         ntfy_icon=os.environ.get("NTFY_ICON", ""),
-        pushover_token=os.environ.get("PUSHOVER_TOKEN", ""),
-        pushover_user_key=os.environ.get("PUSHOVER_USER_KEY", ""),
         tts_enabled=os.environ.get("PREFRONTAL_TTS_ENABLED", "").strip().lower()
         in ("1", "true", "yes", "on"),
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),

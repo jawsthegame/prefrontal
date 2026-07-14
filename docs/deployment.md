@@ -8,20 +8,25 @@ wires up the integrations from the README stack:
 - **Native iOS app** — one-tap outcome logging (App Intents) and location
   triggers (geofences / significant-change), with **iOS Shortcuts** as the
   free-signing fallback
-- **ntfy** (Pushover optional) — notification delivery, with one-tap action buttons
+- **Native APNs push** — the product notification transport, with one-tap action
+  buttons (see §6a). ntfy survives only as a **dev-only shim**
+  (`PREFRONTAL_NTFY_DEV=1`) for free-signing builds with no APNs
+- **Twilio** — voice-call escalation for the `voice`/critical channel
 - **Tailscale** — secure remote access from your phone
 
 **Architecture for this setup:** Prefrontal runs as-is — it is the *memory +
 webhook* core. It stores episodes, derives the behavioral profile, and serves it
-over HTTP. **n8n does the orchestration**: it fetches the profile, calls Ollama
-to compose a reminder, delivers it via ntfy (Pushover optional), and logs the result back
-into Prefrontal. Outcome capture ("Made it" / "Missed it") goes straight from the
-app's App Intent (or a fallback Shortcut) to Prefrontal.
+over HTTP. The native `prefrontal coach --deliver` tick composes and delivers
+nudges itself over **native APNs push** (§19a); a free-signing build with no APNs
+falls back to the **ntfy dev shim** (`PREFRONTAL_NTFY_DEV=1`). **n8n** still does
+optional orchestration where you want it (fetch the profile, call Ollama to
+compose, log results back). Outcome capture ("Made it" / "Missed it") goes
+straight from the app's App Intent (or a fallback Shortcut) to Prefrontal.
 
 ```
 App Intent (one-tap) ───────────────► POST /webhooks/shortcut ─► episodes
   (Shortcut on free-signing installs)                                │
-n8n schedule ─► GET /profile ─► Ollama ─► ntfy ─► POST /webhooks/n8n
+coach --deliver ─► native APNs push (ntfy dev shim on free-signing builds)
 ```
 
 The glue files referenced below live in [`../deploy/`](../deploy/).
@@ -246,6 +251,41 @@ curl -s -X POST http://localhost:8000/webhooks/shortcut \
 
 ---
 
+## 6a. Native push delivery (APNs — the product transport)
+
+Pushes reach the phone over **Apple Push Notification service (APNs)**, which
+renders the real notification action buttons (Ate / Drank / Made it / …). This is
+the default and only product delivery path; the app registers its device token on
+first launch (`POST /route/apns-token`), so there's no per-user topic to hand out.
+
+1. In the Apple Developer portal, create a **.p8 APNs auth key** (Keys → new key,
+   *Apple Push Notifications service* enabled). Note the **Key ID** and your
+   **Team ID**; download the `.p8` once.
+2. Install the push extra and set the signing creds in `.env`:
+
+   ```ini
+   APNS_KEY_ID=ABC123DEF4
+   APNS_TEAM_ID=TEAM123456
+   APNS_AUTH_KEY_PATH=/Users/you/src/prefrontal/AuthKey_ABC123DEF4.p8
+   #   (or inline the PEM in APNS_AUTH_KEY)
+   APNS_TOPIC=com.yourorg.prefrontal      # the app's bundle id
+   ```
+
+   ```bash
+   pip install 'prefrontal[apns]'
+   ```
+3. Verify end-to-end once the app has launched (and registered its token):
+   `prefrontal notify --user <handle>` publishes a test push through the same
+   native delivery client the coaching tick uses, and prints the transport result.
+
+> **Free-signing build (no paid Apple Developer account)?** Such a build has no
+> `aps-environment` entitlement and can't receive APNs. For development only, set
+> `PREFRONTAL_NTFY_DEV=1` and configure the ntfy shim (§7's *Configure once* env
+> vars) so a server-driven push still reaches the device over ntfy. ntfy is
+> **off by default** and never used on a product build.
+
+---
+
 ## 7. n8n (orchestration + delivery)
 
 Install via npm (n8n is not a Homebrew formula). The native `isolated-vm`
@@ -283,19 +323,24 @@ after is just *Import from File → Active*:
    | Variable | Example | Used for |
    |---|---|---|
    | `PREFRONTAL_BASE_URL` | `http://127.0.0.1:8000` | the Prefrontal API origin (use `127.0.0.1`, **not** `localhost` — see the gotcha above) |
-   | `NTFY_SERVER` | `https://ntfy.sh` | the ntfy server (point at a self-hosted one to stay local) |
-   | `NTFY_TOPIC` | `prefrontal-me` | your ntfy topic (subscribe your phone to it) |
+   | `NTFY_SERVER` | `https://ntfy.sh` | *(dev shim only)* the ntfy server — needed only for a free-signing build with no APNs (`PREFRONTAL_NTFY_DEV=1`); point at a self-hosted one to stay local |
+   | `NTFY_TOPIC` | `prefrontal-me` | *(dev shim only)* the ntfy topic to publish to on a free-signing build (subscribe your phone to it) |
 
    Nodes reference them as expressions, e.g. `={{ $env.PREFRONTAL_BASE_URL }}`.
    (Self-host note: leave `N8N_BLOCK_ENV_ACCESS_IN_NODE` unset/`false` — the
    default — so expressions can read `$env`.)
 
+   > The `NTFY_*` vars matter only if you deliver over the **ntfy dev shim** on a
+   > free-signing build. On a product build delivery is **native APNs push**
+   > (§6a), which needs no n8n publish node — `prefrontal coach --deliver` sends
+   > it directly.
+
    **Verify delivery end-to-end** before wiring the workflows: `prefrontal notify
    --user <handle>` publishes a test push through the same native delivery client
-   the coaching tick uses (per-user route over the `NTFY_*`/Pushover defaults). It
-   prints where it routed and the transport result, and exits non-zero if nothing
-   is configured — so you can confirm your phone gets the push first. Add `-m` for
-   a custom message or `--channel sound` to make it noisy.
+   the coaching tick uses (native APNs push, or the ntfy dev shim on a free-signing
+   build). It prints where it routed and the transport result, and exits non-zero
+   if nothing is configured — so you can confirm your phone gets the push first.
+   Add `-m` for a custom message or `--channel sound` to make it noisy.
 
 2. **The token credential** — create **one** *Header Auth* credential named
    exactly **`Prefrontal Token`** (Credentials → New → *Header Auth*; header
@@ -325,9 +370,12 @@ calendar feed URLs, Twilio SID/number/phone — since those aren't Prefrontal's.
    `={{ $env.NTFY_SERVER }}` on `={{ $env.NTFY_TOPIC }}` (all from *Configure once*
    above). Subscribe your phone to that ntfy topic. The push carries the
    endpoint's signed **Made it / Missed it** buttons (see the one-tap note below).
-   *(Prefer Pushover? The native Python delivery client (`prefrontal coach
-   --deliver`) still supports it; or swap this node for a Pushover HTTP node.)*
 4. **Execute Workflow** once to test, then toggle it **Active**.
+
+> This n8n-to-ntfy publish is the **legacy / dev-shim** delivery path — it's how a
+> free-signing build (`PREFRONTAL_NTFY_DEV=1`) still gets server-driven push. On a
+> product build, `prefrontal coach --deliver` (§19a) delivers the same nudge over
+> **native APNs push** with no n8n publish node.
 
 > **For a *travel-time* estimate** (rather than the static `lead_minutes`
 > fallback), Prefrontal needs two things: the phone's recent location (the app
@@ -346,8 +394,8 @@ calendar feed URLs, Twilio SID/number/phone — since those aren't Prefrontal's.
 > further push or 150% call fires. The buttons are only minted when both
 > `OAUTH_BASE_URL` (your Tailscale HTTPS origin — the tap fires off-box) and
 > `SESSION_SECRET` (signs the link) are set; otherwise `actions` is empty and you
-> get a plain notification. *(A signed `GET /nudge/dismiss` link still exists for
-> a Pushover-style single "silence" URL if you build a Pushover node instead.)*
+> get a plain notification. (Native APNs push renders the same actions as real
+> notification buttons.)
 
 This is a starting template — node `typeVersion`s can differ across n8n
 releases, so adjust any node n8n flags on import.
@@ -405,8 +453,9 @@ n8n (every minute)     ─► POST /webhooks/outing/check (returns due nudges)
    `REPLACE_WITH_TWILIO_ACCOUNT_SID` in the URL, and set `To` (your phone) and
    `From` (your Twilio number). The spoken text comes from `{{ $json.message }}`.
 4. **ntfy Push (50% / 100%)** node → posts to `={{ $env.NTFY_SERVER }}` on
-   `={{ $env.NTFY_TOPIC }}`; it carries the **I'm back / Abandon** buttons.
-   (Prefer Pushover? Swap this for a Pushover HTTP node.)
+   `={{ $env.NTFY_TOPIC }}`; it carries the **I'm back / Abandon** buttons. (This
+   is the legacy / dev-shim path; a product build delivers these over native APNs
+   push via `prefrontal coach --deliver`.)
 5. (Optional) Set your name for the voice message:
    `prefrontal` has a `user_name` coaching key —
    `sqlite3 prefrontal.db "UPDATE coaching_state SET value='Tom' WHERE key='user_name';"`
@@ -705,8 +754,9 @@ learned `channel_response` bump), and suppresses on quiet hours + debounce.
 - Preview: `prefrontal coach` (add `--dry-run` to see cues before suppression).
 - Deliver (recommended, native): run `prefrontal coach --deliver` on a launchd
   timer — see [§19](#19-native-scheduling-retiring-the-n8n-nudge-workflows). This
-  publishes each fired cue itself (ntfy/Pushover/TTS with the signed one-tap
-  buttons) and runs the overwhelm check on the same tick, so it replaces the
+  publishes each fired cue itself (native APNs push with the signed one-tap action
+  buttons — TTS/Twilio for the escalation channels, the ntfy dev shim on a
+  free-signing build) and runs the overwhelm check on the same tick, so it replaces the
   `coach-check`, `hyperfocus-check`, `departure-reminder`, and `panic-check` n8n
   workflows in one job.
 - Deliver (legacy, n8n): import [`../deploy/n8n/coach-check.workflow.json`](../deploy/n8n/coach-check.workflow.json)
@@ -887,9 +937,9 @@ auto-starts a session with no separate `focus-arm-check` poll.
 ```sh
 # One job covers everyone: coach.sh runs `focus arm --all-users` then
 # `coach --deliver --all-users` (no handle to set). Delivery is per-user — a user
-# with no ntfy/Pushover target of their own is computed but not delivered to, so
-# nudges never land on someone else's device. coach.sh auto-detects the repo root,
-# so no path editing is needed.
+# with no registered APNs device token (nor ntfy dev-shim target) is computed but
+# not delivered to, so nudges never land on someone else's device. coach.sh
+# auto-detects the repo root, so no path editing is needed.
 deploy/coach.sh                                       # run once by hand — should print what fires
 bash deploy/install-launchd.sh com.prefrontal-coach   # fills paths, loads it
 ```

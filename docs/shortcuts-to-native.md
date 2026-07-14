@@ -45,7 +45,7 @@ The app runs two delivery/ingestion realities side by side:
 |---|---|---|
 | **Auth** | `X-Prefrontal-Token` via `APIClient` off the App Group (`ios/Prefrontal/Networking/APIClient.swift`) | same token, pasted into each shortcut |
 | **Config** | `prefrontal://connect?url=…&token=…` QR/deep-link → `AppConfig` (`ConnectPayload.swift`) | manual URL + token per shortcut |
-| **Push** | APNs → `POST /route/apns-token`; server picks APNs vs ntfy per device (`PushNotifications.swift`, `integrations/delivery.py`) | ntfy / Pushover |
+| **Push** | native APNs → `POST /route/apns-token` (the product transport; `PushNotifications.swift`, `integrations/delivery.py`) | ntfy DEV-ONLY shim (`PREFRONTAL_NTFY_DEV=1`) |
 | **Push actions** | `UNNotificationCategory`/`UNNotificationAction` mirroring server buttons, fire signed `/nudge/act` (`PushNotifications.swift`) | ntfy inline buttons |
 | **Leave-home** | `CLCircularRegion` geofence → `/webhooks/departure/left` + `/webhooks/location` (`Location/LocationMonitor.swift`) | "Leaving Home" automation |
 | **Sessions** | Live Activities for outing/focus (`Activities/LiveActivityManager.swift`) | — |
@@ -176,9 +176,12 @@ the minimum target reaches iOS 26.
 
 - **Paid Apple Developer account required** for APNs, App Groups, and Live
   Activities. `aps-environment` is intentionally omitted from the committed
-  `Prefrontal.entitlements` (`ios/README.md`), so a **free-signing** build falls
-  back to ntfy — and, for capture, to Shortcuts. This is the core reason the end
-  state keeps Shortcuts as a documented fallback rather than deleting them.
+  `Prefrontal.entitlements` (`ios/README.md`), so a **free-signing** build can't
+  receive native APNs push. On such a build, push falls back to the **ntfy
+  DEV-ONLY shim** (`PREFRONTAL_NTFY_DEV=1`, off by default) and, for capture, to
+  Shortcuts — while **native APNs push is the product path**. This is the core
+  reason the end state keeps Shortcuts (and the ntfy shim) as a documented
+  free-signing fallback rather than deleting them.
 - **App Group is the auth substrate** for intents/widgets (they can't reach the
   main-actor `AppConfig`). Any new intent must build its `APIClient` via
   `APIClient(shared:)`, like the existing ones.

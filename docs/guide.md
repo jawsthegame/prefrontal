@@ -15,21 +15,26 @@ for the deeper design of individual agents see the specs linked from
 ```
 iOS app (App Intents / geofence / widget) ─┐
 Shortcuts (free-signing fallback) ─────────┴─►  Prefrontal API (FastAPI, :8000)  ─►  SQLite (on-box)
-                                                         ▲
-                                                         │  polls every 1–15 min
-                       ntfy / Pushover / Twilio  ◄──  n8n  ──►  Ollama (local LLM, optional)
-                       (notifications, calls)
+                                                         │
+                                                         ├─►  native APNs push (product) / Twilio call
+              coach --deliver / n8n ─────────────────────┘     (ntfy dev shim on free-signing builds)
+                       ▲
+                       └── Ollama (local LLM, optional) composes prose
 ```
 
 Your phone's clients (App Intents, geofences, or a fallback Shortcut) **POST
-directly** to the Prefrontal API; **n8n** independently polls the API on a
-schedule, composes nudges with Ollama, and delivers them out.
+directly** to the Prefrontal API; the native `prefrontal coach --deliver` tick
+(or, optionally, **n8n**) polls the data on a schedule, composes nudges with
+Ollama, and delivers them out.
 
 - **Prefrontal** is the brain: a FastAPI app over a SQLite database. Nothing
   leaves the machine unless you wire an outbound step.
-- **n8n** is the muscle: it polls Prefrontal on a schedule and delivers nudges
-  (ntfy pushes by default, Pushover optional, Twilio calls for the top of the
-  ladder). Workflows live in [`../deploy/n8n/`](../deploy/n8n).
+- **Delivery** is native: `prefrontal coach --deliver` publishes each nudge over
+  **native APNs push** (the product transport — real notification action buttons),
+  with **Twilio** calls for the top of the escalation ladder and local TTS on the
+  host. A free-signing build with no APNs falls back to the **ntfy dev shim**
+  (`PREFRONTAL_NTFY_DEV=1`). **n8n** stays as optional orchestration muscle
+  (workflows live in [`../deploy/n8n/`](../deploy/n8n)).
 - **Ollama** is optional local inference for nicer phrasing and triage; every
   feature has a deterministic fallback when it's down. Heavier-reasoning agents
   can optionally use **Claude** instead — see "Inference providers" below.
@@ -368,8 +373,10 @@ curl -s "$PF/briefing" -H "X-Prefrontal-Token: $TOK" | python3 -c 'import sys,js
 # CLI: prefrontal briefing   (add --llm for Ollama prose)
 ```
 
-Delivered each morning by the [`morning-briefing`](../deploy/n8n/morning-briefing.workflow.json)
-workflow via ntfy.
+Delivered each morning by `prefrontal briefing --deliver --all-users` on a
+launchd timer — a native APNs push through each user's own route (the legacy
+[`morning-briefing`](../deploy/n8n/morning-briefing.workflow.json) n8n workflow is
+its predecessor).
 
 ---
 

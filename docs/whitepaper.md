@@ -123,9 +123,10 @@ behavioral memory, rather than one monolithic assistant. The primitives:
   turned into a validated, **previewed** action list against a whitelist of
   allowed operations — you confirm before anything is written. No forms.
 
-- **Delivery & escalation.** Pushover / ntfy today, text-to-speech and voice
-  (via a workflow tool) for the top of the escalation ladder, all reachable
-  remotely over Tailscale.
+- **Delivery & escalation.** Native APNs push (with one-tap action buttons) as
+  the product transport, a Twilio voice call and text-to-speech for the top of
+  the escalation ladder, all reachable remotely over Tailscale. (A dev-only ntfy
+  shim covers free-signing builds with no APNs.)
 
 ---
 
@@ -231,7 +232,8 @@ iOS Shortcuts / Webhooks
         ↓
   Coaching tick       ← fans over modules' evaluate(), picks channel, gates on quiet hours
         ↓
-  Delivery Layer      ← Pushover / ntfy / TTS / voice, with escalation
+  Delivery Layer      ← native APNs push / Twilio voice / TTS, with escalation
+                        (ntfy is a dev-only shim for free-signing builds)
 ```
 
 | Component | Role |
@@ -243,7 +245,7 @@ iOS Shortcuts / Webhooks
 | **n8n** | Workflow orchestration and the top-of-ladder voice path. |
 | **iOS Shortcuts** | Location triggers and one-tap outcome logging. |
 | **Tailscale** | Private remote access — no public exposure. |
-| **Pushover / ntfy** | Notification delivery. |
+| **APNs (native push)** | Notification delivery — one-tap action buttons (ntfy is a dev-only shim for free-signing builds). |
 | Anthropic API (optional) | Heavier reasoning, per-agent, opt-in. |
 
 Two properties are worth calling out:
@@ -287,7 +289,7 @@ check-in, self-serve invites). What's still ahead:
 - **Sharper learning** — deeper context-conditioned patterns and learned channel
   response, building on today's time-of-day bias and recency-weighted pass.
 - **A source-agnostic triage agent** — routing arbitrary inbound events (mail
-  triage is the first slice); native Pushover/TTS beyond today's ntfy default.
+  triage is the first slice), delivered over the native APNs push path.
 
 See [`ROADMAP.md`](../ROADMAP.md) for the detailed, honestly-scoped list of what's
 planned, and [`CHANGELOG.md`](../CHANGELOG.md) for what's already shipped.

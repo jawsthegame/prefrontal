@@ -34,7 +34,7 @@ For the moments you're too overwhelmed to think. On demand, it cuts through ever
 The counterweight to a system whose job is nudging. When a day genuinely goes rough — a missed hard commitment, a pile of misses — it stops nudging and shifts to reassurance: acknowledges the rough day without judgment, then hands back a concrete plan (what still fits, what's safe to move, and one tiny next step). Opt-in, tone-calibrated, and capped at once a day so it never becomes a pile-on.
 
 **Self-care checks**
-The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** on ntfy, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in. At day's end it can read those taps back as a *timeline* and name the gaps a raw tally hides — you drank all six glasses, but your first wasn't until 3pm; six hours passed between two bio breaks — as an opt-in evening recap (and on demand via `prefrontal self-care review` / `GET /self-care/review`).
+The nudges that are *supposed* to interrupt. In deep focus you forget to eat or drink — so from mid-morning it asks "have you eaten?", and through the day nudges you to drink water toward a daily target, deliberately overriding the protect-the-flow stance that silences everything else. One-tap **Ate** / **Drank** / **Snooze** action buttons on the native push, respects your responsive hours, and each check goes quiet once you've hit its target for the day. Opt-in. At day's end it can read those taps back as a *timeline* and name the gaps a raw tally hides — you drank all six glasses, but your first wasn't until 3pm; six hours passed between two bio breaks — as an opt-in evening recap (and on demand via `prefrontal self-care review` / `GET /self-care/review`).
 
 **Behavioral memory**
 Logs outcomes — did you leave on time, did you complete the task, did you respond to the reminder — and uses that data to improve predictions and timing over time.
@@ -89,7 +89,8 @@ Native iOS app (App Intents / geofence / push) · Shortcuts (fallback) · Webhoo
         ↓
   Coaching Agent        ← generates briefings, reminders, check-ins
         ↓
-  Delivery Layer        ← ntfy (default) / Pushover / TTS, one-tap action buttons
+  Delivery Layer        ← native APNs push (one-tap action buttons) / Twilio voice call / TTS
+                          (ntfy is a dev-only shim for free-signing builds)
 ```
 
 The memory layer is the core. Everything the system learns about your behavior lives in a local SQLite database. A summarizer agent periodically compresses patterns into a profile document that gets injected into every agent's system prompt — so behavioral context travels with every interaction.
@@ -128,7 +129,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Challenge-area modules | `prefrontal/modules/` | ✅ Framework + 7 modules, all wired end-to-end (5 EF challenges + closed-loop trip tracking + an opt-in Self-Care meal/water check) |
 | Shared household sheet / Parent pack | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Co-parent facts, agreements & star charts, shared shopping list, load-balance view, daily delta digest, weekly mental-load check-in, self-serve invites; `/kids` + `/family` views, `prefrontal household …` |
 | Recurring shared chores | `prefrontal/household.py`, `webhooks/routers/household.py` | ✅ Owner-assigned daily jobs (run the dishwasher, pack lunches) with a lead-time reminder to the owner and — if it slips past due — a gentle heads-up to the *other* parent so the morning isn't a surprise; one-tap **Done**, `POST /webhooks/household/chores/check`, `prefrontal household chore` |
-| Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes to ntfy / Pushover / TTS with one-tap action buttons; `prefrontal coach --deliver` |
+| Native delivery | `prefrontal/integrations/delivery.py` | ✅ Publishes native APNs push (one-tap action buttons) / Twilio voice call / TTS; ntfy is a dev-only shim (`PREFRONTAL_NTFY_DEV=1`) for free-signing builds; `prefrontal coach --deliver` |
 | Location-Aware Task Anchor | `prefrontal/modules/location_anchor.py` | ✅ Wired end-to-end — escalation + location-gating + auto-close + n8n/Twilio workflow |
 | Implementation Intentions | `prefrontal/modules/implementation_intention.py` | ✅ Wired end-to-end — `implementation_intentions` table, cue-matcher on the coaching tick (curated place via `geo.nearest_place` and/or a `HH:MM-HH:MM` band), one-utterance capture through the NL assistant (`add_if_then`); delivered through the shared channel/debounce path, no new endpoint |
 | Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,domain,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop. Surfaced visually on the **Trips** page (`/trips/board`) |
@@ -219,7 +220,7 @@ prefrontal modules --tutorial hyperfocus # just one
 ```
 
 To run it always-on on a Mac mini and wire up Ollama, n8n, the native iOS app
-(with iOS Shortcuts as the free-signing fallback), and Pushover/Ntfy, follow
+(with iOS Shortcuts as the free-signing fallback), and native APNs push, follow
 [`docs/deployment.md`](docs/deployment.md). The glue files (launchd service,
 importable n8n workflow, iOS Shortcut fallback recipe) live in
 [`deploy/`](deploy/).
@@ -247,7 +248,8 @@ Interactive API docs are available at `http://localhost:8000/docs` while the ser
 | SQLite | Behavioral memory |
 | Google Apps Script | Work email digest (stays within Google) — *planned, not yet implemented* |
 | Native iOS app (Shortcuts fallback) | App Intents, geofences, widgets, push; one-tap logging (Shortcuts on free-signing installs) |
-| ntfy (Pushover optional) | Notification delivery — one-tap action buttons |
+| APNs (native push) | Notification delivery — one-tap action buttons (ntfy is a dev-only shim for free-signing builds) |
+| Twilio | Voice-call escalation (the `voice`/critical channel) |
 | Tailscale | Remote access |
 
 LLM inference uses a local model via Ollama for routing and triage. Heavier reasoning tasks can optionally use the Anthropic API — configurable per agent via `ANTHROPIC_AGENTS` (assistant / summarizer / briefing / sensor / triage), with Ollama as the fallback. See "Inference providers" in [`docs/guide.md`](docs/guide.md).
