@@ -47,7 +47,7 @@ struct MailView: View {
                 Spacer()
                 if let subtitle { Text(subtitle).font(.caption2).foregroundStyle(Brand.muted) }
             }
-            ForEach(Array(messages.enumerated()), id: \.offset) { idx, m in
+            ForEach(Array(messages.enumerated()), id: \.element.id) { idx, m in
                 if idx > 0 { Divider().overlay(Brand.line) }
                 MailRow(message: m)
             }
