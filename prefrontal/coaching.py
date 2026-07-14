@@ -26,7 +26,7 @@ encouragement/recovery layer folds in as one more cue producer (spec §9) via
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -569,16 +569,35 @@ def _fit_receptivity_model(store: Any, timezone: str) -> ReceptivityModel | None
     return ReceptivityModel.fit((cell, ack) for _, cell, ack in obs)
 
 
-def receptivity_gate(store: Any, ctx: CoachContext) -> Any:
-    """Build the per-tick receptivity gate: ``gate(channel: str) -> bool``.
+@dataclass(frozen=True)
+class _ReceptivityGate:
+    """The per-tick receptivity verdict, callable as ``gate(channel) -> bool``.
+
+    Carries ``needs_channel`` so :func:`decide` knows whether the verdict actually
+    depends on the candidate channel: the **learned** model conditions on it (so the
+    channel must be chosen first), but the **rules** fallback returns one verdict for
+    the whole tick — letting ``decide`` short-circuit a non-receptive rules tick
+    *before* the per-cue :func:`choose_channel` pattern read.
+    """
+
+    needs_channel: bool
+    _predict: Callable[[str | None], bool]
+
+    def __call__(self, channel: str | None = None) -> bool:
+        return self._predict(channel)
+
+
+def receptivity_gate(store: Any, ctx: CoachContext) -> _ReceptivityGate:
+    """Build the per-tick receptivity gate — callable as ``gate(channel) -> bool``.
 
     Computed once per tick by :func:`decide`. When the learned model has earned the
     right to gate (:func:`learned_receptivity_active`) and there's data to fit,
-    returns a closure that predicts the acknowledgement probability for *this tick's*
-    context (local hour, weekday/weekend, recent dosage) at the candidate ``channel``
-    and reports receptive iff it clears :data:`RECEPTIVITY_MIN_PROB_KEY`. Otherwise
-    — uncalibrated, no data, or any failure — falls back to the rules-based
-    :func:`receptive` (a single per-tick verdict returned for every channel), so the
+    returns a channel-conditioned gate (``needs_channel=True``) that predicts the
+    acknowledgement probability for *this tick's* context (local hour, weekday/weekend,
+    recent dosage) at the candidate ``channel`` and reports receptive iff it clears
+    :data:`RECEPTIVITY_MIN_PROB_KEY`. Otherwise — uncalibrated, no data, or any
+    failure — falls back to the rules-based :func:`receptive` as a single per-tick
+    verdict (``needs_channel=False``, the same verdict for every channel), so the
     shipped behaviour is unchanged until the model is proven.
 
     Fails open like the rules gate: a prediction that raises treats the user as
@@ -592,7 +611,7 @@ def receptivity_gate(store: Any, ctx: CoachContext) -> Any:
                 dosage = dosage_count_today(store, ctx.now)
                 threshold = store.get_float(RECEPTIVITY_MIN_PROB_KEY, DEFAULT_IGNORE_ACK_RATE)
 
-                def _learned(channel: str) -> bool:
+                def _learned(channel: str | None) -> bool:
                     try:
                         from prefrontal.receptivity import context_cell
 
@@ -603,11 +622,11 @@ def receptivity_gate(store: Any, ctx: CoachContext) -> Any:
                                      exc_info=True)
                         return True
 
-                return _learned
+                return _ReceptivityGate(needs_channel=True, _predict=_learned)
     except Exception:  # noqa: BLE001 — any gate-build failure falls back to the rules
         logger.debug("learned receptivity gate build failed; using rules", exc_info=True)
     is_receptive = receptive(store, ctx)
-    return lambda _channel: is_receptive
+    return _ReceptivityGate(needs_channel=False, _predict=lambda _channel: is_receptive)
 
 
 def choose_channel(store: Any, cue: Cue, ctx: CoachContext) -> str:
@@ -811,8 +830,14 @@ def decide(
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
+        non_critical = cue.urgency != "critical"
+        # Rules gate (channel-independent): decide before the per-cue channel pick, so
+        # a non-receptive tick drops its cues without N `choose_channel` pattern reads.
+        if non_critical and not gate.needs_channel and not gate():
+            continue
         channel = choose_channel(store, cue, ctx)
-        if cue.urgency != "critical" and not gate(channel):
+        # Learned gate conditions on the chosen channel, so it checks after the pick.
+        if non_critical and gate.needs_channel and not gate(channel):
             continue
         candidates.append(
             Decision(

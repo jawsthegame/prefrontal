@@ -1219,9 +1219,29 @@ def test_gate_falls_back_to_rules_when_uncalibrated():
     store = _FakeStore()
     store.episodes = [_nudge_outcome(False) for _ in range(3)]
     gate = receptivity_gate(store, _ctx())
+    assert gate.needs_channel is False  # rules verdict is channel-independent
     assert gate("push") is False  # rules verdict, ignoring the channel arg
     # And receptive when there's no ignore history.
     assert receptivity_gate(_FakeStore(), _ctx())("push") is True
+
+
+def test_decide_rules_gate_short_circuits_before_channel_reads():
+    # When the rules gate holds non-critical cues, decide() must not pay the per-cue
+    # choose_channel() pattern read — the channel-independent verdict short-circuits.
+    class _CountingStore(_FakeStore):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.pattern_reads = 0
+
+        def get_patterns(self, pattern_type=None):
+            self.pattern_reads += 1
+            return super().get_patterns(pattern_type)
+
+    store = _CountingStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]  # rules gate: not receptive
+    decisions = decide(store, [_cue("nudge", dedup="a"), _cue("nudge", dedup="b")], _ctx())
+    assert decisions == []
+    assert store.pattern_reads == 0  # no channel_response reads for dropped cues
 
 
 def test_decide_uses_learned_gate_to_hold_low_probability_context():
@@ -1234,7 +1254,10 @@ def test_decide_uses_learned_gate_to_hold_low_probability_context():
         + _weekday_series(6, hour=2, acknowledged=True)    # night push → acked
     )
     cues = [_cue("nudge", dedup="n"), _cue("critical", dedup="c")]
-    decisions = decide(store, cues, _ctx())  # NOON, a Thursday, inside quiet hours window
+    # NOON is inside the responsive window, so the nudge isn't held by quiet hours —
+    # it's the learned gate predicting a low ack-probability for this context that
+    # drops it, while critical bypasses the gate.
+    decisions = decide(store, cues, _ctx())
     assert [d.cue.dedup_key for d in decisions] == ["c"]
 
 

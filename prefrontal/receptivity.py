@@ -90,6 +90,19 @@ DEFAULT_TEST_FRACTION = 0.34
 Cell = tuple[int, str, str, int]
 
 
+@dataclass
+class _Tally:
+    """Mutable per-cell accumulator used while fitting: acks seen and trials seen.
+
+    ``hits`` is a float because an observation's ack is ``1.0``/``0.0`` (so partials
+    stay expressible); ``trials`` is an integer count. Kept distinct so the fit loop
+    reads as what it is, rather than indexing a ``list[float]`` of mixed meaning.
+    """
+
+    hits: float = 0.0
+    trials: int = 0
+
+
 def context_cell(local_dt: datetime, channel: str, dosage: int) -> Cell:
     """Build the context :data:`Cell` a nudge would land in.
 
@@ -141,19 +154,20 @@ class ReceptivityModel:
         (there is nothing to condition on) — :mod:`prefrontal.coaching` treats a
         no-data fit as "fall back to the rules gate".
         """
-        cells: dict[Cell, list[float]] = defaultdict(lambda: [0.0, 0])
+        cells: dict[Cell, _Tally] = defaultdict(_Tally)
         total_hits = 0.0
         total_n = 0
         for cell, ack in observations:
-            cells[cell][0] += ack
-            cells[cell][1] += 1
+            tally = cells[cell]
+            tally.hits += ack
+            tally.trials += 1
             total_hits += ack
             total_n += 1
         pooled = total_hits / total_n if total_n else 0.0
         return cls(
             pooled=pooled,
             alpha=alpha,
-            cells={c: (hits, int(n)) for c, (hits, n) in cells.items()},
+            cells={c: (t.hits, t.trials) for c, t in cells.items()},
         )
 
     @property
