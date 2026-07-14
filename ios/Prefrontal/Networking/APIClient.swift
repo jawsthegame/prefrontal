@@ -45,9 +45,19 @@ struct APIClient {
         self.token = token
     }
 
+    /// Direct init with an explicit endpoint — bypasses the App Group / Keychain
+    /// config the other inits read. Lets unit tests build a client (and assert on
+    /// `request(...)`) without those runtime dependencies.
+    init(baseURL: URL, token: String) {
+        self.baseURL = baseURL
+        self.token = token
+    }
+
     private static let decoder = JSONDecoder()
 
-    private func request(_ method: String, _ path: String, query: [String: String] = [:], body: Data? = nil) throws -> URLRequest {
+    // Internal (not private) so unit tests can assert the built request — the URL,
+    // query, `X-Prefrontal-Token`/`Accept` headers, method, and JSON body/`Content-Type`.
+    func request(_ method: String, _ path: String, query: [String: String] = [:], body: Data? = nil) throws -> URLRequest {
         guard var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) else {
             throw APIError.badURL
         }
