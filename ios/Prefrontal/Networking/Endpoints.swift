@@ -87,6 +87,24 @@ extension APIClient {
     func decomposeTodo(_ id: Int) async throws { try await post("todos/\(id)/decompose") }
     func markStepDone(_ id: Int, step: Int) async throws { try await post("todos/\(id)/steps/\(step)/done") }
 
+    // Todo edits. `deadlineISO` is an offset-aware ISO-8601 string (the server's
+    // to_utc uses the embedded offset); nil clears the deadline. `notes` nil/blank clears.
+    func setTodoDeadline(_ id: Int, deadlineISO: String?) async throws {
+        try await post("todos/\(id)/deadline", json: ["deadline": deadlineISO ?? NSNull()])
+    }
+    func setTodoNotes(_ id: Int, notes: String?) async throws {
+        try await post("todos/\(id)/notes", json: ["notes": notes ?? NSNull()])
+    }
+
+    // Honest-prioritization reads (pure): tasks you keep bailing on, and important
+    // todos left sitting.
+    func stuckTodos() async throws -> [StuckTodo] {
+        try await get("todos/stuck", as: StuckList.self).stuck
+    }
+    func avoidedTodos() async throws -> [AvoidedTodo] {
+        try await get("todos/avoided", as: AvoidedList.self).avoided
+    }
+
     // Delegation — hand a todo to the in-app AI agent or email a human VA.
     func delegateRecipients() async throws -> [String] {
         try await get("todos/delegate-recipients", as: Recipients.self).recipients
