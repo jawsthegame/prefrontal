@@ -60,7 +60,7 @@
   .hero { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 6px; }
   .hero .n { font-size: 36px; font-weight: 760; letter-spacing: -.5px; }
   .hero .u { color: var(--muted); font-size: 15px; }
-  .streak { display: inline-block; background: var(--line); border-radius: 999px;
+  .badge { display: inline-block; background: var(--line); border-radius: 999px;
     padding: 3px 11px; font-size: 13px; font-weight: 600; }
 
   /* horizontal magnitude bars (thin marks, rounded ends, recessive track) */
@@ -308,10 +308,19 @@ function renderFollow(f) {
     return;
   }
   const c = f.counts || {};
-  const streak = f.streak
-    ? `<span class="streak">🔥 ${f.streak} in a row</span>` : "";
+  // A forgiving badge — a comeback, upward momentum, or a personal best — never a
+  // broken-streak "you lost it". Empty (no badge) when there's nothing to celebrate.
+  const atBest = f.best_rate != null && f.recent_rate != null
+    && f.best_rate > 0 && f.recent_rate >= f.best_rate;
+  const badgeText = f.returned ? "💚 Back at it"
+    : f.trend === "up" ? "📈 Building momentum"
+    : atBest ? "Best stretch yet" : "";
+  const badge = badgeText ? `<span class="badge">${badgeText}</span>` : "";
+  // "lately" — the recent, resettable rate; a stray miss barely moves it.
+  const lately = (f.recent_rate != null && f.n >= 5)
+    ? `<span class="u">· lately ${pct(f.recent_rate)}%</span>` : "";
   let html = `<div class="hero"><span class="n">${pct(f.rate)}%</span><span class="u">follow-through</span>
-    <span style="flex:1"></span>${streak}</div>`;
+    ${lately}<span style="flex:1"></span>${badge}</div>`;
   // composition bar (status colours), each segment sized by share, all labelled below
   const segs = ["success", "partial", "miss"].filter((k) => c[k]);
   html += `<div class="compbar">` + segs.map((k) =>

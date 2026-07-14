@@ -87,9 +87,12 @@ struct InsightsView: View {
                     .font(.title.weight(.bold)).foregroundStyle(rateColor(ft.rate))
                 Text("follow-through").font(.subheadline).foregroundStyle(Brand.muted)
                 Spacer()
-                if ft.streak > 0 {
-                    Chip(text: "🔥 \(ft.streak) in a row", color: Brand.good)
+                if let badge = followBadge(ft) {
+                    Chip(text: badge, color: Brand.good)
                 }
+            }
+            if let lately = followLately(ft) {
+                Text(lately).font(.caption).foregroundStyle(Brand.muted)
             }
             HStack(spacing: 10) {
                 splitTag("\(ft.counts.success)", "done", Brand.good)
@@ -106,6 +109,27 @@ struct InsightsView: View {
                 .padding(.top, 2)
             }
         }
+    }
+
+    /// A forgiving follow-through badge — a comeback, upward momentum, or a
+    /// personal best. Never a broken-streak "you lost it"; `nil` (no badge) when
+    /// there's nothing celebratory to say — silence, not a negative.
+    private func followBadge(_ ft: Stats.FollowThrough) -> String? {
+        if ft.returned { return "💚 Back at it" }
+        if ft.trend == "up" { return "📈 Building momentum" }
+        // recentRate is one of the windows best is taken over, so `recent >= best`
+        // means the current stretch ties the personal best — you're at your best.
+        if let best = ft.bestRate, let recent = ft.recentRate, best > 0, recent >= best {
+            return "Best stretch yet"
+        }
+        return nil
+    }
+
+    /// "lately ~70%" — the recent, resettable completion rate (a stray miss barely
+    /// moves it). Muted and low-prominence; hidden until there's a little history.
+    private func followLately(_ ft: Stats.FollowThrough) -> String? {
+        guard ft.n >= 5, let recent = ft.recentRate else { return nil }
+        return "lately ~\(pct(recent))%"
     }
 
     private func splitTag(_ value: String, _ label: String, _ color: Color) -> some View {

@@ -20,6 +20,7 @@ from prefrontal.modules.self_care import (
 )
 from prefrontal.stats import (
     CHORE_SERIES_LEN,
+    FOLLOW_RECENT_WINDOW,
     FOLLOW_SERIES_LEN,
     MAX_ESTIMATE_POINTS,
     build_stats,
@@ -55,7 +56,11 @@ def test_empty_history_is_safe_and_zeroed(scoped):
     assert te["n"] == 0 and te["ratio"] is None and te["direction"] is None
     assert te["contexts"] == [] and te["points"] == []
     ft = data["follow_through"]
-    assert ft["n"] == 0 and ft["rate"] is None and ft["streak"] == 0
+    assert ft["n"] == 0 and ft["rate"] is None
+    # Forgiving momentum signals — no consecutive-success streak to break.
+    assert "streak" not in ft
+    assert ft["recent_rate"] is None and ft["trend"] is None
+    assert ft["returned"] is False and ft["best_rate"] is None
     assert ft["counts"] == {"success": 0, "partial": 0, "miss": 0}
     assert ft["series"] == []
     assert data["channels"] == []
@@ -176,24 +181,73 @@ def test_time_estimation_points_are_capped(scoped):
 # --- follow-through ----------------------------------------------------------
 
 
-def test_follow_through_counts_rate_and_streak(scoped):
-    """Outcome split, success rate, and the trailing-success streak."""
+def test_follow_through_counts_rate_and_recent(scoped):
+    """Outcome split, overall rate, and the recent ("lately") completion rate.
+
+    No consecutive-success streak: a trailing miss must not produce a
+    "you lost it" zero — the whole point of the reframing.
+    """
     for outcome in ["success", "miss", "success", "partial", "success", "success"]:
         scoped.log_episode("task", outcome=outcome)
     ft = build_stats(scoped)["follow_through"]
     assert ft["n"] == 6
     assert ft["counts"] == {"success": 4, "partial": 1, "miss": 1}
     assert ft["rate"] == round(4 / 6, 2)
-    assert ft["streak"] == 2  # the two trailing successes
+    assert "streak" not in ft
+    # Fewer than a full window ⇒ "lately" is just the overall rate so far.
+    assert ft["recent_rate"] == round(4 / 6, 2)
     assert ft["series"] == ["success", "miss", "success", "partial", "success", "success"]
 
 
-def test_follow_through_streak_breaks_on_non_success(scoped):
-    """A trailing miss ⇒ streak 0 even with earlier successes."""
+def test_follow_through_recent_miss_does_not_zero_out(scoped):
+    """A trailing miss barely moves the forgiving signals — no broken-streak drop."""
     for outcome in ["success", "success", "miss"]:
         scoped.log_episode("task", outcome=outcome)
     ft = build_stats(scoped)["follow_through"]
-    assert ft["streak"] == 0
+    # Where a streak would read 0, the recent rate still reflects the two successes.
+    assert ft["recent_rate"] == round(2 / 3, 2)
+    assert ft["returned"] is False  # no lapse ⇒ no comeback badge, but no penalty either
+
+
+def test_follow_through_trend_up_over_prior_window(scoped):
+    """`trend` compares the recent window to the prior one — direction, not a count."""
+    for _ in range(FOLLOW_RECENT_WINDOW):
+        scoped.log_episode("task", outcome="miss")  # a weak prior window
+    for _ in range(FOLLOW_RECENT_WINDOW):
+        scoped.log_episode("task", outcome="success")  # a strong recent window
+    ft = build_stats(scoped)["follow_through"]
+    assert ft["recent_rate"] == 1.0
+    assert ft["trend"] == "up"
+
+
+def test_follow_through_returns_after_a_lapse(scoped):
+    """A ≥ gap-day break followed by a fresh outcome flags `returned` — the comeback
+    the app celebrates in place of an unbroken streak."""
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-01 09:00:00")
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-01 12:00:00")
+    # Five days later — a lapse, then a return.
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-06 09:00:00")
+    ft = build_stats(scoped)["follow_through"]
+    assert ft["returned"] is True
+
+
+def test_follow_through_no_return_without_a_gap(scoped):
+    """Back-to-back days (no lapse) ⇒ `returned` stays False."""
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-01 09:00:00")
+    scoped.log_episode("task", outcome="success", timestamp="2026-07-02 09:00:00")
+    ft = build_stats(scoped)["follow_through"]
+    assert ft["returned"] is False
+
+
+def test_follow_through_best_rate_is_never_lost(scoped):
+    """`best_rate` is a personal best over any full window — a later slump can't lower it."""
+    for _ in range(FOLLOW_RECENT_WINDOW):
+        scoped.log_episode("task", outcome="success")  # a perfect early stretch
+    for _ in range(FOLLOW_RECENT_WINDOW // 2):
+        scoped.log_episode("task", outcome="miss")  # a later slump
+    ft = build_stats(scoped)["follow_through"]
+    assert ft["best_rate"] == 1.0  # the perfect stretch stands
+    assert ft["recent_rate"] < 1.0  # even though lately is worse
 
 
 def test_follow_through_series_is_capped(scoped):

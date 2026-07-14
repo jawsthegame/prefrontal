@@ -601,16 +601,28 @@ struct Stats: Codable {
         }
     }
 
-    /// Outcomes over time: success `rate`, current success `streak`, the
-    /// success/partial/miss `split`, and a recent chronological `series`.
+    /// Outcomes over time, framed *forgivingly* — no consecutive-success streak
+    /// (a broken streak is the classic ADHD abandonment trigger). `rate` is the
+    /// overall completion rate; `recentRate` is "lately"; `trend` is up/steady/down
+    /// momentum; `returned` flags a recent return-after-lapse (the comeback the app
+    /// celebrates); `bestRate` is a personal-best stretch that can't be lost.
     struct FollowThrough: Codable {
         let n: Int
         let counts: Split
         let rate: Double?
-        let streak: Int
+        let recentRate: Double?
+        let trend: String?
+        let returned: Bool
+        let bestRate: Double?
         let series: [String]
 
         struct Split: Codable { let success: Int; let partial: Int; let miss: Int }
+
+        enum CodingKeys: String, CodingKey {
+            case n, counts, rate, trend, returned, series
+            case recentRate = "recent_rate"
+            case bestRate = "best_rate"
+        }
     }
 
     /// Acknowledgement rate for one delivery channel ("which channel you answer").

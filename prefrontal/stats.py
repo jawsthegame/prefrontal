@@ -9,7 +9,10 @@ three signature views the Insights page renders (all pure and model-free, mirror
    happened: the overall bias multiplier ("you run ~1.4× over your estimates")
    and the same per context, from episodes carrying both a predicted and an
    actual value.
-2. **Follow-through** — outcomes over time: the success rate, the current streak,
+2. **Follow-through** — outcomes over time: the completion rate, a *forgiving*
+   momentum read (recent rate, its trend, whether you've returned after a lapse,
+   and a personal-best stretch — deliberately **not** a consecutive-success
+   streak, which turns any miss into a shame trigger; see ``_follow_through``),
    the success/miss/partial split, and a recent chronological series for a
    sparkline.
 3. **Channel responsiveness** — the acknowledgement rate per delivery channel
@@ -52,6 +55,24 @@ OUTCOMES: tuple[str, ...] = ("success", "partial", "miss")
 
 #: How many recent outcomes the follow-through sparkline shows.
 FOLLOW_SERIES_LEN = 24
+
+#: Rolling window (most-recent N outcomes) for the follow-through momentum signals
+#: — the recent completion rate, its trend, and the personal-best stretch.
+#: Count-based (not calendar) so it's meaningful before there's much history.
+FOLLOW_RECENT_WINDOW = 10
+
+#: Trend needs at least this many outcomes in *each* of the recent and prior
+#: windows before it will name a direction (else ``trend`` stays ``None``).
+FOLLOW_TREND_MIN = 3
+
+#: A recent-vs-prior completion-rate change smaller than this reads as "steady".
+FOLLOW_TREND_DELTA = 0.1
+
+#: A gap of at least this many days between logged outcomes counts as a lapse you
+#: stepped away from; returning after one is the signal this app celebrates
+#: ("design for the return, not the streak") — in place of a fragile success
+#: streak, whose loss is the classic "what-the-hell" abandonment trigger.
+FOLLOW_LAPSE_GAP_DAYS = 4
 
 #: How many estimate points the scatter/summary keeps (most recent).
 MAX_ESTIMATE_POINTS = 60
@@ -126,20 +147,86 @@ def _time_estimation(episodes: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _follow_through(episodes: list[dict[str, Any]]) -> dict[str, Any]:
-    """Outcome counts, success rate, current success streak, and a recent series."""
-    outs = [e.get("outcome") for e in episodes if e.get("outcome") in OUTCOMES]
+    """Outcome split, completion rate, and *forgiving* momentum signals.
+
+    Deliberately **not** a consecutive-success streak: a trailing-success count
+    turns any miss into a "you lost it" moment, which the ADHD abandonment
+    research flags as the classic trigger of the "what-the-hell" spiral (see
+    ``docs/encouragement.md`` and the roadmap's "design for the return, not the
+    streak"). Instead we surface recovery- and direction-oriented signals a single
+    miss can't zero out:
+
+    - ``rate`` — overall completion rate (the split, not a loss count);
+    - ``recent_rate`` — completion rate over the last :data:`FOLLOW_RECENT_WINDOW`
+      outcomes ("lately"), which a stray miss only nudges;
+    - ``trend`` — ``up``/``steady``/``down`` (recent vs. the prior window), or
+      ``None`` without enough history — momentum, not a fragile count;
+    - ``returned`` — whether, within that recent window, you stepped away for a
+      :data:`FOLLOW_LAPSE_GAP_DAYS`-day-plus lapse and *came back*: the comeback
+      the app celebrates in place of an unbroken streak (it surfaces exactly when
+      a streak would have broken);
+    - ``best_rate`` — your best :data:`FOLLOW_RECENT_WINDOW`-length stretch ever,
+      a personal best that can never be "lost".
+
+    Episodes are chronological asc (:meth:`all_episodes`); a missing/unparseable
+    timestamp just can't form a gap.
+    """
+    rows = [
+        (parse_ts(e.get("timestamp")), e["outcome"])
+        for e in episodes
+        if e.get("outcome") in OUTCOMES
+    ]
+    outs = [o for _ts, o in rows]
     counts = {o: outs.count(o) for o in OUTCOMES}
     total = len(outs)
     rate = round(counts["success"] / total, 2) if total else None
-    # Current streak: trailing consecutive successes (episodes are chronological asc).
-    streak = 0
-    for o in reversed(outs):
-        if o == "success":
-            streak += 1
-        else:
-            break
-    return {"n": total, "counts": counts, "rate": rate, "streak": streak,
-            "series": outs[-FOLLOW_SERIES_LEN:]}
+
+    def _win_rate(window: list[str]) -> float | None:
+        return round(window.count("success") / len(window), 2) if window else None
+
+    recent = outs[-FOLLOW_RECENT_WINDOW:]
+    prior = outs[-2 * FOLLOW_RECENT_WINDOW : -FOLLOW_RECENT_WINDOW]
+    recent_rate = _win_rate(recent)
+
+    # Trend: recent window vs. the one before it — a direction, not a fragile
+    # count. Only named once both windows carry enough outcomes to mean something.
+    trend = None
+    if len(recent) >= FOLLOW_TREND_MIN and len(prior) >= FOLLOW_TREND_MIN:
+        delta = (recent_rate or 0.0) - (_win_rate(prior) or 0.0)
+        trend = (
+            "up" if delta > FOLLOW_TREND_DELTA
+            else "down" if delta < -FOLLOW_TREND_DELTA
+            else "steady"
+        )
+
+    # Return-after-lapse: within the recent window, did a >= gap-day break sit
+    # between two logged outcomes? If so the later one is a comeback worth marking.
+    recent_ts = [ts for ts, _o in rows[-FOLLOW_RECENT_WINDOW:]]
+    returned = any(
+        a is not None and b is not None and (b - a).days >= FOLLOW_LAPSE_GAP_DAYS
+        for a, b in zip(recent_ts, recent_ts[1:], strict=False)
+    )
+
+    # Personal best: the best completion rate over any full-length run. It never
+    # decreases as history grows, so it can't be lost. None until there's a run.
+    best_rate = None
+    if total >= FOLLOW_RECENT_WINDOW:
+        best_hits = max(
+            outs[i : i + FOLLOW_RECENT_WINDOW].count("success")
+            for i in range(total - FOLLOW_RECENT_WINDOW + 1)
+        )
+        best_rate = round(best_hits / FOLLOW_RECENT_WINDOW, 2)
+
+    return {
+        "n": total,
+        "counts": counts,
+        "rate": rate,
+        "recent_rate": recent_rate,
+        "trend": trend,
+        "returned": returned,
+        "best_rate": best_rate,
+        "series": outs[-FOLLOW_SERIES_LEN:],
+    }
 
 
 def _channels(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
