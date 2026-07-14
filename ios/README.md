@@ -326,8 +326,10 @@ see the "hard case" in `docs/shortcuts-to-native.md`).
 
 - **iOS 26+**: the tap schedules a one-off alarm at the next occurrence of the
   suggested `HH:MM` via `AlarmManager`, prompting once for AlarmKit authorization
-  (the `NSAlarmKitUsageDescription` string in `project.yml`). No Shortcut, no app
-  to leave.
+  (the `NSAlarmKitUsageDescription` string in `project.yml`). The action opens the
+  app (it's registered `.foreground`, so the first-run permission prompt has
+  somewhere to appear), but no Shortcut is involved and no wake time is typed by
+  hand — the alarm is set for you.
 - **Older iOS / AlarmKit unavailable or denied**: it falls back to opening the
   `shortcuts://run-shortcut?name=Set%20Alarm&text=<HH:MM>` deep link the server
   already sends — the pre-AlarmKit path — so nothing regresses.

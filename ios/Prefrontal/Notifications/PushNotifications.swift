@@ -76,9 +76,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             return
         }
 
-        // A non-HTTP action is a client-side deep link. The only one today is the
-        // evening "⏰ Set alarm" view button (shortcuts://run-shortcut?…&text=HH:MM):
-        // set a real system alarm natively via AlarmKit (iOS 26+), and fall back to
+        // The only non-HTTP action we emit is the evening "⏰ Set alarm" view button
+        // (shortcuts://run-shortcut?…&text=HH:MM). Restrict to that exact scheme so a
+        // malformed/abused payload can't make us open an arbitrary deep link
+        // (tel:, facetime:, …) — anything else is ignored.
+        guard url.scheme?.lowercased() == "shortcuts" else { return }
+        // Set a real system alarm natively via AlarmKit (iOS 26+), falling back to
         // opening the Set Alarm Shortcut when AlarmKit isn't available/authorized.
         if let wake = AlarmScheduler.wakeTime(from: url),
            await AlarmScheduler.scheduleWake(hour: wake.hour, minute: wake.minute) {
