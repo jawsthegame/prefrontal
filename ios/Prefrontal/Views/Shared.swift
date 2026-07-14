@@ -345,6 +345,13 @@ struct MarkdownText: View {
     }
 }
 
+/// Human-readable label for a self-care check key. Shared by the Me tab's
+/// progress chips and the Insights adherence card so the two can't drift.
+func selfCareLabel(_ key: String) -> String {
+    ["meal": "Meals", "water": "Water", "meds": "Meds", "biobreak": "Breaks",
+     "winddown": "Wind-down", "movement": "Movement"][key] ?? key.capitalized
+}
+
 extension View {
     /// Standard scroll screen on the paper background.
     func brandScreen() -> some View {
