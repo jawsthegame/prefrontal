@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import smtplib
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -270,18 +271,32 @@ def _headers():
     return {"X-Prefrontal-Token": SECRET}
 
 
+def _future(day_offset: int, hh: int, mm: int) -> str:
+    """An ISO-Z timestamp ``day_offset`` days from today at ``hh:mm``.
+
+    The conflict endpoint only surfaces *upcoming* commitments
+    (``memory.upcoming_commitments()``), so these fixtures must be future-dated
+    relative to *now* — a hardcoded calendar date silently stops being a conflict
+    the day it arrives (that is exactly how this test went red on 2026-07-14). Two
+    days out keeps every event comfortably in the future regardless of the run's
+    time of day.
+    """
+    day = (datetime.now(timezone.utc) + timedelta(days=day_offset)).date()
+    return f"{day.isoformat()}T{hh:02d}:{mm:02d}:00Z"
+
+
 def _make_conflict(http) -> str:
     """Create two overlapping commitments and return the conflict's dismissal key."""
     http.post(
         "/commitments",
-        json={"title": "Board meeting", "start_at": "2026-07-14T10:00:00Z",
-              "end_at": "2026-07-14T11:00:00Z", "hard": True},
+        json={"title": "Board meeting", "start_at": _future(2, 10, 0),
+              "end_at": _future(2, 11, 0), "hard": True},
         headers=_headers(),
     )
     http.post(
         "/commitments",
-        json={"title": "Coffee", "start_at": "2026-07-14T10:30:00Z",
-              "end_at": "2026-07-14T11:00:00Z"},
+        json={"title": "Coffee", "start_at": _future(2, 10, 30),
+              "end_at": _future(2, 11, 0)},
         headers=_headers(),
     )
     conflicts = http.get("/commitments/conflicts", headers=_headers()).json()["conflicts"]
@@ -345,15 +360,15 @@ def test_http_reschedule_rejects_a_possible_conflict(http):
     """A soft possible-conflict (a placeholder/hold overlap) is not reschedulable."""
     http.post(
         "/commitments",
-        json={"title": "Design review", "start_at": "2026-07-15T14:00:00Z",
-              "end_at": "2026-07-15T15:00:00Z"},
+        json={"title": "Design review", "start_at": _future(3, 14, 0),
+              "end_at": _future(3, 15, 0)},
         headers=_headers(),
     )
     # A generic "Busy" hold overlapping the real event → a *possible* conflict.
     http.post(
         "/commitments",
-        json={"title": "Busy", "start_at": "2026-07-15T14:30:00Z",
-              "end_at": "2026-07-15T15:00:00Z"},
+        json={"title": "Busy", "start_at": _future(3, 14, 30),
+              "end_at": _future(3, 15, 0)},
         headers=_headers(),
     )
     possible = http.get(
