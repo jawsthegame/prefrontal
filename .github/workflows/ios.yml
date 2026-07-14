@@ -1,0 +1,70 @@
+name: iOS
+
+# Lint + compile gate for the Swift app under ios/. Separate from the Python CI
+# (ci.yml) and pinned to a macOS runner, so it only runs when iOS sources or
+# this workflow change — Python-only PRs don't spend macOS minutes.
+#
+# Scope (first cut): SwiftLint (non-strict — only error-severity fails; see
+# ios/.swiftlint.yml) plus the lightweight `swiftc -typecheck` compile check
+# documented in ios/README.md, run for both the app and the widget extension. A
+# full `xcodebuild` build + an XCTest unit-test target are the intended
+# fast-follow (they need the heavier CoreSimulator setup); see #602.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch: {}
+
+# Least-privilege token: this job only reads the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Lint (SwiftLint)
+        working-directory: ios
+        # Non-strict: warnings annotate but don't fail; only error-severity rules
+        # gate. Tighten to `--strict` once a clean baseline is confirmed.
+        run: swiftlint lint --reporter github-actions-logging
+
+      - name: Compile check — app target (swiftc -typecheck)
+        working-directory: ios
+        # The no-build sanity check from ios/README.md: typecheck the app target's
+        # sources against the iOS 17 SDK. Catches build-breaking changes without
+        # the CoreSimulator install a full xcodebuild needs.
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          find Prefrontal -name '*.swift' -print0 \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
+
+      - name: Compile check — widget extension (swiftc -typecheck)
+        working-directory: ios
+        # The widget target's sources per project.yml: the widget dir plus the
+        # shared app sources it compiles in (Config / Networking / Models / Theme
+        # and the two shared intent files — NOT AppShortcuts.swift, which is
+        # app-only). Keeps widget-only breakage from passing CI green.
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          find PrefrontalWidgets Prefrontal/Config Prefrontal/Networking \
+               Prefrontal/Models Prefrontal/Theme -name '*.swift' -print0 \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck \
+                Prefrontal/Intents/WidgetActionIntents.swift \
+                Prefrontal/Intents/PrefrontalIntents.swift

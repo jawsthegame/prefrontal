@@ -1,0 +1,72 @@
+# SwiftLint configuration for the Prefrontal iOS app.
+#
+# Deliberately conservative on first landing: this codebase had never been
+# linted, and CI runs `swiftlint` without `--strict`, so only *error*-severity
+# violations fail the build. A few default rules that are error-severity out of
+# the box (and easy to trip in existing SwiftUI code) are relaxed to warnings
+# here so the gate starts green; tighten them back up once a clean baseline is
+# confirmed on a Mac.
+
+included:
+  - Prefrontal
+  - PrefrontalWidgets
+
+# The XcodeGen-generated project and any local signing override never ship
+# sources to lint.
+excluded:
+  - Prefrontal.xcodeproj
+  - DerivedData
+
+# Opt-in rules worth having without a big churn cost.
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - closure_spacing
+  - unneeded_parentheses_in_closure_argument
+
+disabled_rules:
+  - todo                      # TODO/FIXME comments shouldn't fail a build.
+  - trailing_comma            # multiline-collection trailing commas are fine.
+
+# Relaxed to warning so the first non-strict run stays green (see header note).
+force_cast:
+  severity: warning
+force_try:
+  severity: warning
+
+# Warning-only (no error tier) for the first cut: a handful of existing lines run
+# long, and blocking CI on them on day one isn't the goal. They still surface as
+# warnings; tighten to an error ceiling once the baseline is trimmed.
+line_length:
+  warning: 140
+  ignores_comments: true
+  ignores_urls: true
+
+# SwiftUI + closures lean on short, conventional names (id, ok, to, x/y, vm, and
+# single-letter closure args). Only flag empty names, so the check still catches
+# a genuinely missing identifier without fighting the codebase's style.
+identifier_name:
+  min_length:
+    warning: 1
+  excluded: [id, ok, to, x, y, vm, r, g, b]
+
+# This codebase consistently puts `else`/`catch` on their own line; keep the rule
+# active but aligned to that style (uncuddled) rather than the cuddled default.
+statement_position:
+  statement_mode: uncuddled_else
+
+type_name:
+  min_length:
+    warning: 3
+
+# Generated files and large view bodies make hard function/type length caps
+# noisy; keep them as warnings with generous ceilings.
+function_body_length:
+  warning: 80
+  error: 200
+type_body_length:
+  warning: 400
+  error: 800
+file_length:
+  warning: 600
+  error: 1200
