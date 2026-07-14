@@ -61,6 +61,15 @@ final class LocationMonitor: NSObject, ObservableObject, CLLocationManagerDelega
     private override init() {
         super.init()
         manager.delegate = self
+        // All three feeds are coarse by design — significant-change is ~500 m /
+        // cell-tower, `CLVisit` reports venue-level fixes, and the geofences run at
+        // a ~120 m radius — so best-accuracy GPS is never needed. Left at the
+        // default (`kCLLocationAccuracyBest`), CoreLocation would spin up the GPS
+        // chip to sharpen the `manager.location` fix read on a geofence crossing;
+        // asking only for ~100 m lets it answer from Wi-Fi/cell and keeps the radio
+        // asleep. Well within the geofence radius, so trigger reliability is
+        // unaffected.
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         authorization = manager.authorizationStatus
     }
 

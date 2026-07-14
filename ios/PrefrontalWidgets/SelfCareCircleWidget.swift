@@ -57,11 +57,11 @@ struct SelfCareCircleProvider: AppIntentTimelineProvider {
         if context.isPreview {
             return SelfCareEntry(date: Date(), check: configuration.check, count: 3, target: 6, notConfigured: false)
         }
-        return entry(from: await Glance.fetch(), configuration.check)
+        return entry(from: await Glance.fetchSelfCare(), configuration.check)
     }
 
     func timeline(for configuration: SelfCareCircleConfig, in context: Context) async -> Timeline<SelfCareEntry> {
-        let e = entry(from: await Glance.fetch(), configuration.check)
+        let e = entry(from: await Glance.fetchSelfCare(), configuration.check)
         return Timeline(entries: [e], policy: .after(Date().addingTimeInterval(20 * 60)))
     }
 
