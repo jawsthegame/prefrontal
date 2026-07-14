@@ -141,3 +141,50 @@ def is_muted(store: Any, key: str) -> bool:
         return key in store.muted_features()
     except Exception:  # noqa: BLE001 — mute is a convenience, never a hard gate
         return False
+
+
+#: Coaching-state key prefix for the per-user module on/off overlay (the Settings
+#: "Features" toggles). A value of ``"off"`` disables that module for this user
+#: only; unset (or anything else) keeps the deployment default from
+#: :func:`enabled_modules`.
+MODULE_ENABLED_PREFIX = "module_enabled:"
+
+
+def user_disabled_module_keys(store: Any) -> set[str]:
+    """Module keys the signed-in user has turned **off** for themselves.
+
+    The per-user enablement overlay behind the Settings "Features" toggles — the
+    enable twin of :func:`is_muted`. Only *deployment-enabled* modules matter (the
+    tick and the settings view both start from :func:`enabled_modules`), but this
+    scans every registered module's override so an operator re-enabling a module
+    later still sees the user's prior "off" honored. Best-effort: a store without
+    the state repo (older test doubles) reports none disabled, so the overlay can
+    never hard-fail a nudge path.
+
+    Args:
+        store: The user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+
+    Returns:
+        The set of module keys explicitly disabled for this user.
+    """
+    out: set[str] = set()
+    try:
+        for module in available():
+            value = (store.get_state(f"{MODULE_ENABLED_PREFIX}{module.key}") or "").strip().lower()
+            if value == "off":
+                out.add(module.key)
+    except Exception:  # noqa: BLE001 — the overlay is a convenience, never a hard gate
+        return set()
+    return out
+
+
+def user_enabled_modules(store: Any, settings: Settings | None = None) -> list[Module]:
+    """Deployment-enabled modules minus the ones this user turned off.
+
+    The effective per-user module set: :func:`enabled_modules` (the deployment
+    default) with the user's :func:`user_disabled_module_keys` removed. Used by the
+    Settings "Features" view; the coaching tick applies the same filter inline
+    (alongside mute) so a disabled module offers no cues and no protection.
+    """
+    off = user_disabled_module_keys(store)
+    return [m for m in enabled_modules(settings) if m.key not in off]

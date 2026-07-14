@@ -851,6 +851,16 @@ def run_coaching_tick(
         muted = set()
     if muted:
         modules = [m for m in modules if m.key not in muted]
+    # Per-user enablement (the Settings "Features" toggles): a module the user
+    # turned off for themselves is dropped from the whole tick — no cues, no
+    # protection, no `offered` events — without touching deployment config. Same
+    # best-effort contract as mute above, and the settings view starts from the
+    # same deployment-enabled base, so this only ever removes modules.
+    from prefrontal.modules.registry import user_disabled_module_keys
+
+    disabled = user_disabled_module_keys(store)
+    if disabled:
+        modules = [m for m in modules if m.key not in disabled]
     # Close last round's channel outcomes (taps clear their own markers, so what's
     # swept really went unanswered). Engine-native; a module's own pre-collection
     # housekeeping runs through its before_collect hook below.

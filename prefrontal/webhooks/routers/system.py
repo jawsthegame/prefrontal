@@ -22,7 +22,8 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import local_datetime, utcnow
-from prefrontal.modules import enabled_modules
+from prefrontal.modules import available, enabled_modules
+from prefrontal.modules.registry import MODULE_ENABLED_PREFIX, user_disabled_module_keys
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
@@ -62,6 +63,7 @@ from prefrontal.webhooks.deps import (
 )
 from prefrontal.webhooks.schemas import (
     ApnsTokenRegistration,
+    FeatureToggle,
     GuideProgress,
     SelfCareConfig,
     SelfCareMark,
@@ -375,6 +377,66 @@ def build_router(services: RouterServices) -> APIRouter:
         what went well. A pure read (no writes), safe to poll any time.
         """
         return self_care_review(ctx.store, utcnow(), services.settings.timezone)
+
+    def _features_view(store: Any) -> dict[str, Any]:
+        """The signed-in user's per-module on/off state, for the Settings toggles.
+
+        Lists every **deployment-enabled** module (the set the user can turn off
+        for themselves) with its title, one-line ``challenge``, and whether it's
+        currently on for them. Read-only.
+        """
+        off = user_disabled_module_keys(store)
+        return {
+            "modules": [
+                {
+                    "key": m.key,
+                    "title": m.title,
+                    "challenge": m.challenge,
+                    "enabled": m.key not in off,
+                }
+                for m in enabled_modules(services.settings)
+            ]
+        }
+
+    @router.get("/settings/features", tags=["system"])
+    def get_features(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Per-user feature toggles — which modules the signed-in user has on.
+
+        The read side of the Settings "Features" control: the deployment-enabled
+        modules, each flagged with whether this user has turned it off. Turning a
+        module off is a per-user overlay (``module_enabled:<key>`` coaching state);
+        deployment config (``PREFRONTAL_MODULES``) is never changed. Read-only.
+        """
+        return _features_view(ctx.store)
+
+    @router.post("/settings/features", tags=["system"])
+    def set_features(
+        payload: FeatureToggle,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Turn modules on/off for the signed-in user (Settings "Features").
+
+        For each ``{key: on}`` pair: ``true`` clears the override (back to the
+        deployment default), ``false`` disables that module for this user only —
+        it then offers no cues and no protection in the coaching tick. Only
+        registered module keys take effect (others are ignored). Returns the fresh
+        feature view so the caller re-renders from the response.
+        """
+        # Accept any *registered* module key (matches the docstrings and the
+        # resolver, which scans the full registry): storing an override for a
+        # deployment-disabled module is harmless — it stays inert until/unless the
+        # operator enables that module, at which point the user's prior choice holds.
+        known = {m.key for m in available()}
+        for key, on in payload.modules.items():
+            if key not in known:
+                continue
+            if on:
+                ctx.store.delete_state(f"{MODULE_ENABLED_PREFIX}{key}")
+            else:
+                ctx.store.set_state(f"{MODULE_ENABLED_PREFIX}{key}", "off", source="explicit")
+        return _features_view(ctx.store)
 
     @router.post("/self-care", tags=["system"])
     def set_self_care(
