@@ -21,6 +21,7 @@ from prefrontal.coaching import (
     in_quiet_hours,
     note_delivered,
     phrase,
+    receptive,
     record_fired,
     resolve_ack,
     stamp_pending_engagement,
@@ -79,6 +80,20 @@ class _FakeStore:
     def log_episode(self, episode_type, **kw):
         self.episodes.append({"episode_type": episode_type, **kw})
         return len(self.episodes)
+
+    def episodes_by_type(self, episode_type, limit=100, *, context_prefix=None):
+        # Newest-first, like the real store (which orders by timestamp/id desc),
+        # with the same SQL-level context-prefix filter applied before the limit.
+        matching = [
+            e
+            for e in self.episodes
+            if e.get("episode_type") == episode_type
+            and (
+                context_prefix is None
+                or str(e.get("context") or "").startswith(context_prefix)
+            )
+        ]
+        return list(reversed(matching))[:limit]
 
 
 def _ctx(**kw) -> CoachContext:
@@ -159,6 +174,88 @@ def test_decide_drops_suppressed_and_record_fired_stamps():
     assert [d.cue.dedup_key for d in decisions] == ["fresh"]
     record_fired(store, decisions, NOON)
     assert store.get_state("coach_fired:fresh") is not None
+
+
+# -- receptivity gate (M3): default to silence when not reachable -------------
+
+
+def _nudge_outcome(acknowledged: bool, context: str = "coach nudge: todo") -> dict:
+    """A `coach nudge` channel-outcome episode as record_channel_outcome writes it."""
+    return {
+        "episode_type": "reminder",
+        "context": context,
+        "outcome": "success" if acknowledged else "miss",
+        "acknowledged": acknowledged,
+    }
+
+
+def test_receptive_true_without_enough_ignore_history():
+    # No coaching outcomes at all → receptive (not enough evidence to go quiet).
+    assert receptive(_FakeStore(), _ctx()) is True
+    # Two ignores is below the default streak of 3 → still receptive.
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False), _nudge_outcome(False)]
+    assert receptive(store, _ctx()) is True
+
+
+def test_receptive_false_after_consecutive_ignores():
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]
+    assert receptive(store, _ctx()) is False
+
+
+def test_receptive_reset_by_a_single_recent_ack():
+    # Most-recent (last-appended) is an ack, so the latest run isn't all-misses.
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False), _nudge_outcome(False), _nudge_outcome(True)]
+    assert receptive(store, _ctx()) is True
+
+
+def test_receptive_ignores_non_coach_reminder_episodes():
+    # A run of ignored *non-coaching* reminders must not trigger the backoff.
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False, context="departure reminder") for _ in range(5)]
+    assert receptive(store, _ctx()) is True
+
+
+def test_receptive_backoff_not_masked_by_interleaved_non_coach_reminders():
+    # Three ignored coach nudges, then a burst of unrelated reminders. A fixed
+    # scan-then-filter window would let the burst crowd the coach misses out of
+    # view (falsely receptive); the SQL context-prefix filter still sees them.
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]
+    store.episodes += [_nudge_outcome(False, context="ingest reminder") for _ in range(20)]
+    assert receptive(store, _ctx()) is False
+
+
+def test_receptive_disabled_by_zero_threshold():
+    store = _FakeStore(floats={"coach_ignore_backoff_streak": 0})
+    store.episodes = [_nudge_outcome(False) for _ in range(5)]
+    assert receptive(store, _ctx()) is True
+
+
+def test_receptive_fails_open_when_read_raises():
+    class _Broken(_FakeStore):
+        def episodes_by_type(self, episode_type, limit=100):
+            raise RuntimeError("boom")
+
+    assert receptive(_Broken(), _ctx()) is True
+
+
+def test_decide_holds_non_critical_when_not_receptive_but_lets_critical_through():
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]  # backing off
+    cues = [_cue("nudge", dedup="a"), _cue("urgent", dedup="b"), _cue("critical", dedup="c")]
+    decisions = decide(store, cues, _ctx())
+    # Only the critical cue survives the receptivity gate.
+    assert [d.cue.dedup_key for d in decisions] == ["c"]
+
+
+def test_decide_fires_normally_when_receptive():
+    store = _FakeStore()  # no ignore history
+    cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b")]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["a", "b"]
 
 
 # -- outcome loop: channel_response learning (spec §8) ------------------------

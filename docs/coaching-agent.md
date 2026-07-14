@@ -272,6 +272,19 @@ already a `cta-debounce` track in flight). `suppressed(store, cue, ctx)`:
 - **Rate ceiling** — a per-tick and per-day cap on non-critical cues so a bad day
   (many avoided todos + slips) doesn't produce a barrage; overflow folds into the
   next briefing as `ambient`. Cap lives in a coaching key.
+- **Receptivity gate (M3, ✅ shipped)** — `receptive(store, ctx)`, consulted once
+  per tick in `decide`: after a run of *consecutive ignored* coach nudges the user
+  isn't answering, so hold every non-critical cue rather than pile on (pushing
+  through a non-receptive stretch is exactly what earns the app a permanent mute —
+  the field's #1 abandonment risk). This is the JITAI *receptivity* component the
+  engine didn't model explicitly, as a rules-based first cut (a learned contextual
+  bandit is the later graduation, gated behind a walk-forward win). It reuses the
+  `coach nudge` channel-outcome episodes the learning loop already logs
+  (`resolve_ack` → success, `sweep_stale_nudges` → miss), is forgiving (a single
+  tap breaks the streak and restores delivery), only ever *removes* nudges, and
+  lets `critical` through (as quiet hours do). Threshold: `coach_ignore_backoff_streak`
+  (default 3; `0` disables). The per-day *dosage* half of the rate ceiling above is
+  the natural next increment on the same read.
 
 ---
 

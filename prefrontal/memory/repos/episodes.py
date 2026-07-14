@@ -219,20 +219,39 @@ class EpisodesRepo(Repo):
         return [dict(r) for r in rows]
 
     def episodes_by_type(
-        self, episode_type: str, limit: int = 100
+        self, episode_type: str, limit: int = 100, *, context_prefix: str | None = None
     ) -> list[dict[str, Any]]:
         """Return recent episodes of a single ``episode_type``, newest first.
 
         Args:
             episode_type: One of :data:`EPISODE_TYPES`.
             limit: Maximum number of rows to return.
+            context_prefix: When given, keep only episodes whose ``context`` starts
+                with this literal prefix — filtered **in SQL**, so the ``limit`` is
+                applied to the already-matching rows. This matters when several
+                sub-kinds share an ``episode_type`` (e.g. ``reminder`` covers both
+                coaching nudges — ``"coach nudge: …"`` — and other reminders): a
+                caller wanting only one sub-kind's recent rows must not have them
+                crowded out of the window by interleaved rows of another. Treated as
+                a literal (``%``/``_``/``\\`` escaped), not a pattern.
 
         Returns:
             A list of matching episode dicts.
         """
-        rows = self.conn.execute(
-            "SELECT * FROM episodes WHERE user_id = ? AND episode_type = ? "
-            "ORDER BY timestamp DESC, id DESC LIMIT ?",
-            (self._uid(), episode_type, limit),
-        ).fetchall()
+        if context_prefix is None:
+            rows = self.conn.execute(
+                "SELECT * FROM episodes WHERE user_id = ? AND episode_type = ? "
+                "ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (self._uid(), episode_type, limit),
+            ).fetchall()
+        else:
+            escaped = (
+                context_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            rows = self.conn.execute(
+                "SELECT * FROM episodes WHERE user_id = ? AND episode_type = ? "
+                "AND context LIKE ? ESCAPE '\\' "
+                "ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (self._uid(), episode_type, f"{escaped}%", limit),
+            ).fetchall()
         return [dict(r) for r in rows]

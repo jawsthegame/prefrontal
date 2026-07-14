@@ -67,6 +67,45 @@ DEFAULT_MIN_CHANNEL_SAMPLES = 4
 #: form of the anchor's "fire once per level" guard.
 DEFAULT_DEBOUNCE_MINUTES = 120.0
 
+# --- Receptivity gate (M3: the right nudge at the right moment) ---------------
+#
+# JITAI's insight (Nahum-Shani et al.) is that the timing is the whole game: a
+# mistimed nudge is an added distraction that gets the tool *permanently muted* —
+# an especially fatal outcome for this population, and the field's #1 abandonment
+# risk. Quiet hours + debounce are the seed of that discipline; this adds the
+# receptivity component the engine didn't model explicitly — "when is silence the
+# right call?" — as a rules-based first cut (ship rules now; a learned contextual
+# bandit is the later graduation, gated behind a walk-forward win like every other
+# Prefrontal adaptation).
+#
+# The v1 rule reuses the channel-outcome episodes the learning loop already logs
+# (``resolve_ack`` → a *success*, ``sweep_stale_nudges`` → a *miss*): after a run
+# of *consecutive ignored* coach nudges, the user isn't reachable right now, so
+# hold further **non-critical** cues rather than pile on. It is deliberately
+# forgiving — a single acknowledgement (one tap) breaks the run and restores
+# delivery — and it only ever *removes* nudges (``critical`` always goes through,
+# a missed hard commitment still warrants the call).
+
+#: Coaching-state key: how many of the most-recent coach nudges must *all* have
+#: gone unanswered before the engine backs off non-critical cues. ``0`` disables
+#: the gate (always receptive).
+RECEPTIVITY_BACKOFF_KEY = "coach_ignore_backoff_streak"
+
+#: Default consecutive-ignore run that triggers the backoff. Small but not
+#: hair-trigger: three straight ignored nudges is a clear "not right now" without
+#: silencing on a single missed tap.
+DEFAULT_IGNORE_BACKOFF_STREAK = 3
+
+#: How many recent ``coach nudge`` outcome episodes to scan for the backoff read.
+#: Bounded so the per-tick read is cheap and only *recent* non-response counts
+#: toward it (an ancient ignore from days ago shouldn't gate today).
+_BACKOFF_SCAN_LIMIT = 12
+
+#: Prefix the channel-outcome loop stamps on its episodes' ``context`` (see
+#: :func:`record_channel_outcome`); the receptivity read filters on it so only
+#: coaching nudges — not other ``reminder`` episodes — count toward the streak.
+_COACH_NUDGE_CONTEXT_PREFIX = "coach nudge:"
+
 #: Default responsive-hours window (local clock hours) when unset.
 DEFAULT_RESPONSIVE_START = 8
 DEFAULT_RESPONSIVE_END = 22
@@ -353,6 +392,56 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     return False
 
 
+def receptive(store: Any, ctx: CoachContext) -> bool:
+    """Whether the user seems reachable right now (JITAI receptivity, rules-based).
+
+    The receptivity component of the coaching engine (M3): after a run of ignored
+    nudges the user isn't answering, so the right move is *silence*, not another
+    nudge — pushing through it is what earns the app a permanent mute. Reads the
+    same ``coach nudge`` channel-outcome episodes the channel learning already
+    writes (:func:`resolve_ack` logs a *success* on a tap; :func:`sweep_stale_nudges`
+    a *miss* when one goes unanswered past the ack window), and reports *not*
+    receptive when the most-recent :data:`RECEPTIVITY_BACKOFF_KEY`-many are **all**
+    misses.
+
+    Deliberately forgiving and conservative:
+
+    - a single acknowledgement anywhere in the recent run breaks the streak, so one
+      tap restores delivery (no lingering penalty);
+    - fewer than the threshold's worth of *recent* coaching outcomes ⇒ receptive
+      (not enough evidence to go quiet);
+    - a threshold of ``0`` disables the gate entirely;
+    - **best-effort**: any read failure returns ``True`` (fail open) — a missing
+      signal must never silence a genuine nudge.
+
+    :func:`decide` consults this once per tick and holds non-critical cues when it
+    is ``False``; ``critical`` bypasses it (as it bypasses quiet hours), so a
+    missed hard commitment still gets through a quiet stretch.
+    """
+    try:
+        streak = int(store.get_float(RECEPTIVITY_BACKOFF_KEY, DEFAULT_IGNORE_BACKOFF_STREAK))
+    except (TypeError, ValueError):
+        streak = DEFAULT_IGNORE_BACKOFF_STREAK
+    if streak <= 0:
+        return True
+    try:
+        # Filter to coaching outcomes *in SQL* (not post-hoc over a fixed window),
+        # so a burst of other `reminder` episodes — e.g. ingestion reminders — can't
+        # crowd the most-recent coach nudges out of the scan and mask the streak.
+        recent = store.episodes_by_type(
+            "reminder",
+            limit=max(streak, _BACKOFF_SCAN_LIMIT),
+            context_prefix=_COACH_NUDGE_CONTEXT_PREFIX,
+        )
+    except Exception:  # noqa: BLE001 — a missing/failed read must never silence a nudge
+        logger.debug("receptivity read failed; treating user as receptive", exc_info=True)
+        return True
+    if len(recent) < streak:
+        return True  # not enough recent coaching outcomes to justify backing off
+    # episodes_by_type returns newest-first, so the first `streak` are the latest.
+    return not all(e.get("outcome") == "miss" for e in recent[:streak])
+
+
 def choose_channel(store: Any, cue: Cue, ctx: CoachContext) -> str:
     """Pick a delivery channel class: urgency floor, then learned bump (spec §5).
 
@@ -443,10 +532,21 @@ def decide(
     ``client``/``profile`` are threaded into :func:`phrase` for the optional LLM
     rewrite of ``ambient`` cues; both default to off so the deterministic path is
     unchanged.
+
+    Beyond per-cue :func:`suppressed` (quiet hours, protection, debounce), a
+    tick-level **receptivity** gate (:func:`receptive`, computed once here) holds
+    every non-critical cue when the user has stopped answering — the M3 "default to
+    silence when receptivity is low" discipline. ``critical`` always goes through.
     """
+    is_receptive = receptive(store, ctx)
     decisions: list[Decision] = []
     for cue in cues:
         if suppressed(store, cue, ctx):
+            continue
+        # Receptivity: after a run of ignored nudges, stay quiet rather than pile
+        # on (pushing through is what gets the tool muted). A single ack restores
+        # delivery. Critical is exempt — a missed hard commitment still warrants it.
+        if not is_receptive and cue.urgency != "critical":
             continue
         decisions.append(
             Decision(
