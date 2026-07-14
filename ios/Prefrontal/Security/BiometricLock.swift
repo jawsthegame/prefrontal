@@ -58,6 +58,24 @@ final class BiometricLock: ObservableObject {
     private let canAuthenticateNow: () -> Bool
     private let evaluator: Evaluator
 
+    /// Schedules the one auto-retry. Production defers it briefly off the current
+    /// callback (starting a fresh evaluation synchronously from *inside* the
+    /// previous one's reply can wedge the biometric UI); tests inject a synchronous
+    /// scheduler so the state machine stays deterministic.
+    typealias RetryScheduler = (@escaping @MainActor () -> Void) -> Void
+    private let scheduleRetry: RetryScheduler
+
+    /// How long to wait for an evaluation's callback before assuming it wedged.
+    /// Some devices/OS builds never call back after the first-launch consent
+    /// round-trip — the prompt shows, the user allows, no scan appears, and the
+    /// reply never fires — which used to leave `authenticating` stuck at `true`
+    /// forever (button disabled, no error, only an uninstall recovers). The
+    /// watchdog resets that state so the lock screen can always be retried. `0`
+    /// disables it (tests).
+    private let watchdogSeconds: Double
+    /// The pending wedge-watchdog, cancelled the moment a real result arrives.
+    private var watchdog: Task<Void, Never>?
+
     /// One automatic retry, refreshed on every (re-)lock. Reserved for an attempt
     /// that ended without unlocking through no deliberate user action — above all
     /// the first-launch Face ID consent round-trip, whose evaluation returns
@@ -74,14 +92,19 @@ final class BiometricLock: ObservableObject {
                   evaluator: BiometricLock.evaluateWithLAContext)
     }
 
-    /// Designated initializer. Tests inject the two `LocalAuthentication` seams
-    /// (`canAuthenticate`, `evaluator`) to exercise the lock state machine
+    /// Designated initializer. Tests inject the `LocalAuthentication` seams
+    /// (`canAuthenticate`, `evaluator`), a synchronous `scheduleRetry`, and disable
+    /// the `watchdog` (`watchdogSeconds: 0`) to exercise the state machine
     /// hermetically.
     init(appLockEnabled: Bool,
          canAuthenticate: @escaping () -> Bool,
-         evaluator: @escaping Evaluator) {
+         evaluator: @escaping Evaluator,
+         scheduleRetry: @escaping RetryScheduler = BiometricLock.scheduleRetrySoon,
+         watchdogSeconds: Double = 20) {
         self.canAuthenticateNow = canAuthenticate
         self.evaluator = evaluator
+        self.scheduleRetry = scheduleRetry
+        self.watchdogSeconds = watchdogSeconds
         // Can't reference the `canAuthenticate` computed property before `self` is
         // initialized, so use the injected closure directly.
         isUnlocked = !(appLockEnabled && canAuthenticate())
@@ -167,9 +190,14 @@ final class BiometricLock: ObservableObject {
     /// Present the biometric (with passcode fallback) prompt. Safe to call
     /// redundantly — it early-returns while already unlocked or mid-prompt.
     func authenticate(reason: String = "Unlock Prefrontal") {
-        guard !isUnlocked, !authenticating else { return }
+        guard !isUnlocked, !authenticating else {
+            Self.log("authenticate() skipped — isUnlocked=\(isUnlocked), authenticating=\(authenticating)")
+            return
+        }
         authenticating = true
         lastError = nil
+        armWatchdog()
+        Self.log("authenticate() → presenting policy evaluation")
         evaluator(reason) { [weak self] success, code, message in
             guard let self else { return }
             // The production evaluator delivers on the main actor; the `Evaluator`
@@ -193,7 +221,11 @@ final class BiometricLock: ObservableObject {
     /// error (unless it was a cancel) and, for non-deliberate failures, self-heal
     /// once so the lock screen doesn't strand.
     private func finish(reason: String, success: Bool, code: LAError.Code?, message: String?) {
+        watchdog?.cancel()
+        watchdog = nil
         authenticating = false
+        Self.log("evaluation returned — success=\(success), "
+            + "code=\(code.map { String(describing: $0) } ?? "nil"), message=\(message ?? "nil")")
         if success {
             isUnlocked = true
             lastError = nil
@@ -216,8 +248,43 @@ final class BiometricLock: ObservableObject {
             && code != .authenticationFailed
         if !isUnlocked, canAuthenticate, canAutoRetry, recoverable {
             canAutoRetry = false
-            authenticate(reason: reason)
+            Self.log("recoverable outcome → scheduling one retry")
+            scheduleRetry { [weak self] in self?.authenticate(reason: reason) }
         }
+    }
+
+    /// Arm the wedge-watchdog for the in-flight evaluation. If no callback arrives
+    /// within `watchdogSeconds`, reset `authenticating` so the lock screen offers a
+    /// working retry instead of stranding (see `watchdogSeconds`). A no-op when the
+    /// watchdog is disabled (tests). The work item runs on the main queue, so it
+    /// can safely touch main-actor state.
+    private func armWatchdog() {
+        watchdog?.cancel()
+        guard watchdogSeconds > 0 else { watchdog = nil; return }
+        let seconds = watchdogSeconds
+        watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.authenticating, !self.isUnlocked else { return }
+            Self.log("watchdog — no callback after \(seconds)s; resetting so the user can retry")
+            self.authenticating = false
+            self.lastError = "Face ID didn’t respond. Tap to try again."
+        }
+    }
+
+    /// Production retry scheduler: defer briefly onto the main actor rather than
+    /// re-entering synchronously from inside the previous evaluation's callback.
+    nonisolated static func scheduleRetrySoon(_ work: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            work()
+        }
+    }
+
+    /// Lightweight breadcrumb for on-device debugging via the Xcode console
+    /// (`[AppLock] …`). App-lock has no user-facing log surface, so this is the
+    /// only window into what `LocalAuthentication` actually does on a given device.
+    nonisolated static func log(_ message: String) {
+        print("[AppLock] \(message)")
     }
 
     /// Production evaluator: drives `LAContext.deviceOwnerAuthentication` and

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @EnvironmentObject var config: AppConfig
@@ -28,13 +29,33 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: lock.isUnlocked)
         // Cold-launch auto-prompt: `onChange` doesn't fire for the initial phase,
         // so kick the first unlock here (idempotent — `authenticate()` guards).
-        .onAppear { if config.appLockEnabled { lock.authenticate() } }
+        .onAppear { scheduleUnlockPrompt() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active:     if config.appLockEnabled { lock.authenticate() }
+            case .active:     scheduleUnlockPrompt()
             case .background: lock.lock(enabled: config.appLockEnabled)
             default:          break
             }
+        }
+    }
+
+    /// Present the biometric prompt a beat after the scene settles rather than
+    /// synchronously during launch / a scene transition. Presenting the system
+    /// Face ID UI mid-transition can leave the scan UI unpresented (consent shows,
+    /// then no scan animation) with the evaluation wedged — deferring lets the
+    /// window become key first. Idempotent: `authenticate()` guards on state.
+    private func scheduleUnlockPrompt() {
+        guard config.appLockEnabled else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            // Re-check after the delay: only prompt while the app is actually in the
+            // foreground. If it backgrounded during the wait, presenting the system
+            // biometric UI now would just bounce back `.appCancel` / `.systemCancel`;
+            // the next `.active` transition re-arms this. (`applicationState` is the
+            // live value — the captured `scenePhase` would be stale here.)
+            guard config.appLockEnabled,
+                  UIApplication.shared.applicationState == .active else { return }
+            lock.authenticate()
         }
     }
 }
