@@ -12,6 +12,8 @@ from typing import (
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
+    status,
 )
 
 from prefrontal.assistant import (
@@ -23,8 +25,14 @@ from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
 from prefrontal.availability import plan_availability, render_plan
+from prefrontal.braindump import plan_braindump
 from prefrontal.clock import local_datetime, parse_ts, utcnow
 from prefrontal.scheduling import window_config_for
+from prefrontal.sensor import (
+    avoided_state_keys,
+    describe_proposal,
+    record_candidates,
+)
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -32,6 +40,7 @@ from prefrontal.webhooks.deps import (
 from prefrontal.webhooks.schemas import (
     AssistantApply,
     AssistantMessage,
+    BrainDumpMessage,
     FindTimeMessage,
 )
 from prefrontal.webhooks.services import RouterServices
@@ -100,6 +109,63 @@ def build_router(services: RouterServices) -> APIRouter:
         )
         applied = sum(1 for r in results if r["ok"])
         return {"applied": applied, "results": results, "errors": errors}
+
+    @router.post("/braindump", tags=["assistant"])
+    def braindump(
+        payload: BrainDumpMessage,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Fan one unstructured ramble out to both capture paths (roadmap M1).
+
+        A rambling voice note is the lowest-friction capture there is, but one
+        dump mixes **actionable items** (todos, commitments, shopping, if-then
+        plans, household facts) with **behavioral asides** ("I keep blowing off
+        admin on Mondays"). This turns the single ``text`` into:
+
+        - ``actions`` — a validated, previewable editing action list (the NL
+          assistant). **Nothing is written**; the client shows them and, on
+          confirmation, echoes them back to ``POST /assistant/apply``.
+        - ``proposals`` — allowlisted behavioral candidates (the LLM sensor),
+          recorded as **pending** proposals for review at ``GET /proposals`` and
+          applied only on ``POST /proposals/{id}/accept``.
+
+        So both halves keep their existing human-in-the-loop confirm step — a
+        rambling, imperfect dump can never silently mutate the store. Uses Claude
+        for each half when its agent (``assistant`` / ``sensor``) is opted into
+        the Anthropic provider, otherwise the local Ollama model. A blank ``text``
+        is a 422.
+        """
+        memory = ctx.store
+        if not payload.text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provide a non-empty 'text'.",
+            )
+        assistant_client, provider_name = provider.select("assistant")
+        sensor_client = provider.client("sensor")
+        result = plan_braindump(
+            payload.text,
+            memory,
+            assistant_client=assistant_client,
+            sensor_client=sensor_client,
+            now=utcnow(),
+            tz=resolved_settings.timezone,
+            # Close the sensor's calibration loop: de-emphasize settings the user
+            # reliably rejects (from the last learning pass) in the extraction prompt.
+            avoid_keys=avoided_state_keys(memory),
+        )
+        # Actions stay a preview (applied via /assistant/apply); the sensor
+        # candidates are recorded pending here, exactly as POST /observe does, so
+        # they land in the same review queue and apply via /proposals/{id}/accept.
+        ids = record_candidates(memory, result.candidates)
+        created = [p for p in memory.list_proposals("pending") if p["id"] in set(ids)]
+        return {
+            "reply": result.reply,
+            "actions": [a.to_wire() for a in result.actions],
+            "errors": result.errors,
+            "proposals": [describe_proposal(p) for p in created],
+            "provider": provider_name,
+        }
 
     @router.post("/assistant/find-time", tags=["assistant"])
     def assistant_find_time(

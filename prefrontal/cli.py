@@ -2351,6 +2351,103 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_braindump(args: argparse.Namespace) -> int:
+    """Turn one rambling voice/free-text dump into structured items (roadmap M1).
+
+    Fans a single ramble out to both capture paths (see :mod:`prefrontal.braindump`):
+    the editing assistant proposes actionable edits (todos, commitments, shopping,
+    if-then plans, household facts), and the LLM sensor proposes behavioral asides.
+    Actionable edits are a **preview** by default — nothing is written until
+    ``--apply`` (or the dashboard's Apply). The behavioral candidates always land
+    as *pending* proposals for review (``prefrontal proposals``), never written
+    outright — the same human-in-the-loop guarantee as ``prefrontal note``.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``text``, ``file``,
+            ``apply``.
+
+    Returns:
+        Process exit code (0 on success, 2 on empty input).
+    """
+    from prefrontal.assistant import execute_actions
+    from prefrontal.braindump import plan_braindump
+    from prefrontal.integrations import ProviderResolver
+    from prefrontal.sensor import avoided_state_keys, record_candidates, summarize_candidate
+
+    settings = get_settings()
+    # Source the dump from --file (or "-" for stdin), else the positional text.
+    if getattr(args, "file", None):
+        try:
+            text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
+        except OSError as exc:
+            print(f"Could not read {args.file!r}: {exc}", file=sys.stderr)
+            return 2
+    else:
+        text = args.text or ""
+    if not text.strip():
+        print(
+            'Say what\'s on your mind, e.g. `braindump "call the dentist, we\'re out '
+            'of milk, I keep skipping admin"` (or --file PATH, or --file - for stdin).',
+            file=sys.stderr,
+        )
+        return 2
+
+    resolver = ProviderResolver.from_settings(settings)
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        plan = plan_braindump(
+            text,
+            store,
+            assistant_client=resolver.client("assistant"),
+            sensor_client=resolver.client("sensor"),
+            now=utcnow(),
+            tz=settings.timezone,
+            # Close the sensor's calibration loop (see `prefrontal note`).
+            avoid_keys=avoided_state_keys(store),
+        )
+        if plan.reply:
+            print(plan.reply)
+
+        # Actionable half — a preview unless --apply.
+        if plan.actions:
+            if args.apply:
+                results = execute_actions(
+                    store, plan.actions, timezone=settings.timezone,
+                    client=resolver.client("assistant"),
+                )
+                applied = sum(1 for r in results if r["ok"])
+                print(f"\nApplied {applied}/{len(results)} edit(s):")
+                for r in results:
+                    mark = "✓" if r["ok"] else "✗"
+                    tail = f" — {r['detail']}" if r.get("detail") else ""
+                    print(f"  {mark} {r['summary']}{tail}")
+            else:
+                print(
+                    f"\n{len(plan.actions)} proposed edit(s) "
+                    "(nothing written — re-run with --apply):"
+                )
+                for a in plan.actions:
+                    print(f"  • {a.summary}")
+        elif not plan.candidates and not plan.reply:
+            # Nothing on either half and the model gave no reply (usually offline).
+            print("Nothing to capture (or the model was unreachable).")
+        for err in plan.errors:
+            print(f"  (skipped: {err})", file=sys.stderr)
+
+        # Behavioral half — always recorded pending for review, never auto-applied.
+        if plan.candidates:
+            ids = record_candidates(store, plan.candidates)
+            print(
+                f"\nNoticed {len(ids)} thing(s) about you — recorded pending, "
+                "review with `prefrontal proposals`:"
+            )
+            for pid, c in zip(ids, plan.candidates, strict=True):
+                print(f"  #{pid}  {summarize_candidate(c.kind, c.payload)}")
+                if c.rationale:
+                    print(f"        ↳ {c.rationale}")
+    return 0
+
+
 def _cmd_clarify(args: argparse.Namespace) -> int:
     """Ambiguity clarifications: check / list / resolve / dismiss / guide.
 
@@ -4047,6 +4144,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_note.add_argument("--db-path", default=None, help="Override the database path.")
     p_note.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_note.set_defaults(func=_cmd_note)
+
+    p_braindump = sub.add_parser(
+        "braindump",
+        help="Turn a rambling voice/free-text dump into structured items (preview).",
+    )
+    p_braindump.add_argument(
+        "text",
+        nargs="?",
+        default="",
+        help="The dump, e.g. 'call the dentist, out of milk, I keep skipping admin'.",
+    )
+    p_braindump.add_argument(
+        "--file",
+        default=None,
+        metavar="PATH",
+        help="Read the dump from a file instead (use '-' for stdin).",
+    )
+    p_braindump.add_argument(
+        "--apply",
+        action="store_true",
+        help="Execute the proposed edits now (default previews them; behavioral "
+        "candidates are always left pending for review).",
+    )
+    p_braindump.add_argument("--db-path", default=None, help="Override the database path.")
+    p_braindump.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_braindump.set_defaults(func=_cmd_braindump)
 
     p_proposals = sub.add_parser(
         "proposals", help="Review LLM-sensor candidates: list / accept / reject."

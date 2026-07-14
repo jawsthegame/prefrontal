@@ -25,10 +25,10 @@ from fastapi import (
 from prefrontal.sensor import (
     apply_proposal,
     avoided_state_keys,
+    describe_proposal,
     extract_candidates,
     extract_candidates_from_transcript,
     record_candidates,
-    summarize_candidate,
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -45,17 +45,6 @@ def build_router(services: RouterServices) -> APIRouter:
     router = APIRouter()
     # Claude when the ``sensor`` agent is opted into Anthropic, else local Ollama.
     sensor_client = services.provider.client("sensor")
-
-    def _describe(proposal: dict[str, Any]) -> dict[str, Any]:
-        """A compact, review-ready view of a proposal row (no raw payload noise)."""
-        return {
-            "id": proposal["id"],
-            "kind": proposal["kind"],
-            "summary": summarize_candidate(proposal["kind"], proposal["payload"]),
-            "rationale": proposal.get("rationale") or "",
-            "status": proposal["status"],
-            "created_at": proposal.get("created_at"),
-        }
 
     @router.post("/observe", status_code=status.HTTP_201_CREATED, tags=["sensor"])
     def observe(
@@ -95,7 +84,7 @@ def build_router(services: RouterServices) -> APIRouter:
         ids = record_candidates(memory, candidates)
         # Read back the freshly-stored rows so the response matches GET /proposals.
         created = [p for p in memory.list_proposals("pending") if p["id"] in set(ids)]
-        return {"count": len(ids), "proposals": [_describe(p) for p in created]}
+        return {"count": len(ids), "proposals": [describe_proposal(p) for p in created]}
 
     @router.get("/proposals", tags=["sensor"])
     def list_proposals(
@@ -116,7 +105,7 @@ def build_router(services: RouterServices) -> APIRouter:
         memory = ctx.store
         query = "" if proposal_status == "all" else proposal_status
         rows = memory.list_proposals(query)
-        return {"proposals": [_describe(p) for p in rows]}
+        return {"proposals": [describe_proposal(p) for p in rows]}
 
     @router.post("/proposals/{proposal_id}/{action}", tags=["sensor"])
     def resolve_proposal(

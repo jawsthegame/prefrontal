@@ -25,6 +25,25 @@ class FindTimeMessage(BaseModel):
     )
 
 
+class BrainDumpMessage(BaseModel):
+    """Body of ``POST /braindump`` — an unstructured voice/free-text ramble.
+
+    One rambling dump is fanned out to both capture paths: the editing assistant
+    (actionable items → a previewable action list) and the LLM sensor (behavioral
+    asides → pending candidate updates). Nothing authoritative is written by the
+    call — actions are previewed and applied via ``POST /assistant/apply``; the
+    recorded proposals are reviewed via ``GET /proposals``.
+    """
+
+    text: str = Field(
+        description=(
+            "The brain-dump — a rambling voice transcript or free-text note, e.g. "
+            "'ok so I need to call the dentist, book flights for the trip, we're "
+            "out of milk, and honestly I keep blowing off admin on Mondays'."
+        )
+    )
+
+
 class AssistantApply(BaseModel):
     """Body of ``POST /assistant/apply`` — the proposed actions to execute.
 

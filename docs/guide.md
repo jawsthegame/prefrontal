@@ -482,6 +482,26 @@ hallucinated or someone else's row). Parsing uses **Claude** when the
 local Ollama model (local-first by default); the response says which `provider`
 answered.
 
+### Voice brain-dump → structured items
+
+Capture is where the whole learning loop starts, so the lowest-friction input —
+speaking a rambling thought out loud — gets its own front door. **`POST /braindump`**
+(and `prefrontal braindump "…"`) takes one unstructured dump and fans it out to
+*both* capture paths at once, because a real ramble mixes two kinds of signal:
+
+- **Actionable items** — "call the dentist, book the flights, we're out of milk" —
+  go through the same editing assistant as above and come back as a *previewable*
+  action list (todos, commitments, shopping, if-then plans, household facts).
+- **Behavioral asides** — "…and honestly I keep blowing off admin on Mondays" — go
+  through the LLM **sensor** and come back as *pending* candidate updates.
+
+Nothing is written on capture. The actions apply through `POST /assistant/apply`
+and the sensor candidates through `POST /proposals/{id}/accept`, so both halves
+keep their existing review step — a rambling, imperfect dump can never silently
+change your data. The CLI reads the dump from an argument, a `--file`, or stdin
+(`--file -`), and `--apply` executes the edits immediately (behavioral candidates
+always stay pending for review).
+
 ## Inference providers (local-first, opt-in Claude per agent)
 
 Reasoning runs on the local Ollama model by default — nothing leaves the host.
@@ -642,6 +662,7 @@ client-side; `/family` now 308-redirects to `/household`).
 | `POST /todos/{id}/done` · `/drop` | Complete / drop (logs an episode) |
 | `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
+| `POST /braindump` | Fan one free-text/voice ramble out to both capture paths → previewable edits + pending sensor proposals |
 | `GET /briefing` | Today's digest (structured + rendered text) |
 | `POST /observe` | Feed a free-text note **or** a conversation `transcript` to the LLM sensor → pending candidate updates |
 | `GET /proposals?status=` · `POST /proposals/{id}/accept\|reject` | Review / apply / dismiss sensor proposals |
