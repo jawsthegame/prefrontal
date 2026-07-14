@@ -84,10 +84,20 @@ struct TodayView: View {
         let previewLines = 6
         let long = MarkdownText.lineCount(text) > previewLines
         return Card {
-            HStack {
+            HStack(spacing: 8) {
                 CardLabel(text: "Morning briefing")
                 Spacer()
                 if let d = b.date { Text(d).font(.caption2).foregroundStyle(Brand.muted) }
+                // Rebuild just the briefing from the latest data (fast + model-free
+                // server-side) — a targeted refresh, no full Today reload.
+                AsyncButton {
+                    briefing = try await withAPI { try await $0.briefing() }
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.subheadline)
+                } onError: { error = $0 }
+                .buttonStyle(.borderless)
+                .tint(Brand.teal)
+                .accessibilityLabel("Refresh briefing")
             }
             MarkdownText(text: text, lineLimit: briefingExpanded ? nil : previewLines)
             if long {
