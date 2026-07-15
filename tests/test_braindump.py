@@ -18,7 +18,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from prefrontal.braindump import plan_braindump
+from prefrontal.braindump import OnDeviceParse, plan_braindump
 from prefrontal.config import Settings
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.memory.db import init_db
@@ -140,6 +140,82 @@ def test_plan_empty_text_short_circuits_without_model_call(store):
     assert plan.actions == [] and plan.candidates == []
 
 
+# --- module: on-device parse (no server model) -----------------------------
+
+
+def _boom_client() -> _FakeClient:
+    """A client that raises if any method is touched — proves no model was called."""
+    return _FakeClient(error=True)
+
+
+def test_on_device_parse_skips_both_models(store):
+    """A supplied parse validates through the same gates with no model call."""
+    plan = plan_braindump(
+        "",  # text ignored on the on-device path
+        store,
+        # Hand both halves a client that would raise if touched.
+        assistant_client=_boom_client(),
+        sensor_client=_boom_client(),
+        parse=OnDeviceParse(
+            reply="I'll add a todo to call the dentist.",
+            actions=[{"op": "add_todo", "title": "Call the dentist", "priority": 2}],
+            observations=[
+                {
+                    "kind": "state",
+                    "key": "preferred_briefing_format",
+                    "value": "short",
+                    "rationale": "keep the briefings short",
+                }
+            ],
+        ),
+    )
+    assert plan.reply == "I'll add a todo to call the dentist."
+    assert [a.op for a in plan.actions] == ["add_todo"]
+    assert [c.payload["key"] for c in plan.candidates] == ["preferred_briefing_format"]
+    # Same safety model as the server path: planning writes nothing.
+    assert store.open_todos() == []
+    assert store.list_proposals("pending") == []
+
+
+def test_on_device_parse_revalidates_actions_against_store(store):
+    """An on-device action is untrusted — a bad id drops in validation, like a model's."""
+    plan = plan_braindump(
+        "",
+        store,
+        parse=OnDeviceParse(
+            actions=[
+                {"op": "add_todo", "title": "Real todo"},
+                # References a todo that doesn't exist — must be dropped, not applied.
+                {"op": "complete_todo", "todo_id": 9999},
+            ],
+        ),
+    )
+    assert [a.op for a in plan.actions] == ["add_todo"]
+    assert plan.errors  # the bogus completion was reported, not silently accepted
+
+
+def test_on_device_parse_drops_off_allowlist_observations(store):
+    """An on-device observation can't slip an off-allowlist candidate past the gate."""
+    plan = plan_braindump(
+        "",
+        store,
+        parse=OnDeviceParse(
+            observations=[
+                {"kind": "state", "key": "preferred_briefing_format", "value": "short"},
+                {"kind": "state", "key": "not_a_real_key", "value": "x"},
+                {"kind": "episode", "episode_type": "not_a_type"},
+            ],
+        ),
+    )
+    assert [c.payload["key"] for c in plan.candidates] == ["preferred_briefing_format"]
+
+
+def test_on_device_parse_empty_yields_empty_plan(store):
+    """An empty parse is a valid no-op, not a crash — no reply, no items."""
+    plan = plan_braindump("", store, parse=OnDeviceParse())
+    assert plan.actions == [] and plan.candidates == []
+
+
 # --- endpoint: POST /braindump ---------------------------------------------
 
 
@@ -230,3 +306,64 @@ def test_braindump_actions_only_when_sensor_finds_nothing(app_store, user_store)
         ).json()
     assert len(body["actions"]) == 1
     assert body["proposals"] == []
+
+
+def test_braindump_on_device_parse_calls_no_model(app_store, user_store):
+    """A ``parse`` body validates + records without touching the server model."""
+
+    class _Boom(_RoutingClient):
+        def generate(self, prompt: str, *, system: str | None = None) -> str:
+            raise AssertionError("on-device parse must not call the server model")
+
+    with _client(app_store, _Boom()) as c:
+        resp = c.post(
+            "/braindump",
+            json={
+                "parse": {
+                    "reply": "I'll add a todo to call the dentist.",
+                    "actions": [
+                        {"op": "add_todo", "title": "Call the dentist", "priority": 2}
+                    ],
+                    "observations": [
+                        {
+                            "kind": "state",
+                            "key": "preferred_briefing_format",
+                            "value": "short",
+                        }
+                    ],
+                }
+            },
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reply"] == "I'll add a todo to call the dentist."
+        assert [a["op"] for a in body["actions"]] == ["add_todo"]
+        assert len(body["proposals"]) == 1
+        assert body["proposals"][0]["status"] == "pending"
+        # Both halves report the on-device provider so telemetry sees the path.
+        assert body["provider"] == {"assistant": "on_device", "sensor": "on_device"}
+
+        # Same confirm gates: the action is unwritten, the candidate lands pending.
+        assert user_store.open_todos() == []
+        pending = c.get("/proposals", headers={"X-Prefrontal-Token": SECRET}).json()
+        assert len(pending["proposals"]) == 1
+
+        # Applying the echoed on-device actions writes the todo (existing path).
+        applied = c.post(
+            "/assistant/apply",
+            json={"actions": body["actions"]},
+            headers={"X-Prefrontal-Token": SECRET},
+        ).json()
+    assert applied["applied"] == 1
+    todos = user_store.open_todos()
+    assert len(todos) == 1 and todos[0]["title"] == "Call the dentist"
+
+
+def test_braindump_empty_body_422(app_store):
+    """Neither text nor a parse ⇒ 422 (nothing to capture)."""
+    with _client(app_store, _RoutingClient()) as c:
+        resp = c.post(
+            "/braindump", json={}, headers={"X-Prefrontal-Token": SECRET}
+        )
+    assert resp.status_code == 422

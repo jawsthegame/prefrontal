@@ -25,22 +25,66 @@ class FindTimeMessage(BaseModel):
     )
 
 
-class BrainDumpMessage(BaseModel):
-    """Body of ``POST /braindump`` — an unstructured voice/free-text ramble.
+class BrainDumpParse(BaseModel):
+    """A brain-dump the client already parsed with its **on-device** model.
 
-    One rambling dump is fanned out to both capture paths: the editing assistant
-    (actionable items → a previewable action list) and the LLM sensor (behavioral
-    asides → pending candidate updates). Nothing authoritative is written by the
-    call — actions are previewed and applied via ``POST /assistant/apply``; the
-    recorded proposals are reviewed via ``GET /proposals``.
+    The native app can run the ramble through Apple Foundation Models / Gemini Nano
+    on the device (roadmap M1) and send the structure here — cheap, private, offline,
+    with no server-side inference. The two halves mirror the model outputs the server
+    would otherwise produce and flow through the *same* validation + confirm gates,
+    so an on-device parse is untrusted input that still can't write on its own.
+    """
+
+    reply: str = Field(
+        default="",
+        description="The on-device model's short acknowledgement of the actionable half.",
+    )
+    actions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Wire-format editing actions ({op, ...}) — re-validated and previewed, "
+            "written only on POST /assistant/apply."
+        ),
+    )
+    observations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Raw sensor candidate objects ({kind, ...}) — allowlist-checked and "
+            "recorded pending, applied only on POST /proposals/{id}/accept."
+        ),
+    )
+
+
+class BrainDumpMessage(BaseModel):
+    """Body of ``POST /braindump`` — one ramble, fanned out to both capture paths.
+
+    A rambling dump mixes actionable items (todos, commitments, shopping, if-then
+    plans, household facts → the editing assistant, a previewable action list) with
+    behavioral asides ("I keep blowing off admin on Mondays" → the LLM sensor,
+    pending candidate updates). Nothing authoritative is written by the call —
+    actions are previewed and applied via ``POST /assistant/apply``; recorded
+    proposals are reviewed via ``GET /proposals``.
+
+    Send **either** ``text`` for the server to parse (escalating to the opt-in cloud
+    agent for hard reasoning) **or** ``parse`` when the native app already extracted
+    the structure with its on-device model — the same endpoint serves both.
     """
 
     text: str = Field(
+        default="",
         description=(
             "The brain-dump — a rambling voice transcript or free-text note, e.g. "
             "'ok so I need to call the dentist, book flights for the trip, we're "
-            "out of milk, and honestly I keep blowing off admin on Mondays'."
-        )
+            "out of milk, and honestly I keep blowing off admin on Mondays'. Omit "
+            "when sending a pre-parsed 'parse' instead."
+        ),
+    )
+    parse: BrainDumpParse | None = Field(
+        default=None,
+        description=(
+            "A structure the client already extracted on-device. When present the "
+            "server calls no model — it validates this instead of parsing 'text'."
+        ),
     )
 
 

@@ -257,6 +257,31 @@ def _validate(raw: dict[str, Any]) -> Candidate | None:
     return None
 
 
+def validate_observations(raw_observations: list[dict[str, Any]]) -> list[Candidate]:
+    """Validate candidate dicts parsed *elsewhere* through the safety gate.
+
+    The model call in :func:`extract_candidates` is the only part that isn't pure
+    validation; this exposes that gate for candidates a client already extracted —
+    e.g. the native app's **on-device Foundation Model** (roadmap M1). Each object
+    passes through the identical :func:`_validate` allowlist check (state key /
+    episode type must be on the allowlist, no fabricated numeric fields), so an
+    on-device parse can no more slip an off-allowlist or numeric candidate past the
+    boundary than the server's own model can. Everything still lands **pending**.
+
+    Args:
+        raw_observations: Raw candidate objects (``{"kind": "state"|"episode", ...}``)
+            in the same shape :func:`extract_candidates` reads from a model reply.
+
+    Returns:
+        Validated :class:`Candidate` objects; malformed or off-allowlist items drop.
+    """
+    return [
+        c
+        for c in (_validate(r) for r in raw_observations if isinstance(r, dict))
+        if c is not None
+    ]
+
+
 def extract_candidates(
     text: str,
     *,
