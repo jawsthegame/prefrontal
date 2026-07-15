@@ -44,6 +44,41 @@ class BrainDumpMessage(BaseModel):
     )
 
 
+class VisionMessage(BaseModel):
+    """Body of ``POST /vision`` — one photo to read into structured items.
+
+    A photo of anything already written down (a whiteboard, a school newsletter, a
+    scribbled list, a receipt) is read to text by the multimodal model and then
+    fanned out through the exact same brain-dump paths: the editing assistant
+    (actionable items → a previewable action list) and the LLM sensor (behavioral
+    asides → pending candidates). Nothing authoritative is written by the call —
+    actions apply via ``POST /assistant/apply``; proposals via
+    ``POST /proposals/{id}/accept``. Vision is Anthropic-only today, so the call
+    returns 503 when no Anthropic key/SDK is configured.
+    """
+
+    image_base64: str = Field(
+        description=(
+            "The photo's bytes, base64-encoded. A ``data:`` URI prefix "
+            "(``data:image/jpeg;base64,``) is accepted and stripped."
+        )
+    )
+    media_type: str = Field(
+        default="image/jpeg",
+        description=(
+            "The image's MIME type: one of image/jpeg, image/png, image/gif, "
+            "image/webp."
+        ),
+    )
+    prompt: str | None = Field(
+        default=None,
+        description=(
+            "Optional override for the transcription instruction. Omit to use the "
+            "default faithful, commentary-free reading."
+        ),
+    )
+
+
 class AssistantApply(BaseModel):
     """Body of ``POST /assistant/apply`` — the proposed actions to execute.
 

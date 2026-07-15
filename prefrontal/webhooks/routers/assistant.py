@@ -33,6 +33,7 @@ from prefrontal.sensor import (
     describe_proposal,
     record_candidates,
 )
+from prefrontal.vision import plan_vision
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -42,8 +43,21 @@ from prefrontal.webhooks.schemas import (
     AssistantMessage,
     BrainDumpMessage,
     FindTimeMessage,
+    VisionMessage,
 )
 from prefrontal.webhooks.services import RouterServices
+
+
+def _strip_data_uri(image_base64: str) -> str:
+    """Drop a leading ``data:...;base64,`` prefix, keeping just the payload.
+
+    Native clients and Shortcuts sometimes send a full data URI; the SDK's image
+    block wants only the base64 payload, so normalize here.
+    """
+    if image_base64.startswith("data:"):
+        _, _, payload = image_base64.partition(",")
+        return payload.strip()
+    return image_base64.strip()
 
 
 def build_router(services: RouterServices) -> APIRouter:
@@ -168,6 +182,78 @@ def build_router(services: RouterServices) -> APIRouter:
             "errors": result.errors,
             "proposals": [describe_proposal(p) for p in created],
             "provider": {"assistant": assistant_provider, "sensor": sensor_provider},
+        }
+
+    @router.post("/vision", tags=["assistant"])
+    def vision(
+        payload: VisionMessage,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Read one photo into structured items (roadmap: vision capture).
+
+        A photo of anything already written down (a whiteboard, a school
+        newsletter, a scribbled list, a receipt) is transcribed by the multimodal
+        model and then fanned out through the **same** brain-dump paths, so the
+        response has the identical shape and safety model as ``POST /braindump``:
+
+        - ``transcript`` — what the model read off the image (for display/debug).
+        - ``actions`` — a validated, previewable editing action list. **Nothing is
+          written**; confirm via ``POST /assistant/apply``.
+        - ``proposals`` — allowlisted behavioral candidates, recorded **pending**
+          and applied only on ``POST /proposals/{id}/accept``.
+
+        Vision is Anthropic-only today (the local model can't see), so unlike the
+        text endpoints there's no local fallback: a missing Anthropic key/SDK is a
+        503. A blank image is a 422. Downstream, the two brain-dump halves
+        (``assistant`` / ``sensor``) still select their own provider.
+        """
+        memory = ctx.store
+        image = _strip_data_uri(payload.image_base64)
+        if not image:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provide a non-empty 'image_base64'.",
+            )
+        # Vision has no local fallback — if the Anthropic backend isn't configured
+        # there's simply no way to read the image, so say so plainly rather than
+        # returning a misleading empty plan.
+        if not provider.anthropic.available():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Vision needs the Anthropic provider; set ANTHROPIC_API_KEY "
+                    "and install prefrontal[anthropic]."
+                ),
+            )
+        assistant_client, assistant_provider = provider.select("assistant")
+        sensor_client, sensor_provider = provider.select("sensor")
+        result = plan_vision(
+            image,
+            payload.media_type,
+            memory,
+            vision_client=provider.anthropic,
+            assistant_client=assistant_client,
+            sensor_client=sensor_client,
+            prompt=payload.prompt,
+            now=utcnow(),
+            tz=resolved_settings.timezone,
+            avoid_keys=avoided_state_keys(memory),
+        )
+        # Same as /braindump: actions stay a preview; sensor candidates are recorded
+        # pending here so they land in the shared review queue.
+        ids = set(record_candidates(memory, result.candidates))
+        created = [p for p in memory.list_proposals("pending") if p["id"] in ids]
+        return {
+            "transcript": result.transcript,
+            "reply": result.reply,
+            "actions": [a.to_wire() for a in result.actions],
+            "errors": result.errors,
+            "proposals": [describe_proposal(p) for p in created],
+            "provider": {
+                "vision": "anthropic",
+                "assistant": assistant_provider,
+                "sensor": sensor_provider,
+            },
         }
 
     @router.post("/assistant/find-time", tags=["assistant"])
