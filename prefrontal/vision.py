@@ -5,11 +5,14 @@ A photo is the lowest-friction capture there is for anything already written dow
 receipt. This module turns one such image into the *same* structured items a voice
 brain-dump produces, by composing two capabilities that already exist:
 
-- **Vision** — :meth:`~prefrontal.integrations.anthropic.AnthropicClient.describe_image`
-  reads the image into plain text (a transcript of what's on it). This is the
-  cloud multimodal path; routing it through an *on-device* multimodal model is
-  still ahead on the roadmap, and native camera/Photos capture in the iOS app
-  feeding this endpoint is the client half of the same milestone.
+- **Vision** — a :class:`~prefrontal.integrations.ImageDescriber` reads the image
+  into plain text (a transcript of what's on it). Local-first: the provider
+  prefers the *on-device* multimodal model
+  (:meth:`~prefrontal.integrations.ollama.OllamaClient.describe_image`) when one is
+  configured and installed, and falls back to the cloud Anthropic model
+  (:meth:`~prefrontal.integrations.anthropic.AnthropicClient.describe_image`)
+  otherwise. Native camera/Photos capture in the iOS app feeding this endpoint is
+  the remaining client half of the milestone.
 - **Capture** — :func:`prefrontal.braindump.plan_braindump` fans that transcript
   out to both existing propose→confirm pipelines (the NL editing assistant for
   actionable items, the LLM sensor for behavioral asides).
@@ -20,18 +23,19 @@ and written only on Apply, the behavioral half lands *pending* and applies only 
 accept — a blurry, misread photo can never silently mutate the store, exactly as a
 rambling voice dump can't.
 
-Vision is Anthropic-only today (the local model can't see), so unlike the text
-pipelines there's no local fallback: an unavailable or failing vision client
-degrades to an *empty transcript* (and therefore an empty plan) rather than
-guessing at pixels it never read. The caller decides whether "no vision backend at
-all" is a hard error (the ``POST /vision`` endpoint returns 503) or a soft empty.
+The vision client is provider-selected upstream (see
+:meth:`~prefrontal.integrations.provider.ProviderResolver.select_vision`); this
+module just uses whichever it's handed. A failing or unreachable client degrades
+to an *empty transcript* (and therefore an empty plan) rather than guessing at
+pixels it never read. The caller decides whether "no vision backend at all" is a
+hard error (the ``POST /vision`` endpoint returns 503) or a soft empty.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from prefrontal.assistant import ValidatedAction
 from prefrontal.braindump import plan_braindump
@@ -39,7 +43,7 @@ from prefrontal.integrations.base import ProviderError
 from prefrontal.sensor import Candidate
 
 if TYPE_CHECKING:
-    from prefrontal.integrations import Generator
+    from prefrontal.integrations import Generator, ImageDescriber
 
 #: Default transcription instruction. It asks for a faithful, commentary-free
 #: reading because the *structuring* is the brain-dump's job downstream — the
@@ -52,27 +56,6 @@ DEFAULT_PROMPT = (
     "line by line. Do not add commentary, headings, or guesses — if part is "
     "unreadable, skip it. If the image has no such content, reply with nothing."
 )
-
-
-class ImageDescriber(Protocol):
-    """The slice of the vision backend this module needs.
-
-    :class:`~prefrontal.integrations.anthropic.AnthropicClient` satisfies it; tests
-    pass a fake. Kept separate from :class:`~prefrontal.integrations.Generator`
-    because vision is Anthropic-only and off that shared text protocol.
-    """
-
-    def available(self) -> bool: ...
-
-    def describe_image(
-        self,
-        image_base64: str,
-        *,
-        prompt: str,
-        media_type: str = ...,
-        system: str | None = ...,
-        max_tokens: int | None = ...,
-    ) -> str: ...
 
 
 @dataclass
@@ -111,16 +94,17 @@ def transcribe_image(
     """Read an image to text, degrading to ``""`` rather than raising.
 
     A missing/unavailable client, an unsupported media type, or a transport/auth
-    failure all resolve to an empty transcript — vision has no local fallback, so
-    "couldn't read it" is honestly *nothing read*, never a guess. Callers that want
-    to distinguish "no backend" from "backend read nothing" should check
-    :meth:`ImageDescriber.available` first (the endpoint does, to return 503).
+    failure all resolve to an empty transcript, so "couldn't read it" is honestly
+    *nothing read*, never a guess. Backend fallback (on-device → cloud) happens
+    upstream in the provider; by the time a client reaches here it's the one
+    chosen to answer. Callers that want to distinguish "no backend" from "backend
+    read nothing" should check availability first (the endpoint does, to 503).
 
     Args:
         image_base64: The image bytes, base64-encoded (no ``data:`` prefix).
         media_type: The image's MIME type (see
             :data:`~prefrontal.integrations.anthropic.SUPPORTED_IMAGE_MEDIA_TYPES`).
-        vision_client: The multimodal backend.
+        vision_client: The provider-selected multimodal backend (on-device or cloud).
         prompt: Override the transcription instruction (defaults to
             :data:`DEFAULT_PROMPT`).
         max_tokens: Output-token cap for the vision call (defaults to the client's).
@@ -160,7 +144,7 @@ def plan_vision(
     Two steps, no new safety model:
 
     1. :func:`transcribe_image` reads the image to plain text (empty on any
-       failure — vision has no local fallback).
+       failure).
     2. :func:`prefrontal.braindump.plan_braindump` runs that transcript through the
        existing assistant + sensor fan-out — a validated, previewable action list
        plus behavioral candidates the caller records pending.
@@ -169,7 +153,7 @@ def plan_vision(
         image_base64: The image bytes, base64-encoded (no ``data:`` prefix).
         media_type: The image's MIME type.
         memory: A **scoped** store (one user), for the assistant's snapshot.
-        vision_client: The multimodal backend (Anthropic today).
+        vision_client: The provider-selected multimodal backend (on-device or cloud).
         assistant_client: Model client for the editing assistant half.
         sensor_client: Model client for the sensor half; ``None`` skips it.
         prompt: Override the transcription instruction.

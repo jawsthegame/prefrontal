@@ -577,6 +577,22 @@ change your data. The CLI reads the dump from an argument, a `--file`, or stdin
 (`--file -`), and `--apply` executes the edits immediately (behavioral candidates
 always stay pending for review).
 
+### Photo → structured items
+
+A photo is the same low-friction capture for anything already *written* down — a
+whiteboard after a meeting, a school newsletter, a scribbled list, a receipt.
+**`POST /vision`** (and `prefrontal vision PATH`) reads the image to text with a
+multimodal model, then runs that transcript through the exact brain-dump fan-out
+above — so it has the same response shape and the same safety model (actions are
+previewed, behavioral candidates land pending). A misread photo can never
+silently change your data.
+
+Vision is **local-first**: it reads with the on-device multimodal model when you
+configure one (`OLLAMA_VISION_MODEL`, e.g. `llava` — remember to `ollama pull` it)
+and it's installed, otherwise it falls back to the cloud Anthropic model. With
+neither configured, `POST /vision` returns 503 rather than a misleading empty
+result. A blank image or an unsupported `media_type` (jpeg/png/gif/webp) is a 422.
+
 ## Inference providers (local-first, opt-in Claude per agent)
 
 Reasoning runs on the local Ollama model by default — nothing leaves the host.
@@ -592,6 +608,12 @@ model earns its cost:
 | `briefing` | The morning briefing rewritten as prose | `prefrontal briefing --llm` |
 | `sensor` | Free-text note or conversation transcript → candidate structured updates | `prefrontal note`, `POST /observe` |
 | `triage` | Mail triage (urgency/category/needs-action) | `POST /webhooks/mail/sync` |
+| `vision` | Read a photo → transcript (feeds the brain-dump fan-out) | `POST /vision`, `prefrontal vision` |
+
+`vision` is the one agent that's **local-first even for the cloud toggle**: it
+prefers the on-device multimodal model when one is installed and only reaches for
+Claude as a fallback. Listing `vision` in `ANTHROPIC_AGENTS` inverts that —
+preferring Claude when a key is set (still falling back to local without one).
 
 `ANTHROPIC_AGENTS` is a comma-separated list (`summarizer,triage`), the sentinel
 `all`, or an empty value for all-local. Unset keeps the historical default —
@@ -738,6 +760,7 @@ client-side; `/family` now 308-redirects to `/household`).
 | `POST /assistant` | Interpret a natural-language ask into proposed edits (no writes) |
 | `POST /assistant/apply` | Execute previously-proposed edits (re-validated) |
 | `POST /braindump` | Fan one free-text/voice ramble out to both capture paths → previewable edits + pending sensor proposals |
+| `POST /vision` | Read a photo (on-device model, cloud fallback) → transcript fanned out like `/braindump` |
 | `GET /briefing` | Today's digest (structured + rendered text) |
 | `POST /observe` | Feed a free-text note **or** a conversation `transcript` to the LLM sensor → pending candidate updates |
 | `GET /proposals?status=` · `POST /proposals/{id}/accept\|reject` | Review / apply / dismiss sensor proposals |
@@ -809,8 +832,9 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_PACKS` | _(none)_ | Comma-separated Context Packs (life-context layers, e.g. `parent`); each switches on modules + seeds vocabulary. Earlier-listed wins a conflict. `prefrontal packs -v` |
 | `PREFRONTAL_TRIAGE_LLM` / `_DROP` | `true` / `0` | Triage: use the model for ambiguous signals / confidence below which "noise" is surfaced not dropped |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
+| `OLLAMA_VISION_MODEL` | _(empty)_ | Local multimodal model for on-device vision capture (e.g. `llava`); blank falls back to the cloud model for `/vision` |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
-| `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage`, `all`, or empty for all-local |
+| `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage,vision`, `all`, or empty for all-local (`vision` is local-first — listing it flips it to prefer cloud) |
 | `PREFRONTAL_MAIL_ACCOUNTS` | _(empty)_ | `account=full\|signals` retention pairs |
 | `PREFRONTAL_ACCOUNT_LABELS` | _(empty)_ | `account=label:color` dashboard pills (e.g. `work=Acme:orange`) |
 | `PREFRONTAL_CALENDAR_LABELS` | _(empty)_ | `feed=label:color` calendar pills (e.g. `personal=Personal:blue`) |

@@ -2472,10 +2472,10 @@ def _cmd_vision(args: argparse.Namespace) -> int:
     edits proposed as a **preview** (nothing written until ``--apply``) and
     behavioral asides recorded *pending* for review (``prefrontal proposals``).
 
-    Vision is Anthropic-only today (the local model can't see), so this needs
-    ``ANTHROPIC_API_KEY`` set and ``prefrontal[anthropic]`` installed; without it
-    there's no way to read the image and the command exits non-zero rather than
-    guessing.
+    Vision is local-first: it reads with the on-device multimodal model when one
+    is configured (``OLLAMA_VISION_MODEL``, e.g. ``llava``) and installed, else the
+    cloud Anthropic model (``ANTHROPIC_API_KEY``). With neither there's no way to
+    read the image and the command exits non-zero rather than guessing.
 
     Args:
         args: Parsed arguments; uses ``db_path``, ``user``, ``path``, ``apply``.
@@ -2507,13 +2507,16 @@ def _cmd_vision(args: argparse.Namespace) -> int:
         return 2
 
     resolver = ProviderResolver.from_settings(settings)
-    if not resolver.anthropic.available():
+    # Local-first: prefer the on-device multimodal model, fall back to cloud.
+    vision_client, vision_provider = resolver.select_vision()
+    if vision_client is None:
         print(
-            "Vision needs the Anthropic provider; set ANTHROPIC_API_KEY and "
-            "install prefrontal[anthropic].",
+            "Vision needs a multimodal backend: set OLLAMA_VISION_MODEL (and pull "
+            "it) for on-device, or ANTHROPIC_API_KEY for cloud.",
             file=sys.stderr,
         )
         return 2
+    print(f"(reading image with the {vision_provider} vision model…)", file=sys.stderr)
 
     with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
         store = _resolve_user_store(unscoped, args.user)
@@ -2521,7 +2524,7 @@ def _cmd_vision(args: argparse.Namespace) -> int:
             image_base64,
             media_type,
             store,
-            vision_client=resolver.anthropic,
+            vision_client=vision_client,
             assistant_client=resolver.client("assistant"),
             sensor_client=resolver.client("sensor"),
             now=utcnow(),

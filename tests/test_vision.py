@@ -7,8 +7,9 @@ through it (actions are a preview; behavioral candidates land pending — a misr
 photo can never silently mutate the store). No real model or network: fake clients
 return canned text.
 
-Vision is Anthropic-only (no local fallback), so the endpoint returns 503 when the
-Anthropic backend is unavailable — also covered here.
+Vision is local-first: the provider prefers the on-device multimodal model and
+falls back to the cloud one. The routing (prefer on-device, cloud fallback) and
+the 503 when *neither* backend can see are covered here too.
 """
 
 from __future__ import annotations
@@ -97,21 +98,32 @@ class _FakeVision:
 
 
 class _CombinedFake(_FakeGen, _FakeVision):
-    """One client that is both the vision backend and the text model.
+    """One client that is both a vision backend and the text model.
 
-    The app injects a single client as both ``ollama`` and ``anthropic``; it must
-    answer ``describe_image`` (vision), ``generate`` (assistant/sensor), and
-    ``available`` for all three.
+    The app injects clients as ``ollama`` and ``anthropic``; each must answer
+    ``describe_image`` (vision), ``generate`` (assistant/sensor), ``available``,
+    and — for the on-device role — ``can_describe_images`` (whether a local vision
+    model is installed, which is how the provider decides to route on-device).
     """
 
-    def __init__(self, transcript: str = _TRANSCRIPT, *, available: bool = True) -> None:
+    def __init__(
+        self,
+        transcript: str = _TRANSCRIPT,
+        *,
+        available: bool = True,
+        can_see: bool | None = None,
+    ) -> None:
         _FakeGen.__init__(self)
         _FakeVision.__init__(self, transcript, available=available)
-        # One availability flag drives all three roles (vision + text selection).
         self.available_result = available
+        # can_see gates on-device routing; defaults to availability.
+        self._can_see = available if can_see is None else can_see
 
     def available(self) -> bool:
         return self._available
+
+    def can_describe_images(self) -> bool:
+        return self._can_see
 
 
 # --- module: transcribe_image ----------------------------------------------
@@ -136,7 +148,7 @@ def test_transcribe_unavailable_backend_returns_empty():
 
 
 def test_transcribe_error_degrades_to_empty():
-    """No local fallback ⇒ an erroring backend reads nothing rather than raising."""
+    """An erroring backend reads nothing (empty) rather than raising."""
     v = _FakeVision(error=True)
     assert transcribe_image("aGk=", "image/png", vision_client=v) == ""
 
@@ -218,6 +230,12 @@ def _client(app_store, client):
     return TestClient(app)
 
 
+def _client_split(app_store, *, ollama, anthropic):
+    """Inject distinct on-device / cloud backends to exercise vision routing."""
+    app = create_app(store=app_store, settings=Settings(), ollama=ollama, anthropic=anthropic)
+    return TestClient(app)
+
+
 def test_vision_requires_auth(app_store):
     with _client(app_store, _CombinedFake()) as c:
         assert c.post("/vision", json={"image_base64": "aGk="}).status_code == 401
@@ -258,8 +276,8 @@ def test_vision_normalizes_media_type_case_and_whitespace(app_store):
     assert fake.calls[0]["media_type"] == "image/png"
 
 
-def test_vision_503_when_anthropic_unavailable(app_store):
-    """No vision backend ⇒ 503, not a misleading empty plan."""
+def test_vision_503_when_no_backend_can_see(app_store):
+    """Neither on-device nor cloud can see ⇒ 503, not a misleading empty plan."""
     with _client(app_store, _CombinedFake(available=False)) as c:
         resp = c.post(
             "/vision",
@@ -267,6 +285,36 @@ def test_vision_503_when_anthropic_unavailable(app_store):
             headers={"X-Prefrontal-Token": SECRET},
         )
     assert resp.status_code == 503
+
+
+def test_vision_prefers_on_device_over_cloud(app_store):
+    """Local-first: with a usable on-device model, the cloud one isn't touched."""
+    ollama = _CombinedFake("on-device read", can_see=True)
+    anthropic = _CombinedFake("cloud read", can_see=True)
+    with _client_split(app_store, ollama=ollama, anthropic=anthropic) as c:
+        body = c.post(
+            "/vision",
+            json={"image_base64": "aGk="},
+            headers={"X-Prefrontal-Token": SECRET},
+        ).json()
+    assert body["provider"]["vision"] == "ollama"
+    assert body["transcript"] == "on-device read"
+    assert len(ollama.calls) == 1 and anthropic.calls == []
+
+
+def test_vision_falls_back_to_cloud_when_no_local_model(app_store):
+    """No local vision model installed ⇒ read with the cloud model instead."""
+    ollama = _CombinedFake("unused", can_see=False)  # server up, but no vision model
+    anthropic = _CombinedFake(_TRANSCRIPT, can_see=True)
+    with _client_split(app_store, ollama=ollama, anthropic=anthropic) as c:
+        body = c.post(
+            "/vision",
+            json={"image_base64": "aGk="},
+            headers={"X-Prefrontal-Token": SECRET},
+        ).json()
+    assert body["provider"]["vision"] == "anthropic"
+    assert body["transcript"] == _TRANSCRIPT
+    assert len(anthropic.calls) == 1 and ollama.calls == []
 
 
 def test_vision_previews_actions_and_records_proposals(app_store, user_store):
@@ -283,7 +331,8 @@ def test_vision_previews_actions_and_records_proposals(app_store, user_store):
         assert len(body["actions"]) == 1 and body["actions"][0]["op"] == "add_todo"
         assert len(body["proposals"]) == 1
         assert body["proposals"][0]["status"] == "pending"
-        assert body["provider"]["vision"] == "anthropic"
+        # Local-first: the injected client can see on-device, so vision is "ollama".
+        assert body["provider"]["vision"] == "ollama"
 
         # The actionable half wrote nothing yet…
         assert user_store.open_todos() == []
