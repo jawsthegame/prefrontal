@@ -102,7 +102,13 @@ class OllamaClient:
         models = data.get("models") if isinstance(data, dict) else None
         if not isinstance(models, list):
             return set()
-        return {m["name"] for m in models if isinstance(m, dict) and "name" in m}
+        # Guard the name is a string — an unexpected schema shouldn't blow up the
+        # later ``name.split(...)`` in :meth:`can_describe_images`.
+        return {
+            m["name"]
+            for m in models
+            if isinstance(m, dict) and isinstance(m.get("name"), str)
+        }
 
     def can_describe_images(self) -> bool:
         """Whether on-device vision is usable: a vision model configured *and*

@@ -238,7 +238,8 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=(
                     "Vision needs a multimodal backend: set OLLAMA_VISION_MODEL "
-                    "(and pull it) for on-device, or ANTHROPIC_API_KEY for cloud."
+                    "(and pull it) for on-device, or ANTHROPIC_API_KEY plus "
+                    "'pip install prefrontal[anthropic]' for cloud."
                 ),
             )
         assistant_client, assistant_provider = provider.select("assistant")

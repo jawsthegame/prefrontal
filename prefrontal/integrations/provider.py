@@ -140,15 +140,23 @@ class ProviderResolver:
             ``(None, "none")`` when neither can see — the caller decides whether
             that's a 503 (endpoint) or a soft empty.
         """
-        local_ok = self.ollama.can_describe_images()
-        cloud_ok = self.anthropic.available()
-        if self.prefers_anthropic(VISION):
-            order = [(self.anthropic, "anthropic", cloud_ok), (self.ollama, "ollama", local_ok)]
-        else:
-            order = [(self.ollama, "ollama", local_ok), (self.anthropic, "anthropic", cloud_ok)]
-        for client, name, ok in order:
-            if ok:
-                return client, name
+        def _pick(name: str) -> tuple[ImageDescriber, str] | None:
+            # Checks are lazy (called only in preference order) so the preferred
+            # backend short-circuits — e.g. cloud-first with a key never makes the
+            # local /api/tags call, and local-first that can see never checks cloud.
+            if name == "anthropic":
+                return (self.anthropic, "anthropic") if self.anthropic.available() else None
+            return (self.ollama, "ollama") if self.ollama.can_describe_images() else None
+
+        order = (
+            ["anthropic", "ollama"]
+            if self.prefers_anthropic(VISION)
+            else ["ollama", "anthropic"]
+        )
+        for name in order:
+            picked = _pick(name)
+            if picked is not None:
+                return picked
         return None, "none"
 
     def unknown_agents(self) -> frozenset[str]:

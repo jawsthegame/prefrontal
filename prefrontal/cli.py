@@ -2512,7 +2512,8 @@ def _cmd_vision(args: argparse.Namespace) -> int:
     if vision_client is None:
         print(
             "Vision needs a multimodal backend: set OLLAMA_VISION_MODEL (and pull "
-            "it) for on-device, or ANTHROPIC_API_KEY for cloud.",
+            "it) for on-device, or ANTHROPIC_API_KEY plus "
+            "'pip install prefrontal[anthropic]' for cloud.",
             file=sys.stderr,
         )
         return 2

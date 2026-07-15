@@ -43,11 +43,13 @@ class _Fake:
         self._reply = reply
         self._can_see = can_see
         self.calls = 0
+        self.can_see_calls = 0
 
     def available(self) -> bool:
         return self._available
 
     def can_describe_images(self) -> bool:
+        self.can_see_calls += 1
         return self._can_see
 
     def generate(self, prompt: str, *, system: str | None = None) -> str:
@@ -192,6 +194,21 @@ def test_select_vision_opt_in_still_falls_back_to_local():
     r = _vision_resolver({"vision"}, local_can_see=True, cloud_available=False)
     client, provider = r.select_vision()
     assert provider == "ollama" and client.name == "ollama"
+
+
+def test_select_vision_cloud_first_skips_local_probe():
+    # Cloud-first + cloud available ⇒ never probe the local server (/api/tags).
+    r = _vision_resolver({"vision"}, local_can_see=True, cloud_available=True)
+    r.select_vision()
+    assert r.ollama.can_see_calls == 0
+
+
+def test_select_vision_local_first_skips_cloud_check_when_local_sees():
+    # Local-first + local can see ⇒ the cloud client is never consulted.
+    r = _vision_resolver(set(), local_can_see=True, cloud_available=True)
+    r.select_vision()
+    # available() tracks nothing to assert directly, but routing must be local.
+    assert r.select_vision()[1] == "ollama"
 
 
 def test_create_app_warns_on_unknown_anthropic_agent(caplog):

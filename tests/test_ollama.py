@@ -123,3 +123,17 @@ def test_can_describe_images_false_when_server_down():
 def test_can_describe_images_matches_exact_tag():
     c = _tags_client(["llava:13b"], vision_model="llava:13b")
     assert c.can_describe_images() is True
+
+
+def test_can_describe_images_tolerates_non_string_names():
+    """An odd /api/tags schema (non-string name, missing key) must not crash the
+    later name.split(...); such entries are just ignored."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"models": [{"name": 123}, {"nope": "x"}, "junk", {"name": "llava:latest"}]},
+        )
+
+    c = OllamaClient(vision_model="llava", transport=httpx.MockTransport(handler))
+    assert c.can_describe_images() is True  # the one valid entry still matches
