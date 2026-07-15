@@ -27,6 +27,7 @@ from prefrontal.assistant import (
 from prefrontal.availability import plan_availability, render_plan
 from prefrontal.braindump import plan_braindump
 from prefrontal.clock import local_datetime, parse_ts, utcnow
+from prefrontal.integrations.anthropic import SUPPORTED_IMAGE_MEDIA_TYPES
 from prefrontal.scheduling import window_config_for
 from prefrontal.sensor import (
     avoided_state_keys,
@@ -204,8 +205,9 @@ def build_router(services: RouterServices) -> APIRouter:
 
         Vision is Anthropic-only today (the local model can't see), so unlike the
         text endpoints there's no local fallback: a missing Anthropic key/SDK is a
-        503. A blank image is a 422. Downstream, the two brain-dump halves
-        (``assistant`` / ``sensor``) still select their own provider.
+        503. A blank image or an unsupported ``media_type`` is a 422. Downstream,
+        the two brain-dump halves (``assistant`` / ``sensor``) still select their
+        own provider.
         """
         memory = ctx.store
         image = _strip_data_uri(payload.image_base64)
@@ -213,6 +215,18 @@ def build_router(services: RouterServices) -> APIRouter:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Provide a non-empty 'image_base64'.",
+            )
+        # Validate the media type here rather than letting an unsupported value fall
+        # through to describe_image (which raises) → transcribe_image (which swallows
+        # the error) → a 200 with an empty plan indistinguishable from a blank image.
+        media_type = payload.media_type.strip().lower()
+        if media_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Unsupported 'media_type' {payload.media_type!r}; expected one "
+                    f"of {', '.join(sorted(SUPPORTED_IMAGE_MEDIA_TYPES))}."
+                ),
             )
         # Vision has no local fallback — if the Anthropic backend isn't configured
         # there's simply no way to read the image, so say so plainly rather than
@@ -229,7 +243,7 @@ def build_router(services: RouterServices) -> APIRouter:
         sensor_client, sensor_provider = provider.select("sensor")
         result = plan_vision(
             image,
-            payload.media_type,
+            media_type,
             memory,
             vision_client=provider.anthropic,
             assistant_client=assistant_client,

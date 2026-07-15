@@ -231,6 +231,33 @@ def test_vision_blank_image_422(app_store):
     assert resp.status_code == 422
 
 
+def test_vision_unsupported_media_type_422(app_store):
+    """An unsupported media type is rejected up-front, not swallowed into an empty
+    200 that looks like a blank image."""
+    fake = _CombinedFake()
+    with _client(app_store, fake) as c:
+        resp = c.post(
+            "/vision",
+            json={"image_base64": "aGk=", "media_type": "image/tiff"},
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+    assert resp.status_code == 422
+    assert fake.calls == []  # describe_image never reached
+
+
+def test_vision_normalizes_media_type_case_and_whitespace(app_store):
+    """A padded/upper-case but valid media type is normalized, not rejected."""
+    fake = _CombinedFake()
+    with _client(app_store, fake) as c:
+        resp = c.post(
+            "/vision",
+            json={"image_base64": "aGk=", "media_type": "  IMAGE/PNG  "},
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+    assert resp.status_code == 200
+    assert fake.calls[0]["media_type"] == "image/png"
+
+
 def test_vision_503_when_anthropic_unavailable(app_store):
     """No vision backend ⇒ 503, not a misleading empty plan."""
     with _client(app_store, _CombinedFake(available=False)) as c:
