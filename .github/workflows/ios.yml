@@ -35,6 +35,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check entitlements files in sync
+        working-directory: ios
+        # Prefrontal.push.entitlements (paid-tier, native APNs) must equal
+        # Prefrontal.entitlements (base default, no APNs) plus exactly the
+        # `aps-environment` key. Fail fast if they drift — e.g. an App Group added
+        # to one only would silently drop it from the other's build. Pure Python,
+        # so it needs no brew install and runs before the slower steps.
+        run: ./scripts/check-entitlements-sync.sh
+
       - name: Install SwiftLint + XcodeGen
         run: brew install swiftlint xcodegen
 

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push-enabled entitlements: a mirror of Prefrontal.entitlements PLUS the
+	     `aps-environment` key for native APNs. Selected only when
+	     PREFRONTAL_ENTITLEMENTS points here (a paid account's git-ignored
+	     Signing.local.xcconfig) — the committed default omits `aps-environment`
+	     so a free "Personal Team" clone still signs. Because XcodeGen only
+	     *references* this file (it never regenerates it), the capability survives
+	     `xcodegen generate` with no re-adding in Xcode.
+
+	     Keep the App Group + keychain group below in sync with
+	     Prefrontal.entitlements; only `aps-environment` differs. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.morningstatic.prefrontal</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.morningstatic.prefrontal.shared</string>
+	</array>
+	<!-- development (Debug/run-to-device → sandbox APNs) or production
+	     (Release/TestFlight/App Store), driven by APS_ENVIRONMENT in project.yml
+	     so the entitlement always matches the build's token environment. The
+	     server's APNS_USE_SANDBOX must match: development ⇒ 1, production ⇒ unset. -->
+	<key>aps-environment</key>
+	<string>$(APS_ENVIRONMENT)</string>
+</dict>
+</plist>
