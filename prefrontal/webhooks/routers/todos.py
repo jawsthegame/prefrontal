@@ -683,8 +683,11 @@ def build_router(services: RouterServices) -> APIRouter:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Outside waking hours — nothing to schedule into right now.",
                 )
-            commitments = memory.commitments_between(
-                (now - timedelta(hours=26)).strftime(fmt), horizon.strftime(fmt)
+            # Overlap-aware so an in-progress multi-day / all-day block that started
+            # before now still blocks its span (see ``active_commitments_between``);
+            # placing a new slot on top of it would double-book the user.
+            commitments = memory.active_commitments_between(
+                now.strftime(fmt), horizon.strftime(fmt)
             )
             slot = first_window_fitting(free_windows(commitments, now, horizon), duration)
             if slot is None:
@@ -1085,11 +1088,11 @@ def build_router(services: RouterServices) -> APIRouter:
             result["reason"] = "outside waking hours"
             return result
 
-        fmt = TS_FMT
-        # Look back far enough to catch an in-progress (or all-day) commitment
-        # that started before now; free_windows clips it to the [now, horizon] band.
-        commitments = memory.commitments_between(
-            (now - timedelta(hours=26)).strftime(fmt), horizon.strftime(fmt)
+        # Overlap-aware so a still-running multi-day / all-day block that *started*
+        # before now is counted as busy, not a free window (see
+        # ``active_commitments_between``); free_windows clips it to [now, horizon].
+        commitments = memory.active_commitments_between(
+            now.strftime(TS_FMT), horizon.strftime(TS_FMT)
         )
         free = available_now(commitments, now, horizon)
         result["free_minutes"] = round(free)

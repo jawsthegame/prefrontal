@@ -1285,6 +1285,92 @@ def test_sync_skips_bad_timestamp_keeps_good(store):
     assert [c["title"] for c in store.upcoming_commitments()] == ["Good"]
 
 
+# -- active_commitments_between (overlap-aware busy set) ----------------------
+
+_ACB_NOW = "2026-07-02 12:00:00"
+_ACB_HORIZON = "2026-07-02 13:30:00"
+
+
+def _acb(store):
+    """Titles returned by ``active_commitments_between`` over the fixed test window."""
+    return [c["title"] for c in store.active_commitments_between(_ACB_NOW, _ACB_HORIZON)]
+
+
+def test_active_commitments_between_includes_in_progress_block(store):
+    """A multi-day block that *started* before the window but is still ongoing is
+    returned — the gap ``commitments_between`` (start_at-only) leaves open."""
+    store.upsert_commitment(
+        title="DevConf", start_at="2026-06-30 09:00:00", end_at="2026-07-04 17:00:00",
+        source="manual",
+    )
+    # start_at (2 days before now) is outside the window, so the start_at-only query
+    # misses it; the overlap-aware one catches it.
+    assert store.commitments_between(_ACB_NOW, _ACB_HORIZON) == []
+    assert _acb(store) == ["DevConf"]
+
+
+def test_active_commitments_between_keeps_in_window_starts(store):
+    """A commitment starting inside the window is still returned (superset behavior)."""
+    store.upsert_commitment(
+        title="Team sync", start_at="2026-07-02 12:45:00", end_at="2026-07-02 13:15:00",
+        source="manual",
+    )
+    assert _acb(store) == ["Team sync"]
+
+
+def test_active_commitments_between_excludes_already_ended(store):
+    """A block that ended before the window opens is dropped."""
+    store.upsert_commitment(
+        title="Breakfast", start_at="2026-07-02 08:00:00", end_at="2026-07-02 09:00:00",
+        source="manual",
+    )
+    assert _acb(store) == []
+
+
+def test_active_commitments_between_excludes_block_ending_exactly_at_start(store):
+    """Half-open ``[start, end)``: a block whose ``end_at`` is exactly ``start`` has
+    already finished as the window opens, so it doesn't overlap (strict ``> start``)."""
+    store.upsert_commitment(
+        title="Just ended", start_at="2026-07-02 11:00:00", end_at=_ACB_NOW,
+        source="manual",
+    )
+    assert _acb(store) == []
+
+
+def test_active_commitments_between_excludes_starts_after_window(store):
+    """A commitment starting at/after the horizon is out (``start_at < end``)."""
+    store.upsert_commitment(
+        title="Dinner", start_at="2026-07-02 18:00:00", end_at="2026-07-02 19:00:00",
+        source="manual",
+    )
+    assert _acb(store) == []
+
+
+def test_active_commitments_between_bounds_null_end_by_assumed_duration(store):
+    """A point event (no ``end_at``) is bounded by ``default_event_minutes``: one
+    that started well before the window is treated as over and dropped, so the query
+    never drags the whole past in."""
+    store.upsert_commitment(
+        title="Old ping", start_at="2026-07-02 06:00:00", source="manual",
+    )  # no end_at → assumed 30 min, long since over by noon
+    assert _acb(store) == []
+    # But a null-end event still within its assumed duration at ``now`` is busy.
+    store.upsert_commitment(
+        title="Just started", start_at="2026-07-02 11:50:00", source="manual",
+    )  # assumed to run to 12:20, so ongoing at noon
+    assert _acb(store) == ["Just started"]
+
+
+def test_active_commitments_between_excludes_hidden(store):
+    """Hidden commitments are excluded, matching ``commitments_between``."""
+    cid, _ = store.upsert_commitment(
+        title="Hidden conf", start_at="2026-06-30 09:00:00", end_at="2026-07-04 17:00:00",
+        source="manual",
+    )
+    store.set_commitment_hidden(cid, True)
+    assert _acb(store) == []
+
+
 # -- endpoints ---------------------------------------------------------------
 
 

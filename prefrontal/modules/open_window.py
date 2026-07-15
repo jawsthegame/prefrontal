@@ -38,8 +38,6 @@ Two behaviors this module owns beyond emitting the cue:
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 from prefrontal.clock import TS_FMT, local_datetime, local_hour_of, parse_ts, utcnow
 from prefrontal.coaching import CoachContext, Cue, Decision, note_hint
 from prefrontal.config import get_settings
@@ -68,20 +66,6 @@ COACH_GAP_MIN_KEY = "coach_gap_min_minutes"
 #: dent in a stalled task (the point of the offer) without pitching a window that's
 #: gone before you've context-switched into it.
 DEFAULT_GAP_MIN_MINUTES = 15.0
-
-#: How far back to look for commitments when carving the gap.
-#:
-#: :func:`~prefrontal.scheduling.available_now` decides "busy now" only from
-#: commitments it's *handed*, and ``store.commitments_between`` filters by
-#: ``start_at`` — so a still-running multi-day / all-day block (a week-long
-#: conference, a two-week vacation) that *started* before the lookback would be
-#: missed, and we'd wrongly fire an offer while the user is actually busy. ``GET
-#: /todos/now`` mirrors this recipe and uses a 26h lookback, so it shares that gap
-#: (noted on the PR); here we widen it to comfortably span realistic long events.
-#: :func:`~prefrontal.scheduling.free_windows` clips every commitment to the
-#: ``[now, horizon]`` band and drops any that ended before ``now``, so a wider
-#: lookback only ever *adds* the still-running blocks we need — never stale ones.
-_COMMITMENT_LOOKBACK = timedelta(days=31)
 
 #: Coaching-state key holding the last *fired* offer's signature
 #: (``"<todo_id>:<next_commitment_id>"``). An identical signature on a later tick is
@@ -202,9 +186,12 @@ class OpenWindowModule(Module):
         if not within:
             return None
 
-        commitments = store.commitments_between(
-            (ctx.now - _COMMITMENT_LOOKBACK).strftime(TS_FMT),
-            horizon.strftime(TS_FMT),
+        # Overlap-aware (see ``active_commitments_between``): a still-running
+        # multi-day / all-day block that *started* before now reads as busy rather
+        # than a free window — the same recipe ``GET /todos/now`` uses. No bespoke
+        # lookback to guess how far back an in-progress block might have started.
+        commitments = store.active_commitments_between(
+            ctx.now.strftime(TS_FMT), horizon.strftime(TS_FMT)
         )
         free = available_now(commitments, ctx.now, horizon)
         gap_min = store.get_float(COACH_GAP_MIN_KEY, DEFAULT_GAP_MIN_MINUTES)
