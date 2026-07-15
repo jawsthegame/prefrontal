@@ -90,6 +90,21 @@
   .chip.warn { background: color-mix(in srgb, var(--warn) 24%, transparent); color: var(--fg); }
   .chip.miss { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--fg); }
   .trip .refl { margin-top: 5px; color: var(--muted); font-size: 13px; }
+  .filing { margin-top: 9px; }
+  .filing .row { display: flex; gap: 8px; align-items: center; }
+  .filing input { flex: 1; min-width: 0; padding: 8px 11px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; }
+  .filing input:focus { outline: none; border-color: var(--accent); }
+  .filing .save { flex: none; padding: 8px 15px; min-height: 36px; border: 0; border-radius: 9px;
+    background: var(--accent); color: var(--accent-fg); font-weight: 650; font-size: 13.5px; cursor: pointer; }
+  .filing .save:disabled { opacity: .55; cursor: default; }
+  .filing .spheres { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .filing .sphere { font-size: 11.5px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+  .filing .sphere:hover { border-color: var(--accent); }
+  .filing .sphere[aria-pressed="true"] { border-color: var(--accent); color: var(--fg);
+    background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .filing .err { color: var(--danger); font-size: 12px; margin-top: 5px; }
   .hint { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
 
   .active-trip { display: flex; align-items: center; gap: 12px; }
@@ -165,8 +180,8 @@
 
   <section class="card" id="c-unlabeled" style="display:none">
     <h2>Needs a label</h2>
-    <p class="hint">Completed trips still waiting to be named. Tap the buttons on the
-      "what was that trip?" notification on your phone to file them.</p>
+    <p class="hint">Completed trips still waiting to be named. Name one here to file it —
+      or leave it, and it folds into your next morning briefing (these never interrupt).</p>
     <div id="unlabeled"></div>
   </section>
 
@@ -283,7 +298,27 @@ function renderBalance(bal) {
 }
 
 // ── Trips ──────────────────────────────────────────────────────────────────
-function tripRow(t) {
+// Inline "name + file this trip" form for an unlabeled trip. Prefilled from the
+// reverse-matched place suggestion when there is one, so it reads as a one-tap
+// confirm; Save posts to /webhooks/trip/label, which clears it from this list.
+function fileForm(t, sg) {
+  const preName = sg && sg.label ? esc(sg.label) : "";
+  const preDom = sg && sg.domain ? sg.domain : "";
+  const spheres = Object.keys(DOMAIN_LABEL).map((d) =>
+    `<button type="button" class="sphere" data-domain="${d}" aria-pressed="${d === preDom}">${esc(DOMAIN_LABEL[d])}</button>`
+  ).join("");
+  return `<div class="filing" data-trip="${t.id}">
+    <div class="row">
+      <input type="text" class="fname" maxlength="120" aria-label="Trip name"
+        placeholder="Name this trip…" value="${preName}" />
+      <button type="button" class="save">Save</button>
+    </div>
+    <div class="spheres" role="group" aria-label="Life sphere">${spheres}</div>
+    <div class="err" style="display:none"></div>
+  </div>`;
+}
+
+function tripRow(t, fileable) {
   const w = fmtWhen(t.departed_at);
   const dur = durationOf(t);
   const name = t.label
@@ -301,15 +336,18 @@ function tripRow(t) {
   const refl = t.reflection ? `<div class="refl">“${esc(t.reflection)}”</div>` : "";
   // For a trip still awaiting a name, show the reverse-matched place guess so it
   // reads as a one-tap confirm rather than a blank "unlabeled".
+  const sg = (!t.label && t.suggestion && t.suggestion.label) ? t.suggestion : null;
   let sugg = "";
-  if (!t.label && t.suggestion && t.suggestion.label) {
-    const d = t.suggestion.domain;
-    const dom = d ? ` (${esc(DOMAIN_LABEL[d] || d)})` : "";
-    sugg = `<div class="hint">Looks like ${esc(t.suggestion.label)}${dom} — confirm on your phone.</div>`;
+  if (sg) {
+    const dom = sg.domain ? ` (${esc(DOMAIN_LABEL[sg.domain] || sg.domain)})` : "";
+    sugg = fileable
+      ? `<div class="hint">Looks like ${esc(sg.label)}${dom} — confirm below, or rename.</div>`
+      : `<div class="hint">Looks like ${esc(sg.label)}${dom}.</div>`;
   }
+  const filing = fileable ? fileForm(t, sg) : "";
   return `<div class="trip">
     <div class="when"><b>${esc(w.day)}</b>${esc(w.time)}</div>
-    <div class="main">${name}${sugg}<div class="tags">${tags.join("")}</div>${refl}</div>
+    <div class="main">${name}${sugg}<div class="tags">${tags.join("")}</div>${refl}${filing}</div>
   </div>`;
 }
 
@@ -333,12 +371,12 @@ function render(trips, bal) {
 
   const recent = (trips.recent || []).filter((t) => t.status === "completed");
   $("#recent").innerHTML = recent.length
-    ? recent.map(tripRow).join("")
+    ? recent.map((t) => tripRow(t)).join("")
     : `<p class="empty">No completed trips yet. Set your <a href="/settings#c-home">home location in Settings</a>, and leaving and returning is logged automatically.</p>`;
 
   const unl = trips.unlabeled || [];
   $("#c-unlabeled").style.display = unl.length ? "" : "none";
-  if (unl.length) $("#unlabeled").innerHTML = unl.map(tripRow).join("");
+  $("#unlabeled").innerHTML = unl.map((t) => tripRow(t, true)).join("");
 
   const done = recent.length;
   $("#status").textContent = trips.active
@@ -379,6 +417,57 @@ $("#token-save").onclick = () => {
   load();
 };
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+// ── File an unlabeled trip inline ───────────────────────────────────────────
+// Name (and optionally file into a life-sphere) a completed trip right here, the
+// in-page equivalent of the ambient "what was that trip?" ask — which never
+// interrupts with a push, so there was no other way to act on it from this page.
+async function fileTrip(box) {
+  const id = parseInt(box.getAttribute("data-trip"), 10);
+  const input = box.querySelector(".fname");
+  const err = box.querySelector(".err");
+  const save = box.querySelector(".save");
+  const label = input.value.trim();
+  const sel = box.querySelector('.sphere[aria-pressed="true"]');
+  const domain = sel ? sel.getAttribute("data-domain") : null;
+  if (!label) {
+    err.textContent = "Give the trip a name first.";
+    err.style.display = ""; input.focus(); return;
+  }
+  save.disabled = true; err.style.display = "none";
+  try {
+    await api("/webhooks/trip/label", {
+      method: "POST",
+      body: JSON.stringify({ trip_id: id, label, domain }),
+    });
+    await load();  // re-render: the now-named trip drops off the unlabeled list
+  } catch (e) {
+    if (e.code === 401) { gate(); return; }
+    save.disabled = false;
+    err.textContent = "Couldn't file it — " + e.message;
+    err.style.display = "";
+  }
+}
+
+// Delegated: #unlabeled persists, only its innerHTML is re-rendered per load.
+$("#unlabeled").addEventListener("click", (e) => {
+  const sphere = e.target.closest(".sphere");
+  if (sphere) {
+    const on = sphere.getAttribute("aria-pressed") === "true";
+    sphere.parentElement.querySelectorAll(".sphere")
+      .forEach((s) => s.setAttribute("aria-pressed", "false"));
+    sphere.setAttribute("aria-pressed", on ? "false" : "true");  // tap again to clear
+    return;
+  }
+  const save = e.target.closest(".save");
+  if (save) fileTrip(save.closest(".filing"));
+});
+$("#unlabeled").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.classList.contains("fname")) {
+    e.preventDefault();
+    fileTrip(e.target.closest(".filing"));
+  }
+});
 
 load();
 </script>
