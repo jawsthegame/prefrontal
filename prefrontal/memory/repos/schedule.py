@@ -369,6 +369,48 @@ class ScheduleRepo(Repo):
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
+    def active_commitments_between(
+        self, start: str, end: str, *, default_event_minutes: float = 30.0
+    ) -> list[dict[str, Any]]:
+        """Return active, non-hidden commitments *overlapping* ``[start, end)``, soonest first.
+
+        The overlap-aware companion to :meth:`commitments_between`. That method
+        filters by ``start_at`` alone, so a still-running multi-day / all-day block
+        (a week-long conference, a two-week vacation) whose ``start_at`` predates
+        ``start`` is missed — and a free-window computation over the result would
+        read the user as free while they're actually busy. This method instead
+        returns every commitment that *touches* the window: it starts before ``end``
+        **and** is still ongoing at or after ``start``.
+
+        A commitment's effective end is ``end_at`` when set, else
+        ``start_at + default_event_minutes`` — the same assumed duration
+        :func:`prefrontal.scheduling.free_windows` uses when carving gaps, so a
+        point event with no ``end_at`` is bounded by its assumed length rather than
+        dragging the whole past into the result. The precise clipping to the band
+        still happens in ``free_windows``; this query only decides membership, so it
+        errs toward *including* a borderline row (``free_windows`` drops any that
+        turn out not to overlap).
+
+        Args:
+            start: Inclusive UTC lower bound of the window (``YYYY-MM-DD HH:MM:SS``).
+            end: Exclusive UTC upper bound.
+            default_event_minutes: Assumed length of a commitment with no ``end_at``,
+                for deciding whether it's still ongoing at ``start``.
+
+        Returns:
+            A list of commitment dicts ordered by ``start_at`` ascending — a superset
+            of :meth:`commitments_between`'s result over the same window, adding the
+            in-progress blocks that began before it.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
+            "AND hidden = 0 AND start_at < ? "
+            "AND datetime(COALESCE(end_at, datetime(start_at, ?))) > datetime(?) "
+            "ORDER BY start_at ASC",
+            (self._uid(), end, f"+{int(default_event_minutes)} minutes", start),
+        ).fetchall()
+        return [_with_calendar(dict(r)) for r in rows]
+
     def cancel_commitment(self, commitment_id: int) -> bool:
         """Mark a commitment cancelled. Returns ``True`` if a row changed."""
         cur = self.conn.execute(

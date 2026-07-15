@@ -1655,6 +1655,35 @@ def test_todos_now_zero_when_busy(client, store_open, monkeypatch):
     assert r["reason"] == "no free time right now"
 
 
+def test_todos_now_zero_during_in_progress_multiday_commitment(
+    client, store_open, monkeypatch
+):
+    """An in-progress multi-day block whose ``start_at`` predates the lookback must
+    still read as busy — no free window, no spurious suggestion.
+
+    Regression (origin: PR #647's ``open_window`` review): ``commitments_between``
+    filters by ``start_at``, so a still-running conference/vacation that *started*
+    more than a day ago is missed by a short lookback and the user is wrongly
+    reported free. The centralized :meth:`active_commitments_between` closes this by
+    also returning commitments that merely *overlap* the window.
+    """
+    _all_day(store_open)
+    _freeze_todos_now_clock(monkeypatch)
+    # A 4-day conference: started 2 days ago, ends 2 days from now — the whole span
+    # is busy, but its start is well before the endpoint's 26h lookback.
+    client.post("/commitments", headers=_auth(), json={
+        "title": "DevConf",
+        "start_at": _at(_FROZEN_NOON - timedelta(days=2)),
+        "end_at": _at(_FROZEN_NOON + timedelta(days=2)),
+    })
+    client.post("/todos", headers=_auth(),
+                json={"title": "Quick call", "estimate_minutes": 10})
+    r = client.get("/todos/now", headers=_auth()).json()
+    assert r["free_minutes"] == 0
+    assert r["suggestion"] is None
+    assert r["reason"] == "no free time right now"
+
+
 def test_todos_now_requires_auth(client):
     assert client.get("/todos/now").status_code == 401
 

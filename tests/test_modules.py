@@ -661,11 +661,13 @@ def test_open_window_silent_when_busy_now(store):
 
 def test_open_window_silent_during_in_progress_multiday_commitment(store):
     """An all-day / multi-day block still in progress — but whose start_at predates
-    the commitment lookback — must still read as busy, not a free window.
+    the query window — must still read as busy, not a free window.
 
-    Regression: ``commitments_between`` filters by ``start_at``, so a lookback too
-    short to reach the block's start would miss it and wrongly fire an offer while
-    the user is actually busy (the exact mistimed-nudge failure this feature avoids).
+    Regression: ``commitments_between`` filters by ``start_at`` alone, so an
+    in-progress block that *started* before the window is missed and an offer wrongly
+    fires while the user is busy (the exact mistimed-nudge failure this feature
+    avoids). Exercises the shared overlap-aware path (``active_commitments_between``),
+    the same query ``GET /todos/now`` now uses — no bespoke lookback.
     """
     _avoided_fitting_todo(store)
     # A 4-day conference: started 2 days ago, ends 2 days from now — well before any
