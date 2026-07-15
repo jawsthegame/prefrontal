@@ -12,12 +12,19 @@ enum LiveActivityManager {
     static let focusKind = "focus"
     static let taskKind = "task"
 
-    /// Reconcile running Live Activities with the current active outing / focus /
-    /// task. `task` is the current started todo (see `Todo.current(in:)`) — its
-    /// elapsed timer is the general "this has been running 22 min" glance (M2),
-    /// shown only when there's no formal focus session running (focus is the
-    /// richer count-up of the same "I'm working" state, so it supersedes a bare
-    /// started-task glance rather than stacking a second activity).
+    /// Reconcile the running Live Activity with the current active session.
+    ///
+    /// **Exactly one** timer shows at a time, chosen by a priority ladder:
+    /// **outing → focus → task**. This is deliberate — two competing clocks
+    /// dilute the anti-time-agnosia signal, and the Dynamic Island's compact
+    /// view can only render one activity anyway (with two active, iOS picks
+    /// non-deterministically). The order reflects salience: an outing means
+    /// you're physically out with a hard back-by deadline (whatever task you
+    /// left is paused in reality, even if still flagged started); a focus block
+    /// is the deliberate, richer count-up; a bare started `task` (the current
+    /// todo, see `Todo.current(in:)`) is the loosest signal and the general
+    /// "this has been running 22 min" glance (M2). The lower-priority kinds are
+    /// ended so only the winner remains.
     static func sync(outing: Outings.Outing?,
                      focus: FocusState.Session?,
                      task: Todo? = nil) async {
@@ -26,34 +33,27 @@ enum LiveActivityManager {
             return
         }
 
-        // Outing → "back by" countdown.
         if let outing {
+            // Outing → "back by" countdown; it outranks any focus/task.
             let started = PFDate.parse(outing.departureAt) ?? Date()
             let ends = outing.timeWindowMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: outingKind, title: outing.intention, started: started, ends: ends)
-        } else {
-            end(kind: outingKind)
-        }
-
-        // Focus → elapsed count-up (with a planned-end mark when set). A running
-        // focus session supersedes the plain started-task glance below.
-        if let focus {
+            end(kind: focusKind); end(kind: taskKind)
+        } else if let focus {
+            // Focus → elapsed count-up (with a planned-end mark when set).
             let started = PFDate.parse(focus.startedAt) ?? Date()
             let ends = focus.plannedMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: focusKind, title: focus.intendedTask ?? "Focusing", started: started, ends: ends)
-            end(kind: taskKind)
+            end(kind: outingKind); end(kind: taskKind)
+        } else if let task, task.isStarted {
+            // Task → elapsed count-up from when it was started (estimate, when
+            // set, is only the stale mark — the clock keeps counting past it).
+            let started = PFDate.parse(task.startedAt) ?? Date()
+            let ends = task.estimateMinutes.map { started.addingTimeInterval($0 * 60) }
+            await ensure(kind: taskKind, title: task.title, started: started, ends: ends)
+            end(kind: outingKind); end(kind: focusKind)
         } else {
-            end(kind: focusKind)
-
-            // Task → elapsed count-up from when it was started (estimate, when set,
-            // is only the stale mark — the clock keeps counting up past it).
-            if let task, task.isStarted {
-                let started = PFDate.parse(task.startedAt) ?? Date()
-                let ends = task.estimateMinutes.map { started.addingTimeInterval($0 * 60) }
-                await ensure(kind: taskKind, title: task.title, started: started, ends: ends)
-            } else {
-                end(kind: taskKind)
-            }
+            end(kind: outingKind); end(kind: focusKind); end(kind: taskKind)
         }
     }
 
