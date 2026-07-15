@@ -325,6 +325,18 @@ def test_panic_no_blockers_is_silent(store):
     assert all(p.kind != "blocker" for p in plan.late + plan.soon + plan.piling_up)
 
 
+def test_panic_preserves_priority_zero(store):
+    # A valid priority 0 (low) must not be silently upgraded to 1, which would
+    # score it identically to a genuine priority-1 blocker.
+    from prefrontal.panic import build_panic
+
+    now = _now()
+    store.add_blocker("Lo", "low thing", priority=0, blocking_since="2026-07-10 09:00:00")
+    store.add_blocker("Hi", "normal thing", priority=1, blocking_since="2026-07-10 09:00:00")
+    piling = {p.title.split()[0]: p for p in build_panic(store, now=now).piling_up}
+    assert piling["Lo"].score < piling["Hi"].score
+
+
 # --- briefing surfacing ----------------------------------------------------
 
 
@@ -339,6 +351,17 @@ def test_briefing_surfaces_blockers(store):
     rendered = render_briefing(briefing)
     assert "Waiting on you" in rendered
     assert "Sam — the numbers (waiting 5d)" in rendered
+
+
+def test_briefing_blocker_waiting_today(store):
+    # A blocker logged today (0 days) still shows timing — "today", not blank.
+    from prefrontal.briefing import build_briefing, render_briefing
+
+    now = _now()
+    store.add_blocker("Sam", "the numbers", blocking_since="2026-07-14 09:00:00")
+    briefing = build_briefing(store, now=now)
+    assert briefing.blocked[0]["waiting_days"] == 0
+    assert "Sam — the numbers (waiting today)" in render_briefing(briefing)
 
 
 def test_briefing_no_blockers_no_section(store):

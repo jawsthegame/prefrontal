@@ -377,7 +377,9 @@ def _blocker_pressures(
     for b in store.open_blockers():
         person = (b.get("person") or "Someone").strip() or "Someone"
         what = (b.get("what") or "something").strip()
-        priority = int(b.get("priority") or 1)
+        # `or 1` would swallow a legitimate priority 0 (low), so branch on None.
+        raw_priority = b.get("priority")
+        priority = int(raw_priority) if raw_priority is not None else 1
         bid = b.get("id")
         since = _parse_dt(b.get("blocking_since"))
         waited_min = (now - since).total_seconds() / 60.0 if since is not None else 0.0

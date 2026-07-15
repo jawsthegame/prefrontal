@@ -174,7 +174,7 @@ class Briefing:
             time by life-sphere (shop/work/home/kids/personal) from closed-loop trips;
             ``None`` when no completed trips fall in the window.
         blocked: People blocked on *you* (the ball's in your court) — top few open
-            blockers, longest-waiting first, each ``{person, what, waiting_days,
+            blockers, most urgent first then longest-waiting, each ``{person, what, waiting_days,
             priority, blocker_id}``. Surfaced so an unblock can outrank a shiny new
             task; empty when nobody's waiting.
     """
@@ -383,8 +383,9 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     # completed trips land in the window, so an untracked week adds no noise.
     balance = balance_summary_line(build_focus_balance(store, now=now))
 
-    # Waiting on you: people blocked on you, longest-waiting first — the
-    # prioritization counterweight (an unblock can outrank a shiny new task).
+    # Waiting on you: people blocked on you, most urgent first then longest-waiting
+    # (store order) — the prioritization counterweight (an unblock can outrank a
+    # shiny new task).
     blocked = [
         {
             "person": b["person"],
@@ -562,9 +563,10 @@ def render_briefing(
         if briefing.blocked:
             blocked_lines = []
             for b in briefing.blocked:
-                waited = (
-                    f" (waiting {b['waiting_days']}d)" if b.get("waiting_days") else ""
-                )
+                # 0 days is "today", not "no timing" — match the dashboard and the
+                # waited_phrase helper so a just-logged blocker still reads a wait.
+                wd = b.get("waiting_days") or 0
+                waited = " (waiting today)" if wd == 0 else f" (waiting {wd}d)"
                 blocked_lines.append(f"- {b['person']} — {b['what']}{waited}")
             block("🙋 Waiting on you", *blocked_lines)
 
