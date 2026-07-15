@@ -2,10 +2,11 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-/// Lock Screen + Dynamic Island presentation for the outing/focus Live Activity
-/// (#466). The clock is self-ticking — `Text(timerInterval:)` counts an outing
-/// down to its back-by time; `Text(_, style: .timer)` counts a focus session up
-/// — so it stays live with no push updates. Started/ended by `LiveActivityManager`.
+/// Lock Screen + Dynamic Island presentation for the outing/focus/task Live
+/// Activity (#466, M2). The clock is self-ticking — `Text(timerInterval:)`
+/// counts an outing down to its back-by time; `Text(_, style: .timer)` counts a
+/// focus session or a started task up — so it stays live with no push updates.
+/// Started/ended by `LiveActivityManager`.
 struct SessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SessionActivityAttributes.self) { context in
@@ -23,7 +24,7 @@ struct SessionLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 1) {
-                        Text(context.attributes.isOuting ? "OUT" : "FOCUS")
+                        Text(context.attributes.noun.uppercased())
                             .font(.caption2).foregroundStyle(.white.opacity(0.7))
                         Text(context.attributes.title).font(.caption.weight(.medium))
                             .foregroundStyle(.white).lineLimit(1)
@@ -46,7 +47,7 @@ private struct SessionLockScreenView: View {
         HStack(spacing: 12) {
             sessionIcon(context).font(.title2).foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 2) {
-                Text(context.attributes.isOuting ? "Out" : "Focus")
+                Text(context.attributes.noun)
                     .font(.caption2).foregroundStyle(.white.opacity(0.7))
                 Text(context.attributes.title)
                     .font(.headline).foregroundStyle(.white).lineLimit(1)
@@ -60,16 +61,16 @@ private struct SessionLockScreenView: View {
 }
 
 private func sessionIcon(_ c: ActivityViewContext<SessionActivityAttributes>) -> Image {
-    Image(systemName: c.attributes.isOuting ? "figure.walk" : "scope")
+    Image(systemName: c.attributes.symbolName)
 }
 
 @ViewBuilder
 private func sessionTimer(_ c: ActivityViewContext<SessionActivityAttributes>) -> some View {
-    if c.attributes.isOuting, let ends = c.state.endsAt {
+    if c.attributes.countsDown, let ends = c.state.endsAt {
         // Fixed start…end range (start < end) so the interval is always valid;
         // countsDown shows time remaining to the back-by moment.
         Text(timerInterval: c.state.startedAt...ends, countsDown: true)
     } else {
-        Text(c.state.startedAt, style: .timer)   // focus: elapsed, counting up
+        Text(c.state.startedAt, style: .timer)   // focus/task: elapsed, counting up
     }
 }
