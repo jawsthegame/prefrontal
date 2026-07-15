@@ -371,6 +371,51 @@ def classify(
 # --- apply: the only part that touches the store / delivery ------------------
 
 
+def _signal_text(signal: Signal) -> str:
+    """Title + body of a signal as one string, for name extraction."""
+    return f"{signal.title}\n{signal.body}".strip()
+
+
+def _people_priority_boost(store: Any, signal: Signal) -> int:
+    """Priority notches to add for a known important person named in the signal.
+
+    Best-effort and read-only: any failure (an older DB without the people tables,
+    say) yields ``0`` so triage never breaks over a prioritization nicety.
+    """
+    try:
+        from prefrontal.people import priority_boost
+
+        return priority_boost(store, _signal_text(signal))
+    except Exception:  # noqa: BLE001 — a prioritization boost must never break capture
+        return 0
+
+
+def _enqueue_people(signal: Signal, store: Any, routed_ref: str | None) -> None:
+    """Queue any newly-named people from the signal for identify + categorize.
+
+    The one place ingestion feeds the people queue (:mod:`prefrontal.people`):
+    names already on the roster are *touched* (recurrence signal), unknown ones
+    land as pending mentions. Heuristic-only here (no model call) to keep the
+    capture path snappy — the on-demand ``POST /people/extract`` can use the
+    model. Entirely best-effort: wrapped so a failure never blocks the signal it
+    was recording, exactly like the feature-usage stream.
+    """
+    try:
+        from prefrontal.people import enqueue_mentions
+
+        enqueue_mentions(
+            store,
+            text=_signal_text(signal),
+            source=signal.source,
+            ref=routed_ref,
+            external_id=signal.external_id or None,
+        )
+    except Exception:  # noqa: BLE001 — name capture must never break the ingest path
+        from prefrontal.log import get_logger
+
+        get_logger(__name__).debug("people mention enqueue failed", exc_info=True)
+
+
 def _route_signal(
     signal: Signal, decision: TriageDecision, store: Any, *, client: Generator | None, today: date
 ) -> str | None:
@@ -422,9 +467,15 @@ def _route_signal(
         project_id = suggest_project(
             signal.title, signal.body or None, store.active_projects(), client=client
         )
+        # Prioritization lever: a task that names a known important person (a
+        # family member, a key coworker) should edge up the list. The boost only
+        # ever raises priority, capped at the top, so it nudges an item that
+        # already concerns someone who matters without inventing urgency. Purely a
+        # read; a fresh (still-unidentified) name adds nothing until categorized.
+        priority = min(3, aug.priority + _people_priority_boost(store, signal))
         tid = store.add_todo(
             signal.title, notes=signal.body or None,
-            estimate_minutes=aug.estimate_minutes, priority=aug.priority,
+            estimate_minutes=aug.estimate_minutes, priority=priority,
             deadline=deadline, energy=aug.energy, category=aug.category,
             project_id=project_id, source="triage",
         )
@@ -491,6 +542,10 @@ def apply(
     routed_ref = decision.fields.get("routed_ref")
     if routed_ref is None:
         routed_ref = _route_signal(signal, decision, store, client=client, today=today)
+    # Names mentioned in anything worth keeping (a drop/noise verdict is not) go to
+    # the people review queue — the one ingestion hook into prefrontal.people.
+    if decision.route != "drop":
+        _enqueue_people(signal, store, routed_ref)
     fired = False
     if decision.urgency == "now" and n8n is not None:
         result = n8n.trigger(

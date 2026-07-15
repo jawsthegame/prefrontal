@@ -249,6 +249,24 @@ def build_profile(
             )
         lines.append("")
 
+    # Key people (learning): the handful of identified, high-importance people the
+    # user's ingested items keep naming, so an agent knows who a "call with Dana"
+    # or "email from Mom" actually concerns. Only importance ≥ 2 is listed (see
+    # people.roster_profile_lines) to keep the profile focused on people worth
+    # calibrating around. Best-effort — a store without the roster (older DB)
+    # simply contributes nothing.
+    try:
+        from prefrontal.people import roster_profile_lines
+
+        people_lines = roster_profile_lines(store.list_people(status="active"))
+    except Exception:  # noqa: BLE001 — the profile must render without the roster
+        people_lines = []
+    if people_lines:
+        lines.append("## Key people")
+        lines.append("")
+        lines.extend(people_lines)
+        lines.append("")
+
     # One section per enabled challenge-area module. Modules that have nothing
     # to say (return None/empty) are skipped so the profile stays tight.
     if modules:

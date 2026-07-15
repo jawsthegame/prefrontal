@@ -86,6 +86,12 @@ from prefrontal.webhooks.schemas.ingestion import (
     TripReflect,
     TripRetro,
 )
+from prefrontal.webhooks.schemas.people import (
+    MentionIdentify,
+    PeopleExtract,
+    PersonCreate,
+    PersonUpdate,
+)
 from prefrontal.webhooks.schemas.projects import (
     EntityProjectUpdate,
     ProjectCreate,
@@ -236,6 +242,10 @@ __all__ = [
     "TodoSchedule",
     "TodoWindowUpdate",
     "TravelPadding",
+    "MentionIdentify",
+    "PeopleExtract",
+    "PersonCreate",
+    "PersonUpdate",
     "TriageForget",
     "TriageIn",
     "TripDomain",
