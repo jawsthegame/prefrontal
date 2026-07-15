@@ -209,6 +209,11 @@ When the key is set the assistant prefers Claude and falls back to Ollama if it'
 unreachable; with no key it stays fully local. The key is only ever sent on
 outbound calls to Anthropic — no other data leaves the host because of this.
 
+Photo capture (`POST /vision`) is local-first the other way around: set
+`OLLAMA_VISION_MODEL` (e.g. `llava`, and `ollama pull` it) to read images entirely
+on the host, and it only reaches for the cloud model when no local vision model is
+configured. With neither, `/vision` returns 503.
+
 ---
 
 ## 5. Tailscale (remote access)

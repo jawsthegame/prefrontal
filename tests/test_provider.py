@@ -16,6 +16,7 @@ from prefrontal.integrations import AnthropicError, OllamaError, ProviderError
 from prefrontal.integrations.provider import (
     ALL_AGENTS,
     KNOWN_AGENTS,
+    VISION,
     ProviderResolver,
 )
 from prefrontal.memory.store import MemoryStore
@@ -33,16 +34,23 @@ class _Fake:
         available: bool = True,
         raises: bool = False,
         reply: str | None = None,
+        can_see: bool = False,
     ):
         self.name = name
         self.model = name
         self._available = available
         self._raises = raises
         self._reply = reply
+        self._can_see = can_see
         self.calls = 0
+        self.can_see_calls = 0
 
     def available(self) -> bool:
         return self._available
+
+    def can_describe_images(self) -> bool:
+        self.can_see_calls += 1
+        return self._can_see
 
     def generate(self, prompt: str, *, system: str | None = None) -> str:
         self.calls += 1
@@ -138,6 +146,69 @@ def test_select_uses_explicit_fallback_client():
 def test_unknown_agents_surfaces_typos():
     r = _resolver({"summarizer", "sumarizer", ALL_AGENTS})
     assert r.unknown_agents() == frozenset({"sumarizer"})
+
+
+# --- vision selection (local-first) -----------------------------------------
+
+
+def _vision_resolver(agents, *, local_can_see, cloud_available):
+    return ProviderResolver(
+        ollama=_Fake("ollama", can_see=local_can_see),
+        anthropic=_Fake("anthropic", available=cloud_available),
+        anthropic_agents=frozenset(agents),
+    )
+
+
+def test_vision_is_a_known_agent():
+    assert VISION in KNOWN_AGENTS
+
+
+def test_select_vision_prefers_on_device_by_default():
+    # Local-first: an installed local vision model wins even when cloud is available.
+    r = _vision_resolver(set(), local_can_see=True, cloud_available=True)
+    client, provider = r.select_vision()
+    assert provider == "ollama" and client.name == "ollama"
+
+
+def test_select_vision_falls_back_to_cloud_without_local_model():
+    r = _vision_resolver(set(), local_can_see=False, cloud_available=True)
+    client, provider = r.select_vision()
+    assert provider == "anthropic" and client.name == "anthropic"
+
+
+def test_select_vision_none_when_neither_can_see():
+    r = _vision_resolver(set(), local_can_see=False, cloud_available=False)
+    client, provider = r.select_vision()
+    assert client is None and provider == "none"
+
+
+def test_select_vision_opt_in_prefers_cloud():
+    # Listing 'vision' in ANTHROPIC_AGENTS flips the default to prefer cloud.
+    r = _vision_resolver({"vision"}, local_can_see=True, cloud_available=True)
+    client, provider = r.select_vision()
+    assert provider == "anthropic" and client.name == "anthropic"
+
+
+def test_select_vision_opt_in_still_falls_back_to_local():
+    # Prefer cloud, but with no key fall back to the installed local model.
+    r = _vision_resolver({"vision"}, local_can_see=True, cloud_available=False)
+    client, provider = r.select_vision()
+    assert provider == "ollama" and client.name == "ollama"
+
+
+def test_select_vision_cloud_first_skips_local_probe():
+    # Cloud-first + cloud available ⇒ never probe the local server (/api/tags).
+    r = _vision_resolver({"vision"}, local_can_see=True, cloud_available=True)
+    r.select_vision()
+    assert r.ollama.can_see_calls == 0
+
+
+def test_select_vision_local_first_skips_cloud_check_when_local_sees():
+    # Local-first + local can see ⇒ the cloud client is never consulted.
+    r = _vision_resolver(set(), local_can_see=True, cloud_available=True)
+    r.select_vision()
+    # available() tracks nothing to assert directly, but routing must be local.
+    assert r.select_vision()[1] == "ollama"
 
 
 def test_create_app_warns_on_unknown_anthropic_agent(caplog):

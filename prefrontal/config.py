@@ -79,6 +79,9 @@ class Settings:
         ollama_url: Base URL of the local Ollama server used by the LLM
             summarizer. Local-first: stays on the host by default.
         ollama_model: Ollama model name the summarizer generates with.
+        ollama_vision_model: Optional local multimodal model for on-device vision
+            capture (e.g. ``llava``). Empty means vision falls back to the cloud
+            Anthropic model.
         geocoder_url: Geocoding search endpoint used to resolve a commitment's
             free-text location to coordinates (Nominatim-compatible). Only called
             when the ``geocoding_enabled`` coaching-state flag is on; defaults to
@@ -150,6 +153,12 @@ class Settings:
     packs: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+    # Optional local multimodal model for on-device vision capture (photo →
+    # transcript), e.g. ``llava`` or ``llama3.2-vision``. Empty (default) means
+    # on-device vision is off and the vision flow falls back to the cloud Anthropic
+    # model; set it (and `ollama pull` the model) to keep vision on the host. See
+    # ``prefrontal.integrations.provider.ProviderResolver.select_vision``.
+    ollama_vision_model: str = ""
     # Optional Claude/Anthropic provider for the dashboard assistant. Local-first:
     # empty key means the assistant uses the local Ollama model. When set, the
     # assistant prefers Claude for natural-language parsing and Ollama remains the
@@ -504,6 +513,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         packs=packs,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        ollama_vision_model=os.environ.get("OLLAMA_VISION_MODEL", ""),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
         anthropic_agents=_parse_anthropic_agents(os.environ.get("ANTHROPIC_AGENTS")),

@@ -227,9 +227,11 @@ def build_router(services: RouterServices) -> APIRouter:
         - ``proposals`` — allowlisted behavioral candidates, recorded **pending**
           and applied only on ``POST /proposals/{id}/accept``.
 
-        Vision is Anthropic-only today (the local model can't see), so unlike the
-        text endpoints there's no local fallback: a missing Anthropic key/SDK is a
-        503. A blank image or an unsupported ``media_type`` is a 422. Downstream,
+        Vision is **local-first**: the on-device multimodal model reads the image
+        when one is configured and installed, otherwise the cloud Anthropic model
+        does (see :meth:`ProviderResolver.select_vision`). When *neither* backend
+        can see it's a 503 — say so plainly rather than return a misleading empty
+        plan. A blank image or an unsupported ``media_type`` is a 422. Downstream,
         the two brain-dump halves (``assistant`` / ``sensor``) still select their
         own provider.
         """
@@ -252,15 +254,16 @@ def build_router(services: RouterServices) -> APIRouter:
                     f"of {', '.join(sorted(SUPPORTED_IMAGE_MEDIA_TYPES))}."
                 ),
             )
-        # Vision has no local fallback — if the Anthropic backend isn't configured
-        # there's simply no way to read the image, so say so plainly rather than
-        # returning a misleading empty plan.
-        if not provider.anthropic.available():
+        # Local-first: prefer the on-device model, fall back to cloud. If neither
+        # can see, there's no way to read the image, so say so plainly.
+        vision_client, vision_provider = provider.select_vision()
+        if vision_client is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=(
-                    "Vision needs the Anthropic provider; set ANTHROPIC_API_KEY "
-                    "and install prefrontal[anthropic]."
+                    "Vision needs a multimodal backend: set OLLAMA_VISION_MODEL "
+                    "(and pull it) for on-device, or ANTHROPIC_API_KEY plus "
+                    "'pip install prefrontal[anthropic]' for cloud."
                 ),
             )
         assistant_client, assistant_provider = provider.select("assistant")
@@ -269,7 +272,7 @@ def build_router(services: RouterServices) -> APIRouter:
             image,
             media_type,
             memory,
-            vision_client=provider.anthropic,
+            vision_client=vision_client,
             assistant_client=assistant_client,
             sensor_client=sensor_client,
             prompt=payload.prompt,
@@ -288,7 +291,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "errors": result.errors,
             "proposals": [describe_proposal(p) for p in created],
             "provider": {
-                "vision": "anthropic",
+                "vision": vision_provider,
                 "assistant": assistant_provider,
                 "sensor": sensor_provider,
             },

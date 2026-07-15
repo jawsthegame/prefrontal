@@ -45,10 +45,35 @@ class Generator(Protocol):
     ) -> str: ...
 
 
+class ImageDescriber(Protocol):
+    """The slice of a client the vision flow calls: read one image to text.
+
+    Both :class:`~prefrontal.integrations.anthropic.AnthropicClient` (cloud) and
+    :class:`~prefrontal.integrations.ollama.OllamaClient` (on-device) satisfy it,
+    so :func:`prefrontal.vision.plan_vision` can accept whichever the provider
+    selects without importing a concrete class. Kept separate from
+    :class:`Generator` because reading pixels is a distinct capability from text
+    completion — a text-only backend has ``generate`` but no ``describe_image``.
+    """
+
+    def available(self) -> bool: ...
+
+    def describe_image(
+        self,
+        image_base64: str,
+        *,
+        prompt: str,
+        media_type: str = ...,
+        system: str | None = ...,
+        max_tokens: int | None = ...,
+    ) -> str: ...
+
+
 __all__ = [
     "AnthropicClient",
     "AnthropicError",
     "Generator",
+    "ImageDescriber",
     "N8nClient",
     "N8nResult",
     "OllamaClient",

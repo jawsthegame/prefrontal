@@ -30,7 +30,7 @@ from prefrontal.integrations.anthropic import AnthropicClient
 from prefrontal.integrations.ollama import OllamaClient
 
 if TYPE_CHECKING:
-    from prefrontal.integrations import Generator
+    from prefrontal.integrations import Generator, ImageDescriber
 
 #: Selectable agents — the reasoning-heavy, quality-sensitive call sites where a
 #: better model earns its cost. The snappy in-loop inferers (window/title/kind
@@ -41,7 +41,12 @@ SUMMARIZER = "summarizer"
 BRIEFING = "briefing"
 SENSOR = "sensor"
 TRIAGE = "triage"
-KNOWN_AGENTS = frozenset({ASSISTANT, SUMMARIZER, BRIEFING, SENSOR, TRIAGE})
+#: The vision-capture agent (photo → transcript). Unlike the text agents it's
+#: routed by :meth:`ProviderResolver.select_vision`, which is *local-first*: the
+#: on-device multimodal model is preferred when installed, cloud Anthropic is the
+#: fallback. Listing ``vision`` in ``ANTHROPIC_AGENTS`` flips that to prefer cloud.
+VISION = "vision"
+KNOWN_AGENTS = frozenset({ASSISTANT, SUMMARIZER, BRIEFING, SENSOR, TRIAGE, VISION})
 
 #: Sentinel value in ``anthropic_agents`` meaning "every agent prefers Anthropic".
 ALL_AGENTS = "all"
@@ -114,6 +119,45 @@ class ProviderResolver:
     def client(self, agent: str, *, fallback: Generator | None = None) -> Generator:
         """Return just the selected client for ``agent`` (see :meth:`select`)."""
         return self.select(agent, fallback=fallback)[0]
+
+    def select_vision(self) -> tuple[ImageDescriber | None, str]:
+        """Pick the multimodal backend for the ``vision`` agent (local-first).
+
+        Vision needs a client that can actually *see*, which is a different bar
+        from the text :meth:`select`: the local model qualifies only when a vision
+        model is configured **and** installed
+        (:meth:`~prefrontal.integrations.ollama.OllamaClient.can_describe_images`),
+        and the cloud model only when its key/SDK are present
+        (:meth:`~prefrontal.integrations.anthropic.AnthropicClient.available`).
+
+        Preference is **on-device first** — the point of the milestone — with cloud
+        Anthropic as the graceful fallback. Listing ``vision`` in
+        ``ANTHROPIC_AGENTS`` inverts that, preferring cloud when it's available (and
+        still falling back to local if the key is absent).
+
+        Returns:
+            ``(client, "ollama" | "anthropic")`` for the chosen backend, or
+            ``(None, "none")`` when neither can see — the caller decides whether
+            that's a 503 (endpoint) or a soft empty.
+        """
+        def _pick(name: str) -> tuple[ImageDescriber, str] | None:
+            # Checks are lazy (called only in preference order) so the preferred
+            # backend short-circuits — e.g. cloud-first with a key never makes the
+            # local /api/tags call, and local-first that can see never checks cloud.
+            if name == "anthropic":
+                return (self.anthropic, "anthropic") if self.anthropic.available() else None
+            return (self.ollama, "ollama") if self.ollama.can_describe_images() else None
+
+        order = (
+            ["anthropic", "ollama"]
+            if self.prefers_anthropic(VISION)
+            else ["ollama", "anthropic"]
+        )
+        for name in order:
+            picked = _pick(name)
+            if picked is not None:
+                return picked
+        return None, "none"
 
     def unknown_agents(self) -> frozenset[str]:
         """Configured agent names that don't match a real agent (operator typos)."""
