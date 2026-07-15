@@ -2780,6 +2780,63 @@ def _cmd_todo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_blocked(args: argparse.Namespace) -> int:
+    """Track who's blocked on you — the ball's in your court.
+
+    A blocker records that someone *else* is waiting on you for something, so it
+    can weigh into prioritization (panic mode / the briefing surface it). Capture
+    is one line; resolve it once you've delivered.
+
+    Args:
+        args: Parsed arguments; ``blocked_action`` plus action-specific fields.
+
+    Returns:
+        Process exit code (0 on success, 1 on a not-found resolve/reopen).
+    """
+    from prefrontal.blockers import describe_blocker, normalize_person
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if args.blocked_action == "add":
+            person = normalize_person(args.person)
+            what = (args.what or "").strip()
+            if not person or not what:
+                print("Both a person and a 'what' are required.", file=sys.stderr)
+                return 1
+            bid = store.add_blocker(
+                person,
+                what,
+                priority=args.priority,
+                deadline=args.deadline,
+                notes=args.notes,
+            )
+            print(f"Logged blocker #{bid}: {person} is waiting on you — {what}")
+        elif args.blocked_action == "list":
+            blockers = store.list_blockers(include_resolved=args.all)
+            if not blockers:
+                print("Nobody's blocked on you. 🎉")
+            now = utcnow()
+            for b in blockers:
+                mark = " ✓ resolved" if b.get("status") == "resolved" else ""
+                pri = f" [P{b['priority']}]" if b.get("priority") is not None else ""
+                print(f"#{b['id']}{pri} {describe_blocker(b, now)}{mark}")
+        elif args.blocked_action == "resolve":
+            if store.resolve_blocker(args.blocker_id) is not None:
+                print(f"Blocker #{args.blocker_id} resolved. ✓")
+            else:
+                print(f"No blocker #{args.blocker_id}.", file=sys.stderr)
+                return 1
+        elif args.blocked_action == "reopen":
+            if store.reopen_blocker(args.blocker_id) is not None:
+                print(f"Blocker #{args.blocker_id} reopened.")
+            else:
+                print(f"No blocker #{args.blocker_id}.", file=sys.stderr)
+                return 1
+    return 0
+
+
 def _cmd_fit(args: argparse.Namespace) -> int:
     """Show open todos that fit a block of free time, applying the time bias.
 
@@ -4295,6 +4352,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional cover note shown atop the email to a human VA (--handler email).",
     )
     p_todo.set_defaults(func=_cmd_todo)
+
+    p_blocked = sub.add_parser(
+        "blocked",
+        aliases=["blockers"],
+        help="Track who's blocked on you (the ball's in your court).",
+    )
+    p_blocked.add_argument("--db-path", default=None, help="Override the database path.")
+    p_blocked.add_argument("--user", default=None, help="Handle of the user to act on.")
+    blocked_sub = p_blocked.add_subparsers(dest="blocked_action", required=True)
+    b_add = blocked_sub.add_parser("add", help="Log that someone is waiting on you.")
+    b_add.add_argument("person", help="Who is blocked / waiting on you (a name).")
+    b_add.add_argument("what", help="The thing they need from you.")
+    b_add.add_argument(
+        "--priority", type=int, default=1, choices=[0, 1, 2, 3], help="0 low … 3 urgent."
+    )
+    b_add.add_argument(
+        "--deadline", default=None, help="Optional 'needs it by' (YYYY-MM-DD)."
+    )
+    b_add.add_argument("--notes", default=None, help="Optional free-text detail.")
+    b_list = blocked_sub.add_parser("list", help="List who's blocked on you (most pressing first).")
+    b_list.add_argument(
+        "--all", action="store_true", help="Include resolved blockers, not just open ones."
+    )
+    b_resolve = blocked_sub.add_parser("resolve", help="Mark a blocker resolved (you delivered).")
+    b_resolve.add_argument("blocker_id", type=int)
+    b_reopen = blocked_sub.add_parser("reopen", help="Reopen a resolved blocker.")
+    b_reopen.add_argument("blocker_id", type=int)
+    p_blocked.set_defaults(func=_cmd_blocked)
 
     p_place = sub.add_parser(
         "place", help="Add/list curated place aliases (offline commitment geocoding)."

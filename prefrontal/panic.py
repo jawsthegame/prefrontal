@@ -75,7 +75,7 @@ class Pressure:
 
     Attributes:
         bucket: ``late`` | ``soon`` | ``piling_up``.
-        kind: ``commitment`` | ``todo`` | ``mail`` (the source domain).
+        kind: ``commitment`` | ``todo`` | ``mail`` | ``blocker`` (the source domain).
         title: Short human label for the thing.
         when: Human phrasing of its timing (``"12 min late"``, ``"leave in 8 min"``,
             ``"2d overdue"``).
@@ -95,6 +95,7 @@ class Pressure:
     source: str | None = None
     commitment_id: int | None = None
     todo_id: int | None = None
+    blocker_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -359,6 +360,85 @@ def _mail_pressures(store: MemoryStore) -> list[Pressure]:
     return out
 
 
+def _blocker_pressures(
+    store: MemoryStore, now: datetime, day_end: datetime
+) -> list[Pressure]:
+    """People who are blocked on *you* — the ball's in your court.
+
+    A blocker is the counterweight to shiny-object syndrome: in a panic reset it's
+    exactly the thing to name, because someone else's day is stalled until you
+    move. Bucketed like todos — past its "needs it by" is ``late``, due-today or
+    urgent is ``soon``, otherwise it's ``piling_up`` — but scored a notch above the
+    equivalent todo, since a person waiting outranks your own smoulder. The score
+    stays under the commitment tiers (1000+), so "a commitment you're late for
+    outranks everything else" still holds.
+    """
+    out: list[Pressure] = []
+    for b in store.open_blockers():
+        person = (b.get("person") or "Someone").strip() or "Someone"
+        what = (b.get("what") or "something").strip()
+        # `or 1` would swallow a legitimate priority 0 (low), so branch on None.
+        raw_priority = b.get("priority")
+        priority = int(raw_priority) if raw_priority is not None else 1
+        bid = b.get("id")
+        since = _parse_dt(b.get("blocking_since"))
+        waited_min = (now - since).total_seconds() / 60.0 if since is not None else 0.0
+        waited = f"waiting {_ago_phrase(waited_min)}"
+        title = f"{person} is waiting on you: {what}"
+        deadline = _parse_deadline(b.get("deadline"))
+        if deadline is not None and deadline < now:
+            overdue_min = (now - deadline).total_seconds() / 60.0
+            out.append(
+                Pressure(
+                    bucket="late",
+                    kind="blocker",
+                    title=title,
+                    when=f"{_ago_phrase(overdue_min)} past due · {waited}",
+                    # In the [800, 1000) band with overdue todos but a notch above
+                    # (850 base vs 800): a person past-due on you edges out your own
+                    # overdue todo. Still strictly below the commitment tiers.
+                    score=850.0 + min(overdue_min / 60.0, 240.0) * 0.5 + priority * 20.0,
+                    blocker_id=bid,
+                )
+            )
+        elif deadline is not None and deadline <= day_end:
+            out.append(
+                Pressure(
+                    bucket="soon",
+                    kind="blocker",
+                    title=title,
+                    when=f"needed today · {waited}",
+                    score=520.0 + priority * 30.0,
+                    blocker_id=bid,
+                )
+            )
+        elif priority >= 3:
+            out.append(
+                Pressure(
+                    bucket="soon",
+                    kind="blocker",
+                    title=title,
+                    when=f"marked urgent · {waited}",
+                    score=500.0,
+                    blocker_id=bid,
+                )
+            )
+        else:
+            out.append(
+                Pressure(
+                    bucket="piling_up",
+                    kind="blocker",
+                    title=title,
+                    when=waited,
+                    # Above avoided todos (100+) and high mail (90): the whole point
+                    # is that someone waiting on you outranks your own back-burner.
+                    score=150.0 + min(waited_min / 1440.0, 30.0) + priority * 10.0,
+                    blocker_id=bid,
+                )
+            )
+    return out
+
+
 def _cascade_chain(
     store: MemoryStore, day_end: datetime, now: datetime
 ) -> list[dict[str, Any]]:
@@ -429,6 +509,12 @@ def _first_step_for(top: Pressure, *, max_minutes: float) -> str:
             "back to you by <time>”. That clears the alarm; the real answer can "
             "wait."
         )
+    if top.kind == "blocker":
+        return (
+            "Send them a two-line update right now — “here's where this stands, "
+            "you'll have it by <when>”. Clearing the wait on their side is the "
+            "unblock; the finished work can follow."
+        )
     # todo — break the freeze with the smallest physical action.
     return decompose_task(top.title, max_first_minutes=max_minutes).first_step
 
@@ -457,6 +543,7 @@ def build_panic(store: MemoryStore, now: Any | None = None) -> PanicPlan:
     todo_pressures, _ = _todo_pressures(store, now, day_end)
     pressures.extend(todo_pressures)
     pressures.extend(_mail_pressures(store))
+    pressures.extend(_blocker_pressures(store, now, day_end))
 
     def bucket(name: str) -> list[Pressure]:
         items = sorted(

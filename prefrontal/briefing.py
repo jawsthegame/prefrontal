@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from prefrontal.blockers import waiting_days as _blocker_waiting_days
 from prefrontal.clock import TS_FMT, local_datetime, local_day_bounds, local_time_utc
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import find_conflicts, is_attendable, undismissed_conflicts
@@ -172,6 +173,10 @@ class Briefing:
         balance: Optional one-line focus-balance digest — the week's out-of-home
             time by life-sphere (shop/work/home/kids/personal) from closed-loop trips;
             ``None`` when no completed trips fall in the window.
+        blocked: People blocked on *you* (the ball's in your court) — top few open
+            blockers, most urgent first then longest-waiting, each ``{person, what, waiting_days,
+            priority, blocker_id}``. Surfaced so an unblock can outrank a shiny new
+            task; empty when nobody's waiting.
     """
 
     date: str
@@ -189,6 +194,7 @@ class Briefing:
     encouragement: str | None = None
     switch_feedback: str | None = None
     balance: str | None = None
+    blocked: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -377,6 +383,20 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     # completed trips land in the window, so an untracked week adds no noise.
     balance = balance_summary_line(build_focus_balance(store, now=now))
 
+    # Waiting on you: people blocked on you, most urgent first then longest-waiting
+    # (store order) — the prioritization counterweight (an unblock can outrank a
+    # shiny new task).
+    blocked = [
+        {
+            "person": b["person"],
+            "what": b["what"],
+            "waiting_days": _blocker_waiting_days(b.get("blocking_since"), now),
+            "priority": b.get("priority"),
+            "blocker_id": b.get("id"),
+        }
+        for b in store.open_blockers()[:5]
+    ]
+
     briefing = Briefing(
         date=day_start.strftime("%Y-%m-%d"),
         format=fmt_pref,
@@ -392,6 +412,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         fragile=fragile,
         switch_feedback=switch_feedback,
         balance=balance,
+        blocked=blocked,
     )
 
     # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
@@ -533,8 +554,21 @@ def render_briefing(
 
     # ── 🎯 On your radar — things you could pick up ────────────────────────────
     suggested = [s for s in briefing.spare if s["suggestion"]]
-    if briefing.avoided or briefing.surfaced or suggested:
+    if briefing.blocked or briefing.avoided or briefing.surfaced or suggested:
         block("## 🎯 On your radar")
+
+        # Waiting on you — someone else is blocked until you move. Leads the zone:
+        # it's the highest-signal thing to pick up, and the whole point is that it
+        # outranks a shiny new task. Named plainly, no nag.
+        if briefing.blocked:
+            blocked_lines = []
+            for b in briefing.blocked:
+                # 0 days is "today", not "no timing" — match the dashboard and the
+                # waited_phrase helper so a just-logged blocker still reads a wait.
+                wd = b.get("waiting_days") or 0
+                waited = " (waiting today)" if wd == 0 else f" (waiting {wd}d)"
+                blocked_lines.append(f"- {b['person']} — {b['what']}{waited}")
+            block("🙋 Waiting on you", *blocked_lines)
 
         # Avoidance — the important things that keep sliding. Named plainly, but
         # without a scolding "you keep …": a nudge to pick one up, not a telling-off.

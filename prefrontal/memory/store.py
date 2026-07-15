@@ -43,6 +43,7 @@ from prefrontal.memory._helpers import (
     sha256_hex,
 )
 from prefrontal.memory.db import connect, init_db
+from prefrontal.memory.repos.blockers import BlockersRepo
 from prefrontal.memory.repos.clarifications import ClarificationsRepo
 from prefrontal.memory.repos.episodes import EpisodesRepo
 from prefrontal.memory.repos.feature_usage import FeatureUsageRepo
@@ -88,6 +89,7 @@ class MemoryStore(
     ScheduleRepo,
     TodosRepo,
     ProjectsRepo,
+    BlockersRepo,
     MailRepo,
     NudgesRepo,
     FeatureUsageRepo,

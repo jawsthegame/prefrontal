@@ -212,6 +212,18 @@
   #c-todos .row { flex-wrap: wrap; }
   #c-todos .row .main { flex: 1 1 150px; }
   #c-todos .row .acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+  /* Blockers ("Waiting on you"): the person in accent, the ask beside it, a
+     "Delivered" action to clear the wait. Rows wrap like todos so a long ask
+     doesn't overflow a narrow masonry column, and the two-field add row flows. */
+  #c-blockers .row { flex-wrap: wrap; }
+  #c-blockers .row .main { flex: 1 1 150px; }
+  #c-blockers .row .acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+  #c-blockers .row .main .sub { display: block; }
+  #c-blockers .bl-person { font-weight: 600; }
+  #c-blockers .bl-pri { font-size: 11px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+  #c-blockers .bl-pri.urgent { color: #c0392b; border-color: #c0392b; }
+  #c-blockers .bl-pri.high { color: #b9770e; border-color: #b9770e; }
   .row .title { font-weight: 600; }
   .row .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
   /* Collapsed "Hidden · N" fold in the Commitments card — muted, closed by
@@ -822,6 +834,21 @@
     </div>
     <div class="body"></div>
   </section>
+  <section class="card" id="c-blockers">
+    <h2>Waiting on you</h2>
+    <div class="addrow">
+      <input id="blocker-person" placeholder="Who?" autocomplete="off" aria-label="Who is waiting" />
+      <input id="blocker-what" placeholder="Waiting on…" autocomplete="off" aria-label="What they need" />
+      <select id="blocker-pri" aria-label="priority">
+        <option value="1" selected>normal</option>
+        <option value="3">urgent</option>
+        <option value="2">high</option>
+        <option value="0">low</option>
+      </select>
+      <button class="add" data-action="blocker-add">Add</button>
+    </div>
+    <div class="body"></div>
+  </section>
   <section class="card" id="c-shopping" style="display:none">
     <h2>Shopping</h2>
     <div class="addrow">
@@ -1282,6 +1309,42 @@ async function openProjectMenu(anchor, id, current, opts = {}) {
 
 // Projects card: active projects grouped under their domain, each a tap target
 // that opens the detail view. Rollup badges come straight off /projects.
+// Whole days since a naive-UTC timestamp, floored at 0 — mirrors the server's
+// prefrontal.blockers.waiting_days so the card's "waiting Nd" matches the briefing.
+function waitingDays(ts) {
+  if (!ts) return 0;
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  if (isNaN(d)) return 0;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
+const _PRI_LABEL = { 0: "low", 1: "", 2: "high", 3: "urgent" };
+
+// "Waiting on you" — people blocked on the user (GET /blockers, open, most
+// pressing first). Each row names who's waiting, the ask, how long they've
+// waited, and a one-tap "Delivered" to clear it. The counterweight to shiny-
+// object syndrome: it sits right under Todos so an unblock is hard to miss.
+function renderBlockers(d) {
+  const list = (d && d.blockers) || [];
+  if (!list.length) return `<div class="empty">No one's blocked on you. 🎉</div>`;
+  let html = "";
+  for (const b of list) {
+    const days = waitingDays(b.blocking_since);
+    const waited = days === 0 ? "waiting today" : `waiting ${days}d`;
+    const pri = Number(b.priority);
+    const priLabel = _PRI_LABEL[pri] || "";
+    const priCls = pri === 3 ? " urgent" : pri === 2 ? " high" : "";
+    const priChip = priLabel ? ` <span class="bl-pri${priCls}">${priLabel}</span>` : "";
+    const due = b.deadline ? ` · needs by ${esc(fmtDeadline(b.deadline))}` : "";
+    html += `<div class="row" data-id="${b.id}">`
+      + `<div class="main"><span class="bl-person">${esc(b.person)}</span> — ${esc(b.what)}${priChip}`
+      + `<span class="sub">${waited}${due}</span></div>`
+      + `<div class="acts"><button class="btn-sm" data-action="blocker-resolve" data-id="${b.id}"`
+      + ` title="You delivered — clear the wait">✓ Delivered</button></div></div>`;
+  }
+  return html;
+}
+
 function renderProjects(d) {
   const list = (d && d.projects) || [];
   if (!list.length) return `<div class="empty">No projects yet. Assign one from a todo or commitment's ＋ project pill.</div>`;
@@ -2559,12 +2622,12 @@ async function load() {
     api("/mail/triage/learned"), api("/todos/categories"), api("/household/shopping"),
     api("/triage/recent"), api("/impact/cascade"), api("/clarifications"),
     api("/self-care"), api("/todos/now"), api("/focus"),
-    api("/projects"), api("/packs/situations"),
+    api("/projects"), api("/packs/situations"), api("/blockers"),
   ]);
   if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === 401)) {
     gate("That token was rejected."); return;
   }
-  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now, focus, projects, situations] = results;
+  const [outings, todos, commitments, conflicts, briefing, profile, triage, categories, shopping, triagelog, cascade, clarify, selfcare, now, focus, projects, situations, blockers] = results;
   // Stash projects first: the todo/commitment pills resolve the project name from
   // this map, and both render below.
   lastProjects = projects.status === "fulfilled" ? projects.value : null;
@@ -2617,6 +2680,16 @@ async function load() {
   paintTodos();
   put("#c-categories", categories, renderCategories);
   put("#c-projects", projects, renderProjects);
+  // Don't clobber the add fields mid-type: the poll fires every few seconds, so
+  // skip the body re-render while focus is inside the card (a resolve re-renders
+  // from load() on its own after the POST).
+  {
+    const card = $("#c-blockers");
+    if (!card.contains(document.activeElement)) {
+      card.querySelector(".body").innerHTML = blockers.status === "fulfilled"
+        ? renderBlockers(blockers.value) : `<div class="err">unavailable</div>`;
+    }
+  }
   put("#c-clarify", clarify, renderClarify);
   put("#c-triage", triage, renderTriage);
   put("#c-triagelog", triagelog, renderTriageLog);
@@ -3287,7 +3360,15 @@ document.addEventListener("click", async (e) => {
       if (!item) return;
       await post("/household/shopping", { item });
       $("#shop-item").value = "";
+    } else if (act === "blocker-add") {
+      const person = $("#blocker-person").value.trim();
+      const what = $("#blocker-what").value.trim();
+      if (!person || !what) return;
+      await post("/blockers", { person, what, priority: Number($("#blocker-pri").value) });
+      $("#blocker-person").value = "";
+      $("#blocker-what").value = "";
     }
+    else if (act === "blocker-resolve") { await post(`/blockers/${id}/resolve`, {}); }
     else if (act === "shop-check") { await post(`/household/shopping/${id}/got`, { got: el.dataset.got !== "1" }); }
     else if (act === "shop-dismiss") { await post(`/household/shopping/${id}/remove`, {}); }
     else if (act === "shop-clear-got") { if (!confirm("Clear all checked-off items?")) return; await post("/household/shopping/clear-got", {}); }
@@ -3442,6 +3523,10 @@ document.addEventListener("click", async (e) => {
 });
 $("#todo-title").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="todo-add"]').click(); });
 $("#shop-item").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="shop-add"]').click(); });
+// Enter in either blocker field commits the add (both are required; the handler no-ops if blank).
+for (const _id of ["#blocker-person", "#blocker-what"]) {
+  $(_id).addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="blocker-add"]').click(); });
+}
 $("#todo-search").addEventListener("input", paintTodos);
 $("#asst-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.querySelector('[data-action="asst-send"]').click(); });
 

@@ -238,6 +238,20 @@ also defines:
   in-progress badge on started todos, and the insights panel a **follow-through**
   headline — of the tasks you started, how many you finished (`follow_through_stats`,
   surfaced by `GET /todos/categories`).
+- **`blockers`** — the mirror image of a todo: someone *else* is blocked on
+  *you* (the ball's in your court). A todo is your own open loop; a blocker also
+  names the `person` waiting and, via `blocking_since`, how long they've waited.
+  It exists to feed **prioritization** — panic mode (`prefrontal/panic.py`) buckets
+  open blockers into late/soon/piling-up (scored a notch above the equivalent todo,
+  so a person waiting outranks your own back-burner) and the morning briefing
+  surfaces "🙋 Waiting on you" — so an unblock can outrank a shiny new task
+  (fighting shiny-object syndrome). `priority` is `0`…`3` like todos; `deadline` is
+  an optional "needs it by"; an optional `todo_id` links the open loop that clears
+  it. *Resolved* (`status='resolved'`, `resolved_at` stamped) rather than deleted,
+  so the history stays. Managed by `prefrontal/memory/repos/blockers.py`, the
+  `/blockers` CRUD router, the `prefrontal blocked` CLI, and captured in one
+  utterance through the NL assistant (`add_blocker`). Pure aging/summary helpers
+  live in `prefrontal/blockers.py`.
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).
