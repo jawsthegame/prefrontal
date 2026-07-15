@@ -44,6 +44,18 @@ jobs:
         # so it needs no brew install and runs before the slower steps.
         run: ./scripts/check-entitlements-sync.sh
 
+      - name: Select newest Xcode (needs the iOS 26 SDK)
+        # macos-latest isn't pinned to an Xcode version, so make the iOS 26 SDK —
+        # required by the ios26.0 typecheck target and the app's deployment floor —
+        # deterministic: select the newest installed Xcode 26.x. A no-op when the
+        # image's default already is one, and a clean skip (default Xcode) if none
+        # is found, so it can't regress a runner that's already correct.
+        run: |
+          latest=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest/Contents/Developer"; fi
+          xcodebuild -version
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+
       - name: Install SwiftLint + XcodeGen
         run: brew install swiftlint xcodegen
 
@@ -56,12 +68,13 @@ jobs:
       - name: Compile check — app target (swiftc -typecheck)
         working-directory: ios
         # The no-build sanity check from ios/README.md: typecheck the app target's
-        # sources against the iOS 17 SDK. Catches build-breaking changes without
-        # the CoreSimulator install a full xcodebuild needs.
+        # sources against the iOS 26 deployment target (the app's floor — see
+        # project.yml). Catches build-breaking changes without the CoreSimulator
+        # install a full xcodebuild needs.
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           find Prefrontal -name '*.swift' -print0 \
-            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios26.0 -typecheck
 
       - name: Compile check — widget extension (swiftc -typecheck)
         working-directory: ios
@@ -73,7 +86,7 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           find PrefrontalWidgets Prefrontal/Config Prefrontal/Networking \
                Prefrontal/Models Prefrontal/Theme -name '*.swift' -print0 \
-            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios26.0 -typecheck \
                 Prefrontal/Intents/WidgetActionIntents.swift \
                 Prefrontal/Intents/PrefrontalIntents.swift
 
@@ -96,17 +109,28 @@ jobs:
 
       - name: Unit tests (xcodebuild test on a simulator)
         working-directory: ios
-        # Generate the Xcode project from project.yml, pick any available iPhone
+        # Generate the Xcode project from project.yml, pick an available iPhone
         # simulator by UDID (robust to Xcode's device-name churn across runner
         # images), and run the PrefrontalTests bundle. A simulator unit-test run
         # needs no code signing (CODE_SIGNING_ALLOWED=NO).
         run: |
           set -euo pipefail
           xcodegen generate
-          # `|| true`: under `set -e` a no-match grep would abort the step before
-          # the empty-UDID check below could print the helpful device list.
-          UDID=$(xcrun simctl list devices available \
-            | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1 || true)
+          # Prefer an iPhone on an iOS 26+ runtime — the app's deployment floor, so
+          # a simulator on an older runtime is an ineligible test destination. Fall
+          # back to any available iPhone if the runtime label can't be parsed, so
+          # this never regresses a runner that's already fine. Trailing `|| true`:
+          # under `set -e` a no-match would otherwise abort before the empty-UDID
+          # check below can print the helpful device list.
+          UDID=$(xcrun simctl list devices available --json 2>/dev/null \
+            | jq -r '.devices | to_entries[]
+                     | select(.key | test("iOS-2[6-9]|iOS-[3-9][0-9]"))
+                     | .value[] | select(.name | test("iPhone")) | .udid' 2>/dev/null \
+            | head -1 || true)
+          if [ -z "$UDID" ]; then
+            UDID=$(xcrun simctl list devices available \
+              | grep -m1 'iPhone' | grep -oiE '[0-9a-f-]{36}' | head -1 || true)
+          fi
           if [ -z "$UDID" ]; then
             echo 'No iPhone simulator available on this runner:' >&2
             xcrun simctl list devices available >&2

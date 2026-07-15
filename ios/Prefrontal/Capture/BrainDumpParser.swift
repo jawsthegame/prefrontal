@@ -1,6 +1,7 @@
 import Foundation
+import FoundationModels
 
-/// On-device brain-dump parsing via **Apple Foundation Models** (iOS 26+).
+/// On-device brain-dump parsing via **Apple Foundation Models**.
 ///
 /// A rambling voice/text dump is the lowest-friction capture there is, but it
 /// mixes several actionable items in one breath ("call the dentist, book the
@@ -11,74 +12,57 @@ import Foundation
 /// only the resulting structure is sent, to the same endpoint, which re-validates
 /// it and returns the preview (see `APIClient.braindump(parse:)`).
 ///
-/// Gated exactly like `AlarmScheduler` gates AlarmKit: the app's deployment target
-/// is iOS 17, so everything Foundation-Models-specific lives behind
-/// `#if canImport(FoundationModels)` + `@available(iOS 26.0, *)`. When the
-/// framework, OS, or on-device model isn't available, `parse` returns `nil` and
-/// the caller escalates to the server's own text parse (the opt-in cloud agent
-/// for the hard reasoning) — a graceful, additive fallback, never a hard failure.
+/// The app's deployment target is iOS 26, so Foundation Models is a hard
+/// dependency rather than an availability-gated one — `import FoundationModels` is
+/// unconditional. But the *model* can still be unavailable at runtime (Apple
+/// Intelligence off, an unsupported device, the model still downloading), so
+/// `isAvailable` checks that and `parse` returns `nil` when it can't run — the
+/// caller then escalates to the server's own text parse (the opt-in cloud agent
+/// for the hard reasoning). A graceful, additive fallback, never a hard failure.
 ///
 /// **Scope.** The on-device pass handles the high-value *actionable* items — the
 /// todos, commitments, shopping, and blockers that make up the bulk of a capture,
 /// each with a straightforward, reliably-valid wire mapping. The subtler cases —
 /// behavioral asides ("I keep blowing off admin on Mondays") and if-then plans
 /// (which need a machine-detectable cue) — are left to the server escalation path,
-/// which the UI keeps one tap away. Nothing here is authoritative:
-/// the server re-validates every action and the user still confirms before any
-/// write, so a hallucinated on-device action drops rather than acting.
+/// which the UI keeps one tap away. Nothing here is authoritative: the server
+/// re-validates every action and the user still confirms before any write, so a
+/// hallucinated on-device action drops rather than acting.
+///
+/// (`ParsedBrainDump`, the framework-free result carrier, lives in
+/// `Models/BrainDump.swift` so `Endpoints.swift` — compiled into the widget
+/// extension too — can reference it without importing this Foundation-Models file.)
 enum BrainDumpParser {
-    /// Whether an on-device parse can run right now (framework linked, OS ≥ 26,
-    /// and the system model actually available — not downloading or disabled).
-    /// The UI reads this to label the capture ("parsed on your device") and the
-    /// caller to decide between the on-device and server paths.
+    /// Whether an on-device parse can run right now — i.e. the system model is
+    /// actually available (not off, unsupported, or still downloading). The UI
+    /// reads this to label the capture ("parsed on your device") and the caller to
+    /// decide between the on-device and server paths.
     static var isAvailable: Bool {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) { return FoundationModelsBackend.isAvailable }
-        #endif
+        // `.unavailable` carries a reason, so match the case rather than assume
+        // `Availability` is Equatable.
+        if case .available = SystemLanguageModel.default.availability { return true }
         return false
     }
 
     /// Parse a ramble into structured, server-ready capture actions on-device.
     ///
-    /// Returns `nil` when on-device parsing is unavailable or errors, so the
+    /// Returns `nil` when the on-device model is unavailable or errors, so the
     /// caller falls back to sending the raw text for the server to parse. A
     /// non-nil result is a `ParsedBrainDump` whose `wireActions` are ready to POST
     /// as the `parse` body — but they are still only a proposal until the server
     /// validates them and the user applies.
     static func parse(_ text: String) async -> ParsedBrainDump? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            return await FoundationModelsBackend.parse(trimmed)
+        guard !trimmed.isEmpty, isAvailable else { return nil }
+        let session = LanguageModelSession(instructions: Self.instructions)
+        do {
+            let response = try await session.respond(to: trimmed, generating: Extraction.self)
+            return response.content.toParsedBrainDump()
+        } catch {
+            // Any generation/guardrail error → nil so the caller escalates to the
+            // server parse rather than losing the capture.
+            return nil
         }
-        #endif
-        return nil
-    }
-}
-
-// `ParsedBrainDump` (the framework-free result carrier) is defined in Models.swift
-// so `Endpoints.swift` — compiled into the widget extension too — can reference it
-// without pulling this app-only, Foundation-Models-gated file into that target.
-
-#if canImport(FoundationModels)
-import FoundationModels
-
-/// The Foundation-Models-specific half, isolated so the file still compiles on
-/// toolchains (and runs on OS versions) without the framework. Never referenced
-/// outside the `canImport` + availability guards in `BrainDumpParser`.
-///
-/// Uses **guided generation** (`@Generable`): the model is constrained to emit an
-/// `Extraction`, so we get typed fields back instead of parsing free JSON. We then
-/// map each typed item to the server's wire op. Anything the schema can't express
-/// simply isn't captured on-device — the user escalates to the server for those.
-@available(iOS 26.0, *)
-private enum FoundationModelsBackend {
-    static var isAvailable: Bool {
-        // `.unavailable` carries a reason, so match the case rather than assume
-        // `Availability` is Equatable.
-        if case .available = SystemLanguageModel.default.availability { return true }
-        return false
     }
 
     /// The instruction preamble — mirrors the server assistant's framing so the
@@ -92,22 +76,12 @@ private enum FoundationModelsBackend {
         review — never claim anything is already done.
         """
 
-    static func parse(_ text: String) async -> ParsedBrainDump? {
-        guard isAvailable else { return nil }
-        let session = LanguageModelSession(instructions: instructions)
-        do {
-            let response = try await session.respond(
-                to: text, generating: Extraction.self)
-            return response.content.toParsedBrainDump()
-        } catch {
-            // Any generation/guardrail error → nil so the caller escalates to the
-            // server parse rather than losing the capture.
-            return nil
-        }
-    }
-
     // MARK: Guided-generation schema
 
+    /// Uses **guided generation** (`@Generable`): the model is constrained to emit
+    /// an `Extraction`, so we get typed fields back instead of parsing free JSON.
+    /// Each typed item then maps to the server's wire op; anything the schema can't
+    /// express simply isn't captured on-device — the user escalates for those.
     @Generable
     struct Extraction {
         @Guide(description: "A one-sentence, first-person acknowledgement of what will be captured.")
@@ -161,8 +135,7 @@ private enum FoundationModelsBackend {
     }
 }
 
-@available(iOS 26.0, *)
-private extension FoundationModelsBackend.Extraction {
+private extension BrainDumpParser.Extraction {
     /// Map the typed extraction to server wire actions, dropping empties and
     /// normalizing optional fields exactly as the server assistant expects.
     func toParsedBrainDump() -> ParsedBrainDump {
@@ -206,4 +179,3 @@ private extension FoundationModelsBackend.Extraction {
             reply: reply.trimmingCharacters(in: .whitespacesAndNewlines), wireActions: actions)
     }
 }
-#endif

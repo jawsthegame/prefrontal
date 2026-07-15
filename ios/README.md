@@ -147,7 +147,7 @@ To sanity-check the code compiles without a full build (no components needed):
 ```sh
 cd ios/Prefrontal
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
+find . -name '*.swift' -print0 | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios26.0 -typecheck
 ```
 
 ## Linting
