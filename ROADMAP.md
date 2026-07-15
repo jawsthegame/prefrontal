@@ -90,7 +90,13 @@ closeout, consolidation, and a few net-new surfaces.
 **Shipped:** the native **WidgetKit + ActivityKit Live Activity** (once deferred
 for needing a Swift app / Xcode / Apple Developer account) now ships in
 `ios/PrefrontalWidgets/`, along with Home Screen / Lock Screen glances. The legacy
-Scriptable widget it once stood in for has been retired.
+Scriptable widget it once stood in for has been retired. Joined by the
+**"one next thing" widget** (`OneNextThingWidget`) — a glance that shows the
+single honest next action and nothing else (mid-flight task pinned, a departure
+to leave for, the worst clock-bound fire, or the avoided-but-important todo),
+withholding the rest behind a single "+N more can wait". It reads the new
+read-only `GET /next` (`prefrontal.next_thing`, also `prefrontal next` on the
+CLI), which reuses the panic prioritizer rather than a flat list.
 
 The sections that follow track each capability area in detail, marking shipped
 progress (✅) inline against what remains open.

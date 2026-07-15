@@ -26,9 +26,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from prefrontal.clock import TS_FMT, local_datetime, parse_ts, utcnow
+from prefrontal.clock import TS_FMT, local_datetime, local_hour_of, parse_ts, utcnow
 from prefrontal.clock import parse_ts_strict as _parse
-from prefrontal.todos import KNOWN_CATEGORIES, requires_travel
+from prefrontal.todos import KNOWN_CATEGORIES, avoided_todos, requires_travel
 
 #: Local hour after which a travel-requiring todo (see
 #: :func:`prefrontal.todos.requires_travel`) is no longer suggested into a free
@@ -866,3 +866,95 @@ def suggest_for_windows(
             used.add(pick["id"])  # only the primary is reserved across windows
         out.append({"window": window, "suggestion": pick, "options": options})
     return out
+
+
+def suggest_now(
+    store: Any,
+    settings: Any,
+    now: datetime,
+    *,
+    cap_minutes: float = DEFAULT_FIT_CAP_MINUTES,
+) -> dict[str, Any]:
+    """The single best open todo that fits your free time *right now*.
+
+    The deterministic core behind ``GET /todos/now`` and a fallback tier of the
+    "one next thing" resolver (:mod:`prefrontal.next_thing`), factored here so
+    both share one honest pick instead of re-deriving it.
+
+    "Right now" = the gap until the next commitment, bounded by waking hours (the
+    off-zone's complement) and ``cap_minutes`` (so a wide-open evening doesn't
+    offer a multi-hour task). Candidates are filtered to those whose suggestion
+    window includes the current local time, then ranked by :func:`fit_todos` and
+    resolved to one by :func:`pick_now` — the **most-avoided** fitting todo, else
+    the best fit (low-energy preferred later in the day).
+
+    Args:
+        store: An open memory store (scoped to the user).
+        settings: Resolved settings — used for ``timezone`` and window config.
+        now: Naive-UTC "now".
+        cap_minutes: Never look further ahead than this.
+
+    Returns:
+        ``{"free_minutes", "within_hours", "next_commitment", "suggestion",
+        "reason"}``. ``suggestion`` is ``None`` (with a ``reason``) outside waking
+        hours, with no real free gap, or when nothing fits/belongs now.
+    """
+    from prefrontal.memory.patterns import task_bias_resolver
+
+    window_config = window_config_for(settings, store)
+    day_start, day_end = window_config.awake_band()
+    within, horizon = work_window_now(
+        now, settings.timezone,
+        cap_minutes=cap_minutes, day_start=day_start, day_end=day_end,
+    )
+    upcoming = store.upcoming_commitments(limit=1)
+    result: dict[str, Any] = {
+        "free_minutes": 0,
+        "within_hours": within,
+        "next_commitment": (
+            {"title": upcoming[0]["title"], "start_at": upcoming[0]["start_at"]}
+            if upcoming else None
+        ),
+        "suggestion": None,
+        "reason": None,
+    }
+    if not within:
+        result["reason"] = "outside waking hours"
+        return result
+
+    # Overlap-aware so a still-running multi-day / all-day block that *started*
+    # before now is counted as busy, not a free window; clipped to [now, horizon].
+    commitments = store.active_commitments_between(
+        now.strftime(TS_FMT), horizon.strftime(TS_FMT)
+    )
+    free = available_now(commitments, now, horizon)
+    result["free_minutes"] = round(free)
+    if free < DEFAULT_MIN_WINDOW_MINUTES:
+        result["reason"] = "no free time right now"
+        return result
+
+    now_local = local_datetime(now, settings.timezone)
+    open_todos = filter_suggestible(
+        store.open_todos(exclude_delegated=True, with_project_rank=True),
+        now_local, window_config,
+    )
+    fits = fit_todos(
+        free, open_todos, bias_fn=task_bias_resolver(store, local_hour=now_local.hour)
+    )
+    if not fits:
+        result["reason"] = "nothing fits this window"
+        return result
+    avoided_ids = [a["todo"]["id"] for a in avoided_todos(open_todos, now)]
+    top = pick_now(fits, avoided_ids, local_hour_of(now, settings.timezone))
+    t = top["todo"]
+    result["suggestion"] = {
+        "todo_id": t["id"],
+        "title": t["title"],
+        "estimate_minutes": t.get("estimate_minutes"),
+        "effective_minutes": top["effective_minutes"],
+        "priority": t.get("priority"),
+        "energy": t.get("energy"),
+        "domain": t.get("domain"),
+        "reason": top["reason"],  # "avoided" | "fits"
+    }
+    return result

@@ -90,6 +90,7 @@ from prefrontal.modules.registry import (
 from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
+from prefrontal.next_thing import build_next_thing, render_next_thing
 from prefrontal.packs.registry import get as get_pack
 from prefrontal.packs.registry import user_pack_enabled
 from prefrontal.panic import (
@@ -1656,6 +1657,41 @@ def build_router(services: RouterServices) -> APIRouter:
             "piling_up": [dump(p) for p in plan.piling_up],
             "cascade": plan.cascade,
             "text": render_panic(plan),
+        }
+
+    @router.get("/next", tags=["schedule"])
+    def next_thing(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The single honest next action to do right now — never the whole list.
+
+        Where ``/panic`` names every fire (for when you're already frozen), this
+        surfaces *one* thing: the mid-flight task you're in, a commitment you must
+        leave for, the worst clock-bound fire, or — when nothing's pressing — the
+        avoided-but-important todo you keep skipping. Everything else is withheld
+        and reduced to an ``also_count`` ("+N more can wait"). Read-only, fast, and
+        model-free — it powers the "one next thing" home / lock-screen widget, so a
+        client can poll it every timeline refresh. See
+        :func:`prefrontal.next_thing.build_next_thing` for the resolution ladder.
+        """
+        thing = build_next_thing(ctx.store, settings=resolved_settings)
+        return {
+            "kind": thing.kind,
+            "reason": thing.reason,
+            "title": thing.title,
+            "detail": thing.detail,
+            "action": thing.action,
+            "source": thing.source,
+            "also_count": thing.also_count,
+            "estimate_minutes": thing.estimate_minutes,
+            "free_minutes": thing.free_minutes,
+            "headline": thing.headline,
+            "commitment_id": thing.commitment_id,
+            "todo_id": thing.todo_id,
+            "blocker_id": thing.blocker_id,
+            "session_id": thing.session_id,
+            "outing_id": thing.outing_id,
+            "text": render_next_thing(thing),
         }
 
     @router.post("/webhooks/panic/check", tags=["schedule"])

@@ -169,6 +169,47 @@ struct TodosNow: Codable {
     }
 }
 
+/// The single honest next action from `GET /next` — the "one next thing" glance.
+/// Mirrors `prefrontal.next_thing.NextThing`: one thing, an honest `reason`, and a
+/// single `alsoCount` standing in for everything deliberately withheld.
+struct NextThing: Codable {
+    let kind: String            // focus|outing|departure|todo|blocker|mail|clear
+    let reason: String          // mid-flight|leave-now|overdue|avoided|fits|clear|…
+    let title: String
+    let detail: String
+    let action: String?         // wrap_up|im_back|leave|start|open|none
+    let source: String?
+    let alsoCount: Int?
+    let estimateMinutes: Int?
+    let freeMinutes: Int?
+    let headline: String?
+    let commitmentId: Int?
+    let todoId: Int?
+    let blockerId: Int?
+    let sessionId: Int?
+    let outingId: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, reason, title, detail, action, source, headline
+        case alsoCount = "also_count"
+        case estimateMinutes = "estimate_minutes"
+        case freeMinutes = "free_minutes"
+        case commitmentId = "commitment_id"
+        case todoId = "todo_id"
+        case blockerId = "blocker_id"
+        case sessionId = "session_id"
+        case outingId = "outing_id"
+    }
+
+    static let sample = NextThing(
+        kind: "todo", reason: "avoided", title: "Sort the garage",
+        detail: "open 6d, kept skipping", action: "start", source: "home",
+        alsoCount: 3, estimateMinutes: nil, freeMinutes: nil,
+        headline: "Next: Sort the garage — the thing you keep skipping.",
+        commitmentId: nil, todoId: 1, blockerId: nil, sessionId: nil, outingId: nil
+    )
+}
+
 struct TodosFit: Codable {
     let availableMinutes: Double?
     let fits: [Fit]
