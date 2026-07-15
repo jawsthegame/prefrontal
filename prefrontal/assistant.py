@@ -1486,7 +1486,11 @@ def plan_preparsed(
     """
     snapshot = build_snapshot(memory)
     actions, errors = validate_actions(raw_actions, snapshot)
-    if not reply or (errors and not actions):
+    # Only synthesize a fallback when there's something to report — actions to
+    # preview, or errors explaining a drop. A truly empty parse (nothing parsed,
+    # nothing to say) stays silent with reply="", matching plan_braindump()'s
+    # empty-text short-circuit rather than claiming "I didn't find anything".
+    if (actions or errors) and (not reply or (errors and not actions)):
         reply = _default_reply(actions, errors)
     return AssistantPlan(reply=reply, actions=actions, errors=errors)
 

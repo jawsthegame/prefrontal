@@ -211,8 +211,13 @@ def test_on_device_parse_drops_off_allowlist_observations(store):
 
 
 def test_on_device_parse_empty_yields_empty_plan(store):
-    """An empty parse is a valid no-op, not a crash — no reply, no items."""
+    """An empty parse is a valid no-op, not a crash — no reply, no items.
+
+    A true no-op stays silent (reply=""), like the empty-text short-circuit —
+    not a misleading "I didn't find anything to change."
+    """
     plan = plan_braindump("", store, parse=OnDeviceParse())
+    assert plan.reply == ""
     assert plan.actions == [] and plan.candidates == []
 
 
