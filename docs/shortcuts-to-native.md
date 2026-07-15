@@ -48,7 +48,7 @@ The app runs two delivery/ingestion realities side by side:
 | **Push** | native APNs → `POST /route/apns-token` (the product transport; `PushNotifications.swift`, `integrations/delivery.py`) | ntfy DEV-ONLY shim (`PREFRONTAL_NTFY_DEV=1`) |
 | **Push actions** | `UNNotificationCategory`/`UNNotificationAction` mirroring server buttons, fire signed `/nudge/act` (`PushNotifications.swift`) | ntfy inline buttons |
 | **Leave-home** | `CLCircularRegion` geofence → `/webhooks/departure/left` + `/webhooks/location` (`Location/LocationMonitor.swift`) | "Leaving Home" automation |
-| **Sessions** | Live Activities for outing/focus (`Activities/LiveActivityManager.swift`) | — |
+| **Sessions** | Live Activities for outing/focus/task (`Activities/LiveActivityManager.swift`) | — |
 | **One-tap actions** | App Intents (Siri / Action Button / Spotlight) + widgets + Controls (`Intents/PrefrontalIntents.swift`, `PrefrontalControls.swift`) | the shortcut catalog |
 | **Offline safety** | App-Group offline queue drained by `BGTaskScheduler` (`Config/OfflineQueue.swift`) | lost if off-tailnet |
 
