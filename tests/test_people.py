@@ -77,6 +77,12 @@ def test_extract_dedupes_case_insensitively():
     assert extract_names("Sam emailed. Later, call Sam again.") == ["Sam"]
 
 
+def test_extract_cue_does_not_cross_a_period():
+    # A sentence-ending word must not cue the next sentence's first capital word.
+    assert extract_names("I emailed. Later is fine.") == []
+    assert extract_names("w/ Dana at noon") == ["Dana"]  # slash cue still works
+
+
 # --- repo: roster + queue ---------------------------------------------------
 
 
@@ -226,6 +232,26 @@ def test_http_queue_identify_new_person(client):
     assert [p["name"] for p in client.get("/people", headers=_auth()).json()["people"]] == [
         "Priya Patel"
     ]
+
+
+def test_http_extract_returns_integer_counts(client):
+    r = client.post(
+        "/people/extract", json={"text": "email Sam and Priya Patel"}, headers=_auth()
+    )
+    body = r.json()
+    assert body["queued"] == 2 and body["known"] == 0  # counts (ints), not lists
+    assert isinstance(body["names"], list)
+
+
+def test_http_patch_null_aliases_clears_not_corrupts(client):
+    pid = client.post(
+        "/people", json={"name": "Dana", "aliases": ["D"]}, headers=_auth()
+    ).json()["id"]
+    r = client.patch(f"/people/{pid}", json={"aliases": None}, headers=_auth())
+    assert r.status_code == 200
+    assert r.json()["aliases"] == []
+    # find_person still iterates aliases without crashing.
+    assert client.get("/people", headers=_auth()).json()["people"][0]["aliases"] == []
 
 
 def test_http_identify_links_existing_and_learns_alias(client):

@@ -74,8 +74,10 @@ _CONTEXT_CHARS = 200
 
 #: Lowercased tokens that look like a Title-Case name but never are one on their
 #: own — weekday/month names, mail-header words, and common capitalized fillers.
-#: A multi-word run is only rejected when *every* token is a stopword (so "New
-#: York" still surfaces — one dismiss — while "Best Regards" does not).
+#: A run made entirely of stopwords is dropped; a run that merely *begins* with
+#: one has the leading stopword(s) peeled (so "New York" → "York", then dropped as
+#: a lone token with no cue), while "Best Regards" (all stopwords) is dropped
+#: outright.
 _STOPWORDS: frozenset[str] = frozenset(
     {
         # weekdays / months (+ common abbreviations)
@@ -113,16 +115,28 @@ _NAME_CUES: frozenset[str] = frozenset(
 #: A Title-Case run of 1–3 words, with an optional trailing possessive ("Sam's").
 #: Group 1 is the run; group 2 is the ``'s`` marker when present.
 _TITLE_RUN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})('s)?\b")
-#: The word immediately preceding a match (for the cue test). Deliberately does
-#: *not* reach across a period, so a sentence-ending word ("…emailed. Later")
-#: never acts as a cue for the next sentence's first capitalized word.
-_PREV_WORD = re.compile(r"([A-Za-z/]+)\s*$")
 #: Honorific + name with a literal dot ("Dr. Lee", "Mrs. Alvarez") — the dot
 #: breaks the Title-run, so this pass captures the trailing name directly. Names
 #: after a dot-less honorific ("Dr Lee") are handled by the cue path instead.
 _HONORIFIC_NAME = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sir|Aunt|Uncle|Grandma|Grandpa)\.\s+([A-Z][a-z]+)\b"
 )
+
+
+def _preceding_cue(text: str, pos: int) -> bool:
+    """Whether the word immediately before ``pos`` is a name cue.
+
+    Looks only at the last whitespace-delimited token before ``pos`` and does
+    *not* reach across a period, so a sentence-ending word ("…emailed. Later")
+    never cues the next sentence's first capitalized word (dotted honorifics like
+    "Dr." are handled by :data:`_HONORIFIC_NAME` instead). Implemented with plain
+    string ops rather than a trailing-anchored regex to avoid any super-linear
+    backtracking on adversarial input (CodeQL ReDoS).
+    """
+    before = text[:pos].rstrip()
+    if not before or before.endswith("."):
+        return False
+    return before.split()[-1].lower() in _NAME_CUES
 
 
 def normalize_name(name: str) -> str:
@@ -142,15 +156,18 @@ def name_key(name: str) -> str:
 def extract_names(text: str) -> list[str]:
     """Extract candidate people-names from free text (deterministic, always runs).
 
-    Two signals, unioned in first-seen order:
+    Three signals, unioned in first-seen order:
 
-    1. **A Title-Case run of two or three words** ("Dana Ruiz", "Mrs. Alvarez")
-       — a strong person signal on its own.
-    2. **A lone Title-Case word** ("Sam") only when it carries corroborating
-       evidence: a trailing possessive (``Sam's``) or a preceding
-       :data:`_NAME_CUES` word (``call Sam``, ``from Dana``). A bare capitalized
-       word with neither is dropped — it is far more likely a sentence start, a
-       place, or a product.
+    1. **An honorific + name** ("Dr. Lee", "Mrs. Alvarez") — the dot would
+       otherwise split the run, so it is matched directly.
+    2. **A Title-Case run of two or three words** ("Dana Ruiz") — a strong person
+       signal on its own. Leading cue/filler tokens the greedy run swept in are
+       peeled first ("Ping Sam" → "Sam", "New York" → "York").
+    3. **A lone Title-Case word** ("Sam") only when it carries corroborating
+       evidence: a trailing possessive (``Sam's``), a peeled leading *cue*, or a
+       preceding :data:`_NAME_CUES` word (``call Sam``, ``from Dana``). A bare
+       capitalized word with none of these is dropped — it is far more likely a
+       sentence start, a place, or a product ("New York" → "York" → dropped).
 
     Candidates whose every token is a :data:`_STOPWORDS` entry are discarded. The
     extractor errs toward surfacing (a false positive is one dismiss in the
@@ -201,9 +218,8 @@ def extract_names(text: str) -> list[str]:
             _add(candidate)
             continue
         # A lone Title-Case word survives only with a preceding cue word ("call
-        # **Sam**", "from **Dana**", "Dr. **Lee**").
-        prev = _PREV_WORD.search(text[: m.start()])
-        if prev is not None and prev.group(1).lower() in _NAME_CUES:
+        # **Sam**", "from **Dana**").
+        if _preceding_cue(text, m.start()):
             _add(candidate)
     return found
 

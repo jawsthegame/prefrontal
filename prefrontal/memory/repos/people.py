@@ -53,10 +53,14 @@ class PeopleRepo(Repo):
 
         ``seen_at`` (when the naming item was ingested) seeds ``first_seen`` /
         ``last_seen`` and, when ``mention_count`` is 0 but a sighting is supplied,
-        counts as the first mention. A duplicate ``name_key`` for this user raises
-        (the caller should :meth:`find_person` first); the roster is human-curated,
-        so a clash is a real "already exists" the surface reports.
+        counts as the first mention (so a populated ``first_seen`` never sits
+        beside a zero count). A duplicate ``name_key`` for this user raises (the
+        caller should :meth:`find_person` first); the roster is human-curated, so
+        a clash is a real "already exists" the surface reports.
         """
+        # A supplied sighting is itself the first mention — keep the count and the
+        # first/last_seen stamps consistent.
+        count = mention_count or (1 if seen_at else 0)
         cur = self.conn.execute(
             "INSERT INTO people "
             "(user_id, name, name_key, relationship, importance, aliases, notes, "
@@ -70,7 +74,7 @@ class PeopleRepo(Repo):
                 importance,
                 json.dumps(aliases or []),
                 notes,
-                mention_count,
+                count,
                 seen_at,
                 seen_at,
                 status,
@@ -270,7 +274,10 @@ class PeopleRepo(Repo):
     def _person_row(row: Any) -> dict[str, Any]:
         d = dict(row)
         try:
-            d["aliases"] = json.loads(d["aliases"]) if d.get("aliases") else []
+            aliases = json.loads(d["aliases"]) if d.get("aliases") else []
         except (ValueError, TypeError):
-            d["aliases"] = []
+            aliases = []
+        # Coerce any non-list payload (e.g. a stray JSON null/object) to [] so
+        # callers that iterate aliases never crash on a malformed row.
+        d["aliases"] = aliases if isinstance(aliases, list) else []
         return d

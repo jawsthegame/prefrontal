@@ -108,8 +108,11 @@ def build_router(services: RouterServices) -> APIRouter:
                 )
             fields["name"] = new_name
             fields["name_key"] = name_key(new_name)
-        if "aliases" in fields and fields["aliases"] is not None:
-            fields["aliases"] = [normalize_name(a) for a in fields["aliases"] if normalize_name(a)]
+        if "aliases" in fields:
+            # A null aliases clears the list rather than persisting JSON null
+            # (which would later break alias iteration in find_person).
+            raw_aliases = fields["aliases"] or []
+            fields["aliases"] = [normalize_name(a) for a in raw_aliases if normalize_name(a)]
         return memory.update_person(person_id, **fields)
 
     @router.post("/people/{person_id}/archive", tags=["people"])
@@ -152,7 +155,11 @@ def build_router(services: RouterServices) -> APIRouter:
         result = enqueue_mentions(
             ctx.store, text=payload.text, source=payload.source, client=client
         )
-        return {"queued": len(result["queued"]), "known": len(result["known"]), **result}
+        return {
+            "names": result["names"],
+            "queued": len(result["queued"]),
+            "known": len(result["known"]),
+        }
 
     @router.post("/people/mentions/{mention_id}/identify", tags=["people"])
     def mention_identify(
