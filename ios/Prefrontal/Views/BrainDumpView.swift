@@ -25,7 +25,6 @@ struct BrainDumpView: View {
     @State private var working = false
     @State private var appliedNote: String?
     @State private var acceptedProposals: Set<Int> = []
-    @FocusState private var editorFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -43,7 +42,6 @@ struct BrainDumpView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
         }
-        .onAppear { editorFocused = true }
     }
 
     // MARK: Compose
@@ -62,7 +60,6 @@ struct BrainDumpView: View {
                                 .padding(.top, 8).padding(.leading, 5)
                         }
                         TextEditor(text: $text)
-                            .focused($editorFocused)
                             .frame(minHeight: 160)
                             .scrollContentBackground(.hidden)
                             .font(.body)
@@ -203,7 +200,7 @@ struct BrainDumpView: View {
             Button {
                 // Start over on a fresh dump without leaving the sheet.
                 response = nil; provider = ""; appliedNote = nil
-                acceptedProposals = []; text = ""; editorFocused = true
+                acceptedProposals = []; text = ""
             } label: {
                 Text("New dump").frame(maxWidth: .infinity).padding(.vertical, 8)
             }
@@ -220,13 +217,18 @@ struct BrainDumpView: View {
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
         do {
-            if let parsed = await BrainDumpParser.parse(raw), !parsed.wireActions.isEmpty {
+            if let parsed = await BrainDumpParser.parse(raw) {
+                // On-device parse succeeded — send the structure, never the raw
+                // ramble, so the thought stays on the device (the privacy win).
+                // An empty parse is a valid "found nothing"; the user can tap
+                // "server pass" to escalate, which is when the text leaves the phone.
                 response = try await withAPI { try await $0.braindump(parse: parsed) }
             } else {
+                // On-device parsing unavailable (older OS / model absent) — let the
+                // server parse the raw text.
                 response = try await withAPI { try await $0.braindump(text: raw) }
             }
             provider = response?.provider?["assistant"] ?? "server"
-            editorFocused = false
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -247,6 +249,19 @@ struct BrainDumpView: View {
             try await $0.applyAssistantActions(actions.map { $0.wire })
         }
         let n = result.applied
-        appliedNote = "Applied \(n) change\(n == 1 ? "" : "s")."
+        if n > 0 { appliedNote = "Applied \(n) change\(n == 1 ? "" : "s")." }
+        // A 2xx can still carry partial (or total) failures — a validation drop or
+        // an id that moved. Surface those rather than reporting a false success;
+        // when nothing applied, appliedNote stays nil so the actions card remains
+        // for a retry.
+        let failures = result.results.filter { !$0.ok }.map { $0.detail.isEmpty ? $0.summary : $0.detail }
+        let reasons = failures + result.errors
+        if !reasons.isEmpty {
+            let count = failures.count
+            error = "Couldn't apply \(count) item\(count == 1 ? "" : "s"): "
+                + reasons.joined(separator: "; ")
+        } else {
+            error = nil
+        }
     }
 }

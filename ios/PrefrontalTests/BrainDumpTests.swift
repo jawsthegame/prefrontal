@@ -21,6 +21,25 @@ final class BrainDumpTests: XCTestCase {
         super.tearDown()
     }
 
+    /// URLSession moves a request body into `httpBodyStream`, so read from there
+    /// when `httpBody` is nil (the usual case under `URLProtocol`).
+    private func bodyData(_ req: URLRequest) -> Data? {
+        if let b = req.httpBody { return b }
+        guard let stream = req.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let size = 4096
+        let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+        defer { buf.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buf, maxLength: size)
+            if read <= 0 { break }
+            data.append(buf, count: read)
+        }
+        return data
+    }
+
     // MARK: JSONValue
 
     func testJSONValueDecodesBoolBeforeInt() throws {
@@ -124,8 +143,10 @@ final class BrainDumpTests: XCTestCase {
     func testBraindumpParsePostsParseBody() async throws {
         URLProtocol.registerClass(StubURLProtocol.self)
         var seenPath: String?
-        StubURLProtocol.responder = { req in
+        var seenBody: Data?
+        StubURLProtocol.responder = { [self] req in
             seenPath = req.url?.path
+            seenBody = bodyData(req)
             return (200, Data(#"{"reply":"got it","actions":[],"errors":[],"proposals":[],"provider":{"assistant":"on_device","sensor":"on_device"}}"#.utf8))
         }
         let parsed = ParsedBrainDump(
@@ -134,5 +155,17 @@ final class BrainDumpTests: XCTestCase {
         let r = try await client().braindump(parse: parsed)
         XCTAssertEqual(seenPath, "/braindump")
         XCTAssertEqual(r.provider?["assistant"], "on_device")
+
+        // The request body carries a `parse` object with the reply + wire actions,
+        // and NO top-level `text` — so a regression in braindump(parse:) is caught.
+        let obj = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(seenBody)) as? [String: Any])
+        XCTAssertNil(obj["text"])
+        let parse = try XCTUnwrap(obj["parse"] as? [String: Any])
+        XCTAssertEqual(parse["reply"] as? String, "got it")
+        let acts = try XCTUnwrap(parse["actions"] as? [[String: Any]])
+        XCTAssertEqual(acts.count, 1)
+        XCTAssertEqual(acts.first?["op"] as? String, "add_todo")
+        XCTAssertEqual(acts.first?["title"] as? String, "Call the dentist")
     }
 }
