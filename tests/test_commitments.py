@@ -1327,6 +1327,16 @@ def test_active_commitments_between_excludes_already_ended(store):
     assert _acb(store) == []
 
 
+def test_active_commitments_between_excludes_block_ending_exactly_at_start(store):
+    """Half-open ``[start, end)``: a block whose ``end_at`` is exactly ``start`` has
+    already finished as the window opens, so it doesn't overlap (strict ``> start``)."""
+    store.upsert_commitment(
+        title="Just ended", start_at="2026-07-02 11:00:00", end_at=_ACB_NOW,
+        source="manual",
+    )
+    assert _acb(store) == []
+
+
 def test_active_commitments_between_excludes_starts_after_window(store):
     """A commitment starting at/after the horizon is out (``start_at < end``)."""
     store.upsert_commitment(

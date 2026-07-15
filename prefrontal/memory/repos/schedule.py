@@ -380,7 +380,8 @@ class ScheduleRepo(Repo):
         ``start`` is missed — and a free-window computation over the result would
         read the user as free while they're actually busy. This method instead
         returns every commitment that *touches* the window: it starts before ``end``
-        **and** is still ongoing at or after ``start``.
+        **and** is still ongoing past ``start`` (a strict ``> start``, since the
+        window is half-open — a block ending exactly at ``start`` doesn't overlap).
 
         A commitment's effective end is ``end_at`` when set, else
         ``start_at + default_event_minutes`` — the same assumed duration
@@ -395,19 +396,25 @@ class ScheduleRepo(Repo):
             start: Inclusive UTC lower bound of the window (``YYYY-MM-DD HH:MM:SS``).
             end: Exclusive UTC upper bound.
             default_event_minutes: Assumed length of a commitment with no ``end_at``,
-                for deciding whether it's still ongoing at ``start``.
+                for deciding whether it's still ongoing at ``start`` (rounded to whole
+                minutes for the SQLite date modifier).
 
         Returns:
             A list of commitment dicts ordered by ``start_at`` ascending — a superset
             of :meth:`commitments_between`'s result over the same window, adding the
             in-progress blocks that began before it.
         """
+        # Compare sortable ``YYYY-MM-DD HH:MM:SS`` strings directly (as
+        # commitments_between does) rather than wrapping each side in datetime():
+        # end_at is stored in that normalized format and datetime(start_at, ?)
+        # returns it too, so lexical order is chronological — and the bare start_at
+        # comparison stays index-friendly.
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE user_id = ? AND status = 'active' "
             "AND hidden = 0 AND start_at < ? "
-            "AND datetime(COALESCE(end_at, datetime(start_at, ?))) > datetime(?) "
+            "AND COALESCE(end_at, datetime(start_at, ?)) > ? "
             "ORDER BY start_at ASC",
-            (self._uid(), end, f"+{int(default_event_minutes)} minutes", start),
+            (self._uid(), end, f"+{round(default_event_minutes)} minutes", start),
         ).fetchall()
         return [_with_calendar(dict(r)) for r in rows]
 
