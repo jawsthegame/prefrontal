@@ -35,7 +35,7 @@ dependencies = [
     # Seals per-user source credentials (IMAP passwords, Google refresh tokens)
     # at rest with Fernet before they touch the DB — see prefrontal/crypto.py.
     "cryptography>=42",
-    # Renders the Markdown usage guide (docs/guide.md) as the served /docs page —
+    # Renders the Markdown usage guide (docs/guide.md) as the served /manual page —
     # pure-Python and offline, no network/CDN. The route degrades to raw text if
     # this is somehow absent, so it's a soft dependency in practice.
     "markdown>=3.5",

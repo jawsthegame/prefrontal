@@ -2,23 +2,47 @@
 
 The guide is a single Markdown source of truth in the repo; rather than maintain a
 second HTML copy, this renders that file on request into a self-contained,
-Tailscale-reachable page (``GET /docs``). Local-first and offline: rendering is a
-pure-Python pass with no network and no CDN assets (styles are inlined).
+Tailscale-reachable page (``GET /manual`` — *not* ``/docs``, which is FastAPI's
+Swagger UI). Local-first and offline: rendering is a pure-Python pass with no
+network and no CDN assets (styles are inlined).
 
-Rendering degrades gracefully in two ways so the route can never 500:
+Rendering degrades gracefully so the route can never 500:
 
 - if the ``markdown`` package isn't importable (e.g. a deploy that pulled new code
-  but hasn't reinstalled deps yet), the raw Markdown is shown escaped in a
-  ``<pre>`` with a one-line note — readable, just unstyled;
+  but hasn't reinstalled deps yet) **or the render itself raises**, the raw Markdown
+  is shown escaped in a ``<pre>`` with a one-line note — readable, just unstyled;
 - if the guide file can't be found (e.g. run from a packaged wheel that ships only
   ``prefrontal/``, not ``docs/``), a short explanatory page is served instead.
+
+The guide is trusted first-party content, but since ``/manual`` shares an origin
+with authenticated surfaces, the rendered HTML is scrubbed of active content
+(``<script>``/``<style>``/inline handlers/``javascript:`` URLs) as defense in
+depth — so a stray raw-HTML snippet in the doc can never execute.
 """
 
 from __future__ import annotations
 
 import html
+import re
 from functools import lru_cache
 from pathlib import Path
+
+from prefrontal.log import get_logger
+
+logger = get_logger(__name__)
+
+#: Active-content patterns stripped from the rendered HTML as defense in depth
+#: (see :func:`_scrub_active_html`). Not a general sanitizer — the guide is
+#: first-party — just the realistic XSS vectors, since ``/manual`` shares an origin
+#: with authenticated pages.
+_ACTIVE_HTML_RE = re.compile(
+    r"""(?isx)
+    <\s*(script|style|iframe|object|embed)\b[^>]*>.*?</\s*\1\s*>  # element + contents
+    | <\s*(?:script|style|iframe|object|embed|link|meta|base)\b[^>]*>  # lone/void openers
+    | \son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)                  # inline event handlers
+    | javascript:                                                # javascript: URIs
+    """
+)
 
 #: Candidate locations for docs/guide.md — the deployment runs from a source
 #: checkout (launchd over the repo), where the first resolves; the others are
@@ -98,26 +122,49 @@ def _render_markdown(md_text: str) -> tuple[str, str]:
     """Render Markdown to an HTML fragment; return ``(body_html, note_html)``.
 
     Uses the ``markdown`` package (offline, pure-Python) with the table / fenced-code
-    / heading-anchor extensions the guide relies on. If it isn't importable, falls
-    back to the escaped raw source in a ``<pre>`` plus a visible note, so the page
-    still serves rather than erroring.
+    / heading-anchor extensions the guide relies on, then scrubs active content from
+    the result (:func:`_scrub_active_html`). If the package isn't importable **or the
+    render itself raises**, falls back to the escaped raw source in a ``<pre>`` plus a
+    visible note — so the page always serves rather than 500-ing.
     """
     try:
         import markdown  # noqa: PLC0415 — optional at runtime; fallback below
-    except ImportError:
-        body = f"<pre>{html.escape(md_text)}</pre>"
-        note = (
-            "<div class=\"note\">Showing the raw guide — install the "
-            "<code>markdown</code> package (it's in the project dependencies) and "
-            "reload for the formatted version.</div>"
+
+        rendered = markdown.markdown(
+            md_text,
+            extensions=["extra", "tables", "fenced_code", "sane_lists", "toc"],
+            output_format="html5",
         )
-        return body, note
-    rendered = markdown.markdown(
-        md_text,
-        extensions=["extra", "tables", "fenced_code", "sane_lists", "toc"],
-        output_format="html5",
-    )
-    return rendered, ""
+        return _scrub_active_html(rendered), ""
+    except ImportError:
+        return _raw_fallback(
+            md_text,
+            "Showing the raw guide — install the <code>markdown</code> package (it's "
+            "in the project dependencies) and reload for the formatted version.",
+        )
+    except Exception:  # noqa: BLE001 — a render glitch must degrade, never 500 the route
+        logger.warning("usage-guide markdown render failed; serving raw", exc_info=True)
+        return _raw_fallback(
+            md_text, "Showing the raw guide — the formatted render hit an error."
+        )
+
+
+def _raw_fallback(md_text: str, note_msg: str) -> tuple[str, str]:
+    """The escaped-raw-source body + a note, used when rendering can't run."""
+    return f"<pre>{html.escape(md_text)}</pre>", f'<div class="note">{note_msg}</div>'
+
+
+def _scrub_active_html(rendered: str) -> str:
+    """Strip active content from rendered HTML (defense in depth over trusted docs).
+
+    Not a general-purpose sanitizer — ``docs/guide.md`` is first-party — but because
+    ``/manual`` shares an origin with authenticated pages, this removes the realistic
+    XSS vectors (``<script>``/``<style>``/``<iframe>``/``<object>``/``<embed>``
+    elements, inline ``on*=`` event handlers, ``javascript:`` URLs) so a stray raw-HTML
+    snippet in the guide can never execute. Benign markup (tables, code, headings,
+    links) is untouched.
+    """
+    return _ACTIVE_HTML_RE.sub("", rendered)
 
 
 @lru_cache(maxsize=1)
@@ -135,7 +182,7 @@ def _missing_page() -> str:
 
 
 def render_usage_guide_page() -> str:
-    """The full HTML page for ``GET /docs`` (guide rendered, or a graceful fallback)."""
+    """The full HTML page for ``GET /manual`` (guide rendered, or a graceful fallback)."""
     md_text = _read_guide()
     if md_text is None:
         return _missing_page()
