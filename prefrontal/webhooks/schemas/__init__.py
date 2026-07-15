@@ -22,6 +22,7 @@ from prefrontal.webhooks.schemas.assistant import (
     AssistantApply,
     AssistantMessage,
     BrainDumpMessage,
+    BrainDumpParse,
     FindTimeMessage,
     VisionMessage,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "AssistantApply",
     "AssistantMessage",
     "BrainDumpMessage",
+    "BrainDumpParse",
     "VisionMessage",
     "AvailableHours",
     "FindTimeMessage",

@@ -1456,6 +1456,45 @@ def plan(
     return AssistantPlan(reply=reply, actions=actions, errors=errors)
 
 
+def plan_preparsed(
+    raw_actions: list[dict[str, Any]],
+    memory: Any,
+    *,
+    reply: str = "",
+) -> AssistantPlan:
+    """Build a previewable plan from actions parsed *elsewhere* — no model call.
+
+    The interpret step (:func:`interpret`) is the only part of :func:`plan` that
+    talks to a model; everything after it is pure validation against the current
+    store. When a client has already turned the ramble into an action list on its
+    own — e.g. the native app's **on-device Foundation Model** (roadmap M1) — this
+    runs that same downstream half: the actions are validated and id-resolved
+    against a fresh snapshot exactly as a model's would be, so a hallucinated or
+    stale on-device action drops in validation rather than acting on the wrong row.
+
+    The result is identical in shape and safety to :func:`plan` (a preview, written
+    only on ``POST /assistant/apply``); it just skips the server-side inference,
+    which is the cheap/private/offline win.
+
+    Args:
+        raw_actions: Wire-format actions from the on-device parse (``{op, ...}``),
+            the same shape :meth:`ValidatedAction.to_wire` emits.
+        memory: A **scoped** store, for the validation snapshot.
+        reply: The on-device model's short acknowledgement. Replaced by the honest
+            deterministic fallback when blank, or when every action was dropped in
+            validation (see :func:`plan`).
+    """
+    snapshot = build_snapshot(memory)
+    actions, errors = validate_actions(raw_actions, snapshot)
+    # Only synthesize a fallback when there's something to report — actions to
+    # preview, or errors explaining a drop. A truly empty parse (nothing parsed,
+    # nothing to say) stays silent with reply="", matching plan_braindump()'s
+    # empty-text short-circuit rather than claiming "I didn't find anything".
+    if (actions or errors) and (not reply or (errors and not actions)):
+        reply = _default_reply(actions, errors)
+    return AssistantPlan(reply=reply, actions=actions, errors=errors)
+
+
 def _default_reply(actions: list[ValidatedAction], errors: list[str]) -> str:
     """A fallback acknowledgement when the model gave no ``reply`` text."""
     if actions:

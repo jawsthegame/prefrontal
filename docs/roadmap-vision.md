@@ -187,9 +187,13 @@ visual clutter directly. *(Design commandments 1, 2, 7.)*
   (`assistant.py` `ALLOWED_OPS`, preview-before-write) for todos, commitments,
   household facts and shopping *and* the sensor path (`sensor.py`, propose→accept)
   for behavioral asides, merged into a single review (`POST /braindump`,
-  `prefrontal braindump`). Still ahead: route the extraction through the on-device
-  Foundation Model for cheap/private/offline parse (the native app feeds the same
-  endpoint), escalating to the opt-in cloud agent only for hard reasoning.
+  `prefrontal braindump`). ✅ *On-device escalation seam shipped* — `POST /braindump`
+  now also accepts a `parse` the native app produced with its **on-device Foundation
+  Model** (Apple Foundation Models / Gemini Nano): the server calls *no* model, just
+  running the supplied actions/observations through the identical propose→confirm
+  gates (cheap, private, offline; `provider` reports `on_device`). Raw `text` still
+  escalates to the opt-in cloud agent for the hard reasoning. Still ahead: the iOS
+  client that runs the Foundation Model and posts that parse.
 - **"Photograph the chaos."** A photo of a whiteboard, a mail pile, a scrawled
   sticky note, or a messy desk → structured tasks via multimodal vision. Wires
   into the same triage → propose → accept path.

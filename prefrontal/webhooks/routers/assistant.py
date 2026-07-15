@@ -25,7 +25,7 @@ from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
 from prefrontal.availability import plan_availability, render_plan
-from prefrontal.braindump import plan_braindump
+from prefrontal.braindump import OnDeviceParse, plan_braindump
 from prefrontal.clock import local_datetime, parse_ts, utcnow
 from prefrontal.integrations.anthropic import SUPPORTED_IMAGE_MEDIA_TYPES
 from prefrontal.scheduling import window_config_for
@@ -145,33 +145,57 @@ def build_router(services: RouterServices) -> APIRouter:
           applied only on ``POST /proposals/{id}/accept``.
 
         So both halves keep their existing human-in-the-loop confirm step — a
-        rambling, imperfect dump can never silently mutate the store. Uses Claude
-        for each half when its agent (``assistant`` / ``sensor``) is opted into
-        the Anthropic provider, otherwise the local Ollama model. A blank ``text``
-        is a 422.
+        rambling, imperfect dump can never silently mutate the store.
+
+        **Two ways in, one safety model.** Send raw ``text`` and the server parses
+        it — Claude for a half whose agent (``assistant`` / ``sensor``) is opted
+        into Anthropic, otherwise the local Ollama model. Or send ``parse`` — a
+        structure the native app already extracted with its **on-device Foundation
+        Model** (roadmap M1) — and the server calls **no model at all**, just
+        validating the supplied actions/observations through the same gates
+        (``provider`` reports ``"on_device"``). On-device parse is the cheap,
+        private, offline path; raw text escalates to the opt-in cloud agent for the
+        hard reasoning. A body with neither ``text`` nor ``parse`` is a 422; a
+        ``parse`` that came back empty is a valid "found nothing" result, not an error.
         """
         memory = ctx.store
-        if not payload.text.strip():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide a non-empty 'text'.",
+        parse = payload.parse
+        if parse is not None:
+            # On-device path: the client's Foundation Model already parsed the
+            # ramble. Validate its structure through the identical propose→confirm
+            # gates without touching a server model.
+            result = plan_braindump(
+                "",
+                memory,
+                parse=OnDeviceParse(
+                    actions=parse.actions,
+                    observations=parse.observations,
+                    reply=parse.reply,
+                ),
             )
-        # The two halves are independently provider-selectable agents, so they can
-        # resolve to different providers (Claude for one, local Ollama for the
-        # other); report each rather than one misleading label.
-        assistant_client, assistant_provider = provider.select("assistant")
-        sensor_client, sensor_provider = provider.select("sensor")
-        result = plan_braindump(
-            payload.text,
-            memory,
-            assistant_client=assistant_client,
-            sensor_client=sensor_client,
-            now=utcnow(),
-            tz=resolved_settings.timezone,
-            # Close the sensor's calibration loop: de-emphasize settings the user
-            # reliably rejects (from the last learning pass) in the extraction prompt.
-            avoid_keys=avoided_state_keys(memory),
-        )
+            assistant_provider = sensor_provider = "on_device"
+        else:
+            if not payload.text.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Provide a non-empty 'text', or a 'parse'.",
+                )
+            # The two halves are independently provider-selectable agents, so they
+            # can resolve to different providers (Claude for one, local Ollama for
+            # the other); report each rather than one misleading label.
+            assistant_client, assistant_provider = provider.select("assistant")
+            sensor_client, sensor_provider = provider.select("sensor")
+            result = plan_braindump(
+                payload.text,
+                memory,
+                assistant_client=assistant_client,
+                sensor_client=sensor_client,
+                now=utcnow(),
+                tz=resolved_settings.timezone,
+                # Close the sensor's calibration loop: de-emphasize settings the
+                # user reliably rejects (from the last learning pass) in the prompt.
+                avoid_keys=avoided_state_keys(memory),
+            )
         # Actions stay a preview (applied via /assistant/apply); the sensor
         # candidates are recorded pending here, exactly as POST /observe does, so
         # they land in the same review queue and apply via /proposals/{id}/accept.
