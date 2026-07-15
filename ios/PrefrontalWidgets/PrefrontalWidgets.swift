@@ -182,6 +182,24 @@ struct PrefrontalWidgetView: View {
         HStack(spacing: 5) {
             Image(systemName: "brain.head.profile").font(.caption2).foregroundStyle(Color.wGreen)
             Text("Prefrontal").font(.caption2.weight(.bold)).foregroundStyle(Color.wMuted)
+            // One-tap thought capture on the Home Screen families: opens the app's
+            // pre-focused capture field (which feeds the sensor path) via
+            // `OpenThoughtCaptureIntent`. A `Button(intent:)` — not a `Link` — so it
+            // works in the small family too (small widgets have a single `widgetURL`
+            // tap target and ignore `Link`, but iOS 17 interactive buttons work in
+            // all families). Lock Screen accessories can't host a second tap target,
+            // and there's nothing to capture into until the app is connected.
+            if isSystem, !g.notConfigured {
+                Spacer(minLength: 4)
+                Button(intent: OpenThoughtCaptureIntent()) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.wGreen)
+                        .padding(6)
+                        .background(Color.wGreen.opacity(0.15), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -437,8 +455,9 @@ struct PrefrontalWidgetBundle: WidgetBundle {
         PrefrontalWidget()
         PrefrontalSelfCareCircle()   // configurable Lock Screen self-care ring
         SessionLiveActivity()        // outing/focus Live Activity (Lock Screen + Dynamic Island)
-        // Control Center controls (Panic / I'm Back / Wrap Up Focus) — iOS 18+.
+        // Control Center controls (Capture / Panic / I'm Back / Wrap Up Focus) — iOS 18+.
         if #available(iOS 18.0, *) {
+            CaptureThoughtControl()
             PanicControl()
             ImBackControl()
             WrapUpFocusControl()

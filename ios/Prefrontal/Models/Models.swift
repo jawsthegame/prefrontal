@@ -250,6 +250,16 @@ struct TripRetroResult: Codable {
     enum CodingKeys: String, CodingKey { case confirmation }
 }
 
+/// Response of `POST /observe` — the LLM-as-sensor read a captured thought and
+/// filed `count` *pending* candidate updates for review. Nothing authoritative
+/// is written on capture (see `prefrontal/webhooks/routers/sensor.py`); the
+/// `proposals` payload is ignored here — the app only needs the count for the
+/// capture confirmation.
+struct ObserveResult: Codable {
+    let count: Int
+    enum CodingKeys: String, CodingKey { case count }
+}
+
 // MARK: - Location settings
 
 /// The web-configurable location tunables (`GET /schedule/location-settings`) the

@@ -6,6 +6,7 @@ struct RootView: View {
     @EnvironmentObject var onboarding: OnboardingModel
     @StateObject private var lock = BiometricLock.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showCapture = false
 
     var body: some View {
         Group {
@@ -15,6 +16,17 @@ struct RootView: View {
                 MainTabs()
             }
         }
+        // Quick-capture, opened from the interactive-widget button, the Control
+        // Center control, or a `prefrontal://capture` deep link. All funnel through
+        // `SharedStore.requestCapture()`, which posts `.prefrontalOpenCapture` (warm
+        // app) and sets a flag `tryPresentCapture()` consumes (cold launch).
+        .sheet(isPresented: $showCapture) { CaptureThoughtView() }
+        .onReceive(NotificationCenter.default.publisher(for: .prefrontalOpenCapture)) { _ in
+            tryPresentCapture()
+        }
+        // Re-check once biometrics clear — a request that arrived while locked is
+        // held (not consumed) until the content is actually visible.
+        .onChange(of: lock.isUnlocked) { _, _ in tryPresentCapture() }
         // The lock cover shows whenever the gate isn't satisfied, and also while
         // the scene isn't active — so backgrounding hides content in the app
         // switcher snapshot without triggering a re-auth (only `.active` prompts).
@@ -29,14 +41,33 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: lock.isUnlocked)
         // Cold-launch auto-prompt: `onChange` doesn't fire for the initial phase,
         // so kick the first unlock here (idempotent — `authenticate()` guards).
-        .onAppear { scheduleUnlockPrompt() }
+        .onAppear {
+            scheduleUnlockPrompt()
+            tryPresentCapture()
+            // Cold launch from the capture control: `perform()` may set the flag a
+            // beat after `onAppear`, so re-check once the launch settles.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                tryPresentCapture()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active:     scheduleUnlockPrompt()
+            case .active:     scheduleUnlockPrompt(); tryPresentCapture()
             case .background: lock.lock(enabled: config.appLockEnabled)
             default:          break
             }
         }
+    }
+
+    /// Present the quick-capture sheet if a fresh request is pending — but not over
+    /// the lock screen, and not before the app is connected. Consuming the flag is
+    /// deferred (left pending) while locked, so `onChange(lock.isUnlocked)` picks it
+    /// up once the content is visible.
+    private func tryPresentCapture() {
+        guard !showCapture, !onboarding.active else { return }
+        if config.appLockEnabled, lock.canAuthenticate, !lock.isUnlocked { return }
+        if SharedStore.consumeCaptureRequest() { showCapture = true }
     }
 
     /// Present the biometric prompt a beat after the scene settles rather than

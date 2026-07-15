@@ -45,9 +45,18 @@ struct PrefrontalShortcuts: AppShortcutsProvider {
         // full App Intent (usable in the Shortcuts app / Action Button) but isn't
         // given an auto Siri phrase here — its common path is the notification
         // action buttons — so the three added below fit within the cap.
+        // "Capture this thought" — the headline zero-friction capture. Assign it to
+        // the Action Button (Settings ▸ Action Button ▸ Shortcut) to dictate a
+        // passing thought into the sensor path without opening the app.
+        AppShortcut(
+            intent: CaptureThoughtIntent(),
+            phrases: ["Capture this thought in \(.applicationName)",
+                      "Note a thought in \(.applicationName)"],
+            shortTitle: "Capture a Thought", systemImageName: "square.and.pencil"
+        )
         AppShortcut(
             intent: CaptureImpulseIntent(),
-            phrases: ["Capture an impulse in \(.applicationName)", "Park a thought in \(.applicationName)"],
+            phrases: ["Capture an impulse in \(.applicationName)", "Park an impulse in \(.applicationName)"],
             shortTitle: "Capture Impulse", systemImageName: "tray.and.arrow.down"
         )
         AppShortcut(
@@ -55,10 +64,10 @@ struct PrefrontalShortcuts: AppShortcutsProvider {
             phrases: ["Reflective pause in \(.applicationName)", "I want to switch, \(.applicationName)"],
             shortTitle: "Reflective Pause", systemImageName: "pause.circle"
         )
-        AppShortcut(
-            intent: LogTripIntent(),
-            phrases: ["Log a trip in \(.applicationName)", "Close out my trip in \(.applicationName)"],
-            shortTitle: "Log Trip", systemImageName: "car"
-        )
+        // NOTE: AppShortcutsProvider caps at 10 entries (see MissedItIntent above).
+        // Adding "Capture a Thought" pushed us to the cap, so LogTripIntent no
+        // longer gets an auto Siri phrase — it's still a full App Intent (usable in
+        // the Shortcuts app / Action Button), and its common path is the trip-retro
+        // notification, not a spoken phrase.
     }
 }

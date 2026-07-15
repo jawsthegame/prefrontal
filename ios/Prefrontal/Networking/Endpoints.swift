@@ -273,6 +273,24 @@ extension APIClient {
         try await post("webhooks/focus/switch", as: SwitchPause.self)
     }
 
+    // Sensor path — feed a free-text thought to the LLM-as-sensor (`POST /observe`).
+    // The sensor only *proposes* pending candidate updates for human review; it
+    // never writes an authoritative fact on capture, so this is a safe, no-confirm
+    // capture surface (the native "capture this thought" backbone). Returns how
+    // many candidates it proposed. Queued on a transport failure — off-tailnet a
+    // thought is too easy to lose, so the write replays on reconnect (a replay
+    // re-proposes at worst, and pending proposals are reviewed before anything
+    // applies, so an at-least-once dup is harmless).
+    @discardableResult
+    func observe(text: String) async throws -> Int {
+        do {
+            return try await post("observe", json: ["text": text], as: ObserveResult.self).count
+        } catch APIError.transport {
+            OfflineQueue.enqueue(path: "observe", body: ["text": text])
+            return 0
+        }
+    }
+
     // Trip retro — close out the newest unlabeled trip in one call (label + note).
     func tripRetro(label: String, reflection: String?) async throws -> TripRetroResult {
         var body: [String: Any] = ["label": label]
