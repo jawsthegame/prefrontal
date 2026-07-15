@@ -94,7 +94,8 @@
   .filing .row { display: flex; gap: 8px; align-items: center; }
   .filing input { flex: 1; min-width: 0; padding: 8px 11px; border-radius: 9px;
     border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 14px; }
-  .filing input:focus { outline: none; border-color: var(--accent); }
+  .filing input:focus { border-color: var(--accent); }
+  .filing input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .filing .save { flex: none; padding: 8px 15px; min-height: 36px; border: 0; border-radius: 9px;
     background: var(--accent); color: var(--accent-fg); font-weight: 650; font-size: 13.5px; cursor: pointer; }
   .filing .save:disabled { opacity: .55; cursor: default; }
@@ -303,7 +304,10 @@ function renderBalance(bal) {
 // confirm; Save posts to /webhooks/trip/label, which clears it from this list.
 function fileForm(t, sg) {
   const preName = sg && sg.label ? esc(sg.label) : "";
-  const preDom = sg && sg.domain ? sg.domain : "";
+  // Preselect the trip's existing sphere if it already has one (e.g. filed from the
+  // push button before it was named); fall back to the suggestion's domain only when
+  // unset, so Save never clobbers a set domain with the guess.
+  const preDom = t.domain || (sg && sg.domain) || "";
   const spheres = Object.keys(DOMAIN_LABEL).map((d) =>
     `<button type="button" class="sphere" data-domain="${d}" aria-pressed="${d === preDom}">${esc(DOMAIN_LABEL[d])}</button>`
   ).join("");
