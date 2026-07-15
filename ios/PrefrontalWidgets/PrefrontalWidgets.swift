@@ -435,6 +435,7 @@ struct PrefrontalWidget: Widget {
 struct PrefrontalWidgetBundle: WidgetBundle {
     var body: some Widget {
         PrefrontalWidget()
+        OneNextThingWidget()         // "one next thing" — the single honest next action
         PrefrontalSelfCareCircle()   // configurable Lock Screen self-care ring
         SessionLiveActivity()        // outing/focus Live Activity (Lock Screen + Dynamic Island)
         // Control Center controls (Panic / I'm Back / Wrap Up Focus) — iOS 18+.

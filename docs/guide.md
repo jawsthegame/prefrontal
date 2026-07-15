@@ -638,7 +638,11 @@ and every path keeps its deterministic fallback when both are down.
 - **iOS widget** ([`../ios/PrefrontalWidgets/`](../ios/PrefrontalWidgets)) — a
   native WidgetKit Home Screen / Lock Screen glance: your next departure, the one
   todo to start right now, the next commitment, and tap-to-log self-care, plus a
-  Live Activity for an active outing/focus. Tapping opens the app.
+  Live Activity for an active outing/focus. A separate **"one next thing"** widget
+  shows the *single* honest next action and nothing else — the mid-flight task
+  you're in, a commitment to leave for, the worst clock-bound fire, or the
+  avoided-but-important todo you keep skipping — with everything else withheld
+  behind a "+N more can wait" line (`GET /next`). Tapping opens the app.
 
 All of these share one light/dark theme and a common top nav, are reached over
 Tailscale (e.g. `http://mac-mini.tailnet.ts.net:8000/dashboard`), and
@@ -742,6 +746,7 @@ client-side; `/family` now 308-redirects to `/household`).
 | `POST /observe` | Feed a free-text note **or** a conversation `transcript` to the LLM sensor → pending candidate updates |
 | `GET /proposals?status=` · `POST /proposals/{id}/accept\|reject` | Review / apply / dismiss sensor proposals |
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
+| `GET /next` | The single honest next thing to do right now (powers the "one next thing" widget) |
 | `POST /webhooks/coach/check` · `/ack` | Run the coaching tick / acknowledge a nudge |
 | `GET /encouragement` · `POST /encouragement/sent` | Rough-day recovery message / stamp it delivered (once-a-day cursor) |
 | `POST /emotion/support` | In-the-moment emotion regulation: one micro-skill fitted to the feeling (`{}` for one-tap, or `{"text":"…"}`); crisis language → resources, not a skill |

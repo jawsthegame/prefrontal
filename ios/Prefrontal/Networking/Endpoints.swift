@@ -72,6 +72,9 @@ extension APIClient {
     }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
+    /// The single honest next thing to do right now (powers the "one next thing"
+    /// widget). One action + reason, never the whole list. Pure read, safe to poll.
+    func nextThing() async throws -> NextThing { try await get("next", as: NextThing.self) }
     /// Read-only mail snapshot: messages awaiting action + a recent feed. Safe
     /// to poll (no side effects). Empty lists when mail monitoring is unconfigured.
     func mail() async throws -> MailInbox { try await get("mail", as: MailInbox.self) }

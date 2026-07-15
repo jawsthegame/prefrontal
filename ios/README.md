@@ -25,7 +25,13 @@ session is active it shows a one-tap **I'm back** / **Wrap up** button
 (`ImBackIntent` / `EndFocusIntent`) — all without launching the app. A separate
 **configurable** Lock Screen circular ring (`SelfCareCircleWidget.swift`) lets you
 long-press → **Edit** → pick which self-care check it tracks (Water, Meals, …),
-rather than being fixed to water. When an outing or focus session is running it
+rather than being fixed to water. A separate **"one next thing"** widget
+(`OneNextThingWidget.swift`, all five families) shows the *single* honest next
+action and nothing else — the mid-flight task you're in, a commitment to leave
+for, the worst clock-bound fire, or the avoided-but-important todo you keep
+skipping — withholding everything else behind a "+N more can wait" line. It reads
+`GET /next`, so the phone never re-ranks; the mid-flight cases carry the same
+one-tap **Wrap up** / **I'm back** buttons. When an outing or focus session is running it
 also shows a **Live Activity** on the Lock Screen and in the Dynamic Island — a
 self-ticking "back by" countdown (outing) or elapsed timer (focus), started and
 ended by `Activities/LiveActivityManager` and rendered by

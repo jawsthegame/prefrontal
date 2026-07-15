@@ -15,12 +15,13 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal coach`` — run one coaching tick: what's due + on which channel.
 - ``prefrontal encourage`` — print today's recovery message if the day's rough.
 - ``prefrontal panic`` — triage what's on fire right now + one first step.
+- ``prefrontal next`` — the single honest next thing to do right now.
 - ``prefrontal todo`` — add/list/done open todos (open loops).
 - ``prefrontal fit`` — show open todos that fit N minutes of free time.
 - ``prefrontal mail`` — ingest/fetch/list triaged email (list/sync/fetch).
 
 Multi-tenant: the data commands (``learn``, ``summarize``, ``profile``,
-``briefing``, ``panic``, ``todo``, ``fit``, ``mail``) act on one user, chosen with
+``briefing``, ``panic``, ``next``, ``todo``, ``fit``, ``mail``) act on one user, chosen with
 ``--user <handle>``; ``learn``/``summarize`` also take ``--all-users`` to fan
 out (the nightly default). A command errors if no user is given and more than
 one exists.
@@ -2207,6 +2208,35 @@ def _cmd_panic(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_next(args: argparse.Namespace) -> int:
+    """Print the single honest next thing to do right now.
+
+    The quiet, always-on sibling of ``panic``: where panic names every fire, this
+    surfaces exactly one action — the mid-flight task you're in, a commitment to
+    leave for, the worst clock-bound fire, or the avoided-but-important todo — and
+    withholds the rest. See :mod:`prefrontal.next_thing`.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.next_thing import build_next_thing, render_next_thing
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        text = render_next_thing(build_next_thing(store))
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote the next thing to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def _cmd_note(args: argparse.Namespace) -> int:
     """Feed a free-text note to the LLM sensor; store any candidates as pending.
 
@@ -4139,6 +4169,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_panic.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_panic.set_defaults(func=_cmd_panic)
 
+    p_next = sub.add_parser(
+        "next", help="The single honest next thing to do right now (never the list)."
+    )
+    p_next.add_argument("--db-path", default=None, help="Override the database path.")
+    p_next.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_next.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_next.set_defaults(func=_cmd_next)
+
     p_notify = sub.add_parser(
         "notify",
         help="Send a test notification through the configured route (native APNs push).",
@@ -4624,6 +4662,7 @@ def build_parser() -> argparse.ArgumentParser:
 #: runs (an ``--all-users`` cron fan-out isn't "me using a feature").
 _CLI_PULL_FEATURES = {
     "panic": "panic",
+    "next": "scheduling",
     "briefing": "briefing",
     "balance": "balance",
     "encourage": "encouragement",

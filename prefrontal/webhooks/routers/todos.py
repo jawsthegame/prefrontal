@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 
-from prefrontal.clock import TS_FMT, local_datetime, local_hour_of
+from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import (
     to_utc,
@@ -54,15 +54,12 @@ from prefrontal.modules.task_paralysis import (
 )
 from prefrontal.scheduling import (
     DEFAULT_FIT_CAP_MINUTES,
-    DEFAULT_MIN_WINDOW_MINUTES,
-    available_now,
-    filter_suggestible,
     first_window_fitting,
     fit_todos,
     format_window,
     free_windows,
     parse_window,
-    pick_now,
+    suggest_now,
     window_config_for,
     work_window_now,
 )
@@ -1065,71 +1062,10 @@ def build_router(services: RouterServices) -> APIRouter:
         ``suggestion`` is ``null`` (with a ``reason``). Powers the widget's "you
         have 25 min — knock this out" prompt.
         """
-        memory = ctx.store
-        now = utcnow()
-        window_config = window_config_for(resolved_settings, memory)
-        day_start, day_end = window_config.awake_band()
-        within, horizon = work_window_now(
-            now, resolved_settings.timezone,
-            cap_minutes=cap_minutes, day_start=day_start, day_end=day_end,
-        )
-        upcoming = memory.upcoming_commitments(limit=1)
-        result: dict[str, Any] = {
-            "free_minutes": 0,
-            "within_hours": within,
-            "next_commitment": (
-                {"title": upcoming[0]["title"], "start_at": upcoming[0]["start_at"]}
-                if upcoming else None
-            ),
-            "suggestion": None,
-            "reason": None,
-        }
-        if not within:
-            result["reason"] = "outside waking hours"
-            return result
-
-        # Overlap-aware so a still-running multi-day / all-day block that *started*
-        # before now is counted as busy, not a free window (see
-        # ``active_commitments_between``); free_windows clips it to [now, horizon].
-        commitments = memory.active_commitments_between(
-            now.strftime(TS_FMT), horizon.strftime(TS_FMT)
-        )
-        free = available_now(commitments, now, horizon)
-        result["free_minutes"] = round(free)
-        if free < DEFAULT_MIN_WINDOW_MINUTES:
-            result["reason"] = "no free time right now"
-            return result
-
-        # Only todos whose window includes now (off-zone already excluded above).
-        now_local = local_datetime(now, resolved_settings.timezone)
-        open_todos = filter_suggestible(
-            memory.open_todos(exclude_delegated=True, with_project_rank=True),
-            now_local, window_config
-        )
-        # Context-conditioned (§5): calibrate each todo with *this hour's* band and
-        # its own energy/category, falling back through to the global bias.
-        fits = fit_todos(
-            free, open_todos, bias_fn=task_bias_resolver(memory, local_hour=now_local.hour)
-        )
-        if not fits:
-            result["reason"] = "nothing fits this window"
-            return result
-        # Honest pick: surface the most-avoided todo that fits; else the best fit,
-        # preferring low-energy tasks later in the day.
-        avoided_ids = [a["todo"]["id"] for a in avoided_todos(open_todos, now)]
-        top = pick_now(fits, avoided_ids, local_hour_of(now, resolved_settings.timezone))
-        t = top["todo"]
-        result["suggestion"] = {
-            "todo_id": t["id"],
-            "title": t["title"],
-            "estimate_minutes": t.get("estimate_minutes"),
-            "effective_minutes": top["effective_minutes"],
-            "priority": t.get("priority"),
-            "energy": t.get("energy"),
-            "domain": t.get("domain"),  # work/home guardrail, for the widget's label
-            "reason": top["reason"],  # "avoided" (been putting it off) | "fits"
-        }
-        return result
+        # Deterministic honest pick, shared with the "one next thing" resolver
+        # (:func:`prefrontal.next_thing.build_next_thing`) so both surface the
+        # identical suggestion instead of re-deriving it.
+        return suggest_now(ctx.store, resolved_settings, utcnow(), cap_minutes=cap_minutes)
 
     # -- Admin: user provisioning (operator-only) ----------------------------
 
