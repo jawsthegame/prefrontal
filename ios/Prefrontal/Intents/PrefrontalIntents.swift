@@ -133,9 +133,7 @@ struct OpenThoughtCaptureIntent: AppIntent {
 /// next becomes active (see `CaptureRouter` / `PrefrontalApp`).
 struct BrainDumpIntent: AppIntent {
     static let title: LocalizedStringResource = "Brain-dump"
-    static let description = IntentDescription(
-        "Dump everything on your mind; Prefrontal turns it into reviewable todos, "
-        + "events, and shopping — parsed on your device when possible.")
+    static let description = IntentDescription("Dump everything on your mind; Prefrontal turns it into reviewable todos, events, and shopping — parsed on your device when possible.")
     static var openAppWhenRun: Bool { true }
 
     func perform() async throws -> some IntentResult {
