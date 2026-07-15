@@ -23,6 +23,7 @@ from prefrontal.webhooks.schemas.assistant import (
     AssistantMessage,
     BrainDumpMessage,
     FindTimeMessage,
+    VisionMessage,
 )
 from prefrontal.webhooks.schemas.blockers import (
     BlockerCreate,
@@ -143,6 +144,7 @@ __all__ = [
     "AssistantApply",
     "AssistantMessage",
     "BrainDumpMessage",
+    "VisionMessage",
     "AvailableHours",
     "FindTimeMessage",
     "AutoDecomposeConfig",

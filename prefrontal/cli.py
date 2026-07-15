@@ -2452,6 +2452,127 @@ def _cmd_braindump(args: argparse.Namespace) -> int:
     return 0
 
 
+#: File extension → image MIME type for the ``vision`` command (the Anthropic
+#: vision API's supported set; see ``SUPPORTED_IMAGE_MEDIA_TYPES``).
+_IMAGE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+def _cmd_vision(args: argparse.Namespace) -> int:
+    """Read a photo into structured items (roadmap: vision capture).
+
+    The image twin of ``prefrontal braindump``: a photo of anything already written
+    down (a whiteboard, a newsletter, a scribbled list) is transcribed by the
+    multimodal model and fanned out through the *same* capture paths — actionable
+    edits proposed as a **preview** (nothing written until ``--apply``) and
+    behavioral asides recorded *pending* for review (``prefrontal proposals``).
+
+    Vision is Anthropic-only today (the local model can't see), so this needs
+    ``ANTHROPIC_API_KEY`` set and ``prefrontal[anthropic]`` installed; without it
+    there's no way to read the image and the command exits non-zero rather than
+    guessing.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``path``, ``apply``.
+
+    Returns:
+        Process exit code (0 on success, 2 on a bad/unreadable image or no backend).
+    """
+    import base64
+
+    from prefrontal.assistant import execute_actions
+    from prefrontal.integrations import ProviderResolver
+    from prefrontal.sensor import avoided_state_keys, record_candidates, summarize_candidate
+    from prefrontal.vision import plan_vision
+
+    settings = get_settings()
+    path = Path(args.path)
+    media_type = _IMAGE_MEDIA_TYPES.get(path.suffix.lower())
+    if media_type is None:
+        print(
+            f"Unsupported image type {path.suffix!r}; expected one of "
+            f"{', '.join(sorted(set(_IMAGE_MEDIA_TYPES)))}.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        image_base64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError as exc:
+        print(f"Could not read {args.path!r}: {exc}", file=sys.stderr)
+        return 2
+
+    resolver = ProviderResolver.from_settings(settings)
+    if not resolver.anthropic.available():
+        print(
+            "Vision needs the Anthropic provider; set ANTHROPIC_API_KEY and "
+            "install prefrontal[anthropic].",
+            file=sys.stderr,
+        )
+        return 2
+
+    with MemoryStore.open(args.db_path or settings.db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        plan = plan_vision(
+            image_base64,
+            media_type,
+            store,
+            vision_client=resolver.anthropic,
+            assistant_client=resolver.client("assistant"),
+            sensor_client=resolver.client("sensor"),
+            now=utcnow(),
+            tz=settings.timezone,
+            avoid_keys=avoided_state_keys(store),
+        )
+        if not plan.transcript:
+            print("Couldn't read anything usable from the image.", file=sys.stderr)
+            return 2
+        # Actionable half — a preview unless --apply (mirrors `braindump`).
+        if plan.actions:
+            if plan.reply:
+                print(plan.reply)
+            if args.apply:
+                results = execute_actions(
+                    store, plan.actions, timezone=settings.timezone,
+                    client=resolver.client("assistant"),
+                )
+                applied = sum(1 for r in results if r["ok"])
+                print(f"\nApplied {applied}/{len(results)} edit(s):")
+                for r in results:
+                    mark = "✓" if r["ok"] else "✗"
+                    tail = f" — {r['detail']}" if r.get("detail") else ""
+                    print(f"  {mark} {r['summary']}{tail}")
+            else:
+                print(
+                    f"\n{len(plan.actions)} proposed edit(s) "
+                    "(nothing written — re-run with --apply):"
+                )
+                for a in plan.actions:
+                    print(f"  • {a.summary}")
+        for err in plan.errors:
+            print(f"  (skipped: {err})", file=sys.stderr)
+
+        # Behavioral half — always recorded pending for review, never auto-applied.
+        if plan.candidates:
+            ids = record_candidates(store, plan.candidates)
+            print(
+                f"\nNoticed {len(ids)} thing(s) about you — recorded pending, "
+                "review with `prefrontal proposals`:"
+            )
+            for pid, c in zip(ids, plan.candidates, strict=True):
+                print(f"  #{pid}  {summarize_candidate(c.kind, c.payload)}")
+                if c.rationale:
+                    print(f"        ↳ {c.rationale}")
+
+        if not plan.actions and not plan.candidates:
+            print("Nothing to capture from the image.")
+    return 0
+
+
 def _cmd_clarify(args: argparse.Namespace) -> int:
     """Ambiguity clarifications: check / list / resolve / dismiss / guide.
 
@@ -4231,6 +4352,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_braindump.add_argument("--db-path", default=None, help="Override the database path.")
     p_braindump.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_braindump.set_defaults(func=_cmd_braindump)
+
+    p_vision = sub.add_parser(
+        "vision",
+        help="Read a photo (whiteboard, list, receipt) into structured items (preview).",
+    )
+    p_vision.add_argument(
+        "path",
+        metavar="PATH",
+        help="Path to the image (.jpg/.jpeg/.png/.gif/.webp).",
+    )
+    p_vision.add_argument(
+        "--apply",
+        action="store_true",
+        help="Execute the proposed edits now (default previews them; behavioral "
+        "candidates are always left pending for review).",
+    )
+    p_vision.add_argument("--db-path", default=None, help="Override the database path.")
+    p_vision.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_vision.set_defaults(func=_cmd_vision)
 
     p_proposals = sub.add_parser(
         "proposals", help="Review LLM-sensor candidates: list / accept / reject."
