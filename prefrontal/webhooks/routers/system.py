@@ -353,6 +353,23 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         return _page(GUIDE_HTML)
 
+    @router.get("/manual", response_class=HTMLResponse, tags=["system"])
+    def usage_guide_page() -> HTMLResponse:
+        """Serve the full **usage guide** — `docs/guide.md`, rendered as a web page.
+
+        Where ``/guide`` is the per-module new-user walkthrough (and ``/docs`` is
+        FastAPI's API explorer), this is the whole practical manual: what each
+        capability does, the problem it solves, and runnable examples. Rendered on
+        request from the single Markdown source of truth in the repo, so the page
+        never drifts from the doc. Unauthenticated and data-free like the other web
+        surfaces (the guide carries no personal data), and reachable over Tailscale.
+        Degrades gracefully if the Markdown renderer or the source file is
+        unavailable (see :mod:`prefrontal.webhooks.usage_guide`).
+        """
+        from prefrontal.webhooks.usage_guide import render_usage_guide_page
+
+        return _page(render_usage_guide_page())
+
     @router.get("/admin", response_class=HTMLResponse, tags=["system"])
     def admin_page() -> HTMLResponse:
         """Serve the operator-only user-management page.

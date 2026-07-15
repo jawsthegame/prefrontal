@@ -10,6 +10,10 @@ solves, and a real-world example you can run.** For setup see
 for the deeper design of individual agents see the specs linked from
 [`README.md`](README.md). A compact [API & CLI reference](#reference) is at the end.
 
+> **Reading this in a browser?** Your running instance serves this same guide at
+> **`/manual`** (e.g. `http://mac-mini.tailnet.ts.net:8000/manual` over Tailscale),
+> rendered live from this file — no auth, no personal data.
+
 ## How it fits together (30 seconds)
 
 ```
@@ -58,7 +62,10 @@ TOK=your-X-Prefrontal-Token       # see deployment.md / "Users & access"
 - **Getting things done** — [Todos](#todos) (augmentation · decomposition ·
   time-fitting · avoidance)
 - **Staying on task** — [Focus sessions](#focus-sessions)
+- **Getting started** — [If-then plans](#implementation-intentions--the-cue-is-the-reminder)
+  (implementation intentions)
 - **Daily rhythm** — [Morning briefing](#morning-briefing)
+- **In a hard moment** — [Emotion regulation](#emotion-regulation)
 - **Knowing yourself** — [Profile & learning](#behavioral-profile-and-learning)
 - **Inbox** — [Mail ingestion](#mail-ingestion-and-triage)
 - **Surfaces** — [Dashboard, family, kids, insights & widget](#surfaces-dashboard-family-kids-insights-and-widget)
@@ -357,6 +364,42 @@ once-a-day, evening bookend to the morning start-suggestion.
 
 ---
 
+## Getting started (if-then plans)
+
+### Implementation intentions — the cue *is* the reminder
+
+The single most strongly-evidenced ADHD self-regulation technique isn't a
+to-do list — it's an **implementation intention**: pre-deciding one tiny action
+for one concrete cue ("**if** I sit down at my desk after lunch, **then** I open
+the tax form and set a 5-minute timer"). The payoff is entirely about *when* it's
+surfaced: a plan sitting in a list is just another todo; a plan re-shown **at the
+moment its cue is detected** offloads getting-started from willpower onto the
+environment.
+
+Capture one in a sentence through the assistant — "when I get home, take out the
+recycling" — and the coaching tick re-shows the action the moment the cue fires.
+A cue is any combination of:
+
+- a **place** you're at (a curated location, matched by proximity — "at my desk"),
+- a **time-of-day band** ("after lunch" ≈ 12:30–14:00), and/or
+- a **home-crossing event** — `arrive_home` / `leave_home`, detected as you
+  actually cross (so "when I get home" fires *at* the door, not on a timer).
+
+```bash
+# Capture via the natural-language assistant (previewed before it saves):
+curl -s -XPOST $PF/assistant -H "X-Prefrontal-Token: $TOK" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"when I get home, take out the recycling"}'
+# → previews: add_if_then {cue_text:"when I get home", action_text:"take out the
+#   recycling", event:"arrive_home"}. Apply, and it surfaces at your next arrival.
+```
+
+Forgiving by design: there's no streak and no "you missed it." A plan you're done
+with is simply archived — the technique works by lowering the cost of starting,
+and guilt raises it.
+
+---
+
 ## Daily rhythm
 
 ### Morning briefing
@@ -377,6 +420,38 @@ Delivered each morning by `prefrontal briefing --deliver --all-users` on a
 launchd timer — a native APNs push through each user's own route (the legacy
 [`morning-briefing`](../deploy/n8n/morning-briefing.workflow.json) n8n workflow is
 its predecessor).
+
+---
+
+## In a hard moment
+
+### Emotion regulation
+
+Emotional dysregulation is a core, large-effect part of ADHD — the fast, huge
+spike of overwhelm, frustration, or the sting of perceived rejection — and it's
+the *feeling* side of a hard moment that the task tools (panic-mode triage) and
+the day tools (rough-day recovery) don't reach. Ask for support in the moment —
+one tap, or a few words about what's going on — and Prefrontal offers **one**
+brief, evidence-matched micro-skill fitted to the feeling: an ACT acceptance move
+(name it → let it be → one values-aligned step), a DBT distress-tolerance skill
+(paced breathing, 5-4-3-2-1 grounding, a cold-water reset), or self-compassion
+framing for a rejection-sensitive moment.
+
+```bash
+# One-tap (no words) — a fitting skill for right now:
+curl -s -XPOST $PF/emotion/support -H "X-Prefrontal-Token: $TOK" -d '{}'
+# Or say what's going on, and it routes to a matching skill:
+curl -s -XPOST $PF/emotion/support -H "X-Prefrontal-Token: $TOK" \
+  -H 'Content-Type: application/json' -d '{"text":"I feel completely overwhelmed"}'
+# → {"kind":"skill","state":"overwhelm","text":"…paced breathing: in for 4, out for 6…"}
+```
+
+**This is general-wellness support, not therapy or crisis intervention.** If what
+you type suggests self-harm or crisis, Prefrontal doesn't answer with a coping
+skill — it responds only with resources and an urge to reach a person (in the US,
+988). It's opt-in, forgiving, and never keeps score. You can also fold a single
+gentle acceptance line into the rough-day recovery message with the
+`emotion_recovery_acceptance` key.
 
 ---
 
@@ -669,6 +744,7 @@ client-side; `/family` now 308-redirects to `/household`).
 | `GET /panic` · `POST /webhooks/panic/check` | Overwhelm triage: one-tap headline / poll for a proactive nudge |
 | `POST /webhooks/coach/check` · `/ack` | Run the coaching tick / acknowledge a nudge |
 | `GET /encouragement` · `POST /encouragement/sent` | Rough-day recovery message / stamp it delivered (once-a-day cursor) |
+| `POST /emotion/support` | In-the-moment emotion regulation: one micro-skill fitted to the feeling (`{}` for one-tap, or `{"text":"…"}`); crisis language → resources, not a skill |
 | `POST /webhooks/impulse/capture` · `/webhooks/focus/switch` · `/resolve` | Capture a deferred impulse / log & resolve a context switch |
 | `GET /nudge/act` · `/nudge/dismiss` · `GET /nudges` | One-tap action buttons / dismiss / recent-nudge log |
 | `POST /places` · `GET /places` | Curated location aliases |
@@ -677,6 +753,7 @@ client-side; `/family` now 308-redirects to `/household`).
 | `GET /household/sheet` · `GET /household/shopping` · `POST /household/{create,facts,agreements,shopping,chores,routines,balance,checkin,digest,invites}` | Shared co-parent sheet — facts, agreements/star charts, shopping (list/add/check/remove), chores, routines (grouping + accountability), load-balance (doing + carrying), check-in, digest, invites |
 | `POST /webhooks/household/{star-prompts,checkin,digest,chores}/check` | Scheduled household sweeps (star award prompts, weekly check-in, daily delta digest, chore reminders/miss-handoffs) |
 | `GET /dashboard` · `/household` · `/kids` · `/pets` · `/stats` · `/review` | Web surfaces — dashboard, editable household hub, read-only kids/pets lenses, behavioral insights, LLM-sensor review (no auth on the shell). `/family` redirects to `/household`. |
+| `GET /manual` · `/guide` | This usage guide, rendered as a page / the per-module new-user walkthrough (no auth) |
 | `GET /stats/data` | Aggregated behavioral insights for the /stats charts |
 | `GET /auth/google/login` · `/callback` | Google sign-in (browser); 404 until configured |
 | `POST /auth/logout` | Clear the browser session cookie |
