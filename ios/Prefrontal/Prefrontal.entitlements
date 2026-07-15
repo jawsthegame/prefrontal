@@ -15,10 +15,10 @@
 		<string>$(AppIdentifierPrefix)com.morningstatic.prefrontal.shared</string>
 	</array>
 	<!-- Native push (APNs) is intentionally NOT declared here. The
-	     `aps-environment` entitlement requires a paid Apple Developer account;
-	     a free "Personal Team" can't mint a profile that includes it, which
-	     blocks the whole app from signing. Without it, delivery falls back to
-	     ntfy server-side, so the app still works on free signing.
+	     `aps-environment` entitlement requires a paid Apple Developer account
+	     with the Push Notifications capability, and declaring it without one
+	     breaks signing. Leaving it out keeps this the base entitlements file;
+	     delivery just falls back to ntfy server-side.
 
 	     To use native push (paid tier only), DON'T add the capability in Xcode's
 	     UI (it lands in the git-ignored, regenerated .xcodeproj and is lost on

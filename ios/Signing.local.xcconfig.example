@@ -11,7 +11,7 @@ DEVELOPMENT_TEAM = YOUR_TEAM_ID
 
 // Native APNs push (paid Apple Developer account only). Uncomment to sign with
 // the push-enabled entitlements (adds `aps-environment`); the default is the
-// free-signing file without it. Regeneration-proof — XcodeGen only references
+// base file without it. Regeneration-proof — XcodeGen only references
 // the file, so `xcodegen generate` never strips the capability. After enabling,
 // run `cd ios && xcodegen generate`, then also configure APNS_* on the server.
 // PREFRONTAL_ENTITLEMENTS = Prefrontal/Prefrontal.push.entitlements

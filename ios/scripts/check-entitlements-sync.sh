@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Guard against silent drift between the two app entitlements files:
-#   Prefrontal.entitlements       — committed default, free-signing, NO aps-environment
+#   Prefrontal.entitlements       — committed base default, NO aps-environment
 #   Prefrontal.push.entitlements  — paid-tier opt-in, adds native APNs
 #
 # The push file must equal the base file PLUS exactly the `aps-environment` key —
@@ -29,7 +29,7 @@ errs = []
 if "aps-environment" not in push:
     errs.append("push file is missing `aps-environment` (that's its whole reason to exist)")
 if "aps-environment" in base:
-    errs.append("base file unexpectedly declares `aps-environment` — free signing will break")
+    errs.append("base file unexpectedly declares `aps-environment` — the default build would then require the Push capability")
 
 push_wo = {k: v for k, v in push.items() if k != "aps-environment"}
 if push_wo != base:

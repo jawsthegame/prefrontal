@@ -65,7 +65,7 @@ targets:
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Prefrontal watches your curated places in the background so leaving home logs a departure without opening the app — only if you turn on Location automations."
         CODE_SIGN_STYLE: Automatic
         # Entitlements file is chosen via a build variable (default in
-        # Signing.xcconfig → Prefrontal.entitlements, the free-signing file with no
+        # Signing.xcconfig → Prefrontal.entitlements, the base file with no
         # aps-environment). A paid account overrides PREFRONTAL_ENTITLEMENTS in the
         # git-ignored Signing.local.xcconfig to point at Prefrontal.push.entitlements,
         # which adds APNs — so native push survives `xcodegen generate` without
@@ -79,7 +79,7 @@ targets:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
           # APNs sandbox for dev builds (Xcode run-to-device mints a sandbox token).
           # Consumed by Prefrontal.push.entitlements' aps-environment; ignored by the
-          # default free-signing entitlements. A sandbox token requires
+          # default base entitlements. A sandbox token requires
           # APNS_USE_SANDBOX=1 on the server, else APNs returns 400 BadDeviceToken.
           APS_ENVIRONMENT: development
         Release:

@@ -310,8 +310,8 @@ any device that hasn't registered. See the server side in
 > (the `aps-environment` entitlement), which — like App Groups — requires a
 > **paid Apple Developer account**. A free "Personal Team" can't mint a profile
 > that includes it, and Xcode will refuse to sign the app if it's declared. So
-> `aps-environment` is **not** in the committed `Prefrontal.entitlements`; the
-> app builds and signs on free signing and just uses ntfy.
+> `aps-environment` is **not** in the committed `Prefrontal.entitlements` —
+> keeping it the base file (no Push capability), with delivery falling back to ntfy.
 >
 > To turn on native push, don't add the capability in Xcode's UI — that writes it
 > into the **git-ignored, regenerated** `.xcodeproj`, so `xcodegen generate` wipes
