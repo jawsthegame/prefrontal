@@ -56,12 +56,13 @@ jobs:
       - name: Compile check — app target (swiftc -typecheck)
         working-directory: ios
         # The no-build sanity check from ios/README.md: typecheck the app target's
-        # sources against the iOS 17 SDK. Catches build-breaking changes without
-        # the CoreSimulator install a full xcodebuild needs.
+        # sources against the iOS 26 deployment target (the app's floor — see
+        # project.yml). Catches build-breaking changes without the CoreSimulator
+        # install a full xcodebuild needs.
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           find Prefrontal -name '*.swift' -print0 \
-            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios26.0 -typecheck
 
       - name: Compile check — widget extension (swiftc -typecheck)
         working-directory: ios
@@ -73,7 +74,7 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           find PrefrontalWidgets Prefrontal/Config Prefrontal/Networking \
                Prefrontal/Models Prefrontal/Theme -name '*.swift' -print0 \
-            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -typecheck \
+            | xargs -0 xcrun swiftc -sdk "$SDK" -target arm64-apple-ios26.0 -typecheck \
                 Prefrontal/Intents/WidgetActionIntents.swift \
                 Prefrontal/Intents/PrefrontalIntents.swift
 

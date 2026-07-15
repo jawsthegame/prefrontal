@@ -2,7 +2,10 @@ name: Prefrontal
 options:
   bundleIdPrefix: com.morningstatic
   deploymentTarget:
-    iOS: "17.0"
+    # iOS 26 is the floor: the brain-dump capture parses on-device via Apple
+    # Foundation Models (iOS 26+), so the app requires it rather than gating the
+    # feature behind availability checks. The watch companion is unaffected.
+    iOS: "26.0"
     watchOS: "10.0"
   createIntermediateGroups: true
   xcodeVersion: "26.0"
