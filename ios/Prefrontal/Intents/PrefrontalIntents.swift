@@ -124,6 +124,26 @@ struct OpenThoughtCaptureIntent: AppIntent {
     }
 }
 
+/// Open a **brain-dump** capture — the roadmap-M1 "capture at the speed of
+/// thought" surface. Unlike the other intents this one **opens the app**
+/// (`openAppWhenRun == true`), because the ramble is parsed (on-device when
+/// available) into a *previewable* action list the user reviews before anything
+/// is written — a headless one-shot can't show that confirm step. The launch
+/// leaves a one-shot flag in the App Group; the app presents the sheet when it
+/// next becomes active (see `CaptureRouter` / `PrefrontalApp`).
+struct BrainDumpIntent: AppIntent {
+    static let title: LocalizedStringResource = "Brain-dump"
+    static let description = IntentDescription(
+        "Dump everything on your mind; Prefrontal turns it into reviewable todos, "
+        + "events, and shopping — parsed on your device when possible.")
+    static var openAppWhenRun: Bool { true }
+
+    func perform() async throws -> some IntentResult {
+        SharedStore.defaults.set(true, forKey: SharedStore.pendingBrainDumpKey)
+        return .result()
+    }
+}
+
 // MARK: - Panic
 
 struct PanicIntent: AppIntent {

@@ -30,6 +30,9 @@ struct PrefrontalApp: App {
                         // this deep link is the same landing for a user Shortcut or
                         // Home Screen icon.
                         SharedStore.requestCapture()
+                    } else if url.host == "braindump" {
+                        // `prefrontal://braindump` — open the brain-dump capture sheet.
+                        CaptureRouter.shared.requestBrainDump()
                     }
                 }
         }
@@ -40,6 +43,9 @@ struct PrefrontalApp: App {
                 // Keep the watch's connected-state fresh (config may have changed
                 // while backgrounded, e.g. just after onboarding).
                 PhoneWatchConnectivity.shared.pushStatus()
+                // An Action Button / Siri brain-dump launch left a one-shot flag in
+                // the App Group (it ran in another process); present the sheet now.
+                CaptureRouter.shared.consumePendingBrainDump()
             case .background:  Self.scheduleAppRefresh()
             default:           break
             }

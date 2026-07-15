@@ -17,6 +17,11 @@ struct PrefrontalShortcuts: AppShortcutsProvider {
             shortTitle: "Add Todo", systemImageName: "plus.circle"
         )
         AppShortcut(
+            intent: BrainDumpIntent(),
+            phrases: ["Brain-dump in \(.applicationName)", "Dump my thoughts into \(.applicationName)"],
+            shortTitle: "Brain-dump", systemImageName: "brain.head.profile"
+        )
+        AppShortcut(
             intent: GoingOutIntent(),
             phrases: ["I'm going out with \(.applicationName)", "Start an outing in \(.applicationName)"],
             shortTitle: "Going Out", systemImageName: "figure.walk.departure"
@@ -41,13 +46,11 @@ struct PrefrontalShortcuts: AppShortcutsProvider {
             phrases: ["I made it, \(.applicationName)", "Log made it in \(.applicationName)"],
             shortTitle: "Made It", systemImageName: "checkmark"
         )
-        // NOTE: AppShortcutsProvider caps at 10 entries. MissedItIntent is still a
-        // full App Intent (usable in the Shortcuts app / Action Button) but isn't
-        // given an auto Siri phrase here — its common path is the notification
-        // action buttons — so the three added below fit within the cap.
-        // "Capture this thought" — the headline zero-friction capture. Assign it to
-        // the Action Button (Settings ▸ Action Button ▸ Shortcut) to dictate a
-        // passing thought into the sensor path without opening the app.
+        // NOTE: AppShortcutsProvider caps at 10 entries. Missed It, Log Trip, and
+        // Reflective Pause stay full App Intents (usable in the Shortcuts app /
+        // Action Button) but aren't given an auto Siri phrase here, so the two
+        // flagship captures — Brain-dump (above) and Capture a Thought — fit the cap.
+        // "Capture this thought" — the headline zero-friction sensor capture.
         AppShortcut(
             intent: CaptureThoughtIntent(),
             phrases: ["Capture this thought in \(.applicationName)",
@@ -59,15 +62,5 @@ struct PrefrontalShortcuts: AppShortcutsProvider {
             phrases: ["Capture an impulse in \(.applicationName)", "Park an impulse in \(.applicationName)"],
             shortTitle: "Capture Impulse", systemImageName: "tray.and.arrow.down"
         )
-        AppShortcut(
-            intent: ReflectivePauseIntent(),
-            phrases: ["Reflective pause in \(.applicationName)", "I want to switch, \(.applicationName)"],
-            shortTitle: "Reflective Pause", systemImageName: "pause.circle"
-        )
-        // NOTE: AppShortcutsProvider caps at 10 entries (see MissedItIntent above).
-        // Adding "Capture a Thought" pushed us to the cap, so LogTripIntent no
-        // longer gets an auto Siri phrase — it's still a full App Intent (usable in
-        // the Shortcuts app / Action Button), and its common path is the trip-retro
-        // notification, not a spoken phrase.
     }
 }

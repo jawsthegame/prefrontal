@@ -294,6 +294,42 @@ extension APIClient {
         }
     }
 
+    // Brain-dump (roadmap M1) — one ramble fanned out to both capture paths, and
+    // the confirm steps that write it. Nothing here writes on capture: `braindump`
+    // returns a *preview* (actions) plus *pending* proposals; the actions land only
+    // via `applyAssistantActions`, the proposals only via `acceptProposal`.
+
+    /// Send the raw ramble for the **server** to parse — the escalation path (the
+    /// opt-in cloud agent, else the local model, does the reasoning).
+    func braindump(text: String) async throws -> BrainDumpResponse {
+        try await post("braindump", json: ["text": text], as: BrainDumpResponse.self)
+    }
+
+    /// Send a structure already parsed **on-device** (Apple Foundation Models):
+    /// the server calls no model, just re-validating the supplied actions and
+    /// returning the same preview. `observations` is left empty — the behavioral
+    /// half stays on the server escalation path (see `BrainDumpParser`).
+    func braindump(parse: ParsedBrainDump) async throws -> BrainDumpResponse {
+        let body: [String: Any] = [
+            "parse": [
+                "actions": parse.wireActions,
+                "observations": [] as [[String: Any]],
+                "reply": parse.reply,
+            ] as [String: Any]
+        ]
+        return try await post("braindump", json: body, as: BrainDumpResponse.self)
+    }
+
+    /// Execute previewed brain-dump/assistant actions after the user confirms.
+    /// The server re-validates them against the current store before writing.
+    @discardableResult
+    func applyAssistantActions(_ actions: [[String: Any]]) async throws -> ApplyResult {
+        try await post("assistant/apply", json: ["actions": actions], as: ApplyResult.self)
+    }
+
+    /// Accept one pending behavioral proposal by id (applies it server-side).
+    func acceptProposal(_ id: Int) async throws { try await post("proposals/\(id)/accept") }
+
     // Trip retro — close out the newest unlabeled trip in one call (label + note).
     func tripRetro(label: String, reflection: String?) async throws -> TripRetroResult {
         var body: [String: Any] = ["label": label]

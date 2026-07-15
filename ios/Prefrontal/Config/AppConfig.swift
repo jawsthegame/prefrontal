@@ -15,6 +15,12 @@ enum SharedStore {
 
     static let defaultBaseURL = "https://agent-1.tail8b0a.ts.net"
 
+    /// One-shot hand-off flag: the brain-dump App Intent (a separate process) sets
+    /// it; the app drains it on the next `.active` to present the capture sheet
+    /// (see `CaptureRouter`). Lives here in Config so the intent — compiled into
+    /// the widget target too — can set it without the app-only `CaptureRouter`.
+    static let pendingBrainDumpKey = "pendingBrainDump"
+
     static var baseURL: String { defaults.string(forKey: "baseURL") ?? defaultBaseURL }
 
     /// The token, from the shared Keychain. Falls back to the legacy App Group
