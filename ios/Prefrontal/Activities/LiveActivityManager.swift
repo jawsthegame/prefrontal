@@ -33,27 +33,32 @@ enum LiveActivityManager {
             return
         }
 
+        // End the lower-priority kinds *before* ensuring the winner (and await
+        // it, unlike a fire-and-forget end) so there's never an instant where two
+        // activities are live and iOS could pick the wrong one for the Dynamic
+        // Island. `ensure` then reconciles the winner without disturbing it when
+        // it's already the one on screen.
         if let outing {
             // Outing → "back by" countdown; it outranks any focus/task.
+            await endAll(except: outingKind)
             let started = PFDate.parse(outing.departureAt) ?? Date()
             let ends = outing.timeWindowMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: outingKind, title: outing.intention, started: started, ends: ends)
-            end(kind: focusKind); end(kind: taskKind)
         } else if let focus {
             // Focus → elapsed count-up (with a planned-end mark when set).
+            await endAll(except: focusKind)
             let started = PFDate.parse(focus.startedAt) ?? Date()
             let ends = focus.plannedMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: focusKind, title: focus.intendedTask ?? "Focusing", started: started, ends: ends)
-            end(kind: outingKind); end(kind: taskKind)
         } else if let task, task.isStarted {
             // Task → elapsed count-up from when it was started (estimate, when
             // set, is only the stale mark — the clock keeps counting past it).
+            await endAll(except: taskKind)
             let started = PFDate.parse(task.startedAt) ?? Date()
             let ends = task.estimateMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: taskKind, title: task.title, started: started, ends: ends)
-            end(kind: outingKind); end(kind: focusKind)
         } else {
-            end(kind: outingKind); end(kind: focusKind); end(kind: taskKind)
+            await endAll()
         }
     }
 
@@ -89,16 +94,11 @@ enum LiveActivityManager {
         }
     }
 
-    private static func end(kind: String) {
-        Task {
-            for activity in Activity<SessionActivityAttributes>.activities where activity.attributes.kind == kind {
-                await activity.end(nil, dismissalPolicy: .immediate)
-            }
-        }
-    }
-
-    private static func endAll() async {
-        for activity in Activity<SessionActivityAttributes>.activities {
+    /// End every running activity whose kind isn't `keep` — awaited, so callers
+    /// can guarantee the losers are gone before the winner is requested. Passing
+    /// `nil` (the default) ends them all.
+    private static func endAll(except keep: String? = nil) async {
+        for activity in Activity<SessionActivityAttributes>.activities where activity.attributes.kind != keep {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
     }
