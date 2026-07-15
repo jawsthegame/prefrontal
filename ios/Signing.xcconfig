@@ -15,7 +15,14 @@
 CODE_SIGN_STYLE = Automatic
 DEVELOPMENT_TEAM =
 
+// Which entitlements file the app target signs with (referenced by project.yml's
+// CODE_SIGN_ENTITLEMENTS = $(PREFRONTAL_ENTITLEMENTS)). Default is the committed,
+// free-signing file — NO `aps-environment`, so a Personal Team clone still signs.
+// A paid account overrides this in Signing.local.xcconfig to the push-enabled file
+// to turn on native APNs (see Signing.local.xcconfig.example + ios/README.md).
+PREFRONTAL_ENTITLEMENTS = Prefrontal/Prefrontal.entitlements
+
 // Optional local override (git-ignored). The `?` makes it a no-op when absent,
 // so a fresh clone that hasn't created it yet still generates cleanly. Declared
-// last so its DEVELOPMENT_TEAM wins over the empty default above.
+// last so its DEVELOPMENT_TEAM / PREFRONTAL_ENTITLEMENTS win over the defaults above.
 #include? "Signing.local.xcconfig"

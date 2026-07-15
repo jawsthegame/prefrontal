@@ -17,9 +17,13 @@
 	<!-- Native push (APNs) is intentionally NOT declared here. The
 	     `aps-environment` entitlement requires a paid Apple Developer account;
 	     a free "Personal Team" can't mint a profile that includes it, which
-	     blocks the whole app from signing. To use native push (paid tier only),
-	     add the Push Notifications capability in Xcode ▸ Signing & Capabilities
-	     — it writes `aps-environment` back into this file. Without it, delivery
-	     falls back to ntfy server-side, so the app still works. See ios/README.md. -->
+	     blocks the whole app from signing. Without it, delivery falls back to
+	     ntfy server-side, so the app still works on free signing.
+
+	     To use native push (paid tier only), DON'T add the capability in Xcode's
+	     UI (it lands in the git-ignored, regenerated .xcodeproj and is lost on
+	     `xcodegen generate`). Instead point PREFRONTAL_ENTITLEMENTS at the
+	     sibling Prefrontal.push.entitlements via your git-ignored
+	     Signing.local.xcconfig — regeneration-proof. See ios/README.md. -->
 </dict>
 </plist>

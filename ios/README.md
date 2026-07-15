@@ -311,12 +311,22 @@ any device that hasn't registered. See the server side in
 > **paid Apple Developer account**. A free "Personal Team" can't mint a profile
 > that includes it, and Xcode will refuse to sign the app if it's declared. So
 > `aps-environment` is **not** in the committed `Prefrontal.entitlements`; the
-> app builds and signs on free signing and just uses ntfy. To turn on native
-> push, open the target in **Xcode ▸ Signing & Capabilities ▸ + Capability ▸
-> Push Notifications** — that writes the entitlement back in. (It'll be dropped
-> again on the next `xcodegen generate`; re-add it, or keep a paid-team-only
-> local project.) The APNs client code ships either way and is a no-op without
-> the entitlement (`didFailToRegisterForRemoteNotifications` is handled).
+> app builds and signs on free signing and just uses ntfy.
+>
+> To turn on native push, don't add the capability in Xcode's UI — that writes it
+> into the **git-ignored, regenerated** `.xcodeproj`, so `xcodegen generate` wipes
+> it. Instead flip one line in your git-ignored `Signing.local.xcconfig` (same
+> place as your Team ID), pointing at the committed push-enabled entitlements file:
+>
+>     PREFRONTAL_ENTITLEMENTS = Prefrontal/Prefrontal.push.entitlements
+>
+> then `cd ios && xcodegen generate`. Because the build only *references* that
+> file (never regenerates it), the capability is permanent — regeneration-proof.
+> The `aps-environment` value tracks the build config via `APS_ENVIRONMENT`
+> (`development` for Debug/run-to-device → **sandbox** APNs, `production` for
+> Release/TestFlight); the server's `APNS_USE_SANDBOX` must match. The APNs client
+> code ships either way and is a no-op without the entitlement
+> (`didFailToRegisterForRemoteNotifications` is handled).
 
 ## Location automations (opt-in geofencing)
 
