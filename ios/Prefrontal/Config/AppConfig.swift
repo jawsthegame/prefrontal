@@ -82,6 +82,42 @@ enum SharedStore {
     static var visitsEnabled: Bool {
         defaults.object(forKey: visitsEnabledKey) == nil ? true : defaults.bool(forKey: visitsEnabledKey)
     }
+
+    // MARK: Quick-capture hand-off
+    //
+    // The interactive-widget button and Control Center control can't collect free
+    // text inline, so they open the app straight to the quick-capture sheet. They
+    // signal that intent here — a timestamped App-Group flag the app consumes on
+    // its next foreground, plus a notification for the already-running case — since
+    // the widget/Control Center intent code is compiled into the extension and
+    // can't touch app-only view state directly.
+
+    private static let captureRequestKey = "captureRequestedAt"
+
+    /// Ask the app to open the quick-capture sheet at its next opportunity. Sets a
+    /// timestamped flag (survives a cold launch) and posts a notification (instant
+    /// when the app is already foregrounded).
+    static func requestCapture() {
+        defaults.set(Date().timeIntervalSince1970, forKey: captureRequestKey)
+        NotificationCenter.default.post(name: .prefrontalOpenCapture, object: nil)
+    }
+
+    /// Consume a *fresh* capture request (set within `window` seconds), clearing it
+    /// so the sheet pops exactly once. A stale flag — left by a crash before the app
+    /// could present — is discarded rather than popping the sheet minutes later.
+    static func consumeCaptureRequest(window: TimeInterval = 30) -> Bool {
+        let ts = defaults.double(forKey: captureRequestKey)
+        guard ts > 0 else { return false }
+        defaults.removeObject(forKey: captureRequestKey)
+        return Date().timeIntervalSince1970 - ts <= window
+    }
+}
+
+extension Notification.Name {
+    /// Posted by `SharedStore.requestCapture()` (the widget/Control Center capture
+    /// intents, and the `prefrontal://capture` deep link) so a foregrounded app
+    /// pops the quick-capture sheet immediately.
+    static let prefrontalOpenCapture = Notification.Name("PrefrontalOpenCapture")
 }
 
 @MainActor

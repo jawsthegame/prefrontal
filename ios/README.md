@@ -252,8 +252,8 @@ defaults to `OAUTH_BASE_URL`; ntfy hints come from the user's delivery route.
 ## Offline capture queue + background refresh
 
 Off the tailnet, a write would otherwise just fail and the capture would be
-lost. Capture writes — **Add Todo**, **self-care** marks, **Made it / Missed
-it** — are marked `queueable`, so on a transport failure `APIClient` persists
+lost. Capture writes — **Capture a Thought**, **Add Todo**, **self-care** marks,
+**Made it / Missed it** — are marked `queueable`, so on a transport failure `APIClient` persists
 them to an App-Group-backed `OfflineQueue` (shared by the app, widget, and
 intents) instead of erroring. They replay oldest-first when the app next comes
 to the foreground, and opportunistically via a **Background App Refresh** task
@@ -379,6 +379,7 @@ or `.authenticationFailed` (shows the error) doesn't retry, so it can't loop. Th
 Intents**, so they work from Siri, the Shortcuts app, Spotlight, and the Action
 Button without hand-building "Get Contents of URL" shortcuts or pasting tokens:
 
+- **Capture a Thought** (takes free text) → `POST /observe` (the sensor path)
 - **Add Todo** (takes a title) → `POST /todos`
 - **Panic** → `GET /panic` (speaks the headline + first step)
 - **Going Out** (intention + optional window) → `POST /webhooks/outing/start`
@@ -393,14 +394,39 @@ timeline after a state change. Siri phrases are registered in
 `PrefrontalShortcuts` (`AppShortcutsProvider`, `Intents/AppShortcuts.swift`);
 assign any of them to the Action Button in **Settings ▸ Action Button ▸ Shortcut**.
 
+### Capture this thought (zero-friction capture → the sensor path)
+
+**Capture a Thought** is the headline capture surface: a passing thought is fed to
+the LLM-as-sensor (`POST /observe`), which only *proposes* pending candidate
+updates for review — it never writes an authoritative fact on capture — so the
+tap is safe from anywhere. It's reachable three ways, all landing in the same
+sensor path:
+
+- **Action Button / Siri** — assign **Capture a Thought** to the Action Button;
+  a press prompts for the thought via dictation and sends it in the background,
+  no app launch (`CaptureThoughtIntent`).
+- **Interactive widget** — the ✎ button in the Home Screen widget header opens the
+  app's pre-focused capture field in one tap (`OpenThoughtCaptureIntent`).
+- **Control Center / Lock Screen** — the **Capture a Thought** control does the
+  same (iOS 18, `CaptureThoughtControl`).
+
+The widget/Control Center surfaces can't collect free text inline, so they open
+the app's quick-capture sheet (`Views/CaptureThoughtView.swift`) via a shared
+App-Group hand-off (`SharedStore.requestCapture()` → `RootView`); the sheet — and
+a `prefrontal://capture` deep link — both feed `APIClient.observe`. Captures are
+`queueable`, so a thought jotted off the tailnet replays on reconnect rather than
+being lost.
+
 ### Control Center controls (iOS 18)
 
 The widget extension also ships **Control Center controls**
 (`PrefrontalWidgets/PrefrontalControls.swift`) for the no-input actions —
 **Panic**, **I'm Back**, **Wrap Up Focus** — each firing the matching App Intent
-without opening the app. Add them in **Settings ▸ Control Center** (or assign one
-to the Action Button under **Controls**). Input actions (Add Todo, Going Out,
-Start Focus) stay in Siri/Shortcuts, which can prompt for their values. The
+without opening the app, plus **Capture a Thought**, which opens the quick-capture
+sheet (the one control that needs the app, since a thought is free text). Add them
+in **Settings ▸ Control Center** (or assign one to the Action Button under
+**Controls**). Other input actions (Add Todo, Going Out, Start Focus) stay in
+Siri/Shortcuts, which can prompt for their values. The
 action intents live in `Intents/PrefrontalIntents.swift`, compiled into both the
 app (for Siri) and the widget extension (for the controls).
 

@@ -72,6 +72,18 @@ final class APIClientTests: XCTestCase {
         XCTAssertGreaterThan(list[0].waitingDays, 100)
     }
 
+    func testObserveReturnsProposalCount() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            // The sensor path is POST /observe; the reply carries the pending count.
+            XCTAssertEqual(req.url?.path, "/observe")
+            XCTAssertEqual(req.httpMethod, "POST")
+            return (201, Data(#"{"count":2,"proposals":[]}"#.utf8))
+        }
+        let count = try await client().observe(text: "I keep blowing off admin on Mondays")
+        XCTAssertEqual(count, 2)
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }

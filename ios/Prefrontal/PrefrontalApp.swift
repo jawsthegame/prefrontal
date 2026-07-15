@@ -23,6 +23,13 @@ struct PrefrontalApp: App {
                     // setup sheet) routes into the onboarding flow.
                     if let payload = ConnectPayload(url: url) {
                         onboarding.receive(payload)
+                    } else if url.scheme == "prefrontal", url.host == "capture" {
+                        // `prefrontal://capture` — pop the quick-capture sheet
+                        // (RootView listens for the signal). The widget/Control
+                        // Center surfaces open capture via `OpenThoughtCaptureIntent`;
+                        // this deep link is the same landing for a user Shortcut or
+                        // Home Screen icon.
+                        SharedStore.requestCapture()
                     }
                 }
         }

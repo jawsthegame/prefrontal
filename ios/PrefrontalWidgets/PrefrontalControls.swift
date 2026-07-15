@@ -10,7 +10,23 @@ import AppIntents
 ///
 /// Only no-input actions belong here: a Control Center tap can't collect a todo
 /// title or an outing intention, so Add Todo / Going Out / Start Focus stay in
-/// Siri/Shortcuts (they prompt) rather than becoming controls.
+/// Siri/Shortcuts (they prompt) rather than becoming controls. The one exception
+/// is **Capture a Thought**, whose control opens the app straight to a pre-focused
+/// capture field (`OpenThoughtCaptureIntent`) — a one-tap route into the sensor
+/// path from Control Center or the Lock Screen.
+
+@available(iOS 18.0, *)
+struct CaptureThoughtControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.morningstatic.prefrontal.control.capture") {
+            ControlWidgetButton(action: OpenThoughtCaptureIntent()) {
+                Label("Capture a Thought", systemImage: "square.and.pencil")
+            }
+        }
+        .displayName("Capture a Thought")
+        .description("Jot a passing thought — Prefrontal holds anything worth remembering for review.")
+    }
+}
 
 @available(iOS 18.0, *)
 struct PanicControl: ControlWidget {

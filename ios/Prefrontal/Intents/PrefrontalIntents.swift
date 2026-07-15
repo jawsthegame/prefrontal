@@ -57,6 +57,73 @@ struct AddTodoIntent: AppIntent {
     }
 }
 
+// MARK: - Thought capture (sensor path)
+
+/// "Capture this thought." The headline zero-friction capture: a passing thought
+/// — dictated to the **Action Button** / Siri, or typed in the widget/Control
+/// Center capture sheet — is fed to the LLM-as-sensor (`POST /observe`), which
+/// only *proposes* candidate updates for later review. Nothing authoritative is
+/// written on capture (see `prefrontal/webhooks/routers/sensor.py`), so it's safe
+/// to fire from anywhere without a confirm step, and it runs without opening the
+/// app (`openAppWhenRun == false`) — the Action Button prompts for the thought via
+/// dictation, sends it, and speaks the confirmation.
+struct CaptureThoughtIntent: AppIntent {
+    static let title: LocalizedStringResource = "Capture a Thought"
+    static let description = IntentDescription(
+        "Speak or type a passing thought; Prefrontal notes anything worth remembering for review."
+    )
+    static var openAppWhenRun: Bool { false }
+
+    @Parameter(title: "Thought", requestValueDialog: "What's on your mind?")
+    var thought: String
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let client = try prefrontalClient()
+        let raw = thought.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            // Whitespace-only dictation would 422 server-side; catch it here.
+            return .result(dialog: "Nothing to capture — say the thought and try again.")
+        }
+        let count = try await client.observe(text: raw)
+        // The sensor *proposes*; it never writes on its own. Keep the confirmation
+        // about the capture, and only mention review when there's something to see.
+        let line: String
+        switch count {
+        case 0: line = "Captured. I'll surface anything worth remembering for review."
+        case 1: line = "Captured — 1 thing to review."
+        default: line = "Captured — \(count) things to review."
+        }
+        return .result(dialog: IntentDialog(stringLiteral: line))
+    }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Capture the thought \(\.$thought) in Prefrontal")
+    }
+}
+
+/// Opens the app straight to the quick thought-capture field. Backs the
+/// interactive-widget button and the Control Center control, which can't collect
+/// free text inline — one tap opens the pre-focused sheet, which then feeds the
+/// same sensor path via `APIClient.observe`. `openAppWhenRun` is true by design;
+/// it hands off through `SharedStore.requestCapture()` (a shared App-Group signal)
+/// because this type is compiled into the widget extension and can't reach the
+/// app's view state directly.
+struct OpenThoughtCaptureIntent: AppIntent {
+    static let title: LocalizedStringResource = "Capture a Thought"
+    static let description = IntentDescription("Open Prefrontal's quick thought-capture field.")
+    static var openAppWhenRun: Bool { true }
+    // Plumbing for the widget button / Control Center control — not a standalone
+    // action to surface in the Shortcuts app (that's `CaptureThoughtIntent`, which
+    // captures in the background). Hiding it also avoids a duplicate "Capture a
+    // Thought" row next to the real one.
+    static var isDiscoverable: Bool { false }
+
+    func perform() async throws -> some IntentResult {
+        SharedStore.requestCapture()
+        return .result()
+    }
+}
+
 // MARK: - Panic
 
 struct PanicIntent: AppIntent {
