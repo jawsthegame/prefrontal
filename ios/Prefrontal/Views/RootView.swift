@@ -108,6 +108,9 @@ struct RootView: View {
 
 struct MainTabs: View {
     @State private var showPanic = false
+    // The brain-dump capture sheet, opened from the Action Button / Siri App
+    // Intent or a `prefrontal://braindump` deep link via CaptureRouter.
+    @StateObject private var capture = CaptureRouter.shared
 
     var body: some View {
         TabView {
@@ -123,5 +126,6 @@ struct MainTabs: View {
                 .tabItem { Label("Me", systemImage: "person.crop.circle") }
         }
         .sheet(isPresented: $showPanic) { PanicView() }
+        .sheet(isPresented: $capture.showBrainDump) { BrainDumpView() }
     }
 }

@@ -1086,3 +1086,7 @@ struct FeatureList: Codable {
 
 // Generic ack for POSTs whose body we ignore beyond success.
 struct Ack: Codable {}
+
+// Brain-dump client models (JSONValue, ParsedBrainDump, BrainDumpResponse,
+// BrainDumpAction, BrainDumpProposal, ApplyResult) live in Models/BrainDump.swift
+// to keep this file under the file-length ceiling.
