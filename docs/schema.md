@@ -352,6 +352,34 @@ also defines:
   `POST /clarifications/check` (the on-demand twin), `GET /clarifications`,
   `POST /clarifications/{id}/resolve|dismiss`,
   `GET /clarifications/playbooks/{task_type}`.
+- **`people`** — the identified, categorized **roster** Prefrontal builds from the
+  names ingested items keep mentioning (`prefrontal/people.py`). Per-user rows with
+  a canonical `name`, a normalized `name_key` (so "sam"/"Sam" are one person,
+  `UNIQUE (user_id, name_key)`), JSON `aliases` (other spellings matched to them), a
+  `relationship` (`family`/`coworker`/`friend`/`professional`/`service`/
+  `acquaintance`/`other`/`unknown`), an `importance` (`0`…`3`, mirroring todo
+  priority), free-text `notes`, and the `mention_count`/`first_seen`/`last_seen`
+  recurrence signal that every naming *touches*. It exists to feed **learning**
+  (importance-≥2 people become a "Key people" section in the summarizer profile) and
+  **prioritization** (`people.priority_boost` bumps a triage-created todo that names
+  a high-importance person). `status` is `active`/`archived`. Managed by
+  `prefrontal/memory/repos/people.py`, the `/people` CRUD router, and the
+  `prefrontal people` CLI.
+- **`person_mentions`** — the **review queue**. When an ingested item names someone
+  not yet on the roster, a `pending` mention lands here for the user to *identify*
+  (link an existing person, or create + categorize a new one) or *dismiss* (not a
+  person / not worth tracking). Per-user rows with the `name` as it appeared, its
+  `name_key`, a `source` (`mail`/`calendar`/`n8n`/`manual`/`braindump`/`triage`), a
+  `context` snippet, the routed item `ref` (`todo:…`/`commitment:…`) and
+  `external_id` it came from, a nullable `person_id` (set on identify), and a
+  `status` (`pending`/`identified`/`dismissed`). Like a sensor proposal or a
+  clarification, nothing authoritative is written from a raw extracted name — it
+  stays pending until a human resolves it. A partial unique index keeps a recurring
+  name to **one** pending row (a repeat appearance instead touches the known person
+  / leaves the single queue entry). Names are extracted heuristically on the triage
+  ingest path (`prefrontal/triage.py`, best-effort, never blocking capture) and
+  on-demand via `POST /people/extract` (which can also use the model). Endpoints:
+  `GET /people/queue`, `POST /people/mentions/{id}/identify|dismiss`.
 
 ---
 

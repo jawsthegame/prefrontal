@@ -828,6 +828,65 @@ CREATE INDEX IF NOT EXISTS idx_clarifications_user ON clarifications (user_id, s
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clarifications_pending
     ON clarifications (user_id, target_type, target_id) WHERE status = 'pending';
 
+-- People roster (see prefrontal/people.py). The identified, categorized address
+-- book Prefrontal builds from the names ingested items keep mentioning. It exists
+-- to feed two things the rest of the system already trades on: LEARNING (who
+-- recurs in your life and how you relate to them enriches the summarizer profile)
+-- and PRIORITIZATION (an action naming a high-importance person outranks one
+-- naming a stranger — see people.priority_boost). `name_key` is the normalized
+-- (lowercased) match key so "sam"/"Sam" are one person; `aliases` holds other
+-- spellings/nicknames seen for the same person (JSON array, matched too).
+-- `mention_count`/`last_seen` accumulate every time an ingested item names them
+-- (people.enqueue_mentions touches them) — the raw recurrence signal.
+CREATE TABLE IF NOT EXISTS people (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    name          TEXT    NOT NULL,                       -- canonical display name
+    name_key      TEXT    NOT NULL,                       -- normalized (lowercased) match key
+    relationship  TEXT    NOT NULL DEFAULT 'unknown',     -- family|coworker|friend|professional|service|acquaintance|other|unknown
+    importance    INTEGER NOT NULL DEFAULT 1,             -- 0 low · 1 normal · 2 high · 3 top (mirrors todo priority)
+    aliases       TEXT    NOT NULL DEFAULT '[]',          -- JSON array: other spellings/nicknames matched to this person
+    notes         TEXT,                                   -- free-text (who they are, why they matter)
+    mention_count INTEGER NOT NULL DEFAULT 0,             -- how often ingested items have named them
+    first_seen    DATETIME,                               -- first time named in an ingested item
+    last_seen     DATETIME,                               -- most recent time named
+    status        TEXT    NOT NULL DEFAULT 'active',      -- active | archived
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, name_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_people_user ON people (user_id, status);
+
+-- Person mentions — the REVIEW QUEUE. When an ingested item names someone who
+-- isn't yet on the roster, a `pending` mention lands here for the user to identify
+-- (link to an existing person or create + categorize a new one) or dismiss (not a
+-- person / not worth tracking). Like a sensor proposal or a clarification it stays
+-- `pending` until a human resolves it — nothing authoritative is written from a
+-- raw extracted name. `ref` is the routed item (todo:.. / commitment:..) the name
+-- came from; `context` is a snippet of the item. A partial unique index keeps a
+-- recurring name to ONE pending row so the queue doesn't pile up (each fresh
+-- appearance instead touches the row / the known person).
+CREATE TABLE IF NOT EXISTS person_mentions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    name        TEXT    NOT NULL,                         -- the name as it appeared
+    name_key    TEXT    NOT NULL,                         -- normalized match key (queue de-dupe)
+    source      TEXT    NOT NULL DEFAULT 'triage',        -- mail|calendar|n8n|manual|braindump|triage
+    context     TEXT,                                     -- snippet of the item that named them
+    ref         TEXT,                                     -- routed item ref (todo:.. | commitment:.. | episode:..)
+    external_id TEXT,                                     -- source item id (provenance)
+    person_id   INTEGER REFERENCES people(id),            -- set when identified
+    status      TEXT    NOT NULL DEFAULT 'pending',       -- pending | identified | dismissed
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_person_mentions_user ON person_mentions (user_id, status);
+-- At most one *pending* mention per normalized name; a repeat appearance touches
+-- the existing row instead of adding another.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_mentions_pending
+    ON person_mentions (user_id, name_key) WHERE status = 'pending';
+
 -- Weekly "how did the invisible load feel for you?" self-reports — one row per
 -- parent per ISO week. Deliberately subjective and non-judgmental: we store how
 -- each parent *felt* (light / balanced / heavy), never who did what, and surface

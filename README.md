@@ -149,6 +149,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
 | Home Screen & Lock Screen widget | `ios/PrefrontalWidgets/` | ✅ Native WidgetKit glance — next departure, the one todo to start now, next commitment, tap-to-log self-care + Live Activity |
 | Source-agnostic triage agent | `prefrontal/triage.py` | ✅ Classify → route → nudge for any inbound signal (mail/calendar/n8n/manual): `POST /webhooks/n8n` · `/triage` · `GET /triage/recent`, routing into commitments/todos/episodes + a `triage_log`, surfaced in the briefing + a dashboard panel. See `docs/triage-agent.md`. |
+| People queue (names in ingested items) | `prefrontal/people.py` · `webhooks/routers/people.py` | ✅ Names mentioned in ingested items are extracted on the triage path and, when not yet known, queued for you to **identify** (link/create a person) and **categorize** (relationship + importance). The resulting roster feeds **learning** (a "Key people" section in the profile) and **prioritization** (a todo naming a high-importance person gets a priority bump). `GET /people/queue`, `POST /people/mentions/{id}/identify\|dismiss`, `/people` CRUD, `POST /people/extract`; `prefrontal people queue/identify/dismiss/list/add/categorize/scan` |
 
 If you're exploring the code, start with `docs/schema.md`, then `prefrontal/memory/store.py`,
 then `prefrontal/webhooks/app.py`.
