@@ -9,6 +9,7 @@ the "and N more can wait" subtraction, the deterministic rendering, and the
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 from prefrontal.config import Settings
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.next_thing import build_next_thing, render_next_thing
+from prefrontal.next_thing import _departure_thing, build_next_thing, render_next_thing
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
 
@@ -111,6 +112,29 @@ def test_leave_soon_sits_below_an_overdue_fire():
     assert thing.kind == "todo"
     assert thing.reason == "overdue"
     assert thing.title == "Pay the invoice"
+
+
+def test_mid_flight_pins_the_most_recent_session(store, noon):
+    """With two active focus sessions, the latest in-flight one is pinned — not the
+    oldest (the active-* lists are ordered oldest-first)."""
+    store.start_focus_session("the old thing", started_at=_at(noon - timedelta(hours=2)))
+    store.start_focus_session("the current thing", started_at=_at(noon - timedelta(minutes=5)))
+    thing = build_next_thing(store, now=noon)
+    assert thing.kind == "focus"
+    assert thing.title == "the current thing"
+
+
+def test_leave_soon_detail_rounds_up_never_zero():
+    """A sub-minute leave-soon must read "leave in 1 min", not "leave in 0 min" /
+    "leave now" — that would contradict the soon-not-go semantics."""
+    dep = SimpleNamespace(
+        commitment={"id": 1, "title": "Standup", "location": None, "calendar": "work"},
+        minutes_until_leave=0.4,
+    )
+    thing = _departure_thing(dep, reason="leave-soon", also_count=0)
+    assert thing.detail == "leave in 1 min"
+    assert "in 1 min" in thing.headline
+    assert "leave now" not in thing.detail
 
 
 def test_overdue_todo_is_the_next_thing(store, noon):

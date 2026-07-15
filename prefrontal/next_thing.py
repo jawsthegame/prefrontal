@@ -53,6 +53,7 @@ flake to a fallback.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from typing import Any
 
 from prefrontal.impact import utcnow
@@ -200,8 +201,11 @@ def build_next_thing(
     # so the departure isn't added again (that would double-count it).
     board = _board_size(plan)
 
-    focus = store.active_focus_sessions()
-    outings = store.active_outings()
+    # The *most recent* active session/outing — the active-* lists are ordered
+    # oldest-first (`ORDER BY id`), so on the (rare) chance more than one is open
+    # the latest is the live context; pinning the oldest could surface a stale one.
+    focus = store.most_recent_active_focus_session()
+    outing = store.most_recent_active_outing()
 
     # 1. Leave *now* — physical, time-critical, overrides even flow.
     if top_dep is not None and top_dep.level in _GO_LEVELS:
@@ -209,10 +213,10 @@ def build_next_thing(
 
     # 2/3. Mid-flight task pinned — reflect what you're already doing, don't
     # switch you to something new.
-    if focus:
-        return _focus_thing(focus[0], also_count=max(0, board))
-    if outings:
-        return _outing_thing(outings[0], also_count=max(0, board))
+    if focus is not None:
+        return _focus_thing(focus, also_count=max(0, board))
+    if outing is not None:
+        return _outing_thing(outing, also_count=max(0, board))
 
     # 4. A fire you're already behind on (overdue todo / past-due blocker).
     if late_fires:
@@ -290,8 +294,12 @@ def _departure_thing(dep: Any, *, reason: str, also_count: int) -> NextThing:
         detail = "leave now" + (f" for {location}" if location else "")
         headline = f"Time to go — leave now for {title}."
     else:
-        mins = round(dep.minutes_until_leave)
-        detail = f"leave in {mins} min" if mins > 0 else "leave now"
+        # This branch is the "leave-soon" tier, entered only when the departure
+        # level is soon/heads_up — i.e. minutes_until_leave > 0 (go is <= 0). Round
+        # *up*, so a fractional 0.4 min doesn't render as "leave in 0 min" (which
+        # would read as "leave now" and contradict the soon-not-go semantics).
+        mins = max(1, ceil(dep.minutes_until_leave))
+        detail = f"leave in {mins} min"
         headline = f"Next: leave for {title} in {mins} min."
     return NextThing(
         kind="departure",
