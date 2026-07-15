@@ -16,6 +16,13 @@ struct CaptureThoughtView: View {
     @State private var captured = false
     @FocusState private var focused: Bool
 
+    // `@FocusState` has no default expression, so it suppresses the implicit
+    // no-arg initializer and leaves only a *private* memberwise `init(focused:)`
+    // (the properties are private) — which `RootView`'s `CaptureThoughtView()` can't
+    // reach. An explicit empty init restores an internal `init()`; the wrappers
+    // still self-initialize to their declared defaults.
+    init() {}
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {

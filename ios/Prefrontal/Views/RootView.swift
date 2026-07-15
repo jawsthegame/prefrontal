@@ -43,31 +43,46 @@ struct RootView: View {
         // so kick the first unlock here (idempotent — `authenticate()` guards).
         .onAppear {
             scheduleUnlockPrompt()
-            tryPresentCapture()
-            // Cold launch from the capture control: `perform()` may set the flag a
-            // beat after `onAppear`, so re-check once the launch settles.
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                tryPresentCapture()
-            }
+            scheduleCapturePrompt()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active:     scheduleUnlockPrompt(); tryPresentCapture()
+            case .active:     scheduleUnlockPrompt(); scheduleCapturePrompt()
             case .background: lock.lock(enabled: config.appLockEnabled)
             default:          break
             }
         }
     }
 
-    /// Present the quick-capture sheet if a fresh request is pending — but not over
-    /// the lock screen, and not before the app is connected. Consuming the flag is
-    /// deferred (left pending) while locked, so `onChange(lock.isUnlocked)` picks it
-    /// up once the content is visible.
+    /// Re-check for a pending capture request a beat after the scene settles. On a
+    /// cold launch or a background→active transition the flag can be set — or
+    /// `applicationState` flip to `.active` — a moment after `onAppear`/`onChange`
+    /// fires, so a synchronous check would miss it. The warm paths
+    /// (`.prefrontalOpenCapture`, unlock) call `tryPresentCapture()` directly.
+    private func scheduleCapturePrompt() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            tryPresentCapture()
+        }
+    }
+
+    /// Present the quick-capture sheet if a fresh request is pending.
+    ///
+    /// Ordering matters: while the app isn't foregrounded, or is locked, the request
+    /// is *left pending* (not consumed) — presenting a sheet off `.active` trips
+    /// SwiftUI transition warnings, and a locked launch has nothing visible to show
+    /// over — so a later `.active` / `isUnlocked` change retries. Once we can act we
+    /// consume the flag *unconditionally* (even if the sheet is already up, or we're
+    /// still onboarding), so a one-shot "capture now" tap can't linger in the
+    /// App-Group flag and re-pop the sheet on some unrelated trigger later.
     private func tryPresentCapture() {
-        guard !showCapture, !onboarding.active else { return }
+        // `applicationState` is the live value; the captured `scenePhase` can be
+        // stale inside these callbacks (same reason `scheduleUnlockPrompt` reads it).
+        guard UIApplication.shared.applicationState == .active else { return }
         if config.appLockEnabled, lock.canAuthenticate, !lock.isUnlocked { return }
-        if SharedStore.consumeCaptureRequest() { showCapture = true }
+        guard SharedStore.consumeCaptureRequest() else { return }
+        guard !showCapture, !onboarding.active else { return }
+        showCapture = true
     }
 
     /// Present the biometric prompt a beat after the scene settles rather than
