@@ -255,6 +255,17 @@ also defines:
 - **`todo_decompositions`** — one row per todo big enough to stall on: a tiny
   first step (≤ `max_first_step_minutes`) plus the remaining steps as JSON, the
   task-initiation lever for the Task Paralysis module (`prefrontal/todos.py`).
+- **`todo_events`** — the append-only longitudinal change log behind the
+  **queryable behavioral model**: where `todos` holds a todo's current state, this
+  holds its history — one row per behaviorally-meaningful change (`rescheduled` when
+  an existing deadline moves; `deferred` on each conscious snooze), with
+  `old_value`/`new_value` and `created_at`. Written at the repo layer by
+  `update_todo_deadline` / `defer_todo`, and read by
+  `prefrontal/memory/behavioral.py` into entity-scoped facts + agent context lines
+  ("you've rescheduled this four times"), served by `GET /todos/{id}/behavior` and
+  `prefrontal profile --todo`. Rows outlive the todo's open state so a completed
+  item's history still reads. This is the continuity a generic reminder app throws
+  away by overwriting the deadline in place.
 - **`decomposition_feedback`** — the learning signal from *dismissed* breakdowns:
   when the user waves a breakdown off, a snapshot (`todo_id`, `title`, `first_step`,
   `steps`, `category`, `estimate_minutes`) is recorded with a `reason` —
@@ -541,6 +552,26 @@ ignores them after 3pm; escalate to TTS for anything time-critical in the
 afternoon. Task blocks involving admin work have a high drift rate — check in 
 at 20 minutes rather than 30.
 ```
+
+### Queryable behavioral model (entity-scoped)
+
+The profile above is a *population-level* snapshot — who the person is in general.
+Its complement is the **queryable** behavioral model: given a single entity (today,
+a todo), `prefrontal/memory/behavioral.py` reads that item's `todo_events` history
+into structured facts (reschedule/snooze counts, recency, age, the task-specific
+estimate bias) plus ready-to-inject, second-person context lines an agent retrieves
+*on demand* when it's about to act on that item:
+
+```
+You've rescheduled this 4 times (most recently 3 days ago). It keeps sliding —
+worth asking whether the plan, the size, or the deadline is what's wrong before
+moving it again. You've snoozed this twice. It's been open 26 days.
+```
+
+Retrieved via `GET /todos/{id}/behavior` (JSON facts + `context_lines`) or
+`prefrontal profile --todo <id>`. That continuity — the system remembering how you
+have actually handled a *specific* open loop — is the external-brain payoff a
+generic reminder app can't match: it overwrites the deadline and forgets.
 
 ---
 

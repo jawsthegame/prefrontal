@@ -42,6 +42,7 @@ from prefrontal.log import get_logger
 from prefrontal.mail.feedback import (
     record_drop_feedback,
 )
+from prefrontal.memory.behavioral import todo_behavior
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import gmail_message_url
 from prefrontal.modules.task_paralysis import (
@@ -335,6 +336,33 @@ def build_router(services: RouterServices) -> APIRouter:
                 for s in stuck
             ]
         }
+
+    @router.get("/todos/{todo_id}/behavior", tags=["todos"])
+    def todo_behavior_read(
+        todo_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The queryable behavioral model for one todo — continuity, on demand.
+
+        Where ``GET /profile`` serves the population-level snapshot, this answers a
+        question scoped to a *single* open loop: how has the user actually treated
+        *this* item? It returns the longitudinal facts (how many times the deadline
+        has moved, how many times it's been snoozed, how long it's been open, the
+        estimate bias for a task like it) plus ready-to-inject, second-person
+        ``context_lines`` — so an agent composing a reminder about this todo can lead
+        with "You've rescheduled this four times" instead of a cold nudge.
+
+        Declared before the ``{action}`` route (a GET here, a POST there — no real
+        clash, but grouped with the id-scoped reads for clarity). 404 if no such
+        todo for the caller.
+        """
+        behavior = todo_behavior(ctx.store, todo_id)
+        if behavior is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No todo {todo_id}.",
+            )
+        return behavior.to_dict()
 
     @router.get("/todos/auto-decompose", tags=["todos"])
     def get_auto_decompose(

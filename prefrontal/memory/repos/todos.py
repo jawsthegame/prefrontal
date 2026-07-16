@@ -79,6 +79,76 @@ class TodosRepo(Repo):
         ).fetchone()
         return _row_to_dict(row)
 
+    # -- Longitudinal change log (todo_events) -------------------------------
+    # The history behind the queryable behavioral model: `update_todo_deadline`
+    # and `defer_todo` append here so "you've rescheduled this four times" is
+    # answerable. See prefrontal/memory/behavioral.py for the read side.
+
+    def record_todo_event(
+        self,
+        todo_id: int,
+        event_type: str,
+        *,
+        old_value: str | None = None,
+        new_value: str | None = None,
+    ) -> int:
+        """Append one longitudinal change to a todo's history; return its id.
+
+        Append-only: callers record a behaviorally-meaningful change (a deadline
+        moved, a defer) rather than mutating a running counter, so the full
+        timeline — not just a tally — survives for the behavioral model to read.
+
+        Args:
+            todo_id: The todo the change applies to.
+            event_type: The kind of change (``rescheduled`` | ``deferred``).
+            old_value: The prior value, stringified (``None`` when there was none).
+            new_value: The new value, stringified (``None`` when cleared).
+
+        Returns:
+            The new event row's id.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO todo_events (user_id, todo_id, event_type, old_value, new_value) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (self._uid(), todo_id, event_type, old_value, new_value),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def todo_events(
+        self, todo_id: int, *, event_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return a todo's change history, oldest first (optionally one type).
+
+        Args:
+            todo_id: The todo whose history to read.
+            event_type: If given, only events of this type are returned.
+
+        Returns:
+            A list of event dicts ordered by ``created_at`` then ``id`` ascending,
+            so index 0 is the earliest change and the last is the most recent.
+        """
+        if event_type is None:
+            return self._query_all(
+                "SELECT * FROM todo_events WHERE user_id = ? AND todo_id = ? "
+                "ORDER BY created_at ASC, id ASC",
+                (self._uid(), todo_id),
+            )
+        return self._query_all(
+            "SELECT * FROM todo_events WHERE user_id = ? AND todo_id = ? "
+            "AND event_type = ? ORDER BY created_at ASC, id ASC",
+            (self._uid(), todo_id, event_type),
+        )
+
+    def count_todo_events(self, todo_id: int, event_type: str) -> int:
+        """Return how many ``event_type`` events a todo has accumulated."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM todo_events "
+            "WHERE user_id = ? AND todo_id = ? AND event_type = ?",
+            (self._uid(), todo_id, event_type),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def open_todos(
         self, *, exclude_delegated: bool = False, with_project_rank: bool = False
     ) -> list[dict[str, Any]]:
@@ -193,11 +263,26 @@ class TodosRepo(Repo):
         its title — often needs to move. Only open todos are editable (a closed
         todo's deadline is moot), so this no-ops on a done/dropped/absent todo.
 
+        A *move* of an already-set deadline (including clearing it) is logged as a
+        ``rescheduled`` :meth:`todo_events` row — the longitudinal signal behind
+        "you've rescheduled this four times". Establishing the first deadline (from
+        none) is not a reschedule and is not logged.
+
         Args:
             todo_id: The todo to update.
             deadline: A UTC deadline (``YYYY-MM-DD HH:MM:SS``), or ``None`` to clear it.
         """
-        return self._update_todo_field(todo_id, "deadline", deadline)
+        prior = self.get_todo(todo_id)
+        changed = self._update_todo_field(todo_id, "deadline", deadline)
+        if changed and prior is not None:
+            old = prior.get("deadline")
+            # Only a genuine move of an existing deadline counts — the initial set
+            # (old is None) is establishing one, not rescheduling.
+            if old is not None and old != deadline:
+                self.record_todo_event(
+                    todo_id, "rescheduled", old_value=old, new_value=deadline
+                )
+        return changed
 
     def set_todo_priority(self, todo_id: int, priority: int) -> bool:
         """Set an open todo's priority (0 low … 3 urgent). Returns ``True`` if changed.
@@ -289,7 +374,17 @@ class TodosRepo(Repo):
             todo_id: The todo to defer.
             until: A UTC instant (``YYYY-MM-DD HH:MM:SS``), or ``None`` to un-defer.
         """
-        return self._update_todo_field(todo_id, "snoozed_until", until)
+        prior = self.get_todo(todo_id)
+        changed = self._update_todo_field(todo_id, "snoozed_until", until)
+        # Each conscious park (a non-null defer) is logged as a ``deferred`` event —
+        # the "keeps kicking this down the road" signal. Un-deferring (until is None)
+        # is not itself a deferral, so it isn't logged.
+        if changed and until is not None:
+            old = prior.get("snoozed_until") if prior is not None else None
+            self.record_todo_event(
+                todo_id, "deferred", old_value=old, new_value=until
+            )
+        return changed
 
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
