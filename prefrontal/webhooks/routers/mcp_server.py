@@ -17,6 +17,7 @@ from typing import (
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     Request,
     Response,
@@ -38,15 +39,17 @@ def build_router(services: RouterServices) -> APIRouter:
 
     @router.post("/mcp", tags=["mcp"])
     def mcp_rpc(
-        body: dict[str, Any],
         request: Request,
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        body: Annotated[Any, Body()] = None,
     ):
         """Serve one MCP JSON-RPC message against the caller's scoped data.
 
         A request returns its JSON-RPC response; a notification (no ``id``) returns
         202 with no body. Tool-level failures come back as an MCP ``isError`` result
-        (HTTP 200), not an HTTP error, per the protocol.
+        (HTTP 200), not an HTTP error, per the protocol. The body is accepted as
+        arbitrary JSON (not forced to an object) so a non-object gets the proper
+        JSON-RPC ``-32700`` from :func:`handle_rpc` rather than a FastAPI 422.
         """
         tool_ctx = ToolContext(
             store=ctx.store,

@@ -95,6 +95,14 @@ def test_non_object_body_is_parse_error(store):
     assert r["error"]["code"] == -32700
 
 
+def test_explicit_null_id_is_a_request_not_a_notification(store):
+    """JSON-RPC: a notification *omits* id; an explicit id:null is a (malformed)
+    request and still gets a response (with id null)."""
+    r = handle_rpc(_ctx(store), {"jsonrpc": "2.0", "method": "initialize", "id": None})
+    assert r is not None
+    assert r["id"] is None and "result" in r
+
+
 # --- create_event ------------------------------------------------------------
 
 
@@ -112,6 +120,15 @@ def test_create_event_missing_start_is_tool_error(store):
     r = handle_rpc(_ctx(store), _call("create_event", {"title": "Dentist"}))
     assert r["result"]["isError"] is True
     assert "start" in r["result"]["content"][0]["text"]
+
+
+def test_create_event_bad_timestamp_is_tool_error_without_raw_exception(store):
+    r = handle_rpc(_ctx(store), _call("create_event", {"title": "X", "start": "not-a-date"}))
+    assert r["result"]["isError"] is True
+    text = r["result"]["content"][0]["text"]
+    assert "ISO 8601" in text
+    # the controlled message doesn't leak the underlying exception text
+    assert "Traceback" not in text and "ValueError" not in text
 
 
 # --- create_todo -------------------------------------------------------------
@@ -205,6 +222,13 @@ def test_http_tools_call_creates_a_todo(http):
 def test_http_notification_returns_202(http):
     r = http.post("/mcp", json=_rpc("notifications/initialized", rid=None), headers=_headers())
     assert r.status_code == 202
+
+
+def test_http_non_object_body_is_jsonrpc_parse_error_not_422(http):
+    """A JSON array reaches handle_rpc (JSON-RPC -32700) instead of a FastAPI 422."""
+    r = http.post("/mcp", json=["not", "an", "object"], headers=_headers())
+    assert r.status_code == 200
+    assert r.json()["error"]["code"] == -32700
 
 
 def test_http_place_call_operator_gate(http):

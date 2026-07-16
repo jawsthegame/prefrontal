@@ -102,8 +102,12 @@ def _create_event(ctx: ToolContext, args: dict[str, Any]) -> str:
             event[dst] = val
     try:
         fields = normalize_event(event, default_tz=ctx.settings.timezone)
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
+    except ValueError:
+        # Don't echo the raw exception (py/stack-trace-exposure): title/start are
+        # already checked above, so a ValueError here is an unparseable time.
+        raise ToolError(
+            "couldn't create the event — 'start'/'end' must be valid ISO 8601 timestamps"
+        ) from None
     commitment_id, _ = ctx.store.upsert_commitment(**fields)
     return f"Created event '{title}' (commitment {commitment_id})."
 
@@ -115,7 +119,9 @@ def _create_todo(ctx: ToolContext, args: dict[str, Any]) -> str:
         raise ToolError("'title' is required")
     notes = str(args.get("notes", "")).strip() or None
     deadline = str(args.get("deadline", "")).strip() or None
-    todo_id = ctx.store.add_todo(title, notes=notes, deadline=deadline, source="mcp")
+    # Use the documented default source vocabulary (manual | impulse) rather than a
+    # new value downstream reporting wouldn't recognize.
+    todo_id = ctx.store.add_todo(title, notes=notes, deadline=deadline, source="manual")
     return f"Added todo '{title}' (id {todo_id})."
 
 
@@ -222,9 +228,11 @@ def handle_rpc(ctx: ToolContext, body: Any) -> dict[str, Any] | None:
     if not isinstance(body, dict):
         return _error(None, -32700, "parse error: expected a JSON-RPC object")
     method = body.get("method")
+    # JSON-RPC: a notification omits ``id`` entirely. An explicit ``id: null`` is a
+    # (malformed) *request*, not a notification, so it still gets a response.
+    if "id" not in body:
+        return None  # notification (e.g. notifications/initialized) — no reply
     rid = body.get("id")
-    if rid is None:  # a notification (e.g. notifications/initialized) — no reply
-        return None
     if method == "initialize":
         return _ok(rid, {
             "protocolVersion": PROTOCOL_VERSION,
