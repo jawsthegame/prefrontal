@@ -102,6 +102,13 @@ extension APIClient {
     func dismissMention(_ id: Int) async throws {
         try await post("people/mentions/\(id)/dismiss")
     }
+
+    /// Still-open captured-and-deferred impulses awaiting retro review, plus a
+    /// ready-to-speak retro line. Pure read; triage (keep vs drop) reuses the
+    /// todo endpoints — a "drop" is `closeTodo(_:done:false)`.
+    func parkedImpulses() async throws -> ParkedImpulses {
+        try await get("impulses/parked", as: ParkedImpulses.self)
+    }
     /// The single honest next thing to do right now (powers the "one next thing"
     /// widget). One action + reason, never the whole list. Pure read, safe to poll.
     func nextThing() async throws -> NextThing { try await get("next", as: NextThing.self) }

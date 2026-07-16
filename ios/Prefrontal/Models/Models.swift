@@ -592,6 +592,33 @@ struct PersonMention: Codable, Identifiable, Hashable {
 
 struct PersonMentionList: Codable { let mentions: [PersonMention] }
 
+// MARK: - Parked impulses
+
+/// A captured-and-deferred impulse awaiting retro review (`GET /impulses/parked`)
+/// — an open `source='impulse'` todo. When an impulse pulls at you mid-task you
+/// park it (one tap) instead of chasing it; later you triage the batch. Triage
+/// reuses the normal todo done/drop endpoints ("keep the real ones, drop the
+/// noise"). Server: `prefrontal/webhooks/routers/impulsivity.py`.
+struct ParkedImpulse: Codable, Identifiable, Hashable {
+    let todoId: Int
+    let title: String
+    let notes: String?
+    let createdAt: String?
+    let priority: Int?
+
+    var id: Int { todoId }
+    enum CodingKeys: String, CodingKey {
+        case title, notes, priority
+        case todoId = "todo_id"; case createdAt = "created_at"
+    }
+}
+
+/// The parked-impulses payload: the batch plus a ready-to-speak retro line.
+struct ParkedImpulses: Codable {
+    let parked: [ParkedImpulse]
+    let retro: String?
+}
+
 // MARK: - Mail
 
 /// One triaged message from the mail-monitoring pipeline, a lean subset of the

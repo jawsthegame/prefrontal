@@ -29,6 +29,8 @@ struct TodosView: View {
                     .accessibilityLabel("Stuck and avoided")
                 NavigationLink { ClarifyView() } label: { Image(systemName: "questionmark.bubble") }
                     .accessibilityLabel("Clarify")
+                NavigationLink { ParkedImpulsesView() } label: { Image(systemName: "bolt.horizontal.circle") }
+                    .accessibilityLabel("Parked impulses")
                 Button { showAdd = true } label: { Image(systemName: "plus") }
             }
         }
