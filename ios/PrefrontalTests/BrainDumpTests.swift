@@ -123,6 +123,29 @@ final class BrainDumpTests: XCTestCase {
         XCTAssertEqual(r.results[0].detail, "todo #5")
     }
 
+    // MARK: on-device if-then time-window validation (mirrors server parse_window)
+
+    func testNormalizedTimeWindowAcceptsValidBands() {
+        // Distinct in-range endpoints, 1- or 2-digit hours; a start>end band is a
+        // legal midnight wrap. The trimmed spec comes back verbatim.
+        XCTAssertEqual(normalizedTimeWindow("09:00-17:00"), "09:00-17:00")
+        XCTAssertEqual(normalizedTimeWindow("9:00-17:30"), "9:00-17:30")
+        XCTAssertEqual(normalizedTimeWindow("  22:00-06:00 "), "22:00-06:00")
+    }
+
+    func testNormalizedTimeWindowRejectsInvalid() {
+        // The cases Copilot flagged: a natural-language cue and a bad clock must
+        // return nil so they never count as an if-then cue (the server would only
+        // bounce them back as dropped-item errors).
+        XCTAssertNil(normalizedTimeWindow("after dinner"))
+        XCTAssertNil(normalizedTimeWindow("9pm-10pm"))
+        XCTAssertNil(normalizedTimeWindow("25:00-26:00"))  // hours out of range
+        XCTAssertNil(normalizedTimeWindow("09:60-10:00"))  // minutes out of range
+        XCTAssertNil(normalizedTimeWindow("09:00-09:00"))  // equal endpoints
+        XCTAssertNil(normalizedTimeWindow("09:00"))        // not a band
+        XCTAssertNil(normalizedTimeWindow(""))
+    }
+
     // MARK: /braindump round-trip (server-parse path) over the stub
 
     func testBraindumpTextPostsAndDecodes() async throws {

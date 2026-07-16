@@ -232,10 +232,11 @@ private extension BrainDumpParser.Extraction {
             guard !cue.isEmpty, !action.isEmpty else { continue }
             var a: [String: Any] = ["op": "add_if_then", "cue_text": cue, "action_text": action]
             let place = p.place.trimmingCharacters(in: .whitespacesAndNewlines)
-            let window = p.timeWindow.trimmingCharacters(in: .whitespacesAndNewlines)
             let event = p.event.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if !place.isEmpty { a["place"] = place }
-            if !window.isEmpty { a["time_window"] = window }
+            // Only a window the server's parse_window would accept counts as a cue —
+            // else "after dinner" would pass the guard below yet be dropped server-side.
+            if let window = normalizedTimeWindow(p.timeWindow) { a["time_window"] = window }
             if event == "arrive_home" || event == "leave_home" { a["event"] = event }
             // The server rejects a plan with no detectable cue; drop it here rather
             // than post one that can only come back as a dropped-item error.
@@ -270,4 +271,34 @@ private extension BrainDumpParser.Extraction {
             wireActions: actions,
             wireObservations: wireObservations)
     }
+}
+
+/// A `"HH:MM-HH:MM"` window trimmed and echoed back only if the server's
+/// `parse_window` would accept it — two `H:MM`/`HH:MM` endpoints with in-range
+/// clock values (00:00–23:59) that aren't equal (a `start > end` band is a legal
+/// midnight wrap). Returns `nil` for anything else ("after dinner", "9pm", a bad
+/// clock), so a bogus window never counts as an if-then cue on the client.
+/// Internal (not private) so `BrainDumpTests` can exercise it without the
+/// on-device model, which the simulator test host can't run.
+func normalizedTimeWindow(_ raw: String) -> String? {
+    let spec = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let parts = spec.split(separator: "-", omittingEmptySubsequences: false)
+    guard parts.count == 2 else { return nil }
+    func minutes(_ part: Substring) -> Int? {
+        let hhmm = part.trimmingCharacters(in: .whitespaces).split(
+            separator: ":", omittingEmptySubsequences: false)
+        guard hhmm.count == 2 else { return nil }
+        let h = hhmm[0], m = hhmm[1]
+        guard (1...2).contains(h.count), m.count == 2,
+            h.allSatisfy(\.isASCII), h.allSatisfy(\.isNumber),
+            m.allSatisfy(\.isASCII), m.allSatisfy(\.isNumber),
+            let hours = Int(h), let mins = Int(m),
+            (0...23).contains(hours), (0...59).contains(mins)
+        else { return nil }
+        return hours * 60 + mins
+    }
+    guard let start = minutes(parts[0]), let end = minutes(parts[1]), start != end else {
+        return nil
+    }
+    return spec
 }
