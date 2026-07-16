@@ -6,6 +6,10 @@ Split from a single ``schemas.py`` god-module into a package grouped by router
 """
 from __future__ import annotations
 
+from prefrontal.webhooks.schemas.actions import (
+    ActionPreviewRequest,
+    ActionRunRequest,
+)
 from prefrontal.webhooks.schemas.admin import (
     HouseholdCreate,
     HouseholdMember,
@@ -151,6 +155,8 @@ from prefrontal.webhooks.schemas.todos import (
 )
 
 __all__ = [
+    "ActionPreviewRequest",
+    "ActionRunRequest",
     "AgreementSet",
     "AppointmentCreate",
     "AssistantApply",
