@@ -25,9 +25,14 @@ from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
 from prefrontal.availability import plan_availability, render_plan
-from prefrontal.braindump import OnDeviceParse, plan_braindump
+from prefrontal.braindump import (
+    CAPTURE_FEATURE,
+    OnDeviceParse,
+    plan_braindump,
+)
 from prefrontal.clock import local_datetime, parse_ts, utcnow
 from prefrontal.integrations.anthropic import SUPPORTED_IMAGE_MEDIA_TYPES
+from prefrontal.log import get_logger
 from prefrontal.scheduling import window_config_for
 from prefrontal.sensor import (
     avoided_state_keys,
@@ -47,6 +52,8 @@ from prefrontal.webhooks.schemas import (
     VisionMessage,
 )
 from prefrontal.webhooks.services import RouterServices
+
+logger = get_logger(__name__)
 
 
 def _strip_data_uri(image_base64: str) -> str:
@@ -201,6 +208,17 @@ def build_router(services: RouterServices) -> APIRouter:
         # they land in the same review queue and apply via /proposals/{id}/accept.
         ids = set(record_candidates(memory, result.candidates))
         created = [p for p in memory.list_proposals("pending") if p["id"] in ids]
+        # Persist which path handled this capture so /stats can chart the funnel
+        # (on-device vs. escalated). `source` is the assistant provider — the parse
+        # path reports "on_device" for both halves, so it's the honest capture-level
+        # label; the two halves can differ only on the server path. Best-effort:
+        # telemetry must never fail the capture (mirrors the shortcut recorder).
+        try:
+            memory.record_feature_event(
+                CAPTURE_FEATURE, "invoked", source=assistant_provider
+            )
+        except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+            logger.debug("record_feature_event(braindump) failed", exc_info=True)
         return {
             "reply": result.reply,
             "actions": [a.to_wire() for a in result.actions],

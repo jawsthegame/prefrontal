@@ -111,6 +111,37 @@ class FeatureUsageRepo(Repo):
             (self._uid(), f"-{int(days)} days"),
         )
 
+    def capture_provider_counts(self, feature: str, days: int = 30) -> dict[str, int]:
+        """Count ``invoked`` events for ``feature`` grouped by ``source`` provider.
+
+        The capture funnel (:func:`prefrontal.stats.build_stats`) reads this to
+        answer "what share of captures stayed on the device vs. escalated to a
+        server model?" — the whole point of the on-device parse being cheap and
+        private. Each brain-dump stamps one event whose ``source`` is the provider
+        that handled it (``on_device`` / ``anthropic`` / ``ollama``), so a plain
+        ``GROUP BY source`` is the funnel.
+
+        Args:
+            feature: The capture feature key (see
+                :data:`prefrontal.braindump.CAPTURE_FEATURE`).
+            days: Rolling window in days.
+
+        Returns:
+            A ``{source: count}`` map over the window (empty when nothing was
+            captured). A row whose ``source`` was never set is bucketed under
+            ``"unknown"`` rather than dropped, so the counts always sum to the
+            total captured.
+        """
+        rows = self._query_all(
+            "SELECT COALESCE(source, 'unknown') AS source, COUNT(*) AS n "
+            "FROM feature_events "
+            "WHERE user_id = ? AND feature = ? AND event = 'invoked' "
+            "  AND created_at >= datetime('now', ?) "
+            "GROUP BY COALESCE(source, 'unknown')",
+            (self._uid(), feature, f"-{int(days)} days"),
+        )
+        return {r["source"]: int(r["n"]) for r in rows}
+
     # -- Muting (the "act on it" half of the loop) ---------------------------
 
     def muted_features(self) -> set[str]:

@@ -29,6 +29,10 @@ three signature views the Insights page renders (all pure and model-free, mirror
    module registry (so a never-fired feature reads as dormant, not absent); each
    flagged with whether it's currently muted. The "act on it" half of this view
    is the weekly usage nudge in :mod:`prefrontal.usage`.
+7. **Capture funnel** — of the brain-dumps captured in the window, the share
+   handled **on-device** (the cheap/private Foundation-Model parse, roadmap M1)
+   vs. **escalated** to a server model, read from the same ``feature_events``
+   stream sliced by the provider ``source``.
 
 The first four are derived straight from ``episodes`` (not the ``patterns``
 table), so the page is meaningful even before ``prefrontal learn`` has ever run;
@@ -480,6 +484,38 @@ def _feature_usage(store: MemoryStore) -> dict[str, Any]:
     return {"window_days": USAGE_WINDOW_DAYS, "features": features, "summary": summary}
 
 
+def _capture_funnel(store: MemoryStore) -> dict[str, Any]:
+    """Brain-dump capture split: handled on-device vs. escalated to a server model.
+
+    The on-device Foundation-Model parse (roadmap M1) is the cheap, private,
+    offline path; a raw-text dump escalates to the opt-in cloud agent (or local
+    Ollama) for the harder reasoning. Each capture stamps a ``braindump`` feature
+    event tagged with the provider that handled it, so this rolls the window's
+    events into the one number that says whether the private path is actually
+    carrying the load — the **on-device share** — alongside the raw per-provider
+    counts behind it.
+
+    Pure and model-free like the rest of this module, and safe before any capture
+    exists: everything is 0 and the share is ``None`` (no captures ⇒ no ratio to
+    report, rather than a misleading 0%).
+    """
+    from prefrontal.braindump import CAPTURE_FEATURE, ON_DEVICE_SOURCE
+
+    by_provider = store.capture_provider_counts(CAPTURE_FEATURE, USAGE_WINDOW_DAYS)
+    total = sum(by_provider.values())
+    on_device = by_provider.get(ON_DEVICE_SOURCE, 0)
+    escalated = total - on_device
+    return {
+        "window_days": USAGE_WINDOW_DAYS,
+        "total": total,
+        "on_device": on_device,
+        "escalated": escalated,
+        # None (not 0.0) when nothing was captured — no ratio to report yet.
+        "on_device_share": round(on_device / total, 2) if total else None,
+        "by_provider": by_provider,
+    }
+
+
 def build_stats(store: MemoryStore) -> dict[str, Any]:
     """Assemble the Insights payload from the (scoped) user's episodes.
 
@@ -488,9 +524,9 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
 
     Returns:
         ``{time_estimation, follow_through, channels, self_care, feature_usage,
-        chores, counts}`` — see the module docstring. All fields are
-        JSON-serializable and safe on an empty history (counts are 0, ratios/rates
-        are ``None``).
+        capture_funnel, chores, counts}`` — see the module docstring. All fields
+        are JSON-serializable and safe on an empty history (counts are 0,
+        ratios/rates are ``None``).
     """
     episodes = store.all_episodes()
     return {
@@ -499,6 +535,7 @@ def build_stats(store: MemoryStore) -> dict[str, Any]:
         "channels": _channels(episodes),
         "self_care": _self_care(store),
         "feature_usage": _feature_usage(store),
+        "capture_funnel": _capture_funnel(store),
         "chores": _chores(store),
         "counts": {"episodes": len(episodes)},
     }

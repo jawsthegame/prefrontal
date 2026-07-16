@@ -423,6 +423,39 @@ def test_braindump_on_device_parse_calls_no_model(app_store, user_store):
     assert len(todos) == 1 and todos[0]["title"] == "Call the dentist"
 
 
+def test_braindump_records_capture_funnel_event(app_store, user_store):
+    """Each capture stamps a provider-tagged `invoked` event for the /stats funnel."""
+    from prefrontal.braindump import CAPTURE_FEATURE, ON_DEVICE_SOURCE
+
+    with _client(app_store, _RoutingClient()) as c:
+        # Server-parse path → escalated: source is the resolved assistant provider.
+        c.post(
+            "/braindump",
+            json={"text": "call the dentist"},
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+        # On-device parse path → source is on_device (no server model).
+        c.post(
+            "/braindump",
+            json={
+                "parse": {
+                    "reply": "",
+                    "actions": [{"op": "add_todo", "title": "Buy milk"}],
+                    "observations": [],
+                }
+            },
+            headers={"X-Prefrontal-Token": SECRET},
+        )
+
+    counts = user_store.capture_provider_counts(CAPTURE_FEATURE)
+    assert sum(counts.values()) == 2
+    assert counts.get(ON_DEVICE_SOURCE) == 1  # the parse path
+    # The text path escalated to a server model (labelled by whatever the harness
+    # resolved — not on_device), so exactly one event is non-on_device.
+    escalated = sum(n for src, n in counts.items() if src != ON_DEVICE_SOURCE)
+    assert escalated == 1
+
+
 def test_braindump_empty_body_422(app_store):
     """Neither text nor a parse ⇒ 422 (nothing to capture)."""
     with _client(app_store, _RoutingClient()) as c:
