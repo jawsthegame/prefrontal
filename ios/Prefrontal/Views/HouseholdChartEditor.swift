@@ -146,25 +146,39 @@ struct ChartEditorSheet: View {
         let time = AvailableHours.hhmm(from: promptTime)
         do {
             try await withAPI { client in
-                let id: Int
                 if let editingId {
-                    id = editingId
+                    try await client.setStarTiers(editingId, tiers: tiersSpec)
+                    try await applyPrompt(client, id: editingId, days: days, time: time)
                 } else {
-                    id = try await client.createAgreement(
+                    let id = try await client.createAgreement(
                         title: title.trimmingCharacters(in: .whitespaces), kind: "reward", childId: childId
                     ).id
-                }
-                try await client.setStarTiers(id, tiers: tiersSpec)
-                if promptEnabled {
-                    try await client.setStarPrompt(id, enabled: true, days: days, time: time)
-                } else if wasPromptEnabled {
-                    // Was on, now off — persist the disable (server still needs a valid time).
-                    try await client.setStarPrompt(id, enabled: false, days: days, time: time)
+                    do {
+                        // Tiers are what make it a chart; if that step fails (e.g. a
+                        // malformed spec), roll back the just-created plan so a failed
+                        // creation doesn't leave an orphan tier-less agreement behind.
+                        try await client.setStarTiers(id, tiers: tiersSpec)
+                    } catch {
+                        try? await client.removeAgreement(id)
+                        throw error
+                    }
+                    try await applyPrompt(client, id: id, days: days, time: time)
                 }
             }
             dismiss()
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Write the award-prompt schedule: set it when enabled, or persist a disable
+    /// when it was previously on (the server still needs a valid time either way).
+    /// A no-op when it was never on and isn't now.
+    private func applyPrompt(_ client: APIClient, id: Int, days: [Int], time: String) async throws {
+        if promptEnabled {
+            try await client.setStarPrompt(id, enabled: true, days: days, time: time)
+        } else if wasPromptEnabled {
+            try await client.setStarPrompt(id, enabled: false, days: days, time: time)
         }
     }
 }

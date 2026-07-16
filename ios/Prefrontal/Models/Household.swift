@@ -167,8 +167,13 @@ struct Agreement: Codable, Identifiable {
         case updatedByName = "updated_by_name"
     }
 
-    /// A chart is anything with a running star total or a reward ladder.
-    var isChart: Bool { starTotal != nil && (nextGoal != nil || (starTotal ?? 0) > 0) }
+    /// Whether the plan carries a reward ladder (`structured.thresholds`).
+    var hasTiers: Bool { !((structured?.thresholds ?? []).isEmpty) }
+
+    /// A chart is anything with a reward ladder or a running star total — checked
+    /// directly (the server always sends `star_total`, so a `!= nil` test would be
+    /// vacuously true; the ladder + progress are the real signals).
+    var isChart: Bool { hasTiers || nextGoal != nil || (starTotal ?? 0) > 0 }
 
     /// The reward ladder as the `"7=small toy, 30=big"` spec the tiers endpoint
     /// takes — for prefilling the chart editor. Empty when there are no tiers.
