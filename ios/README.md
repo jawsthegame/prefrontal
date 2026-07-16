@@ -184,6 +184,14 @@ The first cut covers the pure/logic seams that need no device or live server —
 offline queue are the natural next additions (they need a small testable init /
 URLProtocol stub on `APIClient`).
 
+**On-device brain-dump can't be tested here.** The Foundation Models parse
+(`Capture/BrainDumpParser.swift`) needs the system language model, which a
+simulator and CI never have — the unit tests only cover its wire/validation
+layer, never the model. Before trusting a change to that path, run the manual
+device pass in
+[`docs/foundation-models-verification.md`](../docs/foundation-models-verification.md)
+on a real iOS 26 device with Apple Intelligence on.
+
 ## Run on your iPhone
 
 The widget uses an **App Group** and a **shared Keychain access group** (for the
