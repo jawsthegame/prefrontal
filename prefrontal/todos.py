@@ -751,6 +751,20 @@ def _days_open(todo: dict[str, Any], now: datetime) -> float | None:
     return max(0.0, (now - created).total_seconds() / 86400.0)
 
 
+def is_snoozed(todo: dict[str, Any], now: datetime) -> bool:
+    """Whether ``todo`` is consciously deferred to a still-future instant.
+
+    A snoozed todo has been triaged ("not now, come back on <date>") through the
+    stuck-checkpoint, so it isn't avoidance — it's a decision. The whole avoidance
+    surface (:func:`avoidance_score` and everything downstream) treats it as inert
+    until ``snoozed_until`` passes, at which point it re-enters normally. An
+    unparseable or past ``snoozed_until`` is not snoozed (a lapsed defer is just an
+    active todo again — no cleanup write needed).
+    """
+    until = _parse_ts(todo.get("snoozed_until"))
+    return until is not None and until > now
+
+
 def _parse_deadline(value: object) -> datetime | None:
     """Parse a date-only todo deadline (``YYYY-MM-DD``) to an end-of-day datetime.
 
@@ -775,6 +789,26 @@ def _parse_deadline(value: object) -> datetime | None:
     return end_of_local_day_utc(day, get_settings().timezone)
 
 
+def deadline_pressure(todo: dict[str, Any], now: datetime) -> str | None:
+    """A todo's deadline pressure right now: ``"overdue"``, ``"imminent"``, or ``None``.
+
+    The named form of the deadline multiplier :func:`avoidance_score` applies inline
+    (overdue, or due within two days). Exposed so the stuck-checkpoint can gate its
+    *interruptive* cue on genuine time pressure — a weeks-avoided item is normally
+    calm-surfaced in the briefing, but one about to blow a real deadline earns an
+    interruption. ``None`` when there's no deadline or it's comfortably out.
+    """
+    deadline = _parse_deadline(todo.get("deadline"))
+    if deadline is None:
+        return None
+    days_to = (deadline - now).total_seconds() / 86400.0
+    if days_to < 0:
+        return "overdue"
+    if days_to <= 2:
+        return "imminent"
+    return None
+
+
 def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
     """How strongly an open todo looks avoided (0.0 = not at all).
 
@@ -782,6 +816,8 @@ def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
     no "no time" excuse), and deadline pressure. Low-priority items score 0.
     """
     if (todo.get("status") or "open") != "open":
+        return 0.0
+    if is_snoozed(todo, now):  # consciously deferred → not avoidance until it lapses
         return 0.0
     priority = todo.get("priority")
     priority = 1 if priority is None else int(priority)
@@ -794,13 +830,11 @@ def avoidance_score(todo: dict[str, Any], now: datetime) -> float:
     estimate = todo.get("estimate_minutes")
     if estimate is not None and estimate <= 30:
         score *= 1.5  # quick task left undone is a stronger avoidance signal
-    deadline = _parse_deadline(todo.get("deadline"))
-    if deadline is not None:
-        days_to = (deadline - now).total_seconds() / 86400.0
-        if days_to < 0:
-            score *= 3.0  # overdue
-        elif days_to <= 2:
-            score *= 2.0  # imminent
+    pressure = deadline_pressure(todo, now)
+    if pressure == "overdue":
+        score *= 3.0
+    elif pressure == "imminent":
+        score *= 2.0
     return round(score, 1)
 
 
@@ -826,6 +860,37 @@ def avoided_todos(
         out.append({"todo": todo, "days_open": round(days, 1), "score": score})
     out.sort(key=lambda x: -x["score"])
     return out
+
+
+#: Days open past which an avoided todo stops being a normal slide and becomes a
+#: *checkpoint* candidate — old enough that pushing it harder is the wrong move
+#: (research on procrastination-as-emotion-regulation: escalating salience on a
+#: weeks-avoided item adds the negative affect that sustains the avoidance). At
+#: this age the right response is a one-time triage fork (break it down / defer /
+#: let it go), not another nudge. ~2.5 weeks: comfortably past the 3-day avoidance
+#: floor, but not so long the list fills with stale checkpoints.
+DEFAULT_CHECKPOINT_MIN_DAYS = 18.0
+
+
+def long_avoided_todos(
+    todos: list[dict[str, Any]],
+    now: datetime,
+    *,
+    min_days: float = DEFAULT_CHECKPOINT_MIN_DAYS,
+) -> list[dict[str, Any]]:
+    """Avoided todos old enough to need a *strategy switch*, not another nudge.
+
+    The stuck-checkpoint population: :func:`avoided_todos` with a longer floor
+    (:data:`DEFAULT_CHECKPOINT_MIN_DAYS`). These are the items that have sat so
+    long that re-surfacing them with rising urgency is counterproductive — they
+    warrant a one-time triage fork instead (break it down, defer to a real date,
+    or drop guilt-free). Snoozed todos are already excluded (their avoidance score
+    is 0 while deferred), so a deferred item never re-checkpoints until it lapses.
+
+    Returns the same ``{todo, days_open, score}`` shape as :func:`avoided_todos`,
+    worst-first — a strict subset of it.
+    """
+    return avoided_todos(todos, now, min_days=min_days)
 
 
 def _todo_priority(todo: dict[str, Any]) -> int:
@@ -1050,9 +1115,18 @@ def _dropped_is_give_up(todo: dict[str, Any], ref: datetime | None) -> bool:
     A todo the user explicitly **started** and then dropped is always a give-up —
     you engaged with it and abandoned it, which is the follow-through failure worth
     counting — regardless of priority or age.
+
+    A todo the user consciously **deferred** (a ``snoozed_until`` was set via the
+    stuck-checkpoint) and later dropped is hygiene, not a give-up: parking-then-
+    letting-go is the adaptive triage the checkpoint exists to enable, and counting
+    it as a slip would teach the user the checkpoint is a trap. The started-at rule
+    above takes precedence — a todo that was both started and snoozed still reads as
+    engaged-then-abandoned (a real miss), because it's checked first.
     """
     if todo.get("started_at"):
         return True
+    if todo.get("snoozed_until"):  # consciously parked, then dropped → triage, not a slip
+        return False
     priority = todo.get("priority")
     priority = 1 if priority is None else int(priority)
     if priority < 1:

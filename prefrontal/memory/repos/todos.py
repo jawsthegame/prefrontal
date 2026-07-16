@@ -274,6 +274,23 @@ class TodosRepo(Repo):
         self.conn.commit()
         return cur.rowcount > 0
 
+    def defer_todo(self, todo_id: int, until: str | None) -> bool:
+        """Consciously park an open todo until ``until`` (UTC). ``True`` if changed.
+
+        The stuck-checkpoint "defer to a real date" outcome: sets ``snoozed_until``
+        so :func:`~prefrontal.todos.avoidance_score` treats the todo as inert (not
+        avoided, not re-checkpointed) until that instant passes, at which point it
+        re-enters the avoidance surface on its own — no re-activation write. This is
+        the non-escalating exit from the avoidance ramp: a parked item goes quiet,
+        rather than climbing the "worst-avoided" ranking forever. Only open todos
+        are deferrable; ``None`` clears the defer (un-park it now).
+
+        Args:
+            todo_id: The todo to defer.
+            until: A UTC instant (``YYYY-MM-DD HH:MM:SS``), or ``None`` to un-defer.
+        """
+        return self._update_todo_field(todo_id, "snoozed_until", until)
+
     def close_todo(self, todo_id: int, status: str = "done") -> bool:
         """Mark a todo ``done`` or ``dropped``. Returns ``True`` if it changed.
 
