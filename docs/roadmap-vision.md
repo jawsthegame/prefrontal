@@ -373,9 +373,15 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   configured MCP server (`PREFRONTAL_MCP_SERVERS`) behind
   the identical digest-pinned preview→confirm gate, with an inert audit episode per
   run — scoped, verifiable tool-calls, never a browser agent. So both native actions
-  and MCP tools now share one confirm gate. Open remainder: more action types built
-  as MCP tools (calendar-write, forms, scoped call), wiring a tool-call onto a
-  delegated todo's draft, per-user encrypted MCP sources (like SMTP), and
+  and MCP tools now share one confirm gate. ✅ *And Prefrontal now **serves** its own
+  bounded actions as MCP tools too* (`prefrontal/mcp_server.py`, `POST /mcp` —
+  JSON-RPC `initialize`/`tools/list`/`tools/call`): `create_event` (calendar-write),
+  `create_todo`, and `place_call` (a *scoped* reminder call to the caller's own
+  number), each a thin wrapper over an existing op, per-user-token-scoped, with
+  operator-configured tools (`place_call`) operator-gated — so calendar-write / a
+  scoped call are real MCP tools without needing a third-party server. Open remainder:
+  richer served tools (real form-fill, multi-stop), wiring a tool-call onto a
+  delegated todo's draft, per-user encrypted MCP *client* sources (like SMTP), and
   stdio-transport servers.
 - **Communication translation as a first-class tool** ✅ **shipped** — decode an
   ambiguous work email, draft a reply in the right register, or soften a message.
