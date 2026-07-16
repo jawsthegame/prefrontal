@@ -53,7 +53,9 @@ def _ago_phrase(then: datetime, now: datetime) -> str:
     if days < 2:
         return "yesterday"
     if days < 14:
-        return f"{round(days)} days ago"
+        # Truncate rather than round: rounding 13.6 up to 14 would print "14 days
+        # ago" from inside the < 14 band, crossing into what the weeks band renders.
+        return f"{int(days)} days ago"
     return f"{round(days / 7.0)} weeks ago"
 
 
@@ -209,6 +211,12 @@ def todo_behavior(
         when = parse_ts(events[-1].get("created_at"))
         return _ago_phrase(when, now) if when is not None else None
 
+    # Compute the recency phrases once and reuse them for both the structured
+    # fields and the context-line inputs — a single source of truth, so the two
+    # can't drift if _last_ago ever changes.
+    last_rescheduled_ago = _last_ago(reschedules)
+    last_deferred_ago = _last_ago(defers)
+
     snoozed_until = parse_ts(todo.get("snoozed_until"))
     currently_snoozed = snoozed_until is not None and snoozed_until > now
 
@@ -221,14 +229,14 @@ def todo_behavior(
         reschedule_count=len(reschedules),
         defer_count=len(defers),
         days_open=days_open,
-        last_rescheduled_ago=_last_ago(reschedules),
-        last_deferred_ago=_last_ago(defers),
+        last_rescheduled_ago=last_rescheduled_ago,
+        last_deferred_ago=last_deferred_ago,
         currently_snoozed=currently_snoozed,
         estimate_bias=estimate_bias,
         context_lines=_context_lines(
             reschedule_count=len(reschedules),
             defer_count=len(defers),
-            last_rescheduled_ago=_last_ago(reschedules),
+            last_rescheduled_ago=last_rescheduled_ago,
             currently_snoozed=currently_snoozed,
             days_open=days_open,
             estimate_bias=estimate_bias,

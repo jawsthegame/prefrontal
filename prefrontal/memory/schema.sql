@@ -414,7 +414,11 @@ CREATE TABLE IF NOT EXISTS todo_events (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_todo_events_todo ON todo_events (user_id, todo_id, event_type);
+-- Trailing (created_at, id) so the by-type history read — WHERE (user_id, todo_id,
+-- event_type) ORDER BY created_at, id, the count/behavioral path — is satisfied by
+-- the index without a separate sort.
+CREATE INDEX IF NOT EXISTS idx_todo_events_todo
+    ON todo_events (user_id, todo_id, event_type, created_at, id);
 
 -- Blockers — someone ELSE is waiting on YOU. A record that the ball is in your
 -- court: another person is blocked until you do a specific thing. Deliberately
