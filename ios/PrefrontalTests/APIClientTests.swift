@@ -84,6 +84,33 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
 
+    func testEmotionSupportDecodesSkill() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/emotion/support")
+            XCTAssertEqual(req.httpMethod, "POST")
+            return (200, Data(#"{"kind":"skill","state":"overwhelm","skill":"paced_breathing","family":"dbt","text":"Slow the exhale: **in 4, out 6**."}"#.utf8))
+        }
+        let s = try await client().emotionSupport(text: "everything at once")
+        XCTAssertFalse(s.isCrisis)
+        XCTAssertEqual(s.family, "dbt")
+        XCTAssertEqual(s.state, "overwhelm")
+        XCTAssertEqual(s.text, "Slow the exhale: **in 4, out 6**.")
+    }
+
+    func testEmotionSupportDecodesCrisisResponse() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // The crisis screen trips server-side and returns resources (empty
+        // state/skill/family), never a coping skill — `isCrisis` must reflect that
+        // so the view renders resources, not a "try another" skill card.
+        StubURLProtocol.responder = { _ in
+            (200, Data(#"{"kind":"crisis","state":"","skill":"","family":"","text":"Please reach out now: call or text 988."}"#.utf8))
+        }
+        let s = try await client().emotionSupport(text: "i can't do this anymore")
+        XCTAssertTrue(s.isCrisis)
+        XCTAssertTrue(s.text.contains("988"))
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }

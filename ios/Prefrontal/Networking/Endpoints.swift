@@ -72,6 +72,16 @@ extension APIClient {
     }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
+    /// In-the-moment emotion-regulation support (`POST /emotion/support`) — one
+    /// brief, evidence-matched micro-skill for a hard moment. Pass `nil`/empty for
+    /// a one-tap request; a few words let the server fit the skill to the feeling.
+    /// The server screens for crisis language first and, if it trips, returns
+    /// resources (`kind == "crisis"`) instead of a skill — see `EmotionSupport`.
+    func emotionSupport(text: String? = nil) async throws -> EmotionSupport {
+        var json: [String: Any] = [:]
+        if let text, !text.isEmpty { json["text"] = text }
+        return try await post("emotion/support", json: json, as: EmotionSupport.self)
+    }
     /// The single honest next thing to do right now (powers the "one next thing"
     /// widget). One action + reason, never the whole list. Pure read, safe to poll.
     func nextThing() async throws -> NextThing { try await get("next", as: NextThing.self) }
