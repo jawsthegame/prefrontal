@@ -21,10 +21,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Activate the Apple Watch relay (no-op without a paired watch) so the
         // watch can send requests and receive connection status.
         PhoneWatchConnectivity.shared.activate()
-        // If the user already granted notifications on a past launch, refresh the
-        // APNs token now (tokens can rotate); the didRegister callback re-posts it.
+        // Make sure this device is an APNs recipient. If notifications were never
+        // requested (e.g. a build that predates native push, connected before the
+        // onboarding notifications step existed), ask now — otherwise the prompt
+        // never appears and no token is ever minted. If already authorized, just
+        // refresh the token (it can rotate); the didRegister callback re-posts it.
+        // A denial is respected and left alone.
         Task {
-            if await center.notificationSettings().authorizationStatus == .authorized {
+            let status = await center.notificationSettings().authorizationStatus
+            let authorized: Bool
+            if status == .notDetermined {
+                authorized = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+            } else {
+                authorized = status == .authorized
+            }
+            if authorized {
                 await MainActor.run { application.registerForRemoteNotifications() }
             }
         }
