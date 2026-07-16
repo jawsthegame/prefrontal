@@ -33,6 +33,7 @@ struct TodayView: View {
 
                 nowCard
                 BlockersCard()
+                HouseholdTodayCard()
                 if departure != nil { departureCard }
                 if let o = activeOuting { outingCard(o) }
                 if let f = activeFocus { focusCard(f) }
