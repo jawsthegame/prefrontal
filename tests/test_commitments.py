@@ -1646,3 +1646,94 @@ def test_dismissed_conflict_resurfaces_for_a_different_pair(client):
     # Dentist↔Casey stays dismissed; Dentist↔Plumber (and Casey↔Plumber) surface.
     assert frozenset({"Dentist", "1:1 with Casey"}) not in pairs
     assert frozenset({"Dentist", "Plumber"}) in pairs
+
+
+# -- commitment change log (behavioral continuity) ---------------------------
+
+
+def test_reschedule_recorded_only_when_start_moves(store):
+    """A moved start on re-sync logs a `rescheduled` event; an unchanged re-sync
+    (and the initial insert) logs nothing."""
+    cid, created = store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    assert created is True
+    assert store.count_commitment_events(cid, "rescheduled") == 0  # first sync
+    # Re-sync, same time → not a reschedule.
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    assert store.count_commitment_events(cid, "rescheduled") == 0
+    # Two genuine moves.
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-02 09:00:00", external_id="cal:1"
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-03 10:30:00", external_id="cal:1"
+    )
+    events = store.commitment_events(cid, event_type="rescheduled")
+    assert len(events) == 2
+    assert events[0]["old_value"] == "2026-08-01 09:00:00"
+    assert events[0]["new_value"] == "2026-08-02 09:00:00"
+    assert events[-1]["new_value"] == "2026-08-03 10:30:00"
+
+
+def test_manual_commitment_never_records_reschedule(store):
+    """A manual commitment (no external_id) always inserts a fresh row, so it has
+    no update/reschedule path — nothing is logged."""
+    cid, _ = store.upsert_commitment(
+        title="Coffee", start_at="2026-08-01 09:00:00", source="manual"
+    )
+    assert store.count_commitment_events(cid, "rescheduled") == 0
+
+
+def test_commitment_events_scoped_per_user(store):
+    cid, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-02 09:00:00", external_id="cal:1"
+    )
+    other = scoped_default(MemoryStore(store.conn), handle="other")
+    assert other.commitment_events(cid) == []
+
+
+def test_commitment_behavior_model_and_context(store):
+    from prefrontal.memory.behavioral import commitment_behavior
+
+    cid, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    for day in ("02", "03", "04"):
+        store.upsert_commitment(
+            title="Dentist", start_at=f"2026-08-{day} 09:00:00", external_id="cal:1"
+        )
+    behavior = commitment_behavior(store, cid)
+    assert behavior.reschedule_count == 3
+    assert any("rescheduled 3 times" in line for line in behavior.context_lines)
+    assert any("keeps moving" in line for line in behavior.context_lines)
+
+
+def test_commitment_behavior_unknown_returns_none(store):
+    from prefrontal.memory.behavioral import commitment_behavior
+
+    assert commitment_behavior(store, 9999) is None
+
+
+def test_api_commitment_behavior(client, store_open):
+    cid, _ = store_open.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    store_open.upsert_commitment(
+        title="Dentist", start_at="2026-08-02 09:00:00", external_id="cal:1"
+    )
+    r = client.get(f"/commitments/{cid}/behavior", headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["commitment_id"] == cid
+    assert body["reschedule_count"] == 1
+    assert any("rescheduled once" in line for line in body["context_lines"])
+
+
+def test_api_commitment_behavior_unknown_404(client):
+    assert client.get("/commitments/9999/behavior", headers=_auth()).status_code == 404

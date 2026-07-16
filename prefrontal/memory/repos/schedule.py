@@ -96,7 +96,8 @@ class ScheduleRepo(Repo):
         """
         if external_id is not None:
             existing = self.conn.execute(
-                "SELECT id FROM commitments WHERE user_id = ? AND external_id = ?",
+                "SELECT id, start_at FROM commitments "
+                "WHERE user_id = ? AND external_id = ?",
                 (self._uid(), external_id),
             ).fetchone()
             if existing is not None:
@@ -111,6 +112,17 @@ class ScheduleRepo(Repo):
                      dest_lon, lead_minutes, hardness, hardness_source, source,
                      kind, kind_source, existing["id"], self._uid()),
                 )
+                # A moved start on re-sync is a reschedule — log it before the
+                # commit so the change and its history land atomically. An unchanged
+                # start (the common re-sync case) records nothing, so a calendar
+                # that polls constantly doesn't accrue phantom events.
+                if existing["start_at"] != start_at:
+                    self.record_commitment_event(
+                        int(existing["id"]),
+                        "rescheduled",
+                        old_value=existing["start_at"],
+                        new_value=start_at,
+                    )
                 self.conn.commit()
                 return int(existing["id"]), False
 
@@ -134,6 +146,68 @@ class ScheduleRepo(Repo):
         ).fetchone()
         d = _row_to_dict(row)
         return _with_calendar(d) if d is not None else None
+
+    # -- Longitudinal change log (commitment_events) -------------------------
+    # The calendar-side twin of TodosRepo's todo_events: upsert_commitment appends
+    # here when a synced event moves, so "this appointment has been rescheduled
+    # three times" is answerable. See prefrontal/memory/behavioral.py for the read.
+
+    def record_commitment_event(
+        self,
+        commitment_id: int,
+        event_type: str,
+        *,
+        old_value: str | None = None,
+        new_value: str | None = None,
+    ) -> int:
+        """Append one longitudinal change to a commitment's history; return its id.
+
+        Append-only (see :meth:`TodosRepo.record_todo_event`): a
+        behaviorally-meaningful change is recorded rather than a running counter
+        mutated, so the full timeline survives for the behavioral model to read.
+
+        Args:
+            commitment_id: The commitment the change applies to.
+            event_type: The kind of change (today, ``rescheduled``).
+            old_value: The prior value, stringified (``None`` when there was none).
+            new_value: The new value, stringified.
+
+        Returns:
+            The new event row's id.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO commitment_events "
+            "(user_id, commitment_id, event_type, old_value, new_value) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (self._uid(), commitment_id, event_type, old_value, new_value),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def commitment_events(
+        self, commitment_id: int, *, event_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return a commitment's change history, oldest first (optionally one type)."""
+        if event_type is None:
+            return self._query_all(
+                "SELECT * FROM commitment_events WHERE user_id = ? AND commitment_id = ? "
+                "ORDER BY created_at ASC, id ASC",
+                (self._uid(), commitment_id),
+            )
+        return self._query_all(
+            "SELECT * FROM commitment_events WHERE user_id = ? AND commitment_id = ? "
+            "AND event_type = ? ORDER BY created_at ASC, id ASC",
+            (self._uid(), commitment_id, event_type),
+        )
+
+    def count_commitment_events(self, commitment_id: int, event_type: str) -> int:
+        """Return how many ``event_type`` events a commitment has accumulated."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM commitment_events "
+            "WHERE user_id = ? AND commitment_id = ? AND event_type = ?",
+            (self._uid(), commitment_id, event_type),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def upcoming_commitments(
         self,
