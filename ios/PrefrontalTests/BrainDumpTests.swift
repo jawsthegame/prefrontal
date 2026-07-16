@@ -123,6 +123,29 @@ final class BrainDumpTests: XCTestCase {
         XCTAssertEqual(r.results[0].detail, "todo #5")
     }
 
+    // MARK: on-device if-then time-window validation (mirrors server parse_window)
+
+    func testNormalizedTimeWindowAcceptsValidBands() {
+        // Distinct in-range endpoints, 1- or 2-digit hours; a start>end band is a
+        // legal midnight wrap. The trimmed spec comes back verbatim.
+        XCTAssertEqual(normalizedTimeWindow("09:00-17:00"), "09:00-17:00")
+        XCTAssertEqual(normalizedTimeWindow("9:00-17:30"), "9:00-17:30")
+        XCTAssertEqual(normalizedTimeWindow("  22:00-06:00 "), "22:00-06:00")
+    }
+
+    func testNormalizedTimeWindowRejectsInvalid() {
+        // The cases Copilot flagged: a natural-language cue and a bad clock must
+        // return nil so they never count as an if-then cue (the server would only
+        // bounce them back as dropped-item errors).
+        XCTAssertNil(normalizedTimeWindow("after dinner"))
+        XCTAssertNil(normalizedTimeWindow("9pm-10pm"))
+        XCTAssertNil(normalizedTimeWindow("25:00-26:00"))  // hours out of range
+        XCTAssertNil(normalizedTimeWindow("09:60-10:00"))  // minutes out of range
+        XCTAssertNil(normalizedTimeWindow("09:00-09:00"))  // equal endpoints
+        XCTAssertNil(normalizedTimeWindow("09:00"))        // not a band
+        XCTAssertNil(normalizedTimeWindow(""))
+    }
+
     // MARK: /braindump round-trip (server-parse path) over the stub
 
     func testBraindumpTextPostsAndDecodes() async throws {
@@ -167,5 +190,46 @@ final class BrainDumpTests: XCTestCase {
         XCTAssertEqual(acts.count, 1)
         XCTAssertEqual(acts.first?["op"] as? String, "add_todo")
         XCTAssertEqual(acts.first?["title"] as? String, "Call the dentist")
+        // A parse with no behavioral asides still sends observations as an empty
+        // array (never omitted), matching the endpoint contract.
+        let obs = try XCTUnwrap(parse["observations"] as? [[String: Any]])
+        XCTAssertTrue(obs.isEmpty)
+    }
+
+    /// When the on-device pass surfaced behavioral asides, they ride along in the
+    /// same `parse` body under `observations` (the widened schema) — a regression
+    /// in `braindump(parse:)` dropping them is caught here.
+    func testBraindumpParseSendsObservations() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        var seenBody: Data?
+        StubURLProtocol.responder = { [self] req in
+            seenBody = bodyData(req)
+            return (200, Data(#"{"reply":"noted","actions":[],"errors":[],"proposals":[],"provider":{"assistant":"on_device","sensor":"on_device"}}"#.utf8))
+        }
+        let parsed = ParsedBrainDump(
+            reply: "noted",
+            wireActions: [[
+                "op": "add_if_then", "cue_text": "when I get home",
+                "action_text": "take my meds", "event": "arrive_home",
+            ]],
+            wireObservations: [[
+                "kind": "episode", "episode_type": "task", "outcome": "miss",
+                "context": "admin", "notes": "blew off admin again", "rationale": "blew off admin again",
+            ]])
+        _ = try await client().braindump(parse: parsed)
+
+        let obj = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(seenBody)) as? [String: Any])
+        let parse = try XCTUnwrap(obj["parse"] as? [String: Any])
+        // The if-then plan rides in `actions`, the behavioral aside in `observations`.
+        let acts = try XCTUnwrap(parse["actions"] as? [[String: Any]])
+        XCTAssertEqual(acts.first?["op"] as? String, "add_if_then")
+        XCTAssertEqual(acts.first?["event"] as? String, "arrive_home")
+        let obs = try XCTUnwrap(parse["observations"] as? [[String: Any]])
+        XCTAssertEqual(obs.count, 1)
+        XCTAssertEqual(obs.first?["kind"] as? String, "episode")
+        XCTAssertEqual(obs.first?["episode_type"] as? String, "task")
+        XCTAssertEqual(obs.first?["outcome"] as? String, "miss")
+        XCTAssertEqual(obs.first?["notes"] as? String, "blew off admin again")
     }
 }

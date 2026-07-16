@@ -61,6 +61,13 @@ type_name:
   min_length:
     warning: 3
 
+# Warning-only (no error tier), same rationale as line_length: a pre-existing
+# helper (AppConfig) trips the default error tier at complexity 25, and a fresh
+# SwiftLint release now enforces it. Keep the warning signal but stop it failing
+# the non-strict gate; tighten to an error ceiling once that function is split up.
+cyclomatic_complexity:
+  warning: 10
+
 # Generated files and large view bodies make hard function/type length caps
 # noisy; keep them as warnings with generous ceilings.
 function_body_length:

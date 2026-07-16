@@ -210,6 +210,64 @@ def test_on_device_parse_drops_off_allowlist_observations(store):
     assert [c.payload["key"] for c in plan.candidates] == ["preferred_briefing_format"]
 
 
+def test_on_device_parse_if_then_and_episode(store):
+    """The shapes the widened iOS on-device parser now emits survive the gates.
+
+    The native client learned to produce two more kinds on-device (roadmap M1):
+    an ``add_if_then`` action (with a machine-detectable cue) and a behavioral
+    ``episode`` observation. Both go through the identical no-model gates — the
+    plan validates the if-then into a previewable action and records the episode
+    as a pending candidate — so the client can widen without any server change.
+    """
+    plan = plan_braindump(
+        "",
+        store,
+        assistant_client=_boom_client(),
+        sensor_client=_boom_client(),
+        parse=OnDeviceParse(
+            actions=[
+                {
+                    "op": "add_if_then",
+                    "cue_text": "when I get home",
+                    "action_text": "take my meds",
+                    "event": "arrive_home",
+                }
+            ],
+            observations=[
+                {
+                    "kind": "episode",
+                    "episode_type": "task",
+                    "outcome": "miss",
+                    "context": "admin",
+                    "notes": "blew off admin again",
+                    "rationale": "blew off admin again",
+                }
+            ],
+        ),
+    )
+    assert [a.op for a in plan.actions] == ["add_if_then"]
+    assert [c.payload["episode_type"] for c in plan.candidates] == ["task"]
+    assert plan.candidates[0].payload["outcome"] == "miss"
+    # Still preview/pending only — planning writes nothing.
+    assert store.list_proposals("pending") == []
+
+
+def test_on_device_parse_if_then_without_cue_drops(store):
+    """An if-then plan the client failed to give a detectable cue can't fire, so
+    the server drops it (a defense-in-depth mirror of the client-side guard)."""
+    plan = plan_braindump(
+        "",
+        store,
+        parse=OnDeviceParse(
+            actions=[
+                {"op": "add_if_then", "cue_text": "when I feel like it", "action_text": "tidy up"}
+            ],
+        ),
+    )
+    assert plan.actions == []
+    assert plan.errors  # reported as a drop, not silently accepted
+
+
 def test_on_device_parse_empty_yields_empty_plan(store):
     """An empty parse is a valid no-op, not a crash — no reply, no items.
 
