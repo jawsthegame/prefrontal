@@ -436,7 +436,6 @@ struct FactEditor: Identifiable {
 struct FactEditorSheet: View {
     let target: FactEditor
     let categories: [String]
-    let onError: (String) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var category: String
@@ -445,10 +444,9 @@ struct FactEditorSheet: View {
     @State private var error: String?
     @State private var saving = false
 
-    init(target: FactEditor, categories: [String], onError: @escaping (String) -> Void) {
+    init(target: FactEditor, categories: [String]) {
         self.target = target
         self.categories = categories
-        self.onError = onError
         _category = State(initialValue: target.category ?? categories.first ?? "sizes")
         _item = State(initialValue: target.item ?? "")
         _value = State(initialValue: target.value ?? "")

@@ -211,7 +211,6 @@ struct RosterCard: View {
     let reload: () async -> Void
     let onAddChild: () -> Void
     let onAddPet: () -> Void
-    let onError: (String) -> Void
     @State private var factEditor: FactEditor?
 
     private func block(_ blocks: [FactBlock], childId: Int) -> FactBlock? {
@@ -219,10 +218,13 @@ struct RosterCard: View {
     }
 
     /// The category keys the add-fact picker offers — server vocab, or the known
-    /// set as a fallback if the payload didn't carry it.
+    /// set as a fallback if the payload didn't carry it (nil *or* empty, so the
+    /// picker always has options and the seeded selection matches a tag).
     private var categoryKeys: [String] {
-        vocab?.factCategories ?? ["sizes", "routine", "food", "health",
-                                  "school", "contact", "location", "services"]
+        let keys = vocab?.factCategories ?? []
+        return keys.isEmpty
+            ? ["sizes", "routine", "food", "health", "school", "contact", "location", "services"]
+            : keys
     }
 
     var body: some View {
@@ -257,7 +259,7 @@ struct RosterCard: View {
             }
         }
         .sheet(item: $factEditor, onDismiss: { Task { await reload() } }) { ed in
-            FactEditorSheet(target: ed, categories: categoryKeys, onError: onError)
+            FactEditorSheet(target: ed, categories: categoryKeys)
         }
     }
 
