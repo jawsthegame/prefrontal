@@ -21,6 +21,8 @@ struct HouseholdSettingsView: View {
     @State private var error: String?
     @State private var savingCheckin = false
     @State private var checkinSaved = false
+    /// Per-toggle write generation, so a stale failure can't revert a newer flip.
+    @State private var writeGen: [String: Int] = [:]
 
     private static let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -131,7 +133,8 @@ struct HouseholdSettingsView: View {
 
     private var digestSection: some View {
         Section {
-            Toggle("Daily digest", isOn: writeThrough($digestOn) { try await $0.setDigest(enabled: $1) })
+            Toggle("Daily digest",
+                   isOn: writeThrough("digest", $digestOn) { try await $0.setDigest(enabled: $1) })
         } footer: {
             Text("Once a day, catch up on what your co-parent changed on the sheet since you last looked. Silent when nothing's new.")
         }
@@ -139,7 +142,8 @@ struct HouseholdSettingsView: View {
 
     private var balanceSection: some View {
         Section {
-            Toggle("Load balance", isOn: writeThrough($balanceOn) { try await $0.setBalance(enabled: $1) })
+            Toggle("Load balance",
+                   isOn: writeThrough("balance", $balanceOn) { try await $0.setBalance(enabled: $1) })
         } footer: {
             Text("A gentle, no-judgment view of who's been keeping the sheet up — sheet edits, stars, and chores done, plus the routines each parent carries.")
         }
@@ -148,18 +152,26 @@ struct HouseholdSettingsView: View {
     /// Wrap a `Bool` state binding so flipping the toggle writes through `op`
     /// optimistically, reverting the local value (and surfacing the error) if the
     /// write fails — so the switch never lies about the server's state.
-    private func writeThrough(_ source: Binding<Bool>,
+    ///
+    /// Each flip bumps a per-toggle generation token; a failure only reverts when
+    /// it's still the latest write for that toggle, so a slow earlier failure can't
+    /// clobber a newer flip the user has since made (out-of-order results).
+    private func writeThrough(_ key: String, _ source: Binding<Bool>,
                               _ op: @escaping (APIClient, Bool) async throws -> Void) -> Binding<Bool> {
         Binding(
             get: { source.wrappedValue },
             set: { newValue in
                 source.wrappedValue = newValue
+                let token = (writeGen[key] ?? 0) + 1
+                writeGen[key] = token
                 Task {
                     do {
                         try await withAPI { try await op($0, newValue) }
-                        error = nil
+                        if writeGen[key] == token { error = nil }
                         await reload()
                     } catch {
+                        // Ignore a stale failure the user has already superseded.
+                        guard writeGen[key] == token else { return }
                         self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                         source.wrappedValue = !newValue
                     }

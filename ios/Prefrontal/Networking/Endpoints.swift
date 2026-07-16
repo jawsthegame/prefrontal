@@ -454,7 +454,11 @@ extension APIClient {
         var body: [String: Any] = ["enabled": enabled]
         // The server rejects enabling without both; a disabled config may omit them.
         body["day"] = day ?? NSNull()
-        body["time"] = (time?.isEmpty == false ? time! : nil) ?? NSNull()
+        if let time, !time.isEmpty {
+            body["time"] = time
+        } else {
+            body["time"] = NSNull()
+        }
         try await post("household/checkin", json: body)
     }
     func setDigest(enabled: Bool) async throws {
