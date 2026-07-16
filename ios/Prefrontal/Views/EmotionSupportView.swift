@@ -98,7 +98,7 @@ struct EmotionSupportView: View {
             }
             MarkdownText(text: s.text)
             HStack(spacing: 12) {
-                crisisLink("Call 988", systemImage: "phone.fill", url: "tel://988")
+                crisisLink("Call 988", systemImage: "phone.fill", url: "tel:988")
                 crisisLink("Text 988", systemImage: "message.fill", url: "sms:988")
             }
             .padding(.top, 4)
