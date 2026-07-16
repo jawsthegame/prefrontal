@@ -187,3 +187,53 @@ def test_coaching_state_backfill_noop_on_empty_db(tmp_path):
     n = conn.execute("SELECT COUNT(*) FROM coaching_state").fetchone()[0]
     assert n == 0
     conn.close()
+
+
+def test_responsive_hours_seed_default_is_22():
+    """The seed must match coaching.DEFAULT_RESPONSIVE_END, not the old 14:00 bug."""
+    from prefrontal.coaching import DEFAULT_RESPONSIVE_END
+    from prefrontal.memory._helpers import DEFAULT_COACHING_STATE
+
+    seed = dict((k, v) for k, v, _ in DEFAULT_COACHING_STATE)
+    assert seed["responsive_hours_end"] == "22:00"
+    assert seed["responsive_hours_end"] == f"{DEFAULT_RESPONSIVE_END:02d}:00"
+
+
+def test_responsive_hours_seed_reset_fixes_inferred_not_explicit(tmp_path):
+    """The one-time reset moves the buggy seeded 14:00 to 22:00, but leaves a value
+    the user deliberately chose (source ``explicit``) untouched, and is idempotent."""
+    from prefrontal.memory.db import init_db
+    from prefrontal.memory.migrate import reset_seeded_responsive_hours_end
+    from prefrontal.memory.store import MemoryStore, provision_user
+
+    db = tmp_path / "prefrontal.db"
+    conn = init_db(str(db))
+    store = MemoryStore(conn)
+    old, _ = provision_user(store, "old", display_name="Old", is_operator=True)
+    keep, _ = provision_user(store, "keep", display_name="Keep")
+    old_s = store.scoped(old["id"])
+    keep_s = store.scoped(keep["id"])
+    # One user still carries the old buggy seed; another deliberately set 14:00.
+    old_s.set_state("responsive_hours_end", "14:00", source="inferred")
+    keep_s.set_state("responsive_hours_end", "14:00", source="explicit")
+    conn.commit()
+
+    reset_seeded_responsive_hours_end(conn)
+
+    assert old_s.get_state("responsive_hours_end") == "22:00"   # buggy seed corrected
+    assert keep_s.get_state("responsive_hours_end") == "14:00"  # explicit choice kept
+    # Idempotent: nothing left matching 14:00/inferred → a re-run is a no-op.
+    reset_seeded_responsive_hours_end(conn)
+    assert old_s.get_state("responsive_hours_end") == "22:00"
+    conn.close()
+
+
+def test_responsive_hours_seed_reset_noop_on_empty_db(tmp_path):
+    """No users yet → the reset does nothing and doesn't raise."""
+    from prefrontal.memory.db import init_db
+    from prefrontal.memory.migrate import reset_seeded_responsive_hours_end
+
+    db = tmp_path / "empty.db"
+    conn = init_db(str(db))
+    reset_seeded_responsive_hours_end(conn)  # no rows → no-op
+    conn.close()

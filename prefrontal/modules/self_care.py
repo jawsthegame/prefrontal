@@ -32,9 +32,10 @@ window-bounded one, an **end hour**):
   a bedtime is a personal preference (like meds). From ``winddown_start_hour``
   (default 21, in the *evening*) it nudges "start winding down for bed" every
   ``winddown_reask_minutes`` until one "Winding down" settles it for the night.
-  Being an *evening* nudge it collides with the shared **daytime** responsive-hours
-  window (with the seeded 14:00 end a 21:00 cue would never land), so by default it
-  **bypasses quiet hours** (``winddown_bypass_quiet_hours``) and self-bounds with
+  Being an *evening* nudge it can collide with the shared **daytime** responsive-hours
+  window (a user who narrows ``responsive_hours_end`` below their bedtime would never
+  see a 21:00 cue), so by default it **bypasses quiet hours**
+  (``winddown_bypass_quiet_hours``) and self-bounds with
   its own ``winddown_end_hour`` (default 23) instead — the bedtime it used to
   approximate by leaning on the engine's gate. Turn the bypass off to restore the
   "leans on responsive hours" behavior; the end hour keeps it from nagging into the
@@ -128,10 +129,10 @@ DEFAULT_BIOBREAK_DAILY_TARGET = 6
 #: run-up to bed. A bedtime is opinionated, so like meds it's **off even when
 #: self_care is on** — opt in via ``winddown_enabled``.
 #:
-#: **Quiet-hours bypass + its own end hour.** An evening nudge collides with the
-#: shared *daytime* responsive-hours window: with the seeded ``responsive_hours_end``
-#: of 14:00, a 21:00 wind-down cue would be silenced before it ever landed. So
-#: wind-down **bypasses quiet hours** by default (``winddown_bypass_quiet_hours``)
+#: **Quiet-hours bypass + its own end hour.** An evening nudge can collide with the
+#: shared *daytime* responsive-hours window: a user who narrows ``responsive_hours_end``
+#: below their bedtime would have a 21:00 wind-down cue silenced before it ever landed.
+#: So wind-down **bypasses quiet hours** by default (``winddown_bypass_quiet_hours``)
 #: and instead self-bounds with its own ``winddown_end_hour`` (default 23) — the
 #: bedtime it used to lean on the engine's gate to approximate. Turn the bypass off
 #: to restore the old "leans on responsive hours" behavior; either way the end hour
@@ -176,7 +177,7 @@ DEFAULT_MOVEMENT_DAILY_TARGET = 1
 #: ``self_care_review_hour``, and only when there's a gap worth naming (a clean day
 #: stays silent). Like wind-down it **bypasses the shared daytime quiet-hours gate**
 #: by default (``self_care_review_bypass_quiet_hours``) — an end-of-day recap that a
-#: seeded ``responsive_hours_end`` of 14:00 would otherwise silence is no recap at
+#: narrowed ``responsive_hours_end`` would otherwise silence is no recap at
 #: all. It can't nag: it fires once per day (dedup) and only from the review hour
 #: onward on the *same* local day, so an early-morning tick never triggers it. Turn
 #: the bypass off to hold it to responsive hours instead.

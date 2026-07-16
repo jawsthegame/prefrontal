@@ -485,6 +485,32 @@ def backfill_project_ranks(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def reset_seeded_responsive_hours_end(conn: sqlite3.Connection) -> None:
+    """One-time correction of the buggy ``responsive_hours_end`` seed default.
+
+    The seed in :data:`prefrontal.memory._helpers.DEFAULT_COACHING_STATE` used to
+    write ``"14:00"`` (source ``inferred``), overriding the sensible code default
+    ``coaching.DEFAULT_RESPONSIVE_END`` (22). That put every user's responsive
+    window at 08:00–14:00, so *all* non-critical cues were held after 2pm. The seed
+    is now ``"22:00"``, but users provisioned under the old seed keep their stored
+    ``14:00`` until this fixes it.
+
+    Idempotent and conservative: only rows still holding the *exact old seed value*
+    (``"14:00"``) with source ``inferred`` are moved to ``"22:00"`` — a value a user
+    deliberately chose is source ``explicit`` and is left untouched. A no-op once
+    everyone reads ``22:00`` (nothing matches ``14:00`` on a re-run), on a
+    fresh/empty DB, and before the multi-tenant step gives ``coaching_state`` its
+    ``user_id`` shape.
+    """
+    if "user_id" not in _table_columns(conn, "coaching_state"):
+        return  # legacy/absent shape — nothing to correct yet
+    conn.execute(
+        "UPDATE coaching_state SET value = '22:00' "
+        "WHERE key = 'responsive_hours_end' AND value = '14:00' AND source = 'inferred'"
+    )
+    conn.commit()
+
+
 def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     """Apply every pending schema migration, in order, before ``schema.sql`` runs.
 
@@ -506,6 +532,10 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     4. **Project-rank back-fill** — :func:`backfill_project_ranks`, giving existing
        active projects a forced ``rank`` (the column added in step 2 arrives NULL).
        Absent-only; a no-op on a fresh/empty DB.
+    5. **Responsive-hours seed fix** — :func:`reset_seeded_responsive_hours_end`,
+       a one-time correction of the old ``responsive_hours_end`` seed (``14:00`` →
+       ``22:00``) for users provisioned under it. Value-and-source targeted; a no-op
+       on a fresh/empty DB and once corrected.
 
     All steps run *before* ``schema.sql`` is (re)applied: step 1 must, because the
     new schema's indexes reference ``user_id``; steps 2–4 safely can, because they
@@ -529,4 +559,5 @@ def run_migrations(conn: sqlite3.Connection) -> MigrationResult:
     backfill_added_columns(conn)
     backfill_coaching_state_defaults(conn)
     backfill_project_ranks(conn)
+    reset_seeded_responsive_hours_end(conn)
     return result
