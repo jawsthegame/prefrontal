@@ -1736,6 +1736,26 @@ def test_commitment_digest_suffix(store):
     assert commitment_digest_suffix(store, cid) == " · moved 2×"
 
 
+def test_commitment_digest_suffixes_batched(store):
+    from prefrontal.memory.behavioral import commitment_digest_suffixes
+
+    moved, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-02 09:00:00", external_id="cal:1"
+    )
+    still, _ = store.upsert_commitment(
+        title="Standup", start_at="2026-08-01 10:00:00", external_id="cal:2"
+    )
+    # One batched call covers both; a never-moved commitment maps to "".
+    suffixes = commitment_digest_suffixes(store, [moved, still])
+    assert suffixes == {moved: " · moved 1×", still: ""}
+    # The repo batch groups counts in a single query; absent ids => count 0.
+    assert store.reschedule_counts([moved, still, 9999]) == {moved: 1}
+    assert store.reschedule_counts([]) == {}
+
+
 def test_api_commitment_behavior(client, store_open):
     cid, _ = store_open.upsert_commitment(
         title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"

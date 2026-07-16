@@ -36,7 +36,7 @@ from prefrontal.focus_balance import balance_summary_line, build_focus_balance
 from prefrontal.impact import fragile_stretch, utcnow
 from prefrontal.memory.behavioral import (
     behavior_digest_suffix,
-    commitment_digest_suffix,
+    commitment_digest_suffixes,
 )
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
@@ -234,10 +234,12 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     # Reschedule continuity: tag each of today's commitments with a "· moved N×"
     # suffix (or "") from its commitment_events history, so a calendar item that
     # keeps shifting reads as such on the schedule line — the calendar twin of the
-    # avoidance surfaces' continuity. Every shown item is queried (all of today's
-    # commitments render), so there's no over-computation to slice around.
+    # avoidance surfaces' continuity. Fetched in a single batched query (not one
+    # COUNT per item), and set on every today row so structured consumers get it
+    # even when the short-format render caps the visible schedule at five.
+    suffixes = commitment_digest_suffixes(store, [c["id"] for c in today])
     for c in today:
-        c["continuity"] = commitment_digest_suffix(store, c["id"])
+        c["continuity"] = suffixes.get(c["id"], "")
 
     # Double-bookings across today's schedule (regardless of the current hour),
     # which is what a morning overview cares about — minus any the user has

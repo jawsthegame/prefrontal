@@ -209,6 +209,26 @@ class ScheduleRepo(Repo):
         ).fetchone()
         return int(row[0]) if row is not None else 0
 
+    def reschedule_counts(self, commitment_ids: list[int]) -> dict[int, int]:
+        """Return ``{commitment_id: reschedule_count}`` for the given ids, in one query.
+
+        Batches :meth:`count_commitment_events` across many commitments, so a caller
+        annotating a whole set (the briefing's entire "today" schedule) makes a
+        single round-trip instead of an N+1. Ids with no reschedule history are
+        simply absent from the result (i.e. count 0).
+        """
+        ids = [int(c) for c in commitment_ids]
+        if not ids:
+            return {}
+        placeholders = sql_placeholders(len(ids))
+        rows = self.conn.execute(
+            f"SELECT commitment_id, COUNT(*) AS n FROM commitment_events "
+            f"WHERE user_id = ? AND event_type = 'rescheduled' "
+            f"AND commitment_id IN ({placeholders}) GROUP BY commitment_id",
+            [self._uid(), *ids],
+        ).fetchall()
+        return {int(r["commitment_id"]): int(r["n"]) for r in rows}
+
     def upcoming_commitments(
         self,
         limit: int = 50,
