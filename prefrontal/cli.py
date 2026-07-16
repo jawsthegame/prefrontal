@@ -488,6 +488,8 @@ def _cmd_household(args: argparse.Namespace) -> int:
             return _checkin_cli(store, args, settings)
         elif args.household_action == "digest-check":
             return _digest_cli(store, args, settings)
+        elif args.household_action == "trip-checkin-check":
+            return _trip_checkin_cli(store, args, settings)
         elif args.household_action == "balance":
             return _balance_cli(store, args, settings)
         elif args.household_action == "shopping":
@@ -991,6 +993,35 @@ def _digest_cli(store, args, settings) -> int:
         print(f"  → {item['handle']}: {item['count']} change(s) — {state} ({row['detail']})")
     if not result["sent"]:
         print("No digests to send (everyone's caught up or recently digested).")
+    return 0
+
+
+def _trip_checkin_cli(store, args, settings) -> int:
+    """Prompt any parent who's out on a trip to post a status to the other.
+
+    The CLI twin of ``POST /webhooks/household/trip-checkin/check`` — for a launchd
+    trigger or a manual test. Self-gating: silent when the feature's off, no one's
+    out, or the current trip was already prompted.
+    """
+    from prefrontal.household import run_trip_checkin_sweep
+
+    scoped = _resolve_user_store(store, args.user)
+    if scoped.household_id_or_none() is None:
+        print("That user isn't in a household.", file=sys.stderr)
+        return 1
+    result = run_trip_checkin_sweep(scoped, settings=settings)
+    if result["reason"] == "not_shared":
+        print("Single-parent household — the trip check-in is off.")
+        return 0
+    if result["reason"] == "disabled":
+        print("The trip check-in is off for this household.")
+        return 0
+    for item in result["sent"]:
+        row = item["delivery"]
+        state = "sent" if row["delivered"] else "not sent"
+        print(f"  → {item['handle']}: trip {item['trip_id']} — {state} ({row['detail']})")
+    if not result["sent"]:
+        print("No trip check-ins to send (no one's out past the threshold).")
     return 0
 
 
@@ -4135,6 +4166,11 @@ def build_parser() -> argparse.ArgumentParser:
         "digest-check", help="Push each parent the other's unseen sheet changes."
     )
     h_dig.add_argument("--user", default=None, help="Handle of a household member.")
+    h_tci = house_sub.add_parser(
+        "trip-checkin-check",
+        help="Prompt a parent who's out to post a status to the other.",
+    )
+    h_tci.add_argument("--user", default=None, help="Handle of a household member.")
     h_bal = house_sub.add_parser(
         "balance", help="Print the gentle 'who's keeping the sheet up' view."
     )

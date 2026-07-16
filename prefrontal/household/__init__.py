@@ -874,6 +874,84 @@ def run_digest_sweep(
     return {"sent": sent, "checked_at": now_str, "reason": None}
 
 
+#: While a parent's trip runs past this many minutes, the trip check-in sweep
+#: prompts them once to post a status to the other co-parent — short enough to be
+#: useful "while I'm out", long enough that a quick errand doesn't nag.
+TRIP_CHECKIN_MIN_MINUTES = 60
+
+
+def run_trip_checkin_sweep(
+    store: MemoryStore,
+    *,
+    settings: Any,
+    now: datetime | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Prompt any parent who's out on a trip to post a one-tap status to the other.
+
+    Per member, if they have an active trip past :data:`TRIP_CHECKIN_MIN_MINUTES`
+    and we haven't already prompted for *this* trip, send just that member the
+    one-tap status prompt (which relays to the other co-parent on tap — see
+    :func:`prefrontal.nudges.apply_nudge_action`). Once per trip: the out-parent's
+    own ``coaching_state`` stamps ``trip_checkin_last_trip``. Silent when no one's
+    out; a solo or trip-checkin-off household is skipped.
+
+    Args:
+        store: A store scoped to a household member.
+        settings: Operator settings (timezone + one-tap signing origin/secret).
+        now: Optional naive-UTC "now".
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+
+    Returns:
+        ``{"sent": [{handle, trip_id, delivery}], "checked_at": <TS_FMT>,
+        "reason": None | "not_shared" | "disabled"}``.
+    """
+    from prefrontal.integrations.delivery import (
+        deliver_to_member,
+        household_trip_checkin_notice,
+    )
+
+    now = now or utcnow()
+    now_str = now.strftime(TS_FMT)
+    if not store.is_shared_household():
+        return {"sent": [], "checked_at": now_str, "reason": "not_shared"}
+    if not store.get_trip_checkin_enabled():
+        return {"sent": [], "checked_at": now_str, "reason": "disabled"}
+    hid = store.household_id_or_none()
+    members = [
+        m for m in store.household_members(hid)
+        if m.get("status") in (None, "active")
+    ]
+    sent: list[dict[str, Any]] = []
+    for member in members:
+        m_store = store.scoped(member["id"])
+        trip = m_store.active_trip()
+        if trip is None or (trip.get("elapsed_minutes") or 0) < TRIP_CHECKIN_MIN_MINUTES:
+            continue
+        trip_id = trip["id"]
+        if m_store.get_state("trip_checkin_last_trip") == str(trip_id):
+            continue  # already prompted once for this trip
+        others = [o for o in members if o["id"] != member["id"]]
+        if not others:
+            continue  # nobody to update (shouldn't happen in a shared household)
+        other_name = (
+            (others[0].get("display_name") or others[0]["handle"])
+            if len(others) == 1 else "your co-parent"
+        )
+        prompt = f"You've been out a while — tap to let {other_name} know how it's going."
+        delivery = deliver_to_member(
+            m_store,
+            household_trip_checkin_notice(prompt, trip_id, channel="push"),
+            handle=member["handle"], settings=settings, client=client,
+            base_url=settings.oauth_base_url, secret=settings.session_secret,
+        )
+        m_store.set_state("trip_checkin_last_trip", str(trip_id), source="inferred")
+        sent.append(
+            {"handle": member["handle"], "trip_id": trip_id, "delivery": delivery}
+        )
+    return {"sent": sent, "checked_at": now_str, "reason": None}
+
+
 # --- render ------------------------------------------------------------------
 
 

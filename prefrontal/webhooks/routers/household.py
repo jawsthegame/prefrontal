@@ -44,6 +44,7 @@ from prefrontal.household import (
     run_chores_check,
     run_digest_sweep,
     run_star_prompt_sweep,
+    run_trip_checkin_sweep,
     unseen_changes,
     week_key,
 )
@@ -87,6 +88,7 @@ from prefrontal.webhooks.schemas import (
     ShoppingGot,
     StarAward,
     TierConfig,
+    TripCheckinConfig,
 )
 from prefrontal.webhooks.services import RouterServices
 
@@ -583,6 +585,31 @@ def build_router(services: RouterServices) -> APIRouter:
         just that member a warm catch-up. Silent when nothing's new; opt-in.
         """
         result = run_digest_sweep(ctx.store, settings=resolved_settings)
+        return {"sent": result["sent"], "checked_at": result["checked_at"]}
+
+    # -- trip check-in --------------------------------------------------------
+
+    @router.post("/household/trip-checkin", tags=["household"])
+    def set_trip_checkin(
+        payload: TripCheckinConfig,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Turn the opt-in trip check-in prompt on or off (shared by both parents)."""
+        ctx.store.set_trip_checkin_enabled(payload.enabled)
+        return {"ok": True, "enabled": payload.enabled}
+
+    @router.post("/webhooks/household/trip-checkin/check", tags=["household"])
+    def trip_checkin_check(
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Prompt any parent who's out on a trip to post a one-tap status to the other.
+
+        A periodic trigger POSTs here; per member we check for an active trip past a
+        short threshold and — once per trip — send just that member the one-tap
+        status prompt (which relays to the other co-parent on tap). Silent when no
+        one's out or nothing's due; opt-in.
+        """
+        result = run_trip_checkin_sweep(ctx.store, settings=resolved_settings)
         return {"sent": result["sent"], "checked_at": result["checked_at"]}
 
     # -- shared shopping list -------------------------------------------------

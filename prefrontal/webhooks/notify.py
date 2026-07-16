@@ -73,6 +73,13 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Multi-day-absence proposal — one tap marks the member away, so their chores
     # reassign to the present co-parent for the trip (target rides the trip id).
     "away": (("away_confirm", "✅ Mark me away"),),
+    # Trip check-in — while a parent is out, one tap posts a status to the other
+    # co-parent (ntfy caps at 3). Target rides the trip id; the tap relays a notice.
+    "trip_checkin": (
+        ("trip_status_homeward", "🏠 Heading home"),
+        ("trip_status_late", "⏰ Running late"),
+        ("trip_status_ok", "👍 All good"),
+    ),
     # Closed-loop trip label ask — the one-tap "file into a life-sphere" buttons
     # are built per-user from the configured quick-file domains (ntfy caps at 3),
     # not from this static map. See :func:`trip_label_actions`.

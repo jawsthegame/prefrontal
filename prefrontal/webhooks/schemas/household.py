@@ -111,6 +111,14 @@ class BalanceConfig(BaseModel):
         default=False, description="Opt in to the gentle 'who's keeping the sheet up' view."
     )
 
+class TripCheckinConfig(BaseModel):
+    """Body of ``POST /household/trip-checkin`` — toggle the opt-in trip check-in."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Opt in to the 'keep your co-parent posted while you're out' prompt.",
+    )
+
 class InviteCreate(BaseModel):
     """Body of ``POST /household/invites`` — optionally text the link to a co-parent.
 

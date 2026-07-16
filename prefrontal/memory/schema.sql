@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS households (
     -- picture from updated_by/awarded_by counts. Off by default; shown on /kids
     -- (no push). Derived on read, so there's nothing else to store.
     balance_enabled      INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
+    -- Opt-in "trip check-in": while a parent is out on a trip past a short
+    -- threshold, prompt them with a one-tap status ("heading home"/"running
+    -- late"/"all good") that relays to the OTHER co-parent. Off by default. The
+    -- once-per-trip dedup stamp lives in the out-parent's coaching_state
+    -- (trip_checkin_last_trip). See run_trip_checkin_sweep in prefrontal.household.
+    trip_checkin_enabled INTEGER NOT NULL DEFAULT 0,  -- 0/1, opt-in
     -- Optional "we're away" window (vacation / travel). A single household-wide
     -- window of inclusive local dates; while today falls within it, chores marked
     -- away_behavior='suppress' are skipped. All NULL = not away. `away_note` is a

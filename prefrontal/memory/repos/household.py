@@ -646,6 +646,30 @@ class HouseholdRepo(Repo):
         )
         self.conn.commit()
 
+    # -- trip check-in --------------------------------------------------------
+    #
+    # Opt-in household toggle; while a parent is out on a trip, prompt them once
+    # (per trip) with a one-tap status that relays to the other co-parent. The
+    # once-per-trip dedup stamp lives in the out-parent's own coaching_state
+    # (trip_checkin_last_trip); the sweep + relay logic is in prefrontal.household
+    # and prefrontal.nudges.
+
+    def get_trip_checkin_enabled(self) -> bool:
+        """Whether the opt-in trip check-in prompt is on for this household."""
+        row = self.conn.execute(
+            "SELECT trip_checkin_enabled FROM households WHERE id = ?",
+            (self._household_id(),),
+        ).fetchone()
+        return bool(row["trip_checkin_enabled"]) if row is not None else False
+
+    def set_trip_checkin_enabled(self, enabled: bool) -> None:
+        """Turn the trip check-in prompt on or off for this household."""
+        self.conn.execute(
+            "UPDATE households SET trip_checkin_enabled = ? WHERE id = ?",
+            (1 if enabled else 0, self._household_id()),
+        )
+        self.conn.commit()
+
     # -- load balance view ----------------------------------------------------
     #
     # A gentle, opt-in "who's been keeping the sheet up" picture from provenance
