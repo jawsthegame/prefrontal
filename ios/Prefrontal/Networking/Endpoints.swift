@@ -375,6 +375,30 @@ extension APIClient {
         if let reflection, !reflection.isEmpty { body["reflection"] = reflection }
         return try await post("webhooks/trip/retro", json: body, as: TripRetroResult.self)
     }
+
+    // Trips list — active + recent + the unlabeled trips awaiting a name, with the
+    // label-form vocabularies. Pure read, safe to poll.
+    func trips() async throws -> TripsSnapshot { try await get("trips", as: TripsSnapshot.self) }
+
+    /// Close a specific trip's retrospective — label + category + domain +
+    /// reflection — in one call (`POST /webhooks/trip/retro`). The reflection, when
+    /// present, is classified into an outcome that feeds the learning loop.
+    func tripRetro(tripId: Int, label: String?, category: String? = nil,
+                   domain: String? = nil, reflection: String? = nil) async throws {
+        var body: [String: Any] = ["trip_id": tripId]
+        if let label, !label.isEmpty { body["label"] = label }
+        if let category, !category.isEmpty { body["category"] = category }
+        if let domain, !domain.isEmpty { body["domain"] = domain }
+        if let reflection, !reflection.isEmpty { body["reflection"] = reflection }
+        try await post("webhooks/trip/retro", json: body)
+    }
+
+    /// (Re)file a completed trip into a life-domain without touching its label
+    /// (`POST /webhooks/trip/domain`); nil/blank clears it.
+    func setTripDomain(_ tripId: Int, domain: String?) async throws {
+        try await post("webhooks/trip/domain",
+                       json: ["trip_id": tripId, "domain": domain ?? NSNull()])
+    }
 }
 
 /// Shared household sheet — the co-parent surface. Paths mirror
