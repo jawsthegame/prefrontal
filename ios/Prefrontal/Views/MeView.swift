@@ -16,6 +16,7 @@ struct MeView: View {
                 if let r = review, r.enabled, r.hasContent { reviewCard(r) }
                 actionsCard
                 householdLink
+                peopleLink
                 insightsLink
             }
             .padding(16)
@@ -111,6 +112,29 @@ struct MeView: View {
                         Text("Household").font(.subheadline.weight(.semibold))
                             .foregroundStyle(Brand.nearWhite)
                         Text("Shared chores, shopping, kids' details, and star charts")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Navigates to the name-mention review queue — identify/dismiss people the
+    /// system picked out of ingested items.
+    private var peopleLink: some View {
+        NavigationLink {
+            PeopleQueueView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.badge.questionmark").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("People to identify").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Name new people from your mail & calendar")
                             .font(.caption).foregroundStyle(Brand.muted)
                     }
                     Spacer(minLength: 4)

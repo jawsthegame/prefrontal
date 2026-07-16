@@ -127,6 +127,43 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(s.text.contains("988"))
     }
 
+    func testPeopleQueueDecodesMentions() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/people/queue")
+            return (200, Data(#"{"mentions":[{"id":7,"name":"Sarah","source":"mail","context":"lunch with Sarah","status":"pending"}]}"#.utf8))
+        }
+        let queue = try await client().peopleQueue()
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(queue[0].id, 7)
+        XCTAssertEqual(queue[0].name, "Sarah")
+        XCTAssertEqual(queue[0].source, "mail")
+    }
+
+    func testIdentifyMentionPostsCategoryBody() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/people/mentions/7/identify")
+            XCTAssertEqual(req.httpMethod, "POST")
+            // Creates a new person (no person_id) with the chosen category fields.
+            XCTAssertEqual(req.jsonBody?["relationship"] as? String, "coworker")
+            XCTAssertEqual(req.jsonBody?["importance"] as? Int, 2)
+            XCTAssertNil(req.jsonBody?["person_id"])
+            return (200, Data(#"{"mention_id":7,"status":"identified"}"#.utf8))
+        }
+        try await client().identifyMention(7, relationship: "coworker", importance: 2)
+    }
+
+    func testDismissMentionPosts() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/people/mentions/7/dismiss")
+            XCTAssertEqual(req.httpMethod, "POST")
+            return (200, Data(#"{"mention_id":7,"status":"dismissed"}"#.utf8))
+        }
+        try await client().dismissMention(7)
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
