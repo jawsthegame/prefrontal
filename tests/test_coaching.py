@@ -1471,6 +1471,31 @@ def test_run_coaching_tick_fires_open_window_as_a_gated_push():
         conn.close()
 
 
+def test_open_window_nudge_folds_in_reschedule_continuity():
+    conn, unscoped, tid = _tick_store_with_open_window()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        # One deadline move after the first set → "rescheduled it once".
+        store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+        store.update_todo_deadline(tid, "2026-04-20 12:00:00")
+        cues = get("open_window").evaluate(store, _ctx(now=_GAP_NOON))
+        assert len(cues) == 1
+        assert "You've rescheduled it once." in cues[0].text
+    finally:
+        conn.close()
+
+
+def test_open_window_nudge_omits_continuity_without_history():
+    conn, unscoped, tid = _tick_store_with_open_window()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        cues = get("open_window").evaluate(store, _ctx(now=_GAP_NOON))
+        assert len(cues) == 1
+        assert "rescheduled" not in cues[0].text and "snoozed" not in cues[0].text
+    finally:
+        conn.close()
+
+
 def test_open_window_cue_is_receptivity_gated_like_any_nudge():
     """The gap offer is an ordinary non-critical cue, so decide()'s receptivity gate
     holds it after a run of ignored nudges and lets it through when receptive."""
