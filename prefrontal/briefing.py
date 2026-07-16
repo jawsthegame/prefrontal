@@ -43,7 +43,11 @@ from prefrontal.scheduling import (
     suggest_for_windows,
     window_config_for,
 )
-from prefrontal.todos import avoided_todos
+from prefrontal.todos import (
+    DEFAULT_CHECKPOINT_MIN_DAYS,
+    avoided_todos,
+    long_avoided_todos,
+)
 
 #: Default available-hours band (UTC hours) for fitting todos into the day.
 DEFAULT_DAY_START_HOUR = 8
@@ -177,6 +181,12 @@ class Briefing:
             blockers, most urgent first then longest-waiting, each ``{person, what, waiting_days,
             priority, blocker_id}``. Surfaced so an unblock can outrank a shiny new
             task; empty when nobody's waiting.
+        checkpoint: Items avoided long enough (past
+            :data:`~prefrontal.todos.DEFAULT_CHECKPOINT_MIN_DAYS`)
+            that they warrant a *decision* — break down / defer / drop — rather than
+            another nudge (the stuck-checkpoint's calm surface). Top few, worst-first,
+            each ``{title, days_open, todo_id}``. Partitioned out of ``avoided`` so an
+            item shows in exactly one of the two blocks; empty when nothing's that stale.
     """
 
     date: str
@@ -195,6 +205,7 @@ class Briefing:
     switch_feedback: str | None = None
     balance: str | None = None
     blocked: list[dict[str, Any]] = field(default_factory=list)
+    checkpoint: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
@@ -352,11 +363,22 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
                 }
             )
 
-    # Avoidance: the important things still open and being skipped.
+    # Avoidance, split by age into two surfaces so an item shows in exactly one:
+    #   🐢 Keeps sliding   — a normal slide (past the 3-day floor, under the
+    #                        checkpoint floor): a gentle "pick one up".
+    #   🧭 Time to decide  — avoided for weeks (≥ checkpoint floor): pushing it
+    #                        harder backfires, so surface it for a decision instead.
+    # Both draw from the same worst-first ``avoided_todos`` order.
+    def _brief_todo(a: dict[str, Any]) -> dict[str, Any]:
+        t = a["todo"]
+        return {"title": t["title"], "days_open": a["days_open"], "todo_id": t["id"]}
+
     avoided = [
-        {"title": a["todo"]["title"], "days_open": a["days_open"], "todo_id": a["todo"]["id"]}
-        for a in avoided_todos(todos, now)[:3]
-    ]
+        _brief_todo(a)
+        for a in avoided_todos(todos, now)
+        if a["days_open"] < DEFAULT_CHECKPOINT_MIN_DAYS
+    ][:3]
+    checkpoint = [_brief_todo(a) for a in long_avoided_todos(todos, now)[:3]]
 
     # Triage "surface" items — worth seeing once, no core-table write — from the
     # last day (older ones age out of view without deletion, spec §12).
@@ -413,6 +435,7 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
         switch_feedback=switch_feedback,
         balance=balance,
         blocked=blocked,
+        checkpoint=checkpoint,
     )
 
     # Closing encouragement line (spec §6.2). Lazy import: encouragement.py imports
@@ -554,7 +577,13 @@ def render_briefing(
 
     # ── 🎯 On your radar — things you could pick up ────────────────────────────
     suggested = [s for s in briefing.spare if s["suggestion"]]
-    if briefing.blocked or briefing.avoided or briefing.surfaced or suggested:
+    if (
+        briefing.blocked
+        or briefing.avoided
+        or briefing.checkpoint
+        or briefing.surfaced
+        or suggested
+    ):
         block("## 🎯 On your radar")
 
         # Waiting on you — someone else is blocked until you move. Leads the zone:
@@ -576,6 +605,16 @@ def render_briefing(
             block(
                 "🐢 Keeps sliding",
                 *[f"- {a['title']} — open {a['days_open']:g} days" for a in briefing.avoided],
+            )
+
+        # Weeks-avoided — old enough that another nudge backfires; this is the calm
+        # triage surface (the stuck-checkpoint's default). Frame it as a decision, not
+        # a scolding: make it smaller, defer it honestly, or let it go.
+        if briefing.checkpoint:
+            block(
+                "🧭 Time to decide",
+                *[f"- {a['title']} — {a['days_open']:g}d; break it down, defer, or drop it"
+                  for a in briefing.checkpoint],
             )
 
         # Worth a look — triage surfaced these (seen once, no action taken for you).

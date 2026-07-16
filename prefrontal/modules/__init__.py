@@ -21,6 +21,8 @@ assistant. Each module targets one challenge:
 - :mod:`prefrontal.modules.emotion_regulation` — on-demand, evidence-matched
   micro-skills (ACT / DBT distress-tolerance) for a hard emotional moment, with a
   crisis-safety boundary; the feeling side of overwhelm, not the task or the day.
+- :mod:`prefrontal.modules.stuck_checkpoint` — a one-time triage fork (break down /
+  defer / drop) for an item avoided for weeks, instead of escalating the nudge.
 
 Importing this package registers all built-in modules with
 :mod:`prefrontal.modules.registry`. Enable a subset via ``PREFRONTAL_MODULES``
@@ -42,6 +44,7 @@ from prefrontal.modules import (  # noqa: E402,F401  (side-effect imports, after
     open_window,
     projects,
     self_care,
+    stuck_checkpoint,
     task_paralysis,
     time_blindness,
     trip_tracking,

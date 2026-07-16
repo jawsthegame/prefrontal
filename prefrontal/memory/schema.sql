@@ -380,6 +380,7 @@ CREATE TABLE IF NOT EXISTS todos (
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at       DATETIME,                       -- when the user marked "I started this" (NULL = not started); the initiation half of the follow-through signal
+    snoozed_until    DATETIME,                       -- consciously deferred to this UTC instant; suppressed from avoidance until then (NULL = active). The stuck-checkpoint "defer" outcome.
     completed_at     DATETIME
 );
 
