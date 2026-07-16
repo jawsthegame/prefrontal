@@ -387,6 +387,12 @@ struct PrefrontalWidgetView: View {
         VStack(alignment: .leading, spacing: 1) {
             if g.notConfigured {
                 Text("Prefrontal").font(.headline); Text("Tap to connect").font(.caption)
+            } else if let intention = g.outingIntention {
+                Text("OUT").font(.caption2)
+                Text(intention).font(.headline).lineLimit(2)
+            } else if let task = g.focusTask {
+                Text("FOCUS").font(.caption2)
+                Text(task).font(.headline).lineLimit(2)
             } else if let leave = g.depLeaveBy {
                 Text("Leave \(leave.formatted(date: .omitted, time: .shortened))").font(.headline)
                 Text(g.depTitle ?? "").font(.caption).lineLimit(1)
@@ -409,7 +415,11 @@ struct PrefrontalWidgetView: View {
 
     private var accInline: some View {
         Group {
-            if let leave = g.depLeaveBy {
+            if let intention = g.outingIntention {
+                Label(intention, systemImage: "cup.and.saucer")
+            } else if let task = g.focusTask {
+                Label(task, systemImage: "scope")
+            } else if let leave = g.depLeaveBy {
                 Label("Leave \(leave.formatted(date: .omitted, time: .shortened))", systemImage: "figure.walk")
             } else if let task = g.suggestionTitle {
                 Label(task, systemImage: "checklist")
