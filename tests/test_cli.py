@@ -55,6 +55,7 @@ def test_build_parser_registers_expected_commands():
         "todo",
         "place",
         "fit",
+        "communicate",
         "mail",
         "calendar",
         "modules",
@@ -74,6 +75,7 @@ def test_build_parser_registers_expected_commands():
             "calendar": ["calendar", "list-sources"],
             "focus": ["focus", "arm"],
             "care-recipient": ["care-recipient", "list"],
+            "communicate": ["communicate", "hello"],
         }.get(command, [command])
         args = parser.parse_args(argv)
         assert hasattr(args, "func"), f"{command} did not bind a handler"
