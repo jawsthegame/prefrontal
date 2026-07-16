@@ -575,6 +575,23 @@ struct EmotionSupport: Codable {
     var isCrisis: Bool { kind == "crisis" }
 }
 
+// MARK: - People
+
+/// A queued name-mention awaiting review (`GET /people/queue`) — a name pulled
+/// from an ingested item that isn't on the roster yet. The user identifies it
+/// (creates + categorizes a person) or dismisses it; the roster then feeds the
+/// profile (learning) and todo prioritization. Server row:
+/// `prefrontal/memory/repos/people.py`.
+struct PersonMention: Codable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let source: String?
+    let context: String?
+    let status: String?
+}
+
+struct PersonMentionList: Codable { let mentions: [PersonMention] }
+
 // MARK: - Mail
 
 /// One triaged message from the mail-monitoring pipeline, a lean subset of the

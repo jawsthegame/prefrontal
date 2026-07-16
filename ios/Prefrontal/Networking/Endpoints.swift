@@ -82,6 +82,26 @@ extension APIClient {
         if let text, !text.isEmpty { json["text"] = text }
         return try await post("emotion/support", json: json, as: EmotionSupport.self)
     }
+
+    // People — the name-mention review queue. Names that ingested items used but
+    // that aren't on the roster yet; identify or dismiss each. The roster feeds the
+    // behavioral profile and todo prioritization (`prefrontal/people.py`).
+
+    /// Pending name-mentions awaiting review. Pure read, safe to poll.
+    func peopleQueue() async throws -> [PersonMention] {
+        try await get("people/queue", as: PersonMentionList.self).mentions
+    }
+    /// Identify a queued mention by creating + categorizing a new roster person
+    /// (`person_id` omitted). `relationship` must be one of the server's
+    /// `RELATIONSHIPS`; `importance` is the shared 0–3 priority scale.
+    func identifyMention(_ id: Int, relationship: String, importance: Int) async throws {
+        try await post("people/mentions/\(id)/identify",
+                       json: ["relationship": relationship, "importance": importance])
+    }
+    /// Dismiss a queued mention — not a person, or not worth tracking.
+    func dismissMention(_ id: Int) async throws {
+        try await post("people/mentions/\(id)/dismiss")
+    }
     /// The single honest next thing to do right now (powers the "one next thing"
     /// widget). One action + reason, never the whole list. Pure read, safe to poll.
     func nextThing() async throws -> NextThing { try await get("next", as: NextThing.self) }
