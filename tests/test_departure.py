@@ -273,6 +273,20 @@ def test_build_departure_message_attend_mode_consults_notes():
     assert build_departure_message(plan).endswith("Note: dial in early")
 
 
+def test_build_departure_message_folds_in_reschedule_continuity():
+    """The continuity clause rides between the ask and the note; empty appends nothing."""
+    plan = plan_departure(
+        _commit("2026-06-29 12:00:00", lead=5.0, notes="bring the card"), now=NOW
+    )
+    clause = " Heads up — this has moved 3× on the calendar."
+    msg = build_departure_message(plan, continuity=clause)
+    assert clause in msg
+    # Ordering: the time-status caution precedes the packing note.
+    assert msg.index("moved 3×") < msg.index("Note: bring the card")
+    # Empty continuity (the default) adds nothing.
+    assert "Heads up" not in build_departure_message(plan)
+
+
 # -- attend mode: "I'm already where I need to be" ---------------------------
 
 
@@ -490,6 +504,38 @@ def test_evaluate_departure_check_is_usable_without_http(store):
     again = evaluate_departure_check(store, name="Sam")
     assert again.fire is False
     assert again.reminder["level"] == "soon"
+
+
+def test_evaluate_departure_check_folds_in_commitment_continuity(store):
+    """A departure nudge for an event that's been rescheduled flags it, drawn from
+    the commitment_events log written on re-sync."""
+    store.set_location(0.0, 0.0)
+    # First sync establishes the event; a second sync moves it → one reschedule.
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(240), dest_lat=0.0, dest_lon=0.0,
+        external_id="cal:1",
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        external_id="cal:1",
+    )
+    assert store.count_commitment_events(1, "rescheduled") == 1
+
+    result = evaluate_departure_check(store, name="Sam")
+    assert result.fire is True
+    assert "moved 1× on the calendar" in result.message
+
+
+def test_evaluate_departure_check_no_continuity_without_reschedule(store):
+    """A never-moved commitment's nudge carries no continuity clause."""
+    store.set_location(0.0, 0.0)
+    store.upsert_commitment(
+        title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
+        external_id="cal:1",
+    )
+    result = evaluate_departure_check(store, name="Sam")
+    assert result.fire is True
+    assert "on the calendar" not in result.message
 
 
 def test_evaluate_departure_check_falls_back_to_stored_location(store):

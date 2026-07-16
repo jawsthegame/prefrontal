@@ -24,6 +24,7 @@ from prefrontal.departure import (
     next_departure,
     plan_upcoming_departures,
 )
+from prefrontal.memory.behavioral import commitment_nudge_clause
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -408,11 +409,17 @@ class TimeBlindnessModule(Module):
         )
         top = next_departure(plans)
         if top is not None:
-            message = build_departure_message(top, name=ctx.display_name)
+            cid = top.commitment["id"]
+            # Flag an event that keeps shifting on the calendar (behavioral.py), so
+            # a "leave now" for a thrice-moved meeting notes it might move again.
+            message = build_departure_message(
+                top,
+                name=ctx.display_name,
+                continuity=commitment_nudge_clause(store, cid),
+            )
             # Attend-mode heads_up/soon return "" (nothing to say until it starts) —
             # only emit a cue when there's real text.
             if message:
-                cid = top.commitment["id"]
                 cues.append(
                     Cue(
                         module=self.key,
