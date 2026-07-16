@@ -312,8 +312,15 @@ struct ShoppingCard: View {
                 ForEach(items) { item in
                     SwipeToReveal(label: "Remove", systemImage: "trash", tint: Brand.danger,
                                   surface: Brand.card, cornerRadius: 8) {
-                        try? await withAPI { try await $0.removeShopping(item.id) }
-                        await reload()
+                        // Surface a rejected removal instead of pretending it worked:
+                        // only reload on success, so a failed delete leaves the row
+                        // (SwipeToReveal settles it closed) and shows the error.
+                        do {
+                            try await withAPI { try await $0.removeShopping(item.id) }
+                            await reload()
+                        } catch {
+                            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                        }
                     } content: {
                         ShoppingRow(item: item, reload: reload, onError: onError)
                     }

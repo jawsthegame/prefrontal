@@ -280,8 +280,12 @@ struct ChoresStatus: Codable {
     let ids: [Int]
     let scheduled: [Int]
 
-    /// Scheduled-but-not-yet-done today — the "remaining chores" count.
-    var remaining: Int { scheduled.filter { !ids.contains($0) }.count }
+    /// Scheduled-but-not-yet-done today — the "remaining chores" count. Uses a
+    /// `Set` for the done lookup so it stays O(n+m) rather than O(n*m).
+    var remaining: Int {
+        let done = Set(ids)
+        return scheduled.filter { !done.contains($0) }.count
+    }
 }
 
 /// The result of minting an invite (`POST /household/invites`).
