@@ -305,7 +305,14 @@ outcome for this population. *(Design commandments 5, 6, 8, 9.)*
   next tick — so a bad day can't barrage. `critical`/`digest` exempt.)*
 - **Fuse if-then plans with the trigger moment.** Surface the user's pre-set
   implementation intention *at* its cue (the best-evidenced technique meeting the
-  best-timed delivery). This is a small, cheap, deeply-evidenced feature.
+  best-timed delivery). This is a small, cheap, deeply-evidenced feature. *(✅
+  shipped: `prefrontal/modules/implementation_intention.py` is a pure cue-matcher
+  registered as an enabled coaching module — each tick it checks every active
+  plan's `cue_place` / `cue_window` / `cue_event` (an AND over whatever
+  constraints the plan sets; event cues fire once at the home arrive/leave
+  crossing via edge detection, so a half-captured plan stays quiet) against the
+  `CoachContext` and returns one gentle `Cue` re-stating the pre-decided action.
+  `evaluate` stays a pure read; presence state is applied in `after_fire`.)*
 - **Wearable-as-context, honestly.** Sleep/HRV adjust *tone and expectations*
   ("slept 5h — let's pick one thing today, not ten"), never a clinical state
   claim. Respect the delayed circadian phase — don't assume 9pm wind-downs.
@@ -544,14 +551,17 @@ intervention evidence.)
    show a badge that only ever celebrates (`💚 Back at it` › `📈 Building momentum`
    › `Best stretch yet`) and nothing otherwise — never a "you lost it" moment.
    *(Now upholds commandment 4.)*
-4. **The single best-evidenced technique is absent as a primitive.**
-   Implementation intentions / if-then planning is the most strongly-evidenced
-   ADHD self-regulation *technique* (Gollwitzer & Sheeran *d* ≈ 0.65; Gawrilow &
-   Gollwitzer restored Go/No-Go inhibition to non-ADHD levels), yet **no if-then
-   concept exists in the codebase.** The location anchor is cue-shaped (right
-   idea), but there's no explicit "if [cue], then [tiny action]" builder. Low-
-   cost, deeply-evidenced, and it fuses with the coaching tick. *(The missing
-   primitive behind commandment 5; feeds M3.)*
+4. **~~The single best-evidenced technique is absent as a primitive.~~** ✅
+   **Shipped** (`implementation_intention` module + `prefrontal/memory/repos/plans.py`,
+   with a builder over `prefrontal braindump`/the assistant). Implementation
+   intentions / if-then planning is the most strongly-evidenced ADHD
+   self-regulation *technique* (Gollwitzer & Sheeran *d* ≈ 0.65; Gawrilow &
+   Gollwitzer restored Go/No-Go inhibition to non-ADHD levels). It's now an
+   explicit "if [cue], then [tiny action]" primitive: plans carry a
+   `cue_place` / `cue_window` / `cue_event` and the module re-shows the
+   pre-decided action *at* its cue on the coaching tick (see M3 above) — so the
+   location anchor's cue shape is now a first-class builder rather than an
+   implicit one. *(Was the missing primitive behind commandment 5; feeds M3.)*
 5. **The scheduling core is time-based, but the evidence favors cue-based.**
    *(narrowing — cue-based if-then now spans place, time, and home-crossing events.)*
    The flagship planning path still fits todos into free *time windows*
