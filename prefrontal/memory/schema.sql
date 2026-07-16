@@ -386,6 +386,40 @@ CREATE TABLE IF NOT EXISTS todos (
 
 CREATE INDEX IF NOT EXISTS idx_todos_user_status ON todos (user_id, status);
 
+-- Longitudinal per-todo change log — the substrate for the *queryable behavioral
+-- model*. Where `todos` holds a todo's current state, this holds its history: one
+-- row per behaviorally-meaningful change over the item's life. It exists so an
+-- agent can retrieve *entity-scoped continuity* into its context — "you've
+-- rescheduled this four times" — the fact a generic reminder app throws away by
+-- overwriting the deadline in place. That memory of how you've actually treated a
+-- specific loop is the external-brain payoff (see prefrontal/memory/behavioral.py).
+--
+-- Append-only; rows are never updated and outlive the todo's open state (kept
+-- after done/dropped so a completed item's history still reads). `event_type` is
+-- the kind of change:
+--   rescheduled — an existing deadline was moved to a different value (or cleared);
+--                 the first-ever deadline is establishing one, not a reschedule, so
+--                 it is not logged.
+--   deferred    — the todo was consciously parked (snoozed_until set to a date), the
+--                 stuck-checkpoint "not now, come back later" outcome.
+-- `old_value`/`new_value` capture the before/after as stored strings (nullable — a
+-- cleared deadline has no new value); `created_at` orders the history.
+CREATE TABLE IF NOT EXISTS todo_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    todo_id     INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    event_type  TEXT    NOT NULL,                          -- rescheduled | deferred
+    old_value   TEXT,                                       -- prior value (NULL when none)
+    new_value   TEXT,                                       -- new value (NULL when cleared)
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Trailing (created_at, id) so the by-type history read — WHERE (user_id, todo_id,
+-- event_type) ORDER BY created_at, id, the count/behavioral path — is satisfied by
+-- the index without a separate sort.
+CREATE INDEX IF NOT EXISTS idx_todo_events_todo
+    ON todo_events (user_id, todo_id, event_type, created_at, id);
+
 -- Blockers — someone ELSE is waiting on YOU. A record that the ball is in your
 -- court: another person is blocked until you do a specific thing. Deliberately
 -- separate from `todos` (a todo is *your* open loop; a blocker also names the

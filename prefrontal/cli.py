@@ -8,7 +8,8 @@ Exposes subcommands, wired up as the ``prefrontal`` console script in
 - ``prefrontal migrate-multi-tenant`` — upgrade a single-tenant DB in place.
 - ``prefrontal serve`` — run the webhook listener with uvicorn.
 - ``prefrontal learn`` — recompute derived patterns from accumulated episodes.
-- ``prefrontal profile`` — print (or write) the structured behavioral profile.
+- ``prefrontal profile`` — print (or write) the structured behavioral profile;
+  ``--todo <id>`` prints the queryable behavioral model for one todo instead.
 - ``prefrontal summarize`` — LLM-summarize the profile (Ollama); cache it for
   ``GET /profile`` and write ``profile-<handle>.md``.
 - ``prefrontal briefing`` — print today's morning digest (``--llm`` for prose).
@@ -1360,8 +1361,13 @@ def _cmd_learn(args: argparse.Namespace) -> int:
 def _cmd_profile(args: argparse.Namespace) -> int:
     """Build the behavioral profile and print it (or write it to a file).
 
+    With ``--todo <id>`` it prints the *queryable* behavioral model for a single
+    todo instead — the entity-scoped continuity ("you've rescheduled this four
+    times") an agent retrieves on demand — rather than the whole-profile snapshot.
+
     Args:
-        args: Parsed arguments; uses ``args.db_path`` and optional ``args.output``.
+        args: Parsed arguments; uses ``args.db_path``, ``args.user``, optional
+            ``args.output`` and ``args.todo``.
 
     Returns:
         Process exit code (0 on success).
@@ -1371,12 +1377,45 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     # Don't re-seed here; just read whatever exists. initialize=True is still
     # safe and idempotent, and guarantees the tables exist for a fresh checkout.
     with MemoryStore.open(db_path) as store:
-        profile = build_profile(_resolve_user_store(store, args.user))
+        scoped = _resolve_user_store(store, args.user)
+        if args.todo is not None:
+            return _print_todo_behavior(scoped, args.todo)
+        profile = build_profile(scoped)
     if args.output:
         Path(args.output).write_text(profile)
         print(f"Wrote profile to {args.output}")
     else:
         print(profile, end="")
+    return 0
+
+
+def _print_todo_behavior(store: MemoryStore, todo_id: int) -> int:
+    """Print the behavioral model for one todo (the ``profile --todo`` path)."""
+    from prefrontal.memory.behavioral import todo_behavior
+
+    behavior = todo_behavior(store, todo_id)
+    if behavior is None:
+        print(f"No todo {todo_id}.")
+        return 1
+    print(f"Todo {behavior.todo_id}: {behavior.title} [{behavior.status}]")
+    print(f"  rescheduled: {behavior.reschedule_count}", end="")
+    if behavior.last_rescheduled_ago:
+        print(f" (last {behavior.last_rescheduled_ago})", end="")
+    print()
+    print(f"  snoozed: {behavior.defer_count}", end="")
+    if behavior.currently_snoozed:
+        print(" (currently parked)", end="")
+    print()
+    if behavior.days_open is not None:
+        print(f"  open: {round(behavior.days_open)} days")
+    if behavior.estimate_bias is not None:
+        print(f"  estimate bias: {behavior.estimate_bias}x")
+    if behavior.context_lines:
+        print("\nAgent context:")
+        for line in behavior.context_lines:
+            print(f"  {line}")
+    else:
+        print("\nAgent context: (nothing notable yet)")
     return 0
 
 
@@ -4313,6 +4352,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_profile.add_argument(
         "-o", "--output", default=None, help="Write to a file instead of stdout."
+    )
+    p_profile.add_argument(
+        "--todo",
+        type=int,
+        default=None,
+        metavar="ID",
+        help="Print the queryable behavioral model for one todo instead of the "
+        "whole-profile snapshot (its reschedule/snooze history + agent context).",
     )
     p_profile.set_defaults(func=_cmd_profile)
 
