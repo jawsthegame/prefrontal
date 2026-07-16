@@ -453,3 +453,36 @@ def commitment_nudge_clause(store: MemoryStore, commitment_id: int) -> str:
     if not reschedules:
         return ""
     return f" Heads up — this has moved {reschedules}× on the calendar."
+
+
+def _moved_suffix(reschedules: int) -> str:
+    """Format a reschedule count as a ``· moved N×`` suffix (``""`` for zero)."""
+    return f" · moved {reschedules}×" if reschedules else ""
+
+
+def commitment_digest_suffix(store: MemoryStore, commitment_id: int) -> str:
+    """A compact ``· moved N×`` suffix for a commitment digest line, or ``""``.
+
+    The commitment analogue of :func:`behavior_digest_suffix`, for the morning
+    briefing's schedule ("📅 Today") list: a schedule row already leads with the
+    time and title, so this stays terse — just the move count, the "this one has
+    been shifting" signal a static calendar line can't show. Leading ``" · "``
+    separator so a caller appends it unconditionally (empty history → ``""``). For
+    a whole list of commitments, prefer :func:`commitment_digest_suffixes` (one
+    query instead of one per item).
+    """
+    return _moved_suffix(store.count_commitment_events(commitment_id, "rescheduled"))
+
+
+def commitment_digest_suffixes(
+    store: MemoryStore, commitment_ids: list[int]
+) -> dict[int, str]:
+    """Batched :func:`commitment_digest_suffix` for many commitments — one query.
+
+    Returns ``{commitment_id: suffix}`` for every id passed (ids with no reschedule
+    history map to ``""``), so the briefing can annotate a whole day's schedule
+    without an N+1 (see :meth:`ScheduleRepo.reschedule_counts`).
+    """
+    ids = list(commitment_ids)
+    counts = store.reschedule_counts(ids)
+    return {cid: _moved_suffix(counts.get(cid, 0)) for cid in ids}

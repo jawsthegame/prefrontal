@@ -63,6 +63,51 @@ def test_build_briefing_scopes_to_local_day(store, monkeypatch):
     assert "Tomorrow AM" not in titles
 
 
+def _ny(monkeypatch):
+    """Pin the briefing to America/New_York so 'today' is deterministic."""
+    from prefrontal import briefing as briefing_mod
+
+    monkeypatch.setattr(
+        briefing_mod, "get_settings",
+        lambda: Settings(webhook_secret=SECRET, timezone="America/New_York"),
+    )
+
+
+def test_briefing_today_line_shows_reschedule_continuity(store, monkeypatch):
+    """A commitment that has moved on the calendar carries a `· moved N×` suffix on
+    its schedule line, and a `continuity` key in the structured data."""
+    _ny(monkeypatch)
+    now = datetime(2026, 7, 6, 20, 0, 0)  # 16:00 EDT on the 6th
+    # First sync establishes the time; two moves → moved 2×. Final start is today.
+    cid, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-01-01 09:00:00", external_id="cal:1",
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-01-02 09:00:00", external_id="cal:1",
+    )
+    store.upsert_commitment(  # 18:00 EDT on the 6th — today (local)
+        title="Dentist", start_at="2026-07-06 22:00:00", external_id="cal:1",
+    )
+    briefing = build_briefing(store, now=now)
+    row = next(c for c in briefing.today if c["id"] == cid)
+    assert row["continuity"] == " · moved 2×"
+    text = render_briefing(briefing)
+    assert "Dentist" in text and "· moved 2×" in text
+
+
+def test_briefing_today_line_no_suffix_without_reschedule(store, monkeypatch):
+    """A never-moved commitment's schedule line carries no continuity suffix."""
+    _ny(monkeypatch)
+    now = datetime(2026, 7, 6, 20, 0, 0)
+    cid, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-07-06 22:00:00", external_id="cal:1",
+    )
+    briefing = build_briefing(store, now=now)
+    row = next(c for c in briefing.today if c["id"] == cid)
+    assert row["continuity"] == ""
+    assert "· moved" not in render_briefing(briefing)
+
+
 def test_briefing_renders_times_in_local_zone(store, monkeypatch):
     """Commitment/leave-by/spare times read in the local zone, not raw UTC.
 

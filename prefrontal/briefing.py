@@ -34,7 +34,10 @@ from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.focus_balance import balance_summary_line, build_focus_balance
 from prefrontal.impact import fragile_stretch, utcnow
-from prefrontal.memory.behavioral import behavior_digest_suffix
+from prefrontal.memory.behavioral import (
+    behavior_digest_suffix,
+    commitment_digest_suffixes,
+)
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
@@ -151,7 +154,9 @@ class Briefing:
             zone). Stored ``start_at``/``leave_by`` values are naive UTC; the
             renderer converts them to this zone so the digest reads in local
             wall-clock time, not UTC.
-        today: Today's commitments (dicts), soonest first.
+        today: Today's commitments (dicts), soonest first. Each carries a
+            ``continuity`` key — a compact ``· moved N×`` reschedule suffix from its
+            ``commitment_events`` history, or ``""`` — folded onto its schedule line.
         conflicts: Double-booking pairs among upcoming commitments.
         slips: Count of recent ``miss`` episodes by ``episode_type``.
         coaching: Selected coaching values surfaced in the briefing.
@@ -226,6 +231,15 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     fmt = TS_FMT
 
     today = store.commitments_between(day_start.strftime(fmt), day_end.strftime(fmt))
+    # Reschedule continuity: tag each of today's commitments with a "· moved N×"
+    # suffix (or "") from its commitment_events history, so a calendar item that
+    # keeps shifting reads as such on the schedule line — the calendar twin of the
+    # avoidance surfaces' continuity. Fetched in a single batched query (not one
+    # COUNT per item), and set on every today row so structured consumers get it
+    # even when the short-format render caps the visible schedule at five.
+    suffixes = commitment_digest_suffixes(store, [c["id"] for c in today])
+    for c in today:
+        c["continuity"] = suffixes.get(c["id"], "")
 
     # Double-bookings across today's schedule (regardless of the current hour),
     # which is what a morning overview cares about — minus any the user has
@@ -556,7 +570,10 @@ def render_briefing(
                 mark = " (hard)" if c.get("hardness") == "hard" else ""
                 cal = f" · {c['calendar']}" if c.get("calendar") else ""
                 fyi = " · FYI" if c.get("kind") == "fyi" else ""
-                rows.append(f"- {_time_of(c, briefing.tz)} — {c['title']}{mark}{cal}{fyi}")
+                moved = c.get("continuity", "")
+                rows.append(
+                    f"- {_time_of(c, briefing.tz)} — {c['title']}{mark}{cal}{fyi}{moved}"
+                )
         block(head, *rows)
 
     # Leave by — when to head out for today's remaining travel commitments, so the
