@@ -290,7 +290,7 @@ struct ChoreRow: View {
             Button {
                 Task { await toggleEnabled() }
             } label: {
-                Label(chore.isEnabled ? "Pause reminders" : "Resume",
+                Label(chore.isEnabled ? "Pause reminders" : "Resume reminders",
                       systemImage: chore.isEnabled ? "pause.circle" : "play.circle")
             }
             Button(role: .destructive) {

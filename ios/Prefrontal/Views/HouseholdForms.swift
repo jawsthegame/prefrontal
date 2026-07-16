@@ -265,17 +265,45 @@ struct ChoreEditorSheet: View {
     let routines: [Routine]
     @Environment(\.dismiss) private var dismiss
 
-    @State private var title = ""
+    @State private var title: String
     @State private var ownerId: Int?
     @State private var routineId: Int?
-    @State private var days: Set<Int> = []
-    @State private var hasTime = false
-    @State private var time = AvailableHours.date(from: "09:00")
-    @State private var impact = ""
-    @State private var enabled = true
+    @State private var days: Set<Int>
+    @State private var hasTime: Bool
+    @State private var time: Date
+    @State private var impact: String
+    @State private var enabled: Bool
     @State private var error: String?
     @State private var saving = false
-    @State private var prefilled = false
+
+    /// Seed `@State` from `mode` at construction rather than in `onAppear`, so the
+    /// fields are correct on first render and can't carry stale values across
+    /// presentations — `.add` gets clean defaults, `.edit` gets the chore's values.
+    init(mode: ChoreEditor, members: [HouseholdMember], routines: [Routine]) {
+        self.mode = mode
+        self.members = members
+        self.routines = routines
+        if case let .edit(chore) = mode {
+            let due = chore.effectiveDueTime ?? ""
+            _title = State(initialValue: chore.title)
+            _ownerId = State(initialValue: chore.ownerId)
+            _routineId = State(initialValue: chore.routineId)
+            _days = State(initialValue: Set(chore.weekdays))
+            _hasTime = State(initialValue: !due.isEmpty)
+            _time = State(initialValue: AvailableHours.date(from: due.isEmpty ? "09:00" : due))
+            _impact = State(initialValue: chore.impact ?? "")
+            _enabled = State(initialValue: chore.isEnabled)
+        } else {
+            _title = State(initialValue: "")
+            _ownerId = State(initialValue: nil)
+            _routineId = State(initialValue: nil)
+            _days = State(initialValue: [])
+            _hasTime = State(initialValue: false)
+            _time = State(initialValue: AvailableHours.date(from: "09:00"))
+            _impact = State(initialValue: "")
+            _enabled = State(initialValue: true)
+        }
+    }
 
     private static let weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -330,7 +358,6 @@ struct ChoreEditorSheet: View {
                         .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || saving)
                 }
             }
-            .onAppear(perform: prefill)
         }
     }
 
@@ -363,23 +390,6 @@ struct ChoreEditorSheet: View {
                     .font(.caption).foregroundStyle(Brand.muted)
             }
         }
-    }
-
-    /// Seed the fields from the edited chore once (guarded so re-renders don't
-    /// clobber in-progress edits).
-    private func prefill() {
-        guard !prefilled else { return }
-        prefilled = true
-        guard case let .edit(chore) = mode else { return }
-        title = chore.title
-        ownerId = chore.ownerId
-        routineId = chore.routineId
-        days = Set(chore.weekdays)
-        let due = chore.effectiveDueTime ?? ""
-        hasTime = !due.isEmpty
-        if hasTime { time = AvailableHours.date(from: due) }
-        impact = chore.impact ?? ""
-        enabled = chore.isEnabled
     }
 
     private func save() async {
