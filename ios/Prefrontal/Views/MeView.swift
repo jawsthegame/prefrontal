@@ -15,6 +15,7 @@ struct MeView: View {
                 selfCareCard
                 if let r = review, r.enabled, r.hasContent { reviewCard(r) }
                 actionsCard
+                householdLink
                 insightsLink
             }
             .padding(16)
@@ -94,6 +95,30 @@ struct MeView: View {
                 }
             }
         }
+    }
+
+    /// Always-present entry to the shared Household screen — the durable way in
+    /// (the Today glance only shows for members, so a user in no household would
+    /// otherwise have no path to the create/join screen).
+    private var householdLink: some View {
+        NavigationLink {
+            HouseholdView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "house").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Household").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Shared chores, shopping, kids' details, and star charts")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     /// Navigates to the behavioral Insights screen (stats + focus balance).
