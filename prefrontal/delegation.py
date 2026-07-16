@@ -751,9 +751,22 @@ DRAFT_EMAIL_CHANNEL = "email"
 #: presence blocks a send — a template with "[name]" must be filled in first.
 _PLACEHOLDER_RE = re.compile(r"\[[^\[\]\n]{1,80}\]")
 
-#: A deliberately-simple "looks like an email" guard. SMTP is the real validator;
-#: this only stops an obvious non-address (the model often writes a name in ``to``).
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+def _valid_email(addr: str) -> bool:
+    """A deliberately-simple, *linear* "looks like an email" guard.
+
+    Just enough to stop an obvious non-address (the prep often writes a name in
+    ``to``); SMTP is the real validator. Hand-parsed rather than a regex to avoid
+    ReDoS on the user-supplied recipient — one ``@``, a non-empty local part, and a
+    dotted domain with non-empty labels, no whitespace.
+    """
+    addr = addr.strip()
+    if not addr or any(ch.isspace() for ch in addr):
+        return False
+    local, sep, domain = addr.partition("@")
+    if not sep or not local or "@" in domain:
+        return False
+    labels = domain.split(".")
+    return len(labels) >= 2 and all(labels)
 
 
 @dataclass(frozen=True)
@@ -851,7 +864,7 @@ def _resolve_send(
 
     if not to:
         blockers.append("no recipient — the draft names no email address; supply one to send")
-    elif not _EMAIL_RE.match(to):
+    elif not _valid_email(to):
         blockers.append(f'the recipient "{to}" isn\'t a valid email address; supply one')
     if has_placeholder(subject, body):
         blockers.append("the draft still has [bracketed placeholders] to fill in before sending")
@@ -935,7 +948,10 @@ def send_prepared_draft(
             status=current_status,
             detail=blockers[0] if blockers else "nothing to send",
         )
-    if expected_digest and expected_digest != draft_digest(to, subject, body):
+    # ``None`` = an internal caller opting out of the digest check (CLI/tests); an
+    # empty string is a *provided* digest that can't match, so it's refused — a
+    # caller can't slip past the gate with "preview_digest": "".
+    if expected_digest is not None and expected_digest != draft_digest(to, subject, body):
         return SendOutcome(
             sent=False,
             code="stale",
@@ -964,7 +980,9 @@ def send_prepared_draft(
             sent=False, code="send_failed", to=to, status=STATUS_FAILED, detail=detail
         )
     detail = f"sent draft to {to} ({result.detail})"
-    store.update_delegation_status(todo_id, STATUS_FORWARDED, detail=detail, prepped=True)
+    # prepped=False: don't re-stamp prepped_at — the prep completed earlier; a send
+    # is a later event and shouldn't overwrite the original prep-completion time.
+    store.update_delegation_status(todo_id, STATUS_FORWARDED, detail=detail, prepped=False)
     return SendOutcome(sent=True, code="sent", to=to, status=STATUS_FORWARDED, detail=detail)
 
 

@@ -23,6 +23,7 @@ from prefrontal.crypto import generate_key
 from prefrontal.delegation import (
     STATUS_FAILED,
     STATUS_FORWARDED,
+    _valid_email,
     preview_send,
     send_prepared_draft,
 )
@@ -83,6 +84,30 @@ def _delegated(store, *, drafts, status="prepped"):
     tid = store.add_todo("Book dentist")
     store.set_delegation(tid, handler="agent", status=status, drafts=drafts)
     return tid
+
+
+# --- recipient validation (linear, ReDoS-safe) ------------------------------
+
+
+@pytest.mark.parametrize(
+    "addr,ok",
+    [
+        ("dentist@example.com", True),
+        ("a.b+c@sub.example.co.uk", True),
+        ("the dentist office", False),  # a name, not an address
+        ("no-at-sign.com", False),
+        ("two@@ats.com", False),
+        ("nodot@domain", False),
+        ("trailing@dot.", False),
+        ("has space@x.com", False),
+        ("", False),
+        # A string shaped like the old regex's catastrophic-backtracking input:
+        # must return quickly (linear), not hang.
+        ("a@" + "!." * 5000, False),
+    ],
+)
+def test_valid_email(addr, ok):
+    assert _valid_email(addr) is ok
 
 
 # --- preview (no side effects) -----------------------------------------------
@@ -171,6 +196,19 @@ def test_send_refuses_stale_digest(store):
     assert outcome.sent is False and outcome.code == "stale"
     assert record == {}  # nothing was sent
     assert store.get_delegation(tid)["status"] == "prepped"  # unchanged
+
+
+def test_send_refuses_empty_digest(store):
+    """An empty digest is a *provided* value that can't match — it must not slip
+    past the gate the way `None` (an internal opt-out) does."""
+    tid = _delegated(store, drafts=[_email_draft()])
+    record: dict = {}
+    outcome = send_prepared_draft(
+        store, tid, smtp=_smtp_source(), expected_digest="",
+        smtp_client=SmtpClient(connect=lambda h, port, t: _FakeConn(record)),
+    )
+    assert outcome.sent is False and outcome.code == "stale"
+    assert record == {}
 
 
 def test_send_refuses_when_blocked(store):
@@ -303,6 +341,18 @@ def test_http_send_stale_digest_is_409(http):
         headers=_headers(),
     )
     assert r.status_code == 409
+
+
+def test_http_send_empty_digest_rejected(http):
+    """The API rejects an empty preview_digest (schema min_length) — the gate can't
+    be bypassed with "preview_digest": ""."""
+    tid = _delegate_over_http(http)
+    r = http.post(
+        f"/todos/{tid}/delegate/send",
+        json={"preview_digest": ""},
+        headers=_headers(),
+    )
+    assert r.status_code == 422
 
 
 def test_http_send_blocked_is_422(http):

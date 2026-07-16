@@ -180,7 +180,8 @@ class DelegateSend(BaseModel):
     """
 
     preview_digest: str = Field(
-        description="The digest from the matching preview call (pins the exact content)."
+        min_length=1,
+        description="The digest from the matching preview call (pins the exact content).",
     )
     to: str | None = Field(
         default=None,
