@@ -50,6 +50,7 @@ from prefrontal.commitments import (
 from prefrontal.config import (
     Settings,
 )
+from prefrontal.day_shape import build_day_shape, day_shape_payload, render_day_shape
 from prefrontal.departure import (
     DEFAULT_DEPARTURE_GRACE_MINUTES,
     DEFAULT_TRAVEL_PAD_AUTOLEARN,
@@ -1693,6 +1694,26 @@ def build_router(services: RouterServices) -> APIRouter:
             "outing_id": thing.outing_id,
             "text": render_next_thing(thing),
         }
+
+    @router.get("/day", tags=["schedule"])
+    def day_shape(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The visual **day-shape** — today laid out as a timeline of blocks.
+
+        Where ``/briefing`` narrates the day and ``/next`` names one action, this
+        returns the day's *shape*: today's commitments as fixed blocks, the open
+        todos fitted into the forward gaps, and the free time in between — the
+        Structured / Tiimo pattern, built from the same fitting the briefing uses.
+        Every block carries a non-colour kind signal (``glyph`` + ``pattern`` +
+        ``kind``) so a client can draw it legibly without relying on hue (the
+        CHI-2024 finding on ADHD chart-reading). Read-only, fast, and model-free —
+        it powers the ``/day/board`` timeline and any glanceable day widget, so a
+        client can poll it on a timeline cadence. See
+        :func:`prefrontal.day_shape.build_day_shape`.
+        """
+        shape = build_day_shape(ctx.store, settings=resolved_settings)
+        return {**day_shape_payload(shape), "text": render_day_shape(shape)}
 
     @router.post("/webhooks/panic/check", tags=["schedule"])
     def panic_check(

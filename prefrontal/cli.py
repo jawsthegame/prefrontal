@@ -2237,6 +2237,35 @@ def _cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_day(args: argparse.Namespace) -> int:
+    """Print today's visual day-shape — the day as a timeline of blocks.
+
+    Today's commitments as fixed anchors, the open todos fitted into the forward
+    gaps, and the free time in between (the Structured / Tiimo pattern), rendered
+    as a monochrome vertical timeline so it reads as a *shape* even in a plain
+    terminal. See :mod:`prefrontal.day_shape`.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``output``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.day_shape import build_day_shape, render_day_shape
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        text = render_day_shape(build_day_shape(store))
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"Wrote the day-shape to {args.output}")
+    else:
+        print(text, end="")
+    return 0
+
+
 def _cmd_note(args: argparse.Namespace) -> int:
     """Feed a free-text note to the LLM sensor; store any candidates as pending.
 
@@ -4479,6 +4508,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
     p_next.set_defaults(func=_cmd_next)
 
+    p_day = sub.add_parser(
+        "day", help="Today's visual day-shape — the day as a timeline of blocks."
+    )
+    p_day.add_argument("--db-path", default=None, help="Override the database path.")
+    p_day.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_day.add_argument("-o", "--output", default=None, help="Write to a file instead of stdout.")
+    p_day.set_defaults(func=_cmd_day)
+
     p_notify = sub.add_parser(
         "notify",
         help="Send a test notification through the configured route (native APNs push).",
@@ -5063,6 +5100,7 @@ def build_parser() -> argparse.ArgumentParser:
 _CLI_PULL_FEATURES = {
     "panic": "panic",
     "next": "scheduling",
+    "day": "scheduling",
     "briefing": "briefing",
     "balance": "balance",
     "encourage": "encouragement",

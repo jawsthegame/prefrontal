@@ -51,6 +51,7 @@ from prefrontal.webhooks._common import (
     CALENDAR_HTML,
     CARE_HTML,
     DASHBOARD_HTML,
+    DAY_HTML,
     GUIDE_HTML,
     HOUSEHOLD_HTML,
     PROJECTS_HTML,
@@ -338,6 +339,24 @@ def build_router(services: RouterServices) -> APIRouter:
         endpoint (same split as ``/projects/board`` vs ``/projects``).
         """
         return _page(TRIPS_HTML)
+
+    @router.get("/day/board", response_class=HTMLResponse, tags=["system"])
+    def day_board() -> HTMLResponse:
+        """Serve the **Today's shape** page — the day as a proportional timeline.
+
+        The visual surface for the day-shape: today's commitments as fixed blocks,
+        the open todos fitted into the forward gaps, and the free time in between,
+        each block's height tracking its length so the day reads as a *shape* (the
+        Structured / Tiimo pattern). Designed for how ADHD readers actually read a
+        chart — every block carries a non-colour signal (a kind word + glyph + a
+        solid/dashed/dotted edge), so it stays legible without leaning on hue
+        (CHI-2024). Same self-contained, data-less shell as the other web surfaces;
+        reads ``GET /day``. Read-only and forgiving — the past is dimmed, not scored.
+
+        Served at ``/day/board`` because the bare ``/day`` path is the JSON endpoint
+        (same split as ``/trips/board`` vs ``/trips`` and ``/projects/board``).
+        """
+        return _page(DAY_HTML)
 
     @router.get("/guide", response_class=HTMLResponse, tags=["system"])
     def guide_page() -> HTMLResponse:

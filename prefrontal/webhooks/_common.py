@@ -159,6 +159,10 @@ GUIDE_HTML = _with_shortcuts(_shell("guide.html"))
 #: The Trips & balance page — surfaces closed-loop trips (active/recent/unlabeled)
 #: and the life-sphere focus-balance rollup. Reads GET /trips and GET /balance.
 TRIPS_HTML = _with_shortcuts(_shell("trips.html"))
+#: The visual **day-shape** page — today rendered as a proportional timeline of
+#: commitments + fitted todos + free time (the Structured/Tiimo pattern). Reads
+#: GET /day; served at /day/board (the bare /day path is the JSON endpoint).
+DAY_HTML = _with_shortcuts(_shell("day.html"))
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.

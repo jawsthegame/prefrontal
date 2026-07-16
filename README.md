@@ -147,6 +147,7 @@ Prefrontal is in active development — multi-tenant (every row scoped per user;
 | Closed-Loop Trip Tracking | `prefrontal/trips.py`, `prefrontal/modules/trip_tracking.py` | ✅ Wired end-to-end — passive home-radius loop detection on `POST /webhooks/location` (set home via `POST /webhooks/home`), retrospective `POST /webhooks/trip/{label,domain,reflect}`, `GET /trips`; the honest reflection classifies to an outcome that feeds the learning loop. Surfaced visually on the **Trips** page (`/trips/board`) |
 | Focus balance (life-domains) | `prefrontal/focus_balance.py` | ✅ Rolls **all** out-of-home time — passive trips **and** declared outings that returned — up by life-sphere (shop/work/home/kids/personal) over a week: `GET /balance`, `prefrontal balance`, a briefing line + profile section, and the bar chart on the **Trips** page (`/trips/board`); opt-in weekly "light on kids/personal" nudge gated on per-domain targets the **Parent pack** seeds. One-tap 🏠/🧒/🙋 buttons on the trip-label ask file a trip's sphere from the notification |
 | Hyperfocus | `prefrontal/modules/hyperfocus.py` | ✅ Wired end-to-end — focus sessions, protect-vs-interrupt, `POST /webhooks/focus/*` |
+| Visual day-shape (timeline) | `prefrontal/day_shape.py` · `webhooks/day.html` | ✅ Today as a proportional **timeline** (the Structured/Tiimo pattern) — fixed commitment blocks, open todos fitted into the forward gaps, quiet free time between; block height tracks length so the day's *shape* is glanceable. Built for how ADHD readers read a chart (CHI-2024): meaning never rides on colour alone — a `kind` word + glyph + solid/dashed/dotted edge on every block, and a monochrome CLI render. Past dimmed, not scored. `GET /day`, `/day/board`, `prefrontal day` |
 | Home Screen & Lock Screen widget | `ios/PrefrontalWidgets/` | ✅ Native WidgetKit glance — next departure, the one todo to start now, next commitment, tap-to-log self-care + Live Activity |
 | Source-agnostic triage agent | `prefrontal/triage.py` | ✅ Classify → route → nudge for any inbound signal (mail/calendar/n8n/manual): `POST /webhooks/n8n` · `/triage` · `GET /triage/recent`, routing into commitments/todos/episodes + a `triage_log`, surfaced in the briefing + a dashboard panel. See `docs/triage-agent.md`. |
 | People queue (names in ingested items) | `prefrontal/people.py` · `webhooks/routers/people.py` | ✅ Names mentioned in ingested items are extracted on the triage path and, when not yet known, queued for you to **identify** (link/create a person) and **categorize** (relationship + importance). The resulting roster feeds **learning** (a "Key people" section in the profile) and **prioritization** (a todo naming a high-importance person gets a priority bump). `GET /people/queue`, `POST /people/mentions/{id}/identify\|dismiss`, `/people` CRUD, `POST /people/extract`; `prefrontal people queue/identify/dismiss/list/add/categorize/scan` |
@@ -201,6 +202,10 @@ prefrontal panic
 # Capture open loops, then fit them into spare time
 prefrontal todo add "Call dentist" --minutes 10 --priority 2
 prefrontal fit 20      # "with 20 min free, you could knock out…"
+
+# See the whole day's *shape* — commitments + fitted todos + free time, as a
+# monochrome timeline (the visual /day/board page renders the same data)
+prefrontal day
 
 # Capture when someone else is blocked on YOU (feeds panic + briefing priorities)
 prefrontal blocked add "Sam" "the budget numbers" --priority 2

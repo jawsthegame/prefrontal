@@ -236,10 +236,19 @@ commandments 1, 3.)*
   but-important todo, the mid-flight task pinned) rather than a flat list. Never
   show the whole mountain. *(Overwhelm is an indictment; one thing is an
   invitation.)*
-- **Visual day-shape.** A timeline widget (the Structured/Tiimo pattern) rendered
-  from commitments + fitted todos, so the day's shape is glanceable and concrete.
-  Mind the CHI-2024 finding that ADHD users read color/contrast in charts
-  differently — design the time UI accordingly.
+- **Visual day-shape.** ✅ **(shipped — see `CHANGELOG.md`)** A timeline widget
+  (the Structured/Tiimo pattern) rendered from commitments + fitted todos, so the
+  day's shape is glanceable and concrete. The deterministic core
+  (`prefrontal/day_shape.py`: `build_day_shape`) lays today's commitments out as
+  fixed, proportional blocks and fits the open todos into the *forward* gaps —
+  reusing the briefing's own `free_windows` + `suggest_for_windows`, so the two
+  never disagree — with the free time drawn quietly between them. Served read-only
+  at `GET /day`, rendered on the `/day/board` timeline page, and printed by
+  `prefrontal day`. The CHI-2024 finding — that ADHD users read color/contrast in
+  charts differently — is taken literally: no meaning rides on hue alone (every
+  block carries a redundant `kind` word + glyph + solid/dashed/dotted edge, and the
+  CLI render is monochrome), and the surface stays read-mostly and forgiving (the
+  past is dimmed, not scored — no overdue-red, no streak).
 - **Longitudinal model, retrieved.** Evolve the profile summarizer from a
   compressed prose snapshot toward a queryable behavioral model ("you've
   rescheduled this four times") retrieved into agent context — continuity is the
