@@ -21,6 +21,7 @@ from prefrontal.integrations.ollama import OllamaClient
 from prefrontal.memory.behavioral import (
     _ago_phrase,
     _count_phrase,
+    behavior_nudge_clause,
     todo_behavior,
 )
 from prefrontal.memory.db import init_db
@@ -197,7 +198,43 @@ def test_ago_phrase_bands():
     assert _ago_phrase(now, now) == "today"
     assert _ago_phrase(now - timedelta(days=1, hours=2), now) == "yesterday"
     assert _ago_phrase(now - timedelta(days=5), now) == "5 days ago"
+    # 13.6 days must truncate, not round up into the weeks band's territory.
+    assert _ago_phrase(now - timedelta(days=13, hours=15), now) == "13 days ago"
     assert _ago_phrase(now - timedelta(days=21), now) == "3 weeks ago"
+
+
+# --- nudge continuity clause -----------------------------------------------
+
+
+def test_nudge_clause_empty_without_history(store):
+    tid = store.add_todo("fresh")
+    assert behavior_nudge_clause(store, tid) == ""
+
+
+def test_nudge_clause_reschedule_only(store):
+    tid = store.add_todo("file taxes")
+    store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+    for day in ("16", "17", "18", "19"):
+        store.update_todo_deadline(tid, f"2026-04-{day} 12:00:00")
+    assert behavior_nudge_clause(store, tid) == " You've rescheduled it 4 times."
+
+
+def test_nudge_clause_defer_only(store):
+    tid = store.add_todo("call dentist")
+    store.defer_todo(tid, "2026-07-20 09:00:00")
+    store.defer_todo(tid, "2026-07-25 09:00:00")
+    assert behavior_nudge_clause(store, tid) == " You've snoozed it twice."
+
+
+def test_nudge_clause_combines_reschedule_and_defer(store):
+    tid = store.add_todo("renew passport")
+    store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+    store.update_todo_deadline(tid, "2026-04-20 12:00:00")
+    store.defer_todo(tid, "2026-07-20 09:00:00")
+    assert (
+        behavior_nudge_clause(store, tid)
+        == " You've rescheduled it once and snoozed it once."
+    )
 
 
 # --- HTTP surface ----------------------------------------------------------

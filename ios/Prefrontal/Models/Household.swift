@@ -25,6 +25,37 @@ struct HouseholdPayload: Codable {
     let checkin: Checkin?
     let digest: Digest?
     let balance: BalanceInfo?
+    /// Controlled vocabularies the server owns (fact categories, agreement kinds),
+    /// so the editors' pickers stay in lockstep with the backend.
+    let vocab: Vocab?
+}
+
+/// Server-owned controlled vocabularies from `/household/sheet`.
+struct Vocab: Codable {
+    let factCategories: [String]
+    enum CodingKeys: String, CodingKey {
+        case factCategories = "fact_categories"
+    }
+}
+
+/// Human labels for the fact categories — mirrors the server's
+/// `FACT_CATEGORY_LABELS` (prefrontal/memory/repos/household.py). The sheet
+/// carries labels for categories already in use; this fills in the rest for the
+/// add-fact picker. Unknown keys fall back to a title-cased key.
+enum FactCategoryVocab {
+    static let labels: [String: String] = [
+        "sizes": "Clothing & sizes",
+        "routine": "Routines",
+        "food": "Food & allergies",
+        "health": "Health",
+        "school": "School & activities",
+        "contact": "Key contacts",
+        "location": "Location",
+        "services": "Household services",
+    ]
+    static func label(_ key: String) -> String {
+        labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
+    }
 }
 
 /// The structured sheet (`asdict(HouseholdSheet)`), assembled deterministically
@@ -124,17 +155,33 @@ struct Agreement: Codable, Identifiable {
     let starTotal: Int?
     let nextGoal: StarGoal?
     let updatedByName: String?
+    /// Parsed chart JSON — the reward ladder + optional award-prompt schedule.
+    /// Present on any agreement; the fields are nil for a plain (non-chart) plan.
+    let structured: StarStructured?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, kind, body
+        case id, title, kind, body, structured
         case childName = "child_name"
         case starTotal = "star_total"
         case nextGoal = "next_goal"
         case updatedByName = "updated_by_name"
     }
 
-    /// A chart is anything with a running star total or a reward ladder.
-    var isChart: Bool { starTotal != nil && (nextGoal != nil || (starTotal ?? 0) > 0) }
+    /// Whether the plan carries a reward ladder (`structured.thresholds`).
+    var hasTiers: Bool { !((structured?.thresholds ?? []).isEmpty) }
+
+    /// A chart is anything with a reward ladder or a running star total — checked
+    /// directly (the server always sends `star_total`, so a `!= nil` test would be
+    /// vacuously true; the ladder + progress are the real signals).
+    var isChart: Bool { hasTiers || nextGoal != nil || (starTotal ?? 0) > 0 }
+
+    /// The reward ladder as the `"7=small toy, 30=big"` spec the tiers endpoint
+    /// takes — for prefilling the chart editor. Empty when there are no tiers.
+    var tiersSpec: String {
+        (structured?.thresholds ?? [])
+            .compactMap { t in t.count.map { "\($0)=\(t.reward ?? "")" } }
+            .joined(separator: ", ")
+    }
 }
 
 struct StarGoal: Codable {
@@ -142,6 +189,37 @@ struct StarGoal: Codable {
     let unit: String?
     let reward: String
     let remaining: Int
+}
+
+/// The parsed `structured` JSON of an agreement — the star ladder (`thresholds`)
+/// and an optional recurring award-prompt (`prompt`). All fields optional so a
+/// plain agreement (or an unknown shape) decodes to empties, not a failure.
+struct StarStructured: Codable {
+    let thresholds: [Tier]?
+    let prompt: PromptSchedule?
+
+    /// One reward tier. The server stores the count under `stars` (parse_star_tiers);
+    /// tolerate `points`/`star` too, matching the backend's `_star_thresholds`.
+    struct Tier: Codable {
+        let stars: Int?
+        let points: Int?
+        let star: Int?
+        let reward: String?
+        var count: Int? { stars ?? points ?? star }
+    }
+
+    struct PromptSchedule: Codable {
+        let enabled: Bool?
+        let days: [Int]?
+        let time: String?
+        let question: String?
+    }
+}
+
+/// Result of creating an agreement (`POST /household/agreements`).
+struct AgreementCreated: Codable {
+    let id: Int
+    let title: String?
 }
 
 // MARK: - Appointments

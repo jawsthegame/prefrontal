@@ -946,6 +946,21 @@ def test_award_stars_accumulates_and_reports_totals(store, dana, alex):
     assert alex.star_totals() == {aid: 5}
 
 
+def test_remove_agreement_with_awarded_stars(store, dana):
+    """Deleting a star chart that has grants clears its ledger, not a 500.
+
+    ``household_stars.agreement_id`` FK-references the agreement with no
+    ON DELETE CASCADE, so with foreign keys enforced a naive delete raised
+    ``FOREIGN KEY constraint failed``. Removal must clear the ledger first.
+    """
+    aid = _star_agreement(dana, store)
+    dana.award_stars(agreement_id=aid, delta=3, awarded_by=store.get_user("dana")["id"])
+    assert dana.star_total(aid) == 3
+    assert dana.remove_agreement(aid) is True  # no IntegrityError
+    assert dana.agreements() == []
+    assert dana.star_total(aid) == 0  # ledger cleared with the chart
+
+
 def test_award_stars_rejects_foreign_agreement(store, dana):
     """Awarding against another household's agreement is a None (→ 404), not a write."""
     other = store.create_household("Other")

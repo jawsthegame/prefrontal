@@ -19,6 +19,7 @@ struct TodayView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var showAdd = false
+    @State private var showEmotion = false
     @State private var queuedOffline = 0
 
     var body: some View {
@@ -28,6 +29,7 @@ struct TodayView: View {
                 if queuedOffline > 0 { offlineBanner }
 
                 quickActions
+                emotionButton
 
                 if let b = briefing, let text = b.text, !text.isEmpty { briefingCard(b, text) }
 
@@ -49,6 +51,7 @@ struct TodayView: View {
         .refreshable { await load() }
         .task { if !loaded { await load() } }
         .sheet(isPresented: $showAdd) { AddTodoSheet { await load() } }
+        .sheet(isPresented: $showEmotion) { EmotionSupportView() }
     }
 
     private var offlineBanner: some View {
@@ -81,6 +84,20 @@ struct TodayView: View {
             .background(Brand.danger.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
             .foregroundStyle(.white)
         }
+    }
+
+    // The calm counterpart to Panic: Panic triages what's on fire (tasks); this
+    // opens in-the-moment emotion-regulation support (the *feeling* side). Kept a
+    // quiet, inviting row rather than a loud button — it's an offer, not an alarm.
+    private var emotionButton: some View {
+        Button { showEmotion = true } label: {
+            Label("Having a hard moment?", systemImage: "figure.mind.and.body")
+                .font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity).padding(.vertical, 11)
+        }
+        .background(Brand.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Brand.teal.opacity(0.30)))
+        .foregroundStyle(Brand.teal)
     }
 
     private func briefingCard(_ b: Briefing, _ text: String) -> some View {

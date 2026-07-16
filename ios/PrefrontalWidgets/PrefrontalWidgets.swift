@@ -251,10 +251,6 @@ struct PrefrontalWidgetView: View {
             if g.notConfigured {
                 Text("Open Prefrontal to connect this widget.").font(.footnote).foregroundStyle(Color.wMuted)
                 Spacer(minLength: 0)
-            } else if hasActive {
-                activeLine
-                Spacer(minLength: 0)
-                selfCareLine
             } else {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -279,14 +275,23 @@ struct PrefrontalWidgetView: View {
         }
     }
 
-    // The "RIGHT NOW" column: the one concrete thing to start, from the server's
-    // suggestion — a real initiation nudge, not a "N fit" count. Falls back to the
-    // open window, then a calm all-clear. The next commitment lives in `nextRow`
-    // below, so this heading always means the same thing.
+    // The "RIGHT NOW" column: what's actually in front of you this moment. An
+    // active outing or focus session is the most literal answer — you're doing it
+    // right now — so it leads, carrying its one-tap end action. Absent that, the
+    // server's concrete "you can do this now" suggestion (a real initiation nudge,
+    // not a "N fit" count), then the open window, then a calm all-clear. The next
+    // commitment lives in `nextRow` below, so this heading always means the same
+    // thing.
     @ViewBuilder private var rightNowColumn: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("RIGHT NOW").font(.caption2).foregroundStyle(Color.wMuted)
-            if let task = g.suggestionTitle {
+            if let intention = g.outingIntention {
+                Text(intention).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+                actionButton("I'm back", systemImage: "house", intent: ImBackIntent())
+            } else if let task = g.focusTask {
+                Text(task).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
+                actionButton("Wrap up", systemImage: "flag.checkered", intent: EndFocusIntent())
+            } else if let task = g.suggestionTitle {
                 Text(task).font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
                 Text(rightNowSub).font(.caption).foregroundStyle(Color.wMuted).lineLimit(1)
             } else if g.freeMinutes > 0 {
@@ -336,24 +341,6 @@ struct PrefrontalWidgetView: View {
         return f.string(from: date)
     }
 
-    // Active outing / focus with its one-tap end action (medium layout).
-    @ViewBuilder private var activeLine: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(g.outingIntention != nil ? "OUT" : "FOCUS")
-                    .font(.caption2).foregroundStyle(Color.wMuted)
-                Text(g.outingIntention ?? g.focusTask ?? "")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(Color.wInk).lineLimit(2)
-            }
-            Spacer(minLength: 0)
-            if g.outingIntention != nil {
-                actionButton("I'm back", systemImage: "house", intent: ImBackIntent())
-            } else {
-                actionButton("Wrap up", systemImage: "flag.checkered", intent: EndFocusIntent())
-            }
-        }
-    }
-
     private func actionButton<I: AppIntent>(_ title: String, systemImage: String, intent: I) -> some View {
         Button(intent: intent) {
             Label(title, systemImage: systemImage)
@@ -400,6 +387,12 @@ struct PrefrontalWidgetView: View {
         VStack(alignment: .leading, spacing: 1) {
             if g.notConfigured {
                 Text("Prefrontal").font(.headline); Text("Tap to connect").font(.caption)
+            } else if let intention = g.outingIntention {
+                Text("OUT").font(.caption2)
+                Text(intention).font(.headline).lineLimit(2)
+            } else if let task = g.focusTask {
+                Text("FOCUS").font(.caption2)
+                Text(task).font(.headline).lineLimit(2)
             } else if let leave = g.depLeaveBy {
                 Text("Leave \(leave.formatted(date: .omitted, time: .shortened))").font(.headline)
                 Text(g.depTitle ?? "").font(.caption).lineLimit(1)
@@ -422,7 +415,11 @@ struct PrefrontalWidgetView: View {
 
     private var accInline: some View {
         Group {
-            if let leave = g.depLeaveBy {
+            if let intention = g.outingIntention {
+                Label(intention, systemImage: "cup.and.saucer")
+            } else if let task = g.focusTask {
+                Label(task, systemImage: "scope")
+            } else if let leave = g.depLeaveBy {
                 Label("Leave \(leave.formatted(date: .omitted, time: .shortened))", systemImage: "figure.walk")
             } else if let task = g.suggestionTitle {
                 Label(task, systemImage: "checklist")

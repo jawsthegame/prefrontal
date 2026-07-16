@@ -292,3 +292,197 @@ def _context_lines(
         lines.append(_bias_line(estimate_bias, category))
 
     return lines
+
+
+def behavior_nudge_clause(store: MemoryStore, todo_id: int) -> str:
+    """A compact reschedule/snooze continuity clause to fold into a nudge, or ``""``.
+
+    The nudge-sized slice of the behavioral model. Where :func:`todo_behavior`
+    renders the full retrievable picture (recency, age, estimate bias), a *delivered*
+    nudge has room for one short clause — so this names only the reschedule and
+    snooze **counts**, the history a plain "12d and counting" age can't convey
+    ("You keep putting off X … You've rescheduled it 4 times."). Age and estimate
+    bias are omitted on purpose: the nudges that use this already state the age, and
+    a multi-clause line would bury the concrete ask.
+
+    Returned as a leading-space-prefixed sentence the caller appends
+    unconditionally — the same contract as :func:`prefrontal.coaching.note_hint` —
+    so an empty history is simply ``""``. Reads counts directly (no bias/age work),
+    keeping it cheap enough for the per-tick coaching path.
+    """
+    reschedules = store.count_todo_events(todo_id, "rescheduled")
+    defers = store.count_todo_events(todo_id, "deferred")
+    parts: list[str] = []
+    if reschedules:
+        parts.append(f"rescheduled it {_count_phrase(reschedules)}")
+    if defers:
+        parts.append(f"snoozed it {_count_phrase(defers)}")
+    if not parts:
+        return ""
+    return f" You've {' and '.join(parts)}."
+
+
+def behavior_digest_suffix(store: MemoryStore, todo_id: int) -> str:
+    """A compact ``· rescheduled N×, snoozed M×`` suffix for a digest line, or ``""``.
+
+    The list-item slice of the behavioral model, for the morning briefing's
+    avoidance surfaces. A digest bullet already leads with the item and its age, so
+    this stays terse — ``×N`` counts rather than the nudge's full sentence — and
+    reinforces *why* something on the "keeps sliding" / "time to decide" lists is
+    worth a decision: it's not just old, you've actively moved it.
+
+    Returned with a leading ``" · "`` separator so a caller appends it
+    unconditionally (empty history → ``""``), the same append-anywhere contract as
+    :func:`behavior_nudge_clause`. Counts-only, so it's cheap per briefing item.
+    """
+    reschedules = store.count_todo_events(todo_id, "rescheduled")
+    defers = store.count_todo_events(todo_id, "deferred")
+    parts: list[str] = []
+    if reschedules:
+        parts.append(f"rescheduled {reschedules}×")
+    if defers:
+        parts.append(f"snoozed {defers}×")
+    if not parts:
+        return ""
+    return f" · {', '.join(parts)}"
+
+
+# -- Commitments -------------------------------------------------------------
+# The calendar-side of the behavioral model. A commitment can't be "snoozed" the
+# way a todo is, so its only continuity signal is how often the synced event has
+# *moved* — the "this appointment keeps shifting" story that a plain calendar
+# mirror discards by overwriting start_at in place (see commitment_events).
+
+
+@dataclass(frozen=True)
+class CommitmentBehavior:
+    """The behavioral model for one commitment: its reschedule history + lines.
+
+    Attributes:
+        commitment_id: The commitment this describes.
+        title: The commitment's current title (so an agent can name it).
+        reschedule_count: How many times the synced event's start has moved.
+        last_rescheduled_ago: Human "how long ago" for the most recent move, or
+            ``None`` if never rescheduled.
+        context_lines: Ready-to-inject, second-person lines summarizing the above;
+            empty when there's nothing worth saying.
+    """
+
+    commitment_id: int
+    title: str
+    reschedule_count: int
+    last_rescheduled_ago: str | None
+    context_lines: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-friendly dict of the facts, for the HTTP query surface."""
+        return {
+            "commitment_id": self.commitment_id,
+            "title": self.title,
+            "reschedule_count": self.reschedule_count,
+            "last_rescheduled_ago": self.last_rescheduled_ago,
+            "context_lines": list(self.context_lines),
+        }
+
+    @property
+    def context(self) -> str:
+        """The context lines joined into a single paragraph (``""`` when empty)."""
+        return " ".join(self.context_lines)
+
+
+def commitment_behavior(
+    store: MemoryStore, commitment_id: int, *, now: datetime | None = None
+) -> CommitmentBehavior | None:
+    """Assemble the behavioral model for one commitment, or ``None`` if absent.
+
+    Reads the commitment and its ``commitment_events`` history and derives the
+    reschedule count, recency, and the second-person context line an agent
+    retrieves when acting on the event. Deterministic and model-free.
+
+    Args:
+        store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        commitment_id: The commitment to describe.
+        now: Reference time (defaults to :func:`prefrontal.clock.utcnow`).
+
+    Returns:
+        A :class:`CommitmentBehavior`, or ``None`` when there is no such
+        commitment for the scoped user.
+    """
+    commitment = store.get_commitment(commitment_id)
+    if commitment is None:
+        return None
+    now = now or utcnow()
+
+    reschedules = store.commitment_events(commitment_id, event_type="rescheduled")
+    last_ago: str | None = None
+    if reschedules:
+        when = parse_ts(reschedules[-1].get("created_at"))
+        last_ago = _ago_phrase(when, now) if when is not None else None
+
+    lines: list[str] = []
+    if reschedules:
+        recent = f" (most recently {last_ago})" if last_ago else ""
+        lead = (
+            f"This has been rescheduled {_count_phrase(len(reschedules))}{recent}"
+        )
+        if len(reschedules) >= 3:
+            lines.append(
+                f"{lead}. It keeps moving — worth confirming the time still holds "
+                "before you build around it."
+            )
+        else:
+            lines.append(f"{lead}.")
+
+    return CommitmentBehavior(
+        commitment_id=commitment_id,
+        title=commitment.get("title") or "",
+        reschedule_count=len(reschedules),
+        last_rescheduled_ago=last_ago,
+        context_lines=lines,
+    )
+
+
+def commitment_nudge_clause(store: MemoryStore, commitment_id: int) -> str:
+    """A compact reschedule continuity clause to fold into a commitment nudge, or ``""``.
+
+    The commitment analogue of :func:`behavior_nudge_clause` — leading-space-prefixed
+    so a departure/prep reminder can append it unconditionally ("… — heads up, this
+    has moved 3× on the calendar."). Counts-only and cheap; empty history → ``""``.
+    """
+    reschedules = store.count_commitment_events(commitment_id, "rescheduled")
+    if not reschedules:
+        return ""
+    return f" Heads up — this has moved {reschedules}× on the calendar."
+
+
+def _moved_suffix(reschedules: int) -> str:
+    """Format a reschedule count as a ``· moved N×`` suffix (``""`` for zero)."""
+    return f" · moved {reschedules}×" if reschedules else ""
+
+
+def commitment_digest_suffix(store: MemoryStore, commitment_id: int) -> str:
+    """A compact ``· moved N×`` suffix for a commitment digest line, or ``""``.
+
+    The commitment analogue of :func:`behavior_digest_suffix`, for the morning
+    briefing's schedule ("📅 Today") list: a schedule row already leads with the
+    time and title, so this stays terse — just the move count, the "this one has
+    been shifting" signal a static calendar line can't show. Leading ``" · "``
+    separator so a caller appends it unconditionally (empty history → ``""``). For
+    a whole list of commitments, prefer :func:`commitment_digest_suffixes` (one
+    query instead of one per item).
+    """
+    return _moved_suffix(store.count_commitment_events(commitment_id, "rescheduled"))
+
+
+def commitment_digest_suffixes(
+    store: MemoryStore, commitment_ids: list[int]
+) -> dict[int, str]:
+    """Batched :func:`commitment_digest_suffix` for many commitments — one query.
+
+    Returns ``{commitment_id: suffix}`` for every id passed (ids with no reschedule
+    history map to ``""``), so the briefing can annotate a whole day's schedule
+    without an N+1 (see :meth:`ScheduleRepo.reschedule_counts`).
+    """
+    ids = list(commitment_ids)
+    counts = store.reschedule_counts(ids)
+    return {cid: _moved_suffix(counts.get(cid, 0)) for cid in ids}

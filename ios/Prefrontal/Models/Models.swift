@@ -556,6 +556,69 @@ struct Panic: Codable {
     }
 }
 
+// MARK: - Emotion regulation
+
+/// In-the-moment emotion-regulation support (`POST /emotion/support`). The server
+/// (`prefrontal/emotion_regulation.py`) screens for crisis language **first**: if
+/// it trips, `kind == "crisis"` and `text` is resources + an urge to reach a
+/// person — never a coping skill. Otherwise `kind == "skill"` and `text` is one
+/// micro-skill fitted to the inferred `state`, from a `family` (`act` / `dbt` /
+/// `self_compassion`). All keys are flat single words, so no `CodingKeys` mapping.
+/// `text` is delivered verbatim — the client renders it, never paraphrases it.
+struct EmotionSupport: Codable {
+    let kind: String
+    let state: String?
+    let skill: String?
+    let family: String?
+    let text: String
+
+    var isCrisis: Bool { kind == "crisis" }
+}
+
+// MARK: - People
+
+/// A queued name-mention awaiting review (`GET /people/queue`) — a name pulled
+/// from an ingested item that isn't on the roster yet. The user identifies it
+/// (creates + categorizes a person) or dismisses it; the roster then feeds the
+/// profile (learning) and todo prioritization. Server row:
+/// `prefrontal/memory/repos/people.py`.
+struct PersonMention: Codable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let source: String?
+    let context: String?
+    let status: String?
+}
+
+struct PersonMentionList: Codable { let mentions: [PersonMention] }
+
+// MARK: - Parked impulses
+
+/// A captured-and-deferred impulse awaiting retro review (`GET /impulses/parked`)
+/// — an open `source='impulse'` todo. When an impulse pulls at you mid-task you
+/// park it (one tap) instead of chasing it; later you triage the batch. Triage
+/// reuses the normal todo done/drop endpoints ("keep the real ones, drop the
+/// noise"). Server: `prefrontal/webhooks/routers/impulsivity.py`.
+struct ParkedImpulse: Codable, Identifiable, Hashable {
+    let todoId: Int
+    let title: String
+    let notes: String?
+    let createdAt: String?
+    let priority: Int?
+
+    var id: Int { todoId }
+    enum CodingKeys: String, CodingKey {
+        case title, notes, priority
+        case todoId = "todo_id"; case createdAt = "created_at"
+    }
+}
+
+/// The parked-impulses payload: the batch plus a ready-to-speak retro line.
+struct ParkedImpulses: Codable {
+    let parked: [ParkedImpulse]
+    let retro: String?
+}
+
 // MARK: - Mail
 
 /// One triaged message from the mail-monitoring pipeline, a lean subset of the

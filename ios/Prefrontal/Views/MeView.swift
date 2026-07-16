@@ -15,6 +15,9 @@ struct MeView: View {
                 selfCareCard
                 if let r = review, r.enabled, r.hasContent { reviewCard(r) }
                 actionsCard
+                householdLink
+                peopleLink
+                tripsLink
                 insightsLink
             }
             .padding(16)
@@ -94,6 +97,75 @@ struct MeView: View {
                 }
             }
         }
+    }
+
+    /// Always-present entry to the shared Household screen — the durable way in
+    /// (the Today glance only shows for members, so a user in no household would
+    /// otherwise have no path to the create/join screen).
+    private var householdLink: some View {
+        NavigationLink {
+            HouseholdView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "house").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Household").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Shared chores, shopping, kids' details, and star charts")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Navigates to the name-mention review queue — identify/dismiss people the
+    /// system picked out of ingested items.
+    private var peopleLink: some View {
+        NavigationLink {
+            PeopleQueueView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.badge.questionmark").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("People to identify").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Name new people from your mail & calendar")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Navigates to the Trips log — label completed round trips and see history.
+    private var tripsLink: some View {
+        NavigationLink {
+            TripsView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "car").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Trips").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Label your round trips; they feed your focus balance")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     /// Navigates to the behavioral Insights screen (stats + focus balance).

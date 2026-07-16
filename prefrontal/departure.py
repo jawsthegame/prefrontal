@@ -427,12 +427,20 @@ def next_departure(plans: list[DeparturePlan]) -> DeparturePlan | None:
     return min(worthy, key=lambda p: p.minutes_until_leave)
 
 
-def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
+def build_departure_message(
+    plan: DeparturePlan, name: str = "", continuity: str = ""
+) -> str:
     """Build the user-facing nudge for a departure plan.
 
     Args:
         plan: The :class:`DeparturePlan` to phrase.
         name: Optional first name, used as a light greeting when set.
+        continuity: Optional reschedule-continuity clause for this commitment
+            (:func:`prefrontal.memory.behavioral.commitment_nudge_clause`) — e.g.
+            " Heads up — this has moved 3× on the calendar." A leading-space-prefixed
+            suffix (empty by default) folded into the same trailing slot as the note,
+            so a "leave now" for an event that keeps shifting flags that it might
+            move again. Computed by the caller, which has the store.
 
     Returns:
         The message string. Empty for the ``none`` level.
@@ -454,7 +462,10 @@ def build_departure_message(plan: DeparturePlan, name: str = "") -> str:
         if plan.travel_minutes is not None
         else ""
     )
-    note = note_hint(plan.commitment.get("notes"))
+    # The continuity caution and the note share the trailing slot (both are
+    # leading-space suffixes); continuity first, so "it keeps moving" reads before
+    # the packing reminder. Every branch's closing "{note}" carries both.
+    note = f"{continuity}{note_hint(plan.commitment.get('notes'))}"
     greeting = f"Hey {name}, " if name else ""
     minutes = plan.minutes_until_leave
 
@@ -811,8 +822,14 @@ def evaluate_departure_check(
     fire = signature != store.get_state(LAST_DEPARTURE_SIGNATURE_KEY, "")
     message = ""
     if fire:
+        from prefrontal.memory.behavioral import commitment_nudge_clause
+
         store.set_state(LAST_DEPARTURE_SIGNATURE_KEY, signature, source="inferred")
-        message = build_departure_message(top, name=name)
+        message = build_departure_message(
+            top,
+            name=name,
+            continuity=commitment_nudge_clause(store, top.commitment["id"]),
+        )
         # Expire the nudge at the meeting's start: "leave now" is moot once it has
         # begun, so the widget won't show it for hours after.
         store.record_nudge(

@@ -274,16 +274,14 @@ def test_payload_is_json_friendly(store, noon):
 # --- Endpoint + page ---------------------------------------------------------
 
 
-def test_day_endpoint_is_token_guarded(store):
+def test_day_endpoint_is_token_guarded(store, noon):
     """GET /day returns the shape payload + text, and 401s without a token."""
-    # Anchor the commitment to midday *today* (not now+2h): the endpoint builds the
-    # shape from the server's real clock, so a now-relative offset slips into
-    # tomorrow when the test runs in the last couple of UTC hours, emptying today's
-    # shape. Midday always falls inside today's band regardless of the run time.
-    midday = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    # Anchor the commitment to a fixed midday today (not now+2h) so it always
+    # lands inside today's window — a now-relative offset crosses local midnight
+    # for late-in-the-day runs and silently drops the commitment segment.
     store.upsert_commitment(
-        title="Dentist", start_at=_at(midday),
-        end_at=_at(midday + timedelta(hours=1)), external_id="p:1",
+        title="Dentist", start_at=_at(noon),
+        end_at=_at(noon + timedelta(hours=1)), external_id="p:1",
     )
     app = create_app(store=store, settings=UTC)
     with TestClient(app) as c:

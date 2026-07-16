@@ -29,10 +29,11 @@ struct HouseholdView: View {
                     ChoresCard(sheet: p.sheet, members: p.members, showAll: $showAllChores,
                                reload: load, onDone: handleChoreDone, onError: { error = $0 })
                     ShoppingCard(items: p.sheet.shopping, reload: load, onError: { error = $0 })
-                    ChartsCard(agreements: p.sheet.agreements, reload: load,
-                               onAward: { add = .award($0) }, onError: { error = $0 })
+                    ChartsCard(agreements: p.sheet.agreements, children: p.sheet.children,
+                               reload: load, onAward: { add = .award($0) }, onError: { error = $0 })
                     AppointmentsCard(appointments: p.sheet.upcoming, onAdd: { add = .appointment })
-                    RosterCard(sheet: p.sheet, onAddChild: { add = .child }, onAddPet: { add = .pet })
+                    RosterCard(sheet: p.sheet, vocab: p.vocab, reload: load,
+                               onAddChild: { add = .child }, onAddPet: { add = .pet })
                     if let balance = p.balance, balance.enabled, let view = balance.view {
                         BalanceCard(balance: balance, view: view)
                     }
@@ -46,8 +47,17 @@ struct HouseholdView: View {
         .brandScreen()
         .navigationTitle("Household")
         .toolbar {
-            if payload != nil, !noHousehold {
-                ToolbarItem(placement: .topBarTrailing) { addMenu }
+            if let p = payload, !noHousehold {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    NavigationLink {
+                        HouseholdSettingsView(checkin: p.checkin, digest: p.digest,
+                                              balance: p.balance, shared: p.shared, reload: load)
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Household settings")
+                    addMenu
+                }
             }
         }
         .refreshable { await load() }

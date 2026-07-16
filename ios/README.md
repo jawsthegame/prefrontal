@@ -184,6 +184,14 @@ The first cut covers the pure/logic seams that need no device or live server —
 offline queue are the natural next additions (they need a small testable init /
 URLProtocol stub on `APIClient`).
 
+**On-device brain-dump can't be tested here.** The Foundation Models parse
+(`Capture/BrainDumpParser.swift`) needs the system language model, which a
+simulator and CI never have — the unit tests only cover its wire/validation
+layer, never the model. Before trusting a change to that path, run the manual
+device pass in
+[`docs/foundation-models-verification.md`](../docs/foundation-models-verification.md)
+on a real iOS 26 device with Apple Intelligence on.
+
 ## Run on your iPhone
 
 The widget uses an **App Group** and a **shared Keychain access group** (for the
@@ -290,9 +298,10 @@ during onboarding.
 | Clarify | `/clarifications`; resolve → `POST /clarifications/{id}/resolve`, dismiss → `POST /clarifications/{id}/dismiss`, sweep → `POST /clarifications/check`, guide → `/clarifications/playbooks/{task_type}` — reached from **Todos** |
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome`; conflicts → `/commitments/conflicts`, reschedule → `.../conflicts/reschedule`, dismiss → `.../conflicts/dismiss` |
-| Household | `/household/sheet` (roster, facts, chores, shopping, star charts, appointments, load-balance, catch-up feed); chores → `POST /household/chores/{id}/done` · `/undone`, set up → `POST /household/chores` (add/edit) · `/household/chores/{id}/enabled` (pause) · `/household/chores/{id}/remove`; shopping → `/household/shopping` (+ `/{id}/got` · `/remove` · `/clear-got`); stars → `/household/agreements/{id}/stars`; appointments → `/household/appointments`; roster → `/household/children` · `/pets`; membership → `/household/create`, `/household/invites` · `/invites/redeem` — reached from a **Today** glance (light `/household/shopping` + `/household/chores/done`, no `household_seen_at` stamp) |
+| Household | `/household/sheet` (roster, facts, chores, shopping, star charts, appointments, load-balance, catch-up feed); chores → `POST /household/chores/{id}/done` · `/undone`, set up → `POST /household/chores` (add/edit) · `/household/chores/{id}/enabled` (pause) · `/household/chores/{id}/remove`; shopping → `/household/shopping` (+ `/{id}/got` · `/remove` · `/clear-got`); star charts → create `POST /household/agreements` + `/household/agreements/{id}/tiers` (reward ladder) · `/prompt` (award-reminder schedule) · `/stars` (award) · `/remove`; appointments → `/household/appointments`; roster → `/household/children` · `/pets`; facts → `POST /household/facts` · `/household/facts/clear` (add/edit/remove per-member reference facts); membership → `/household/create`, `/household/invites` · `/invites/redeem`; settings (gear, shared households) → `POST /household/checkin` · `/digest` · `/balance` — reached from a **Today** glance (light `/household/shopping` + `/household/chores/done`, no `household_seen_at` stamp; members only) and an always-present **Household** entry on the **Me** tab (the durable path in — a user in no household lands on the create/join screen) |
 | Me | `/self-care` + `/self-care/mark`, `/self-care/review` (end-of-day gap recap); `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Insights | `/stats/data` (estimate bias, follow-through, channels, self-care, feature usage), `/balance` (focus balance) — reached from **Me** |
+| Trips | `/trips` (active + unlabeled + recent + label vocab); label → `POST /webhooks/trip/retro` (label + category + domain + reflection), re-file → `/webhooks/trip/domain`; `/balance` summary → **Insights** — reached from **Me** |
 | Panic | `/panic` |
 
 ## Native push (APNs)

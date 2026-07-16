@@ -72,6 +72,43 @@ extension APIClient {
     }
     func briefing() async throws -> Briefing { try await get("briefing", as: Briefing.self) }
     func panic() async throws -> Panic { try await get("panic", as: Panic.self) }
+    /// In-the-moment emotion-regulation support (`POST /emotion/support`) — one
+    /// brief, evidence-matched micro-skill for a hard moment. Pass `nil`/empty for
+    /// a one-tap request; a few words let the server fit the skill to the feeling.
+    /// The server screens for crisis language first and, if it trips, returns
+    /// resources (`kind == "crisis"`) instead of a skill — see `EmotionSupport`.
+    func emotionSupport(text: String? = nil) async throws -> EmotionSupport {
+        var json: [String: Any] = [:]
+        if let text, !text.isEmpty { json["text"] = text }
+        return try await post("emotion/support", json: json, as: EmotionSupport.self)
+    }
+
+    // People — the name-mention review queue. Names that ingested items used but
+    // that aren't on the roster yet; identify or dismiss each. The roster feeds the
+    // behavioral profile and todo prioritization (`prefrontal/people.py`).
+
+    /// Pending name-mentions awaiting review. Pure read, safe to poll.
+    func peopleQueue() async throws -> [PersonMention] {
+        try await get("people/queue", as: PersonMentionList.self).mentions
+    }
+    /// Identify a queued mention by creating + categorizing a new roster person
+    /// (`person_id` omitted). `relationship` must be one of the server's
+    /// `RELATIONSHIPS`; `importance` is the shared 0–3 priority scale.
+    func identifyMention(_ id: Int, relationship: String, importance: Int) async throws {
+        try await post("people/mentions/\(id)/identify",
+                       json: ["relationship": relationship, "importance": importance])
+    }
+    /// Dismiss a queued mention — not a person, or not worth tracking.
+    func dismissMention(_ id: Int) async throws {
+        try await post("people/mentions/\(id)/dismiss")
+    }
+
+    /// Still-open captured-and-deferred impulses awaiting retro review, plus a
+    /// ready-to-speak retro line. Pure read; triage (keep vs drop) reuses the
+    /// todo endpoints — a "drop" is `closeTodo(_:done:false)`.
+    func parkedImpulses() async throws -> ParkedImpulses {
+        try await get("impulses/parked", as: ParkedImpulses.self)
+    }
     /// The single honest next thing to do right now (powers the "one next thing"
     /// widget). One action + reason, never the whole list. Pure read, safe to poll.
     func nextThing() async throws -> NextThing { try await get("next", as: NextThing.self) }
@@ -338,6 +375,30 @@ extension APIClient {
         if let reflection, !reflection.isEmpty { body["reflection"] = reflection }
         return try await post("webhooks/trip/retro", json: body, as: TripRetroResult.self)
     }
+
+    // Trips list — active + recent + the unlabeled trips awaiting a name, with the
+    // label-form vocabularies. Pure read, safe to poll.
+    func trips() async throws -> TripsSnapshot { try await get("trips", as: TripsSnapshot.self) }
+
+    /// Close a specific trip's retrospective — label + category + domain +
+    /// reflection — in one call (`POST /webhooks/trip/retro`). The reflection, when
+    /// present, is classified into an outcome that feeds the learning loop.
+    func tripRetro(tripId: Int, label: String?, category: String? = nil,
+                   domain: String? = nil, reflection: String? = nil) async throws {
+        var body: [String: Any] = ["trip_id": tripId]
+        if let label, !label.isEmpty { body["label"] = label }
+        if let category, !category.isEmpty { body["category"] = category }
+        if let domain, !domain.isEmpty { body["domain"] = domain }
+        if let reflection, !reflection.isEmpty { body["reflection"] = reflection }
+        try await post("webhooks/trip/retro", json: body)
+    }
+
+    /// (Re)file a completed trip into a life-domain without touching its label
+    /// (`POST /webhooks/trip/domain`); nil/blank clears it.
+    func setTripDomain(_ tripId: Int, domain: String?) async throws {
+        try await post("webhooks/trip/domain",
+                       json: ["trip_id": tripId, "domain": domain ?? NSNull()])
+    }
 }
 
 /// Shared household sheet — the co-parent surface. Paths mirror
@@ -390,6 +451,18 @@ extension APIClient {
         if let species, !species.isEmpty { body["species"] = species }
         if let birthday, !birthday.isEmpty { body["birthday"] = birthday }
         try await post("household/pets", json: body)
+    }
+
+    // Facts — per-member (or household-wide, childId 0) reference facts. Upsert on
+    // (category, item, child); `value` nil blanks the value. Clear deletes the row.
+    func setFact(category: String, item: String, value: String?, childId: Int = 0) async throws {
+        try await post("household/facts",
+                       json: ["category": category, "item": item,
+                              "value": value ?? NSNull(), "child_id": childId])
+    }
+    func clearFact(category: String, item: String, childId: Int = 0) async throws {
+        try await post("household/facts/clear",
+                       json: ["category": category, "item": item, "child_id": childId])
     }
 
     // Shopping — add is a capture write (queued off-tailnet); the rest are edits.
@@ -446,6 +519,51 @@ extension APIClient {
         var body: [String: Any] = ["delta": delta]
         if let note, !note.isEmpty { body["note"] = note }
         return try await post("household/agreements/\(agreementId)/stars", json: body, as: StarAwardResult.self)
+    }
+
+    // Co-parent settings (shared households). The weekly mental-load check-in
+    // schedule, and the opt-in daily digest / load-balance toggles.
+    func setCheckin(enabled: Bool, day: Int? = nil, time: String? = nil) async throws {
+        var body: [String: Any] = ["enabled": enabled]
+        // The server rejects enabling without both; a disabled config may omit them.
+        body["day"] = day ?? NSNull()
+        if let time, !time.isEmpty {
+            body["time"] = time
+        } else {
+            body["time"] = NSNull()
+        }
+        try await post("household/checkin", json: body)
+    }
+    func setDigest(enabled: Bool) async throws {
+        try await post("household/digest", json: ["enabled": enabled])
+    }
+    func setBalance(enabled: Bool) async throws {
+        try await post("household/balance", json: ["enabled": enabled])
+    }
+
+    // Star charts / agreements — create a plan, set its reward tiers (which makes
+    // it a chart), set the recurring award-prompt schedule, or remove it.
+    func createAgreement(title: String, kind: String = "reward",
+                         childId: Int = 0, body: String? = nil) async throws -> AgreementCreated {
+        var json: [String: Any] = ["title": title, "kind": kind, "child_id": childId]
+        if let body, !body.isEmpty { json["body"] = body }
+        return try await post("household/agreements", json: json, as: AgreementCreated.self)
+    }
+    /// Set/replace the reward tiers from a `"7=small toy, 30=big"` spec (turns a
+    /// plain plan into a star chart; the server rejects an empty spec).
+    func setStarTiers(_ agreementId: Int, tiers: String) async throws {
+        try await post("household/agreements/\(agreementId)/tiers", json: ["tiers": tiers])
+    }
+    /// Set the recurring "did <kid> earn a star today?" prompt schedule. The server
+    /// requires a valid `time` and (when enabled) at least one weekday.
+    func setStarPrompt(_ agreementId: Int, enabled: Bool, days: [Int], time: String,
+                       question: String? = nil) async throws {
+        var json: [String: Any] = ["enabled": enabled, "days": days, "time": time]
+        if let question, !question.isEmpty { json["question"] = question }
+        try await post("household/agreements/\(agreementId)/prompt", json: json)
+    }
+    func removeAgreement(_ agreementId: Int) async throws {
+        try await post("household/agreements/\(agreementId)/remove")
     }
 
     // Appointments — a kid appointment as a `kind='child'` commitment. `startAtISO`

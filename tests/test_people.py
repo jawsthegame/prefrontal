@@ -73,6 +73,27 @@ def test_extract_drops_stopwords_and_places():
     assert extract_names("Best Regards") == []
 
 
+def test_extract_drops_generic_capitalized_phrases():
+    # The dominant false-positive source: Title-Case noun-phrases that aren't
+    # people. A run made entirely of common/generic words is dropped even though
+    # it is a clean Title-Case bigram/trigram.
+    assert extract_names("reminder about the Field Trip") == []
+    assert extract_names("Weekly Status Report attached") == []
+    assert extract_names("your Order Confirmation is ready") == []
+    assert extract_names("please contact Support") == []  # lone generic word, even with a cue
+    # A real name mixed in still survives — only the generic run is dropped.
+    assert extract_names("the Weekly Report from Dana Ruiz") == ["Dana Ruiz"]
+
+
+def test_extract_drops_organization_names():
+    # A run naming an organization (an org-marker token) is not a person.
+    assert extract_names("booked United Airlines for the trip") == []
+    assert extract_names("deposit at Chase Bank today") == []
+    assert extract_names("email from State University admissions") == []
+    # But a person whose name merely sits near an org is still caught.
+    assert extract_names("call Dana Ruiz about Chase Bank") == ["Dana Ruiz"]
+
+
 def test_extract_dedupes_case_insensitively():
     assert extract_names("Sam emailed. Later, call Sam again.") == ["Sam"]
 

@@ -21,9 +21,14 @@ storage side is :class:`prefrontal.memory.repos.people.PeopleRepo`; the
 :func:`enqueue_mentions` orchestrator is the one place that both reads (skip a
 known person) and writes (queue an unknown one, touch a known one).
 
-The extractor deliberately errs toward *surfacing* a candidate rather than
-dropping it — a false positive (a place, a product) is one dismiss in the review
-queue, whereas a missed real person is a learning signal lost. Nothing here is
+The extractor leans toward *surfacing* a candidate rather than dropping it — a
+missed real person is a learning signal lost, whereas a stray false positive is
+one dismiss in the review queue. But "lean toward surfacing" is not "surface every
+capitalized phrase": real mail and calendar text is dominated by Title-Case
+noun-phrases that are not people ("Weekly Report", "Order Confirmation", "United
+Airlines"), so the extractor drops runs that are purely generic words or that name
+an organization (:data:`_COMMON_WORDS`, :data:`_ORG_MARKERS`). That filter is what
+keeps the queue reviewable instead of almost-all false positives. Nothing here is
 authoritative: an extracted name is a **pending** :data:`STATUS_PENDING` mention
 until a human identifies or dismisses it, the same propose-don't-apply stance the
 LLM sensor and clarifications take.
@@ -94,6 +99,63 @@ _STOPWORDS: frozenset[str] = frozenset(
         "the", "a", "an", "i", "we", "you", "it", "this", "that", "these", "those",
         "today", "tomorrow", "tonight", "yesterday", "next", "last", "new",
         "your", "our", "my", "his", "her", "their", "and", "or", "but",
+    }
+)
+
+#: Lowercased words that are common Title-Cased tokens in mail/calendar/task text
+#: but are essentially never a person's given name or surname. A candidate whose
+#: *every* token is one of these (or a :data:`_STOPWORDS` entry) is dropped, so a
+#: capitalized noun-phrase like "Field Trip", "Weekly Report" or "Order
+#: Confirmation" never reaches the review queue — while a real name survives
+#: because at least one of its tokens ("Dana", "Ruiz") is not a common word.
+#:
+#: Deliberately conservative: any word that is *also* a plausible name (Bill,
+#: Mark, Grace, Will, May, June, Rose, …) is left OUT, since dropping a real name
+#: costs more than surfacing one extra generic phrase.
+_COMMON_WORDS: frozenset[str] = frozenset(
+    {
+        # scheduling / time
+        "meeting", "meetings", "call", "calls", "appointment", "appointments",
+        "appt", "reminder", "reminders", "event", "events", "invite", "invitation",
+        "schedule", "agenda", "deadline", "followup", "review", "reviews", "sync",
+        "standup", "checkin", "session", "conference", "webinar", "zoom", "hangout",
+        "recap", "kickoff", "onboarding", "interview", "demo", "training",
+        # business / correspondence nouns
+        "report", "reports", "budget", "invoice", "invoices", "receipt", "receipts",
+        "order", "orders", "payment", "payments", "statement", "statements",
+        "account", "accounts", "update", "updates", "request", "requests", "notice",
+        "notification", "notifications", "alert", "alerts", "confirmation", "summary",
+        "proposal", "contract", "agreement", "project", "projects", "task", "tasks",
+        "todo", "ticket", "tickets", "issue", "issues", "form", "forms", "document",
+        "documents", "file", "files", "folder", "message", "inbox", "newsletter",
+        "subscription", "offer", "offers", "deal", "deals", "sale", "sales",
+        "support", "billing", "shipping", "delivery", "tracking", "refund", "return",
+        "quote", "estimate", "reservation", "booking", "itinerary", "checkout",
+        "status", "info", "information", "details", "detail", "list", "plan",
+        "plans", "results", "result", "version", "menu", "photo", "photos",
+        # generic / place / filler nouns
+        "trip", "trips", "vacation", "holiday", "flight", "flights", "hotel", "room",
+        "office", "building", "floor", "street", "road", "avenue", "city", "town",
+        "north", "south", "east", "west", "field", "park", "center", "centre",
+        "quick", "weekly", "monthly", "daily", "annual", "urgent", "important",
+        "final", "draft", "copy", "action", "items", "item", "welcome", "congrats",
+        "congratulations", "happy", "birthday", "anniversary", "team", "group",
+    }
+)
+
+#: Lowercased tokens that mark an *organization* rather than a person. A candidate
+#: run containing ANY of these names a company/institution ("United Airlines",
+#: "Chase Bank", "State University"), so the whole run is dropped even though it is
+#: otherwise a clean Title-Case run.
+_ORG_MARKERS: frozenset[str] = frozenset(
+    {
+        "inc", "corp", "corporation", "co", "company", "llc", "ltd", "plc", "gmbh",
+        "bank", "airlines", "airways", "airline", "university", "college", "school",
+        "hospital", "clinic", "institute", "foundation", "association", "society",
+        "department", "bureau", "agency", "authority", "committee", "council",
+        "store", "shop", "market", "supermarket", "restaurant", "cafe", "hotel",
+        "services", "solutions", "systems", "technologies", "industries", "partners",
+        "group", "holdings", "enterprises", "media", "network", "labs", "studio",
     }
 )
 
@@ -169,9 +231,15 @@ def extract_names(text: str) -> list[str]:
        capitalized word with none of these is dropped — it is far more likely a
        sentence start, a place, or a product ("New York" → "York" → dropped).
 
-    Candidates whose every token is a :data:`_STOPWORDS` entry are discarded. The
-    extractor errs toward surfacing (a false positive is one dismiss in the
-    queue), so the result is *candidates for review*, not confirmed people.
+    Candidates that are purely generic are then discarded: a run whose every token
+    is a :data:`_STOPWORDS` or :data:`_COMMON_WORDS` entry ("Weekly Report", "Order
+    Confirmation"), or that contains an :data:`_ORG_MARKERS` token naming an
+    organization ("United Airlines", "State University"). This is what keeps the
+    review queue from filling with the capitalized noun-phrases that dominate real
+    mail and calendar text — a real name survives because at least one of its
+    tokens is neither generic nor an org marker. Beyond that the extractor still
+    errs toward surfacing (a stray false positive is one dismiss in the queue), so
+    the result is *candidates for review*, not confirmed people.
 
     Returns:
         Normalized names, de-duplicated case-insensitively, in order of first
@@ -186,7 +254,15 @@ def extract_names(text: str) -> list[str]:
         if not name:
             return
         tokens = name_key(name).split()
-        if not tokens or all(t in _STOPWORDS for t in tokens):
+        if not tokens:
+            return
+        # Drop a run that is purely generic (every token a stopword or common
+        # non-name word — "Weekly Report", "Order Confirmation") or that names an
+        # organization rather than a person ("United Airlines", "State University").
+        # A real name keeps at least one token that is neither.
+        if all(t in _STOPWORDS or t in _COMMON_WORDS for t in tokens):
+            return
+        if any(t in _ORG_MARKERS for t in tokens):
             return
         key = name_key(name)
         if key in seen:

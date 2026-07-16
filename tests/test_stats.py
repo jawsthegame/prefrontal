@@ -69,6 +69,34 @@ def test_empty_history_is_safe_and_zeroed(scoped):
     assert ch["total"] == 0 and ch["today"] == 0 and ch["yesterday"] == 0
     assert ch["by_person"] == [] and ch["enabled_chores"] == 0
     assert len(ch["series"]) == CHORE_SERIES_LEN
+    # Capture funnel: no captures ⇒ zeros and a None share (not a misleading 0%).
+    cf = data["capture_funnel"]
+    assert cf["total"] == 0 and cf["on_device"] == 0 and cf["escalated"] == 0
+    assert cf["on_device_share"] is None and cf["by_provider"] == {}
+
+
+def test_capture_funnel_splits_on_device_vs_escalated(scoped):
+    """The brain-dump funnel counts invoked captures by provider `source`.
+
+    on_device is the private/cheap path; anything else escalated to a server
+    model. The share is on_device/total, and a source-less row buckets under
+    'unknown' so counts always sum to the total.
+    """
+    from prefrontal.braindump import CAPTURE_FEATURE, ON_DEVICE_SOURCE
+
+    for src in (ON_DEVICE_SOURCE, ON_DEVICE_SOURCE, ON_DEVICE_SOURCE, "anthropic"):
+        scoped.record_feature_event(CAPTURE_FEATURE, "invoked", source=src)
+    scoped.record_feature_event(CAPTURE_FEATURE, "invoked")  # source=None → 'unknown'
+    # Noise that must NOT be counted: a different feature, and a non-invoked event.
+    scoped.record_feature_event("panic", "invoked", source=ON_DEVICE_SOURCE)
+    scoped.record_feature_event(CAPTURE_FEATURE, "engaged", source=ON_DEVICE_SOURCE)
+
+    cf = build_stats(scoped)["capture_funnel"]
+    assert cf["total"] == 5
+    assert cf["on_device"] == 3
+    assert cf["escalated"] == 2  # anthropic + the unknown-source row
+    assert cf["on_device_share"] == 0.6
+    assert cf["by_provider"] == {"on_device": 3, "anthropic": 1, "unknown": 1}
 
 
 def test_chores_view_surfaces_a_real_error(scoped, monkeypatch):
