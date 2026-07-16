@@ -43,11 +43,7 @@ from prefrontal.scheduling import (
     suggest_for_windows,
     window_config_for,
 )
-from prefrontal.todos import (
-    DEFAULT_CHECKPOINT_MIN_DAYS,
-    avoided_todos,
-    long_avoided_todos,
-)
+from prefrontal.todos import avoided_todos, long_avoided_todos
 
 #: Default available-hours band (UTC hours) for fitting todos into the day.
 DEFAULT_DAY_START_HOUR = 8
@@ -368,17 +364,22 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     #                        checkpoint floor): a gentle "pick one up".
     #   🧭 Time to decide  — avoided for weeks (≥ checkpoint floor): pushing it
     #                        harder backfires, so surface it for a decision instead.
-    # Both draw from the same worst-first ``avoided_todos`` order.
+    # Partition by the checkpoint set itself, not a day-count compare: long_avoided_todos
+    # rounds days_open, so a separate ``< floor`` test here would drop a boundary item
+    # (e.g. 17.96d → rounds to 18.0) from *both* lists. checkpoint is authoritative;
+    # avoided is everything else still open and sliding.
     def _brief_todo(a: dict[str, Any]) -> dict[str, Any]:
         t = a["todo"]
         return {"title": t["title"], "days_open": a["days_open"], "todo_id": t["id"]}
 
+    checkpoint_hits = long_avoided_todos(todos, now)
+    checkpoint_ids = {a["todo"]["id"] for a in checkpoint_hits}
     avoided = [
         _brief_todo(a)
         for a in avoided_todos(todos, now)
-        if a["days_open"] < DEFAULT_CHECKPOINT_MIN_DAYS
+        if a["todo"]["id"] not in checkpoint_ids
     ][:3]
-    checkpoint = [_brief_todo(a) for a in long_avoided_todos(todos, now)[:3]]
+    checkpoint = [_brief_todo(a) for a in checkpoint_hits[:3]]
 
     # Triage "surface" items — worth seeing once, no core-table write — from the
     # last day (older ones age out of view without deletion, spec §12).

@@ -230,3 +230,22 @@ def test_briefing_partitions_sliding_from_time_to_decide(store):
     text = render_briefing(briefing)
     assert "🧭 Time to decide" in text
     assert "Renew passport" in text and "break it down, defer, or drop it" in text
+
+
+def test_briefing_boundary_item_shows_in_exactly_one_block(store):
+    """Regression (PR #670 review): an item whose days_open rounds to the checkpoint
+    floor but is just under it must land in 🐢 Keeps sliding, not vanish from both
+    blocks. Partitioning by the long_avoided set (not a rounded day-count compare)
+    guarantees exactly-one membership at the boundary."""
+    tid = store.add_todo("Email accountant", estimate_minutes=15, priority=2)
+    # ~17.96d open: long_avoided_todos (unrounded `days < 18.0`) excludes it, while its
+    # rounded days_open is 18.0 — which a naive `days_open < 18.0` filter would also
+    # exclude, dropping it from both lists.
+    ts = (utcnow() - timedelta(days=17, hours=23)).strftime(TS)
+    store.conn.execute("UPDATE todos SET created_at = ? WHERE id = ?", (ts, tid))
+    store.conn.commit()
+
+    briefing = build_briefing(store, now=utcnow())
+    in_avoided = tid in {a["todo_id"] for a in briefing.avoided}
+    in_checkpoint = tid in {a["todo_id"] for a in briefing.checkpoint}
+    assert in_avoided and not in_checkpoint

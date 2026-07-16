@@ -1119,10 +1119,9 @@ def _dropped_is_give_up(todo: dict[str, Any], ref: datetime | None) -> bool:
     A todo the user consciously **deferred** (a ``snoozed_until`` was set via the
     stuck-checkpoint) and later dropped is hygiene, not a give-up: parking-then-
     letting-go is the adaptive triage the checkpoint exists to enable, and counting
-    it as a slip would teach the user the checkpoint is a trap. This is checked
-    before the started-at rule only in that it can't co-occur meaningfully — a
-    started todo that was also snoozed still reads as engaged-then-abandoned, so
-    started wins.
+    it as a slip would teach the user the checkpoint is a trap. The started-at rule
+    above takes precedence — a todo that was both started and snoozed still reads as
+    engaged-then-abandoned (a real miss), because it's checked first.
     """
     if todo.get("started_at"):
         return True
