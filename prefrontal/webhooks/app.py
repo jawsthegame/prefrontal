@@ -186,6 +186,7 @@ def create_app(
     app.middleware("http")(usage_middleware)
 
     from prefrontal.webhooks.routers import (
+        actions,
         admin,
         anchor,
         assistant,
@@ -234,6 +235,7 @@ def create_app(
         search,
         coaching,
         communicate,
+        actions,
         household,
         sensor,
         clarify,

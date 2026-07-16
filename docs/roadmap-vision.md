@@ -357,10 +357,16 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   contract. ✅ *First action shipped — **send the pre-drafted email***
   (`preview_send` / `send_prepared_draft`, `POST /todos/{id}/delegate/send[/preview]`):
   a two-phase preview→confirm gate over the existing SMTP source that refuses stale
-  or blocked sends and never lets the caller inject body content. Built on native
-  transports first; the remaining action types (calendar-write, forms, scoped call)
-  and a generic **MCP tool-call** provider that slots in behind the same confirm
-  gate are the open remainder of this item.
+  or blocked sends and never lets the caller inject body content. ✅ *The generic
+  **MCP tool-call provider** has now landed too* (`prefrontal/actions.py` +
+  `prefrontal/integrations/mcp.py`, `POST /actions/{tools,preview,run}`): call an
+  **allowlisted** tool on a configured MCP server (`PREFRONTAL_MCP_SERVERS`) behind
+  the identical digest-pinned preview→confirm gate, with an inert audit episode per
+  run — scoped, verifiable tool-calls, never a browser agent. So both native actions
+  and MCP tools now share one confirm gate. Open remainder: more action types built
+  as MCP tools (calendar-write, forms, scoped call), wiring a tool-call onto a
+  delegated todo's draft, per-user encrypted MCP sources (like SMTP), and
+  stdio-transport servers.
 - **Communication translation as a first-class tool** ✅ **shipped** — decode an
   ambiguous work email, draft a reply in the right register, or soften a message.
   Text-only and side-effect-free (`prefrontal/communication_translation.py`,

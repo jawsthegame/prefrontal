@@ -12,6 +12,7 @@ to force a fresh read of the environment.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from dataclasses import dataclass
@@ -61,6 +62,26 @@ def _load_dotenv(path: str = ".env") -> None:
                 idx = value.find("#", idx + 1)
             value = value.strip()
         os.environ.setdefault(key, value)
+
+
+@dataclass(frozen=True)
+class McpServerConfig:
+    """A configured MCP server the scoped-action provider may call (roadmap M4).
+
+    Attributes:
+        name: Operator-chosen handle used to address the server (e.g. ``calendar``).
+        url: The server's Streamable-HTTP endpoint (a full https URL).
+        auth_token: Optional bearer token sent as ``Authorization: Bearer …``.
+        allowed_tools: The **allowlist** of tool names that may be called on this
+            server. A tool not in this set is refused — the bounded-action guard
+            (M4 is scoped, verifiable tool-calls, never arbitrary execution). An
+            empty set means *no* tool is callable (the server is effectively off).
+    """
+
+    name: str
+    url: str
+    auth_token: str = ""
+    allowed_tools: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -334,6 +355,11 @@ class Settings:
     self_update_repo_dir: str = ""     # where to run git (default: the repo root)
     update_cmd: str = ""               # override update cmd (default: bash deploy/update.sh)
     restart_cmd: str = ""              # override restart cmd (default: launchd kickstart)
+    # Scoped agentic execution (roadmap M4): MCP servers the confirmed-action
+    # provider may call, each with an allowlist of callable tools. Configured via
+    # PREFRONTAL_MCP_SERVERS (JSON); empty (default) leaves the capability dormant
+    # — local-first, opt-in. See `_parse_mcp_servers` and `prefrontal.actions`.
+    mcp_servers: tuple[McpServerConfig, ...] = ()
 
     @property
     def google_oauth_enabled(self) -> bool:
@@ -599,7 +625,60 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         self_update_repo_dir=os.environ.get("PREFRONTAL_REPO_DIR", "").strip(),
         update_cmd=os.environ.get("PREFRONTAL_UPDATE_CMD", "").strip(),
         restart_cmd=os.environ.get("PREFRONTAL_RESTART_CMD", "").strip(),
+        mcp_servers=_parse_mcp_servers(os.environ.get("PREFRONTAL_MCP_SERVERS", "")),
     )
+
+
+def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
+    """Parse ``PREFRONTAL_MCP_SERVERS`` into :class:`McpServerConfig` entries.
+
+    The value is a JSON array of objects, each ``{"name", "url", "auth"?,
+    "allowed_tools": [...]}``. A malformed blob, a non-array, or an entry missing
+    ``name``/``url`` is skipped (never raises — a bad config leaves the capability
+    off rather than crashing boot). ``allowed_tools`` is the callable-tool
+    allowlist; an entry with no tools listed is kept but can call nothing, so a
+    server is never accidentally wide-open.
+
+    Args:
+        raw: The raw environment-variable value (may be empty).
+
+    Returns:
+        A tuple of :class:`McpServerConfig`, suitable for :attr:`Settings.mcp_servers`.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ()
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return ()
+    if not isinstance(data, list):
+        return ()
+    out: list[McpServerConfig] = []
+    seen: set[str] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if not name or not url or name in seen:
+            continue
+        seen.add(name)
+        tools_raw = item.get("allowed_tools")
+        allowed = frozenset(
+            str(t).strip()
+            for t in (tools_raw if isinstance(tools_raw, list) else [])
+            if str(t).strip()
+        )
+        out.append(
+            McpServerConfig(
+                name=name,
+                url=url,
+                auth_token=str(item.get("auth", "")).strip(),
+                allowed_tools=allowed,
+            )
+        )
+    return tuple(out)
 
 
 def _parse_mail_accounts(raw: str) -> tuple[tuple[str, str], ...]:
