@@ -27,13 +27,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // never appears and no token is ever minted. If already authorized, just
         // refresh the token (it can rotate); the didRegister callback re-posts it.
         // A denial is respected and left alone.
+        //
+        // Only ask on a *foreground* launch: this delegate also runs on background
+        // relaunches (e.g. a geofence crossing via LocationMonitor), and iOS won't
+        // present the prompt then — the request would just return false and we'd
+        // re-ask every background wake with nothing to show. Defer to the next
+        // foreground launch. Provisional/ephemeral grants still deliver, so they
+        // register like a full authorization.
+        let launchedToForeground = application.applicationState != .background
         Task {
             let status = await center.notificationSettings().authorizationStatus
-            let authorized: Bool
-            if status == .notDetermined {
+            var authorized = status == .authorized || status == .provisional || status == .ephemeral
+            if status == .notDetermined && launchedToForeground {
                 authorized = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
-            } else {
-                authorized = status == .authorized
             }
             if authorized {
                 await MainActor.run { application.registerForRemoteNotifications() }
