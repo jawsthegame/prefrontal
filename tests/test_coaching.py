@@ -719,6 +719,23 @@ def test_task_paralysis_evaluator_prefers_the_decomposition_first_step():
     assert "Find the accountant's number and dial." in cue.text
 
 
+def test_task_paralysis_nudge_folds_in_reschedule_continuity():
+    store, tid = _store_with_avoided_todo()
+    # Two deadline moves after the first set → "rescheduled it twice".
+    store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+    store.update_todo_deadline(tid, "2026-04-20 12:00:00")
+    store.update_todo_deadline(tid, "2026-04-25 12:00:00")
+    cue = get("task_paralysis").evaluate(store, _ctx())[0]
+    assert "You've rescheduled it twice." in cue.text
+
+
+def test_task_paralysis_nudge_omits_continuity_without_history():
+    store, _tid = _store_with_avoided_todo()
+    cue = get("task_paralysis").evaluate(store, _ctx())[0]
+    # No reschedule/snooze history → no continuity clause, just the base nudge.
+    assert "rescheduled" not in cue.text and "snoozed" not in cue.text
+
+
 # -- Location anchor evaluator (parity refactor, spec step 2) ----------------
 
 
@@ -1450,6 +1467,31 @@ def test_run_coaching_tick_fires_open_window_as_a_gated_push():
             store, settings=settings, ollama=_offline_ollama(settings), now=_GAP_NOON
         )
         assert [dec for dec in second.decisions if dec.cue.context_key == "open_window"] == []
+    finally:
+        conn.close()
+
+
+def test_open_window_nudge_folds_in_reschedule_continuity():
+    conn, unscoped, tid = _tick_store_with_open_window()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        # One deadline move after the first set → "rescheduled it once".
+        store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+        store.update_todo_deadline(tid, "2026-04-20 12:00:00")
+        cues = get("open_window").evaluate(store, _ctx(now=_GAP_NOON))
+        assert len(cues) == 1
+        assert "You've rescheduled it once." in cues[0].text
+    finally:
+        conn.close()
+
+
+def test_open_window_nudge_omits_continuity_without_history():
+    conn, unscoped, tid = _tick_store_with_open_window()
+    try:
+        store = unscoped.scoped(unscoped.get_user("tester")["id"])
+        cues = get("open_window").evaluate(store, _ctx(now=_GAP_NOON))
+        assert len(cues) == 1
+        assert "rescheduled" not in cues[0].text and "snoozed" not in cues[0].text
     finally:
         conn.close()
 

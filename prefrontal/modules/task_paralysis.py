@@ -31,6 +31,7 @@ from typing import Any
 
 from prefrontal.clock import TS_FMT
 from prefrontal.coaching import CoachContext, Cue, note_hint
+from prefrontal.memory.behavioral import behavior_nudge_clause
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
 from prefrontal.modules.registry import register
@@ -300,6 +301,9 @@ class TaskParalysisModule(Module):
            thing) and reframe it as one <5-minute first action, preferring the
            stored decomposition's first step when it exists.
 
+        The ``tiny_first_step`` nudge also folds in the todo's reschedule/snooze
+        continuity (:func:`~prefrontal.memory.behavioral.behavior_nudge_clause`) —
+        "you've circled this before", the dimension a days-open count can't convey.
         Any note the user attached to the target todo is folded onto the end
         (:func:`~prefrontal.coaching.note_hint`), so the context they left rides
         along. Quiet hours + debounce are applied downstream by the coaching engine.
@@ -349,9 +353,12 @@ class TaskParalysisModule(Module):
             if first
             else f"Start tiny — set a 5-minute timer and just open “{todo['title']}.”"
         )
+        # Fold in the reschedule/snooze continuity — the "you've circled this before"
+        # dimension the days-open count alone can't convey (behavioral.py).
+        continuity = behavior_nudge_clause(store, todo["id"])
         text = (
             f"You keep putting off “{todo['title']}” ({round(top['days_open'])}d and "
-            f"counting). {opener}{note_hint(todo.get('notes'))}"
+            f"counting).{continuity} {opener}{note_hint(todo.get('notes'))}"
         )
         return [
             Cue(

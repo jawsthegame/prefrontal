@@ -41,6 +41,7 @@ from __future__ import annotations
 from prefrontal.clock import TS_FMT, local_datetime, local_hour_of, parse_ts, utcnow
 from prefrontal.coaching import CoachContext, Cue, Decision, note_hint
 from prefrontal.config import get_settings
+from prefrontal.memory.behavioral import behavior_nudge_clause
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.base import Intervention, Module
@@ -100,13 +101,17 @@ def open_window_message(
     next_title: str | None,
     next_clock: str,
     notes: str | None,
+    continuity: str = "",
 ) -> str:
     """Phrase the gap offer, naming the free minutes and (when known) the next thing.
 
     The concrete ask ("knock out X") and the numbers (free minutes, days open) are
     load-bearing — the engine's optional LLM phrasing pass never touches a ``nudge``,
-    so this deterministic text is exactly what ships. Any note on the todo rides
-    along (:func:`~prefrontal.coaching.note_hint`).
+    so this deterministic text is exactly what ships. The reschedule/snooze
+    ``continuity`` clause ("you've circled this before") and any note on the todo
+    ride along (:func:`~prefrontal.memory.behavioral.behavior_nudge_clause` /
+    :func:`~prefrontal.coaching.note_hint`); both are leading-space-prefixed, so an
+    empty value appends cleanly.
     """
     if next_title:
         when = f" before {next_title}" + (f" at {next_clock}" if next_clock else "")
@@ -115,7 +120,7 @@ def open_window_message(
     return (
         f"You've got ~{free_minutes} min{when}. Good time to knock out "
         f"“{todo_title}”? You've been putting it off ({round(days_open)}d and "
-        f"counting).{note_hint(notes)}"
+        f"counting).{continuity}{note_hint(notes)}"
     )
 
 
@@ -242,6 +247,7 @@ class OpenWindowModule(Module):
                 next_title=next_c["title"] if next_c else None,
                 next_clock=_local_clock(next_c["start_at"], ctx.timezone) if next_c else "",
                 notes=todo.get("notes"),
+                continuity=behavior_nudge_clause(store, todo["id"]),
             ),
             context_key="open_window",
             dedup_key=f"open_window:{todo['id']}",
