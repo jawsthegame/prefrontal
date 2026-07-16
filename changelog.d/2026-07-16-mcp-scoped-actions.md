@@ -21,9 +21,10 @@
     it never pollutes the learning loop). `None` digest opts out (internal callers);
     an empty string is a *provided* value that can't match, so it's refused.
   - Endpoints `GET /actions/tools`, `POST /actions/preview`, `POST /actions/run`
-    (new `actions` router + schemas) — a thin skin over the core; a tool/transport
-    rejection returns `ran: false` with the reason (report-never-raise), a stale call
-    409s, a blocker 422s.
+    (new `actions` router + schemas), **operator-only** (`require_operator`) since a
+    call executes operator-configured integrations with the operator's credentials —
+    a thin skin over the core; a tool/transport rejection returns `ran: false` with
+    the reason (report-never-raise), a stale call 409s, a blocker 422s.
   Both native actions and this MCP provider now share the one confirm gate. Covered by
   `tests/test_mcp.py` (the client against a fake JSON-RPC server incl. isError,
   transport-failure, and SSE) and `tests/test_actions.py` (allowlist∩advertised

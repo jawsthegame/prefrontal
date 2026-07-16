@@ -28,6 +28,7 @@ from prefrontal.memory.store import MemoryStore, provision_user
 from tests.conftest import scoped_default
 
 SECRET = "actions-secret"
+MEMBER_SECRET = "actions-member-secret"
 
 
 def _server_transport(tools, *, call_text="done", call_is_error=False):
@@ -121,7 +122,7 @@ def test_preview_blocks_tool_not_advertised():
     p = preview_action(_settings(allowed=("create_event",)), "calendar", "create_event",
                        client_factory=_factory([]))
     assert p.can_run is False
-    assert any("doesn't currently offer" in b for b in p.blockers)
+    assert any("doesn't offer" in b for b in p.blockers)
 
 
 # --- run ---------------------------------------------------------------------
@@ -182,6 +183,7 @@ def http():
     conn = init_db(":memory:")
     unscoped = MemoryStore(conn)
     provision_user(unscoped, "me", display_name="Me", token=SECRET, is_operator=True)
+    provision_user(unscoped, "kid", display_name="Kid", token=MEMBER_SECRET, is_operator=False)
     app = create_app(store=unscoped, settings=_settings())
     app.state.mcp_client_factory = _factory(CAL_TOOLS, call_text="booked")
     with TestClient(app) as c:
@@ -193,6 +195,21 @@ def test_http_requires_auth(http):
     assert http.get("/actions/tools").status_code == 401
     r = http.post("/actions/preview", json={"server": "calendar", "tool": "create_event"})
     assert r.status_code == 401
+
+
+def test_http_requires_operator(http):
+    """A non-operator household member can't reach the actions surface (executes
+    operator-configured integrations with the operator's credentials)."""
+    member = {"X-Prefrontal-Token": MEMBER_SECRET}
+    assert http.get("/actions/tools", headers=member).status_code == 403
+    assert http.post(
+        "/actions/preview", json={"server": "calendar", "tool": "create_event"}, headers=member
+    ).status_code == 403
+    assert http.post(
+        "/actions/run",
+        json={"server": "calendar", "tool": "create_event", "preview_digest": "x"},
+        headers=member,
+    ).status_code == 403
 
 
 def test_http_list_tools(http):

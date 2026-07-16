@@ -31,7 +31,7 @@ from prefrontal.actions import (
 )
 from prefrontal.webhooks.deps import (
     ScopedRequest,
-    resolve_user,
+    require_operator,
 )
 from prefrontal.webhooks.schemas import (
     ActionPreviewRequest,
@@ -52,7 +52,7 @@ def build_router(services: RouterServices) -> APIRouter:
     @router.get("/actions/tools", tags=["actions"])
     def actions_tools(
         request: Request,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
     ) -> dict[str, Any]:
         """List the callable (configured + allowlisted) MCP tools across servers.
 
@@ -66,7 +66,7 @@ def build_router(services: RouterServices) -> APIRouter:
     def actions_preview(
         payload: ActionPreviewRequest,
         request: Request,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
     ) -> dict[str, Any]:
         """Dry-run a scoped tool-call: validate it and return a digest — no side effects.
 
@@ -95,7 +95,7 @@ def build_router(services: RouterServices) -> APIRouter:
     def actions_run(
         payload: ActionRunRequest,
         request: Request,
-        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        ctx: Annotated[ScopedRequest, Depends(require_operator)],
     ) -> dict[str, Any]:
         """Confirm and run a scoped tool-call.
 
@@ -103,7 +103,9 @@ def build_router(services: RouterServices) -> APIRouter:
         ``preview_digest`` no longer matches) or a structural blocker (422), then
         calls the tool. A tool/transport rejection returns 200 with ``ran: false``
         and the reason (the "report, never raise" ethos); a success returns the
-        tool's ``content``. Every run leaves an inert ``action`` audit episode.
+        tool's ``content``. A call that actually reaches the tool (success or
+        failure) leaves an inert ``action`` audit episode; a refused one doesn't.
+        Operator-only — it can execute operator-configured integrations.
         """
         outcome = run_action(
             ctx.store,

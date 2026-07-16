@@ -17,8 +17,9 @@ The safety model, in one place:
    fires. :func:`run_action` re-validates against the *current* config, refuses if
    the digest no longer matches (the confirmed call drifted from the previewed
    one), and only then calls the tool.
-3. **Audit.** A run logs an inert ``action`` episode (no outcome/ack, so it never
-   pollutes the learning loop) as a queryable trace of what was executed.
+3. **Audit.** A call that reaches the tool (success *or* failure) logs an inert
+   ``action`` episode (no outcome/ack, so it never pollutes the learning loop) as a
+   queryable trace; a refused call (blocked/stale) doesn't execute, so it doesn't.
 
 The transport (:class:`~prefrontal.integrations.mcp.McpClient`) is injected via a
 ``client_factory`` so tests can stand in a fake server; unset, it builds a real
@@ -155,9 +156,14 @@ def _validate(
         return None, "", [f'no MCP server named "{server_name}" is configured']
     if tool not in server.allowed_tools:
         return server, "", [f'the tool "{tool}" is not on {server_name}\'s allowlist']
+    # ``list_tools`` returns [] on an unreachable/failing server too, so a missing
+    # tool here means "not offered *or* couldn't be verified" — say both.
     advertised = {t.name: t for t in client_factory(server).list_tools()}
     if tool not in advertised:
-        blockers.append(f'the server "{server_name}" doesn\'t currently offer a "{tool}" tool')
+        blockers.append(
+            f'the server "{server_name}" doesn\'t offer a "{tool}" tool '
+            "(or couldn't be reached to confirm it)"
+        )
     description = advertised[tool].description if tool in advertised else ""
     return server, description, blockers
 

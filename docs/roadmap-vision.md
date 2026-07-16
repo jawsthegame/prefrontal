@@ -359,8 +359,9 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   a two-phase preview→confirm gate over the existing SMTP source that refuses stale
   or blocked sends and never lets the caller inject body content. ✅ *The generic
   **MCP tool-call provider** has now landed too* (`prefrontal/actions.py` +
-  `prefrontal/integrations/mcp.py`, `POST /actions/{tools,preview,run}`): call an
-  **allowlisted** tool on a configured MCP server (`PREFRONTAL_MCP_SERVERS`) behind
+  `prefrontal/integrations/mcp.py`, `GET /actions/tools` + `POST /actions/preview`
+  + `POST /actions/run`, operator-only): call an **allowlisted** tool on a
+  configured MCP server (`PREFRONTAL_MCP_SERVERS`) behind
   the identical digest-pinned preview→confirm gate, with an inert audit episode per
   run — scoped, verifiable tool-calls, never a browser agent. So both native actions
   and MCP tools now share one confirm gate. Open remainder: more action types built
