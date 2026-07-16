@@ -25,7 +25,11 @@ DEFAULT_COACHING_STATE: tuple[tuple[str, str, str], ...] = (
     ("preferred_briefing_format", "short", "explicit"),
     ("escalation_delay_minutes", "5", "inferred"),
     ("responsive_hours_start", "08:00", "inferred"),
-    ("responsive_hours_end", "14:00", "inferred"),
+    # 22:00, matching coaching.DEFAULT_RESPONSIVE_END. A stray 14:00 here used to
+    # override that code default, so every user's responsive window was 08:00–14:00
+    # and *all* non-critical cues were held after 2pm (see the one-time reset in
+    # migrate.reset_seeded_responsive_hours_end for existing users).
+    ("responsive_hours_end", "22:00", "inferred"),
     ("preferred_reminder_channel", "notification", "inferred"),
     ("time_estimation_bias", "1.4", "inferred"),
     ("active_escalation_path", "notification,sound,tts", "explicit"),
