@@ -158,3 +158,32 @@ class DelegateTodo(BaseModel):
             "VA (handler='email' only; ignored for 'agent')."
         ),
     )
+
+
+class DelegateSendPreview(BaseModel):
+    """Body of ``POST /todos/{id}/delegate/send/preview`` — dry-run a draft send."""
+
+    to: str | None = Field(
+        default=None,
+        description=(
+            "Optional recipient override (a valid email). The prepared draft often "
+            "doesn't know the real address; supply it here to preview sending to it."
+        ),
+    )
+
+
+class DelegateSend(BaseModel):
+    """Body of ``POST /todos/{id}/delegate/send`` — confirm and send the draft.
+
+    ``preview_digest`` is the digest returned by the preview; the send refuses if
+    the stored draft changed since then, so a stale confirmation can't fire.
+    """
+
+    preview_digest: str = Field(
+        min_length=1,
+        description="The digest from the matching preview call (pins the exact content).",
+    )
+    to: str | None = Field(
+        default=None,
+        description="The same recipient override used in the preview (bound by the digest).",
+    )
