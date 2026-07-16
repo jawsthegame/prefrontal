@@ -8,6 +8,6 @@
   behavioral episode, a settings-change the on-device pass leaves to the cloud), an
   edge/branch checklist (availability off → server fallback, guardrail refusal,
   the "server pass" escalation, the privacy claim that raw text never leaves the
-  device), and how to observe each — including using the new `capture_funnel`
+  device), and how to observe each — including using the `capture_funnel`
   stat as the end-to-end signal that the on-device path actually ran. Linked from
   the iOS README's Tests section. Docs only.

@@ -72,14 +72,16 @@ Apply / Accept.
       `capture_funnel.on_device` increments; body carries `parse`, not `text`.
 - [ ] **Apple Intelligence OFF** (toggle it off in Settings) → `isAvailable` is
       `false`, capture falls back to the **server text parse**; provider is
-      `anthropic`/`ollama`, funnel increments the cloud bucket, body carries `text`.
+      `anthropic`/`ollama`, `capture_funnel.escalated` increments (with that
+      provider under `by_provider`), body carries `text`.
 - [ ] **Model still downloading** → same graceful fallback as "off" (not a hang or
       crash).
 - [ ] **Guardrail refusal / generation error** (an input the model refuses) →
       `parse` returns `nil` → falls back to server rather than losing the capture.
 - [ ] **"Server pass" button** (shown after an on-device result) → re-runs the
       same ramble through the cloud agent; catches the behavioral asides (#6) and
-      settings changes (#7) the on-device pass leaves alone; funnel moves to cloud.
+      settings changes (#7) the on-device pass leaves alone; the capture counts
+      under `capture_funnel.escalated`.
 - [ ] **Empty on-device result** stays silent and still offers the server pass
       (that's when the raw text first leaves the device).
 - [ ] **Privacy:** across every on-device capture, confirm via the proxy that the
@@ -105,15 +107,15 @@ Date:              <YYYY-MM-DD>
 
 Matrix  1..8:      [ ] pass  (notes: …)
 Edge checklist:    [ ] all pass  (notes: …)
-capture_funnel before/after: on_device <n>→<n>, cloud <n>→<n>
+capture_funnel before/after: on_device <n>→<n>, escalated <n>→<n>
 Extraction quality (10 rambles): <good / issues: …>
 ```
 
 ## Exit criteria
 
 Consider the on-device path **verified** when the matrix and edge checklist pass,
-the funnel confirms `on_device` moved on on-device captures (and cloud moved on
-the server pass), the proxy confirms no raw text leaves the device on the
+the funnel confirms `on_device` moved on on-device captures (and `escalated`
+moved on the server pass), the proxy confirms no raw text leaves the device on the
 on-device path, and extraction quality on real rambles is acceptable. Until then,
 treat on-device extraction as **unverified at runtime** — the automated tests
 only prove the wire/validation layer, never the model.
