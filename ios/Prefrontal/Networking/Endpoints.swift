@@ -383,7 +383,7 @@ extension APIClient {
     /// Close a specific trip's retrospective — label + category + domain +
     /// reflection — in one call (`POST /webhooks/trip/retro`). The reflection, when
     /// present, is classified into an outcome that feeds the learning loop.
-    func retroTrip(tripId: Int, label: String?, category: String? = nil,
+    func tripRetro(tripId: Int, label: String?, category: String? = nil,
                    domain: String? = nil, reflection: String? = nil) async throws {
         var body: [String: Any] = ["trip_id": tripId]
         if let label, !label.isEmpty { body["label"] = label }

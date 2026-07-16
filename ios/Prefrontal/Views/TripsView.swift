@@ -163,7 +163,9 @@ struct TripRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            if let o = trip.reflectionOutcome { Text(outcomeIcon(o)) }
+            if let o = trip.reflectionOutcome, !o.isEmpty {
+                Text(outcomeIcon(o)).accessibilityLabel("Outcome: \(o)")
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(trip.label ?? "Trip").font(.subheadline.weight(.medium)).foregroundStyle(Brand.nearWhite)
                 FlowRow(spacing: 6) {
@@ -194,7 +196,7 @@ struct TripRow: View {
                 if trip.domain == d { Label(d.capitalized, systemImage: "checkmark") } else { Text(d.capitalized) }
             }
         }
-        if trip.domain != nil {
+        if !(trip.domain ?? "").isEmpty {
             Divider()
             Button(role: .destructive) { Task { await setDomain(nil) } } label: {
                 Label("Clear life area", systemImage: "xmark")
@@ -288,10 +290,10 @@ struct TripLabelSheet: View {
 
     private func save() async {
         saving = true; defer { saving = false }
-        let note = reflection.trimmingCharacters(in: .whitespaces)
+        let note = reflection.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             try await withAPI {
-                try await $0.retroTrip(tripId: trip.id,
+                try await $0.tripRetro(tripId: trip.id,
                                        label: label.trimmingCharacters(in: .whitespaces),
                                        category: category.isEmpty ? nil : category,
                                        domain: domain.isEmpty ? nil : domain,
