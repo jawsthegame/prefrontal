@@ -402,10 +402,22 @@ class HouseholdRepo(Repo):
         return int(row["id"])
 
     def remove_agreement(self, agreement_id: int) -> bool:
-        """Delete an agreement by id (scoped to the household). ``True`` if removed."""
+        """Delete an agreement by id (scoped to the household). ``True`` if removed.
+
+        Clears the star ledger for the agreement first: ``household_stars``
+        FK-references this row with no ``ON DELETE CASCADE``, so with foreign keys
+        enforced, deleting a chart that has awarded stars would otherwise raise
+        ``FOREIGN KEY constraint failed`` (surfacing as a 500). Both deletes share
+        one transaction, so a chart and its ledger drop together atomically.
+        """
+        hid = self._household_id()
+        self.conn.execute(
+            "DELETE FROM household_stars WHERE agreement_id = ? AND household_id = ?",
+            (agreement_id, hid),
+        )
         cur = self.conn.execute(
             "DELETE FROM household_agreements WHERE id = ? AND household_id = ?",
-            (agreement_id, self._household_id()),
+            (agreement_id, hid),
         )
         self.conn.commit()
         return cur.rowcount > 0
