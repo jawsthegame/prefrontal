@@ -23,9 +23,12 @@ existing one:
   number (``resolve_route``'s ``twilio_to``), never an arbitrary recipient — a
   scoped "call me and say X" reminder, not an outbound dialer.
 
-The protocol handling is a tiny JSON-RPC dispatcher (``initialize`` / ``tools/list``
-/ ``tools/call``); a tool-level failure comes back as an MCP ``isError`` result,
-not a protocol error, per the MCP convention.
+A tool reports a failure by *returning* a :class:`ToolResult` with ``is_error`` set
+— never by raising — so a caught exception's text never flows into a response
+(``py/stack-trace-exposure``); a validation message is an authored literal. The
+protocol handling is a tiny JSON-RPC dispatcher (``initialize`` / ``tools/list`` /
+``tools/call``); a tool-level failure comes back as an MCP ``isError`` result, not a
+protocol error, per the MCP convention.
 """
 
 from __future__ import annotations
@@ -36,16 +39,28 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.commitments import normalize_event
 from prefrontal.config import Settings
+from prefrontal.log import get_logger
 
 if TYPE_CHECKING:
     from prefrontal.memory.store import MemoryStore
+
+logger = get_logger(__name__)
 
 #: The MCP protocol revision this server advertises.
 PROTOCOL_VERSION = "2025-06-18"
 
 
-class ToolError(Exception):
-    """A tool-level failure (bad args, precondition) — surfaced as an MCP isError."""
+@dataclass(frozen=True)
+class ToolResult:
+    """What a tool handler returns: the text to show, and whether it's an error.
+
+    Returning (rather than raising) keeps any exception's text out of the response
+    — a failure message is always an authored literal, so nothing derived from a
+    caught exception reaches the caller.
+    """
+
+    text: str
+    is_error: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,7 +77,7 @@ class ToolContext:
     voice_client: Any = None
 
 
-ToolHandler = Callable[["ToolContext", dict[str, Any]], str]
+ToolHandler = Callable[["ToolContext", dict[str, Any]], ToolResult]
 
 
 @dataclass(frozen=True)
@@ -84,17 +99,21 @@ class Tool:
         }
 
 
+def _err(text: str) -> ToolResult:
+    return ToolResult(text=text, is_error=True)
+
+
 # --- tool handlers -----------------------------------------------------------
 
 
-def _create_event(ctx: ToolContext, args: dict[str, Any]) -> str:
+def _create_event(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     """Create a calendar commitment on the caller's schedule."""
     title = str(args.get("title", "")).strip()
     start = str(args.get("start", "")).strip()
     if not title:
-        raise ToolError("'title' is required")
+        return _err("'title' is required")
     if not start:
-        raise ToolError("'start' is required (an ISO 8601 timestamp)")
+        return _err("'start' is required (an ISO 8601 timestamp)")
     event: dict[str, Any] = {"title": title, "start_at": start, "source": "manual"}
     for src, dst in (("end", "end_at"), ("notes", "notes"), ("location", "location")):
         val = str(args.get(src, "")).strip()
@@ -105,31 +124,29 @@ def _create_event(ctx: ToolContext, args: dict[str, Any]) -> str:
     except ValueError:
         # Don't echo the raw exception (py/stack-trace-exposure): title/start are
         # already checked above, so a ValueError here is an unparseable time.
-        raise ToolError(
-            "couldn't create the event — 'start'/'end' must be valid ISO 8601 timestamps"
-        ) from None
+        return _err("couldn't create the event — 'start'/'end' must be valid ISO 8601 timestamps")
     commitment_id, _ = ctx.store.upsert_commitment(**fields)
-    return f"Created event '{title}' (commitment {commitment_id})."
+    return ToolResult(f"Created event '{title}' (commitment {commitment_id}).")
 
 
-def _create_todo(ctx: ToolContext, args: dict[str, Any]) -> str:
+def _create_todo(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     """Capture a todo on the caller's list."""
     title = str(args.get("title", "")).strip()
     if not title:
-        raise ToolError("'title' is required")
+        return _err("'title' is required")
     notes = str(args.get("notes", "")).strip() or None
     deadline = str(args.get("deadline", "")).strip() or None
     # Use the documented default source vocabulary (manual | impulse) rather than a
     # new value downstream reporting wouldn't recognize.
     todo_id = ctx.store.add_todo(title, notes=notes, deadline=deadline, source="manual")
-    return f"Added todo '{title}' (id {todo_id})."
+    return ToolResult(f"Added todo '{title}' (id {todo_id}).")
 
 
-def _place_call(ctx: ToolContext, args: dict[str, Any]) -> str:
+def _place_call(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     """Place a scoped reminder call to the caller's *own* configured number."""
     message = str(args.get("message", "")).strip()
     if not message:
-        raise ToolError("'message' is required (what the call should say)")
+        return _err("'message' is required (what the call should say)")
     # Lazy import: delivery reaches up into webhooks/coaching, so keep it off the
     # module import path (matching how todos.py reaches the delivery client).
     from prefrontal.integrations.delivery import TwilioVoiceClient, resolve_route
@@ -137,7 +154,7 @@ def _place_call(ctx: ToolContext, args: dict[str, Any]) -> str:
     route = resolve_route(ctx.store, ctx.settings)
     if not (route.twilio_account_sid and route.twilio_auth_token
             and route.twilio_from and route.twilio_to):
-        raise ToolError("no phone-call route is configured for you (Twilio account + your number)")
+        return _err("no phone-call route is configured for you (Twilio account + your number)")
     client = ctx.voice_client or TwilioVoiceClient()
     result = client.call(
         route.twilio_account_sid,
@@ -147,8 +164,8 @@ def _place_call(ctx: ToolContext, args: dict[str, Any]) -> str:
         message=message,
     )
     if not result.delivered:
-        raise ToolError(f"the call wasn't placed: {result.detail}")
-    return f"Placed a reminder call to your number ({result.detail})."
+        return _err(f"the call wasn't placed: {result.detail}")
+    return ToolResult(f"Placed a reminder call to your number ({result.detail}).")
 
 
 #: The served tool registry. Add an entry to expose a new bounded capability.
@@ -252,8 +269,9 @@ def handle_rpc(ctx: ToolContext, body: Any) -> dict[str, Any] | None:
         if tool.operator_only and not ctx.is_operator:
             return _tool_result(rid, f"'{name}' requires operator privileges", is_error=True)
         try:
-            text = tool.handler(ctx, arguments)
-        except ToolError as exc:
-            return _tool_result(rid, str(exc), is_error=True)
-        return _tool_result(rid, text)
+            result = tool.handler(ctx, arguments)
+        except Exception:  # a handler bug must not leak a traceback to the caller
+            logger.exception("MCP tool %r failed", name)
+            return _tool_result(rid, "the tool failed unexpectedly", is_error=True)
+        return _tool_result(rid, result.text, is_error=result.is_error)
     return _error(rid, -32601, f"unknown method '{method}'")
