@@ -448,6 +448,26 @@ extension APIClient {
         return try await post("household/agreements/\(agreementId)/stars", json: body, as: StarAwardResult.self)
     }
 
+    // Co-parent settings (shared households). The weekly mental-load check-in
+    // schedule, and the opt-in daily digest / load-balance toggles.
+    func setCheckin(enabled: Bool, day: Int? = nil, time: String? = nil) async throws {
+        var body: [String: Any] = ["enabled": enabled]
+        // The server rejects enabling without both; a disabled config may omit them.
+        body["day"] = day ?? NSNull()
+        if let time, !time.isEmpty {
+            body["time"] = time
+        } else {
+            body["time"] = NSNull()
+        }
+        try await post("household/checkin", json: body)
+    }
+    func setDigest(enabled: Bool) async throws {
+        try await post("household/digest", json: ["enabled": enabled])
+    }
+    func setBalance(enabled: Bool) async throws {
+        try await post("household/balance", json: ["enabled": enabled])
+    }
+
     // Appointments — a kid appointment as a `kind='child'` commitment. `startAtISO`
     // is an offset-aware ISO-8601 string (the server's to_utc reads the offset).
     func addAppointment(title: String, startAtISO: String, endAtISO: String? = nil,
