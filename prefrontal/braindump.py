@@ -47,6 +47,19 @@ from prefrontal.sensor import Candidate, extract_candidates, validate_observatio
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
 
+#: Feature key stamped on the ``feature_events`` row recorded for each brain-dump
+#: capture (see the ``POST /braindump`` handler). The event's ``source`` carries
+#: the provider that handled the parse — ``"on_device"`` when the client posted a
+#: Foundation-Model parse, else the escalated server provider
+#: (``"anthropic"``/``"ollama"``) — which :func:`prefrontal.stats.build_stats`
+#: rolls into the capture funnel (on-device vs escalated share).
+CAPTURE_FEATURE = "braindump"
+
+#: The ``source`` label meaning "handled entirely on the device, no server model".
+#: Anything else on :data:`CAPTURE_FEATURE` events is an escalation to the cloud/
+#: local server model.
+ON_DEVICE_SOURCE = "on_device"
+
 
 @dataclass
 class OnDeviceParse:
