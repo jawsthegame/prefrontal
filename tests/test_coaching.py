@@ -719,6 +719,23 @@ def test_task_paralysis_evaluator_prefers_the_decomposition_first_step():
     assert "Find the accountant's number and dial." in cue.text
 
 
+def test_task_paralysis_nudge_folds_in_reschedule_continuity():
+    store, tid = _store_with_avoided_todo()
+    # Two deadline moves after the first set → "rescheduled it twice".
+    store.update_todo_deadline(tid, "2026-04-15 12:00:00")
+    store.update_todo_deadline(tid, "2026-04-20 12:00:00")
+    store.update_todo_deadline(tid, "2026-04-25 12:00:00")
+    cue = get("task_paralysis").evaluate(store, _ctx())[0]
+    assert "You've rescheduled it twice." in cue.text
+
+
+def test_task_paralysis_nudge_omits_continuity_without_history():
+    store, _tid = _store_with_avoided_todo()
+    cue = get("task_paralysis").evaluate(store, _ctx())[0]
+    # No reschedule/snooze history → no continuity clause, just the base nudge.
+    assert "rescheduled" not in cue.text and "snoozed" not in cue.text
+
+
 # -- Location anchor evaluator (parity refactor, spec step 2) ----------------
 
 

@@ -292,3 +292,31 @@ def _context_lines(
         lines.append(_bias_line(estimate_bias, category))
 
     return lines
+
+
+def behavior_nudge_clause(store: MemoryStore, todo_id: int) -> str:
+    """A compact reschedule/snooze continuity clause to fold into a nudge, or ``""``.
+
+    The nudge-sized slice of the behavioral model. Where :func:`todo_behavior`
+    renders the full retrievable picture (recency, age, estimate bias), a *delivered*
+    nudge has room for one short clause — so this names only the reschedule and
+    snooze **counts**, the history a plain "12d and counting" age can't convey
+    ("You keep putting off X … You've rescheduled it 4 times."). Age and estimate
+    bias are omitted on purpose: the nudges that use this already state the age, and
+    a multi-clause line would bury the concrete ask.
+
+    Returned as a leading-space-prefixed sentence the caller appends
+    unconditionally — the same contract as :func:`prefrontal.coaching.note_hint` —
+    so an empty history is simply ``""``. Reads counts directly (no bias/age work),
+    keeping it cheap enough for the per-tick coaching path.
+    """
+    reschedules = store.count_todo_events(todo_id, "rescheduled")
+    defers = store.count_todo_events(todo_id, "deferred")
+    parts: list[str] = []
+    if reschedules:
+        parts.append(f"rescheduled it {_count_phrase(reschedules)}")
+    if defers:
+        parts.append(f"snoozed it {_count_phrase(defers)}")
+    if not parts:
+        return ""
+    return f" You've {' and '.join(parts)}."
