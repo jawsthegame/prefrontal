@@ -103,6 +103,45 @@ def test_suggestions_are_forward_only_the_past_is_quiet(store, noon):
     assert past_free and all(s.kind == "free" for s in past_free)
 
 
+def test_small_remainder_after_a_todo_still_tiles(store, noon):
+    """A sliver of free time left after a fitted todo is drawn, not dropped.
+
+    Segments tile the day: an 18-min gap that a 15-min block only partly fills
+    must still render the ~3-min tail (regression guard — it used to require the
+    remainder clear the 10-min window floor, silently dropping real time).
+    """
+    # A commitment starting exactly at now leaves no pre-now gap; the only forward
+    # gap is the 18 minutes between it and the next block.
+    store.upsert_commitment(
+        title="Morning block", start_at=_at(noon),
+        end_at=_at(noon + timedelta(hours=1)), external_id="w:1",
+    )
+    store.upsert_commitment(
+        title="Next block", start_at=_at(noon + timedelta(hours=1, minutes=18)),
+        end_at=_at(noon + timedelta(hours=1, minutes=48)), external_id="w:2",
+    )
+    store.add_todo("Quick note", estimate_minutes=5, priority=2)
+    shape = build_day_shape(store, now=noon, settings=UTC)
+    todo = next(s for s in shape.segments if s.kind == "todo")
+    # The tail free segment starts exactly where the todo ends (no hole) and is
+    # shorter than the 10-min window floor — proof it's no longer dropped.
+    tail = next(
+        s for s in shape.segments
+        if s.kind == "free" and s.start_at == todo.end_at
+    )
+    assert 0 < tail.minutes < 10
+
+
+def test_no_now_marker_at_the_end_of_the_band(store):
+    """At exactly the band's end the day is done — no marker fraction is reported."""
+    # 22:00 UTC is the default waking-band end; with nothing on the calendar the
+    # band isn't widened, so now sits exactly on band_end.
+    now = utcnow().replace(hour=22, minute=0, second=0, microsecond=0)
+    shape = build_day_shape(store, now=now, settings=UTC)
+    assert shape.band_end_local == "22:00"
+    assert shape.now_fraction is None
+
+
 def test_now_marker_and_states(store, noon):
     """Blocks are classified past/now/upcoming and now_fraction locates the marker."""
     # A commitment in progress right now.

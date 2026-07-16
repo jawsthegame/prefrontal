@@ -58,8 +58,9 @@ from prefrontal.scheduling import (
 )
 from prefrontal.todos import avoided_todos
 
-#: A fitted-todo block never renders shorter than this many minutes, so a quick
-#: 5-minute task is still a tappable target on the timeline rather than a sliver.
+#: The floor a fitted-todo block is padded up to, so a quick 5-minute task is
+#: still a tappable target rather than a sliver — *unless the gap itself is
+#: shorter*, in which case the block is capped at the gap (it never overflows it).
 _MIN_TODO_BLOCK_MINUTES = 15.0
 #: How many todo options to offer per gap (a primary + up to 2 alternatives),
 #: matching the briefing's spare-time menu so the two surfaces agree.
@@ -393,14 +394,21 @@ def build_day_shape(
             )
         )
         fitted_count += 1
-        if (we - block_end).total_seconds() / 60.0 >= DEFAULT_MIN_WINDOW_MINUTES:
+        # Draw whatever's left of the gap after the block, down to a 1-minute
+        # epsilon — the same floor the past-gap segment uses above — so the
+        # segments genuinely tile the day and a real sliver of free time isn't
+        # silently dropped.
+        if (we - block_end).total_seconds() / 60.0 >= 1.0:
             segments.append(_free_segment(block_end, we, now, tz))
 
     segments.sort(key=lambda s: (s.start_at, s.end_at))
 
+    # band_end is exclusive: at exactly the end of the band the day is done, and a
+    # client that splices the marker before the first *upcoming* block has nowhere
+    # to place it — so report no marker (None) rather than a fraction implying one.
     total = (band_end - band_start).total_seconds() / 60.0
     now_fraction: float | None = None
-    if band_start <= now <= band_end and total > 0:
+    if band_start <= now < band_end and total > 0:
         now_fraction = round((now - band_start).total_seconds() / 60.0 / total, 4)
 
     return DayShape(
