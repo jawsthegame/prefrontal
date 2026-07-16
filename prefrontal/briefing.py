@@ -385,11 +385,15 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
 
     checkpoint_hits = long_avoided_todos(todos, now)
     checkpoint_ids = {a["todo"]["id"] for a in checkpoint_hits}
-    avoided = [
-        _brief_todo(a)
+    # Slice to the shown few *before* mapping _brief_todo: it now runs two COUNT
+    # queries per item (behavior_digest_suffix), so mapping the full avoided set
+    # first would be an N+1 that computes continuity for rows the briefing drops.
+    avoided_hits = [
+        a
         for a in avoided_todos(todos, now)
         if a["todo"]["id"] not in checkpoint_ids
     ][:3]
+    avoided = [_brief_todo(a) for a in avoided_hits]
     checkpoint = [_brief_todo(a) for a in checkpoint_hits[:3]]
 
     # Triage "surface" items — worth seeing once, no core-table write — from the
