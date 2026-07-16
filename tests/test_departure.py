@@ -511,7 +511,7 @@ def test_evaluate_departure_check_folds_in_commitment_continuity(store):
     the commitment_events log written on re-sync."""
     store.set_location(0.0, 0.0)
     # First sync establishes the event; a second sync moves it → one reschedule.
-    store.upsert_commitment(
+    cid, _ = store.upsert_commitment(
         title="Dentist", start_at=_utc(240), dest_lat=0.0, dest_lon=0.0,
         external_id="cal:1",
     )
@@ -519,7 +519,7 @@ def test_evaluate_departure_check_folds_in_commitment_continuity(store):
         title="Dentist", start_at=_utc(8), dest_lat=0.0, dest_lon=0.0,
         external_id="cal:1",
     )
-    assert store.count_commitment_events(1, "rescheduled") == 1
+    assert store.count_commitment_events(cid, "rescheduled") == 1
 
     result = evaluate_departure_check(store, name="Sam")
     assert result.fire is True

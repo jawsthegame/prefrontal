@@ -409,17 +409,21 @@ class TimeBlindnessModule(Module):
         )
         top = next_departure(plans)
         if top is not None:
-            cid = top.commitment["id"]
-            # Flag an event that keeps shifting on the calendar (behavioral.py), so
-            # a "leave now" for a thrice-moved meeting notes it might move again.
-            message = build_departure_message(
-                top,
-                name=ctx.display_name,
-                continuity=commitment_nudge_clause(store, cid),
-            )
+            message = build_departure_message(top, name=ctx.display_name)
             # Attend-mode heads_up/soon return "" (nothing to say until it starts) —
             # only emit a cue when there's real text.
             if message:
+                cid = top.commitment["id"]
+                # Flag an event that keeps shifting (behavioral.py) so a "leave now"
+                # for a thrice-moved meeting notes it might move again. Computed only
+                # now that a cue is firing — attend-mode ticks that produce no message
+                # don't pay for the events query — and only re-phrased when there's
+                # actually history to add.
+                clause = commitment_nudge_clause(store, cid)
+                if clause:
+                    message = build_departure_message(
+                        top, name=ctx.display_name, continuity=clause
+                    )
                 cues.append(
                     Cue(
                         module=self.key,
