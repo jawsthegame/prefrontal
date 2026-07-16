@@ -1376,8 +1376,8 @@ def build_router(services: RouterServices) -> APIRouter:
         """The queryable behavioral model for one commitment — has it kept moving?
 
         The calendar twin of ``GET /todos/{id}/behavior``: it answers how often
-        this synced event's time has changed (from ``commitment_events``) plus a
-        ready-to-inject, second-person ``context`` line ("This has been rescheduled
+        this synced event's time has changed (from ``commitment_events``) plus
+        ready-to-inject, second-person ``context_lines`` ("This has been rescheduled
         three times…"), so an agent building a departure/prep reminder can flag an
         event that keeps shifting rather than treating the latest time as settled.
         404 if no such commitment for the caller.
