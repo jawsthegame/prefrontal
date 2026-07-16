@@ -556,6 +556,25 @@ struct Panic: Codable {
     }
 }
 
+// MARK: - Emotion regulation
+
+/// In-the-moment emotion-regulation support (`POST /emotion/support`). The server
+/// (`prefrontal/emotion_regulation.py`) screens for crisis language **first**: if
+/// it trips, `kind == "crisis"` and `text` is resources + an urge to reach a
+/// person — never a coping skill. Otherwise `kind == "skill"` and `text` is one
+/// micro-skill fitted to the inferred `state`, from a `family` (`act` / `dbt` /
+/// `self_compassion`). All keys are flat single words, so no `CodingKeys` mapping.
+/// `text` is delivered verbatim — the client renders it, never paraphrases it.
+struct EmotionSupport: Codable {
+    let kind: String
+    let state: String?
+    let skill: String?
+    let family: String?
+    let text: String
+
+    var isCrisis: Bool { kind == "crisis" }
+}
+
 // MARK: - Mail
 
 /// One triaged message from the mail-monitoring pipeline, a lean subset of the

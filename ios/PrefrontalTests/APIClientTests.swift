@@ -84,6 +84,49 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
 
+    func testEmotionSupportDecodesSkill() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/emotion/support")
+            XCTAssertEqual(req.httpMethod, "POST")
+            // The typed feeling is forwarded under the `text` key the server reads.
+            XCTAssertEqual(req.jsonBody?["text"] as? String, "everything at once")
+            return (200, Data(#"{"kind":"skill","state":"overwhelm","skill":"paced_breathing","family":"dbt","text":"Slow the exhale: **in 4, out 6**."}"#.utf8))
+        }
+        let s = try await client().emotionSupport(text: "everything at once")
+        XCTAssertFalse(s.isCrisis)
+        XCTAssertEqual(s.family, "dbt")
+        XCTAssertEqual(s.state, "overwhelm")
+        XCTAssertEqual(s.text, "Slow the exhale: **in 4, out 6**.")
+    }
+
+    func testEmotionSupportOneTapSendsEmptyBody() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            // A wordless one-tap request carries no `text` key (server treats an
+            // empty body as a generic-skill ask, not a crisis).
+            XCTAssertNil(req.jsonBody?["text"])
+            return (200, Data(#"{"kind":"skill","state":"generic","skill":"name_and_allow","family":"act","text":"Name it plainly."}"#.utf8))
+        }
+        let s = try await client().emotionSupport()
+        XCTAssertFalse(s.isCrisis)
+        XCTAssertEqual(s.skill, "name_and_allow")
+    }
+
+    func testEmotionSupportDecodesCrisisResponse() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // The crisis screen trips server-side and returns resources (empty
+        // state/skill/family), never a coping skill — `isCrisis` must reflect that
+        // so the view renders resources, not a "try another" skill card.
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.jsonBody?["text"] as? String, "i can't do this anymore")
+            return (200, Data(#"{"kind":"crisis","state":"","skill":"","family":"","text":"Please reach out now: call or text 988."}"#.utf8))
+        }
+        let s = try await client().emotionSupport(text: "i can't do this anymore")
+        XCTAssertTrue(s.isCrisis)
+        XCTAssertTrue(s.text.contains("988"))
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
@@ -95,6 +138,34 @@ final class APIClientTests: XCTestCase {
         } catch {
             XCTFail("expected APIError.http, got \(error)")
         }
+    }
+}
+
+extension URLRequest {
+    /// The POST body decoded as a JSON object. A `URLProtocol` sees the body on
+    /// `httpBodyStream` (URLSession moves it off `httpBody` before dispatch), so
+    /// read the stream when the direct property is nil.
+    var jsonBody: [String: Any]? {
+        let data: Data?
+        if let httpBody {
+            data = httpBody
+        } else if let stream = httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = Data()
+            let size = 4096
+            let chunk = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+            defer { chunk.deallocate() }
+            while stream.hasBytesAvailable {
+                let read = stream.read(chunk, maxLength: size)
+                if read <= 0 { break }
+                buffer.append(chunk, count: read)
+            }
+            data = buffer
+        } else {
+            data = nil
+        }
+        guard let data, !data.isEmpty else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }
 
