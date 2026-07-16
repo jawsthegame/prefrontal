@@ -201,15 +201,30 @@ struct AppointmentsCard: View {
 
 // MARK: - Roster + facts
 
-/// The kids and pets roster with each member's reference facts (read-only; edit
-/// on the web dashboard). The household-wide facts block leads, then each member.
+/// The kids and pets roster with each member's reference facts — editable. The
+/// household-wide ("Everyone") block leads, then each kid, then each pet. A ＋ on
+/// a member adds a fact; a long-press on a fact edits or removes it. Roster adds
+/// (child/pet) route up through the toolbar menu.
 struct RosterCard: View {
     let sheet: HouseholdSheet
+    let vocab: Vocab?
+    let reload: () async -> Void
     let onAddChild: () -> Void
     let onAddPet: () -> Void
+    @State private var factEditor: FactEditor?
 
     private func block(_ blocks: [FactBlock], childId: Int) -> FactBlock? {
         blocks.first { $0.childId == childId }
+    }
+
+    /// The category keys the add-fact picker offers — server vocab, or the known
+    /// set as a fallback if the payload didn't carry it (nil *or* empty, so the
+    /// picker always has options and the seeded selection matches a tag).
+    private var categoryKeys: [String] {
+        let keys = vocab?.factCategories ?? []
+        return keys.isEmpty
+            ? ["sizes", "routine", "food", "health", "school", "contact", "location", "services"]
+            : keys
     }
 
     var body: some View {
@@ -226,28 +241,38 @@ struct RosterCard: View {
                 .tint(Brand.accent)
             }
 
-            // Household-wide facts (child_id 0) first, when present.
-            if let wide = block(sheet.perChild, childId: 0), !wide.categories.isEmpty {
-                MemberFacts(name: "Everyone", tag: nil, categories: wide.categories)
-                if !sheet.children.isEmpty || !sheet.pets.isEmpty { Divider().overlay(Brand.line) }
-            }
-
-            if sheet.children.isEmpty && sheet.pets.isEmpty {
-                Text("No kids or pets yet — add one with ＋.")
-                    .font(.footnote).foregroundStyle(Brand.muted)
-            }
+            // Household-wide facts (child_id 0) — always shown so there's a home
+            // for things like trash day, the home address, or the Wi-Fi.
+            member(childId: 0, name: "Everyone", tag: nil,
+                   categories: block(sheet.perChild, childId: 0)?.categories ?? [])
+            if !sheet.children.isEmpty || !sheet.pets.isEmpty { Divider().overlay(Brand.line) }
 
             ForEach(sheet.children) { child in
-                MemberFacts(name: child.name, tag: birthdayTag(child.birthday),
-                            categories: block(sheet.perChild, childId: child.id)?.categories ?? [])
+                member(childId: child.id, name: child.name, tag: birthdayTag(child.birthday),
+                       categories: block(sheet.perChild, childId: child.id)?.categories ?? [])
                 if child.id != sheet.children.last?.id || !sheet.pets.isEmpty { Divider().overlay(Brand.line) }
             }
             ForEach(sheet.pets) { pet in
-                MemberFacts(name: pet.name, tag: pet.species ?? birthdayTag(pet.birthday),
-                            categories: block(sheet.perPet, childId: pet.id)?.categories ?? [])
+                member(childId: pet.id, name: pet.name, tag: pet.species ?? birthdayTag(pet.birthday),
+                       categories: block(sheet.perPet, childId: pet.id)?.categories ?? [])
                 if pet.id != sheet.pets.last?.id { Divider().overlay(Brand.line) }
             }
         }
+        .sheet(item: $factEditor, onDismiss: { Task { await reload() } }) { ed in
+            FactEditorSheet(target: ed, categories: categoryKeys)
+        }
+    }
+
+    private func member(childId: Int, name: String, tag: String?, categories: [FactCategory]) -> some View {
+        MemberFacts(
+            name: name, tag: tag, categories: categories,
+            onAdd: { factEditor = FactEditor(childId: childId, memberName: name,
+                                             category: nil, item: nil, value: nil) },
+            onEdit: { cat, item in
+                factEditor = FactEditor(childId: childId, memberName: name,
+                                        category: cat, item: item.item, value: item.value)
+            }
+        )
     }
 
     private func birthdayTag(_ birthday: String?) -> String? {
@@ -256,20 +281,27 @@ struct RosterCard: View {
     }
 }
 
-/// One roster member's name + reference facts, grouped by category.
+/// One roster member's name + reference facts, grouped by category. The ＋ adds a
+/// fact for this member; a long-press on a fact edits or removes it.
 struct MemberFacts: View {
     let name: String
     let tag: String?
     let categories: [FactCategory]
+    let onAdd: () -> Void
+    let onEdit: (String, FactItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.nearWhite)
                 if let tag { Chip(text: tag) }
+                Spacer(minLength: 4)
+                Button { onAdd() } label: { Image(systemName: "plus.circle").font(.subheadline) }
+                    .buttonStyle(.plain).tint(Brand.accent)
+                    .accessibilityLabel("Add a fact for \(name)")
             }
             if categories.isEmpty {
-                Text("No facts saved yet.").font(.caption).foregroundStyle(Brand.muted)
+                Text("No facts saved yet — add one with ＋.").font(.caption).foregroundStyle(Brand.muted)
             } else {
                 ForEach(categories) { cat in
                     VStack(alignment: .leading, spacing: 2) {
@@ -279,6 +311,13 @@ struct MemberFacts: View {
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
                                 Text(item.item).font(.caption).foregroundStyle(Brand.muted)
                                 Text(item.value ?? "—").font(.caption).foregroundStyle(Brand.fg)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button { onEdit(cat.category, item) } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
                             }
                         }
                     }

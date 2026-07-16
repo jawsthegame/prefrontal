@@ -25,6 +25,37 @@ struct HouseholdPayload: Codable {
     let checkin: Checkin?
     let digest: Digest?
     let balance: BalanceInfo?
+    /// Controlled vocabularies the server owns (fact categories, agreement kinds),
+    /// so the editors' pickers stay in lockstep with the backend.
+    let vocab: Vocab?
+}
+
+/// Server-owned controlled vocabularies from `/household/sheet`.
+struct Vocab: Codable {
+    let factCategories: [String]
+    enum CodingKeys: String, CodingKey {
+        case factCategories = "fact_categories"
+    }
+}
+
+/// Human labels for the fact categories — mirrors the server's
+/// `FACT_CATEGORY_LABELS` (prefrontal/memory/repos/household.py). The sheet
+/// carries labels for categories already in use; this fills in the rest for the
+/// add-fact picker. Unknown keys fall back to a title-cased key.
+enum FactCategoryVocab {
+    static let labels: [String: String] = [
+        "sizes": "Clothing & sizes",
+        "routine": "Routines",
+        "food": "Food & allergies",
+        "health": "Health",
+        "school": "School & activities",
+        "contact": "Key contacts",
+        "location": "Location",
+        "services": "Household services",
+    ]
+    static func label(_ key: String) -> String {
+        labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
+    }
 }
 
 /// The structured sheet (`asdict(HouseholdSheet)`), assembled deterministically
