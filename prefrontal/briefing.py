@@ -34,6 +34,7 @@ from prefrontal.config import get_settings
 from prefrontal.departure import departure_kwargs, plan_departure
 from prefrontal.focus_balance import balance_summary_line, build_focus_balance
 from prefrontal.impact import fragile_stretch, utcnow
+from prefrontal.memory.behavioral import behavior_digest_suffix
 from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
@@ -181,8 +182,10 @@ class Briefing:
             :data:`~prefrontal.todos.DEFAULT_CHECKPOINT_MIN_DAYS`)
             that they warrant a *decision* — break down / defer / drop — rather than
             another nudge (the stuck-checkpoint's calm surface). Top few, worst-first,
-            each ``{title, days_open, todo_id}``. Partitioned out of ``avoided`` so an
-            item shows in exactly one of the two blocks; empty when nothing's that stale.
+            each ``{title, days_open, todo_id, continuity}`` (``continuity`` is the
+            compact reschedule/snooze suffix, or ``""``). Partitioned out of ``avoided``
+            so an item shows in exactly one of the two blocks; empty when nothing's
+            that stale. (``avoided`` items carry the same keys.)
     """
 
     date: str
@@ -370,15 +373,27 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     # avoided is everything else still open and sliding.
     def _brief_todo(a: dict[str, Any]) -> dict[str, Any]:
         t = a["todo"]
-        return {"title": t["title"], "days_open": a["days_open"], "todo_id": t["id"]}
+        return {
+            "title": t["title"],
+            "days_open": a["days_open"],
+            "todo_id": t["id"],
+            # Reschedule/snooze continuity: "· rescheduled 4×, snoozed 2×", or "".
+            # Why an item's sliding matters beyond its age — you've moved it, not
+            # just let it sit (behavioral.py).
+            "continuity": behavior_digest_suffix(store, t["id"]),
+        }
 
     checkpoint_hits = long_avoided_todos(todos, now)
     checkpoint_ids = {a["todo"]["id"] for a in checkpoint_hits}
-    avoided = [
-        _brief_todo(a)
+    # Slice to the shown few *before* mapping _brief_todo: it now runs two COUNT
+    # queries per item (behavior_digest_suffix), so mapping the full avoided set
+    # first would be an N+1 that computes continuity for rows the briefing drops.
+    avoided_hits = [
+        a
         for a in avoided_todos(todos, now)
         if a["todo"]["id"] not in checkpoint_ids
     ][:3]
+    avoided = [_brief_todo(a) for a in avoided_hits]
     checkpoint = [_brief_todo(a) for a in checkpoint_hits[:3]]
 
     # Triage "surface" items — worth seeing once, no core-table write — from the
@@ -605,7 +620,11 @@ def render_briefing(
         if briefing.avoided:
             block(
                 "🐢 Keeps sliding",
-                *[f"- {a['title']} — open {a['days_open']:g} days" for a in briefing.avoided],
+                *[
+                    f"- {a['title']} — open {a['days_open']:g} days"
+                    f"{a.get('continuity', '')}"
+                    for a in briefing.avoided
+                ],
             )
 
         # Weeks-avoided — old enough that another nudge backfires; this is the calm
@@ -614,8 +633,11 @@ def render_briefing(
         if briefing.checkpoint:
             block(
                 "🧭 Time to decide",
-                *[f"- {a['title']} — {a['days_open']:g}d; break it down, defer, or drop it"
-                  for a in briefing.checkpoint],
+                *[
+                    f"- {a['title']} — {a['days_open']:g}d{a.get('continuity', '')}; "
+                    "break it down, defer, or drop it"
+                    for a in briefing.checkpoint
+                ],
             )
 
         # Worth a look — triage surfaced these (seen once, no action taken for you).

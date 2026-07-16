@@ -232,6 +232,42 @@ def test_briefing_partitions_sliding_from_time_to_decide(store):
     assert "Renew passport" in text and "break it down, defer, or drop it" in text
 
 
+def test_briefing_folds_reschedule_continuity_into_avoidance_surfaces(store):
+    """Both avoidance blocks carry the compact reschedule/snooze suffix, so a
+    sliding item reads as *actively moved*, not merely old."""
+    slide = store.add_todo("Book dentist", estimate_minutes=15, priority=2)
+    _age(store, slide, 10)
+    slide_deadline = (utcnow() + timedelta(days=1)).strftime(TS)
+    store.update_todo_deadline(slide, slide_deadline)
+    store.update_todo_deadline(slide, (utcnow() + timedelta(days=2)).strftime(TS))
+    stuck = store.add_todo("Renew passport", estimate_minutes=20, priority=3)
+    _age(store, stuck, 25)
+    store.update_todo_deadline(stuck, (utcnow() + timedelta(days=1)).strftime(TS))
+    store.update_todo_deadline(stuck, (utcnow() + timedelta(days=3)).strftime(TS))
+    store.update_todo_deadline(stuck, (utcnow() + timedelta(days=5)).strftime(TS))
+
+    briefing = build_briefing(store, now=utcnow())
+    slide_row = next(a for a in briefing.avoided if a["todo_id"] == slide)
+    stuck_row = next(a for a in briefing.checkpoint if a["todo_id"] == stuck)
+    assert slide_row["continuity"] == " · rescheduled 1×"
+    assert stuck_row["continuity"] == " · rescheduled 2×"
+
+    text = render_briefing(briefing)
+    # Keeps-sliding line: suffix rides after the age.
+    assert "Book dentist — open 10 days · rescheduled 1×" in text
+    # Time-to-decide line: suffix sits before the decision clause.
+    assert "rescheduled 2×; break it down, defer, or drop it" in text
+
+
+def test_briefing_avoidance_line_has_no_suffix_without_history(store):
+    tid = store.add_todo("Book dentist", estimate_minutes=15, priority=2)
+    _age(store, tid, 10)
+    briefing = build_briefing(store, now=utcnow())
+    row = next(a for a in briefing.avoided if a["todo_id"] == tid)
+    assert row["continuity"] == ""
+    assert "Book dentist — open 10 days" in render_briefing(briefing)
+
+
 def test_briefing_boundary_item_shows_in_exactly_one_block(store):
     """Regression (PR #670 review): an item whose days_open rounds to the checkpoint
     floor but is just under it must land in 🐢 Keeps sliding, not vanish from both
