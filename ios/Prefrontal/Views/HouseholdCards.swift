@@ -74,27 +74,54 @@ struct HouseholdTodayCard: View {
 
 // MARK: - Star charts / agreements
 
-/// Standing behaviour plans. Charts (with a star ladder) show progress and a
-/// one-tap "add a star"; plain agreements show their plain-language body.
+/// Standing behaviour plans + star charts. The ＋ creates a star chart; a
+/// long-press on a row edits its reward tiers / prompt schedule or removes it.
+/// Charts show progress with a one-tap "add a star"; plain plans show their body.
 struct ChartsCard: View {
     let agreements: [Agreement]
+    let children: [RosterMember]
     let reload: () async -> Void
     let onAward: (Agreement) -> Void
     let onError: (String) -> Void
+    @State private var chartEditor: ChartEditor?
 
     var body: some View {
-        if !agreements.isEmpty {
-            Card {
+        Card {
+            HStack {
                 CardLabel(text: "Agreements & star charts")
+                Spacer()
+                Button { chartEditor = .create } label: { Image(systemName: "plus").font(.footnote.weight(.semibold)) }
+                    .tint(Brand.accent)
+                    .accessibilityLabel("Create a star chart")
+            }
+            if agreements.isEmpty {
+                Text("No charts yet — add a star chart with ＋.")
+                    .font(.footnote).foregroundStyle(Brand.muted)
+            } else {
                 ForEach(agreements) { a in
                     if a.isChart {
-                        ChartRow(agreement: a, reload: reload, onAward: onAward, onError: onError)
+                        ChartRow(agreement: a, reload: reload, onAward: onAward,
+                                 onEdit: { chartEditor = .edit(a) }, onRemove: { await remove(a) },
+                                 onError: onError)
                     } else {
-                        AgreementRow(agreement: a)
+                        AgreementRow(agreement: a,
+                                     onEdit: { chartEditor = .edit(a) }, onRemove: { await remove(a) })
                     }
                     if a.id != agreements.last?.id { Divider().overlay(Brand.line) }
                 }
             }
+        }
+        .sheet(item: $chartEditor, onDismiss: { Task { await reload() } }) { mode in
+            ChartEditorSheet(mode: mode, children: children)
+        }
+    }
+
+    private func remove(_ a: Agreement) async {
+        do {
+            try await withAPI { try await $0.removeAgreement(a.id) }
+            await reload()
+        } catch {
+            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
     }
 }
@@ -103,6 +130,8 @@ struct ChartRow: View {
     let agreement: Agreement
     let reload: () async -> Void
     let onAward: (Agreement) -> Void
+    let onEdit: () -> Void
+    let onRemove: () async -> Void
     let onError: (String) -> Void
 
     var body: some View {
@@ -122,7 +151,7 @@ struct ChartRow: View {
                 }
             }
             Spacer(minLength: 0)
-            // Quick +1; long-press-equivalent (a bigger grant / a note) via the sheet.
+            // Quick +1; a bigger grant / a note via the award sheet.
             AsyncButton {
                 _ = try await withAPI { try await $0.awardStars(agreement.id) }
                 await reload()
@@ -131,16 +160,22 @@ struct ChartRow: View {
             } onError: { onError($0) }
             .buttonStyle(.plain)
             .accessibilityLabel("Add a star")
-            .contextMenu {
-                Button { onAward(agreement) } label: { Label("Award stars…", systemImage: "star.leadinghalf.filled") }
-            }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button { onAward(agreement) } label: { Label("Award stars…", systemImage: "star.leadinghalf.filled") }
+            Button { onEdit() } label: { Label("Edit chart…", systemImage: "pencil") }
+            Button(role: .destructive) { Task { await onRemove() } } label: { Label("Remove", systemImage: "trash") }
+        }
     }
 }
 
 struct AgreementRow: View {
     let agreement: Agreement
+    let onEdit: () -> Void
+    let onRemove: () async -> Void
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -155,6 +190,11 @@ struct AgreementRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button { onEdit() } label: { Label("Add reward tiers…", systemImage: "star.leadinghalf.filled") }
+            Button(role: .destructive) { Task { await onRemove() } } label: { Label("Remove", systemImage: "trash") }
+        }
     }
 }
 

@@ -510,6 +510,31 @@ extension APIClient {
         try await post("household/balance", json: ["enabled": enabled])
     }
 
+    // Star charts / agreements — create a plan, set its reward tiers (which makes
+    // it a chart), set the recurring award-prompt schedule, or remove it.
+    func createAgreement(title: String, kind: String = "reward",
+                         childId: Int = 0, body: String? = nil) async throws -> AgreementCreated {
+        var json: [String: Any] = ["title": title, "kind": kind, "child_id": childId]
+        if let body, !body.isEmpty { json["body"] = body }
+        return try await post("household/agreements", json: json, as: AgreementCreated.self)
+    }
+    /// Set/replace the reward tiers from a `"7=small toy, 30=big"` spec (turns a
+    /// plain plan into a star chart; the server rejects an empty spec).
+    func setStarTiers(_ agreementId: Int, tiers: String) async throws {
+        try await post("household/agreements/\(agreementId)/tiers", json: ["tiers": tiers])
+    }
+    /// Set the recurring "did <kid> earn a star today?" prompt schedule. The server
+    /// requires a valid `time` and (when enabled) at least one weekday.
+    func setStarPrompt(_ agreementId: Int, enabled: Bool, days: [Int], time: String,
+                       question: String? = nil) async throws {
+        var json: [String: Any] = ["enabled": enabled, "days": days, "time": time]
+        if let question, !question.isEmpty { json["question"] = question }
+        try await post("household/agreements/\(agreementId)/prompt", json: json)
+    }
+    func removeAgreement(_ agreementId: Int) async throws {
+        try await post("household/agreements/\(agreementId)/remove")
+    }
+
     // Appointments — a kid appointment as a `kind='child'` commitment. `startAtISO`
     // is an offset-aware ISO-8601 string (the server's to_utc reads the offset).
     func addAppointment(title: String, startAtISO: String, endAtISO: String? = nil,

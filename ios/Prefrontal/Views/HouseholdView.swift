@@ -29,8 +29,8 @@ struct HouseholdView: View {
                     ChoresCard(sheet: p.sheet, members: p.members, showAll: $showAllChores,
                                reload: load, onDone: handleChoreDone, onError: { error = $0 })
                     ShoppingCard(items: p.sheet.shopping, reload: load, onError: { error = $0 })
-                    ChartsCard(agreements: p.sheet.agreements, reload: load,
-                               onAward: { add = .award($0) }, onError: { error = $0 })
+                    ChartsCard(agreements: p.sheet.agreements, children: p.sheet.children,
+                               reload: load, onAward: { add = .award($0) }, onError: { error = $0 })
                     AppointmentsCard(appointments: p.sheet.upcoming, onAdd: { add = .appointment })
                     RosterCard(sheet: p.sheet, vocab: p.vocab, reload: load,
                                onAddChild: { add = .child }, onAddPet: { add = .pet })
