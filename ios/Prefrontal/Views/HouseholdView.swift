@@ -46,8 +46,17 @@ struct HouseholdView: View {
         .brandScreen()
         .navigationTitle("Household")
         .toolbar {
-            if payload != nil, !noHousehold {
-                ToolbarItem(placement: .topBarTrailing) { addMenu }
+            if let p = payload, !noHousehold {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    NavigationLink {
+                        HouseholdSettingsView(checkin: p.checkin, digest: p.digest,
+                                              balance: p.balance, shared: p.shared, reload: load)
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Household settings")
+                    addMenu
+                }
             }
         }
         .refreshable { await load() }
