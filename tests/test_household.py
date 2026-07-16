@@ -35,6 +35,7 @@ from prefrontal.household import (
     prompt_due,
     prompt_question,
     render_sheet,
+    run_trip_checkin_sweep,
     star_congrats_text,
     unseen_changes,
     week_key,
@@ -48,6 +49,7 @@ from prefrontal.integrations.delivery import (
     household_digest_notice,
     household_notice,
     household_prompt_notice,
+    household_trip_checkin_notice,
 )
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
@@ -1558,6 +1560,101 @@ def test_nudge_act_digest_seen_marks_the_sheet_seen(signed_client, store):
     r = signed_client.get(f"/nudge/act?t={sign_action('dana', 'digest_seen', 0, SIGNING)}")
     assert r.status_code == 200 and "caught up" in r.text.lower()
     assert dana.get_state("household_seen_at")
+
+
+# --- trip check-in: prompt an out-parent to post a status --------------------
+
+
+def _open_trip_minutes_ago(scoped, minutes):
+    """Open an active trip that departed ``minutes`` ago (so elapsed ≈ minutes)."""
+    departed = (utcnow() - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    return scoped.open_trip(departed_at=departed)
+
+
+def test_trip_checkin_enabled_toggle(store, dana):
+    assert dana.get_trip_checkin_enabled() is False
+    dana.set_trip_checkin_enabled(True)
+    assert dana.get_trip_checkin_enabled() is True
+
+
+def test_trip_checkin_sweep_prompts_once_per_trip(store, dana, alex):
+    settings = Settings()
+    # Off by default → disabled; a solo/off household never prompts.
+    assert run_trip_checkin_sweep(dana, settings=settings)["reason"] == "disabled"
+    dana.set_trip_checkin_enabled(True)
+    # Enabled but nobody's out → nothing to send.
+    assert run_trip_checkin_sweep(dana, settings=settings)["sent"] == []
+    # Dana's been out 90 min → Dana (only) is prompted, tagged with the trip id.
+    tid = _open_trip_minutes_ago(dana, 90)
+    first = run_trip_checkin_sweep(dana, settings=settings)
+    assert [s["handle"] for s in first["sent"]] == ["dana"]
+    assert first["sent"][0]["trip_id"] == tid
+    # A second sweep for the same open trip is suppressed (once per trip).
+    assert run_trip_checkin_sweep(dana, settings=settings)["sent"] == []
+
+
+def test_trip_checkin_sweep_skips_a_quick_errand(store, dana):
+    dana.set_trip_checkin_enabled(True)
+    _open_trip_minutes_ago(dana, 20)  # under the 60-min floor → no nag
+    assert run_trip_checkin_sweep(dana, settings=Settings())["sent"] == []
+
+
+def test_trip_checkin_sweep_not_shared_for_solo(store):
+    provision_user(store, "sol", display_name="Sol", token="sol-tok")
+    hid = store.create_household("Solo House")
+    store.set_user_household("sol", hid)
+    sol = store.scoped(store.get_user("sol")["id"])
+    sol.set_trip_checkin_enabled(True)
+    _open_trip_minutes_ago(sol, 90)
+    assert run_trip_checkin_sweep(sol, settings=Settings())["reason"] == "not_shared"
+
+
+def test_trip_checkin_notice_carries_three_signed_status_buttons(store):
+    dana = store.scoped(store.get_user("dana")["id"])
+    dana.set_state("ntfy_topic", "dana-topic")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
+    deliver_to_member(
+        dana, household_trip_checkin_notice("out and about?", 7),
+        handle="dana", settings=Settings(), client=client, base_url=BASE, secret=SIGNING,
+    )
+    actions = bodies[0]["actions"]
+    assert [a["label"] for a in actions] == [
+        "🏠 Heading home", "⏰ Running late", "👍 All good"
+    ]
+    # Each button is signed for the recipient and rides the trip id as its target.
+    assert verify_action(actions[0]["url"].split("t=", 1)[1], SIGNING) == (
+        "dana", "trip_status_homeward", 7
+    )
+
+
+def test_nudge_act_trip_status_relays_to_the_other_parent(signed_client, store):
+    # Dana (out) taps "heading home" → the note is relayed to Alex, not Dana.
+    r = signed_client.get(
+        f"/nudge/act?t={sign_action('dana', 'trip_status_homeward', 5, SIGNING)}"
+    )
+    assert r.status_code == 200 and "Sent to Alex" in r.text
+
+
+def test_trip_checkin_endpoint_toggles_and_check_fires(client, store):
+    r = client.post("/household/trip-checkin", json={"enabled": True}, headers=_h("dana-tok"))
+    assert r.json() == {"ok": True, "enabled": True}
+    check = "/webhooks/household/trip-checkin/check"
+    # Nobody's out yet → silent.
+    assert client.post(check, json={}, headers=_h("dana-tok")).json()["sent"] == []
+    # Dana out 90 min → prompted.
+    _open_trip_minutes_ago(store.scoped(store.get_user("dana")["id"]), 90)
+    sent = client.post(check, json={}, headers=_h("dana-tok")).json()["sent"]
+    assert [s["handle"] for s in sent] == ["dana"]
 
 
 # --- shared shopping list ----------------------------------------------------

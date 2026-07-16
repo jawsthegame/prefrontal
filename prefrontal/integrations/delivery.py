@@ -110,6 +110,7 @@ _CONTEXT_KIND = {
     "checkin": "load",
     "digest": "digest",
     "chore": "chore",
+    "trip_checkin": "trip_checkin",
     # "trip" is handled separately (per-user quick-file domains) — see _actions_for_cue.
 }
 _KIND_TARGET = {
@@ -126,6 +127,7 @@ _KIND_TARGET = {
     "load": "target",
     "digest": "target",
     "chore": "chore_id",
+    "trip_checkin": "trip_id",
 }
 
 
@@ -804,6 +806,33 @@ def household_chore_notice(
         context_key="chore",
         dedup_key=f"chore:{chore_id}",
         ref={"chore_id": chore_id},
+    )
+    return Decision(cue=cue, channel=channel, text=message)
+
+
+def household_trip_checkin_notice(
+    message: str, trip_id: int, *, channel: str = "push"
+) -> Decision:
+    """A "you're out — post a status?" push with one-tap status buttons.
+
+    Sent to the parent who's currently out on a trip. Carries
+    ``context_key="trip_checkin"`` and the trip's id in ``ref`` so
+    :meth:`DeliveryClient.deliver` attaches the signed *Heading home / Running late
+    / All good* buttons (built per recipient in ``notify.py``) — tapping one hits
+    ``/nudge/act`` and relays that status to the *other* co-parent with no app
+    switch (see :func:`prefrontal.nudges.apply_nudge_action`). The trip id rides the
+    signed tap token as the target; the relay reads the tapping user for the "who".
+    """
+    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
+
+    cue = Cue(
+        module="household",
+        intervention="trip_checkin",
+        urgency="nudge",
+        text=message,
+        context_key="trip_checkin",
+        dedup_key=f"trip_checkin:{trip_id}",
+        ref={"trip_id": trip_id},
     )
     return Decision(cue=cue, channel=channel, text=message)
 

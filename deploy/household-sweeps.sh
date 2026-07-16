@@ -2,10 +2,12 @@
 #
 # Household sweeps: the shared-household nudges that aren't part of the per-user
 # coaching tick — chores due, the weekly mental-load check-in, the daily delta
-# digest, and the ⭐ star-agreement prompts.
+# digest, the trip check-in (prompt an out-parent to post a status), and the
+# ⭐ star-agreement prompts.
 #
 # Native replacement for the n8n household workflows (chores-check,
-# checkin-check, digest-check, star-prompt-check). Each subcommand is the CLI
+# checkin-check, digest-check, trip-checkin-check, star-prompt-check). Each
+# subcommand is the CLI
 # twin of its /webhooks/household/*/check endpoint and self-gates on due-ness
 # (off, wrong day/time, already sent, nothing new) — so it's safe to run this on
 # a coarse interval and let each one decide whether to actually send. Scheduled
@@ -40,4 +42,5 @@ run() {  # run() <household-action> — one sweep, never abort the rest on failu
 run chores-check
 run checkin-check
 run digest-check
+run trip-checkin-check
 run prompt-check

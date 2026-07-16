@@ -71,6 +71,7 @@ from prefrontal.webhooks.schemas.household import (
     ShoppingGot,
     StarAward,
     TierConfig,
+    TripCheckinConfig,
 )
 from prefrontal.webhooks.schemas.impulsivity import (
     CaptureImpulse,
@@ -262,6 +263,7 @@ __all__ = [
     "PersonUpdate",
     "TriageForget",
     "TriageIn",
+    "TripCheckinConfig",
     "TripDomain",
     "TripLabel",
     "TripReflect",

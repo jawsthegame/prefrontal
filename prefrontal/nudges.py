@@ -46,6 +46,17 @@ from prefrontal.panic import resolve_panic_step
 
 logger = get_logger(__name__)
 
+#: Trip check-in one-tap statuses → the note relayed to the *other* co-parent when
+#: the out-parent taps one (``{who}`` = the tapper's name). Single source of truth:
+#: the button set (:data:`prefrontal.webhooks.notify._NUDGE_BUTTONS`) and the
+#: allowlist (:data:`prefrontal.webhooks.oauth.NUDGE_ACTIONS`) must carry the same
+#: three action names. Tweak the wording here.
+TRIP_STATUS_LINES = {
+    "trip_status_homeward": "{who} is heading home. 🏠",
+    "trip_status_late": "{who} is running late. ⏰",
+    "trip_status_ok": "{who} checked in — all good. 👍",
+}
+
 #: One-tap ``/nudge/act`` action → the coaching ``context_key`` its target lives
 #: under, so a tap can resolve the delivered nudge's channel outcome (spec §8).
 #: Actions absent here (the ``switch_*`` pause resolutions) aren't coaching cues,
@@ -79,6 +90,7 @@ _ACT_FEATURE = {
     "digest_seen": "household",
     "chore_done": "household",
     "away_confirm": "household",
+    **{a: "household" for a in TRIP_STATUS_LINES},
     "briefing_helped": "briefing",
     "briefing_not_helped": "briefing",
     # Departure outcomes belong to the Time Blindness module — its departure_buffer
@@ -287,6 +299,35 @@ def apply_nudge_action(
         if done:
             return f"Done — that wraps up “{done['title']}” for today! 🎉"
         return f"Done — “{result['title']}” is sorted for today. 🙌"
+
+    if action in TRIP_STATUS_LINES:
+        # Trip check-in: the parent who's out tapped a status, so relay it to the
+        # OTHER co-parent as a plain notice (no buttons). target_id is the trip id,
+        # but we don't re-check the trip — a "heading home" tap right as they pull
+        # in is still worth sending. Solo / no co-parent → a friendly no-op.
+        from prefrontal.integrations.delivery import (
+            deliver_to_member,
+            household_notice,
+        )
+
+        hid = memory.household_id_or_none()
+        others = [
+            m for m in (memory.household_members(hid) if hid is not None else [])
+            if m["id"] != user["id"] and m.get("status") in (None, "active")
+        ]
+        if not others:
+            return "You're the only one here — nothing to send. 🙂"
+        who = user.get("display_name") or user["handle"]
+        line = TRIP_STATUS_LINES[action].format(who=who)
+        for other in others:
+            deliver_to_member(
+                memory.scoped(other["id"]),
+                household_notice(line, channel="push"),
+                handle=other["handle"],
+                settings=settings,
+            )
+        names = ", ".join((o.get("display_name") or o["handle"]) for o in others)
+        return f"Sent to {names} 💛"
 
     if action == "away_confirm":
         # The multi-day-absence proposal was accepted: mark this member away so
