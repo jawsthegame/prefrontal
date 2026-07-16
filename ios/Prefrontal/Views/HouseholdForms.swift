@@ -413,3 +413,114 @@ struct ChoreEditorSheet: View {
         }
     }
 }
+
+// MARK: - Add / edit a fact
+
+/// Which fact-editor sheet is up: a fresh add for a member, or an edit of one
+/// existing fact. `category`/`item` are set only for an edit (the key is
+/// (child, category, item), so an edit changes the value, not the key).
+struct FactEditor: Identifiable {
+    let childId: Int
+    let memberName: String
+    let category: String?
+    let item: String?
+    let value: String?
+    var id: String { "\(childId)|\(category ?? "")|\(item ?? "")|\(item == nil ? "add" : "edit")" }
+    var isEdit: Bool { item != nil }
+}
+
+/// Add a reference fact for a roster member (or the household), or edit / remove
+/// an existing one. `POST /household/facts` upserts on (child, category, item);
+/// since that triple is the key, an edit keeps the category + item fixed and
+/// changes the value (a different item is a new fact). Remove → `/facts/clear`.
+struct FactEditorSheet: View {
+    let target: FactEditor
+    let categories: [String]
+    let onError: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var category: String
+    @State private var item: String
+    @State private var value: String
+    @State private var error: String?
+    @State private var saving = false
+
+    init(target: FactEditor, categories: [String], onError: @escaping (String) -> Void) {
+        self.target = target
+        self.categories = categories
+        self.onError = onError
+        _category = State(initialValue: target.category ?? categories.first ?? "sizes")
+        _item = State(initialValue: target.item ?? "")
+        _value = State(initialValue: target.value ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if target.isEdit {
+                        LabeledContent("Category", value: FactCategoryVocab.label(category))
+                        LabeledContent("Field", value: item)
+                    } else {
+                        Picker("Category", selection: $category) {
+                            ForEach(categories, id: \.self) { Text(FactCategoryVocab.label($0)).tag($0) }
+                        }
+                        TextField("Field (e.g. shoe size, pediatrician)", text: $item)
+                    }
+                    TextField("Value (e.g. 13, Dr. Lin 555-0100)", text: $value, axis: .vertical)
+                        .lineLimit(1...4)
+                } header: {
+                    Text("For \(target.memberName)")
+                }
+                if target.isEdit {
+                    Section {
+                        Button(role: .destructive) { Task { await remove() } } label: {
+                            Label("Remove this fact", systemImage: "trash")
+                        }
+                        .disabled(saving)
+                    }
+                }
+                if let error { Section { Text(error).foregroundStyle(Brand.danger).font(.footnote) } }
+            }
+            .brandScreen()
+            .navigationTitle(target.isEdit ? "Edit fact" : "Add fact")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving || item.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func save() async {
+        saving = true; defer { saving = false }
+        let trimmedItem = item.trimmingCharacters(in: .whitespaces)
+        let trimmedValue = value.trimmingCharacters(in: .whitespaces)
+        do {
+            try await withAPI {
+                try await $0.setFact(category: category, item: trimmedItem,
+                                     value: trimmedValue.isEmpty ? nil : trimmedValue,
+                                     childId: target.childId)
+            }
+            dismiss()
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func remove() async {
+        saving = true; defer { saving = false }
+        do {
+            try await withAPI {
+                try await $0.clearFact(category: category, item: target.item ?? item,
+                                       childId: target.childId)
+            }
+            dismiss()
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}

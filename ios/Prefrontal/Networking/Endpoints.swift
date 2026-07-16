@@ -402,6 +402,18 @@ extension APIClient {
         try await post("household/pets", json: body)
     }
 
+    // Facts — per-member (or household-wide, childId 0) reference facts. Upsert on
+    // (category, item, child); `value` nil blanks the value. Clear deletes the row.
+    func setFact(category: String, item: String, value: String?, childId: Int = 0) async throws {
+        try await post("household/facts",
+                       json: ["category": category, "item": item,
+                              "value": value ?? NSNull(), "child_id": childId])
+    }
+    func clearFact(category: String, item: String, childId: Int = 0) async throws {
+        try await post("household/facts/clear",
+                       json: ["category": category, "item": item, "child_id": childId])
+    }
+
     // Shopping — add is a capture write (queued off-tailnet); the rest are edits.
     func addShopping(item: String, spec: String? = nil, whereToBuy: String? = nil,
                      childId: Int = 0) async throws {

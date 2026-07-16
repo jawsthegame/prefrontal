@@ -32,7 +32,9 @@ struct HouseholdView: View {
                     ChartsCard(agreements: p.sheet.agreements, reload: load,
                                onAward: { add = .award($0) }, onError: { error = $0 })
                     AppointmentsCard(appointments: p.sheet.upcoming, onAdd: { add = .appointment })
-                    RosterCard(sheet: p.sheet, onAddChild: { add = .child }, onAddPet: { add = .pet })
+                    RosterCard(sheet: p.sheet, vocab: p.vocab, reload: load,
+                               onAddChild: { add = .child }, onAddPet: { add = .pet },
+                               onError: { error = $0 })
                     if let balance = p.balance, balance.enabled, let view = balance.view {
                         BalanceCard(balance: balance, view: view)
                     }
