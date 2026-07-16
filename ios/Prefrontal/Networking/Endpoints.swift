@@ -338,6 +338,106 @@ extension APIClient {
     }
 }
 
+/// Shared household sheet — the co-parent surface. Paths mirror
+/// prefrontal/webhooks/routers/household.py; every route is scoped to the caller
+/// and guarded to members (a caller in no household gets a 404, which the UI
+/// turns into the create/join empty state).
+extension APIClient {
+    // Reads
+    /// The whole shared sheet (roster, facts, chores, shopping, charts,
+    /// appointments) plus the co-parent surfaces (members, invites, check-in,
+    /// digest, balance). Throws `.http(404, …)` when the caller is in no household.
+    func householdSheet() async throws -> HouseholdPayload {
+        try await get("household/sheet", as: HouseholdPayload.self)
+    }
+    /// The shopping list on its own — a light read (no `household_seen_at` stamp,
+    /// unlike the full sheet), for the Today glance. 404s for a non-member.
+    func shoppingList() async throws -> [ShoppingItem] {
+        try await get("household/shopping", as: ShoppingList.self).items
+    }
+    /// Which chores are done + which are scheduled for a local day (0 today, 1
+    /// yesterday). Light and side-effect-free — powers the Today glance's
+    /// "chores today" count without building (and marking seen) the whole sheet.
+    func choresStatus(daysAgo: Int = 0) async throws -> ChoresStatus {
+        try await get("household/chores/done", query: ["days_ago": "\(daysAgo)"], as: ChoresStatus.self)
+    }
+
+    // Membership (self-serve, no operator needed)
+    /// Create a household and join it — the empty-state "start one" path.
+    func createHousehold(name: String) async throws {
+        try await post("household/create", json: ["name": name])
+    }
+    /// Join an existing household by redeeming a co-parent's invite code.
+    @discardableResult
+    func redeemInvite(code: String) async throws -> RedeemResult {
+        try await post("household/invites/redeem", json: ["code": code], as: RedeemResult.self)
+    }
+    /// Mint a shareable invite code (+ join link) to add a co-parent.
+    func createInvite() async throws -> InviteMinted {
+        try await post("household/invites", as: InviteMinted.self)
+    }
+
+    // Roster
+    func addChild(name: String, birthday: String? = nil) async throws {
+        var body: [String: Any] = ["name": name]
+        if let birthday, !birthday.isEmpty { body["birthday"] = birthday }
+        try await post("household/children", json: body)
+    }
+    func addPet(name: String, species: String? = nil, birthday: String? = nil) async throws {
+        var body: [String: Any] = ["name": name]
+        if let species, !species.isEmpty { body["species"] = species }
+        if let birthday, !birthday.isEmpty { body["birthday"] = birthday }
+        try await post("household/pets", json: body)
+    }
+
+    // Shopping — add is a capture write (queued off-tailnet); the rest are edits.
+    func addShopping(item: String, spec: String? = nil, whereToBuy: String? = nil,
+                     childId: Int = 0) async throws {
+        var body: [String: Any] = ["item": item, "child_id": childId]
+        if let spec, !spec.isEmpty { body["spec"] = spec }
+        if let whereToBuy, !whereToBuy.isEmpty { body["where_to_buy"] = whereToBuy }
+        try await post("household/shopping", json: body, queueable: true)
+    }
+    func setShoppingGot(_ id: Int, got: Bool) async throws {
+        try await post("household/shopping/\(id)/got", json: ["got": got])
+    }
+    func removeShopping(_ id: Int) async throws { try await post("household/shopping/\(id)/remove") }
+    /// Sweep every checked-off item after a shop; still-needed rows stay.
+    @discardableResult
+    func clearGotShopping() async throws -> ClearResult {
+        try await post("household/shopping/clear-got", as: ClearResult.self)
+    }
+
+    // Chores — one-tap done/undone. `daysAgo` back-fills yesterday (0 or 1). The
+    // done tap is a capture write, so it replays if logged off-tailnet.
+    @discardableResult
+    func markChoreDone(_ id: Int, daysAgo: Int = 0) async throws -> ChoreDoneResult {
+        try await post("household/chores/\(id)/done", json: ["days_ago": daysAgo], as: ChoreDoneResult.self)
+    }
+    func unmarkChoreDone(_ id: Int, daysAgo: Int = 0) async throws {
+        try await post("household/chores/\(id)/undone", json: ["days_ago": daysAgo])
+    }
+
+    // Star charts — record earned stars; the server congratulates both parents
+    // and returns the crossed goals + running total.
+    @discardableResult
+    func awardStars(_ agreementId: Int, delta: Int = 1, note: String? = nil) async throws -> StarAwardResult {
+        var body: [String: Any] = ["delta": delta]
+        if let note, !note.isEmpty { body["note"] = note }
+        return try await post("household/agreements/\(agreementId)/stars", json: body, as: StarAwardResult.self)
+    }
+
+    // Appointments — a kid appointment as a `kind='child'` commitment. `startAtISO`
+    // is an offset-aware ISO-8601 string (the server's to_utc reads the offset).
+    func addAppointment(title: String, startAtISO: String, endAtISO: String? = nil,
+                        location: String? = nil) async throws {
+        var body: [String: Any] = ["title": title, "start_at": startAtISO]
+        if let endAtISO, !endAtISO.isEmpty { body["end_at"] = endAtISO }
+        if let location, !location.isEmpty { body["location"] = location }
+        try await post("household/appointments", json: body)
+    }
+}
+
 /// Convenience: build a client on the main actor, then run an async call.
 @MainActor
 func withAPI<T>(_ body: (APIClient) async throws -> T) async throws -> T {

@@ -2,9 +2,10 @@
 
 A native SwiftUI client for the Prefrontal API. It mirrors the daily-driver
 surface of the web dashboard: a **Today** glance, interactive **Todos**, a
-**Mail** triage inbox, a **Calendar** week view + free-slot finder, and a **Me**
-tab for self-care, focus/outing controls, settings, and a behavioral **Insights**
-screen — plus a **Panic** sheet.
+**Mail** triage inbox, a **Calendar** week view + free-slot finder, a shared
+**Household** sheet (co-parent chores, shopping, kids' facts, star charts), and a
+**Me** tab for self-care, focus/outing controls, settings, and a behavioral
+**Insights** screen — plus a **Panic** sheet.
 
 It talks to the same FastAPI service as everything else, over Tailscale, using
 the `X-Prefrontal-Token` header. Its **App Intents** (Siri / Action Button /
@@ -56,7 +57,7 @@ ios/
     Activities/            # LiveActivityManager (starts/ends the Live Activity)
     Notifications/         # LocalNotifications + AppDelegate (APNs, categories)
     Location/              # LocationMonitor (opt-in geofences over /places)
-    Views/                 # RootView, Onboarding, Today, Todos, Calendar, Me, Panic, Settings
+    Views/                 # RootView, Onboarding, Today, Todos, Calendar, Household, Me, Panic, Settings
     Watch/                 # WatchProtocol (shared wire types) + PhoneWatchConnectivity (relay)
     Assets.xcassets/       # app icon (brand mark) + accent color
   PrefrontalWidgets/       # WidgetKit extension (Home + Lock Screen glances)
@@ -289,6 +290,7 @@ during onboarding.
 | Clarify | `/clarifications`; resolve → `POST /clarifications/{id}/resolve`, dismiss → `POST /clarifications/{id}/dismiss`, sweep → `POST /clarifications/check`, guide → `/clarifications/playbooks/{task_type}` — reached from **Todos** |
 | Mail | `/mail` (read-only: `needs_action` + `recent`) |
 | Calendar | `/commitments` (+ its `previous` list), `/calendar/slots`; Made it/Missed it → `POST /commitments/{id}/outcome`; conflicts → `/commitments/conflicts`, reschedule → `.../conflicts/reschedule`, dismiss → `.../conflicts/dismiss` |
+| Household | `/household/sheet` (roster, facts, chores, shopping, star charts, appointments, load-balance, catch-up feed); chores → `POST /household/chores/{id}/done` · `/undone`; shopping → `/household/shopping` (+ `/{id}/got` · `/remove` · `/clear-got`); stars → `/household/agreements/{id}/stars`; appointments → `/household/appointments`; roster → `/household/children` · `/pets`; membership → `/household/create`, `/household/invites` · `/invites/redeem` — reached from a **Today** glance (light `/household/shopping` + `/household/chores/done`, no `household_seen_at` stamp) |
 | Me | `/self-care` + `/self-care/mark`, `/self-care/review` (end-of-day gap recap); `/webhooks/focus/start` · `/end`; `/webhooks/outing/start` · `/return` |
 | Insights | `/stats/data` (estimate bias, follow-through, channels, self-care, feature usage), `/balance` (focus balance) — reached from **Me** |
 | Panic | `/panic` |
