@@ -164,6 +164,19 @@ final class APIClientTests: XCTestCase {
         try await client().dismissMention(7)
     }
 
+    func testParkedImpulsesDecode() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/impulses/parked")
+            return (200, Data(#"{"parked":[{"todo_id":42,"title":"Buy a label maker","notes":"ooh a label maker for the pantry","created_at":"2026-07-16 09:00:00","priority":1}],"retro":"You parked 1 thing while heads-down."}"#.utf8))
+        }
+        let payload = try await client().parkedImpulses()
+        XCTAssertEqual(payload.parked.count, 1)
+        XCTAssertEqual(payload.parked[0].todoId, 42)
+        XCTAssertEqual(payload.parked[0].title, "Buy a label maker")
+        XCTAssertEqual(payload.retro, "You parked 1 thing while heads-down.")
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
