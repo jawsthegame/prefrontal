@@ -36,3 +36,6 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# Secrets — APNs signing key (.p8 private key); never commit
+*.p8
