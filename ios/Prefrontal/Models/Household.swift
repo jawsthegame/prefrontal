@@ -190,6 +190,7 @@ struct ShoppingItem: Codable, Identifiable, Hashable {
 struct Chore: Codable, Identifiable {
     let id: Int
     let title: String
+    let ownerId: Int?
     let ownerName: String?
     let routineId: Int?
     let routineTitle: String?
@@ -202,6 +203,7 @@ struct Chore: Codable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, impact, enabled
+        case ownerId = "owner_id"
         case ownerName = "owner_name"
         case routineId = "routine_id"
         case routineTitle = "routine_title"
@@ -212,6 +214,12 @@ struct Chore: Codable, Identifiable {
     }
 
     var isEnabled: Bool { (enabled ?? 1) != 0 }
+
+    /// Weekday ints parsed from the CSV `effective_days` ("0,2,4" → [0,2,4]).
+    /// Empty means "every day".
+    var weekdays: [Int] {
+        (effectiveDays ?? "").split(separator: ",").compactMap { Int($0) }.filter { (0..<7).contains($0) }
+    }
 }
 
 /// A routine grouping chores under one accountable parent, with today's roll-up.

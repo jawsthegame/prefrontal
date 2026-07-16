@@ -420,6 +420,25 @@ extension APIClient {
         try await post("household/chores/\(id)/undone", json: ["days_ago": daysAgo])
     }
 
+    // Chore setup — upsert (keyed on title within the household), pause/resume,
+    // and delete. `ownerId` nil = either parent; `routineId` nil = stands alone;
+    // `days` empty = inherit routine / every day; `dueTime` "" = untimed checklist.
+    func setChore(title: String, ownerId: Int? = nil, routineId: Int? = nil,
+                  days: [Int] = [], dueTime: String = "", impact: String? = nil,
+                  enabled: Bool = true) async throws {
+        var body: [String: Any] = [
+            "title": title, "days": days, "due_time": dueTime, "enabled": enabled,
+        ]
+        if let ownerId { body["owner_id"] = ownerId }
+        if let routineId { body["routine_id"] = routineId }
+        if let impact, !impact.isEmpty { body["impact"] = impact }
+        try await post("household/chores", json: body)
+    }
+    func setChoreEnabled(_ id: Int, enabled: Bool) async throws {
+        try await post("household/chores/\(id)/enabled", json: ["enabled": enabled])
+    }
+    func removeChore(_ id: Int) async throws { try await post("household/chores/\(id)/remove") }
+
     // Star charts — record earned stars; the server congratulates both parents
     // and returns the crossed goals + running total.
     @discardableResult
