@@ -34,6 +34,9 @@ from prefrontal.webhooks.schemas.clarify import (
     ClarificationLocalization,
     ClarificationResolve,
 )
+from prefrontal.webhooks.schemas.communicate import (
+    TranslateMessage,
+)
 from prefrontal.webhooks.schemas.focus import (
     FocusEnd,
     FocusLog,
@@ -241,6 +244,7 @@ __all__ = [
     "TodoNotesUpdate",
     "TodoSchedule",
     "TodoWindowUpdate",
+    "TranslateMessage",
     "TravelPadding",
     "MentionIdentify",
     "PeopleExtract",

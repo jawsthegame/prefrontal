@@ -348,9 +348,13 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   fill a known form, place a scoped Twilio call — each **previewed and confirmed**
   before it fires, matching the NL-assistant's existing preview-before-write
   contract.
-- **Communication translation as a first-class tool:** decode an ambiguous work
-  email, draft a reply in the right register, soften a message. High demand, low
-  risk, ready now.
+- **Communication translation as a first-class tool** ✅ **shipped** — decode an
+  ambiguous work email, draft a reply in the right register, or soften a message.
+  Text-only and side-effect-free (`prefrontal/communication_translation.py`,
+  `POST /communicate/translate`, `prefrontal communicate`): the model does the work
+  when reachable, decode/draft decline honestly offline, soften degrades to the
+  user's own text. High demand, low risk — the ready-now half of M4, landed ahead of
+  the gated "drafts → does" execution loop below.
 
 **Abandonment trap guarded:** over-reach and loss of trust. Actions are scoped,
 verifiable, and confirmable. Never an open browser agent (~1/3 success). A single

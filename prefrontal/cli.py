@@ -3206,6 +3206,49 @@ def _cmd_find_time(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_communicate(args: argparse.Namespace) -> int:
+    """Decode, draft, or soften a work message (communication translation, M4).
+
+    Text only — nothing is sent, booked, or stored. ``--mode decode`` explains
+    what a received message really means; ``--mode draft`` writes a reply from a
+    short description; ``--mode soften`` rewrites your own message in ``--register``
+    (professional/warm/firm/concise/friendly). The model does the work under
+    ``--llm`` (Claude when the assistant agent is opted into Anthropic, else local
+    Ollama); without a reachable model, decode/draft say so plainly rather than
+    guessing.
+
+    Args:
+        args: Parsed arguments; uses ``text``, ``mode``, ``register``, ``db_path``,
+            ``user``, ``llm``.
+
+    Returns:
+        Process exit code (0 on success, 2 on empty input).
+    """
+    from prefrontal.communication_translation import translate
+    from prefrontal.integrations import ProviderResolver
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    text = " ".join(args.text).strip()
+    if not text:
+        print(
+            'Say what to work on, e.g. `communicate --mode soften "just send it already"`.',
+            file=sys.stderr,
+        )
+        return 2
+    # The store is opened only so the command shares the standard user-scoping and
+    # config path; translation itself is stateless (text in, text out).
+    with MemoryStore.open(db_path) as unscoped:
+        _resolve_user_store(unscoped, args.user)
+        client = ProviderResolver.from_settings(settings).client("assistant") if args.llm else None
+        result = translate(text, args.mode, args.register, client=client)
+    if result.note:
+        print(result.note, file=sys.stderr)
+    if result.output:
+        print(result.output)
+    return 0
+
+
 def _ingest_mail(store, messages, *, account, policy, client, use_model, settings):
     """Ingest a batch of messages for one account into a (scoped) store.
 
@@ -4789,6 +4832,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_find_time.add_argument("--db-path", default=None, help="Override the database path.")
     p_find_time.add_argument("--user", default=None, help="Handle of the user to act on.")
     p_find_time.set_defaults(func=_cmd_find_time)
+
+    p_communicate = sub.add_parser(
+        "communicate",
+        help="Decode, draft, or soften a work message (text only, nothing sent).",
+    )
+    p_communicate.add_argument(
+        "text",
+        nargs="+",
+        help="The message received (decode), what to say (draft), or your message (soften).",
+    )
+    p_communicate.add_argument(
+        "--mode",
+        choices=["decode", "draft", "soften"],
+        default="decode",
+        help="decode a received message, draft a reply, or soften your own (default decode).",
+    )
+    p_communicate.add_argument(
+        "--register",
+        choices=["professional", "warm", "firm", "concise", "friendly"],
+        default=None,
+        help="Tone for draft/soften (default professional); ignored for decode.",
+    )
+    p_communicate.add_argument(
+        "--llm",
+        action="store_true",
+        help="Use the configured model (else decode/draft report the model is unavailable).",
+    )
+    p_communicate.add_argument("--db-path", default=None, help="Override the database path.")
+    p_communicate.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_communicate.set_defaults(func=_cmd_communicate)
 
     p_mail = sub.add_parser("mail", help="Ingest/fetch/list triaged email.")
     p_mail.add_argument("--db-path", default=None, help="Override the database path.")
