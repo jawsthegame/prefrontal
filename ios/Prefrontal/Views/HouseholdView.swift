@@ -26,7 +26,7 @@ struct HouseholdView: View {
                     HouseholdEmptyState(reload: reloadAfterJoin)
                 } else if let p = payload {
                     header(p)
-                    ChoresCard(sheet: p.sheet, showAll: $showAllChores,
+                    ChoresCard(sheet: p.sheet, members: p.members, showAll: $showAllChores,
                                reload: load, onDone: handleChoreDone, onError: { error = $0 })
                     ShoppingCard(items: p.sheet.shopping, reload: load, onError: { error = $0 })
                     ChartsCard(agreements: p.sheet.agreements, reload: load,
@@ -180,49 +180,71 @@ enum HouseholdAdd: Identifiable {
 
 // MARK: - Chores
 
-/// Today's shared chores with one-tap Done. Defaults to today's scheduled,
-/// enabled chores; a toggle reveals the full list. The circle tap logs (or
-/// clears) the completion for today, and finishing a routine's last chore
-/// surfaces a celebration via `onDone`.
+/// Today's shared chores with one-tap Done, plus setup from the phone. Defaults
+/// to today's scheduled, enabled chores; a toggle reveals the full list
+/// (including paused ones). The circle tap logs (or clears) today's completion,
+/// and finishing a routine's last chore surfaces a celebration via `onDone`. The
+/// ＋ adds a chore; a long-press on a row edits it, pauses/resumes, or removes it.
 struct ChoresCard: View {
     let sheet: HouseholdSheet
+    let members: [HouseholdMember]
     @Binding var showAll: Bool
     let reload: () async -> Void
     let onDone: (ChoreDoneResult) -> Void
     let onError: (String) -> Void
+    @State private var editor: ChoreEditor?
 
+    /// Chores not in the default (today's scheduled + enabled) view — paused ones
+    /// or those scheduled for another day. Drives whether "Show all" is offered.
+    private var hasMore: Bool {
+        sheet.chores.contains { !($0.isEnabled && $0.scheduledToday) }
+    }
     private var visible: [Chore] {
-        if showAll { return sheet.chores.filter { $0.isEnabled } }
-        return sheet.chores.filter { $0.isEnabled && $0.scheduledToday }
+        showAll ? sheet.chores : sheet.chores.filter { $0.isEnabled && $0.scheduledToday }
     }
 
     var body: some View {
         Card {
-            HStack {
+            HStack(spacing: 10) {
                 CardLabel(text: showAll ? "All chores" : "Today's chores")
                 Spacer()
-                if sheet.chores.contains(where: { $0.isEnabled && !$0.scheduledToday }) {
+                if hasMore {
                     Button(showAll ? "Today only" : "Show all") { withAnimation { showAll.toggle() } }
                         .font(.caption.weight(.medium)).tint(Brand.accent)
                 }
+                Button { editor = .add } label: { Image(systemName: "plus").font(.footnote.weight(.semibold)) }
+                    .tint(Brand.accent)
+                    .accessibilityLabel("Add a chore")
             }
             if visible.isEmpty {
-                Text(showAll ? "No chores set up yet." : "Nothing due today. 🎉")
+                Text(showAll ? "No chores set up yet — add one with ＋." : "Nothing due today. 🎉")
                     .font(.footnote).foregroundStyle(Brand.muted)
             } else {
                 ForEach(visible) { chore in
-                    ChoreRow(chore: chore, reload: reload, onDone: onDone, onError: onError)
+                    ChoreRow(chore: chore, reload: reload, onDone: onDone,
+                             onEdit: { editor = .edit(chore) }, onError: onError)
                     if chore.id != visible.last?.id { Divider().overlay(Brand.line) }
                 }
             }
         }
+        .sheet(item: $editor, onDismiss: { Task { await reload() } }) { mode in
+            ChoreEditorSheet(mode: mode, members: members, routines: sheet.routines)
+        }
     }
+}
+
+/// Which chore-editor sheet is up: a fresh add, or an edit of an existing chore.
+enum ChoreEditor: Identifiable {
+    case add
+    case edit(Chore)
+    var id: Int { if case let .edit(c) = self { return c.id } else { return 0 } }
 }
 
 struct ChoreRow: View {
     let chore: Chore
     let reload: () async -> Void
     let onDone: (ChoreDoneResult) -> Void
+    let onEdit: () -> Void
     let onError: (String) -> Void
 
     var body: some View {
@@ -245,9 +267,10 @@ struct ChoreRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(chore.title)
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(chore.doneToday ? Brand.muted : Brand.nearWhite)
+                    .foregroundStyle(chore.doneToday || !chore.isEnabled ? Brand.muted : Brand.nearWhite)
                     .strikethrough(chore.doneToday, color: Brand.muted)
                 FlowRow(spacing: 6) {
+                    if !chore.isEnabled { Chip(text: "paused", color: Brand.warn) }
                     if let owner = chore.ownerName, !owner.isEmpty { Chip(text: owner, color: Brand.fyi) }
                     else { Chip(text: "either parent") }
                     if let routine = chore.routineTitle, !routine.isEmpty { DomainPill(text: routine) }
@@ -261,6 +284,37 @@ struct ChoreRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button { onEdit() } label: { Label("Edit", systemImage: "pencil") }
+            Button {
+                Task { await toggleEnabled() }
+            } label: {
+                Label(chore.isEnabled ? "Pause reminders" : "Resume",
+                      systemImage: chore.isEnabled ? "pause.circle" : "play.circle")
+            }
+            Button(role: .destructive) {
+                Task { await remove() }
+            } label: { Label("Remove", systemImage: "trash") }
+        }
+    }
+
+    private func toggleEnabled() async {
+        do {
+            try await withAPI { try await $0.setChoreEnabled(chore.id, enabled: !chore.isEnabled) }
+            await reload()
+        } catch {
+            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    private func remove() async {
+        do {
+            try await withAPI { try await $0.removeChore(chore.id) }
+            await reload()
+        } catch {
+            onError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
     }
 }
 
