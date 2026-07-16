@@ -320,3 +320,28 @@ def behavior_nudge_clause(store: MemoryStore, todo_id: int) -> str:
     if not parts:
         return ""
     return f" You've {' and '.join(parts)}."
+
+
+def behavior_digest_suffix(store: MemoryStore, todo_id: int) -> str:
+    """A compact ``· rescheduled N×, snoozed M×`` suffix for a digest line, or ``""``.
+
+    The list-item slice of the behavioral model, for the morning briefing's
+    avoidance surfaces. A digest bullet already leads with the item and its age, so
+    this stays terse — ``×N`` counts rather than the nudge's full sentence — and
+    reinforces *why* something on the "keeps sliding" / "time to decide" lists is
+    worth a decision: it's not just old, you've actively moved it.
+
+    Returned with a leading ``" · "`` separator so a caller appends it
+    unconditionally (empty history → ``""``), the same append-anywhere contract as
+    :func:`behavior_nudge_clause`. Counts-only, so it's cheap per briefing item.
+    """
+    reschedules = store.count_todo_events(todo_id, "rescheduled")
+    defers = store.count_todo_events(todo_id, "deferred")
+    parts: list[str] = []
+    if reschedules:
+        parts.append(f"rescheduled {reschedules}×")
+    if defers:
+        parts.append(f"snoozed {defers}×")
+    if not parts:
+        return ""
+    return f" · {', '.join(parts)}"
