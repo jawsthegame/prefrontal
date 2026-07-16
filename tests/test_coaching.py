@@ -269,6 +269,60 @@ def test_decide_fires_normally_when_receptive():
     assert [d.cue.dedup_key for d in decisions] == ["a", "b"]
 
 
+# -- user-initiated cues bypass the discretionary silence gates ----------------
+#
+# An outing's overdue ladder is a signal the user asked for by starting the outing,
+# so soft/firm/call all land regardless of quiet hours, an ignore streak, a
+# vulnerable moment, or the dosage cap — the fix for "only the 150% call ever
+# arrived because soft/firm were held". They still debounce (fire once per level).
+
+
+def test_user_initiated_bypasses_quiet_hours_like_critical():
+    store = _FakeStore()
+    night = _ctx(now=datetime(2026, 7, 2, 3, 0, 0))  # 3am, outside 8–22
+    # A plain nudge is held at night; the same nudge marked user_initiated is not.
+    assert suppressed(store, _cue("nudge"), night) is True
+    assert suppressed(store, _cue("nudge", user_initiated=True), night) is False
+    assert suppressed(store, _cue("urgent", user_initiated=True), night) is False
+
+
+def test_user_initiated_still_debounces():
+    fired = (NOON - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    store = _FakeStore(state={"coach_fired:k": fired})
+    # Bypassing the silence gates does not bypass "fire once" — a level already
+    # fired within the debounce window stays held.
+    assert suppressed(store, _cue("nudge", dedup="k", user_initiated=True), _ctx()) is True
+
+
+def test_decide_fires_user_initiated_when_not_receptive():
+    store = _FakeStore()
+    store.episodes = [_nudge_outcome(False) for _ in range(3)]  # backing off
+    cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b", user_initiated=True)]
+    decisions = decide(store, cues, _ctx())
+    # The plain nudge is silenced by the ignore streak; the user-initiated one lands.
+    assert [d.cue.dedup_key for d in decisions] == ["b"]
+
+
+def test_decide_fires_user_initiated_when_vulnerable():
+    store = _FakeStore()
+    store.episodes = [_support_checkin(5)]  # in a hard moment right now
+    cues = [_cue("nudge", dedup="a"), _cue("nudge", dedup="b", user_initiated=True)]
+    decisions = decide(store, cues, _ctx())
+    assert [d.cue.dedup_key for d in decisions] == ["b"]
+
+
+def test_dosage_cap_never_holds_user_initiated():
+    store = _FakeStore(
+        floats={"coach_daily_nudge_cap": 1},
+        state={"coach_nudge_day": _capday(NOON, 5)},  # already way over cap
+    )
+    cues = [_cue("nudge", dedup="n"), _cue("nudge", dedup="u", user_initiated=True)]
+    decisions = decide(store, cues, _ctx())
+    keys = {d.cue.dedup_key for d in decisions}
+    # The plain nudge is over-cap and held; the user-initiated one is uncapped.
+    assert keys == {"u"}
+
+
 # -- vulnerability gate (M3): hold nudges in a state where one could do harm ---
 
 

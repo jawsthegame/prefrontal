@@ -777,6 +777,15 @@ class LocationAnchorModule(Module):
                         context_key="outing",
                         dedup_key=f"outing_escalation:{outing['id']}:{ev.level}",
                         ref={"outing_id": outing["id"]},
+                        # The user started this outing and told us when they'd be
+                        # back, so its overdue ladder is a signal they asked for —
+                        # deliver every level (soft/firm/call) regardless of quiet
+                        # hours or an ignore streak, not just the critical `call`.
+                        # Without this, soft/firm are held whenever an outing runs
+                        # outside the responsive window or during a receptivity
+                        # back-off, so only the 150% call ever lands. See
+                        # prefrontal.coaching._bypasses_silence_gates.
+                        user_initiated=True,
                     )
                 )
             elif ev.action == "at_home" and ev.fire:

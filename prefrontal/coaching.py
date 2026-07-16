@@ -348,6 +348,16 @@ class Cue:
     # ``critical`` it does *not* force the voice channel; it's an ordinary push that
     # is simply allowed through late. A module sets this from a per-user toggle.
     quiet_hours_exempt: bool = False
+    # When True, this cue was triggered by something the **user themselves started**
+    # (today: an outing's "you're overdue" escalation ladder), so its nudges are a
+    # self-requested signal rather than unsolicited coaching noise. Like ``critical``
+    # it skips *every* discretionary silence gate — quiet hours, focus protection,
+    # vulnerability, receptivity, and the dosage cap — so it lands whenever it fires
+    # (soft/firm/call all get through, regardless of responsive hours or an ignore
+    # streak). Unlike ``critical`` it keeps its own urgency→channel mapping (soft
+    # stays a gentle push) instead of forcing the voice call. Debounce still applies,
+    # so a given level still fires only once. See :func:`_bypasses_silence_gates`.
+    user_initiated: bool = False
 
 
 @dataclass(frozen=True)
@@ -501,6 +511,21 @@ def last_fired(store: Any, dedup_key: str) -> datetime | None:
     return _parse_ts(store.get_state(_fired_key(dedup_key)))
 
 
+def _bypasses_silence_gates(cue: Cue) -> bool:
+    """Whether a cue skips the engine's *discretionary* silence gates.
+
+    Two kinds of cue do: ``critical`` (a hard, time-sensitive obligation — a missed
+    leave-by, a proactive-overwhelm alert) and **user-initiated** ones (the user
+    started the thing the cue tracks, so its escalations are a signal they asked
+    for — an outing's "you're overdue" ladder). Both bypass quiet hours, focus
+    protection, the vulnerability hold, the receptivity back-off, and the dosage cap;
+    both still **debounce** (this is not a bypass of "fire once"). The difference is
+    only in phrasing/channel: ``critical`` forces the voice call, while a
+    user-initiated cue keeps its own urgency→channel mapping (see :class:`Cue`).
+    """
+    return cue.urgency == "critical" or cue.user_initiated
+
+
 def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     """Whether a cue should be held back right now (spec §6).
 
@@ -508,8 +533,10 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     ``critical`` is held), **protected hyperfocus** (while an aligned block is
     shielded, non-critical cues are held — except self-care, which pierces flow),
     and **debounce** (the same ``dedup_key`` won't refire within
-    ``debounce_minutes``). ``critical`` bypasses quiet hours and protection — a
-    missed hard commitment at 6am still warrants the call — but still debounces.
+    ``debounce_minutes``). ``critical`` — and, equally, a **user-initiated** cue
+    (:func:`_bypasses_silence_gates`) — bypasses quiet hours and protection (a missed
+    hard commitment at 6am still warrants the call; an outing the user *started* still
+    warrants its overdue nudge) but still debounces.
 
     A non-critical cue may also opt out of the **quiet-hours** gate alone by
     setting ``quiet_hours_exempt`` — for an evening nudge (wind-down, the
@@ -518,7 +545,7 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     voice or pierce protection; it's an ordinary push simply allowed through late,
     and it still debounces.
     """
-    if cue.urgency != "critical":
+    if not _bypasses_silence_gates(cue):
         if not cue.quiet_hours_exempt:
             hour = local_hour_of(ctx.now, ctx.timezone)
             if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):
@@ -873,14 +900,16 @@ def _urgency_rank(urgency: str) -> int:
         return -1
 
 
-def _counts_against_dosage(urgency: str, channel: str) -> bool:
+def _counts_against_dosage(urgency: str, channel: str, *, user_initiated: bool = False) -> bool:
     """Whether a decision is governed by the dosage cap.
 
-    Only *interrupting, non-critical* deliveries: ``critical`` is never capped (a
-    missed hard commitment always goes through) and ``digest``/ambient never
-    interrupts (it folds into the briefing), so neither consumes budget.
+    Only *interrupting, non-critical, engine-driven* deliveries: ``critical`` is
+    never capped (a missed hard commitment always goes through), ``digest``/ambient
+    never interrupts (it folds into the briefing), and a **user-initiated** cue (an
+    outing escalation the user set in motion) isn't habituation noise to ration — so
+    none of them consume budget.
     """
-    return urgency != "critical" and channel != "digest"
+    return urgency != "critical" and channel != "digest" and not user_initiated
 
 
 def _apply_dosage_cap(store: Any, candidates: list[Decision], ctx: CoachContext) -> list[Decision]:
@@ -895,7 +924,11 @@ def _apply_dosage_cap(store: Any, candidates: list[Decision], ctx: CoachContext)
     cap = dosage_cap(store)
     if cap <= 0:
         return candidates
-    capped = [d for d in candidates if _counts_against_dosage(d.cue.urgency, d.channel)]
+    capped = [
+        d
+        for d in candidates
+        if _counts_against_dosage(d.cue.urgency, d.channel, user_initiated=d.cue.user_initiated)
+    ]
     budget = max(0, cap - dosage_count_today(store, ctx.now))
     if len(capped) <= budget:
         return candidates
@@ -906,7 +939,8 @@ def _apply_dosage_cap(store: Any, candidates: list[Decision], ctx: CoachContext)
     return [
         d
         for d in candidates
-        if not _counts_against_dosage(d.cue.urgency, d.channel) or id(d) in keep
+        if not _counts_against_dosage(d.cue.urgency, d.channel, user_initiated=d.cue.user_initiated)
+        or id(d) in keep
     ]
 
 
@@ -959,18 +993,22 @@ def decide(
     for cue in cues:
         if suppressed(store, cue, ctx):
             continue
-        non_critical = cue.urgency != "critical"
+        # ``critical`` and user-initiated cues skip the discretionary holds below
+        # (vulnerability, receptivity) just as they skipped quiet hours/protection in
+        # :func:`suppressed` — a self-requested outing escalation isn't coaching noise
+        # to be silenced on an ignore streak or a low-responsiveness afternoon.
+        gated = not _bypasses_silence_gates(cue)
         # Vulnerability first (cheapest, safety-first): a hard-moment hold short-
         # circuits the cue before any channel/receptivity work.
-        if non_critical and in_vulnerable_state:
+        if gated and in_vulnerable_state:
             continue
         # Rules gate (channel-independent): decide before the per-cue channel pick, so
         # a non-receptive tick drops its cues without N `choose_channel` pattern reads.
-        if non_critical and not gate.needs_channel and not gate():
+        if gated and not gate.needs_channel and not gate():
             continue
         channel = choose_channel(store, cue, ctx)
         # Learned gate conditions on the chosen channel, so it checks after the pick.
-        if non_critical and gate.needs_channel and not gate(channel):
+        if gated and gate.needs_channel and not gate(channel):
             continue
         candidates.append(
             Decision(
@@ -997,7 +1035,7 @@ def record_fired(store: Any, decisions: list[Decision], now: datetime) -> None:
     fired_capped = 0
     for d in decisions:
         store.set_state(_fired_key(d.cue.dedup_key), stamp, source="inferred")
-        if _counts_against_dosage(d.cue.urgency, d.channel):
+        if _counts_against_dosage(d.cue.urgency, d.channel, user_initiated=d.cue.user_initiated):
             fired_capped += 1
         try:
             store.record_feature_event(
