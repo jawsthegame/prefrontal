@@ -75,10 +75,11 @@ class TranslationResult:
             ``decode``, which doesn't rewrite).
         output: The translated text — the decoded meaning, the drafted reply, or
             the softened message. The one thing the caller shows the user.
-        note: An optional short framing line for the client (e.g. the offline
+        note: An optional short framing line for the client (e.g. the fallback
             caveat), never part of the message itself.
-        offline: True when the result came from the heuristic fallback (no model
-            reachable or an unusable reply) rather than the model.
+        offline: True when the result came from the heuristic fallback rather than
+            usable model output — either the model was unreachable *or* it replied
+            with something that couldn't be used (see ``note`` for which).
     """
 
     mode: str
@@ -143,22 +144,34 @@ def _coerce_output(raw: dict) -> str:
     return out.strip()
 
 
-def _heuristic(mode: str, register: str, text: str) -> TranslationResult:
-    """A hand-authored result when the model is unavailable.
+def _heuristic(
+    mode: str, register: str, text: str, *, unusable: bool = False
+) -> TranslationResult:
+    """A hand-authored result when usable model output isn't available.
 
-    ``decode`` and ``draft`` cannot be done honestly offline — there is nothing to
-    explain from no reading, and nothing to draft from no model — so they return an
-    honest caveat rather than a guess. ``soften`` degrades gracefully: it hands the
-    user's own text back with a register note, which is at least useful.
+    ``decode`` and ``draft`` cannot be done honestly without the model — there is
+    nothing to explain from no reading, and nothing to draft from no model — so they
+    return an honest caveat rather than a guess. ``soften`` degrades gracefully: it
+    hands the user's own text back with a register note, which is at least useful.
+
+    ``unusable`` distinguishes the two ways this path is reached: ``False`` means the
+    model was never reachable (no client, or a transport error), ``True`` means the
+    model *replied* but its answer couldn't be used (e.g. non-JSON) — the caveat
+    names which so the message isn't misleading when the model was in fact online.
     """
+    cause = (
+        "the model returned a response I couldn't use"
+        if unusable
+        else "the model was unavailable"
+    )
     if mode == "soften":
         return TranslationResult(
             mode=mode,
             register=register,
             output=text.strip(),
             note=(
-                "The model was unavailable, so this is your original text unchanged — "
-                f"rewrite it to read as {register} when you have a model, or edit by hand."
+                f"Because {cause}, this is your original text unchanged — "
+                f"rewrite it to read as {register} when a model is reachable, or edit by hand."
             ),
             offline=True,
         )
@@ -168,7 +181,7 @@ def _heuristic(mode: str, register: str, text: str) -> TranslationResult:
         register="" if mode == "decode" else register,
         output="",
         note=(
-            f"The model was unavailable, so I can't {what} right now. "
+            f"I can't {what} right now — {cause}. "
             "Try again when a model is reachable (or opt the assistant into the cloud provider)."
         ),
         offline=True,
@@ -225,4 +238,13 @@ def translate(
                 register=resolved_register,
                 output=output,
             )
+        # Consulted the model but couldn't use its answer: a non-empty reply that
+        # didn't parse is "unusable" (the model was online), an empty one is a
+        # transport failure — the heuristic caveat names the right one.
+        return _heuristic(
+            resolved_mode,
+            resolved_register or DEFAULT_REGISTER,
+            stripped,
+            unusable=bool(reply.strip()),
+        )
     return _heuristic(resolved_mode, resolved_register or DEFAULT_REGISTER, stripped)

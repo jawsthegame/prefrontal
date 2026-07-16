@@ -115,20 +115,25 @@ def test_soften_rewrites_via_model():
     assert result.offline is False
 
 
-def test_malformed_reply_falls_back_to_heuristic():
-    # No parseable JSON object → treated as an unusable reply → offline heuristic.
+def test_malformed_reply_reports_unusable_not_unavailable():
+    # A non-empty reply that doesn't parse → the model WAS online, so the caveat
+    # must say the response was unusable, not that the model was unavailable.
     client = _FakeGenerator("sorry, I can't do that")
     result = translate("what does this mean", "decode", client=client)
     assert result.offline is True
     assert result.output == ""
-    assert "unavailable" in result.note.lower()
+    assert "couldn't use" in result.note.lower()
+    assert "unavailable" not in result.note.lower()
 
 
-def test_transport_error_falls_back_to_heuristic():
+def test_transport_error_reports_unavailable():
+    # An empty reply (transport failure) is genuine unavailability — the other side
+    # of the distinction from the malformed-reply case above.
     client = _FakeGenerator(raises=True)
     result = translate("draft a reply", "draft", client=client)
     assert result.offline is True
     assert "unavailable" in result.note.lower()
+    assert "couldn't use" not in result.note.lower()
 
 
 # --- offline heuristic (no client) -------------------------------------------
