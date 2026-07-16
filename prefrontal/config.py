@@ -23,9 +23,13 @@ def _load_dotenv(path: str = ".env") -> None:
     """Populate ``os.environ`` from a ``.env`` file if one exists.
 
     This is a deliberately tiny parser so the project has no hard dependency on
-    ``python-dotenv``. It supports ``KEY=value`` lines, ignores blanks and
-    ``#`` comments, strips surrounding quotes, and never overwrites a variable
-    that is already set in the environment.
+    ``python-dotenv``. It supports ``KEY=value`` lines, ignores blank/``#``-comment
+    lines, strips surrounding quotes, and never overwrites a variable that is
+    already set in the environment. For unquoted values it also strips a trailing
+    *inline* comment (a ``#`` preceded by whitespace) — so ``KEY=val # note`` yields
+    ``val``, not ``val # note`` (a folded comment once corrupted ``APNS_KEY_ID`` and
+    silently disabled ``APNS_USE_SANDBOX``). A ``#`` inside quotes, or one not
+    preceded by whitespace (e.g. a ``pa#ss`` password), is preserved.
 
     Args:
         path: Path to the dotenv file. Missing files are silently ignored.
@@ -39,7 +43,23 @@ def _load_dotenv(path: str = ".env") -> None:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        value = value.strip()
+        if value[:1] in ('"', "'"):
+            # Quoted: take the content up to the matching close quote; a ``#``
+            # inside stays literal, anything after the close quote is dropped.
+            quote = value[0]
+            end = value.find(quote, 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            # Unquoted: cut a ``#`` that begins a comment (start of value, or
+            # preceded by whitespace); leave a ``#`` that's part of the value.
+            idx = value.find("#")
+            while idx != -1:
+                if idx == 0 or value[idx - 1] in " \t":
+                    value = value[:idx]
+                    break
+                idx = value.find("#", idx + 1)
+            value = value.strip()
         os.environ.setdefault(key, value)
 
 
