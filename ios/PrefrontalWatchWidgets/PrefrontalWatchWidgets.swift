@@ -50,7 +50,11 @@ struct ComplicationView: View {
     }
 
     @ViewBuilder private var inline: some View {
-        if let leave = PFDate.parse(g?.departureLeaveBy) {
+        if let intention = g?.outingIntention {
+            Label(intention, systemImage: "cup.and.saucer")
+        } else if let task = g?.focusTask {
+            Label(task, systemImage: "scope")
+        } else if let leave = PFDate.parse(g?.departureLeaveBy) {
             Label("Leave \(leave.formatted(date: .omitted, time: .shortened))", systemImage: "figure.walk")
         } else if let task = g?.suggestionTitle {
             Label(task, systemImage: "checklist")
@@ -62,7 +66,12 @@ struct ComplicationView: View {
     }
 
     @ViewBuilder private var circular: some View {
-        if let leave = PFDate.parse(g?.departureLeaveBy) {
+        if g?.outingIntention != nil {
+            // You're out — the most literal "right now"; no time to show, just the state.
+            Image(systemName: "cup.and.saucer").font(.title3).widgetAccentable()
+        } else if g?.focusTask != nil {
+            Image(systemName: "scope").font(.title3).widgetAccentable()
+        } else if let leave = PFDate.parse(g?.departureLeaveBy) {
             // Time-to-leave is the most urgent glance when travel is pending.
             VStack(spacing: 0) {
                 Image(systemName: "figure.walk").font(.caption2)
@@ -84,7 +93,13 @@ struct ComplicationView: View {
 
     @ViewBuilder private var rectangular: some View {
         VStack(alignment: .leading, spacing: 1) {
-            if let leave = PFDate.parse(g?.departureLeaveBy) {
+            if let intention = g?.outingIntention {
+                Text("OUT").font(.caption2).widgetAccentable()
+                Text(intention).font(.headline).lineLimit(2)
+            } else if let task = g?.focusTask {
+                Text("FOCUS").font(.caption2).widgetAccentable()
+                Text(task).font(.headline).lineLimit(2)
+            } else if let leave = PFDate.parse(g?.departureLeaveBy) {
                 Text("Leave \(leave.formatted(date: .omitted, time: .shortened))")
                     .font(.headline).widgetAccentable()
                 if let t = g?.departureTitle { Text(t).font(.caption).lineLimit(1) }
