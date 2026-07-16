@@ -307,13 +307,15 @@ extension APIClient {
 
     /// Send a structure already parsed **on-device** (Apple Foundation Models):
     /// the server calls no model, just re-validating the supplied actions and
-    /// returning the same preview. `observations` is left empty — the behavioral
-    /// half stays on the server escalation path (see `BrainDumpParser`).
+    /// observations and returning the same preview. `observations` carries any
+    /// behavioral-episode candidates the on-device pass surfaced (usually empty);
+    /// the server allowlist-checks them and records them **pending**, so a
+    /// hallucinated candidate drops rather than acting (see `BrainDumpParser`).
     func braindump(parse: ParsedBrainDump) async throws -> BrainDumpResponse {
         let body: [String: Any] = [
             "parse": [
                 "actions": parse.wireActions,
-                "observations": [] as [[String: Any]],
+                "observations": parse.wireObservations,
                 "reply": parse.reply,
             ] as [String: Any]
         ]

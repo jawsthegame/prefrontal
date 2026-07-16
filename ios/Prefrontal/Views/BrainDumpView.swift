@@ -13,8 +13,8 @@ import SwiftUI
 /// — private and cheap, no cloud model sees the raw thought — and falls back to
 /// the server's own parse otherwise. Either way the same `POST /braindump`
 /// endpoint validates the result and returns the preview. A "server pass" button
-/// escalates a dump to the cloud agent for the harder reasoning (e.g. to catch a
-/// behavioral aside the on-device pass leaves alone).
+/// escalates a dump to the cloud agent for the harder reasoning — a settings
+/// change the on-device pass won't propose, or a subtler aside it didn't catch.
 struct BrainDumpView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -186,8 +186,8 @@ struct BrainDumpView: View {
     private var footerButtons: some View {
         VStack(spacing: 8) {
             // Escalate: re-run the same ramble through the server's own parse (the
-            // opt-in cloud agent), which also extracts behavioral asides the
-            // on-device pass leaves alone.
+            // opt-in cloud agent), which reaches the cases the on-device pass won't
+            // touch — a settings change, or a subtler aside it didn't catch.
             if provider == "on_device" {
                 AsyncButton {
                     try await runServerPass()

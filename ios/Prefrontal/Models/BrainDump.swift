@@ -7,12 +7,28 @@ import Foundation
 
 /// The framework-free result of an on-device parse (`BrainDumpParser`). `wireActions`
 /// are `{op, …}` dictionaries in the exact shape `POST /braindump`'s `parse.actions`
-/// expects and `POST /assistant/apply` echoes.
+/// expects and `POST /assistant/apply` echoes; `wireObservations` are the sensor
+/// candidate objects (`{kind:"episode", …}`) `parse.observations` expects, which the
+/// server validates against its allowlist and records **pending**.
 struct ParsedBrainDump {
     /// A short, first-person acknowledgement of what was captured (never "done").
     let reply: String
     /// Server-ready wire actions. Each is a JSON-serializable `[String: Any]`.
     let wireActions: [[String: Any]]
+    /// Server-ready sensor candidates (behavioral episodes). Empty when the ramble
+    /// carried no behavioral aside — the common case. Each is a JSON-serializable
+    /// `[String: Any]` in the shape `sensor.validate_observations` reads.
+    let wireObservations: [[String: Any]]
+
+    init(
+        reply: String,
+        wireActions: [[String: Any]],
+        wireObservations: [[String: Any]] = []
+    ) {
+        self.reply = reply
+        self.wireActions = wireActions
+        self.wireObservations = wireObservations
+    }
 }
 
 /// A minimal JSON value, so we can carry the assistant's heterogeneous action

@@ -21,13 +21,19 @@ import FoundationModels
 /// for the hard reasoning). A graceful, additive fallback, never a hard failure.
 ///
 /// **Scope.** The on-device pass handles the high-value *actionable* items — the
-/// todos, commitments, shopping, and blockers that make up the bulk of a capture,
-/// each with a straightforward, reliably-valid wire mapping. The subtler cases —
-/// behavioral asides ("I keep blowing off admin on Mondays") and if-then plans
-/// (which need a machine-detectable cue) — are left to the server escalation path,
-/// which the UI keeps one tap away. Nothing here is authoritative: the server
-/// re-validates every action and the user still confirms before any write, so a
-/// hallucinated on-device action drops rather than acting.
+/// todos, commitments, shopping, and blockers that make up the bulk of a capture —
+/// plus the two cases that used to escalate: **if-then plans** ("when I get home,
+/// I'll take my meds"), emitted as `add_if_then` actions once a machine-detectable
+/// cue (a place, a time window, or arriving/leaving home) is present, and
+/// **behavioral episodes** ("I blew off admin again today"), emitted as pending
+/// sensor `observations`. The one thing still left to the server escalation path is
+/// a *settings change* (a `state` candidate like "stop nudging me after 9") — a
+/// hallucinated one would propose editing the user's own preferences, a sharper
+/// edge than logging an episode, so it stays behind the deliberate cloud pass the
+/// UI keeps one tap away. Nothing here is authoritative regardless: the server
+/// re-validates every action against the live store and allowlist-checks every
+/// observation, and the user still confirms before any write, so a hallucinated
+/// on-device item drops rather than acting.
 ///
 /// (`ParsedBrainDump`, the framework-free result carrier, lives in
 /// `Models/BrainDump.swift` so `Endpoints.swift` — compiled into the widget
@@ -70,10 +76,13 @@ enum BrainDumpParser {
     private static let instructions = """
         You extract concrete capture items from a rambling brain-dump by an adult \
         with ADHD. Pull out todos, calendar commitments, shopping-list items, and \
-        blockers (someone else waiting on the user). Keep each item terse and in \
-        the user's own words; do not invent items that weren't said. Times are the \
-        user's local wall-clock. The items are only a proposal the user will \
-        review — never claim anything is already done.
+        blockers (someone else waiting on the user). Also pull out two subtler \
+        kinds when the user clearly states them: if-then plans ("when/after X, \
+        I'll Y") that pair a cue with a tiny action, and behavioral observations \
+        (an aside about how something went, e.g. "I blew off admin again"). Keep \
+        each item terse and in the user's own words; do not invent items that \
+        weren't said. Times are the user's local wall-clock. The items are only a \
+        proposal the user will review — never claim anything is already done.
         """
 
     // MARK: Guided-generation schema
@@ -94,6 +103,10 @@ enum BrainDumpParser {
         var shopping: [ShoppingItem]
         @Guide(description: "People waiting on the user for something (the ball is in the user's court).")
         var blockers: [Blocker]
+        @Guide(description: "If-then plans: a cue the user will run into paired with a tiny action they'll take.")
+        var ifThenPlans: [IfThenPlan]
+        @Guide(description: "Behavioral observations: brief asides about how something went, for later review.")
+        var observations: [Observation]
     }
 
     @Generable
@@ -132,6 +145,45 @@ enum BrainDumpParser {
         var person: String
         @Guide(description: "What they need from the user.")
         var what: String
+    }
+
+    /// An implementation-intention plan. The server needs a *machine-detectable*
+    /// cue to ever fire the plan, so it requires at least one of `place`,
+    /// `timeWindow`, or `event`; a plan with none is dropped in the mapping below.
+    @Generable
+    struct IfThenPlan {
+        @Guide(description: "The cue in the user's words — 'when I sit down at my desk', 'after dinner'.")
+        var cue: String
+        @Guide(description: "The tiny, pre-committed action — 'take my meds', 'text mom back'.")
+        var action: String
+        @Guide(description: "A place the cue happens at (e.g. 'the office', 'home'), or empty if the cue isn't a place.")
+        var place: String
+        @Guide(description: "A time-of-day band as 'HH:MM-HH:MM' if the cue is a time window, else empty.")
+        var timeWindow: String
+        @Guide(
+            description: "'arrive_home' or 'leave_home' if the cue is arriving at or leaving home, else empty.",
+            .anyOf(["", "arrive_home", "leave_home"]))
+        var event: String
+    }
+
+    /// A behavioral episode the sensor may record as a pending candidate. Maps to
+    /// the server's `{kind:"episode", …}` observation shape; `episodeType` and
+    /// `outcome` are constrained to the server's allowlists so the item survives
+    /// validation instead of silently dropping.
+    @Generable
+    struct Observation {
+        @Guide(
+            description: "The kind of behavioral event.",
+            .anyOf(["task", "checkin", "reminder", "departure"]))
+        var episodeType: String
+        @Guide(
+            description: "How it went, or empty if unclear.",
+            .anyOf(["", "success", "partial", "miss"]))
+        var outcome: String
+        @Guide(description: "A short label for what it was about (the task or place), or empty.")
+        var context: String
+        @Guide(description: "A short note in the user's own words about the behavior.")
+        var notes: String
     }
 }
 
@@ -174,8 +226,48 @@ private extension BrainDumpParser.Extraction {
             guard !person.isEmpty, !what.isEmpty else { continue }
             actions.append(["op": "add_blocker", "person": person, "what": what])
         }
+        for p in ifThenPlans {
+            let cue = p.cue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let action = p.action.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cue.isEmpty, !action.isEmpty else { continue }
+            var a: [String: Any] = ["op": "add_if_then", "cue_text": cue, "action_text": action]
+            let place = p.place.trimmingCharacters(in: .whitespacesAndNewlines)
+            let window = p.timeWindow.trimmingCharacters(in: .whitespacesAndNewlines)
+            let event = p.event.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !place.isEmpty { a["place"] = place }
+            if !window.isEmpty { a["time_window"] = window }
+            if event == "arrive_home" || event == "leave_home" { a["event"] = event }
+            // The server rejects a plan with no detectable cue; drop it here rather
+            // than post one that can only come back as a dropped-item error.
+            guard a["place"] != nil || a["time_window"] != nil || a["event"] != nil else { continue }
+            actions.append(a)
+        }
+
+        var wireObservations: [[String: Any]] = []
+        for o in observations {
+            let type = o.episodeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard ["task", "checkin", "reminder", "departure"].contains(type) else { continue }
+            let notes = o.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            let context = o.context.trimmingCharacters(in: .whitespacesAndNewlines)
+            // A bare episode type with nothing said about it isn't worth a pending
+            // proposal — require at least a note or a context label.
+            guard !notes.isEmpty || !context.isEmpty else { continue }
+            var obs: [String: Any] = [
+                "kind": "episode",
+                "episode_type": type,
+                // The sensor's rationale ideally quotes the source; the aside is it.
+                "rationale": notes.isEmpty ? context : notes,
+            ]
+            let outcome = o.outcome.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if ["success", "partial", "miss"].contains(outcome) { obs["outcome"] = outcome }
+            if !context.isEmpty { obs["context"] = context }
+            if !notes.isEmpty { obs["notes"] = notes }
+            wireObservations.append(obs)
+        }
 
         return ParsedBrainDump(
-            reply: reply.trimmingCharacters(in: .whitespacesAndNewlines), wireActions: actions)
+            reply: reply.trimmingCharacters(in: .whitespacesAndNewlines),
+            wireActions: actions,
+            wireObservations: wireObservations)
     }
 }

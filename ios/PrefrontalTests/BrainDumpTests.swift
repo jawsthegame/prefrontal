@@ -167,5 +167,46 @@ final class BrainDumpTests: XCTestCase {
         XCTAssertEqual(acts.count, 1)
         XCTAssertEqual(acts.first?["op"] as? String, "add_todo")
         XCTAssertEqual(acts.first?["title"] as? String, "Call the dentist")
+        // A parse with no behavioral asides still sends observations as an empty
+        // array (never omitted), matching the endpoint contract.
+        let obs = try XCTUnwrap(parse["observations"] as? [[String: Any]])
+        XCTAssertTrue(obs.isEmpty)
+    }
+
+    /// When the on-device pass surfaced behavioral asides, they ride along in the
+    /// same `parse` body under `observations` (the widened schema) — a regression
+    /// in `braindump(parse:)` dropping them is caught here.
+    func testBraindumpParseSendsObservations() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        var seenBody: Data?
+        StubURLProtocol.responder = { [self] req in
+            seenBody = bodyData(req)
+            return (200, Data(#"{"reply":"noted","actions":[],"errors":[],"proposals":[],"provider":{"assistant":"on_device","sensor":"on_device"}}"#.utf8))
+        }
+        let parsed = ParsedBrainDump(
+            reply: "noted",
+            wireActions: [[
+                "op": "add_if_then", "cue_text": "when I get home",
+                "action_text": "take my meds", "event": "arrive_home",
+            ]],
+            wireObservations: [[
+                "kind": "episode", "episode_type": "task", "outcome": "miss",
+                "context": "admin", "notes": "blew off admin again", "rationale": "blew off admin again",
+            ]])
+        _ = try await client().braindump(parse: parsed)
+
+        let obj = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(seenBody)) as? [String: Any])
+        let parse = try XCTUnwrap(obj["parse"] as? [String: Any])
+        // The if-then plan rides in `actions`, the behavioral aside in `observations`.
+        let acts = try XCTUnwrap(parse["actions"] as? [[String: Any]])
+        XCTAssertEqual(acts.first?["op"] as? String, "add_if_then")
+        XCTAssertEqual(acts.first?["event"] as? String, "arrive_home")
+        let obs = try XCTUnwrap(parse["observations"] as? [[String: Any]])
+        XCTAssertEqual(obs.count, 1)
+        XCTAssertEqual(obs.first?["kind"] as? String, "episode")
+        XCTAssertEqual(obs.first?["episode_type"] as? String, "task")
+        XCTAssertEqual(obs.first?["outcome"] as? String, "miss")
+        XCTAssertEqual(obs.first?["notes"] as? String, "blew off admin again")
     }
 }
