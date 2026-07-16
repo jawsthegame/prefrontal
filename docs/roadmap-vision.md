@@ -354,7 +354,13 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   actions via MCP tool-calls: book the calendar event, send the pre-drafted email,
   fill a known form, place a scoped Twilio call — each **previewed and confirmed**
   before it fires, matching the NL-assistant's existing preview-before-write
-  contract.
+  contract. ✅ *First action shipped — **send the pre-drafted email***
+  (`preview_send` / `send_prepared_draft`, `POST /todos/{id}/delegate/send[/preview]`):
+  a two-phase preview→confirm gate over the existing SMTP source that refuses stale
+  or blocked sends and never lets the caller inject body content. Built on native
+  transports first; the remaining action types (calendar-write, forms, scoped call)
+  and a generic **MCP tool-call** provider that slots in behind the same confirm
+  gate are the open remainder of this item.
 - **Communication translation as a first-class tool** ✅ **shipped** — decode an
   ambiguous work email, draft a reply in the right register, or soften a message.
   Text-only and side-effect-free (`prefrontal/communication_translation.py`,

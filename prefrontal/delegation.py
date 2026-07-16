@@ -29,6 +29,8 @@ assistant's ``ALLOWED_OPS``.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -717,6 +719,253 @@ def run_delegation(
         prepped=result.status in (STATUS_PREPPED, STATUS_FORWARDED),
     )
     return result
+
+
+# -- Send a prepared draft (M4: "drafts → does") -------------------------------
+#
+# Delegation's ``agent`` handler *prepares* draft communications but never sends
+# them — they sit on the todo for the user to copy out by hand. This is the first
+# "does the thing" action (roadmap M4): promote a prepared **email** draft to an
+# actually-sent message, over the same SMTP source the email handler uses, but
+# only behind a deliberate two-phase gate that mirrors the NL-assistant's
+# propose→apply contract:
+#
+#   preview_send(...)  → shows EXACTLY what would go out (recipient, subject,
+#                        body, outbox) + a content digest, and refuses up front on
+#                        any blocker (no email draft, no valid recipient, unfilled
+#                        [placeholders], SMTP unconfigured);
+#   send_prepared_draft(..., expected_digest=…)  → re-resolves from the *current*
+#                        stored draft, refuses if the content changed since the
+#                        preview (stale digest), and only then sends.
+#
+# The body/subject always come from the stored draft, never from the caller, so a
+# caller can pin *which* message goes out (via the digest) and *who* it goes to (a
+# validated recipient) but can't inject content. A single wrong autonomous send is
+# the one thing that would cost the trust the product runs on — hence the belt and
+# braces. Never a browser agent; a bounded, verifiable, confirmed action only.
+
+#: The draft ``channel`` that can be sent as an email.
+DRAFT_EMAIL_CHANNEL = "email"
+
+#: A ``[bracketed placeholder]`` the prep leaves for a missing real detail. Its
+#: presence blocks a send — a template with "[name]" must be filled in first.
+_PLACEHOLDER_RE = re.compile(r"\[[^\[\]\n]{1,80}\]")
+
+#: A deliberately-simple "looks like an email" guard. SMTP is the real validator;
+#: this only stops an obvious non-address (the model often writes a name in ``to``).
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@dataclass(frozen=True)
+class SendPreview:
+    """What ``preview_send`` would send — shown to the user before they confirm.
+
+    ``can_send`` is the single go/no-go; ``blockers`` explains any no. ``warnings``
+    are non-blocking (e.g. "looks already sent"). ``digest`` pins the exact
+    recipient+subject+body so a later ``send_prepared_draft`` can detect drift.
+    """
+
+    todo_id: int
+    to: str
+    subject: str
+    body: str
+    sender: str
+    account: str
+    can_send: bool
+    blockers: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    digest: str = ""
+
+
+@dataclass(frozen=True)
+class SendOutcome:
+    """The result of attempting a send.
+
+    ``code`` discriminates the outcome for the caller/HTTP layer:
+    ``sent`` (done), ``blocked`` (a precondition failed — fix and retry),
+    ``stale`` (the draft changed since preview — re-preview), ``send_failed``
+    (the transport rejected it — the draft is kept for another try).
+    """
+
+    sent: bool
+    code: str
+    to: str
+    status: str
+    detail: str
+
+
+def email_draft(drafts: Any) -> dict[str, str] | None:
+    """Return the first sendable ``email`` draft (non-empty body), or ``None``."""
+    if not isinstance(drafts, list):
+        return None
+    for d in drafts:
+        if not isinstance(d, dict):
+            continue
+        if str(d.get("channel", "")).strip().lower() != DRAFT_EMAIL_CHANNEL:
+            continue
+        if str(d.get("body", "")).strip():
+            return d
+    return None
+
+
+def has_placeholder(*texts: str) -> bool:
+    """True if any text still carries an unfilled ``[bracketed placeholder]``."""
+    return any(_PLACEHOLDER_RE.search(t or "") for t in texts)
+
+
+def draft_digest(to: str, subject: str, body: str) -> str:
+    """A stable content hash pinning exactly what would be sent (change-detection).
+
+    Not a security token — auth is the scoped store; this only lets the confirm
+    step refuse when the stored draft drifted between preview and send.
+    """
+    canon = "\x00".join((to.strip(), subject.strip(), body.strip()))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def _resolve_send(
+    store: MemoryStore,
+    todo_id: int,
+    smtp: SmtpSource | None,
+    recipient: str | None,
+) -> tuple[dict[str, str] | None, str, str, str, str, str, list[str], list[str]]:
+    """Shared resolution for preview + send: the draft, recipient, outbox, blockers.
+
+    Returns ``(draft, to, subject, body, sender, account, blockers, warnings)``.
+    ``draft`` is ``None`` when there's nothing to send; ``blockers`` is non-empty
+    whenever the send can't proceed as-is.
+    """
+    blockers: list[str] = []
+    warnings: list[str] = []
+    empty = (None, "", "", "", "", "")
+    row = store.get_delegation(todo_id)
+    if row is None:
+        return (*empty, ["this todo hasn't been delegated — there's no draft to send"], warnings)
+    draft = email_draft(row.get("drafts"))
+    if draft is None:
+        return (*empty, ["the delegation prep has no email draft to send"], warnings)
+
+    subject = str(draft.get("subject", "")).strip()
+    body = str(draft.get("body", "")).strip()
+    to = (recipient or "").strip() or str(draft.get("to", "")).strip()
+
+    if not to:
+        blockers.append("no recipient — the draft names no email address; supply one to send")
+    elif not _EMAIL_RE.match(to):
+        blockers.append(f'the recipient "{to}" isn\'t a valid email address; supply one')
+    if has_placeholder(subject, body):
+        blockers.append("the draft still has [bracketed placeholders] to fill in before sending")
+
+    sender = ""
+    account = ""
+    if smtp is None or not smtp.configured:
+        blockers.append("email isn't configured — set up an outbox in Settings to send")
+    else:
+        sender = (smtp.sender or smtp.username or "").strip()
+        account = smtp.account or "default"
+
+    if row.get("status") == STATUS_FORWARDED and "sent draft to" in (row.get("detail") or ""):
+        warnings.append(
+            "this draft looks like it was already sent — sending again will send a duplicate"
+        )
+
+    return draft, to, subject, body, sender, account, blockers, warnings
+
+
+def preview_send(
+    store: MemoryStore,
+    todo_id: int,
+    *,
+    smtp: SmtpSource | None,
+    recipient: str | None = None,
+) -> SendPreview:
+    """Show exactly what sending this todo's email draft would do (no side effects).
+
+    ``recipient`` optionally overrides the draft's own ``to`` (the prep often can't
+    know the address). The returned ``digest`` should be echoed back to
+    :func:`send_prepared_draft` so it can refuse a stale send.
+    """
+    draft, to, subject, body, sender, account, blockers, warnings = _resolve_send(
+        store, todo_id, smtp, recipient
+    )
+    digest = draft_digest(to, subject, body) if draft is not None else ""
+    return SendPreview(
+        todo_id=todo_id,
+        to=to,
+        subject=subject,
+        body=body,
+        sender=sender,
+        account=account,
+        can_send=draft is not None and not blockers,
+        blockers=blockers,
+        warnings=warnings,
+        digest=digest,
+    )
+
+
+def send_prepared_draft(
+    store: MemoryStore,
+    todo_id: int,
+    *,
+    smtp: SmtpSource | None,
+    expected_digest: str | None = None,
+    recipient: str | None = None,
+    smtp_client: SmtpClient | None = None,
+) -> SendOutcome:
+    """Send this todo's prepared email draft, then record the outcome on the row.
+
+    Re-resolves from the *current* stored draft and refuses if a blocker is present
+    (``blocked``) or ``expected_digest`` no longer matches the content (``stale``) —
+    the "re-verify before firing" guard. Subject/body are taken from the store, not
+    the caller, so only *which* draft and *who* it goes to are caller-controlled.
+    The transport never raises: a rejected send lands ``send_failed`` with the
+    delegation marked ``failed`` (the draft is kept), a success marks it
+    ``forwarded`` with a "sent draft to …" detail — the auditable trace, mirroring
+    the email handler.
+    """
+    draft, to, subject, body, _sender, _account, blockers, _warnings = _resolve_send(
+        store, todo_id, smtp, recipient
+    )
+    current_status = (store.get_delegation(todo_id) or {}).get("status", "")
+    if draft is None or blockers:
+        return SendOutcome(
+            sent=False,
+            code="blocked",
+            to=to,
+            status=current_status,
+            detail=blockers[0] if blockers else "nothing to send",
+        )
+    if expected_digest and expected_digest != draft_digest(to, subject, body):
+        return SendOutcome(
+            sent=False,
+            code="stale",
+            to=to,
+            status=current_status,
+            detail="the draft changed since you previewed it — preview again before sending",
+        )
+    # smtp is non-None here (else it'd be a blocker above).
+    assert smtp is not None
+    client = smtp_client or SmtpClient()
+    result = client.send(
+        smtp.host,
+        smtp.port,
+        smtp.username,
+        smtp.password,
+        sender=smtp.sender,
+        to=to,
+        subject=subject,
+        body=body,
+        use_tls=smtp.use_tls,
+    )
+    if not result.delivered:
+        detail = f"send failed ({result.detail}) — draft kept for another try"
+        store.update_delegation_status(todo_id, STATUS_FAILED, detail=detail)
+        return SendOutcome(
+            sent=False, code="send_failed", to=to, status=STATUS_FAILED, detail=detail
+        )
+    detail = f"sent draft to {to} ({result.detail})"
+    store.update_delegation_status(todo_id, STATUS_FORWARDED, detail=detail, prepped=True)
+    return SendOutcome(sent=True, code="sent", to=to, status=STATUS_FORWARDED, detail=detail)
 
 
 def delegation_notice(todo_title: str, result: DelegationResult) -> str | None:

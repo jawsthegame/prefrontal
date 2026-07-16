@@ -33,7 +33,9 @@ from prefrontal.delegation import (
     STATUS_IN_PREP,
     STATUS_RETURNED,
     delegation_notice,
+    preview_send,
     run_delegation,
+    send_prepared_draft,
 )
 from prefrontal.impact import (
     utcnow,
@@ -89,6 +91,8 @@ from prefrontal.webhooks.helpers import (
 )
 from prefrontal.webhooks.schemas import (
     AutoDecomposeConfig,
+    DelegateSend,
+    DelegateSendPreview,
     DelegateTodo,
     DismissDecomposition,
     EntityProjectUpdate,
@@ -929,6 +933,101 @@ def build_router(services: RouterServices) -> APIRouter:
             "drafts": [],
             "actions": [],
             "detail": "prepping… you'll get a heads-up when it's ready",
+        }
+
+    def _resolve_outbox(memory, todo_id: int, todo: dict[str, Any]):
+        """Resolve the SMTP source a send should use for this todo (same pick as delegate)."""
+        src = memory.mail_sources_for_todos([todo_id]).get(todo_id) or {}
+        return resolve_smtp_for(memory, account=src.get("account"), domain=todo.get("domain"))
+
+    @router.post("/todos/{todo_id}/delegate/send/preview", tags=["todos"])
+    def todo_delegate_send_preview(
+        todo_id: int,
+        payload: DelegateSendPreview,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Dry-run sending this todo's prepared **email** draft — no side effects.
+
+        The "does the thing" half of delegation (roadmap M4): the agent handler
+        drafts an email but never sends it; this previews sending it for real. It
+        returns exactly what would go out — recipient, subject, body, and the outbox
+        it'd use — plus a ``digest`` to echo back to ``POST …/delegate/send``, and a
+        ``can_send`` go/no-go with ``blockers`` (no email draft, no valid recipient,
+        unfilled ``[placeholders]``, SMTP unconfigured) and non-blocking ``warnings``.
+        Declared before the ``{action}`` catch-all so "delegate" isn't read as one.
+
+        404 if the todo doesn't exist.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Todo {todo_id} not found."
+            )
+        smtp = _resolve_outbox(memory, todo_id, todo)
+        preview = preview_send(memory, todo_id, smtp=smtp, recipient=payload.to)
+        return {
+            "todo_id": preview.todo_id,
+            "to": preview.to,
+            "subject": preview.subject,
+            "body": preview.body,
+            "sender": preview.sender,
+            "account": preview.account,
+            "can_send": preview.can_send,
+            "blockers": preview.blockers,
+            "warnings": preview.warnings,
+            "digest": preview.digest,
+        }
+
+    @router.post("/todos/{todo_id}/delegate/send", tags=["todos"])
+    def todo_delegate_send(
+        todo_id: int,
+        payload: DelegateSend,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Confirm and actually send this todo's prepared email draft.
+
+        The second half of the two-phase gate: it re-resolves from the *current*
+        stored draft and refuses if a precondition regressed (422) or the content
+        changed since the preview (409 — ``preview_digest`` no longer matches), then
+        sends over the user's SMTP source. Subject/body come from the stored draft
+        (never the caller), so only *which* draft and *who* it goes to are yours to
+        set. A rejected transport send returns 200 with ``sent: false`` and the
+        reason — the draft is kept and the delegation marked ``failed`` — matching
+        the app's "report, never raise" delivery ethos.
+
+        404 if the todo doesn't exist.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        if todo is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Todo {todo_id} not found."
+            )
+        smtp = _resolve_outbox(memory, todo_id, todo)
+        # Test seam: an injected fake transport (mirrors app.state.store / .delegation_async).
+        smtp_client = getattr(request.app.state, "smtp_client", None)
+        outcome = send_prepared_draft(
+            memory,
+            todo_id,
+            smtp=smtp,
+            expected_digest=payload.preview_digest,
+            recipient=payload.to,
+            smtp_client=smtp_client,
+        )
+        if outcome.code == "stale":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=outcome.detail)
+        if outcome.code == "blocked":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=outcome.detail
+            )
+        return {
+            "todo_id": todo_id,
+            "sent": outcome.sent,
+            "to": outcome.to,
+            "status": outcome.status,
+            "detail": outcome.detail,
         }
 
     @router.post("/todos/{todo_id}/delegate/return", tags=["todos"])
