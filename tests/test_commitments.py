@@ -1720,6 +1720,22 @@ def test_commitment_behavior_unknown_returns_none(store):
     assert commitment_behavior(store, 9999) is None
 
 
+def test_commitment_digest_suffix(store):
+    from prefrontal.memory.behavioral import commitment_digest_suffix
+
+    cid, _ = store.upsert_commitment(
+        title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"
+    )
+    assert commitment_digest_suffix(store, cid) == ""  # first sync, no move
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-02 09:00:00", external_id="cal:1"
+    )
+    store.upsert_commitment(
+        title="Dentist", start_at="2026-08-03 09:00:00", external_id="cal:1"
+    )
+    assert commitment_digest_suffix(store, cid) == " · moved 2×"
+
+
 def test_api_commitment_behavior(client, store_open):
     cid, _ = store_open.upsert_commitment(
         title="Dentist", start_at="2026-08-01 09:00:00", external_id="cal:1"

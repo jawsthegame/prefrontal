@@ -453,3 +453,16 @@ def commitment_nudge_clause(store: MemoryStore, commitment_id: int) -> str:
     if not reschedules:
         return ""
     return f" Heads up — this has moved {reschedules}× on the calendar."
+
+
+def commitment_digest_suffix(store: MemoryStore, commitment_id: int) -> str:
+    """A compact ``· moved N×`` suffix for a commitment digest line, or ``""``.
+
+    The commitment analogue of :func:`behavior_digest_suffix`, for the morning
+    briefing's schedule ("📅 Today") list: a schedule row already leads with the
+    time and title, so this stays terse — just the move count, the "this one has
+    been shifting" signal a static calendar line can't show. Leading ``" · "``
+    separator so a caller appends it unconditionally (empty history → ``""``).
+    """
+    reschedules = store.count_commitment_events(commitment_id, "rescheduled")
+    return f" · moved {reschedules}×" if reschedules else ""
