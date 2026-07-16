@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Today's shape</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  /* ── Shared theme (identical across /dashboard, /household, /stats, /review) ─ */
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --accent-fg: #ffffff; --good: #4a7c59; --warn: #b9762f;
+    --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --accent-fg: #0f1512; --good: #6fbf86; --warn: #d59a4f;
+    --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  /* ── Shared top nav ────────────────────────────────────────────────────── */
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg); border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg); text-decoration: none;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .topnav .links { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+  .topnav .links a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 7px 11px; border-radius: 9px; }
+  .topnav .links a:hover { color: var(--fg); background: var(--line); }
+  .topnav .links a[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+
+  /* ── Page ──────────────────────────────────────────────────────────────── */
+  header { max-width: 720px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .empty { color: var(--muted); font-style: italic; }
+
+  /* ── Legend — the key is text + shape, never colour alone (CHI-2024) ─────── */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 2px 0 2px; }
+  .legend .k { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
+  .legend .swatch { width: 26px; height: 16px; border-radius: 5px; background: var(--card);
+    flex: none; }
+  /* Each kind is distinguished by BORDER STYLE (a non-colour channel) as well as
+     its accent — so the three read apart in monochrome or with atypical colour
+     perception. Commitment: solid. Suggested todo: dashed. Free: dotted. */
+  .swatch.commitment { border: 2px solid var(--accent); }
+  .swatch.todo { border: 2px dashed var(--accent); }
+  .swatch.free { border: 2px dotted var(--muted); }
+  .legend-note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+  /* ── Timeline ────────────────────────────────────────────────────────────── */
+  /* A vertical, proportional day: a block's height tracks its length, so the day
+     reads as a *shape*. Left rail carries the clock time as text (position is a
+     cue, but the number is always spelled out). A "now" line spans the column. */
+  .tl { position: relative; margin-top: 6px; }
+  .seg { position: relative; display: grid; grid-template-columns: 58px 1fr; gap: 12px;
+    align-items: stretch; }
+  .seg .rail { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums;
+    text-align: right; padding-top: 10px; line-height: 1.25; white-space: nowrap; }
+  .seg .rail .end { display: block; opacity: .6; font-size: 11px; }
+  .block { border: 1px solid var(--line); border-radius: 12px; padding: 10px 13px;
+    margin: 4px 0; background: var(--card); min-height: 46px; display: flex; flex-direction: column;
+    justify-content: center; overflow: hidden; }
+  /* Kind is carried by the LEFT-EDGE BORDER STYLE + the glyph + the kind word —
+     three redundant signals so no single one (least of all colour) is load-bearing. */
+  .block.commitment { border-left: 5px solid var(--accent); }
+  .block.commitment.hard { border-left-width: 7px; }
+  .block.todo { border-left: 5px dashed var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, var(--card)); }
+  .block.free { border-left: 5px dotted var(--muted); background: transparent; border-style: dotted;
+    box-shadow: none; }
+  .block.fyi { border-left-color: var(--muted); }
+  /* The past is dimmed, never scored — a forgiving, no-guilt surface. */
+  .seg.past .block { opacity: .5; }
+  .seg.past .rail { opacity: .55; }
+  .block .top { display: flex; align-items: baseline; gap: 8px; }
+  .block .glyph { flex: none; font-size: 15px; line-height: 1.2; }
+  .block .title { font-weight: 620; font-size: 15px; min-width: 0; }
+  .block.free .title { font-weight: 500; color: var(--muted); }
+  .block .dur { margin-left: auto; flex: none; font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .block .detail { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .block .alts { color: var(--muted); font-size: 12.5px; margin-top: 3px; font-style: italic; }
+  /* Text tags for the attributes that must NOT ride on colour: firmness, FYI,
+     double-booking, and each block's kind. */
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--line);
+    color: var(--muted); white-space: nowrap; }
+  .tag.kind { background: transparent; border: 1px solid var(--line); }
+  .tag.hard { border: 1px solid var(--fg); color: var(--fg); background: transparent; font-weight: 640; }
+  .tag.warn { border: 1px solid var(--warn); color: var(--warn); background: transparent; font-weight: 640; }
+  .tag.avoided { border: 1px solid var(--warn); color: var(--warn); background: transparent; }
+
+  /* "Now" marker — a labelled line, so it's unmistakable without relying on hue. */
+  .nowline { position: relative; display: grid; grid-template-columns: 58px 1fr; gap: 12px;
+    align-items: center; margin: 2px 0; }
+  .nowline .lbl { text-align: right; font-size: 11px; font-weight: 700; color: var(--danger);
+    font-variant-numeric: tabular-nums; }
+  .nowline .bar { height: 0; border-top: 2px solid var(--danger); position: relative; }
+  .nowline .bar::before { content: "now"; position: absolute; left: 0; top: -9px;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em; color: var(--danger);
+    background: var(--bg); padding: 0 6px 0 0; }
+
+  .summary { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--fg); font-size: 13.5px;
+    margin: 0 0 4px; }
+  .summary b { font-weight: 640; }
+
+  #gate { position: fixed; inset: 0; background: var(--bg); display: none;
+    align-items: center; justify-content: center; padding: 18px; z-index: 40; }
+  #gate .box { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px; width: min(420px, 100%); }
+  #gate h2 { margin: 0 0 6px; font-size: 18px; }
+  #gate .gsi { display: block; box-sizing: border-box; width: 100%; padding: 13px; min-height: 46px;
+    line-height: 20px; text-align: center; text-decoration: none; background: var(--accent);
+    color: var(--accent-fg); border-radius: 10px; font-weight: 650; font-size: 16px; }
+  #gate .tokenfallback { margin-top: 16px; }
+  #gate .tokenfallback summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  #gate input { width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); font-size: 16px; margin: 10px 0 0; }
+  #gate button { width: 100%; padding: 13px; min-height: 46px; margin-top: 10px; background: var(--accent);
+    color: var(--accent-fg); border: none; border-radius: 10px; font-weight: 650; font-size: 16px; cursor: pointer; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/dashboard">🧠 Prefrontal</a>
+  <div class="links">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/day/board" aria-current="page">Day</a>
+    <a href="/calendar">Calendar</a>
+    <a href="/projects/board">Projects</a>
+    <a href="/household">Household</a>
+    <a href="/kids">Kids</a>
+    <a href="/pets">Pets</a>
+    <a href="/stats">Insights</a>
+    <a href="/trips/board">Trips</a>
+    <a href="/review">Review</a>
+    <a href="/settings">Settings</a>
+    <a href="/guide">Guide</a>
+    <a href="/admin" data-nav-admin style="display:none">Admin</a>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>🗓 Today's shape</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap" id="wrap" style="display:none">
+  <section class="card">
+    <div class="summary" id="summary"></div>
+    <div class="legend" id="legend">
+      <span class="k"><span class="swatch commitment"></span>📌 Commitment</span>
+      <span class="k"><span class="swatch todo"></span>✨ Suggested todo</span>
+      <span class="k"><span class="swatch free"></span>○ Free</span>
+    </div>
+    <p class="legend-note">Suggested todos are just that — Prefrontal's guess at what fits.
+      Move them, or ignore them. The past is dimmed, not counted against you.</p>
+  </section>
+
+  <section class="card">
+    <div class="tl" id="tl"></div>
+  </section>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h2>Sign in</h2>
+    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <details class="tokenfallback">
+      <summary>Use an access code instead</summary>
+      <input id="token-input" type="password" placeholder="Access code" autocomplete="off" />
+      <button id="token-save" type="button">View</button>
+    </details>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script>
+const KEY = "prefrontal_token";
+let token = localStorage.getItem(KEY);
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Pixels-per-minute for the proportional heights, with a floor so a short block
+// stays a real, tappable target (min-height in CSS backs this up).
+const PX_PER_MIN = 0.9;
+const KIND_WORD = { commitment: "commitment", todo: "suggested", free: "free" };
+
+// ── Theme toggle (shared) ────────────────────────────────────────────────
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; if (btn) btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  if (btn) btn.onclick = () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  };
+})();
+
+function gate(msg) {
+  token = null; localStorage.removeItem(KEY);
+  $("#gate-err").textContent = msg || "";
+  $("#gate").style.display = "flex";
+}
+async function api(path, opts) {
+  const headers = token ? { "X-Prefrontal-Token": token } : {};
+  const r = await fetch(path, { ...(opts || {}), headers });
+  if (r.status === 401) { const e = new Error("unauthorized"); e.code = 401; throw e; }
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+function fmtDur(mins) {
+  const m = Math.round(mins || 0);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
+function blockHtml(seg) {
+  const cls = ["block", seg.kind];
+  if (seg.hard) cls.push("hard");
+  if (seg.fyi) cls.push("fyi");
+  const h = Math.max(46, Math.round((seg.minutes || 0) * PX_PER_MIN));
+
+  const tags = [];
+  // Kind is always spelled out as a word — colour/shape are reinforcement, not
+  // the sole carrier of meaning.
+  tags.push(`<span class="tag kind">${esc(KIND_WORD[seg.kind] || seg.kind)}</span>`);
+  if (seg.hard) tags.push(`<span class="tag hard">hard</span>`);
+  if (seg.fyi) tags.push(`<span class="tag">FYI · someone else's</span>`);
+  if (seg.conflict) tags.push(`<span class="tag warn">⚠ double-booked</span>`);
+  if (seg.reason === "avoided") tags.push(`<span class="tag avoided">kept skipping</span>`);
+
+  const dur = `<span class="dur">${esc(fmtDur(seg.minutes))}</span>`;
+  const detail = seg.detail ? `<div class="detail">${esc(seg.detail)}</div>` : "";
+  const alts = (seg.alternatives && seg.alternatives.length)
+    ? `<div class="alts">or: ${seg.alternatives.map(esc).join(", ")}</div>` : "";
+
+  return `<div class="seg ${esc(seg.state)}">
+    <div class="rail">${esc(seg.start_local)}<span class="end">${esc(seg.end_local)}</span></div>
+    <div class="${cls.join(" ")}" style="min-height:${h}px">
+      <div class="top">
+        <span class="glyph" aria-hidden="true">${esc(seg.glyph)}</span>
+        <span class="title">${esc(seg.title)}</span>
+        ${dur}
+      </div>
+      ${detail}${alts}
+      <div class="tags">${tags.join("")}</div>
+    </div>
+  </div>`;
+}
+
+function nowLineHtml(day) {
+  return `<div class="nowline"><div class="lbl">${esc(day.now_local)}</div><div class="bar"></div></div>`;
+}
+
+function render(day) {
+  const segs = day.segments || [];
+  // Summary line — plain-text totals, no chart needed to read them.
+  const bits = [
+    `<span><b>${esc(day.band_start_local)}–${esc(day.band_end_local)}</b></span>`,
+    `<span>${esc(fmtDur(day.committed_minutes))} committed</span>`,
+    `<span>${esc(fmtDur(day.free_minutes))} free ahead</span>`,
+  ];
+  if (day.fitted_count) {
+    bits.push(`<span>${day.fitted_count} todo${day.fitted_count === 1 ? "" : "s"} fitted in</span>`);
+  }
+  $("#summary").innerHTML = bits.join("");
+
+  if (!segs.length) {
+    $("#tl").innerHTML = `<p class="empty">Nothing scheduled and no free time in your waking hours today. Enjoy it. 🌿</p>`;
+    $("#status").textContent = "A clear day";
+    return;
+  }
+
+  // Splice the "now" marker in just above the first *upcoming* block, so an
+  // in-progress block sits above the line (now/past) and what's ahead sits below
+  // it. When now is outside the band (before it starts, or after it ends) the
+  // fraction is null and no marker is drawn.
+  let html = "";
+  let placedNow = false;
+  for (const seg of segs) {
+    if (!placedNow && day.now_fraction != null && seg.state === "upcoming") {
+      html += nowLineHtml(day);
+      placedNow = true;
+    }
+    html += blockHtml(seg);
+  }
+  $("#tl").innerHTML = html;
+
+  const committed = segs.filter((s) => s.kind === "commitment").length;
+  $("#status").textContent =
+    `${committed} commitment${committed === 1 ? "" : "s"} · ${day.fitted_count} fitted todo${day.fitted_count === 1 ? "" : "s"}`;
+}
+
+async function load() {
+  try {
+    const day = await api("/day");
+    $("#gate").style.display = "none";
+    $("#wrap").style.display = "";
+    render(day);
+  } catch (e) {
+    if (e.code === 401) gate();
+    else $("#status").textContent = "Couldn't load your day — " + e.message;
+  }
+}
+
+$("#token-save").onclick = () => {
+  const v = $("#token-input").value.trim();
+  if (!v) return;
+  token = v; try { localStorage.setItem(KEY, v); } catch (e) {}
+  load();
+};
+$("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
+
+load();
+</script>
+</body>
+</html>
