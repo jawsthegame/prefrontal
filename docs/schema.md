@@ -211,6 +211,14 @@ also defines:
   `kind_source`, so a user override (`POST /commitments/{id}/hardness`, the
   assistant, or the dashboard toggle) sticks across calendar re-syncs while a
   feed-provided value stays refreshable.
+- **`commitment_events`** — the append-only longitudinal change log for
+  commitments, the calendar-side twin of `todo_events`. `upsert_commitment` appends
+  a `rescheduled` row whenever a synced event's `start_at` changes on re-sync (the
+  first sync establishes the time, so it isn't a reschedule; an unchanged re-sync
+  records nothing), with `old_value`/`new_value` and `created_at`. Read by
+  `prefrontal/memory/behavioral.py` (`commitment_behavior`) into "this appointment
+  has been rescheduled three times…", served by `GET /commitments/{id}/behavior` —
+  the continuity a plain calendar mirror discards by overwriting `start_at` in place.
 - **`todos`** — open loops (not pinned to a clock time) with an estimate and
   priority, fitted into free windows between commitments (`prefrontal/scheduling.py`).
   Each carries an inferred, editable `category` (a short topic label). The

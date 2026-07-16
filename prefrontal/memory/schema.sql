@@ -358,6 +358,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_external
     ON commitments (user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_commitments_user_start ON commitments (user_id, start_at);
 
+-- Longitudinal per-commitment change log — the calendar-side twin of `todo_events`
+-- (see prefrontal/memory/behavioral.py). Where `commitments` holds an event's
+-- current state, this holds its history: one row per time a synced calendar event
+-- *moved*. It exists so an agent can retrieve entity-scoped continuity — "this
+-- appointment has been rescheduled three times" — the fact a plain calendar mirror
+-- throws away by overwriting `start_at` in place on each re-sync.
+--
+-- Append-only; rows are never updated and outlive the commitment (kept after
+-- cancel). `event_type` today is just `rescheduled` — recorded by `upsert_commitment`
+-- when an existing event's `start_at` changes on re-sync (the first sync establishes
+-- the time, so it is not a reschedule). `old_value`/`new_value` are the prior/new UTC
+-- start; `created_at` orders the history. Trailing (created_at, id) in the index so
+-- the by-type ordered read is satisfied without a separate sort.
+CREATE TABLE IF NOT EXISTS commitment_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    commitment_id INTEGER NOT NULL REFERENCES commitments(id) ON DELETE CASCADE,
+    event_type    TEXT    NOT NULL,                          -- rescheduled
+    old_value     TEXT,                                       -- prior UTC start (NULL if none)
+    new_value     TEXT,                                       -- new UTC start
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_commitment_events_commitment
+    ON commitment_events (user_id, commitment_id, event_type, created_at, id);
+
 -- Open loops — "todos" that aren't pinned to a clock time but need doing
 -- (call the dentist, plan a birthday). The scheduler fits these into free
 -- windows between commitments. `estimate_minutes` is how long it'll take;

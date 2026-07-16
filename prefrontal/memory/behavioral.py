@@ -345,3 +345,111 @@ def behavior_digest_suffix(store: MemoryStore, todo_id: int) -> str:
     if not parts:
         return ""
     return f" · {', '.join(parts)}"
+
+
+# -- Commitments -------------------------------------------------------------
+# The calendar-side of the behavioral model. A commitment can't be "snoozed" the
+# way a todo is, so its only continuity signal is how often the synced event has
+# *moved* — the "this appointment keeps shifting" story that a plain calendar
+# mirror discards by overwriting start_at in place (see commitment_events).
+
+
+@dataclass(frozen=True)
+class CommitmentBehavior:
+    """The behavioral model for one commitment: its reschedule history + lines.
+
+    Attributes:
+        commitment_id: The commitment this describes.
+        title: The commitment's current title (so an agent can name it).
+        reschedule_count: How many times the synced event's start has moved.
+        last_rescheduled_ago: Human "how long ago" for the most recent move, or
+            ``None`` if never rescheduled.
+        context_lines: Ready-to-inject, second-person lines summarizing the above;
+            empty when there's nothing worth saying.
+    """
+
+    commitment_id: int
+    title: str
+    reschedule_count: int
+    last_rescheduled_ago: str | None
+    context_lines: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-friendly dict of the facts, for the HTTP query surface."""
+        return {
+            "commitment_id": self.commitment_id,
+            "title": self.title,
+            "reschedule_count": self.reschedule_count,
+            "last_rescheduled_ago": self.last_rescheduled_ago,
+            "context_lines": list(self.context_lines),
+        }
+
+    @property
+    def context(self) -> str:
+        """The context lines joined into a single paragraph (``""`` when empty)."""
+        return " ".join(self.context_lines)
+
+
+def commitment_behavior(
+    store: MemoryStore, commitment_id: int, *, now: datetime | None = None
+) -> CommitmentBehavior | None:
+    """Assemble the behavioral model for one commitment, or ``None`` if absent.
+
+    Reads the commitment and its ``commitment_events`` history and derives the
+    reschedule count, recency, and the second-person context line an agent
+    retrieves when acting on the event. Deterministic and model-free.
+
+    Args:
+        store: A user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        commitment_id: The commitment to describe.
+        now: Reference time (defaults to :func:`prefrontal.clock.utcnow`).
+
+    Returns:
+        A :class:`CommitmentBehavior`, or ``None`` when there is no such
+        commitment for the scoped user.
+    """
+    commitment = store.get_commitment(commitment_id)
+    if commitment is None:
+        return None
+    now = now or utcnow()
+
+    reschedules = store.commitment_events(commitment_id, event_type="rescheduled")
+    last_ago: str | None = None
+    if reschedules:
+        when = parse_ts(reschedules[-1].get("created_at"))
+        last_ago = _ago_phrase(when, now) if when is not None else None
+
+    lines: list[str] = []
+    if reschedules:
+        recent = f" (most recently {last_ago})" if last_ago else ""
+        lead = (
+            f"This has been rescheduled {_count_phrase(len(reschedules))}{recent}"
+        )
+        if len(reschedules) >= 3:
+            lines.append(
+                f"{lead}. It keeps moving — worth confirming the time still holds "
+                "before you build around it."
+            )
+        else:
+            lines.append(f"{lead}.")
+
+    return CommitmentBehavior(
+        commitment_id=commitment_id,
+        title=commitment.get("title") or "",
+        reschedule_count=len(reschedules),
+        last_rescheduled_ago=last_ago,
+        context_lines=lines,
+    )
+
+
+def commitment_nudge_clause(store: MemoryStore, commitment_id: int) -> str:
+    """A compact reschedule continuity clause to fold into a commitment nudge, or ``""``.
+
+    The commitment analogue of :func:`behavior_nudge_clause` — leading-space-prefixed
+    so a departure/prep reminder can append it unconditionally ("… — heads up, this
+    has moved 3× on the calendar."). Counts-only and cheap; empty history → ``""``.
+    """
+    reschedules = store.count_commitment_events(commitment_id, "rescheduled")
+    if not reschedules:
+        return ""
+    return f" Heads up — this has moved {reschedules}× on the calendar."

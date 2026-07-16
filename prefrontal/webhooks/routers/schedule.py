@@ -79,6 +79,9 @@ from prefrontal.impact import (
     project_free_time,
     utcnow,
 )
+from prefrontal.memory.behavioral import (
+    commitment_behavior,
+)
 from prefrontal.memory.patterns import (
     departure_late_stats,
 )
@@ -1364,6 +1367,27 @@ def build_router(services: RouterServices) -> APIRouter:
             current["title"], kind, llm_kind=current.get("kind")
         )
         return {"commitment": updated}
+
+    @router.get("/commitments/{commitment_id}/behavior", tags=["schedule"])
+    def commitment_behavior_read(
+        commitment_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The queryable behavioral model for one commitment — has it kept moving?
+
+        The calendar twin of ``GET /todos/{id}/behavior``: it answers how often
+        this synced event's time has changed (from ``commitment_events``) plus a
+        ready-to-inject, second-person ``context`` line ("This has been rescheduled
+        three times…"), so an agent building a departure/prep reminder can flag an
+        event that keeps shifting rather than treating the latest time as settled.
+        404 if no such commitment for the caller.
+        """
+        behavior = commitment_behavior(ctx.store, commitment_id)
+        if behavior is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="commitment not found"
+            )
+        return behavior.to_dict()
 
     @router.post("/commitments/{commitment_id}/hardness", tags=["schedule"])
     def set_commitment_hardness(
