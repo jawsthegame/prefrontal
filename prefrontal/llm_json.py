@@ -82,7 +82,12 @@ def _json_candidates(text: str) -> list[str]:
     fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
     if fence:
         candidates.append(fence.group(1))
-    # First balanced {...} or [...] span, whichever appears first.
+    # First balanced {...} or [...] span, whichever *opener* appears first. Order
+    # by opener position, not a fixed {}-before-[] preference: a prose-wrapped bare
+    # array ("here are the actions: [{...}, {...}]") would otherwise match the '{'
+    # of its first element first and collapse to that single object, dropping the
+    # rest of the array.
+    spans: list[tuple[int, str]] = []
     for opener, closer in (("{", "}"), ("[", "]")):
         start = text.find(opener)
         if start == -1:
@@ -94,6 +99,7 @@ def _json_candidates(text: str) -> list[str]:
             elif text[i] == closer:
                 depth -= 1
                 if depth == 0:
-                    candidates.append(text[start : i + 1])
+                    spans.append((start, text[start : i + 1]))
                     break
+    candidates.extend(span for _, span in sorted(spans))
     return candidates
