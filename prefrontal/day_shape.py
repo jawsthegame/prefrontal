@@ -48,6 +48,7 @@ from prefrontal.clock import (
     local_time_utc,
 )
 from prefrontal.clock import parse_ts_strict as _parse
+from prefrontal.commitments import is_attendable
 from prefrontal.scheduling import (
     DEFAULT_EVENT_MINUTES,
     DEFAULT_MIN_WINDOW_MINUTES,
@@ -305,7 +306,14 @@ def build_day_shape(
         prev_end = ce if prev_end is None else max(prev_end, ce)
 
     # ── Free windows, with the open todos fitted into the forward ones ────────
-    raw_windows = free_windows(today, band_start, band_end)
+    # Only real, own commitments carve up free time. FYI events (someone else's)
+    # and placeholder/hold blocks are still *drawn* as segments above, but they
+    # must not consume the gaps todos get fitted into — otherwise an FYI hour is
+    # neither committed nor available and silently vanishes. Mirrors
+    # availability.constraint_commitments / scheduling.suggest_now.
+    raw_windows = free_windows(
+        [c for c in today if is_attendable(c)], band_start, band_end
+    )
 
     # Only forward-looking gaps get a suggestion, clipped so the fit is measured
     # against the time actually left in the gap (not a slot that's half gone).

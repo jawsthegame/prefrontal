@@ -206,3 +206,34 @@ def test_find_slots_rejects_nonpositive():
     now = datetime(2026, 7, 7, 9, 0, 0)
     assert find_slots([], now, "UTC", minutes=0, days=1) == []
     assert find_slots([], now, "UTC", minutes=30, days=0) == []
+
+
+def test_suggest_now_ignores_fyi_and_hold_blocks():
+    """FYI events and placeholder/hold blocks don't consume your free time.
+
+    Regression: a genuinely-free user whose only calendar entry right now is
+    someone else's event (an FYI, e.g. a kid's recital) or a movable focus/hold
+    block must still get a suggestion — not "no free time right now". Only real,
+    own commitments (:func:`prefrontal.commitments.is_attendable`) block.
+    """
+    from prefrontal.config import Settings
+    from prefrontal.memory.store import MemoryStore
+    from prefrontal.scheduling import suggest_now
+    from tests.conftest import scoped_default
+
+    settings = Settings(webhook_secret="s", timezone="UTC")
+    now = datetime(2026, 7, 7, 13, 0, 0)  # midday, inside waking hours
+    span = ("2026-07-07 13:00:00", "2026-07-07 14:00:00")  # covers "now"
+
+    # A hold is a normal-kind ("self") commitment whose *title* is a placeholder.
+    for kind, title, eid in [("fyi", "Kid's recital", "fyi:1"), ("self", "Focus", "hold:1")]:
+        with MemoryStore.open(":memory:") as raw:
+            store = scoped_default(raw)
+            store.add_todo("Quick email", estimate_minutes=15, priority=2)
+            store.upsert_commitment(
+                title=title, start_at=span[0], end_at=span[1],
+                external_id=eid, kind=kind,
+            )
+            result = suggest_now(store, settings, now)
+            assert result["free_minutes"] > 0, f"{title} wrongly consumed free time"
+            assert result["suggestion"] is not None, f"{title} suppressed the suggestion"
