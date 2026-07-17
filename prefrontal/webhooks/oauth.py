@@ -23,7 +23,7 @@ import secrets
 import time
 from hashlib import sha256
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, status
@@ -114,14 +114,25 @@ def safe_next(next_path: str, *, default: str = "/dashboard") -> str:
     """Clamp a post-login redirect target to a same-origin absolute path.
 
     Anything that isn't a plain ``/…`` local path is dropped to ``default`` so a
-    crafted ``?next=`` (a protocol-relative ``//evil``, an absolute URL, or a
+    crafted ``?next=`` (a protocol-relative ``//evil``, an absolute URL, a
+    ``/\\evil`` backslash trick a browser rewrites to ``//evil``, or a
     header-injecting newline) can't turn sign-in into an open redirect.
+
+    The surviving value is *rebuilt* from the parsed URL with the scheme and
+    host cleared, so what we hand to ``RedirectResponse`` is only ever a
+    host-less local path — never the caller's string verbatim.
     """
-    if not next_path.startswith("/") or next_path.startswith(("//", "/\\")):
+    if (
+        not next_path.startswith("/")
+        or next_path.startswith(("//", "/\\"))
+        or any(c in next_path for c in ("\\", "\r", "\n"))
+    ):
         return default
-    if any(c in next_path for c in ("\r", "\n")):
+    parts = urlsplit(next_path)
+    if parts.scheme or parts.netloc:  # an absolute or protocol-relative URL
         return default
-    return next_path
+    local = urlunsplit(("", "", parts.path, parts.query, parts.fragment))
+    return local if local.startswith("/") else default
 
 
 #: How long a one-tap "dismiss this nudge" link stays valid. A nudge is only
