@@ -106,20 +106,30 @@ class MailRepo(Repo):
         return [dict(r) for r in rows]
 
     def mail_needing_action(self) -> list[dict[str, Any]]:
-        """Return ingested messages still flagged ``needs_action``, newest first.
+        """Return the open action loops from mail — newest first.
 
-        A message stays here until the linked todo is closed; messages whose
-        ``todo_id`` todo is no longer open are excluded, so resolving the open
-        loop clears the mail from the action list.
+        This is the "Needs action" list surfaced by ``GET /mail`` (and the iOS
+        Mail tab / CLI ``mail list``). It is the set of messages that both triaged
+        ``needs_action`` **and** produced an *open linked todo* — i.e. the genuine
+        open loops, not the raw triage verdict.
+
+        Requiring an open ``todo_id`` is what keeps the list clean: mail that was
+        flagged but gated out of todo creation — automated notifications, no-reply
+        and monitoring/alert senders (AWS, Datadog, …), and informational
+        categories (see :func:`prefrontal.mail.triage.suppress_todo_reason`) —
+        never got a todo, so it is excluded here even though its
+        ``mail_messages.needs_action`` flag is still set. Such mail is still
+        recorded and still shows in the ``recent`` feed; it just no longer clutters
+        the action list. Resolving a message's todo (or a re-triage dropping it)
+        clears it from here on the next load.
 
         Returns:
             A list of ``mail_messages`` dicts.
         """
         rows = self.conn.execute(
             "SELECT m.* FROM mail_messages m "
-            "LEFT JOIN todos t ON m.todo_id = t.id "
-            "WHERE m.user_id = ? AND m.needs_action = 1 "
-            "AND (m.todo_id IS NULL OR t.status = 'open') "
+            "JOIN todos t ON m.todo_id = t.id "
+            "WHERE m.user_id = ? AND m.needs_action = 1 AND t.status = 'open' "
             "ORDER BY (m.received_at IS NULL), m.received_at DESC, m.id DESC",
             (self._uid(),),
         ).fetchall()

@@ -146,6 +146,36 @@ _NO_REPLY_SENDER_MARKERS = (
     "notification@",
 )
 
+#: Sender-address/name fragments that mark an automated alerting/monitoring
+#: service — infrastructure and ops mail (AWS, Datadog, PagerDuty, CloudWatch,
+#: monitoring mailers, bounce daemons). Like the no-reply markers, mail from one
+#: of these never becomes a todo, whatever the model decides: its "action" is
+#: almost always a false positive, and these alert streams were the bulk of what
+#: flooded the needs-action list. Matched against both the address and the
+#: display name, so a service that sends from a repliable-looking local part is
+#: still caught by its recognizable domain (and vice-versa).
+_AUTOMATED_SENDER_MARKERS = (
+    # Generic alerting / monitoring / automation local parts.
+    "alert@",
+    "alerts@",
+    "alarm@",
+    "alarms@",
+    "monitor@",
+    "monitoring@",
+    "automated@",
+    "automation@",
+    "mailer-daemon",
+    "postmaster@",
+    "bounce@",
+    "bounces@",
+    # Common infra/ops alert senders (the AWS/Datadog flood these gate against).
+    "amazonaws.com",
+    "datadoghq.com",
+    "pagerduty.com",
+    "opsgenie.com",
+    "cloudwatch",
+)
+
 #: Triage categories that are informational, not open loops. A message in one of
 #: these still gets recorded and can still read as ``needs_action`` in ``/mail`` —
 #: it just doesn't spawn a todo. Keeps the actionable categories (``reply``,
@@ -172,6 +202,8 @@ def suppress_todo_reason(
       :func:`prefrontal.mail.feedback.learned_denylist`);
     - the sender address looks structurally un-repliable
       (:data:`_NO_REPLY_SENDER_MARKERS`);
+    - the sender is an automated alerting/monitoring service — AWS, Datadog,
+      PagerDuty, and the like (:data:`_AUTOMATED_SENDER_MARKERS`);
     - the category is informational (:data:`_NON_TODO_CATEGORIES`).
 
     Args:
@@ -188,6 +220,8 @@ def suppress_todo_reason(
         return "denylisted-sender"
     if any(marker in haystack for marker in _NO_REPLY_SENDER_MARKERS):
         return "no-reply-sender"
+    if any(marker in haystack for marker in _AUTOMATED_SENDER_MARKERS):
+        return "automated-sender"
     if verdict.category in _NON_TODO_CATEGORIES:
         return f"non-actionable-category:{verdict.category}"
     return None
@@ -313,6 +347,17 @@ _BULK_MARKERS = (
     "order confirmation",
     "digest",
     "weekly update",
+    # Automated alerting/monitoring noise (AWS, Datadog, PagerDuty, …). Mirrors
+    # the _AUTOMATED_SENDER_MARKERS gate so the down-model fallback filters the
+    # same alert flood the model path does.
+    "alert",
+    "alarm",
+    "monitoring",
+    "datadog",
+    "pagerduty",
+    "opsgenie",
+    "cloudwatch",
+    "amazonaws",
 )
 #: Words that, in a subject, bump urgency.
 _URGENT_MARKERS = (
