@@ -151,6 +151,22 @@ def test_sync_skips_invalid_events_without_rejecting_the_batch(store):
     ]
 
 
+def test_sync_idempotent_for_events_without_external_id(store):
+    """A UID-less event syncs once and stays a single row across repeated polls.
+
+    Regression: an event with no external_id could never be matched on re-sync, so
+    every poll INSERTed a fresh copy — unbounded duplicates that also read as a
+    self-conflict. A stable synthetic id now makes the sync idempotent.
+    """
+    event = {"title": "Recital", "start_at": _iso(60), "end_at": _iso(120)}  # no external_id
+    first = sync_calendar(store, [dict(event)])
+    assert first.added == 1
+    second = sync_calendar(store, [dict(event)])  # same event, polled again
+    assert second.added == 0 and second.updated == 1  # matched, not re-inserted
+    rows = [c for c in store.upcoming_commitments() if c["title"] == "Recital"]
+    assert len(rows) == 1  # exactly one copy, not two
+
+
 # -- recurrence expansion ----------------------------------------------------
 
 # A weekly Wednesday 07:30 America/New_York master, dated long before the window

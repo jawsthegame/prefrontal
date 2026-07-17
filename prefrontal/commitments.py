@@ -16,6 +16,7 @@ Persistence lives in :class:`~prefrontal.memory.store.MemoryStore`.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -458,6 +459,21 @@ def _dedupe_key(fields: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _synthetic_external_id(fields: dict[str, Any]) -> str:
+    """A stable ``external_id`` for a calendar event that arrived without a UID.
+
+    Derived from the event's identity (the same title+start+end as
+    :func:`_dedupe_key`), so the *same* id-less event hashes to the *same* id on
+    every poll and :meth:`MemoryStore.upsert_commitment` updates in place rather
+    than inserting a duplicate. Deliberately un-namespaced (no ``feed:`` prefix):
+    :meth:`cancel_missing_calendar` only prunes within namespaces present in a
+    batch, so a bare id can't cross-cancel another feed's id-less events — it stays
+    idempotent without risking spurious cancellation.
+    """
+    digest = hashlib.sha1("\x00".join(_dedupe_key(fields)).encode("utf-8")).hexdigest()
+    return f"noid-{digest[:16]}"
+
+
 def dedupe_events(normalized: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse the same real event synced from more than one calendar feed.
 
@@ -777,6 +793,15 @@ def sync_calendar(
     # Collapse the same real event mirrored across feeds (outlook + work) so it's
     # stored once, shown once, and never conflicts with itself.
     normalized = dedupe_events(normalized)
+    # A calendar event with no UID (a malformed but legal VEVENT) normalizes to no
+    # external_id, so upsert_commitment can't match it on re-sync and INSERTs a
+    # fresh copy every poll — unbounded duplicates that also read as self-conflicts.
+    # Give each id-less survivor a stable synthetic id derived from its identity so
+    # the sync is idempotent. Done *after* dedupe so a real feed id is still
+    # preferred as the keeper for a mirrored event.
+    for fields in normalized:
+        if not fields["external_id"]:
+            fields["external_id"] = _synthetic_external_id(fields)
     eids = {f["external_id"] for f in normalized if f["external_id"]}
     existing_kinds = store.kinds_by_external_id(eids)
     existing_hardness = store.hardness_by_external_id(eids)
