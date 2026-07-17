@@ -692,7 +692,10 @@ def build_router(services: RouterServices) -> APIRouter:
         moves into the ``needs_action`` list on the next load.
 
         Idempotent against a double-tap: a message that already has a linked todo
-        is returned unchanged (``created: false``) rather than spawning a duplicate.
+        is returned unchanged (``created: false``) rather than spawning a duplicate,
+        and a concurrent create that loses the link race has its extra todo dropped.
+        Only a message triage flagged ``needs_action`` can be turned into a todo — a
+        plain FYI/recent row is rejected (409) rather than spawning a stray loop.
         """
         memory = ctx.store
         row = memory.get_mail(mail_id)
@@ -704,6 +707,11 @@ def build_router(services: RouterServices) -> APIRouter:
         existing = row.get("todo_id")
         if existing is not None:
             return {"todo_id": existing, "created": False, "mail_id": mail_id}
+        if not row.get("needs_action"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Mail message {mail_id} is not flagged as needing action.",
+            )
 
         # The manual path stays snappy and deterministic: no model call on a tap —
         # project suggestion falls back to the token-overlap heuristic (client=None).
@@ -721,7 +729,13 @@ def build_router(services: RouterServices) -> APIRouter:
             project_id=payload.get("project_id"),
             source=payload.get("source", "manual"),
         )
-        memory.link_mail_todo(mail_id, todo_id)
+        # ``link_mail_todo`` only sets a NULL link, so under a concurrent double-tap
+        # exactly one caller wins. The loser drops the todo it just created (so it
+        # isn't orphaned) and returns the winner's linked id — no duplicate loop.
+        if not memory.link_mail_todo(mail_id, todo_id):
+            memory.close_todo(todo_id, status="dropped")
+            winner = memory.get_mail(mail_id) or {}
+            return {"todo_id": winner.get("todo_id"), "created": False, "mail_id": mail_id}
         return {"todo_id": todo_id, "created": True, "mail_id": mail_id}
 
     @router.get("/mail/triage/learned", tags=["ingestion"])

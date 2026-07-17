@@ -1096,6 +1096,18 @@ def test_mail_create_todo_unknown_id_is_404(client):
     assert resp.status_code == 404
 
 
+def test_mail_create_todo_rejects_non_needs_action_row(client, store):
+    """A plain FYI/recent row (not flagged needs_action) can't be turned into a
+    todo — the endpoint 409s rather than spawning a stray loop."""
+    mail_id = store.record_mail(
+        account="personal", message_id="<fyi@x>", needs_action=False, subject="FYI"
+    )
+    resp = client.post(f"/mail/{mail_id}/todo", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 409
+    assert store.get_mail(mail_id)["todo_id"] is None
+    assert store.open_todos() == []
+
+
 def test_mail_create_todo_requires_auth(client):
     assert client.post("/mail/1/todo").status_code == 401
 

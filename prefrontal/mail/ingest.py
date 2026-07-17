@@ -157,15 +157,19 @@ def mail_todo_payload_from_row(
     two value objects are reconstructed from the row so the resulting title/notes/
     priority match what ingest would have produced.
     """
+    unread = row.get("unread")
     item = MailItem(
         account=row.get("account") or "",
         message_id=row.get("message_id") or "",
+        policy=row.get("policy") or "full",
         thread_id=row.get("thread_id"),
         sender_name=row.get("sender_name"),
         sender_email=row.get("sender_email"),
         subject=row.get("subject"),
         received_at=row.get("received_at"),
         snippet=row.get("snippet"),
+        body=row.get("body"),
+        unread=bool(unread) if unread is not None else None,
     )
     verdict = MailTriage(
         needs_action=bool(row.get("needs_action")),
