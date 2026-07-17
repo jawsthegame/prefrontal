@@ -201,6 +201,25 @@ def test_fyi_event_is_shown_but_marked(store, noon):
     assert shape.committed_minutes == 0.0
 
 
+def test_fyi_block_does_not_consume_free_time(store, noon):
+    """An FYI event is drawn but leaves free time intact — you're free during it.
+
+    Regression: the FYI hour must not be carved out of the day's free windows
+    (it's someone else's event, not yours to attend), or it would vanish —
+    neither committed nor available. Only real, own commitments block free time.
+    """
+    baseline = build_day_shape(store, now=noon, settings=UTC).free_minutes
+    store.upsert_commitment(
+        title="Kid's recital", start_at=_at(noon + timedelta(hours=2)),
+        end_at=_at(noon + timedelta(hours=3)), external_id="fyi:1", kind="fyi",
+    )
+    shape = build_day_shape(store, now=noon, settings=UTC)
+    # The FYI hour stays free — it doesn't subtract from the day's open time...
+    assert shape.free_minutes == baseline
+    # ...while still being drawn (so the day reads true), flagged as not yours.
+    assert any(s.title == "Kid's recital" and s.fyi for s in shape.segments)
+
+
 def test_avoided_todo_is_named_as_such(store, noon):
     """A todo you keep skipping is fitted with the 'avoided' reason, not 'fits'."""
     old = utcnow() - timedelta(days=6)

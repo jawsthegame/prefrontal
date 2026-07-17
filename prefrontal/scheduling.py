@@ -927,7 +927,16 @@ def suggest_now(
     commitments = store.active_commitments_between(
         now.strftime(TS_FMT), horizon.strftime(TS_FMT)
     )
-    free = available_now(commitments, now, horizon)
+    # Only real, own commitments consume *your* time. FYI events (someone else's)
+    # and placeholder/hold blocks don't — counting them as busy makes a genuinely
+    # free user (mid kid's-recital, or inside a movable focus hold) read as "no
+    # free time right now". Mirrors availability.constraint_commitments.
+    # Lazy import: prefrontal.commitments -> focus_balance -> scheduling would
+    # cycle at module load.
+    from prefrontal.commitments import is_attendable
+
+    attendable = [c for c in commitments if is_attendable(c)]
+    free = available_now(attendable, now, horizon)
     result["free_minutes"] = round(free)
     if free < DEFAULT_MIN_WINDOW_MINUTES:
         result["reason"] = "no free time right now"
