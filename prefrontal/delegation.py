@@ -796,8 +796,9 @@ class SendOutcome:
 
     ``code`` discriminates the outcome for the caller/HTTP layer:
     ``sent`` (done), ``blocked`` (a precondition failed — fix and retry),
-    ``stale`` (the draft changed since preview — re-preview), ``send_failed``
-    (the transport rejected it — the draft is kept for another try).
+    ``already_sent`` (this draft was already delivered — refused to avoid a
+    duplicate), ``stale`` (the draft changed since preview — re-preview),
+    ``send_failed`` (the transport rejected it — the draft is kept for another try).
     """
 
     sent: bool
@@ -834,6 +835,23 @@ def draft_digest(to: str, subject: str, body: str) -> str:
     """
     canon = "\x00".join((to.strip(), subject.strip(), body.strip()))
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def _already_sent(row: dict[str, Any] | None) -> bool:
+    """Whether this delegation row already recorded a successful email send.
+
+    A successful send marks the row :data:`STATUS_FORWARDED` with a
+    ``"sent draft to …"`` detail (see :func:`send_prepared_draft`) — the auditable
+    trace. That exact pairing is the durable "already sent" signal, and it can't
+    collide with the *initial* handoff (which is also ``forwarded`` but carries a
+    prep-summary detail, never ``"sent draft to"``). Re-delegating rewrites the
+    row's status/detail, so a genuinely new draft reads as not-yet-sent again.
+    """
+    if row is None:
+        return False
+    return row.get("status") == STATUS_FORWARDED and "sent draft to" in (
+        row.get("detail") or ""
+    )
 
 
 def _resolve_send(
@@ -877,7 +895,7 @@ def _resolve_send(
         sender = (smtp.sender or smtp.username or "").strip()
         account = smtp.account or "default"
 
-    if row.get("status") == STATUS_FORWARDED and "sent draft to" in (row.get("detail") or ""):
+    if _already_sent(row):
         warnings.append(
             "this draft looks like it was already sent — sending again will send a duplicate"
         )
@@ -924,22 +942,31 @@ def send_prepared_draft(
     expected_digest: str | None = None,
     recipient: str | None = None,
     smtp_client: SmtpClient | None = None,
+    allow_resend: bool = False,
 ) -> SendOutcome:
     """Send this todo's prepared email draft, then record the outcome on the row.
 
     Re-resolves from the *current* stored draft and refuses if a blocker is present
-    (``blocked``) or ``expected_digest`` no longer matches the content (``stale``) —
-    the "re-verify before firing" guard. Subject/body are taken from the store, not
+    (``blocked``), the draft was already sent (``already_sent``), or
+    ``expected_digest`` no longer matches the content (``stale``) — the
+    "re-verify before firing" guard. Subject/body are taken from the store, not
     the caller, so only *which* draft and *who* it goes to are caller-controlled.
     The transport never raises: a rejected send lands ``send_failed`` with the
     delegation marked ``failed`` (the draft is kept), a success marks it
     ``forwarded`` with a "sent draft to …" detail — the auditable trace, mirroring
     the email handler.
+
+    An already-sent draft is refused (``already_sent``) rather than re-delivered:
+    a client that retries after a timed-out-but-successful send would otherwise
+    send a duplicate. Pass ``allow_resend=True`` to deliberately re-send the same
+    stored draft (e.g. the first copy never arrived); regenerating the draft also
+    clears the sent state.
     """
     draft, to, subject, body, _sender, _account, blockers, _warnings = _resolve_send(
         store, todo_id, smtp, recipient
     )
-    current_status = (store.get_delegation(todo_id) or {}).get("status", "")
+    current = store.get_delegation(todo_id) or {}
+    current_status = current.get("status", "")
     if draft is None or blockers:
         return SendOutcome(
             sent=False,
@@ -947,6 +974,14 @@ def send_prepared_draft(
             to=to,
             status=current_status,
             detail=blockers[0] if blockers else "nothing to send",
+        )
+    if _already_sent(current) and not allow_resend:
+        return SendOutcome(
+            sent=False,
+            code="already_sent",
+            to=to,
+            status=current_status,
+            detail="this draft was already sent — sending again would deliver a duplicate",
         )
     # ``None`` = an internal caller opting out of the digest check (CLI/tests); an
     # empty string is a *provided* digest that can't match, so it's refused — a

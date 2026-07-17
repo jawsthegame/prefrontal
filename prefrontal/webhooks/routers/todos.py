@@ -1017,9 +1017,11 @@ def build_router(services: RouterServices) -> APIRouter:
         """Confirm and actually send this todo's prepared email draft.
 
         The second half of the two-phase gate: it re-resolves from the *current*
-        stored draft and refuses if a precondition regressed (422) or the content
-        changed since the preview (409 — ``preview_digest`` no longer matches), then
-        sends over the user's SMTP source. Subject/body come from the stored draft
+        stored draft and refuses if a precondition regressed (422), the content
+        changed since the preview (409 — ``preview_digest`` no longer matches), or
+        the draft was already sent (409 — a retry after a timed-out send must not
+        deliver a duplicate), then sends over the user's SMTP source. Subject/body
+        come from the stored draft
         (never the caller), so only *which* draft and *who* it goes to are yours to
         set. A rejected transport send returns 200 with ``sent: false`` and the
         reason — the draft is kept and the delegation marked ``failed`` — matching
@@ -1044,7 +1046,7 @@ def build_router(services: RouterServices) -> APIRouter:
             recipient=payload.to,
             smtp_client=smtp_client,
         )
-        if outcome.code == "stale":
+        if outcome.code in ("stale", "already_sent"):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=outcome.detail)
         if outcome.code == "blocked":
             raise HTTPException(
