@@ -677,11 +677,42 @@ struct MailMessage: Codable, Identifiable, Hashable {
 /// feed for a dashboard glance.
 struct MailInbox: Codable {
     let needsAction: [MailMessage]
+    /// Needs-action mail whose todo was **suppressed** at ingest (a no-reply /
+    /// notification sender, an informational category, or a learned repeat-dropped
+    /// sender) — so it carries no `todoId` and the UI can offer to create one on
+    /// demand (`POST /mail/{id}/todo`). Optional so an older server still decodes.
+    let needsActionNoTodo: [MailMessage]
     let recent: [MailMessage]
 
     enum CodingKeys: String, CodingKey {
         case needsAction = "needs_action"
+        case needsActionNoTodo = "needs_action_no_todo"
         case recent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        needsAction = try c.decodeIfPresent([MailMessage].self, forKey: .needsAction) ?? []
+        needsActionNoTodo = try c.decodeIfPresent([MailMessage].self, forKey: .needsActionNoTodo) ?? []
+        recent = try c.decodeIfPresent([MailMessage].self, forKey: .recent) ?? []
+    }
+
+    init(needsAction: [MailMessage], needsActionNoTodo: [MailMessage] = [], recent: [MailMessage]) {
+        self.needsAction = needsAction
+        self.needsActionNoTodo = needsActionNoTodo
+        self.recent = recent
+    }
+}
+
+/// The result of `POST /mail/{id}/todo` — the linked todo's id, and whether this
+/// call created it (`false` when the message already had one, i.e. a double-tap).
+struct MailTodoCreated: Codable {
+    let todoId: Int
+    let created: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case todoId = "todo_id"
+        case created
     }
 }
 

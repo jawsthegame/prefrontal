@@ -987,6 +987,131 @@ def test_learned_denylist_needs_repeat_drops(store):
     assert "solo@vendor.com" not in deny
 
 
+# -- needs-action-without-todo + manual create-todo (POST /mail/{id}/todo) ----
+
+
+def test_mail_needing_action_no_todo_lists_only_suppressed(store):
+    """The complement list surfaces flagged-but-suppressed mail (todo_id NULL),
+    and excludes both the with-todo action items and the resolved ones."""
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "normal", "category": "reply", "summary": "x"}
+    )
+    # A real reply → gets a todo (in needs_action, not the no-todo list).
+    ingest_messages(store, [_msg(message_id="<real@x>")], account="personal", client=client)
+    # A no-reply sender → flagged, suppressed, no todo.
+    ingest_messages(
+        store,
+        [_msg(message_id="<nr@x>", **{"from": "Acme <no-reply@acme.com>"})],
+        account="personal",
+        client=client,
+    )
+
+    no_todo = store.mail_needing_action_no_todo()
+    assert [m["message_id"] for m in no_todo] == ["<nr@x>"]
+    assert no_todo[0]["todo_id"] is None
+    # The with-todo item is on the clean action list, not the offer list.
+    assert [m["message_id"] for m in store.mail_needing_action()] == ["<real@x>"]
+
+
+def test_link_mail_todo_sets_link_once(store):
+    """link_mail_todo sets a NULL link and refuses to clobber an existing one."""
+    mail_id = store.record_mail(
+        account="personal", message_id="<x@x>", needs_action=True, subject="s"
+    )
+    first_todo = store.add_todo("Reply to s")
+    other_todo = store.add_todo("Something else")
+    assert store.link_mail_todo(mail_id, first_todo) is True
+    assert store.get_mail(mail_id)["todo_id"] == first_todo
+    # A second call is a no-op — the first link stands.
+    assert store.link_mail_todo(mail_id, other_todo) is False
+    assert store.get_mail(mail_id)["todo_id"] == first_todo
+
+
+def test_mail_list_route_exposes_needs_action_no_todo(client):
+    """GET /mail carries the suppressed needs-action list for the create offer."""
+    client.post(
+        "/webhooks/mail/sync",
+        json={"account": "personal", "messages": [
+            _msg(message_id="<nr@x>", **{"from": "Acme <no-reply@acme.com>"})
+        ]},
+        headers={"X-Prefrontal-Token": SECRET},
+    )
+    listing = client.get("/mail", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert listing["needs_action"] == []  # suppressed → not an open loop yet
+    assert len(listing["needs_action_no_todo"]) == 1
+    assert listing["needs_action_no_todo"][0]["todo_id"] is None
+
+
+def test_mail_create_todo_creates_links_and_promotes(client):
+    """POST /mail/{id}/todo turns a suppressed message into a tracked open loop."""
+    client.post(
+        "/webhooks/mail/sync",
+        json={"account": "personal", "messages": [
+            _msg(message_id="<nr@x>", subject="Ping",
+                 **{"from": "Acme <no-reply@acme.com>"})
+        ]},
+        headers={"X-Prefrontal-Token": SECRET},
+    )
+    mail_id = client.get(
+        "/mail", headers={"X-Prefrontal-Token": SECRET}
+    ).json()["needs_action_no_todo"][0]["id"]
+
+    resp = client.post(
+        f"/mail/{mail_id}/todo", headers={"X-Prefrontal-Token": SECRET}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["created"] is True
+    todo_id = body["todo_id"]
+
+    # It's now a tracked open loop: off the offer list, onto the action list.
+    listing = client.get("/mail", headers={"X-Prefrontal-Token": SECRET}).json()
+    assert listing["needs_action_no_todo"] == []
+    assert [m["id"] for m in listing["needs_action"]] == [mail_id]
+    assert listing["needs_action"][0]["todo_id"] == todo_id
+
+
+def test_mail_create_todo_is_idempotent(client):
+    """A double-tap returns the same todo without spawning a duplicate."""
+    client.post(
+        "/webhooks/mail/sync",
+        json={"account": "personal", "messages": [
+            _msg(message_id="<nr@x>", **{"from": "Acme <no-reply@acme.com>"})
+        ]},
+        headers={"X-Prefrontal-Token": SECRET},
+    )
+    mail_id = client.get(
+        "/mail", headers={"X-Prefrontal-Token": SECRET}
+    ).json()["needs_action_no_todo"][0]["id"]
+
+    first = client.post(f"/mail/{mail_id}/todo", headers={"X-Prefrontal-Token": SECRET})
+    second = client.post(f"/mail/{mail_id}/todo", headers={"X-Prefrontal-Token": SECRET})
+    assert first.json()["created"] is True
+    assert second.json()["created"] is False
+    assert second.json()["todo_id"] == first.json()["todo_id"]
+
+
+def test_mail_create_todo_unknown_id_is_404(client):
+    resp = client.post("/mail/99999/todo", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 404
+
+
+def test_mail_create_todo_rejects_non_needs_action_row(client, store):
+    """A plain FYI/recent row (not flagged needs_action) can't be turned into a
+    todo — the endpoint 409s rather than spawning a stray loop."""
+    mail_id = store.record_mail(
+        account="personal", message_id="<fyi@x>", needs_action=False, subject="FYI"
+    )
+    resp = client.post(f"/mail/{mail_id}/todo", headers={"X-Prefrontal-Token": SECRET})
+    assert resp.status_code == 409
+    assert store.get_mail(mail_id)["todo_id"] is None
+    assert store.open_todos() == []
+
+
+def test_mail_create_todo_requires_auth(client):
+    assert client.post("/mail/1/todo").status_code == 401
+
+
 # -- inbound delegation loop-closer (#448) -----------------------------------
 
 

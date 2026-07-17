@@ -141,6 +141,47 @@ def _mail_todo_payload(
     }
 
 
+def mail_todo_payload_from_row(
+    store: MemoryStore,
+    row: dict[str, Any],
+    *,
+    client: Generator | None = None,
+    domain: str | None = None,
+) -> dict[str, Any]:
+    """Build a todo payload for an *already-stored* mail message.
+
+    The manual counterpart to :func:`_mail_todo_payload`: that one runs at ingest
+    with the live ``MailItem``/``MailTriage`` in hand, whereas this one serves the
+    on-demand ``POST /mail/{id}/todo`` path, where all we have is the persisted
+    ``mail_messages`` row (a needs-action message whose todo was suppressed). The
+    two value objects are reconstructed from the row so the resulting title/notes/
+    priority match what ingest would have produced.
+    """
+    unread = row.get("unread")
+    item = MailItem(
+        account=row.get("account") or "",
+        message_id=row.get("message_id") or "",
+        policy=row.get("policy") or "full",
+        thread_id=row.get("thread_id"),
+        sender_name=row.get("sender_name"),
+        sender_email=row.get("sender_email"),
+        subject=row.get("subject"),
+        received_at=row.get("received_at"),
+        snippet=row.get("snippet"),
+        body=row.get("body"),
+        unread=bool(unread) if unread is not None else None,
+    )
+    verdict = MailTriage(
+        needs_action=bool(row.get("needs_action")),
+        urgency=row.get("urgency") or "normal",
+        category=row.get("category") or "other",
+        waiting_on=row.get("waiting_on"),
+        summary=row.get("summary") or "",
+        source=row.get("triage_source") or "heuristic",
+    )
+    return _mail_todo_payload(store, item, verdict, client=client, domain=domain)
+
+
 def _todo_id_from_ref(routed_ref: str | None) -> int | None:
     """Extract the integer id from a ``"todo:<id>"`` routed-ref, or ``None``."""
     if isinstance(routed_ref, str) and routed_ref.startswith("todo:"):

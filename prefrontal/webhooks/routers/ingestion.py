@@ -28,6 +28,7 @@ from prefrontal.geo import DEFAULT_PLACE_MATCH_RADIUS_M
 from prefrontal.log import get_logger
 from prefrontal.mail import (
     ingest_messages,
+    mail_todo_payload_from_row,
 )
 from prefrontal.mail.feedback import (
     learned_corrections,
@@ -658,14 +659,84 @@ def build_router(services: RouterServices) -> APIRouter:
         """Read-only snapshot: recent triaged mail and the open action items.
 
         ``needs_action`` lists messages still awaiting a reply/action (their
-        linked todo is still open); ``recent`` is the latest ingested mail for a
+        linked todo is still open); ``needs_action_no_todo`` lists messages triage
+        flagged as needing action but whose todo was *suppressed* at ingest (a
+        no-reply/notification sender, an informational category, or a learned
+        repeat-dropped sender) — so a surface can offer to create one on demand via
+        ``POST /mail/{id}/todo``; ``recent`` is the latest ingested mail for a
         dashboard. No side effects — safe to poll.
         """
         memory = ctx.store
         return {
             "needs_action": memory.mail_needing_action(),
+            "needs_action_no_todo": memory.mail_needing_action_no_todo(),
             "recent": memory.recent_mail(limit=30),
         }
+
+    @router.post(
+        "/mail/{mail_id}/todo",
+        status_code=status.HTTP_201_CREATED,
+        tags=["ingestion"],
+    )
+    def mail_create_todo(
+        mail_id: int,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Create (and link) a todo for a stored needs-action message.
+
+        The manual counterpart to ingest's automatic todo creation: for a message
+        triage flagged as needing action but whose todo was suppressed (see
+        ``needs_action_no_todo`` in ``GET /mail``), this turns it into a tracked
+        open loop on demand. The title/notes/priority match what ingest would have
+        produced, and the message is linked back (``mail_messages.todo_id``) so it
+        moves into the ``needs_action`` list on the next load.
+
+        Idempotent against a double-tap: a message that already has a linked todo
+        is returned unchanged (``created: false``) rather than spawning a duplicate,
+        and a concurrent create that loses the link race has its extra todo dropped.
+        Only a message triage flagged ``needs_action`` can be turned into a todo — a
+        plain FYI/recent row is rejected (409) rather than spawning a stray loop.
+        """
+        memory = ctx.store
+        row = memory.get_mail(mail_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No mail message {mail_id}.",
+            )
+        existing = row.get("todo_id")
+        if existing is not None:
+            return {"todo_id": existing, "created": False, "mail_id": mail_id}
+        if not row.get("needs_action"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Mail message {mail_id} is not flagged as needing action.",
+            )
+
+        # The manual path stays snappy and deterministic: no model call on a tap —
+        # project suggestion falls back to the token-overlap heuristic (client=None).
+        payload = mail_todo_payload_from_row(
+            memory,
+            row,
+            client=None,
+            domain=resolved_settings.account_domain_map.get(row.get("account") or ""),
+        )
+        todo_id = memory.add_todo(
+            payload["title"],
+            notes=payload.get("notes"),
+            priority=payload.get("priority", 1),
+            domain=payload.get("domain"),
+            project_id=payload.get("project_id"),
+            source=payload.get("source", "manual"),
+        )
+        # ``link_mail_todo`` only sets a NULL link, so under a concurrent double-tap
+        # exactly one caller wins. The loser drops the todo it just created (so it
+        # isn't orphaned) and returns the winner's linked id — no duplicate loop.
+        if not memory.link_mail_todo(mail_id, todo_id):
+            memory.close_todo(todo_id, status="dropped")
+            winner = memory.get_mail(mail_id) or {}
+            return {"todo_id": winner.get("todo_id"), "created": False, "mail_id": mail_id}
+        return {"todo_id": todo_id, "created": True, "mail_id": mail_id}
 
     @router.get("/mail/triage/learned", tags=["ingestion"])
     def triage_learned(
