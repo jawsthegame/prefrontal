@@ -220,6 +220,21 @@ def test_date_only_deadline_today_is_not_overdue(store, noon):
     assert [p.title for p in plan.soon] == ["Renew passport"]
 
 
+def test_midnight_timestamped_deadline_today_is_not_overdue(store, noon):
+    """A todo due 'today' stored as a full midnight timestamp is soon, not late.
+
+    The chat assistant runs a date-only deadline through ``to_utc``, which yields
+    ``YYYY-MM-DD 00:00:00``. Panic must still treat that as end-of-local-day (the
+    deadline is date-granular) rather than reading the midnight verbatim and
+    flagging a genuinely-not-yet-due todo as already overdue all day.
+    """
+    midnight_today = noon.strftime("%Y-%m-%d 00:00:00")
+    store.add_todo("Submit expense report", deadline=midnight_today)
+    plan = build_panic(store, now=noon)
+    assert [p.title for p in plan.late] == []
+    assert [p.title for p in plan.soon] == ["Submit expense report"]
+
+
 def test_mail_urgency_splits_across_soon_and_piling_up(store, noon):
     """Urgent action-mail is 'soon'; high is 'piling_up'; each tagged by inbox."""
     store.record_mail(
