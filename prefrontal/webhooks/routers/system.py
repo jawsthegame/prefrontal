@@ -44,6 +44,7 @@ from prefrontal.sources import (
     smtp_sources,
 )
 from prefrontal.stats import build_stats
+from prefrontal.vacation import activate, deactivate, vacation_status
 from prefrontal.webhooks._common import (
     ADMIN_HTML,
     APP_ICON_PNG,
@@ -73,6 +74,7 @@ from prefrontal.webhooks.schemas import (
     SelfCareConfig,
     SelfCareMark,
     SmtpConfig,
+    VacationSet,
 )
 from prefrontal.webhooks.schemas.ingestion import HomeSet
 from prefrontal.webhooks.services import RouterServices
@@ -764,5 +766,33 @@ def build_router(services: RouterServices) -> APIRouter:
         if not delete_smtp_source(ctx.store, account):
             raise HTTPException(status_code=404, detail=f"No SMTP account '{account}'.")
         return {"account": account, "deleted": True}
+
+    @router.get("/vacation", tags=["system"])
+    def vacation_get(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's vacation-mode state (JSON for the banner/Settings).
+
+        ``{"active", "since", "source"}`` — backs the visible "🏝️ nudges eased
+        since …" banner the design leans on (commandment 1: the state is never
+        something the user has to hold in their head). Read-only.
+        """
+        return vacation_status(ctx.store)
+
+    @router.post("/vacation", tags=["system"])
+    def vacation_set(
+        payload: VacationSet,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Turn vacation mode on/off for the signed-in user (manual control).
+
+        The always-available escape hatch — enter it for a staycation location
+        can't detect, or tap it off to correct a false positive. ``active: true``
+        eases the nudges (``source="manual"``); ``active: false`` resumes with a
+        clean slate. Returns the fresh status so the caller re-renders from it.
+        """
+        if payload.active:
+            return activate(ctx.store, now=utcnow(), source="manual")
+        return deactivate(ctx.store)
 
     return router

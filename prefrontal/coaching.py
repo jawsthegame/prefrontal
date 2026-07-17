@@ -47,6 +47,7 @@ from prefrontal.receptivity import (
     ReceptivityModel,
     observations_from_episodes,
 )
+from prefrontal.vacation import is_on_vacation
 
 logger = get_logger(__name__)
 
@@ -376,6 +377,12 @@ class CoachContext:
     debounce_minutes: float = DEFAULT_DEBOUNCE_MINUTES
     ignore_ack_rate: float = DEFAULT_IGNORE_ACK_RATE
     min_channel_samples: int = DEFAULT_MIN_CHANNEL_SAMPLES
+    # Whether the user is on vacation — a multi-day, location-cued "quiet hours"
+    # that holds every discretionary cue (see :func:`suppressed` and
+    # :mod:`prefrontal.vacation`). Set once per tick by :func:`build_context`;
+    # ``critical`` and user-initiated cues bypass it, exactly as they bypass quiet
+    # hours, so a flight on the calendar still gets through.
+    on_vacation: bool = False
     current_lat: float | None = None
     current_lon: float | None = None
     # Whether a module is currently shielding the user with a protective state
@@ -439,6 +446,7 @@ def build_context(
         min_channel_samples=int(
             store.get_float("coach_min_channel_samples", DEFAULT_MIN_CHANNEL_SAMPLES)
         ),
+        on_vacation=is_on_vacation(store),
         current_lat=current_lat,
         current_lon=current_lon,
         focus_protected=focus_protected,
@@ -546,6 +554,14 @@ def suppressed(store: Any, cue: Cue, ctx: CoachContext) -> bool:
     and it still debounces.
     """
     if not _bypasses_silence_gates(cue):
+        # Vacation mode: a multi-day, location-cued quiet stretch that holds every
+        # discretionary cue — checked before quiet hours because it's the wider
+        # window (and doesn't honour ``quiet_hours_exempt``: an evening recap is
+        # routine-life noise on vacation, not a wanted late nudge). ``critical`` and
+        # user-initiated cues already skipped this whole block, so a flight or a
+        # self-started outing still gets through. See :mod:`prefrontal.vacation`.
+        if ctx.on_vacation:
+            return True
         if not cue.quiet_hours_exempt:
             hour = local_hour_of(ctx.now, ctx.timezone)
             if not _within_hours(hour, ctx.responsive_start, ctx.responsive_end):

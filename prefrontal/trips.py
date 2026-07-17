@@ -36,6 +36,7 @@ from prefrontal.geo import (
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.scheduling import minutes_between
+from prefrontal.vacation import resume_on_return
 
 __all__ = [
     "TRIP_CATEGORIES",
@@ -330,6 +331,7 @@ def process_location(
         "at_home": at_home,
         "episode_id": None,
         "waypoint_id": None,
+        "vacation_resumed": False,
     }
 
     if at_home:
@@ -339,6 +341,10 @@ def process_location(
             result["trip_id"] = active["id"]
             if closed is not None:
                 result["episode_id"] = record_trip_return(store, closed)
+            # Returning inside the home radius is the high-confidence "vacation's
+            # over" cue: lift an active vacation so a forgotten manual toggle can't
+            # leave the user muted for weeks (see :mod:`prefrontal.vacation`).
+            result["vacation_resumed"] = resume_on_return(store)
         return result
 
     # Away from home.

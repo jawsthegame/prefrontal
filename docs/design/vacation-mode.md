@@ -1,6 +1,7 @@
 # Vacation mode
 
-Status: **proposal**
+Status: **v1 landed** (manual toggle + suppression gate + auto-resume on return);
+auto-entry *suggestion* is the tracked follow-up
 Author: drafted with Claude, 2026-07-17
 
 ## Question
@@ -176,6 +177,30 @@ who has to remember the feature exists. Manual survives as the fallback because
 some vacations (the at-home kind) have no location cue to catch. The primary path
 is cue-based because the alternative — relying on prospective memory to flip a
 toggle both ways — is the exact deficit Prefrontal exists to carry.
+
+## What shipped in v1
+
+The load-bearing core, end-to-end:
+
+- **The mechanism** — `prefrontal/vacation.py`: a pure state core
+  (`activate` / `deactivate` / `vacation_status` / `resume_on_return`) over the
+  per-user `coaching_state` KV store (no new schema), plus `is_on_vacation` for
+  the tick.
+- **The suppression gate** — `coaching.build_context` threads `on_vacation` onto
+  the per-tick context; `coaching.suppressed` holds every discretionary cue while
+  it's on, checked ahead of quiet hours and ignoring `quiet_hours_exempt`.
+  `critical` and user-initiated cues bypass it unchanged (a flight, a self-started
+  outing still land).
+- **Manual control** — `GET` / `POST /vacation` and `prefrontal vacation
+  on|off|status`, the always-available escape hatch.
+- **Automatic resume** — the trip state machine (`trips.process_location`) calls
+  `resume_on_return` on a return-home edge and echoes `vacation_resumed` out
+  through `POST /webhooks/location`, so a forgotten manual off can't leave the
+  user muted. A staycation never departs, so it's never auto-lifted.
+
+Deferred to the follow-up (see below): the location/calendar **entry
+suggestion** (a one-tap confirm on away-dwell), the visible banner UI, and
+self-care softening.
 
 ## Open questions for a follow-up build
 
