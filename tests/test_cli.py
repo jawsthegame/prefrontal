@@ -189,7 +189,7 @@ def test_user_route_sets_and_clears_per_user_ntfy_topic(tmp_path, capsys):
     co-parent's nudges reach *their* phone rather than falling back to the
     operator default (there was no CLI/UI to set this before)."""
     from prefrontal.cli import _resolve_user_store
-    from prefrontal.integrations.delivery import resolve_route
+    from prefrontal.delivery import resolve_route
 
     db = tmp_path / "prefrontal.db"
     assert main(["init-db", "--db-path", str(db)]) == 0

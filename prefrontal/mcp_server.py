@@ -149,7 +149,7 @@ def _place_call(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         return _err("'message' is required (what the call should say)")
     # Lazy import: delivery reaches up into webhooks/coaching, so keep it off the
     # module import path (matching how todos.py reaches the delivery client).
-    from prefrontal.integrations.delivery import TwilioVoiceClient, resolve_route
+    from prefrontal.delivery import TwilioVoiceClient, resolve_route
 
     route = resolve_route(ctx.store, ctx.settings)
     if not (route.twilio_account_sid and route.twilio_auth_token

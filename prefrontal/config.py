@@ -217,7 +217,7 @@ class Settings:
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
     geocoder_user_agent: str = "Prefrontal/0.1 (https://github.com/jawsthegame/prefrontal)"
     # Delivery layer — operator *defaults* for the native publishing client
-    # (:mod:`prefrontal.integrations.delivery`). Prefrontal is iOS-only, so the
+    # (:mod:`prefrontal.delivery`). Prefrontal is iOS-only, so the
     # product push transport is native APNs (below); per-user routing in
     # ``coaching_state`` (``apns_token``/``twilio_to``/… — multi-tenant §6.5)
     # overrides these. All empty is the local-first default: the delivery client

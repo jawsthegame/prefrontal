@@ -17,14 +17,14 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 from prefrontal.coaching import Cue, Decision
 from prefrontal.config import Settings
-from prefrontal.integrations.apns import build_apns_jwt, build_apns_payload
-from prefrontal.integrations.delivery import (
+from prefrontal.delivery import (
     ApnsClient,
     DeliveryClient,
     DeliveryResult,
     Route,
     resolve_route,
 )
+from prefrontal.integrations.apns import build_apns_jwt, build_apns_payload
 from prefrontal.memory.store import MemoryStore, provision_user
 from tests.conftest import scoped_default
 

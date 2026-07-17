@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from prefrontal.clock import local_datetime
 from prefrontal.config import Settings
+from prefrontal.delivery import DeliveryClient
 from prefrontal.household import (
     apply_service_shift,
     away_covers,
@@ -54,7 +55,6 @@ from prefrontal.household import (
     with_effective_schedule,
 )
 from prefrontal.impact import utcnow
-from prefrontal.integrations.delivery import DeliveryClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
 from prefrontal.webhooks.app import create_app

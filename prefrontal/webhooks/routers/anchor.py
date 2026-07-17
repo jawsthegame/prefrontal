@@ -459,7 +459,7 @@ def build_router(services: RouterServices) -> APIRouter:
             opens this page in a browser, so they already see it; a user with no
             route configured simply gets no push (``deliver_to_member`` no-ops).
             """
-            from prefrontal.integrations.delivery import (  # lazy: avoid import cycle
+            from prefrontal.delivery import (  # lazy: avoid import cycle
                 deliver_to_member,
                 household_notice,
             )

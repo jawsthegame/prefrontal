@@ -28,7 +28,7 @@ from typing import Any
 from prefrontal.clock import fmt_ts, local_datetime, parse_ts, utcnow
 from prefrontal.coaching import Cue, Decision
 from prefrontal.config import Settings, get_settings
-from prefrontal.integrations.delivery import (
+from prefrontal.delivery import (
     DeliveryClient,
     resolve_route,
 )

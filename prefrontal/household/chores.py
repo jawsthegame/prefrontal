@@ -629,7 +629,7 @@ def run_chores_check(
         now: Optional naive-UTC "now" (defaults to :func:`prefrontal.impact.utcnow`).
         client: Optional :class:`DeliveryClient` (tests inject a mock transport).
     """
-    from prefrontal.integrations.delivery import (
+    from prefrontal.delivery import (
         deliver_to_member,
         household_chore_notice,
     )
@@ -858,7 +858,7 @@ def _celebrate_routine_if_complete(
         return None
     store.mark_routine_completed(routine_id, today)
     # Lazy import: delivery pulls in webhooks.notify (see award_stars_and_notify).
-    from prefrontal.integrations.delivery import deliver_to_household, household_notice
+    from prefrontal.delivery import deliver_to_household, household_notice
 
     notified = deliver_to_household(
         store,

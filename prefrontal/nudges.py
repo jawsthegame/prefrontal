@@ -253,7 +253,7 @@ def apply_nudge_action(
         # Weekly mental-load check-in: record how *this* parent's week felt (no
         # entity id — resolve the ISO week at tap time). Once everyone has replied,
         # send both parents the gentle shared note.
-        from prefrontal.integrations.delivery import (
+        from prefrontal.delivery import (
             deliver_to_household,
             household_notice,
         )
@@ -305,7 +305,7 @@ def apply_nudge_action(
         # OTHER co-parent as a plain notice (no buttons). target_id is the trip id,
         # but we don't re-check the trip — a "heading home" tap right as they pull
         # in is still worth sending. Solo / no co-parent → a friendly no-op.
-        from prefrontal.integrations.delivery import (
+        from prefrontal.delivery import (
             deliver_to_member,
             household_notice,
         )

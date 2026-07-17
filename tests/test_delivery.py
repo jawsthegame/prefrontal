@@ -16,7 +16,7 @@ import pytest
 
 from prefrontal.coaching import Cue, Decision
 from prefrontal.config import Settings
-from prefrontal.integrations.delivery import (
+from prefrontal.delivery import (
     DeliveryClient,
     DeliveryResult,
     NtfyClient,

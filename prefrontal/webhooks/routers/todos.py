@@ -832,7 +832,7 @@ def build_router(services: RouterServices) -> APIRouter:
         # matching how the household surfaces reach it.
         message = delegation_notice(todo["title"], result)
         if message:
-            from prefrontal.integrations.delivery import (
+            from prefrontal.delivery import (
                 deliver_to_member,
                 household_notice,
             )
