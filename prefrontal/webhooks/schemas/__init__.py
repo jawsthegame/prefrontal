@@ -139,6 +139,7 @@ from prefrontal.webhooks.schemas.system import (
     SelfCareConfig,
     SelfCareMark,
     SmtpConfig,
+    VacationSet,
 )
 from prefrontal.webhooks.schemas.todos import (
     AutoDecomposeConfig,
@@ -246,6 +247,7 @@ __all__ = [
     "StarAward",
     "StepDone",
     "SwitchImpulse",
+    "VacationSet",
     "SwitchPause",
     "SwitchResolve",
     "SwitchResolved",

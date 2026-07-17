@@ -297,6 +297,11 @@ def build_router(services: RouterServices) -> APIRouter:
                     "trip_id": trip["trip_id"],
                     "distance_m": trip["distance_m"],
                 }
+                # A return that also lifted vacation mode: surface it so the app can
+                # show a "welcome back — nudges resumed" edge rather than silently
+                # un-muting (commandment 1, keep the state visible).
+                if trip.get("vacation_resumed"):
+                    response["vacation_resumed"] = True
         return response
 
     @router.get("/location", tags=["ingestion"])

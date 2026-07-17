@@ -1727,6 +1727,46 @@ def _cmd_self_care(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_vacation(args: argparse.Namespace) -> int:
+    """Turn vacation mode on/off, or print its state (``on`` / ``off`` / ``status``).
+
+    Vacation mode eases off the nudges for a multi-day, away-from-home stretch: the
+    coaching tick then holds every discretionary cue (as quiet hours does),
+    leaving time-critical calendar obligations and on-demand surfaces untouched.
+    This is the manual control (the location-cued auto-resume on returning home is
+    wired into the trip state machine); ``status`` is the default and read-only.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``action``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.vacation import activate, deactivate, vacation_status
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    action = args.action or "status"
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if action == "on":
+            status = activate(store, now=utcnow(), source="manual")
+        elif action == "off":
+            status = deactivate(store)
+        else:
+            status = vacation_status(store)
+
+    if status["active"]:
+        since = status.get("since")
+        src = status.get("source")
+        detail = f" (since {since})" if since else ""
+        detail += f" [{src}]" if src else ""
+        print(f"🏝️  Vacation mode is ON{detail} — non-urgent nudges are eased off.")
+    else:
+        print("Vacation mode is OFF — nudges run as normal.")
+    return 0
+
+
 def _cmd_encourage(args: argparse.Namespace) -> int:
     """Print today's encouragement/recovery message when the day's gone rough.
 
@@ -3498,6 +3538,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=int, default=7, help="Look-back window in days (default 7)."
     )
     p_balance.set_defaults(func=_cmd_balance)
+
+    p_vacation = sub.add_parser(
+        "vacation", help="Ease off the nudges while away (on/off/status)."
+    )
+    p_vacation.add_argument(
+        "action", nargs="?", choices=["on", "off", "status"], default="status",
+        help="Turn vacation mode on, off, or print its state (default: status).",
+    )
+    p_vacation.add_argument("--db-path", default=None, help="Override the database path.")
+    p_vacation.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_vacation.set_defaults(func=_cmd_vacation)
 
     p_bd = sub.add_parser(
         "body-double", help="Start a timed start-together sprint on a stalled todo."
