@@ -567,29 +567,31 @@ class TodosRepo(Repo):
         """
         if not self._owns_todo(todo_id):
             return False
-        row = self.conn.execute(
-            "SELECT steps, done_steps FROM todo_decompositions WHERE todo_id = ?",
-            (todo_id,),
-        ).fetchone()
-        if row is None:
-            return False
-        try:
-            steps = json.loads(row["steps"]) if row["steps"] else []
-        except (ValueError, TypeError):
-            steps = []
-        total = 1 + (len(steps) if isinstance(steps, list) else 0)
-        if step_index < 0 or step_index >= total:
-            return False
-        done_set = set(self._decode_done_steps(row["done_steps"]))
-        if done:
-            done_set.add(step_index)
-        else:
-            done_set.discard(step_index)
-        self.conn.execute(
-            "UPDATE todo_decompositions SET done_steps = ? WHERE todo_id = ?",
-            (json.dumps(sorted(done_set)), todo_id),
-        )
-        self.conn.commit()
+        # Read-modify-write on the done_steps blob: take the write lock before the
+        # read so two concurrent step taps can't both read the old set and lose one.
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT steps, done_steps FROM todo_decompositions WHERE todo_id = ?",
+                (todo_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                steps = json.loads(row["steps"]) if row["steps"] else []
+            except (ValueError, TypeError):
+                steps = []
+            total = 1 + (len(steps) if isinstance(steps, list) else 0)
+            if step_index < 0 or step_index >= total:
+                return False
+            done_set = set(self._decode_done_steps(row["done_steps"]))
+            if done:
+                done_set.add(step_index)
+            else:
+                done_set.discard(step_index)
+            conn.execute(
+                "UPDATE todo_decompositions SET done_steps = ? WHERE todo_id = ?",
+                (json.dumps(sorted(done_set)), todo_id),
+            )
         return True
 
     def delete_decomposition(self, todo_id: int) -> bool:

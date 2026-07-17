@@ -167,10 +167,14 @@ class FeatureUsageRepo(Repo):
         Returns:
             ``muted`` — the resulting state, so a one-tap handler can confirm.
         """
-        current = self.muted_features()
-        updated = current | {feature} if muted else current - {feature}
-        if updated != current:  # genuinely a no-op write when the set is unchanged
-            self.set_state(
-                MUTED_FEATURES_KEY, ",".join(sorted(updated)), source="explicit"
-            )
+        # Read-modify-write on the muted CSV: hold the write lock across the read
+        # and the write so a concurrent mute/un-mute of another feature can't read
+        # the same set and clobber this change.
+        with self.transaction():
+            current = self.muted_features()
+            updated = current | {feature} if muted else current - {feature}
+            if updated != current:  # genuinely a no-op write when the set is unchanged
+                self.set_state(
+                    MUTED_FEATURES_KEY, ",".join(sorted(updated)), source="explicit"
+                )
         return muted

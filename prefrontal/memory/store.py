@@ -233,6 +233,37 @@ class MemoryStore(
                 self._reap_dead_conns_locked()
         return conn
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run a read-modify-write atomically, serialized against other writers.
+
+        Most writes are a single ``execute`` + ``commit`` and need nothing more.
+        But a *read-modify-write* on an aggregate column — read a JSON/CSV blob,
+        mutate it in Python, write the whole thing back — is two separate
+        statements, so two concurrent same-user requests (different worker threads,
+        different connections under WAL) can both read the old value and the second
+        write clobbers the first. This wraps such a sequence in a single
+        ``BEGIN IMMEDIATE`` transaction, taking the write lock *before* the read, so
+        a concurrent writer waits (the 5s ``busy_timeout``) and then reads the
+        already-updated value instead of interleaving.
+
+        Commits on clean exit, rolls back on exception. The guarded
+        ``in_transaction`` checks let the body call a helper that commits its own
+        single write (e.g. :meth:`set_state`) without this wrapper double-committing
+        or rolling back a settled transaction. Not re-entrant — don't nest.
+        """
+        conn = self.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        else:
+            if conn.in_transaction:
+                conn.commit()
+
     def _reap_dead_conns_locked(self) -> None:
         """Close connections whose owning thread has exited (call under lock).
 
