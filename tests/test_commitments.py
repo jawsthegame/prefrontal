@@ -151,6 +151,49 @@ def test_sync_skips_invalid_events_without_rejecting_the_batch(store):
     ]
 
 
+def test_sync_idempotent_for_events_without_external_id(store):
+    """A UID-less event syncs once and stays a single row across repeated polls.
+
+    Regression: an event with no external_id could never be matched on re-sync, so
+    every poll INSERTed a fresh copy — unbounded duplicates that also read as a
+    self-conflict. A stable synthetic id now makes the sync idempotent.
+    """
+    event = {"title": "Recital", "start_at": _iso(60), "end_at": _iso(120)}  # no external_id
+    first = sync_calendar(store, [dict(event)])
+    assert first.added == 1
+    second = sync_calendar(store, [dict(event)])  # same event, polled again
+    assert second.added == 0 and second.updated == 1  # matched, not re-inserted
+    rows = [c for c in store.upcoming_commitments() if c["title"] == "Recital"]
+    assert len(rows) == 1  # exactly one copy, not two
+
+
+def test_sync_prunes_dropped_idless_event_within_its_feed(store):
+    """A UID-less event borrows its single-feed batch's namespace, so it's pruned
+    once it drops out of a later sync of that same feed."""
+    real = {"title": "Standup", "start_at": _iso(30), "external_id": "work:1"}
+    idless = {"title": "Recital", "start_at": _iso(60)}
+    sync_calendar(store, [dict(real), dict(idless)])
+    titles = {c["title"] for c in store.upcoming_commitments()}
+    assert {"Standup", "Recital"} <= titles
+    # Next poll of the *same* feed no longer includes the id-less event → it's gone.
+    sync_calendar(store, [dict(real)])
+    titles = {c["title"] for c in store.upcoming_commitments()}
+    assert "Standup" in titles and "Recital" not in titles
+
+
+def test_sync_idless_event_not_cross_cancelled_by_another_feed(store):
+    """Syncing a different feed must not cancel another feed's UID-less event."""
+    sync_calendar(store, [
+        {"title": "Standup", "start_at": _iso(30), "external_id": "work:1"},
+        {"title": "Recital", "start_at": _iso(60)},  # id-less → work:noid-...
+    ])
+    # A personal-feed sync (different namespace) must leave the work id-less event.
+    sync_calendar(store, [{"title": "Dinner", "start_at": _iso(90), "external_id": "personal:1"}])
+    titles = {c["title"] for c in store.upcoming_commitments()}
+    assert "Recital" in titles  # not cross-cancelled
+    assert "Standup" in titles  # nor was the other work event
+
+
 # -- recurrence expansion ----------------------------------------------------
 
 # A weekly Wednesday 07:30 America/New_York master, dated long before the window

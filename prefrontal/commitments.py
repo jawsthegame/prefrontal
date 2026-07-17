@@ -16,6 +16,7 @@ Persistence lives in :class:`~prefrontal.memory.store.MemoryStore`.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -458,6 +459,45 @@ def _dedupe_key(fields: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _sole_namespace(normalized: list[dict[str, Any]]) -> str | None:
+    """The one feed namespace shared by every namespaced id in a batch, else ``None``.
+
+    Real feed ids are ``<feed>:<UID>``. When every id-bearing event in a sync comes
+    from a single feed, a synthetic id minted for an id-less event in that batch can
+    safely borrow that feed's namespace, so :meth:`cancel_missing_calendar` prunes
+    the synthetic event per-feed once it drops out of a later sync. A batch spanning
+    multiple feeds — or one with no namespaced ids to key off — returns ``None``, so
+    the synthetic id stays un-namespaced and can't cross-cancel another feed's
+    id-less events.
+    """
+    namespaces = {
+        f["external_id"].split(":", 1)[0]
+        for f in normalized
+        if f.get("external_id") and ":" in f["external_id"]
+    }
+    return next(iter(namespaces)) if len(namespaces) == 1 else None
+
+
+def _synthetic_external_id(fields: dict[str, Any], *, namespace: str | None = None) -> str:
+    """A stable ``external_id`` for a calendar event that arrived without a UID.
+
+    Derived from the event's identity (the same title+start+end as
+    :func:`_dedupe_key`), so the *same* id-less event hashes to the *same* id on
+    every poll and :meth:`MemoryStore.upsert_commitment` updates in place rather
+    than inserting a duplicate.
+
+    When ``namespace`` is given (the batch is unambiguously one feed, see
+    :func:`_sole_namespace`), the id is ``<feed>:noid-<hash>`` so
+    :meth:`cancel_missing_calendar` prunes it once it drops out of that feed's sync.
+    Otherwise it's a bare ``noid-<hash>``: pruning only acts within namespaces
+    present in a batch, so a bare id stays idempotent without risking a cross-feed
+    cancellation of another feed's id-less events.
+    """
+    digest = hashlib.sha1("\x00".join(_dedupe_key(fields)).encode("utf-8")).hexdigest()
+    stem = f"noid-{digest[:16]}"
+    return f"{namespace}:{stem}" if namespace else stem
+
+
 def dedupe_events(normalized: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse the same real event synced from more than one calendar feed.
 
@@ -777,6 +817,19 @@ def sync_calendar(
     # Collapse the same real event mirrored across feeds (outlook + work) so it's
     # stored once, shown once, and never conflicts with itself.
     normalized = dedupe_events(normalized)
+    # A calendar event with no UID (a malformed but legal VEVENT) normalizes to no
+    # external_id, so upsert_commitment can't match it on re-sync and INSERTs a
+    # fresh copy every poll — unbounded duplicates that also read as self-conflicts.
+    # Give each id-less survivor a stable synthetic id derived from its identity so
+    # the sync is idempotent. Done *after* dedupe so a real feed id is still
+    # preferred as the keeper for a mirrored event. The id borrows the batch's feed
+    # namespace when unambiguous, so a dropped id-less event is still prunable by
+    # cancel_missing_calendar; otherwise it's left un-namespaced (never pruned, but
+    # never cross-cancelling another feed either).
+    feed_ns = _sole_namespace(normalized)
+    for fields in normalized:
+        if not fields["external_id"]:
+            fields["external_id"] = _synthetic_external_id(fields, namespace=feed_ns)
     eids = {f["external_id"] for f in normalized if f["external_id"]}
     existing_kinds = store.kinds_by_external_id(eids)
     existing_hardness = store.hardness_by_external_id(eids)
