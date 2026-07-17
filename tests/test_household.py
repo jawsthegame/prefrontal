@@ -34,6 +34,7 @@ from prefrontal.household import (
     parse_structured,
     prompt_due,
     prompt_question,
+    relay_to_coparents,
     render_sheet,
     run_trip_checkin_sweep,
     star_congrats_text,
@@ -1655,6 +1656,63 @@ def test_trip_checkin_endpoint_toggles_and_check_fires(client, store):
     _open_trip_minutes_ago(store.scoped(store.get_user("dana")["id"]), 90)
     sent = client.post(check, json={}, headers=_h("dana-tok")).json()["sent"]
     assert [s["handle"] for s in sent] == ["dana"]
+
+
+# --- dictate-and-relay: free-text "message my co-parent" ---------------------
+
+
+def test_relay_to_coparents_sends_name_prefixed_push_to_the_other(store):
+    # Alex's device is provisioned; Dana relays a note → Alex gets it, name-prefixed.
+    store.scoped(store.get_user("alex")["id"]).set_state("ntfy_topic", "alex-topic")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DeliveryClient.from_settings(
+        Settings(ntfy_dev=True), transport=httpx.MockTransport(handler)
+    )
+    dana_store = store.scoped(store.get_user("dana")["id"])
+    result = relay_to_coparents(
+        dana_store, sender=store.get_user("dana"),
+        message="running 20 late, start dinner", settings=Settings(), client=client,
+    )
+    assert result == {"sent": ["alex"], "reason": None}
+    # Delivered only to Alex's topic, carrying the sender-prefixed verbatim text.
+    assert [b["topic"] for b in bodies] == ["alex-topic"]
+    assert bodies[0]["message"] == "Dana: running 20 late, start dinner"
+
+
+def test_relay_to_coparents_solo_household_is_a_noop(store):
+    provision_user(store, "sol", display_name="Sol", token="sol-tok")
+    hid = store.create_household("Solo House")
+    store.set_user_household("sol", hid)
+    sol_store = store.scoped(store.get_user("sol")["id"])
+    result = relay_to_coparents(
+        sol_store, sender=store.get_user("sol"), message="hi", settings=Settings()
+    )
+    assert result == {"sent": [], "reason": "no_coparent"}
+
+
+def test_relay_endpoint_delivers_validates_and_is_member_guarded(client, store):
+    # Happy path: Dana → Alex.
+    r = client.post("/household/relay", json={"message": "on my way home"}, headers=_h("dana-tok"))
+    assert r.status_code == 200 and r.json() == {"sent": ["alex"], "reason": None}
+    # Blank / whitespace-only is rejected.
+    assert client.post(
+        "/household/relay", json={"message": "   "}, headers=_h("dana-tok")
+    ).status_code == 422
+    # Empty string fails schema validation (min_length=1).
+    assert client.post(
+        "/household/relay", json={"message": ""}, headers=_h("dana-tok")
+    ).status_code == 422
+    # A non-member (Lee is in no household) 404s.
+    assert client.post(
+        "/household/relay", json={"message": "hi"}, headers=_h("lee-tok")
+    ).status_code == 404
 
 
 # --- shared shopping list ----------------------------------------------------

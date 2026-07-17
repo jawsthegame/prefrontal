@@ -952,6 +952,56 @@ def run_trip_checkin_sweep(
     return {"sent": sent, "checked_at": now_str, "reason": None}
 
 
+def relay_to_coparents(
+    store: MemoryStore,
+    *,
+    sender: dict[str, Any],
+    message: str,
+    settings: Any,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Relay a parent's free-text update to their co-parent(s)' device(s).
+
+    The general "message my co-parent" channel — the free-text counterpart to the
+    trip check-in's canned one-tap statuses (which relay the same way, see
+    :func:`prefrontal.nudges.apply_nudge_action`). Ungated: any household member can
+    send anytime; it does not depend on an active trip or ``trip_checkin_enabled``.
+    Verbatim and name-prefixed so the recipient sees who it's from; stateless (a
+    plain push, nothing stored).
+
+    Args:
+        store: A store scoped to the *sending* member.
+        sender: The sending user row (``id`` + ``display_name``/``handle``).
+        message: The update text (already stripped by the caller).
+        settings: Operator settings.
+        client: Optional :class:`DeliveryClient` (tests inject a mock transport).
+
+    Returns:
+        ``{"sent": [handle, ...], "reason": None | "no_coparent"}`` — never raises;
+        a solo household (no other member) is a friendly no-op.
+    """
+    from prefrontal.integrations.delivery import deliver_to_member, household_notice
+
+    hid = store.household_id_or_none()
+    others = [
+        m for m in (store.household_members(hid) if hid is not None else [])
+        if m["id"] != sender["id"] and m.get("status") in (None, "active")
+    ]
+    if not others:
+        return {"sent": [], "reason": "no_coparent"}
+    sender_name = sender.get("display_name") or sender["handle"]
+    body = f"{sender_name}: {message}"
+    sent: list[str] = []
+    for other in others:
+        deliver_to_member(
+            store.scoped(other["id"]),
+            household_notice(body, channel="push"),
+            handle=other["handle"], settings=settings, client=client,
+        )
+        sent.append(other["handle"])
+    return {"sent": sent, "reason": None}
+
+
 # --- render ------------------------------------------------------------------
 
 

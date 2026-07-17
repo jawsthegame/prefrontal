@@ -465,6 +465,14 @@ extension APIClient {
                        json: ["category": category, "item": item, "child_id": childId])
     }
 
+    /// Relay a free-text update to the caller's co-parent(s) as a push — the
+    /// "message my co-parent" channel (the free-text counterpart to the trip
+    /// check-in's one-tap statuses). A capture write, so it replays off-tailnet;
+    /// a solo household is a server-side no-op.
+    func relayUpdate(_ text: String) async throws {
+        try await post("household/relay", json: ["message": text], queueable: true)
+    }
+
     // Shopping — add is a capture write (queued off-tailnet); the rest are edits.
     func addShopping(item: String, spec: String? = nil, whereToBuy: String? = nil,
                      childId: Int = 0) async throws {
