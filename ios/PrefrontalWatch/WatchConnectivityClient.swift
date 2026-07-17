@@ -105,7 +105,22 @@ final class WatchConnectivityClient: NSObject, ObservableObject, WCSessionDelega
     nonisolated func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState,
                              error: Error?) {
         let reachable = session.isReachable
-        Task { @MainActor in self.reachable = reachable }
+        // WatchConnectivity persists the last context the phone pushed but does
+        // not reliably re-fire `didReceiveApplicationContext` for it on a fresh
+        // launch. Seed from it directly so the watch reflects a phone that was
+        // already set up before this session activated (otherwise the UI is stuck
+        // on the "connect on your phone" placeholder forever).
+        // Fall back to the disconnected default when there's no decodable
+        // context (never pushed, or cleared by a re-pair/session reset) so we
+        // never keep a stale connected=true from a prior session. Activation
+        // always fires before any `didReceiveApplicationContext`, so this can't
+        // clobber a live push.
+        let status = WatchStatus(context: session.receivedApplicationContext)
+            ?? WatchStatus(connected: false, displayName: "")
+        Task { @MainActor in
+            self.reachable = reachable
+            self.status = status
+        }
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
