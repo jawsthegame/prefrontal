@@ -9,5 +9,9 @@
   updated value). Applied to `set_step_done` (todo decomposition progress),
   `set_feature_muted` (the Insights mute set), and the `/schedule/available-hours`
   partial-day merge. (`set_care_recipient_names` was checked and is a wholesale
-  replace, not a read-modify-write, so it needs no change.) Covered by new
-  concurrency + transaction cases in `tests/test_store_concurrency.py`.
+  replace, not a read-modify-write, so it needs no change.) The wrapper is truly
+  atomic — the `StateRepo` writes (`set_state`/`delete_state`) route their commit
+  through `_commit`, so inside a block they join the transaction and roll back with
+  it rather than settling on their own — and it refuses to nest (a clear error
+  instead of an opaque SQLite one). Covered by new concurrency + transaction cases
+  in `tests/test_store_concurrency.py`.

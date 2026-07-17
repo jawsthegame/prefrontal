@@ -136,7 +136,7 @@ class StateRepo(Repo):
             """,
             (self._uid(), key, value, source),
         )
-        self.conn.commit()
+        self._commit()  # joins an open transaction() block; commits otherwise
 
     def delete_state(self, key: str) -> None:
         """Remove a coaching-state key if present (a no-op when it isn't).
@@ -148,7 +148,7 @@ class StateRepo(Repo):
             "DELETE FROM coaching_state WHERE user_id = ? AND key = ?",
             (self._uid(), key),
         )
-        self.conn.commit()
+        self._commit()  # joins an open transaction() block; commits otherwise
 
     def care_recipient_names(self) -> list[str]:
         """The user's care-recipient names, or ``[]`` when none are set.

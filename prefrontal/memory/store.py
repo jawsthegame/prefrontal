@@ -247,13 +247,23 @@ class MemoryStore(
         a concurrent writer waits (the 5s ``busy_timeout``) and then reads the
         already-updated value instead of interleaving.
 
-        Commits on clean exit, rolls back on exception. The guarded
-        ``in_transaction`` checks let the body call a helper that commits its own
-        single write (e.g. :meth:`set_state`) without this wrapper double-committing
-        or rolling back a settled transaction. Not re-entrant — don't nest.
+        Commits on clean exit, rolls back on exception. Write helpers that route
+        their commit through :meth:`_commit` (the ``StateRepo`` writes —
+        :meth:`set_state` / :meth:`delete_state`) defer to this wrapper while a
+        block is active, so their write joins the transaction and is rolled back
+        with it rather than settling on its own. Not re-entrant: it raises rather
+        than issue a nested ``BEGIN`` (which SQLite would reject with an opaque
+        error), and the guarded ``in_transaction`` checks keep it from committing
+        or rolling back a transaction the body already settled itself.
         """
         conn = self.conn
+        if conn.in_transaction or getattr(self._local, "in_explicit_txn", False):
+            raise RuntimeError(
+                "MemoryStore.transaction() is not re-entrant and cannot start while "
+                "a transaction is already open on this connection."
+            )
         conn.execute("BEGIN IMMEDIATE")
+        self._local.in_explicit_txn = True
         try:
             yield conn
         except BaseException:
@@ -263,6 +273,21 @@ class MemoryStore(
         else:
             if conn.in_transaction:
                 conn.commit()
+        finally:
+            self._local.in_explicit_txn = False
+
+    def _commit(self) -> None:
+        """Commit the current write — unless inside a :meth:`transaction` block.
+
+        Write helpers call this instead of ``self.conn.commit()`` so that within a
+        ``transaction()`` block their write joins the enclosing transaction (the
+        wrapper commits or rolls it back as a unit) instead of settling
+        immediately, which would defeat the wrapper's atomicity and rollback
+        guarantee. Outside such a block it commits normally, preserving the
+        per-write-commit default the rest of the store relies on.
+        """
+        if not getattr(self._local, "in_explicit_txn", False):
+            self.conn.commit()
 
     def _reap_dead_conns_locked(self) -> None:
         """Close connections whose owning thread has exited (call under lock).

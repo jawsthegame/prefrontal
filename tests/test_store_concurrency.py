@@ -296,6 +296,44 @@ def test_transaction_rolls_back_on_error(tmp_path):
         store.close()
 
 
+def test_transaction_rolls_back_a_helper_write(tmp_path):
+    """A set_state() inside transaction() is rolled back if the block then raises.
+
+    set_state normally commits on its own; inside a transaction() it must defer
+    (via _commit) so the wrapper can undo it — otherwise the "rolls back on
+    exception" guarantee would be a lie for any body that used such a helper.
+    """
+    store = MemoryStore.threaded(str(tmp_path / "memory.db"))
+    try:
+        user, _ = provision_user(store, "tester", is_operator=True)
+        scoped = store.scoped(user["id"])
+        scoped.set_state("k", "orig", source="explicit")
+        with pytest.raises(RuntimeError):
+            with scoped.transaction():
+                scoped.set_state("k", "new", source="explicit")  # a committing helper
+                raise RuntimeError("boom")
+        assert scoped.get_state("k") == "orig"  # helper write rolled back with the block
+        # And set_state still commits normally outside a transaction.
+        scoped.set_state("k", "final", source="explicit")
+        assert scoped.get_state("k") == "final"
+    finally:
+        store.close()
+
+
+def test_transaction_is_not_reentrant(tmp_path):
+    """Nesting transaction() raises a clear error, not an opaque sqlite one."""
+    store = MemoryStore.threaded(str(tmp_path / "memory.db"))
+    try:
+        user, _ = provision_user(store, "tester", is_operator=True)
+        scoped = store.scoped(user["id"])
+        with pytest.raises(RuntimeError, match="not re-entrant"):
+            with scoped.transaction():
+                with scoped.transaction():
+                    pass
+    finally:
+        store.close()
+
+
 def test_concurrent_set_step_done_keeps_both_steps(tmp_path):
     """Two step taps on the same todo at once both stick — no lost update.
 
