@@ -811,16 +811,3 @@ class TodosRepo(Repo):
         )
         self.conn.commit()
         return cur.rowcount > 0
-
-    def delete_delegation(self, todo_id: int) -> bool:
-        """Remove a todo's delegation. Returns ``True`` if a row was deleted.
-
-        Used to recall a handoff. No-ops if the todo isn't this user's or had none.
-        """
-        if not self._owns_todo(todo_id):
-            return False
-        cur = self.conn.execute(
-            "DELETE FROM todo_delegations WHERE todo_id = ?", (todo_id,)
-        )
-        self.conn.commit()
-        return cur.rowcount > 0
