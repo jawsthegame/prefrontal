@@ -337,10 +337,12 @@ def summarize_profile(
             ``fallback`` is ``False``.
     """
     from prefrontal.integrations.base import ProviderError
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations.provider import SUMMARIZER, ProviderResolver
 
     structured = build_profile(store, modules=modules)
-    client = client or OllamaClient.from_settings()
+    # Default path honors ANTHROPIC_AGENTS (the summarizer is a selectable agent);
+    # falls back to local Ollama when it's not opted in / unavailable.
+    client = client or ProviderResolver.from_settings().client(SUMMARIZER)
 
     try:
         prose = client.generate(structured, system=SUMMARIZER_SYSTEM_PROMPT)

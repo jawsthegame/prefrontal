@@ -242,11 +242,13 @@ def ingest_messages(
     summary = IngestSummary(account=account, policy=policy, received=len(raw_messages))
 
     # Resolve the model once so triage and the delegation loop-closer share it
-    # (mirrors triage_message's own default; unchanged behavior when None).
+    # (mirrors triage_message's own default). Routes through the provider selector
+    # so the mail/triage agent honors ANTHROPIC_AGENTS instead of always going
+    # local; falls back to Ollama when it's not opted in / unavailable.
     if use_model and client is None:
-        from prefrontal.integrations.ollama import OllamaClient
+        from prefrontal.integrations.provider import TRIAGE, ProviderResolver
 
-        client = OllamaClient.from_settings()
+        client = ProviderResolver.from_settings().client(TRIAGE)
 
     # Inbound delegation loop-closer (#448): a message from a VA we handed a todo
     # off to may be that work coming back. Fetch the open delegations once — the

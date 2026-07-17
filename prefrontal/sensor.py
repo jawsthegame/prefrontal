@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.integrations.base import ProviderError
-from prefrontal.integrations.ollama import OllamaClient
+from prefrontal.integrations.provider import SENSOR, ProviderResolver
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
@@ -305,7 +305,7 @@ def extract_candidates(
     """
     if not text or not text.strip():
         return []
-    client = client or OllamaClient.from_settings()
+    client = client or ProviderResolver.from_settings().client(SENSOR)
     prompt = _build_prompt(text, avoid_keys=avoid_keys or frozenset())
     try:
         reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
@@ -349,7 +349,7 @@ def extract_candidates_from_transcript(
     transcript = render_transcript(turns)
     if not transcript.strip():
         return []
-    client = client or OllamaClient.from_settings()
+    client = client or ProviderResolver.from_settings().client(SENSOR)
     prompt = _build_transcript_prompt(transcript, avoid_keys=avoid_keys or frozenset())
     try:
         reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
