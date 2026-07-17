@@ -153,7 +153,7 @@ steps collapse into installer output.
 **Notification delivery — native push as the zero-config default.** Native iOS
 push (APNs) is the product transport: it delivers when a device token is
 registered and the `APNS_*` creds are configured
-([`delivery.py`](../../prefrontal/integrations/delivery.py) `deliver()`). The only
+([`delivery.py`](../../prefrontal/delivery.py) `deliver()`). The only
 other path is a **dev-only ntfy shim** (`PREFRONTAL_NTFY_DEV=1`, off by default)
 for free-signing builds with no APNs entitlement. A self-hosted DIY box that lacks
 Apple push signing creds leans on that shim during development ("install the ntfy

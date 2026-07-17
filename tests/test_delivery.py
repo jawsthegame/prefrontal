@@ -1,4 +1,4 @@
-"""Tests for the native delivery client (integrations/delivery.py).
+"""Tests for the native delivery client (prefrontal/delivery.py).
 
 The HTTP transports are exercised with an ``httpx.MockTransport`` so no real
 server is contacted, matching ``test_summarizer``'s Ollama tests. Native APNs is

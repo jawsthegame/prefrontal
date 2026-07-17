@@ -464,7 +464,7 @@ positive `children.id`.
   carries the total across a threshold "reaches" that goal — the write layer then
   congratulates and pushes to **both** co-parents (`newly_reached_goals` in
   `prefrontal/household.py` → `deliver_to_household` in
-  `prefrontal/integrations/delivery.py`). Awarded via
+  `prefrontal/delivery.py`). Awarded via
   `POST /household/agreements/{id}/stars` or `prefrontal household star`; the
   running total and next reward render on the shared sheet.
 

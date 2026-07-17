@@ -68,7 +68,7 @@ replace them):
   delivery layer remains "beyond v1" in the roadmap. The coaching agent *chooses*
   the channel; n8n still *sends*.
   *(Update: the first-class Python delivery layer has since shipped —
-  `prefrontal/integrations/delivery.py`, exercised by `prefrontal coach
+  `prefrontal/delivery.py`, exercised by `prefrontal coach
   --deliver`. It's an **addition**, not a replacement: n8n delivery still works,
   and the engine's channel-choice/suppression contract here is unchanged. The
   client gives the box a native, n8n-free path that renders ntfy's action buttons

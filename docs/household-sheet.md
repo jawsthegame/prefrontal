@@ -236,7 +236,7 @@ so awarding is a plain insert. The **goal-crossing** logic is pure and lives in
 `award_stars()` returns — a goal `n` fires exactly once, when a grant carries the
 total from `before < n` to `>= n`. When one or more goals are reached, the write
 layer congratulates and pushes to **both** co-parents at once via
-`deliver_to_household()` (`prefrontal/integrations/delivery.py`), which resolves
+`deliver_to_household()` (`prefrontal/delivery.py`), which resolves
 each member's own `Route` (their registered APNs device token, or an ntfy
 dev-shim topic on a free-signing build). This is the first
 concrete slice of the "push the delta to the *other* parent" idea in §7 — a goal
@@ -649,7 +649,7 @@ load-balancing features light up on their own.
 | `prefrontal/memory/repos/household.py` | Repo mixin: `_household_id()`, `household_member_count()`/`is_shared_household()` (the single-parent switch), facts/agreements/children methods, the star ledger + `mark_prompted`, the check-in, the digest toggle, and the balance view (`get`/`set_balance_enabled`, `contribution_counts`). |
 | `prefrontal/memory/store.py` | Mix in the household repo; `set_user_household`, `create_household` on the unscoped store. |
 | `prefrontal/household.py` | Pure render + goal logic + prompt logic + the `award_stars_and_notify` service + the check-in logic + the digest logic (`unseen_changes`/`digest_message`/`digest_interval_ok`). |
-| `prefrontal/integrations/delivery.py` | `deliver_to_household()` + `deliver_to_member()`; `household_notice()`, `household_prompt_notice()` (⭐), `household_checkin_notice()` (self-report), `household_digest_notice()` (Caught up). |
+| `prefrontal/delivery.py` | `deliver_to_household()` + `deliver_to_member()`; `household_notice()`, `household_prompt_notice()` (⭐), `household_checkin_notice()` (self-report), `household_digest_notice()` (Caught up). |
 | `prefrontal/webhooks/{notify,oauth}.py` | `star` + `load` + `digest` nudge kinds and their actions (`star_award`/`star_skip`, `load_*`, `digest_seen`); handled in `routers/anchor.py`'s `/nudge/act`. |
 | `prefrontal/assistant.py` | New ops in `ALLOWED_OPS`; snapshot + validators + executors. |
 | `prefrontal/webhooks/…` | `/family` render section; `GET /household/sheet` (+ `checkin` + `digest`, marks seen); star endpoints; `POST /household/{checkin,digest}` + `POST /webhooks/household/{checkin,digest}/check`; the `/kids` star-chart + check-in + digest UI; operator household endpoints. |
