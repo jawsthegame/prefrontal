@@ -135,19 +135,25 @@ class PanicPlan:
 
 
 def _parse_deadline(ts: Any) -> datetime | None:
-    """Parse a todo deadline, which may be a full timestamp or a bare date.
+    """Parse a todo/blocker deadline to its end-of-local-day instant.
 
-    Todos created via :func:`prefrontal.todos.augment_todo` store a date-only
-    deadline (``YYYY-MM-DD``); the endpoint accepts full ``YYYY-MM-DD HH:MM:SS``.
-    A bare date is treated as end-of-day *in the user's local zone* (converted to
-    UTC) so a todo due "today" isn't flagged overdue hours early in a western
-    zone — nor until the local day is actually over.
+    A deadline means "due by the end of that day" in the user's *local* zone,
+    regardless of how the value is stored. Todos created via
+    :func:`prefrontal.todos.augment_todo` store a date-only deadline
+    (``YYYY-MM-DD``), but the chat assistant writes a full
+    ``YYYY-MM-DD HH:MM:SS`` (a date-only deadline run through ``to_utc`` becomes
+    midnight — ``2026-07-16 00:00:00``). Either way only the *date* is meaningful,
+    so we slice to ``[:10]`` and anchor to local 23:59:59: parsing the full
+    timestamp verbatim would read that midnight as the deadline and flag a todo
+    due *today* as already overdue all day.
+
+    This deliberately mirrors :func:`prefrontal.todos._parse_deadline` — the two
+    are readers of the same field and must not drift.
     """
-    dt = _parse_dt(ts)
-    if dt is not None:
-        return dt
+    if ts is None:
+        return None
     try:
-        day = datetime.strptime(str(ts)[:10], "%Y-%m-%d")
+        day = datetime.strptime(str(ts).strip()[:10], "%Y-%m-%d")
     except (ValueError, TypeError):
         return None
     return end_of_local_day_utc(day, get_settings().timezone)
