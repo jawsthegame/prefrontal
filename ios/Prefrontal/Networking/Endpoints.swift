@@ -585,6 +585,64 @@ extension APIClient {
     }
 }
 
+/// Operator-only admin surface — the native counterpart to the web `/admin`
+/// page (prefrontal/webhooks/admin.html). Provisions users + households and
+/// manages tokens. Paths mirror prefrontal/webhooks/routers/admin.py; every
+/// route but `whoami` needs an operator's token (a non-operator gets a 403,
+/// surfaced as `.http(403, …)`), and the caller gates the whole screen on
+/// `adminWhoami().isOperator` so it never shows for a regular user.
+extension APIClient {
+    /// The signed-in user's admin capabilities — used to gate the Admin screen.
+    func adminWhoami() async throws -> AdminWhoami {
+        try await get("admin/whoami", as: AdminWhoami.self)
+    }
+
+    /// Every user on the deployment (active + disabled); never their tokens.
+    func adminUsers() async throws -> [AdminUser] {
+        try await get("admin/users", as: AdminUsersList.self).users
+    }
+
+    /// Provision a user and mint their token (returned **once**). A Google
+    /// `email` lets them Sign in with Google; `isOperator` grants the admin
+    /// surface. Mirrors the CLI's `prefrontal user add`.
+    func adminCreateUser(handle: String, displayName: String? = nil,
+                         email: String? = nil, isOperator: Bool = false) async throws -> AdminUserCreated {
+        var body: [String: Any] = ["handle": handle, "is_operator": isOperator]
+        if let displayName, !displayName.isEmpty { body["display_name"] = displayName }
+        if let email, !email.isEmpty { body["email"] = email }
+        return try await post("admin/users", json: body, as: AdminUserCreated.self)
+    }
+
+    /// Mint a fresh token for `handle` (old devices stop working). Shown once.
+    func adminRotateUser(_ handle: String) async throws -> AdminUserCreated {
+        try await post("admin/users/\(handle)/rotate", as: AdminUserCreated.self)
+    }
+
+    /// Disable a user (their token stops resolving). Idempotent.
+    func adminDisableUser(_ handle: String) async throws {
+        try await post("admin/users/\(handle)/disable")
+    }
+    /// Re-enable a disabled user (their token resolves again). Idempotent.
+    func adminEnableUser(_ handle: String) async throws {
+        try await post("admin/users/\(handle)/enable")
+    }
+    /// Set (or, with a blank string, clear) a user's Google sign-in email.
+    func adminSetUserEmail(_ handle: String, email: String) async throws {
+        try await post("admin/users/\(handle)/email", json: ["email": email])
+    }
+
+    // Households — two co-parents in one household share its sheet + charts.
+    func adminHouseholds() async throws -> [AdminHousehold] {
+        try await get("admin/households", as: AdminHouseholdsList.self).households
+    }
+    func adminCreateHousehold(name: String) async throws {
+        try await post("admin/households", json: ["name": name])
+    }
+    func adminAddHouseholdMember(householdId: Int, handle: String) async throws {
+        try await post("admin/households/\(householdId)/members", json: ["handle": handle])
+    }
+}
+
 /// Convenience: build a client on the main actor, then run an async call.
 @MainActor
 func withAPI<T>(_ body: (APIClient) async throws -> T) async throws -> T {

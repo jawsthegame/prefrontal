@@ -7,6 +7,8 @@ struct MeView: View {
     @State private var loaded = false
     @State private var showFocus = false
     @State private var showOuting = false
+    // Operator-only: the Admin entry appears only when /admin/whoami says so.
+    @State private var isOperator = false
 
     var body: some View {
         ScrollView {
@@ -19,6 +21,7 @@ struct MeView: View {
                 peopleLink
                 tripsLink
                 insightsLink
+                if isOperator { adminLink }
             }
             .padding(16)
         }
@@ -190,6 +193,30 @@ struct MeView: View {
         .buttonStyle(.plain)
     }
 
+    /// Operator-only entry to the admin surface — provision users (with a
+    /// scannable connect QR), rotate/disable tokens, and manage households. Shown
+    /// only when `/admin/whoami` reports the signed-in user is an operator.
+    private var adminLink: some View {
+        NavigationLink {
+            AdminView()
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "key.horizontal").foregroundStyle(Brand.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Admin").font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Brand.nearWhite)
+                        Text("Add users, show connect QR codes, and manage households")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     private var actionsCard: some View {
         Card {
             CardLabel(text: "Start something")
@@ -216,10 +243,14 @@ struct MeView: View {
             let client = try await MainActor.run { try APIClient() }
             async let care = client.selfCare()
             async let rev = client.selfCareReview()
+            async let who = client.adminWhoami()
             selfCare = try await care
             // Best-effort: the review is a nicety; a failure there shouldn't blank
             // the self-care card the tab is built around.
             review = try? await rev
+            // Best-effort too: whoami just gates the Admin entry. A non-operator
+            // gets is_operator=false; an older server (no /admin) throws → hidden.
+            isOperator = (try? await who)?.isOperator ?? false
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
