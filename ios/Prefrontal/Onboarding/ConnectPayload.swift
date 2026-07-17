@@ -47,6 +47,20 @@ struct ConnectPayload: Equatable {
     static let scheme = "prefrontal"
     static let host = "connect"
 
+    /// Build a payload directly — used by the operator admin flow to turn a
+    /// freshly-provisioned user (base URL + minted token + handle/name) into the
+    /// scannable connect link its `url` renders. The failable string/URL inits
+    /// suppress the synthesized memberwise init, so it's spelled out here.
+    init(baseURL: String, token: String? = nil, ntfyServer: String? = nil,
+         ntfyTopic: String? = nil, handle: String? = nil, displayName: String? = nil) {
+        self.baseURL = baseURL
+        self.token = token
+        self.ntfyServer = ntfyServer
+        self.ntfyTopic = ntfyTopic
+        self.handle = handle
+        self.displayName = displayName
+    }
+
     /// Parse a scanned string or opened URL. Accepts a `prefrontal://connect?…`
     /// URL; returns `nil` for anything that isn't one or that lacks a usable
     /// server URL.
