@@ -46,7 +46,7 @@ def build_router(services: RouterServices) -> APIRouter:
     router = APIRouter()
     # Snappy in-loop inference (one short JSON call per item) — local by design,
     # like the todo augment/decompose paths; heuristic fallback when it's down.
-    ollama_client = services.ollama
+    ollama_client = services.provider.ollama
 
     def _pending_view(row: dict[str, Any]) -> dict[str, Any]:
         """A dashboard-ready view of a pending clarification (question + options)."""

@@ -119,7 +119,7 @@ def build_router(services: RouterServices) -> APIRouter:
     router = APIRouter()
     resolved_settings = services.settings
     n8n = services.n8n
-    ollama_client = services.ollama
+    ollama_client = services.provider.ollama
     # Reasoning-heavy paths are per-agent selectable (Claude vs local): mail
     # triage and the sensor that reads a trip reflection. The snappy outcome
     # inference on a reflection stays on the local model.

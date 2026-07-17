@@ -87,7 +87,7 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "anchor" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-    ollama_client = services.ollama
+    ollama_client = services.provider.ollama
 
     @router.post(
         "/webhooks/outing/start",
