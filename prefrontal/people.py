@@ -403,10 +403,17 @@ def enqueue_mentions(
     queued: list[int] = []
     known: list[int] = []
     for name in names:
-        person = store.find_person(name_key(name))
+        key = name_key(name)
+        person = store.find_person(key)
         if person is not None and person.get("status") == PERSON_ACTIVE:
             store.touch_person(int(person["id"]))
             known.append(int(person["id"]))
+            continue
+        # A name the user already dismissed ("not a person") must not re-queue on a
+        # later appearance — otherwise a recurring false positive fills the review
+        # queue forever. The pending unique index only de-dupes pending rows, so
+        # this durable check is what makes a dismissal stick.
+        if store.has_dismissed_mention(key):
             continue
         mention_id = store.add_person_mention(
             name=name, source=source, context=snippet, ref=ref, external_id=external_id

@@ -953,6 +953,11 @@ CREATE INDEX IF NOT EXISTS idx_person_mentions_user ON person_mentions (user_id,
 -- the existing row instead of adding another.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_person_mentions_pending
     ON person_mentions (user_id, name_key) WHERE status = 'pending';
+-- Supports has_dismissed_mention's (user_id, name_key) lookup on the ingest hot
+-- path (enqueue_mentions) — without it that check scans every dismissed row for
+-- the user as the table grows.
+CREATE INDEX IF NOT EXISTS idx_person_mentions_dismissed
+    ON person_mentions (user_id, name_key) WHERE status = 'dismissed';
 
 -- Weekly "how did the invisible load feel for you?" self-reports — one row per
 -- parent per ISO week. Deliberately subjective and non-judgmental: we store how

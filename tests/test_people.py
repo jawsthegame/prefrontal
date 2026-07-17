@@ -171,6 +171,25 @@ def test_enqueue_queues_unknown_touches_known(store):
     assert queued[0]["ref"] == "todo:5"
 
 
+def test_dismissed_mention_does_not_requeue(store):
+    """Once dismissed, a name must not re-queue on a later appearance.
+
+    Regression: the pending unique index only de-dupes *pending* rows, so a
+    dismissed mention (which leaves no ``people`` row) used to re-queue on every
+    later appearance — the user had to re-dismiss the same false positive forever.
+    """
+    first = enqueue_mentions(store, text="call Dana Ruiz", source="mail")
+    assert len(first["queued"]) == 1
+    mid = first["queued"][0]
+    assert store.dismiss_person_mention(mid) is True
+    assert store.has_dismissed_mention(name_key("Dana Ruiz")) is True
+
+    # The same name shows up again later — it must be suppressed, not re-queued.
+    again = enqueue_mentions(store, text="meeting with Dana Ruiz", source="calendar")
+    assert again["queued"] == []
+    assert store.count_pending_mentions() == 0
+
+
 def test_priority_boost_scales_with_importance(store):
     store.add_person(name="Sam", name_key=name_key("Sam"), importance=3)
     store.add_person(name="Dana", name_key=name_key("Dana"), importance=2)
