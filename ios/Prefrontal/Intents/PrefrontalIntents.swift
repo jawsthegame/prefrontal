@@ -101,6 +101,39 @@ struct CaptureThoughtIntent: AppIntent {
     }
 }
 
+/// "Update my co-parent." Speak or type a short note and Prefrontal relays it
+/// verbatim (name-prefixed) to the other parent's device — the free-text
+/// counterpart to the trip check-in's one-tap statuses, usable anytime. Like the
+/// thought capture it runs without opening the app (`openAppWhenRun == false`): the
+/// Action Button / Shortcut prompts for the update via dictation, sends it, and
+/// speaks the confirmation. The relay is a plain push (nothing stored); a solo
+/// household is a no-op server-side.
+struct UpdateCoParentIntent: AppIntent {
+    static let title: LocalizedStringResource = "Update Co-Parent"
+    static let description = IntentDescription(
+        "Speak or type a quick update; Prefrontal sends it to your co-parent."
+    )
+    static var openAppWhenRun: Bool { false }
+
+    @Parameter(title: "Update", requestValueDialog: "What should I tell your co-parent?")
+    var message: String
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let client = try prefrontalClient()
+        let raw = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else {
+            // Whitespace-only dictation would 422 server-side; catch it here.
+            return .result(dialog: "Nothing to send — say the update and try again.")
+        }
+        try await client.relayUpdate(raw)
+        return .result(dialog: "Sent to your co-parent 💛")
+    }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Send your co-parent the update \(\.$message)")
+    }
+}
+
 /// Opens the app straight to the quick thought-capture field. Backs the
 /// interactive-widget button and the Control Center control, which can't collect
 /// free text inline — one tap opens the pre-focused sheet, which then feeds the

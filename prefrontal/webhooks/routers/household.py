@@ -39,6 +39,7 @@ from prefrontal.household import (
     normalize_routine,
     parse_star_tiers,
     parse_structured,
+    relay_to_coparents,
     render_sheet,
     run_checkin_sweep,
     run_chores_check,
@@ -82,6 +83,7 @@ from prefrontal.webhooks.schemas import (
     PetCreate,
     PetRename,
     PromptConfig,
+    RelayMessage,
     RoutineEnabled,
     RoutineSet,
     ShoppingAdd,
@@ -611,6 +613,29 @@ def build_router(services: RouterServices) -> APIRouter:
         """
         result = run_trip_checkin_sweep(ctx.store, settings=resolved_settings)
         return {"sent": result["sent"], "checked_at": result["checked_at"]}
+
+    @router.post("/household/relay", tags=["household"])
+    def relay_update(
+        payload: RelayMessage,
+        ctx: Annotated[ScopedRequest, Depends(require_member)],
+    ) -> dict[str, Any]:
+        """Relay a free-text update to the caller's co-parent(s)' device(s).
+
+        The general "message my co-parent" channel — the free-text counterpart to
+        the trip check-in's one-tap statuses, usable anytime (not gated on a trip).
+        The push is verbatim and name-prefixed. A solo household (no co-parent) is a
+        friendly no-op rather than an error.
+        """
+        message = payload.message.strip()
+        if not message:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="message must not be blank",
+            )
+        result = relay_to_coparents(
+            ctx.store, sender=ctx.user, message=message, settings=resolved_settings
+        )
+        return {"sent": result["sent"], "reason": result["reason"]}
 
     # -- shared shopping list -------------------------------------------------
 

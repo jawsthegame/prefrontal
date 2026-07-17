@@ -119,6 +119,14 @@ class TripCheckinConfig(BaseModel):
         description="Opt in to the 'keep your co-parent posted while you're out' prompt.",
     )
 
+class RelayMessage(BaseModel):
+    """Body of ``POST /household/relay`` — a free-text update to relay to the co-parent."""
+
+    message: str = Field(
+        min_length=1, max_length=1000,
+        description="The update to send your co-parent, e.g. 'running 20 late, start dinner'.",
+    )
+
 class InviteCreate(BaseModel):
     """Body of ``POST /household/invites`` — optionally text the link to a co-parent.
 
