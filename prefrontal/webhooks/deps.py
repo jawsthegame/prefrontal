@@ -37,17 +37,6 @@ class ScopedRequest:
     store: MemoryStore
 
 
-def get_store(request: Request) -> MemoryStore:
-    """FastAPI dependency returning the app's **unscoped** memory store.
-
-    Used by the user-resolution layer and the admin surface. Defined at module
-    level (not a closure) so that, with ``from __future__ import annotations`` in
-    effect, FastAPI can resolve the ``Depends(get_store)`` annotation via
-    ``get_type_hints``.
-    """
-    return request.app.state.store
-
-
 def _resolve_user_row(
     request: Request, token: str | None
 ) -> dict[str, Any]:
