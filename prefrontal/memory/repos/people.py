@@ -270,6 +270,24 @@ class PeopleRepo(Repo):
         self.conn.commit()
         return cur.rowcount > 0
 
+    def has_dismissed_mention(self, name_key: str) -> bool:
+        """Whether this user ever dismissed a mention of this normalized name.
+
+        A dismissal is a durable "not a person / don't surface" signal. The
+        pending unique index only de-dupes *pending* rows, so without consulting
+        past dismissals a recurring false positive ("Order Confirmation", "Field
+        Trip") re-queues on every later appearance and the review queue never
+        converges. :func:`prefrontal.people.enqueue_mentions` checks this before
+        queuing. (Identifying a mention instead creates a ``people`` row, which
+        that path already short-circuits on.)
+        """
+        row = self.conn.execute(
+            "SELECT 1 FROM person_mentions "
+            "WHERE user_id = ? AND name_key = ? AND status = 'dismissed' LIMIT 1",
+            (self._uid(), name_key),
+        ).fetchone()
+        return row is not None
+
     @staticmethod
     def _person_row(row: Any) -> dict[str, Any]:
         d = dict(row)
