@@ -220,6 +220,26 @@ def test_fyi_block_does_not_consume_free_time(store, noon):
     assert any(s.title == "Kid's recital" and s.fyi for s in shape.segments)
 
 
+def test_hold_block_does_not_consume_free_time(store, noon):
+    """A placeholder/hold block ("Focus") is drawn but leaves free time intact.
+
+    Regression: `build_day_shape` filters free windows through `is_attendable`,
+    which excludes *both* FYI events and placeholder/hold blocks — elastic time
+    you'd yield the instant a real commitment needed it. The hold must not carve
+    an hour out of the day's open time (companion to the FYI case above).
+    """
+    baseline = build_day_shape(store, now=noon, settings=UTC).free_minutes
+    store.upsert_commitment(
+        title="Focus", start_at=_at(noon + timedelta(hours=2)),
+        end_at=_at(noon + timedelta(hours=3)), external_id="hold:1",
+    )
+    shape = build_day_shape(store, now=noon, settings=UTC)
+    # The hold hour stays free (it's movable), not blocked...
+    assert shape.free_minutes == baseline
+    # ...while still being drawn as a block so the day reads true.
+    assert any(s.title == "Focus" and s.kind == "commitment" for s in shape.segments)
+
+
 def test_avoided_todo_is_named_as_such(store, noon):
     """A todo you keep skipping is fitted with the 'avoided' reason, not 'fits'."""
     old = utcnow() - timedelta(days=6)
