@@ -49,6 +49,16 @@ final class PhoneWatchConnectivity: NSObject, WCSessionDelegate {
         Task { @MainActor in pushStatus() }
     }
 
+    // Re-push when the watch comes within reach. The watch app is often opened
+    // while the phone is already foreground/active — there's no scenePhase or
+    // activation transition on the phone to trigger a fresh push in that case,
+    // so react to the watch showing up instead. (`updateApplicationContext`
+    // de-dupes identical payloads, so this is a no-op when nothing changed.)
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        guard session.isReachable else { return }
+        Task { @MainActor in pushStatus() }
+    }
+
     // Required on iOS; re-activate so a re-paired watch reconnects.
     func sessionDidBecomeInactive(_ session: WCSession) {}
     func sessionDidDeactivate(_ session: WCSession) { session.activate() }
