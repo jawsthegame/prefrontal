@@ -338,8 +338,16 @@ def apply_nudge_action(
         # assistant while they're home.
         from prefrontal.vacation import SOURCE_AUTO, activate
 
-        if memory.active_trip() is None:
+        # Act only on the trip this suggestion was raised for (target_id). The
+        # short-lived signed link already bounds a stale tap, but matching the id
+        # also stops an old notification from muting the assistant during a *later*,
+        # unrelated trip — a wrong-trip activation is exactly the silent-mute the
+        # design guards against.
+        trip = memory.active_trip()
+        if trip is None:
             return "Looks like you're back home — no need to ease off. 🙂"
+        if trip["id"] != target_id:
+            return "That suggestion was for an earlier trip — tap vacation on anytime. 🙂"
         activate(memory, now=utcnow(), source=SOURCE_AUTO)
         return (
             "🏝️ Vacation mode on — I'll hold the non-urgent nudges (a flight or "

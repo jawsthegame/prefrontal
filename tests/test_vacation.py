@@ -309,6 +309,19 @@ def test_vacation_confirm_when_home_is_noop(store):
     assert is_on_vacation(store) is False
 
 
+def test_vacation_confirm_ignores_stale_target(store):
+    """A tap carrying an earlier trip's id doesn't mute during a later trip."""
+    store.set_home(*HOME)
+    process_location(store, *FAR)  # a new (different) trip is active now
+    current = store.active_trip()["id"]
+    user = {"id": 1, "handle": "tester", "display_name": "Tester"}
+    headline = apply_nudge_action(
+        store, "vacation_confirm", current + 999, user=user, settings=Settings()
+    )
+    assert "earlier trip" in headline
+    assert is_on_vacation(store) is False
+
+
 # -- CLI ---------------------------------------------------------------------
 
 
