@@ -8,7 +8,8 @@ after that, and :func:`prefrontal.webhooks.app.resolve_user` accepts either.
 
 Flow: ``/auth/google/login`` → Google consent → ``/auth/google/callback`` (verify
 the email against the ``GOOGLE_OAUTH_ALLOWED`` allowlist, map it to a user, set
-the cookie) → back to ``/dashboard``. Only allow-listed emails can sign in.
+the cookie) → back to the ``?next=`` page the user started from (``/dashboard`` by
+default). Only allow-listed emails can sign in.
 
 No new dependency: the code-for-email exchange uses ``httpx`` (already vendored),
 and the session cookie is a small HMAC-signed token (no JWT library).
@@ -81,15 +82,46 @@ def verify_session(cookie: str, secret: str, *, now: float | None = None) -> str
     return _verify(cookie, secret, now=now)
 
 
-def sign_state(secret: str, *, now: float | None = None) -> str:
+def sign_state(secret: str, next_path: str = "", *, now: float | None = None) -> str:
     """A short-lived signed CSRF state — no cookie needed, so it survives the
-    cross-site redirect back from Google (Safari/strict cookie policies)."""
-    return _sign(secrets.token_urlsafe(12), secret, STATE_TTL_SECONDS, now=now)
+    cross-site redirect back from Google (Safari/strict cookie policies).
+
+    ``next_path`` rides *inside* the signed value so the callback can return the
+    user to the page they signed in from (e.g. ``/admin``) instead of always
+    landing on ``/dashboard``. It's part of the HMAC, so it can't be tampered
+    with in flight; the login route still validates it is a safe local path
+    before signing. A random nonce keeps each state unique.
+    """
+    return _sign(f"{secrets.token_urlsafe(12)}|{next_path}", secret, STATE_TTL_SECONDS, now=now)
 
 
-def verify_state(state: str, secret: str, *, now: float | None = None) -> bool:
-    """Whether a state token is validly signed and unexpired."""
-    return _verify(state, secret, now=now) is not None
+def verify_state(state: str, secret: str, *, now: float | None = None) -> str | None:
+    """Return the ``next`` path carried by a valid state (``""`` if none), else ``None``.
+
+    ``None`` means the state is forged or expired — the callback rejects it. A
+    valid state yields its ``next_path`` (possibly empty), so callers must test
+    ``is None`` rather than truthiness. Legacy states without an embedded path
+    decode to ``""`` and simply fall back to the default destination.
+    """
+    raw = _verify(state, secret, now=now)
+    if raw is None:
+        return None
+    _nonce, _, next_path = raw.partition("|")
+    return next_path
+
+
+def safe_next(next_path: str, *, default: str = "/dashboard") -> str:
+    """Clamp a post-login redirect target to a same-origin absolute path.
+
+    Anything that isn't a plain ``/…`` local path is dropped to ``default`` so a
+    crafted ``?next=`` (a protocol-relative ``//evil``, an absolute URL, or a
+    header-injecting newline) can't turn sign-in into an open redirect.
+    """
+    if not next_path.startswith("/") or next_path.startswith(("//", "/\\")):
+        return default
+    if any(c in next_path for c in ("\r", "\n")):
+        return default
+    return next_path
 
 
 #: How long a one-tap "dismiss this nudge" link stays valid. A nudge is only
@@ -291,9 +323,13 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
     secure = settings.oauth_base_url.startswith("https://")
 
     @app.get("/auth/google/login", tags=["auth"])
-    def google_login() -> RedirectResponse:
+    def google_login(next: str = "") -> RedirectResponse:
         if not settings.google_oauth_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Google sign-in is not configured.")
+        # Carry the caller's page through the round-trip so the callback returns
+        # them there (e.g. the /admin gate) rather than always to /dashboard.
+        # Validated to a same-origin path here, before it's signed into the state.
+        dest = safe_next(next, default="")
         params = urlencode(
             {
                 "client_id": settings.google_oauth_client_id,
@@ -302,7 +338,7 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
                 "scope": "openid email",
                 # Signed, self-expiring state — verified by signature on the way
                 # back, so no cross-site cookie has to survive the Google redirect.
-                "state": sign_state(settings.session_secret),
+                "state": sign_state(settings.session_secret, dest),
                 "access_type": "online",
                 "prompt": "select_account",
             }
@@ -313,7 +349,8 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
     def google_callback(request: Request, code: str = "", state: str = "") -> RedirectResponse:
         if not settings.google_oauth_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Google sign-in is not configured.")
-        if not verify_state(state, settings.session_secret):
+        next_path = verify_state(state, settings.session_secret)
+        if next_path is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired sign-in state.")
         if not code:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing authorization code.")
@@ -337,7 +374,9 @@ def register_oauth_routes(app: FastAPI, settings: Settings) -> None:
         if user["status"] != "active":
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"User '{handle}' is not active.")
 
-        resp = RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+        # Re-clamp on the way out (defence in depth), then send them back to the
+        # page they started from — /dashboard when no next was carried.
+        resp = RedirectResponse(safe_next(next_path), status_code=status.HTTP_303_SEE_OTHER)
         resp.set_cookie(
             SESSION_COOKIE,
             sign_session(handle, settings.session_secret),

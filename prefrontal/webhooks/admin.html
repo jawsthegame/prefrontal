@@ -184,7 +184,7 @@
   <div class="box">
     <h2>Operator sign-in</h2>
     <p>User management needs an operator's access code.</p>
-    <a class="gsi" href="/auth/google/login">Sign in with Google</a>
+    <a class="gsi" href="/auth/google/login?next=/admin">Sign in with Google</a>
     <details class="tokenfallback">
       <summary>Use an access code instead</summary>
       <input id="token-input" type="password" placeholder="Operator access code" autocomplete="off" />
@@ -233,7 +233,9 @@ async function api(path, method, body) {
   const opts = { method: method || "GET", headers: headers(body ? { "Content-Type": "application/json" } : undefined) };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(path, opts);
-  if (r.status === 401) { gate("That access code didn't work."); throw new Error("401"); }
+  // No token means we were relying on the Google session cookie (sent
+  // automatically): a 401 there is just "not signed in", not a bad code.
+  if (r.status === 401) { gate(token ? "That access code didn't work." : ""); throw new Error("401"); }
   if (r.status === 403) { gate("That account isn't an operator — use an operator's access code."); throw new Error("403"); }
   if (!r.ok) {
     let detail = "HTTP " + r.status;
@@ -404,7 +406,9 @@ $("#token-save").addEventListener("click", () => {
 });
 $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#token-save").click(); });
 
-if (token) load().catch(() => {}); else gate("");
+// Always attempt: a Google session cookie (httponly, invisible to JS) can
+// authenticate even with no saved token. The gate appears only on a 401/403.
+load().catch(() => {});
 </script>
 </body>
 </html>
