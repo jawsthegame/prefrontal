@@ -23,6 +23,33 @@ def test_extract_json_bare_array():
     ]
 
 
+def test_extract_json_prose_wrapped_array_keeps_all_elements():
+    """A prose-wrapped array must not collapse to its first object.
+
+    Regression: the balanced-span matcher tried the '{' span before the '[' span
+    regardless of position, so an array wrapped in prose matched the '{' of its
+    first element and returned only that object — silently dropping the rest (in
+    the assistant, every requested edit after the first). Candidates are now
+    ordered by opener position, so the earlier '[' wins.
+    """
+    text = (
+        'Sure, here are the actions: '
+        '[{"op":"add_todo","title":"milk"}, {"op":"drop_todo","todo_id":5}]'
+    )
+    assert extract_json(text) == [
+        {"op": "add_todo", "title": "milk"},
+        {"op": "drop_todo", "todo_id": 5},
+    ]
+
+
+def test_extract_json_prose_wrapped_object_with_inner_array():
+    """An object that merely contains an array still parses as the object."""
+    assert extract_json('result: {"reply":"hi","actions":[1,2]} thanks') == {
+        "reply": "hi",
+        "actions": [1, 2],
+    }
+
+
 def test_extract_json_garbage_returns_none():
     assert extract_json("I can't help with that.") is None
 
