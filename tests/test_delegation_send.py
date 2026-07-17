@@ -248,6 +248,48 @@ def test_preview_warns_when_already_sent(store):
     assert any("already sent" in w for w in again.warnings)
 
 
+def test_send_refuses_duplicate_after_success(store):
+    """A retry of an already-sent draft is refused, not re-delivered.
+
+    Regression: an already-sent draft was only a *warning*, and the send gate
+    consulted only blockers + the digest. A client that retried after a send that
+    succeeded but timed out client-side (same, unchanged draft → same digest) would
+    send a second copy. The guard must be a hard refusal.
+    """
+    tid = _delegated(store, drafts=[_email_draft()])
+    p = preview_send(store, tid, smtp=_smtp_source())
+    first = send_prepared_draft(
+        store, tid, smtp=_smtp_source(), expected_digest=p.digest,
+        smtp_client=SmtpClient(connect=lambda h, port, t: _FakeConn({})),
+    )
+    assert first.sent is True
+    # Same draft, same digest (nothing changed) — the retry after a timed-out send.
+    record: dict = {}
+    again = send_prepared_draft(
+        store, tid, smtp=_smtp_source(), expected_digest=p.digest,
+        smtp_client=SmtpClient(connect=lambda h, port, t: _FakeConn(record)),
+    )
+    assert again.sent is False and again.code == "already_sent"
+    assert record == {}  # the transport was never touched a second time
+
+
+def test_send_allow_resend_overrides_the_duplicate_guard(store):
+    """``allow_resend=True`` deliberately re-sends the same stored draft."""
+    tid = _delegated(store, drafts=[_email_draft()])
+    p = preview_send(store, tid, smtp=_smtp_source())
+    send_prepared_draft(
+        store, tid, smtp=_smtp_source(), expected_digest=p.digest,
+        smtp_client=SmtpClient(connect=lambda h, port, t: _FakeConn({})),
+    )
+    record: dict = {}
+    again = send_prepared_draft(
+        store, tid, smtp=_smtp_source(), expected_digest=p.digest, allow_resend=True,
+        smtp_client=SmtpClient(connect=lambda h, port, t: _FakeConn(record)),
+    )
+    assert again.sent is True and again.code == "sent"
+    assert record["to"] == "dentist@example.com"
+
+
 # --- HTTP surface ------------------------------------------------------------
 
 
@@ -368,3 +410,33 @@ def test_http_send_blocked_is_422(http):
         headers=_headers(),
     )
     assert r.status_code == 422
+
+
+def test_http_send_duplicate_is_409(http):
+    """A retry of an already-sent draft is refused with 409, not re-delivered."""
+    tid = _delegate_over_http(http)
+    http.post(
+        "/smtp",
+        json={"host": "smtp.test", "username": "me@x.com", "password": "pw", "sender": "me@x.com"},
+        headers=_headers(),
+    )
+    preview = http.post(
+        f"/todos/{tid}/delegate/send/preview", json={}, headers=_headers()
+    ).json()
+    http.app.state.smtp_client = SmtpClient(connect=lambda h, port, t: _FakeConn({}))
+    first = http.post(
+        f"/todos/{tid}/delegate/send",
+        json={"preview_digest": preview["digest"]},
+        headers=_headers(),
+    )
+    assert first.status_code == 200 and first.json()["sent"] is True
+    # Retry with the same digest — must be refused (409) and never reach transport.
+    record: dict = {}
+    http.app.state.smtp_client = SmtpClient(connect=lambda h, port, t: _FakeConn(record))
+    again = http.post(
+        f"/todos/{tid}/delegate/send",
+        json={"preview_digest": preview["digest"]},
+        headers=_headers(),
+    )
+    assert again.status_code == 409
+    assert record == {}
