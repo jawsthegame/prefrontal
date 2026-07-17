@@ -233,6 +233,62 @@ class MemoryStore(
                 self._reap_dead_conns_locked()
         return conn
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run a read-modify-write atomically, serialized against other writers.
+
+        Most writes are a single ``execute`` + ``commit`` and need nothing more.
+        But a *read-modify-write* on an aggregate column — read a JSON/CSV blob,
+        mutate it in Python, write the whole thing back — is two separate
+        statements, so two concurrent same-user requests (different worker threads,
+        different connections under WAL) can both read the old value and the second
+        write clobbers the first. This wraps such a sequence in a single
+        ``BEGIN IMMEDIATE`` transaction, taking the write lock *before* the read, so
+        a concurrent writer waits (the 5s ``busy_timeout``) and then reads the
+        already-updated value instead of interleaving.
+
+        Commits on clean exit, rolls back on exception. Write helpers that route
+        their commit through :meth:`_commit` (the ``StateRepo`` writes —
+        :meth:`set_state` / :meth:`delete_state`) defer to this wrapper while a
+        block is active, so their write joins the transaction and is rolled back
+        with it rather than settling on its own. Not re-entrant: it raises rather
+        than issue a nested ``BEGIN`` (which SQLite would reject with an opaque
+        error), and the guarded ``in_transaction`` checks keep it from committing
+        or rolling back a transaction the body already settled itself.
+        """
+        conn = self.conn
+        if conn.in_transaction or getattr(self._local, "in_explicit_txn", False):
+            raise RuntimeError(
+                "MemoryStore.transaction() is not re-entrant and cannot start while "
+                "a transaction is already open on this connection."
+            )
+        conn.execute("BEGIN IMMEDIATE")
+        self._local.in_explicit_txn = True
+        try:
+            yield conn
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        else:
+            if conn.in_transaction:
+                conn.commit()
+        finally:
+            self._local.in_explicit_txn = False
+
+    def _commit(self) -> None:
+        """Commit the current write — unless inside a :meth:`transaction` block.
+
+        Write helpers call this instead of ``self.conn.commit()`` so that within a
+        ``transaction()`` block their write joins the enclosing transaction (the
+        wrapper commits or rolls it back as a unit) instead of settling
+        immediately, which would defeat the wrapper's atomicity and rollback
+        guarantee. Outside such a block it commits normally, preserving the
+        per-write-commit default the rest of the store relies on.
+        """
+        if not getattr(self._local, "in_explicit_txn", False):
+            self.conn.commit()
+
     def _reap_dead_conns_locked(self) -> None:
         """Close connections whose owning thread has exited (call under lock).
 

@@ -850,12 +850,19 @@ def build_router(services: RouterServices) -> APIRouter:
         back so the client re-renders from the response.
         """
         memory = ctx.store
-        stored = _stored_available_hours(memory)
-        for name, day in payload.days.items():
-            stored[name] = {
-                "available": day.available, "start": day.start, "end": day.end,
-            }
-        memory.set_state(STATE_AVAILABLE_HOURS_KEY, json.dumps(stored), source="explicit")
+        # A partial merge is a read-modify-write of the available_hours blob, so
+        # hold the write lock across the read and the write — otherwise two "save
+        # one day" requests can both read the old blob and the second drops the
+        # first day.
+        with memory.transaction():
+            stored = _stored_available_hours(memory)
+            for name, day in payload.days.items():
+                stored[name] = {
+                    "available": day.available, "start": day.start, "end": day.end,
+                }
+            memory.set_state(
+                STATE_AVAILABLE_HOURS_KEY, json.dumps(stored), source="explicit"
+            )
         return _available_hours_payload(memory)
 
     # -- Location settings (tunables on web; the phone keeps only the opt-in) --
