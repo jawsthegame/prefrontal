@@ -164,6 +164,45 @@ final class APIClientTests: XCTestCase {
         try await client().dismissMention(7)
     }
 
+    func testMailInboxDecodesTodoStatusAndSuppressedList() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/mail")
+            return (200, Data(#"""
+            {"needs_action":[{"id":1,"subject":"Reply to Sarah","todo_id":42,"needs_action":1}],
+             "needs_action_no_todo":[{"id":2,"subject":"Newsletter ask","todo_id":null,"needs_action":1}],
+             "recent":[{"id":3,"subject":"FYI","todo_id":null,"needs_action":0}]}
+            """#.utf8))
+        }
+        let inbox = try await client().mail()
+        XCTAssertEqual(inbox.needsAction.count, 1)
+        XCTAssertEqual(inbox.needsAction[0].todoId, 42)
+        XCTAssertEqual(inbox.needsActionNoTodo.count, 1)
+        XCTAssertNil(inbox.needsActionNoTodo[0].todoId)
+        XCTAssertEqual(inbox.recent.count, 1)
+    }
+
+    func testMailInboxToleratesOlderServerWithoutNoTodoKey() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // An older server omits `needs_action_no_todo` — it decodes as empty.
+        StubURLProtocol.responder = { _ in
+            (200, Data(#"{"needs_action":[],"recent":[]}"#.utf8))
+        }
+        let inbox = try await client().mail()
+        XCTAssertTrue(inbox.needsActionNoTodo.isEmpty)
+    }
+
+    func testCreateMailTodoPostsAndReturnsTodoId() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/mail/2/todo")
+            XCTAssertEqual(req.httpMethod, "POST")
+            return (201, Data(#"{"todo_id":99,"created":true,"mail_id":2}"#.utf8))
+        }
+        let todoId = try await client().createMailTodo(2)
+        XCTAssertEqual(todoId, 99)
+    }
+
     func testParkedImpulsesDecode() async throws {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { req in

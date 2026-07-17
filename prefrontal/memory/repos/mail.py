@@ -135,6 +135,61 @@ class MailRepo(Repo):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def mail_needing_action_no_todo(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Return needs-action mail that never got a todo — newest first.
+
+        The complement of :meth:`mail_needing_action`: messages triage flagged
+        ``needs_action`` but whose todo was *suppressed* at ingest (a no-reply/
+        notification sender, an informational category, or a learned repeat-dropped
+        sender — see :func:`prefrontal.mail.triage.suppress_todo_reason`), so they
+        carry no ``todo_id`` link at all. These are deliberately kept out of the
+        clean action list, but a surface can offer to turn one into a tracked todo
+        on demand (``POST /mail/{id}/todo``).
+
+        Only rows with a NULL ``todo_id`` are returned: a message whose todo was
+        created and later resolved is a closed loop, not an offer to make one.
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            A list of ``mail_messages`` dicts (``todo_id`` is always ``None``).
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM mail_messages "
+            "WHERE user_id = ? AND needs_action = 1 AND todo_id IS NULL "
+            "ORDER BY (received_at IS NULL), received_at DESC, id DESC LIMIT ?",
+            (self._uid(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_mail(self, mail_id: int) -> dict[str, Any] | None:
+        """Return one stored message by row id (user-scoped), or ``None``."""
+        row = self.conn.execute(
+            "SELECT * FROM mail_messages WHERE id = ? AND user_id = ?",
+            (mail_id, self._uid()),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def link_mail_todo(self, mail_id: int, todo_id: int) -> bool:
+        """Link a message to the todo it spawned — but never clobber an existing one.
+
+        Sets ``mail_messages.todo_id`` only when it is currently NULL, so a manual
+        create-todo (``POST /mail/{id}/todo``) is safe against a double-tap: the
+        second call finds the link already set and changes nothing.
+
+        Returns:
+            ``True`` if this call set the link, ``False`` if it was already linked
+            (or no such message exists for this user).
+        """
+        cur = self.conn.execute(
+            "UPDATE mail_messages SET todo_id = ? "
+            "WHERE id = ? AND user_id = ? AND todo_id IS NULL",
+            (todo_id, mail_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def mail_by_todo(self, todo_id: int) -> dict[str, Any] | None:
         """Return the mail message that created ``todo_id``, or ``None``.
 

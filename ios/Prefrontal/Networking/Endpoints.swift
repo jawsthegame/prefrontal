@@ -115,6 +115,14 @@ extension APIClient {
     /// Read-only mail snapshot: messages awaiting action + a recent feed. Safe
     /// to poll (no side effects). Empty lists when mail monitoring is unconfigured.
     func mail() async throws -> MailInbox { try await get("mail", as: MailInbox.self) }
+    /// Create (and link) a todo for a needs-action message whose todo was
+    /// suppressed at ingest (`POST /mail/{id}/todo`) — the "make this a tracked
+    /// loop" affordance on the Mail tab. Idempotent server-side: a message that
+    /// already has a todo returns it unchanged. Returns the linked todo id.
+    @discardableResult
+    func createMailTodo(_ mailId: Int) async throws -> Int {
+        try await post("mail/\(mailId)/todo", as: MailTodoCreated.self).todoId
+    }
     /// On-demand situation tools the enabled Context Packs contribute (empty if none). Pure read.
     func situations() async throws -> [SituationTool] {
         try await get("packs/situations", as: SituationList.self).situations

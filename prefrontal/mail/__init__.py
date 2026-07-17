@@ -25,6 +25,7 @@ from prefrontal.mail.ingest import (
     IngestSummary,
     RetriageSummary,
     ingest_messages,
+    mail_todo_payload_from_row,
     retriage_messages,
 )
 from prefrontal.mail.models import MailItem, normalize_message
@@ -38,6 +39,7 @@ __all__ = [
     "priority_for_urgency",
     "IngestSummary",
     "ingest_messages",
+    "mail_todo_payload_from_row",
     "RetriageSummary",
     "retriage_messages",
 ]
