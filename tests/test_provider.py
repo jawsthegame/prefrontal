@@ -241,6 +241,55 @@ def test_summarizer_falls_back_when_anthropic_client_raises():
     assert result.text  # the structured profile is still returned
 
 
+def test_leaf_defaults_route_through_provider_selection(monkeypatch):
+    """With no client injected, the selectable leaf agents honor ANTHROPIC_AGENTS.
+
+    Regression: sensor / summarizer / mail-triage defaulted to a hard-wired
+    OllamaClient, so those agents could never reach Claude on their default
+    (non-router) paths — a CLI tick, a background ingest — even when opted into
+    ANTHROPIC_AGENTS. They now build the client via ProviderResolver.
+    """
+    from prefrontal import sensor
+    from prefrontal.mail.models import MailItem
+    from prefrontal.mail.triage import triage_message
+    from prefrontal.memory.summarizer import summarize_profile
+
+    def route(agents):
+        """Point ProviderResolver.from_settings at fakes; return (anthropic, ollama)."""
+        anthropic = _Fake("anthropic", reply="[]")
+        ollama = _Fake("ollama", reply="[]")
+        resolver = ProviderResolver(
+            ollama=ollama, anthropic=anthropic, anthropic_agents=frozenset(agents)
+        )
+        monkeypatch.setattr(
+            ProviderResolver, "from_settings",
+            classmethod(lambda cls, *a, **k: resolver),
+        )
+        return anthropic, ollama
+
+    item = MailItem(account="personal", message_id="<1@x>", subject="Quick question?")
+    with MemoryStore.open(":memory:") as raw:
+        store = scoped_default(raw)
+
+        # Each selectable agent, opted in → its default path reaches Claude.
+        a, o = route({"sensor"})
+        sensor.extract_candidates("call the dentist tomorrow")
+        assert (a.calls, o.calls) == (1, 0)
+
+        a, o = route({"summarizer"})
+        summarize_profile(store)
+        assert (a.calls, o.calls) == (1, 0)
+
+        a, o = route({"triage"})
+        triage_message(item)
+        assert (a.calls, o.calls) == (1, 0)
+
+        # Not opted in → the default still falls back to local Ollama.
+        a, o = route(set())
+        sensor.extract_candidates("call the dentist tomorrow")
+        assert (a.calls, o.calls) == (0, 1)
+
+
 # --- router wiring (per-agent selection reaches beyond the assistant) -------
 
 

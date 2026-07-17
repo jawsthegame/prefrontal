@@ -262,12 +262,14 @@ def triage_message(
             ``fallback`` is ``False``.
     """
     from prefrontal.integrations.base import ProviderError
-    from prefrontal.integrations.ollama import OllamaClient
+    from prefrontal.integrations.provider import TRIAGE, ProviderResolver
 
     if not use_model:
         return _heuristic_triage(item)
 
-    client = client or OllamaClient.from_settings()
+    # Default path honors ANTHROPIC_AGENTS for the triage agent; falls back to
+    # local Ollama when it's not opted in / unavailable.
+    client = client or ProviderResolver.from_settings().client(TRIAGE)
     prompt = _build_prompt(item)
     try:
         raw = client.generate(prompt, system=TRIAGE_SYSTEM_PROMPT + corrections)
