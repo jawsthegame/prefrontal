@@ -51,9 +51,10 @@ def client(store):
         yield c
 
 
-def _login_state(client) -> str:
+def _login_state(client, next_path: str = "") -> str:
     """Hit /login (sets the state cookie) and return the matching state value."""
-    r = client.get("/auth/google/login", follow_redirects=False)
+    url = "/auth/google/login" + (f"?next={next_path}" if next_path else "")
+    r = client.get(url, follow_redirects=False)
     assert r.status_code in (302, 307)
     loc = r.headers["location"]
     assert loc.startswith("https://accounts.google.com/o/oauth2/v2/auth")
@@ -93,6 +94,25 @@ def test_callback_allowed_email_signs_in(client, monkeypatch):
     # ...and logging out drops it again.
     client.post("/auth/logout")
     assert client.get("/todos").status_code == 401
+
+
+def test_callback_returns_to_next_page(client, monkeypatch):
+    """Signing in from /admin lands back on /admin, not the default dashboard."""
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "tom@example.com")
+    state = _login_state(client, next_path="/admin")
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 303 and cb.headers["location"] == "/admin"
+    assert "prefrontal_session" in cb.headers.get("set-cookie", "")
+
+
+def test_callback_ignores_offsite_next(client, monkeypatch):
+    """A crafted external ?next= can't turn sign-in into an open redirect."""
+    monkeypatch.setattr(oauth, "_exchange_code_for_email",
+                        lambda code, settings, client=None: "tom@example.com")
+    state = _login_state(client, next_path="https://evil.example")
+    cb = client.get(f"/auth/google/callback?code=abc&state={state}", follow_redirects=False)
+    assert cb.status_code == 303 and cb.headers["location"] == "/dashboard"
 
 
 def test_callback_resolves_email_from_user_record(client, store, monkeypatch):
@@ -149,9 +169,35 @@ def test_token_header_still_works_alongside_cookie(client):
 
 
 def test_signed_state_no_cookie_needed():
-    """CSRF state is a signed token (survives the cross-site redirect; no cookie)."""
+    """CSRF state is a signed token (survives the cross-site redirect; no cookie).
+
+    A valid state yields its carried ``next`` path (``""`` when none); only a
+    forged/expired/wrong-secret state returns ``None``.
+    """
     st = oauth.sign_state(SECRET)
-    assert oauth.verify_state(st, SECRET) is True
-    assert oauth.verify_state("forged", SECRET) is False
-    assert oauth.verify_state(oauth.sign_state(SECRET, now=0), SECRET) is False  # expired
-    assert oauth.verify_state(st, "other-secret") is False
+    assert oauth.verify_state(st, SECRET) == ""
+    assert oauth.verify_state("forged", SECRET) is None
+    assert oauth.verify_state(oauth.sign_state(SECRET, now=0), SECRET) is None  # expired
+    assert oauth.verify_state(st, "other-secret") is None
+
+
+def test_state_round_trips_next_path():
+    """The signed state carries a ``next`` destination back intact."""
+    st = oauth.sign_state(SECRET, "/admin")
+    assert oauth.verify_state(st, SECRET) == "/admin"
+    # Two states are distinct (random nonce) even for the same next path.
+    assert oauth.sign_state(SECRET, "/admin") != oauth.sign_state(SECRET, "/admin")
+
+
+def test_safe_next_clamps_open_redirects():
+    """Only same-origin absolute paths survive; everything else falls to default."""
+    assert oauth.safe_next("/admin") == "/admin"
+    assert oauth.safe_next("/day/board") == "/day/board"
+    assert oauth.safe_next("") == "/dashboard"          # default
+    assert oauth.safe_next("//evil.com") == "/dashboard"  # protocol-relative
+    assert oauth.safe_next("/\\evil.com") == "/dashboard"  # backslash trick
+    assert oauth.safe_next("https://evil.com") == "/dashboard"  # absolute URL
+    assert oauth.safe_next("relative") == "/dashboard"  # not absolute
+    assert oauth.safe_next("/ok\r\nSet-Cookie: x") == "/dashboard"  # header injection
+    assert oauth.safe_next("/x", default="/y") == "/x"
+    assert oauth.safe_next("bad", default="/y") == "/y"
