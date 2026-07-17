@@ -50,8 +50,11 @@ VACATION_SINCE_KEY = "vacation_since"
 #: confirmed location suggestion). Recorded for explainability, not gating.
 VACATION_SOURCE_KEY = "vacation_source"
 
-#: How :func:`resume_on_return` records the auto-lift, so the source is legible
-#: after the fact even though the state itself is cleared.
+#: The ``source`` values :func:`activate` stamps on :data:`VACATION_SOURCE_KEY`.
+#: ``manual`` is a user toggle (CLI / ``POST /vacation``); ``auto`` is reserved for
+#: a future confirmed location/calendar *entry* suggestion. Note the *exit* is not
+#: sourced — :func:`resume_on_return` calls :func:`deactivate`, which clears the
+#: state to a clean slate rather than recording who lifted it.
 SOURCE_MANUAL = "manual"
 SOURCE_AUTO = "auto"
 

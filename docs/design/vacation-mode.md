@@ -40,7 +40,7 @@ Reading each relevant commandment (see
 vacation mode before you leave" *is* a time-based prospective-memory task — the
 exact channel the commandment calls "the weakest," and the exact deficit the
 whole product exists to externalize. Leaving your home radius is a **cue**, and
-the system already detects it (`prefrontal/trips.py` `process_location_ping`
+the system already detects it (`prefrontal/trips.py` `process_location`
 emits `depart`/`return` edges across `home_radius_m`, with dwell/waypoint
 tracking). The commandment doesn't merely *permit* location detection here — it
 *mandates* cue over "ask the human to remember."

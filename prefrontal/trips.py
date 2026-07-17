@@ -331,6 +331,8 @@ def process_location(
         "at_home": at_home,
         "episode_id": None,
         "waypoint_id": None,
+        # Set True only on a return edge that lifted an active vacation (see the
+        # ``at_home`` branch and :func:`prefrontal.vacation.resume_on_return`).
         "vacation_resumed": False,
     }
 
