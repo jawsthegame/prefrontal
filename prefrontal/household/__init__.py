@@ -728,7 +728,7 @@ def run_star_prompt_sweep(
     Returns:
         ``{"sent": [{agreement_id, title, question, notified}], "checked_at": "%Y-%m-%d %H:%M"}``.
     """
-    from prefrontal.integrations.delivery import (
+    from prefrontal.delivery import (
         deliver_to_household,
         household_prompt_notice,
     )
@@ -785,7 +785,7 @@ def run_checkin_sweep(
         "reason": None | "not_shared" | "not_due"}`` — ``notified`` is populated
         only when ``sent`` is true.
     """
-    from prefrontal.integrations.delivery import (
+    from prefrontal.delivery import (
         deliver_to_household,
         household_checkin_notice,
     )
@@ -839,7 +839,7 @@ def run_digest_sweep(
         ``{"sent": [{handle, count, delivery}], "checked_at": <TS_FMT>,
         "reason": None | "not_shared" | "disabled"}``.
     """
-    from prefrontal.integrations.delivery import (
+    from prefrontal.delivery import (
         deliver_to_member,
         household_digest_notice,
     )
@@ -906,7 +906,7 @@ def run_trip_checkin_sweep(
         ``{"sent": [{handle, trip_id, delivery}], "checked_at": <TS_FMT>,
         "reason": None | "not_shared" | "disabled"}``.
     """
-    from prefrontal.integrations.delivery import (
+    from prefrontal.delivery import (
         deliver_to_member,
         household_trip_checkin_notice,
     )
@@ -980,7 +980,7 @@ def relay_to_coparents(
         ``{"sent": [handle, ...], "reason": None | "no_coparent"}`` — never raises;
         a solo household (no other member) is a friendly no-op.
     """
-    from prefrontal.integrations.delivery import deliver_to_member, household_notice
+    from prefrontal.delivery import deliver_to_member, household_notice
 
     hid = store.household_id_or_none()
     others = [

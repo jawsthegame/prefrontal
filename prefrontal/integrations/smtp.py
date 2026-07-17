@@ -2,7 +2,7 @@
 
 A tiny, credential-free-at-construction transport in the same shape as the other
 integration clients (:class:`~prefrontal.integrations.sms.TwilioSmsClient`,
-:class:`~prefrontal.integrations.delivery.NtfyClient`): the SMTP account
+:class:`~prefrontal.delivery.NtfyClient`): the SMTP account
 credentials ride in per :meth:`send`, so one client serves any user's outbox.
 Local-first, like every other integration client — with nothing configured it
 runs in **no-op/log mode** and nothing leaves the host, and transport errors are

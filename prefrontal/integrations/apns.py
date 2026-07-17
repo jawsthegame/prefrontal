@@ -3,7 +3,7 @@
 Pure, dependency-light builders so they're unit-testable without touching the
 network: :func:`build_apns_jwt` (the ES256 provider token) and
 :func:`build_apns_payload` (the ``aps`` dictionary). The HTTP sender that uses
-them lives in :mod:`prefrontal.integrations.delivery` (``ApnsClient``), next to
+them lives in :mod:`prefrontal.delivery` (``ApnsClient``), next to
 the other transports.
 
 Token-based auth (a ``.p8`` key) rather than certificates: the provider JWT is

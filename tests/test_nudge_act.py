@@ -144,7 +144,7 @@ def test_act_pushes_confirmation_feedback(client, store, monkeypatch):
     An ntfy ``http`` button fires a background GET — the HTML reply is never seen —
     so ``/nudge/act`` also publishes the confirmation to the tapper's own route.
     """
-    import prefrontal.integrations.delivery as delivery
+    import prefrontal.delivery as delivery
 
     sent: list[dict] = []
 

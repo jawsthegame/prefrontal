@@ -19,6 +19,16 @@ from prefrontal.classify import classify_kind
 from prefrontal.clock import local_datetime
 from prefrontal.commitments import sync_calendar
 from prefrontal.config import Settings
+from prefrontal.delivery import (
+    DeliveryClient,
+    deliver_to_household,
+    deliver_to_member,
+    household_checkin_notice,
+    household_digest_notice,
+    household_notice,
+    household_prompt_notice,
+    household_trip_checkin_notice,
+)
 from prefrontal.household import (
     balance_view,
     build_sheet,
@@ -42,16 +52,6 @@ from prefrontal.household import (
     week_key,
 )
 from prefrontal.impact import utcnow
-from prefrontal.integrations.delivery import (
-    DeliveryClient,
-    deliver_to_household,
-    deliver_to_member,
-    household_checkin_notice,
-    household_digest_notice,
-    household_notice,
-    household_prompt_notice,
-    household_trip_checkin_notice,
-)
 from prefrontal.memory.db import connect, init_db
 from prefrontal.memory.migrate import backfill_added_columns
 from prefrontal.memory.store import MemoryStore, provision_user

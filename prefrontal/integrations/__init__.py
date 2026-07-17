@@ -1,19 +1,19 @@
-"""Outbound and inbound integrations with external systems.
+"""Outbound and inbound integrations with external systems — the transport leaf.
 
 Houses the n8n workflow-orchestration integration
 (:mod:`prefrontal.integrations.n8n`), the local Ollama inference client
 (:mod:`prefrontal.integrations.ollama`), the optional Claude/Anthropic provider
 (:mod:`prefrontal.integrations.anthropic`) used by the dashboard assistant, and
-the native delivery client (:mod:`prefrontal.integrations.delivery`) that
-publishes coaching decisions via native APNs push / a Twilio voice call / local
-TTS (with a dev-only ntfy shim for free-signing builds).
+the low-level transport wire clients (APNs :mod:`~prefrontal.integrations.apns`,
+Twilio/SMS :mod:`~prefrontal.integrations.sms`, SMTP :mod:`~prefrontal.integrations.smtp`).
 
-The delivery client is intentionally **not** re-exported here: it reaches up into
-:mod:`prefrontal.webhooks` and :mod:`prefrontal.coaching`, whereas this package is
-imported by low-level modules (e.g. :mod:`prefrontal.todos` pulls
-:class:`~prefrontal.integrations.ollama.OllamaError`), so eager re-export would
-create an import cycle. Import it directly: ``from prefrontal.integrations.delivery
-import DeliveryClient``.
+This package is a **leaf**: it's imported by low-level modules (e.g.
+:mod:`prefrontal.todos` pulls :class:`~prefrontal.integrations.ollama.OllamaError`),
+so nothing here may import up into the domain or web layers. The native delivery
+*client* that composes these transports with a coaching :class:`~prefrontal.coaching.Decision`
+and the notification button builder therefore lives one layer up, at
+:mod:`prefrontal.delivery` — import it directly from there
+(``from prefrontal.delivery import DeliveryClient``).
 """
 
 from typing import Protocol

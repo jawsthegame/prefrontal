@@ -54,11 +54,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from xml.sax.saxutils import escape as _xml_escape
 
 import httpx
 
+from prefrontal.coaching import Cue, Decision
 from prefrontal.config import Settings, get_settings
 from prefrontal.integrations.apns import build_apns_jwt, build_apns_payload
 from prefrontal.integrations.sms import _API_ROOT as _TWILIO_API_ROOT
@@ -69,10 +70,6 @@ from prefrontal.webhooks.notify import (
     nudge_actions,
     trip_label_actions,
 )
-
-if TYPE_CHECKING:  # only a type annotation — importing it at runtime cycles via
-    # coaching → scheduling → todos → integrations (this package).
-    from prefrontal.coaching import Decision
 
 logger = get_logger(__name__)
 
@@ -699,11 +696,8 @@ def household_notice(message: str, *, channel: str = "push") -> Decision:
     Reuses the coaching cue/decision shape so :meth:`DeliveryClient.deliver` can
     route it, but the cue's ``context_key`` is unmapped (see ``_CONTEXT_KIND``),
     so it delivers as a plain notification with no one-tap action buttons — which
-    is exactly right for a "goal reached!" congratulation. ``coaching`` is
-    imported lazily to keep this transport module free of the cycle its
-    ``TYPE_CHECKING`` import already avoids.
+    is exactly right for a "goal reached!" congratulation.
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",
@@ -726,7 +720,6 @@ def household_prompt_notice(
     the signed ⭐ Yes / Not today buttons (built per recipient in ``notify.py``) —
     tapping ⭐ Yes hits ``/nudge/act`` and awards a star with no app switch.
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",
@@ -749,7 +742,6 @@ def household_checkin_notice(message: str, *, channel: str = "push") -> Decision
     it rides a synthetic ``target`` like the self-care checks; the tap resolves the
     week at ``/nudge/act`` time.
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",
@@ -770,7 +762,6 @@ def household_digest_notice(message: str, *, channel: str = "push") -> Decision:
     signed *Caught up 👍* button (``notify.py``); tapping it marks the sheet seen
     at ``/nudge/act`` so the parent isn't re-nudged about the same changes.
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",
@@ -796,7 +787,6 @@ def household_chore_notice(
     reminder, the owner's still-not-done nudge, and the other parent's heads-up;
     only the ``message`` differs (see :mod:`prefrontal.household`).
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",
@@ -823,7 +813,6 @@ def household_trip_checkin_notice(
     switch (see :func:`prefrontal.nudges.apply_nudge_action`). The trip id rides the
     signed tap token as the target; the relay reads the tapping user for the "who".
     """
-    from prefrontal.coaching import Cue, Decision  # lazy: avoid an import cycle
 
     cue = Cue(
         module="household",

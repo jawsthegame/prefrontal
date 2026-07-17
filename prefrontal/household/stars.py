@@ -180,7 +180,7 @@ def award_stars_and_notify(
     if goals:
         # Lazy import: delivery pulls in webhooks.notify, which would re-enter the
         # partially-initialized webhooks package if imported at module load.
-        from prefrontal.integrations.delivery import (
+        from prefrontal.delivery import (
             deliver_to_household,
             household_notice,
         )

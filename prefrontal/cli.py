@@ -336,7 +336,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 return 1
             print(f"Disabled '{args.handle}'.")
         elif args.user_action == "route":
-            from prefrontal.integrations.delivery import resolve_route
+            from prefrontal.delivery import resolve_route
 
             scoped = _resolve_user_store(store, args.handle)  # SystemExits if unknown
             # Only the flags actually passed are written; an empty string clears a
@@ -369,7 +369,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
                     f"Verify with `prefrontal notify --user {args.handle}`."
                 )
         elif args.user_action == "connect-link":
-            from prefrontal.integrations.delivery import resolve_route
+            from prefrontal.delivery import resolve_route
 
             user = store.get_user(args.handle)
             if user is None:
@@ -1789,13 +1789,13 @@ def _deliver_briefing(unscoped: MemoryStore, args: argparse.Namespace, settings)
 
     A plain notification (no one-tap buttons) on the ``push`` channel — the
     briefing is the digest, so unlike an ``ambient`` cue it actually sends. Uses
-    the same per-user :func:`~prefrontal.integrations.delivery.resolve_route` +
-    :class:`~prefrontal.integrations.delivery.DeliveryClient` the coaching tick
+    the same per-user :func:`~prefrontal.delivery.resolve_route` +
+    :class:`~prefrontal.delivery.DeliveryClient` the coaching tick
     uses, so a user with no route of their own is skipped, never delivered to the
     operator's device (no cross-account leak on a multi-user box).
     """
     from prefrontal.coaching import Cue, Decision
-    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+    from prefrontal.delivery import DeliveryClient, resolve_route
 
     client = DeliveryClient.from_settings(settings)
     any_sent = False
@@ -2019,7 +2019,7 @@ def _deliver_decisions(unscoped, store, decisions, settings) -> None:
     defaults) and delivers each decision on its chosen channel. Signs the one-tap
     action buttons with the user's handle so a background tap authenticates.
     """
-    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+    from prefrontal.delivery import DeliveryClient, resolve_route
 
     handle = next(
         (u["handle"] for u in unscoped.list_users() if u["id"] == store.user_id), ""
@@ -2049,7 +2049,7 @@ def _deliver_panic(unscoped, store, settings, now) -> None:
     an n8n poll. A no-op when nothing tips into overwhelm.
     """
     from prefrontal.coaching import Cue, Decision, in_quiet_hours
-    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+    from prefrontal.delivery import DeliveryClient, resolve_route
     from prefrontal.panic import evaluate_panic_check
     from prefrontal.webhooks.notify import nudge_actions, panic_actions
 
@@ -2095,8 +2095,8 @@ def _cmd_notify(args: argparse.Namespace) -> int:
     """Send a test notification through the user's configured delivery route.
 
     Exercises the real delivery stack end-to-end — the same
-    :class:`~prefrontal.integrations.delivery.DeliveryClient` and per-user
-    :func:`~prefrontal.integrations.delivery.resolve_route` the coaching tick uses
+    :class:`~prefrontal.delivery.DeliveryClient` and per-user
+    :func:`~prefrontal.delivery.resolve_route` the coaching tick uses
     — so it confirms native APNs push is wired up (device token + ``APNS_*`` signing
     creds) before you rely on a nudge landing. Prints where it routed and the
     transport's result. It sends a plain push (no action buttons), so the
@@ -2111,7 +2111,7 @@ def _cmd_notify(args: argparse.Namespace) -> int:
         transport configured, or the transport returned an error).
     """
     from prefrontal.coaching import Cue, Decision
-    from prefrontal.integrations.delivery import DeliveryClient, resolve_route
+    from prefrontal.delivery import DeliveryClient, resolve_route
 
     settings = get_settings()
     db_path = args.db_path or settings.db_path
