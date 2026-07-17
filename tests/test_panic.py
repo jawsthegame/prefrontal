@@ -237,13 +237,15 @@ def test_midnight_timestamped_deadline_today_is_not_overdue(store, noon):
 
 def test_mail_urgency_splits_across_soon_and_piling_up(store, noon):
     """Urgent action-mail is 'soon'; high is 'piling_up'; each tagged by inbox."""
+    # Action-mail carries an open linked todo (as real ingest creates); that open
+    # loop is what keeps it on the needs-action list panic scores from.
     store.record_mail(
         account="work", message_id="m1", sender_name="Boss", subject="Contract???",
-        needs_action=True, urgency="urgent",
+        needs_action=True, urgency="urgent", todo_id=store.add_todo("Reply to Boss"),
     )
     store.record_mail(
         account="home", message_id="m2", sender_name="School", subject="Form due",
-        needs_action=True, urgency="high",
+        needs_action=True, urgency="high", todo_id=store.add_todo("Reply to School"),
     )
     plan = build_panic(store, now=noon)
     assert any(p.kind == "mail" and p.source == "work" for p in plan.soon)
@@ -255,6 +257,7 @@ def test_first_step_prefers_a_clocked_item_over_a_smoulder(store, noon):
     store.record_mail(
         account="home", message_id="m2", sender_name="School", subject="Form",
         needs_action=True, urgency="high",  # piling_up only
+        todo_id=store.add_todo("Reply to School"),
     )
     store.add_todo("Reply to landlord", deadline=noon.strftime("%Y-%m-%d"))  # soon
     plan = build_panic(store, now=noon)
@@ -272,7 +275,7 @@ def test_render_no_hard_clock(store, noon):
     """Only piling-up items → a calmer 'nothing has a hard clock' grounding."""
     store.record_mail(
         account="home", message_id="m2", sender_name="School", subject="Form",
-        needs_action=True, urgency="high",
+        needs_action=True, urgency="high", todo_id=store.add_todo("Reply to School"),
     )
     text = render_panic(build_panic(store, now=noon))
     assert "nothing has a hard clock" in text.lower()

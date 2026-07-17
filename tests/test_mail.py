@@ -232,6 +232,19 @@ def test_heuristic_newsletter_is_no_action():
     assert v.category == "newsletter"
 
 
+def test_heuristic_automated_alert_is_no_action():
+    """The down-model fallback also treats monitoring/alert mail as no-action."""
+    raw = _msg(
+        message_id="<dd-h-1>",
+        **{"from": "alerts@datadoghq.com"},
+        subject="[ALERT] High CPU on api-prod",
+        body="Monitor triggered. Please investigate.",
+    )
+    v = _heuristic_triage(normalize_message(raw, account="p", policy="full"))
+    assert v.needs_action is False
+    assert v.category == "notification"
+
+
 def test_heuristic_urgent_subject_bumps_urgency():
     raw = _msg(message_id="<u-1>", subject="URGENT: can you approve this today?")
     v = _heuristic_triage(normalize_message(raw, account="p", policy="full"))
@@ -843,6 +856,24 @@ def test_suppress_reason_blocks_no_reply_style_senders(sender_email):
     )
 
 
+@pytest.mark.parametrize(
+    "sender_email",
+    [
+        "alerts@datadoghq.com",
+        "alarm@example.com",
+        "monitoring@corp.example.com",
+        "billing@pagerduty.com",
+        "ops@my-stack.amazonaws.com",
+    ],
+)
+def test_suppress_reason_blocks_automated_alert_senders(sender_email):
+    """Automated alert/monitoring senders (AWS, Datadog, …) never spawn a todo."""
+    verdict = MailTriage(needs_action=True, category="reply")
+    assert suppress_todo_reason(_item(sender_email=sender_email), verdict) == (
+        "automated-sender"
+    )
+
+
 @pytest.mark.parametrize("category", ["notification", "newsletter", "fyi"])
 def test_suppress_reason_blocks_informational_categories(category):
     """Informational categories are recorded but don't become open loops."""
@@ -871,7 +902,8 @@ def test_suppress_reason_blocks_denylisted_sender():
 
 
 def test_ingest_suppresses_todo_for_no_reply_sender_but_keeps_record(store):
-    """A no-reply sender the model flags is recorded + needs_action, no todo."""
+    """A no-reply sender the model flags is recorded + needs_action, no todo —
+    and no longer clutters the needs-action list (which tracks open loops)."""
     client = _ollama_returning(
         {"needs_action": True, "urgency": "normal", "category": "reply", "summary": "x"}
     )
@@ -885,10 +917,26 @@ def test_ingest_suppresses_todo_for_no_reply_sender_but_keeps_record(store):
     assert summary.todos_suppressed == 1
     assert store.open_todos() == []
 
-    # Mail-record-only: still visible in /mail's needs-action view, todo unset.
-    action_items = store.mail_needing_action()
-    assert len(action_items) == 1
-    assert action_items[0]["todo_id"] is None
+    # No open todo → not in the needs-action list, but still in the recent feed.
+    assert store.mail_needing_action() == []
+    (recorded,) = store.recent_mail()
+    assert recorded["needs_action"] == 1 and recorded["todo_id"] is None
+
+
+def test_ingest_automated_alert_is_recorded_but_not_actionable(store):
+    """An AWS/Datadog-style alert the model flags stays out of the needs-action
+    list even though it's recorded — the flood the filter targets."""
+    client = _ollama_returning(
+        {"needs_action": True, "urgency": "high", "category": "reply", "summary": "x"}
+    )
+    msg = _msg(message_id="<dd-1@x>", **{"from": "Datadog <alerts@datadoghq.com>"})
+    summary = ingest_messages(store, [msg], account="personal", client=client)
+
+    assert summary.todos_created == 0 and summary.todos_suppressed == 1
+    assert store.open_todos() == []
+    assert store.mail_needing_action() == []  # filtered from the action list
+    (recorded,) = store.recent_mail()
+    assert recorded["needs_action"] == 1  # still recorded for the feed
 
 
 def test_ingest_honors_denylisted_senders(store):

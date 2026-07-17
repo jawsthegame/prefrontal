@@ -163,10 +163,12 @@ def test_blocker_past_due_reads_as_someone_waiting(store, noon):
 
 
 def test_urgent_mail_surfaces_when_no_hard_clock(store, noon):
-    """Urgent action-mail is the next thing when nothing has a harder clock."""
+    """Urgent action-mail (with its open todo) is the next thing when nothing
+    has a harder clock."""
+    todo_id = store.add_todo("Reply to Boss: Contract???")
     store.record_mail(
         account="work", message_id="m1", sender_name="Boss", subject="Contract???",
-        needs_action=True, urgency="urgent",
+        needs_action=True, urgency="urgent", todo_id=todo_id,
     )
     thing = build_next_thing(store, now=noon)
     assert thing.kind == "mail"
