@@ -8,26 +8,34 @@ on returning home, the HTTP surface (``GET`` / ``POST /vacation`` and the
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from prefrontal.cli import main
-from prefrontal.coaching import Cue, build_context, suppressed
+from prefrontal.coaching import CoachContext, Cue, build_context, suppressed
 from prefrontal.config import Settings
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore
+from prefrontal.modules.registry import get as get_module
+from prefrontal.nudges import apply_nudge_action
 from prefrontal.trips import process_location
 from prefrontal.vacation import (
     activate,
     deactivate,
     is_on_vacation,
     resume_on_return,
+    should_suggest_vacation,
+    suggest_threshold_minutes,
     vacation_status,
 )
 from prefrontal.webhooks.app import create_app
 from tests.conftest import scoped_default
+
+
+def _minutes_ago(minutes: float) -> str:
+    return (datetime.utcnow() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 HOME = (40.0000, -73.0000)
 NEAR = (40.0004, -73.0004)   # ~55 m — inside the default 150 m radius
@@ -207,6 +215,98 @@ def test_location_endpoint_echoes_vacation_resume(client):
     assert ret["trip"]["event"] == "return"
     assert ret["vacation_resumed"] is True
     assert client.get("/vacation", headers=_auth()).json()["active"] is False
+
+
+# -- entry suggestion: pure logic --------------------------------------------
+
+
+def test_suggest_threshold_default_override_and_floor(store):
+    assert suggest_threshold_minutes(store) == 2 * 1440
+    store.set_state("vacation_suggest_after_nights", "3")
+    assert suggest_threshold_minutes(store) == 3 * 1440
+    store.set_state("vacation_suggest_after_nights", "0")  # floored to one night
+    assert suggest_threshold_minutes(store) == 1440
+
+
+def test_should_suggest_vacation_logic(store):
+    # Below the 2-night threshold → no.
+    assert should_suggest_vacation(store, away_minutes=1440, already_asked=False) is False
+    # At/over the threshold → yes.
+    assert should_suggest_vacation(store, away_minutes=2 * 1440, already_asked=False) is True
+    # Already asked this absence → no re-nag.
+    assert should_suggest_vacation(store, away_minutes=5 * 1440, already_asked=True) is False
+    # Already on vacation → nothing to suggest.
+    activate(store, now=NOON)
+    assert should_suggest_vacation(store, away_minutes=5 * 1440, already_asked=False) is False
+
+
+# -- entry suggestion: the trip_tracking cue ---------------------------------
+
+
+def _vacation_cues(store):
+    module = get_module("trip_tracking")
+    ctx = CoachContext(now=datetime.utcnow())
+    return [c for c in module.evaluate(store, ctx) if c.context_key == "vacation_suggest"]
+
+
+def test_module_suggests_vacation_after_multiday_absence(store):
+    store.set_home(*HOME)
+    store.open_trip(departed_at=_minutes_ago(3 * 1440))  # away 3 days
+    cues = _vacation_cues(store)
+    assert len(cues) == 1
+    assert cues[0].ref["trip_id"] == store.active_trip()["id"]
+    assert cues[0].intervention == "vacation_suggest"
+    assert "🏝️" in cues[0].text
+
+
+def test_module_no_suggest_for_short_trip(store):
+    store.set_home(*HOME)
+    store.open_trip(departed_at=_minutes_ago(60))  # an hour out
+    assert _vacation_cues(store) == []
+
+
+def test_module_no_suggest_when_already_on_vacation(store):
+    store.set_home(*HOME)
+    store.open_trip(departed_at=_minutes_ago(3 * 1440))
+    activate(store, now=NOON)
+    assert _vacation_cues(store) == []
+
+
+def test_module_suggests_once_per_absence(store):
+    """Once the ask has fired for a trip, the fire-once guard silences re-asks."""
+    store.set_home(*HOME)
+    trip_id = store.open_trip(departed_at=_minutes_ago(3 * 1440))
+    assert len(_vacation_cues(store)) == 1
+    # The engine stamps coach_fired:<dedup_key> when the cue fires.
+    store.set_state(f"coach_fired:vacation_suggest:{trip_id}", _minutes_ago(1))
+    assert _vacation_cues(store) == []
+
+
+# -- entry suggestion: the one-tap confirm -----------------------------------
+
+
+def test_vacation_confirm_turns_on_source_auto(store):
+    store.set_home(*HOME)
+    process_location(store, *FAR)  # open a trip → out
+    trip_id = store.active_trip()["id"]
+    user = {"id": 1, "handle": "tester", "display_name": "Tester"}
+    headline = apply_nudge_action(
+        store, "vacation_confirm", trip_id, user=user, settings=Settings()
+    )
+    assert "Vacation mode on" in headline
+    assert is_on_vacation(store) is True
+    assert vacation_status(store)["source"] == "auto"
+
+
+def test_vacation_confirm_when_home_is_noop(store):
+    """A stale tap after returning home doesn't mute the assistant."""
+    store.set_home(*HOME)  # no open trip
+    user = {"id": 1, "handle": "tester", "display_name": "Tester"}
+    headline = apply_nudge_action(
+        store, "vacation_confirm", 999, user=user, settings=Settings()
+    )
+    assert "back home" in headline
+    assert is_on_vacation(store) is False
 
 
 # -- CLI ---------------------------------------------------------------------

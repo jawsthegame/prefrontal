@@ -62,6 +62,7 @@ _CUE_ACTION_KIND = {
     "movement": ("movement", "target"),
     # "trip" is handled separately (per-user quick-file domains) — see _actions.
     "away_proposal": ("away", "trip_id"),
+    "vacation_suggest": ("vacation", "trip_id"),
 }
 
 
