@@ -45,7 +45,7 @@ The app runs two delivery/ingestion realities side by side:
 |---|---|---|
 | **Auth** | `X-Prefrontal-Token` via `APIClient` off the App Group (`ios/Prefrontal/Networking/APIClient.swift`) | same token, pasted into each shortcut |
 | **Config** | `prefrontal://connect?url=…&token=…` QR/deep-link → `AppConfig` (`ConnectPayload.swift`) | manual URL + token per shortcut |
-| **Push** | native APNs → `POST /route/apns-token` (the product transport; `PushNotifications.swift`, `integrations/delivery.py`) | ntfy DEV-ONLY shim (`PREFRONTAL_NTFY_DEV=1`) |
+| **Push** | native APNs → `POST /route/apns-token` (the product transport; `PushNotifications.swift`, `delivery.py`) | ntfy DEV-ONLY shim (`PREFRONTAL_NTFY_DEV=1`) |
 | **Push actions** | `UNNotificationCategory`/`UNNotificationAction` mirroring server buttons, fire signed `/nudge/act` (`PushNotifications.swift`) | ntfy inline buttons |
 | **Leave-home** | `CLCircularRegion` geofence → `/webhooks/departure/left` + `/webhooks/location` (`Location/LocationMonitor.swift`) | "Leaving Home" automation |
 | **Sessions** | Live Activities for outing/focus/task (`Activities/LiveActivityManager.swift`) | — |
@@ -247,7 +247,7 @@ reference, not the primary setup.
 ## What explicitly does *not* migrate
 
 - **n8n Twilio voice escalation** — server-side, already native to the delivery
-  layer (`integrations/delivery.py`); unrelated to Shortcuts.
+  layer (`delivery.py`); unrelated to Shortcuts.
 - **Home Assistant continuous location (Tier 2)** — an intentionally separate,
   higher-fidelity source; out of scope.
 - **`deploy/ios-shortcut.md`** — retained as the free-signing fallback catalog.
