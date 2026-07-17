@@ -8,6 +8,10 @@ import UIKit
 /// the CLI's `prefrontal user connect-link --qr` prints on the paper setup
 /// sheet, but on-screen. iOS Camera recognises the custom scheme in the code.
 enum QRCode {
+    /// Shared render context — a `CIContext` is relatively expensive to build, and
+    /// this helper can be re-invoked on SwiftUI re-renders, so reuse one.
+    private static let context = CIContext()
+
     /// A crisp opaque QR for `string`, or `nil` if it can't be encoded (empty, or
     /// too much data for a single symbol). The CoreImage generator emits a tiny
     /// 1-module-per-pixel image; we scale it up with nearest-neighbour so the
@@ -19,7 +23,6 @@ enum QRCode {
         filter.correctionLevel = "M"  // ~15% recovery — a good balance for a screen scan
         guard let output = filter.outputImage else { return nil }
         let scaled = output.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let context = CIContext()
         guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
         return UIImage(cgImage: cg)
     }

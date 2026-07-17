@@ -615,20 +615,29 @@ extension APIClient {
 
     /// Mint a fresh token for `handle` (old devices stop working). Shown once.
     func adminRotateUser(_ handle: String) async throws -> AdminUserCreated {
-        try await post("admin/users/\(handle)/rotate", as: AdminUserCreated.self)
+        try await post("admin/users/\(Self.seg(handle))/rotate", as: AdminUserCreated.self)
     }
 
     /// Disable a user (their token stops resolving). Idempotent.
     func adminDisableUser(_ handle: String) async throws {
-        try await post("admin/users/\(handle)/disable")
+        try await post("admin/users/\(Self.seg(handle))/disable")
     }
     /// Re-enable a disabled user (their token resolves again). Idempotent.
     func adminEnableUser(_ handle: String) async throws {
-        try await post("admin/users/\(handle)/enable")
+        try await post("admin/users/\(Self.seg(handle))/enable")
     }
     /// Set (or, with a blank string, clear) a user's Google sign-in email.
     func adminSetUserEmail(_ handle: String, email: String) async throws {
-        try await post("admin/users/\(handle)/email", json: ["email": email])
+        try await post("admin/users/\(Self.seg(handle))/email", json: ["email": email])
+    }
+
+    /// Percent-encode an interpolated value as a **single** path segment, so a
+    /// reserved character in a handle (notably `/`) can't reshape the request
+    /// path. `.urlPathAllowed` leaves `/` intact, so drop it from the allowed set.
+    private static func seg(_ value: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     // Households — two co-parents in one household share its sheet + charts.
