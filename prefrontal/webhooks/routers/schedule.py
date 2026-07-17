@@ -157,7 +157,7 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "schedule" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-    ollama_client = services.ollama
+    ollama_client = services.provider.ollama
     _run_geocode = services.run_geocode
 
     @router.post("/webhooks/calendar/sync", tags=["schedule"])

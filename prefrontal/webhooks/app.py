@@ -212,7 +212,6 @@ def create_app(
     services = RouterServices(
         settings=resolved_settings,
         n8n=n8n,
-        ollama=ollama_client,
         summarizer=summarizer_client,
         anthropic=anthropic_client,
         provider=provider,

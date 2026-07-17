@@ -133,7 +133,7 @@ def build_router(services: RouterServices) -> APIRouter:
     """Build the "todos" APIRouter (shared services injected by create_app)."""
     router = APIRouter()
     resolved_settings = services.settings
-    ollama_client = services.ollama
+    ollama_client = services.provider.ollama
     # Delegation prep writes a multi-sentence brief + draft messages — a heavier
     # generation than the snappy window/title inference, so it uses the longer-
     # timeout summarizer client (like the profile/briefing paths) rather than the

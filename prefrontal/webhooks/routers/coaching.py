@@ -104,7 +104,7 @@ def build_router(services: RouterServices) -> APIRouter:
         result = run_coaching_tick(
             memory,
             settings=resolved_settings,
-            ollama=services.ollama,
+            ollama=services.provider.ollama,
             current_lat=body.get("current_lat"),
             current_lon=body.get("current_lon"),
             display_name=ctx.user.get("display_name") or "",

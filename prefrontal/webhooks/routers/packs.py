@@ -39,7 +39,7 @@ def build_router(services: RouterServices) -> APIRouter:
     # snappy in-loop inference: window/title/kind) stays local by design, and which
     # catches only OllamaError — handing it an Anthropic client would let an
     # AnthropicError escape as a 500 instead of falling back to the heuristic.
-    decompose_client = services.ollama
+    decompose_client = services.provider.ollama
 
     @router.get("/packs/situations", tags=["packs"])
     def list_situations(

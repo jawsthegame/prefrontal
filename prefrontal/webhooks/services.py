@@ -29,19 +29,23 @@ class RouterServices:
     Attributes:
         settings: The resolved :class:`~prefrontal.config.Settings`.
         n8n: Outbound n8n client.
-        ollama: Ollama client for the snappy window/title inference calls.
-        summarizer: Ollama client with the longer generation timeout (profile).
+        summarizer: Ollama client with the longer generation timeout, for the
+            heavier generations (profile summary, delegation-prep briefs). Kept
+            separate from the snappy inference client because of its timeout;
+            passed as the explicit local ``fallback`` for the ``summarizer`` agent.
         anthropic: Optional Claude client for the dashboard assistant.
-        provider: Per-agent backend selector (Claude vs local). Routers resolve
-            the client for their agent via ``provider.client("<agent>")`` so the
-            Anthropic path is selectable per agent, not hard-wired.
+        provider: Per-agent backend selector (Claude vs local). Routers resolve a
+            selectable agent's client via ``provider.client("<agent>")``; a path
+            that is deliberately local (todo/mail decompose, clarify, calendar
+            classify, …) uses the local client directly via ``provider.ollama``.
+            Either way the local inference client is reached through the provider,
+            not a duplicate bundle field.
         geocoder: Forward geocoder (usually reached only via ``run_geocode``).
         run_geocode: Best-effort commitment-destination enrichment closure.
     """
 
     settings: Settings
     n8n: N8nClient
-    ollama: OllamaClient
     summarizer: OllamaClient
     anthropic: AnthropicClient
     provider: ProviderResolver
