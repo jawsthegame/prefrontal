@@ -73,6 +73,9 @@ _NUDGE_BUTTONS: dict[str, tuple[tuple[str, str], ...]] = {
     # Multi-day-absence proposal — one tap marks the member away, so their chores
     # reassign to the present co-parent for the trip (target rides the trip id).
     "away": (("away_confirm", "✅ Mark me away"),),
+    # Vacation entry suggestion — one tap eases off the non-urgent nudges until you
+    # return (target rides the trip id; ignoring it is a no-op, never a re-nag).
+    "vacation": (("vacation_confirm", "🏝️ Ease off"),),
     # Trip check-in — while a parent is out, one tap posts a status to the other
     # co-parent (ntfy caps at 3). Target rides the trip id; the tap relays a notice.
     "trip_checkin": (

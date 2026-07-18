@@ -145,7 +145,52 @@ class ClosedLoopTripModule(Module):
 
         cues.extend(self._focus_balance_cues(store, ctx))
         cues.extend(self._away_proposal_cues(store, ctx))
+        cues.extend(self._vacation_suggest_cues(store, ctx))
         return cues
+
+    def _vacation_suggest_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
+        """At most one "away a while — ease off the nudges?" vacation suggestion.
+
+        The location-cued *entry* half of vacation mode: the single open trip is
+        the "away since <departure>" state, so when it runs past
+        :func:`~prefrontal.vacation.suggest_threshold_minutes` and vacation isn't
+        already on, offer a one-tap confirm that turns it on (``source=auto``).
+        Deliberately a *suggestion*, not an auto-switch — a work offsite shouldn't
+        silently mute the assistant. Fires once per absence: the engine's fire-once
+        guard (:func:`~prefrontal.coaching.last_fired` on the trip-keyed
+        ``dedup_key``) means an ignored ask never re-nags (commandments 9 & 10);
+        confirming turns vacation on, which the guard below then keeps quiet.
+        """
+        from prefrontal.coaching import last_fired
+        from prefrontal.vacation import (
+            SUGGEST_DEDUP_PREFIX,
+            should_suggest_vacation,
+            vacation_suggestion_text,
+        )
+
+        trip = store.active_trip()
+        if not trip:
+            return []
+        away_minutes = trip.get("elapsed_minutes") or 0
+        dedup = f"{SUGGEST_DEDUP_PREFIX}:{trip['id']}"
+        if not should_suggest_vacation(
+            store,
+            away_minutes=away_minutes,
+            already_asked=last_fired(store, dedup) is not None,
+        ):
+            return []
+        days = int(away_minutes // 1440)
+        return [
+            Cue(
+                module=self.key,
+                intervention="vacation_suggest",
+                urgency="nudge",
+                text=vacation_suggestion_text(days),
+                context_key="vacation_suggest",
+                dedup_key=dedup,
+                ref={"trip_id": trip["id"]},
+            )
+        ]
 
     def _away_proposal_cues(self, store: MemoryStore, ctx: CoachContext) -> list[Cue]:
         """At most one "you've been away a while — mark you away?" proposal.

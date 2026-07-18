@@ -46,17 +46,32 @@ VACATION_ACTIVE_KEY = "vacation_active"
 #: Display-only ("eased since Tue"); preserved across a re-activate so the "since"
 #: clock reflects the *start* of the stretch, not the last toggle.
 VACATION_SINCE_KEY = "vacation_since"
-#: Coaching-state key: what turned it on — ``"manual"`` or ``"auto"`` (a future
-#: confirmed location suggestion). Recorded for explainability, not gating.
+#: Coaching-state key: what turned it on — ``"manual"`` or ``"auto"`` (a confirmed
+#: location suggestion). Recorded for explainability, not gating.
 VACATION_SOURCE_KEY = "vacation_source"
 
 #: The ``source`` values :func:`activate` stamps on :data:`VACATION_SOURCE_KEY`.
-#: ``manual`` is a user toggle (CLI / ``POST /vacation``); ``auto`` is reserved for
-#: a future confirmed location/calendar *entry* suggestion. Note the *exit* is not
-#: sourced — :func:`resume_on_return` calls :func:`deactivate`, which clears the
-#: state to a clean slate rather than recording who lifted it.
+#: ``manual`` is a user toggle (CLI / ``POST /vacation``); ``auto`` is a confirmed
+#: location *entry* suggestion (:func:`should_suggest_vacation` → a one-tap
+#: ``vacation_confirm``). Note the *exit* is not sourced — :func:`resume_on_return`
+#: calls :func:`deactivate`, which clears the state to a clean slate rather than
+#: recording who lifted it.
 SOURCE_MANUAL = "manual"
 SOURCE_AUTO = "auto"
+
+#: Default away-from-home dwell before the *entry* suggestion fires, in nights. Two
+#: nights is deliberately conservative: an errand or a single overnight never trips
+#: it, only a genuine multi-day trip does — the design's "suggest, don't switch, and
+#: don't false-positive a work day-trip into silence" stance. Tunable per user via
+#: :data:`VACATION_SUGGEST_AFTER_KEY`.
+DEFAULT_SUGGEST_AFTER_NIGHTS = 2
+#: Coaching-state key overriding :data:`DEFAULT_SUGGEST_AFTER_NIGHTS`.
+VACATION_SUGGEST_AFTER_KEY = "vacation_suggest_after_nights"
+
+#: Dedup-key prefix for the one-per-absence entry suggestion (keyed on trip id), so
+#: the engine's fire-once guard suggests at most once per trip — a single ask, never
+#: a recurring nag (commandments 9 & 10).
+SUGGEST_DEDUP_PREFIX = "vacation_suggest"
 
 
 def is_on_vacation(store: Any) -> bool:
@@ -133,3 +148,41 @@ def resume_on_return(store: Any) -> bool:
         return False
     deactivate(store)
     return True
+
+
+def suggest_threshold_minutes(store: Any) -> float:
+    """Away-dwell (minutes) past which the entry suggestion fires, per user.
+
+    Reads :data:`VACATION_SUGGEST_AFTER_KEY` (in nights) and floors it at one
+    night, so a hand-edited ``0`` can't turn the suggestion into a same-day
+    false-positive on an ordinary outing.
+    """
+    nights = store.get_float(VACATION_SUGGEST_AFTER_KEY, DEFAULT_SUGGEST_AFTER_NIGHTS)
+    return max(1.0, nights) * 1440.0
+
+
+def should_suggest_vacation(store: Any, *, away_minutes: float, already_asked: bool) -> bool:
+    """Whether to raise the one-tap "away a while — ease off?" entry suggestion.
+
+    Pure and total (no clock/store-mutation): the caller threads in how long the
+    current trip has been open (``away_minutes``, e.g. an active trip's
+    ``elapsed_minutes``) and whether this absence was already asked about
+    (``already_asked`` — the engine's fire-once guard, so a single ask per trip).
+    Says yes only when vacation isn't already on, the dwell has passed
+    :func:`suggest_threshold_minutes`, and it hasn't asked yet. Deliberately a
+    *suggestion* gate, never an auto-switch — a work offsite shouldn't silently
+    mute the assistant; the human taps to confirm.
+    """
+    if is_on_vacation(store):
+        return False
+    if already_asked:
+        return False
+    return away_minutes >= suggest_threshold_minutes(store)
+
+
+def vacation_suggestion_text(days: int) -> str:
+    """The one-tap entry-suggestion copy, given whole days away so far."""
+    return (
+        f"You've been away for {days} days. Want me to ease off the non-urgent "
+        "nudges until you're back? Tap 🏝️ for vacation mode."
+    )

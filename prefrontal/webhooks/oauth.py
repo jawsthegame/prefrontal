@@ -218,6 +218,7 @@ NUDGE_ACTIONS = (
     "briefing_not_helped", # morning briefing → 👎 it didn't (tighten it up)
     "chore_done",      # shared chore → mark it done for today (whoever tapped)
     "away_confirm",    # multi-day-absence proposal → mark me away (chores reassign)
+    "vacation_confirm", # vacation entry suggestion → ease off the nudges (source=auto)
     "trip_status_homeward",  # trip check-in → tell the other parent I'm heading home
     "trip_status_late",      # trip check-in → tell the other parent I'm running late
     "trip_status_ok",        # trip check-in → tell the other parent all's good

@@ -90,6 +90,7 @@ _ACT_FEATURE = {
     "digest_seen": "household",
     "chore_done": "household",
     "away_confirm": "household",
+    "vacation_confirm": "vacation",
     **{a: "household" for a in TRIP_STATUS_LINES},
     "briefing_helped": "briefing",
     "briefing_not_helped": "briefing",
@@ -328,6 +329,30 @@ def apply_nudge_action(
             )
         names = ", ".join((o.get("display_name") or o["handle"]) for o in others)
         return f"Sent to {names} 💛"
+
+    if action == "vacation_confirm":
+        # The location-cued vacation suggestion was accepted: ease off the nudges
+        # until they're back (source=auto). Re-check the open trip at tap time — if
+        # they've since returned home there's no open trip (and resume_on_return
+        # already ran), so a stale tap is a friendly no-op rather than muting the
+        # assistant while they're home.
+        from prefrontal.vacation import SOURCE_AUTO, activate
+
+        # Act only on the trip this suggestion was raised for (target_id). The
+        # short-lived signed link already bounds a stale tap, but matching the id
+        # also stops an old notification from muting the assistant during a *later*,
+        # unrelated trip — a wrong-trip activation is exactly the silent-mute the
+        # design guards against.
+        trip = memory.active_trip()
+        if trip is None:
+            return "Looks like you're back home — no need to ease off. 🙂"
+        if trip["id"] != target_id:
+            return "That suggestion was for an earlier trip — tap vacation on anytime. 🙂"
+        activate(memory, now=utcnow(), source=SOURCE_AUTO)
+        return (
+            "🏝️ Vacation mode on — I'll hold the non-urgent nudges (a flight or "
+            "hard commitment still gets through). It lifts itself when you're home."
+        )
 
     if action == "away_confirm":
         # The multi-day-absence proposal was accepted: mark this member away so

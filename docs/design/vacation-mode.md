@@ -1,7 +1,8 @@
 # Vacation mode
 
-Status: **v1 landed** (manual toggle + suppression gate + auto-resume on return);
-auto-entry *suggestion* is the tracked follow-up
+Status: **shipped** — manual toggle + suppression gate + auto-resume on return
+(v1), plus the location-cued one-tap **entry suggestion** (v2). The visible
+banner UI and self-care softening remain follow-ups.
 Author: drafted with Claude, 2026-07-17
 
 ## Question
@@ -198,9 +199,26 @@ The load-bearing core, end-to-end:
   through `POST /webhooks/location`, so a forgotten manual off can't leave the
   user muted. A staycation never departs, so it's never auto-lifted.
 
-Deferred to the follow-up (see below): the location/calendar **entry
-suggestion** (a one-tap confirm on away-dwell), the visible banner UI, and
-self-care softening.
+## What shipped in v2
+
+The location-cued **entry suggestion** — the "automatic by location, and it asks
+you" half:
+
+- **The cue** — the `trip_tracking` module raises one `vacation_suggest` cue when
+  the open trip passes `vacation.suggest_threshold_minutes` (default **2 nights**,
+  per-user via `vacation_suggest_after_nights`) and vacation isn't already on. It's
+  a `nudge` (respects quiet hours + receptivity), **fired once per absence** via
+  the engine's fire-once guard (`last_fired` on the trip-keyed dedup) — an ignored
+  ask never re-nags (commandments 9 & 10).
+- **The decision** — `vacation.should_suggest_vacation` is a pure gate (threshold ·
+  not-already-on · not-already-asked). It **suggests, never switches**: a work
+  offsite that trips the dwell gets one tap-to-dismiss ask, not a silent mute.
+- **The confirm** — a one-tap `🏝️ Ease off` button (`vacation_confirm`, wired
+  through the same signed `nudge_actions` path as the other one-tap nudges) calls
+  `activate(source="auto")`. A stale tap after returning home is a friendly no-op.
+
+Deferred: the visible banner UI (the `GET /vacation` JSON that backs it is
+shipped) and self-care softening on vacation.
 
 ## Open questions for a follow-up build
 
