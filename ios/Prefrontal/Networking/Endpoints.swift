@@ -55,6 +55,14 @@ extension APIClient {
     func availableHours() async throws -> AvailableHours {
         try await get("schedule/available-hours", as: AvailableHours.self)
     }
+    /// Vacation-mode state — whether non-urgent nudges are eased off while away.
+    /// Pure read; backs the Today banner and the Settings toggle.
+    func vacation() async throws -> Vacation { try await get("vacation", as: Vacation.self) }
+    /// Turn vacation mode on/off manually. Returns the fresh state.
+    @discardableResult
+    func setVacation(_ active: Bool) async throws -> Vacation {
+        try await post("vacation", json: ["active": active], as: Vacation.self)
+    }
     /// Per-user feature toggles: the deployment-enabled modules + Context packs,
     /// each flagged with whether this user has it on.
     func features() async throws -> FeatureList {

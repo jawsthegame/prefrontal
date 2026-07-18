@@ -72,6 +72,32 @@ final class APIClientTests: XCTestCase {
         XCTAssertGreaterThan(list[0].waitingDays, 100)
     }
 
+    func testVacationDecodesState() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/vacation")
+            XCTAssertEqual(req.httpMethod, "GET")
+            return (200, Data(#"{"active":true,"since":"2026-07-02 12:00:00","source":"auto"}"#.utf8))
+        }
+        let v = try await client().vacation()
+        XCTAssertTrue(v.active)
+        XCTAssertEqual(v.source, "auto")
+        XCTAssertEqual(v.since, "2026-07-02 12:00:00")
+    }
+
+    func testSetVacationPostsActiveFlag() async throws {
+        URLProtocol.registerClass(StubURLProtocol.self)
+        StubURLProtocol.responder = { req in
+            XCTAssertEqual(req.url?.path, "/vacation")
+            XCTAssertEqual(req.httpMethod, "POST")
+            XCTAssertEqual(req.jsonBody?["active"] as? Bool, false)
+            return (200, Data(#"{"active":false,"since":null,"source":null}"#.utf8))
+        }
+        let v = try await client().setVacation(false)
+        XCTAssertFalse(v.active)
+        XCTAssertNil(v.since)
+    }
+
     func testObserveReturnsProposalCount() async throws {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { req in

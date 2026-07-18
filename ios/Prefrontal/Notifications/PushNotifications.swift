@@ -138,6 +138,9 @@ enum PushCategories {
         "checkin": ["Felt light 🙂", "Balanced ⚖️", "Carried a lot 🫠"],
         "digest": ["Caught up 👍"],
         "chore": ["✓ Done"],
+        // Location-cued vacation suggestion: one tap eases off the nudges until
+        // you're home. Title must match the server's button label (notify.py).
+        "vacation_suggest": ["🏝️ Ease off"],
         // The evening morning-prep heads-up: one tap sets a real wake alarm
         // (AlarmKit on iOS 26+, else the Set Alarm Shortcut). See AppDelegate.
         "morning_prep": ["⏰ Set alarm"],
