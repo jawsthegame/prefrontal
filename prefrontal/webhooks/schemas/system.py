@@ -178,3 +178,20 @@ class SmtpConfig(BaseModel):
     )
     use_tls: bool = Field(default=True, description="Use STARTTLS (the norm for port 587).")
     enabled: bool = Field(default=True, description="Whether the email handler may send.")
+
+
+class VacationSet(BaseModel):
+    """Body of ``POST /vacation`` — turn vacation mode on or off for the user.
+
+    Vacation mode eases off the nudges for a multi-day, away-from-home stretch:
+    while it's on the coaching engine holds every discretionary cue (the same set
+    quiet hours holds), leaving genuinely time-critical calendar obligations and
+    on-demand surfaces (panic, emotion support) untouched. This is the *manual*
+    control — the always-available escape hatch for a staycation or to correct a
+    false positive; returning home also lifts it automatically. See
+    :mod:`prefrontal.vacation`.
+    """
+
+    active: bool = Field(
+        description="True to enter vacation mode, false to leave it (a clean-slate resume)."
+    )

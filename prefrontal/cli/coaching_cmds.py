@@ -206,6 +206,57 @@ def register(sub) -> None:
     p_notify.add_argument("--user", default=None, help="Handle of the user to notify.")
     p_notify.set_defaults(func=_cmd_notify)
 
+    p_vacation = sub.add_parser(
+        "vacation", help="Ease off the nudges while away (on/off/status)."
+    )
+    p_vacation.add_argument(
+        "action", nargs="?", choices=["on", "off", "status"], default="status",
+        help="Turn vacation mode on, off, or print its state (default: status).",
+    )
+    p_vacation.add_argument("--db-path", default=None, help="Override the database path.")
+    p_vacation.add_argument("--user", default=None, help="Handle of the user to act on.")
+    p_vacation.set_defaults(func=_cmd_vacation)
+
+
+def _cmd_vacation(args: argparse.Namespace) -> int:
+    """Turn vacation mode on/off, or print its state (``on`` / ``off`` / ``status``).
+
+    Vacation mode eases off the nudges for a multi-day, away-from-home stretch: the
+    coaching tick then holds every discretionary cue (as quiet hours does),
+    leaving time-critical calendar obligations and on-demand surfaces untouched.
+    This is the manual control (the location-cued auto-resume on returning home is
+    wired into the trip state machine); ``status`` is the default and read-only.
+
+    Args:
+        args: Parsed arguments; uses ``db_path``, ``user``, ``action``.
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    from prefrontal.vacation import activate, deactivate, vacation_status
+
+    settings = get_settings()
+    db_path = args.db_path or settings.db_path
+    action = args.action or "status"
+    with MemoryStore.open(db_path) as unscoped:
+        store = _resolve_user_store(unscoped, args.user)
+        if action == "on":
+            status = activate(store, now=utcnow(), source="manual")
+        elif action == "off":
+            status = deactivate(store)
+        else:
+            status = vacation_status(store)
+
+    if status["active"]:
+        since = status.get("since")
+        src = status.get("source")
+        detail = f" (since {since})" if since else ""
+        detail += f" [{src}]" if src else ""
+        print(f"🏝️  Vacation mode is ON{detail} — non-urgent nudges are eased off.")
+    else:
+        print("Vacation mode is OFF — nudges run as normal.")
+    return 0
+
 
 def _cmd_usage(args: argparse.Namespace) -> int:
     """Feature-usage loop: list usage, mute/un-mute a module, or run the weekly nudge.
