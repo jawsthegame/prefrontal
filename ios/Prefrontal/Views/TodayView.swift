@@ -84,7 +84,7 @@ struct TodayView: View {
     private func resumeVacation() async {
         resumingVacation = true
         defer { resumingVacation = false }
-        do { vacation = try await withAPI { try await $0.setVacation(false) } }
+        do { vacation = try await withAPI { try await $0.setVacation(false) }; self.error = nil }
         catch { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
     }
 

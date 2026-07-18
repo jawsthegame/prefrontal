@@ -180,26 +180,16 @@ struct VacationSection: View {
     private var activeSubtitle: String {
         let auto = vacation?.source == "auto"
         let how = auto ? "auto-detected from your trip" : "on"
-        if let since = vacation?.since, let when = Self.friendly(since) {
+        // Reuse PFDate (en_US_POSIX, UTC → local "Tue 3:40 PM"); "" on parse fail.
+        let when = PFDate.dayTime(vacation?.since)
+        if !when.isEmpty {
             return "🏝️ Eased off since \(when) (\(how)). Turn off to resume now."
         }
         return "🏝️ Nudges eased off (\(how)). Turn off to resume now."
     }
 
-    /// Parse the server's UTC "yyyy-MM-dd HH:mm:ss" into a short local date string.
-    private static func friendly(_ ts: String) -> String? {
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        parser.timeZone = TimeZone(identifier: "UTC")
-        guard let date = parser.date(from: ts) else { return nil }
-        let out = DateFormatter()
-        out.dateStyle = .medium
-        out.timeStyle = .short
-        return out.string(from: date)
-    }
-
     private func load() async {
-        do { vacation = try await withAPI { try await $0.vacation() } }
+        do { vacation = try await withAPI { try await $0.vacation() }; status = nil }
         catch { status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
         loaded = true
     }
