@@ -62,6 +62,7 @@ struct SettingsView: View {
 
             if !isOnboarding {
                 FeaturesSection()
+                VacationSection()
                 AvailableHoursSection()
                 AppLockSection()
                 LocationSection()
@@ -131,6 +132,85 @@ struct AppLockSection: View {
                 Text("Locks Prefrontal behind \(lock.biometryName) on launch and when it returns from the background. Your device passcode still works as a fallback.")
                     .font(.caption).foregroundStyle(Brand.muted)
             }
+        }
+    }
+}
+
+/// Manual vacation-mode control (`GET`/`POST /vacation`). The escape hatch the
+/// design keeps alongside the location-cued auto-suggestion: a toggle to ease off
+/// the non-urgent nudges for a staycation location can't detect, or to correct a
+/// false positive. While on, the coaching engine holds discretionary cues — a
+/// flight or hard commitment still gets through, and returning home lifts it
+/// automatically. Loads current state, writes through on toggle, resyncs on error.
+struct VacationSection: View {
+    @State private var vacation: Vacation?
+    @State private var loaded = false
+    @State private var busy = false
+    @State private var status: String?
+
+    var body: some View {
+        Section("Vacation mode") {
+            if !loaded {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading…").font(.footnote).foregroundStyle(Brand.muted)
+                }
+            } else {
+                Toggle("Ease off the nudges", isOn: Binding(
+                    get: { vacation?.active ?? false },
+                    set: { on in Task { await set(on) } }
+                ))
+                .disabled(busy)
+
+                if vacation?.active == true {
+                    Text(activeSubtitle)
+                        .font(.caption).foregroundStyle(Brand.muted)
+                } else {
+                    Text("Holds the non-urgent nudges while you're away — a flight or hard commitment still gets through. It turns itself off when you get home; this switch is for staycations or to fix a wrong guess.")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                }
+                if let status {
+                    Text(status).font(.caption).foregroundStyle(Brand.danger)
+                }
+            }
+        }
+        .task { if !loaded { await load() } }
+    }
+
+    private var activeSubtitle: String {
+        let auto = vacation?.source == "auto"
+        let how = auto ? "auto-detected from your trip" : "on"
+        if let since = vacation?.since, let when = Self.friendly(since) {
+            return "🏝️ Eased off since \(when) (\(how)). Turn off to resume now."
+        }
+        return "🏝️ Nudges eased off (\(how)). Turn off to resume now."
+    }
+
+    /// Parse the server's UTC "yyyy-MM-dd HH:mm:ss" into a short local date string.
+    private static func friendly(_ ts: String) -> String? {
+        let parser = DateFormatter()
+        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        parser.timeZone = TimeZone(identifier: "UTC")
+        guard let date = parser.date(from: ts) else { return nil }
+        let out = DateFormatter()
+        out.dateStyle = .medium
+        out.timeStyle = .short
+        return out.string(from: date)
+    }
+
+    private func load() async {
+        do { vacation = try await withAPI { try await $0.vacation() } }
+        catch { status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+        loaded = true
+    }
+
+    private func set(_ on: Bool) async {
+        busy = true; status = nil
+        defer { busy = false }
+        do { vacation = try await withAPI { try await $0.setVacation(on) } }
+        catch {
+            status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            await load()  // resync the toggle to what's actually stored
         }
     }
 }

@@ -334,6 +334,18 @@ struct LocationSettings: Codable {
     }
 }
 
+// MARK: - Vacation mode
+
+/// Whether the non-urgent nudges are eased off while the user is away
+/// (`GET`/`POST /vacation`). `since`/`source` are only meaningful while `active`;
+/// the server sends them as null when off. `source` is "manual" (a toggle) or
+/// "auto" (a confirmed location suggestion).
+struct Vacation: Codable {
+    let active: Bool
+    let since: String?
+    let source: String?
+}
+
 // MARK: - Departure
 
 struct DepartureNext: Codable {

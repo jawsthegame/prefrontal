@@ -16,6 +16,9 @@ struct TodayView: View {
     @State private var selfCareForNotifs: SelfCare?
     @State private var briefingExpanded = false
     @State private var briefingVote: Bool?
+    /// Vacation-mode state — drives the "nudges eased off" banner + one-tap resume.
+    @State private var vacation: Vacation?
+    @State private var resumingVacation = false
     @State private var error: String?
     @State private var loaded = false
     @State private var showAdd = false
@@ -27,6 +30,7 @@ struct TodayView: View {
             VStack(spacing: 16) {
                 if let error { ErrorBanner(message: error) }
                 if queuedOffline > 0 { offlineBanner }
+                if vacation?.active == true { vacationBanner }
 
                 quickActions
                 emotionButton
@@ -52,6 +56,36 @@ struct TodayView: View {
         .task { if !loaded { await load() } }
         .sheet(isPresented: $showAdd) { AddTodoSheet { await load() } }
         .sheet(isPresented: $showEmotion) { EmotionSupportView() }
+    }
+
+    /// Shown while vacation mode is on, so the quiet is never a mystery
+    /// (commandment 1 — the state is visible, not something to hold in your head).
+    /// Returning home lifts it automatically; this is the manual "resume now".
+    private var vacationBanner: some View {
+        HStack(spacing: 8) {
+            Text("🏝️")
+            Text("Vacation mode — non-urgent nudges are eased off.")
+                .font(.footnote).foregroundStyle(Brand.fg)
+            Spacer(minLength: 0)
+            Button {
+                Task { await resumeVacation() }
+            } label: {
+                if resumingVacation { ProgressView().controlSize(.small) }
+                else { Text("Resume").font(.footnote.weight(.semibold)) }
+            }
+            .disabled(resumingVacation)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Brand.ok.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.ok.opacity(0.35)))
+    }
+
+    private func resumeVacation() async {
+        resumingVacation = true
+        defer { resumingVacation = false }
+        do { vacation = try await withAPI { try await $0.setVacation(false) } }
+        catch { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
     }
 
     private var offlineBanner: some View {
@@ -263,6 +297,7 @@ struct TodayView: View {
             // Fetched only to refresh the offline self-care local notifications
             // (not shown on Today — the Me tab renders the self-care card).
             async let care = client.selfCare()
+            async let vac = client.vacation()
 
             self.now = try? await now
             let d = try? await dep
@@ -273,6 +308,7 @@ struct TodayView: View {
             self.nudges = (try? await nud) ?? []
             self.briefing = try? await brief
             self.selfCareForNotifs = try? await care
+            self.vacation = try? await vac
             self.error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

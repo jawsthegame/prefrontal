@@ -1,8 +1,9 @@
 # Vacation mode
 
 Status: **shipped** — manual toggle + suppression gate + auto-resume on return
-(v1), plus the location-cued one-tap **entry suggestion** (v2). The visible
-banner UI and self-care softening remain follow-ups.
+(v1), the location-cued one-tap **entry suggestion** (v2), and the **native iOS
+UI** (v3: Settings toggle, Today banner, one-tap notification button). Self-care
+softening on vacation remains the one follow-up.
 Author: drafted with Claude, 2026-07-17
 
 ## Question
@@ -217,8 +218,29 @@ you" half:
   through the same signed `nudge_actions` path as the other one-tap nudges) calls
   `activate(source="auto")`. A stale tap after returning home is a friendly no-op.
 
-Deferred: the visible banner UI (the `GET /vacation` JSON that backs it is
-shipped) and self-care softening on vacation.
+## What shipped in v3 (native iOS)
+
+The in-app surface, so vacation mode is usable from the phone rather than only
+the CLI/API:
+
+- **Settings toggle** — a "Vacation mode" section (`VacationSection` in
+  `SettingsView`) reads `GET /vacation` and writes `POST /vacation`; the manual
+  escape hatch for a staycation, with status copy showing since/source when on.
+- **Today banner** — while active, a visible "🏝️ Vacation mode — nudges eased
+  off" banner with a one-tap **Resume** (commandment 1: the quiet is never a
+  mystery). Auto-resume on return still does the heavy lifting; this is the
+  manual "resume now".
+- **One-tap notification button** — registered the `vacation_suggest` push
+  category (`PushNotifications.swift`) so the server's `🏝️ Ease off` button
+  actually renders on the suggestion notification (it was previously a
+  buttonless banner, like `away_proposal`).
+- New `Vacation` model + `vacation()` / `setVacation()` client methods; decode
+  tests in `PrefrontalTests/APIClientTests.swift`.
+
+The Swift app builds on a Mac — the iOS CI (`ios.yml`: SwiftLint +
+`swiftc -typecheck` + `xcodebuild test`) is the gate.
+
+Deferred: self-care softening on vacation (the one remaining open question below).
 
 ## Open questions for a follow-up build
 
