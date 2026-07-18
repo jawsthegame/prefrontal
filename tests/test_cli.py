@@ -454,7 +454,7 @@ def test_deliver_panic_publishes_when_overwhelmed(tmp_path, capsys):
     nudge through the user's route — so panic no longer needs the n8n poll."""
     from datetime import timedelta
 
-    from prefrontal.cli import _deliver_panic
+    from prefrontal.cli.coaching_cmds import _deliver_panic
     from prefrontal.config import Settings
     from prefrontal.impact import utcnow
 
