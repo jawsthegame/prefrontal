@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @Binding var showPanic: Bool
+    @EnvironmentObject private var offline: OfflineState
 
     @State private var now: TodosNow?
     @State private var departure: DepartureNext.Departure?
@@ -28,6 +29,7 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if offline.isOffline { OfflineBanner(lastSyncedAt: offline.lastSyncedAt) }
                 if let error { ErrorBanner(message: error) }
                 if queuedOffline > 0 { offlineBanner }
                 if vacation?.active == true { vacationBanner }
@@ -314,6 +316,7 @@ struct TodayView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         queuedOffline = OfflineQueue.count
+        offline.refresh()   // reads may have come from cache — reflect that
         // Schedule local nudges as an off-tailnet fallback (replaced each refresh
         // from current state). No-op unless notifications are authorized.
         await LocalNotifications.reconcileDeparture(departure)
