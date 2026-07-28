@@ -66,6 +66,38 @@ class SmsResult:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class TwilioConfig:
+    """The operator's Twilio credentials, resolved for a single send.
+
+    The SMS mirror of :class:`~prefrontal.sources.SmtpSource`: a small, transport-
+    agnostic bundle a caller can hand to a sender without dragging the whole
+    :class:`~prefrontal.config.Settings` along. Unlike SMTP (a per-user source in
+    the encrypted store), Twilio is an **operator-level** account — the same one
+    the invite SMS and the n8n voice-call escalation use — so it comes from
+    :class:`Settings`, not the store. Build it with :meth:`from_settings`.
+    """
+
+    account_sid: str = ""
+    auth_token: str = ""
+    sender: str = ""  # the Twilio "from" number (E.164)
+
+    @property
+    def configured(self) -> bool:
+        """Whether there's enough to actually send a text (SID + token + from-number)."""
+        return bool(self.account_sid and self.auth_token and self.sender)
+
+    @classmethod
+    def from_settings(cls, settings: Settings | None) -> TwilioConfig:
+        """Pull the Twilio account/token/from-number off ``settings`` (or defaults)."""
+        resolved = settings or get_settings()
+        return cls(
+            account_sid=resolved.twilio_account_sid,
+            auth_token=resolved.twilio_auth_token,
+            sender=resolved.twilio_from,
+        )
+
+
 class TwilioSmsClient:
     """Send an SMS via Twilio's REST API.
 

@@ -207,7 +207,7 @@ class DelegationCheckinModule(Module):
         waiting = sum(1 for t in parked if (t.get("delegation") or {}).get("status") == "forwarded")
         bits = [f"{len(parked)} delegated todo(s) currently parked"]
         if waiting:
-            bits.append(f"{waiting} awaiting a human assistant")
+            bits.append(f"{waiting} awaiting a reply")
         lines = ["- " + "; ".join(bits) + "."]
         # Fold in how check-ins have landed (from before_collect's outcomes) so the
         # profile reflects whether re-surfacing a parked hand-off actually moves it.

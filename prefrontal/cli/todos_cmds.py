@@ -144,11 +144,14 @@ def register(sub) -> None:
     )
     t_delegate.add_argument("todo_id", type=int)
     t_delegate.add_argument(
-        "--handler", choices=["agent", "email"], default="agent",
-        help="agent = in-app AI prep (default); email = send the brief to a human VA.",
+        "--handler", choices=["agent", "email", "sms"], default="agent",
+        help="agent = in-app AI prep (default); email = send the brief to a human VA; "
+             "sms = text a person a question via Twilio.",
     )
     t_delegate.add_argument(
-        "--to", default=None, help="The assistant's email address (required for --handler email)."
+        "--to", default=None,
+        help="Where to send it: the VA's email (--handler email) or a phone number "
+             "(--handler sms). Required for both.",
     )
     t_delegate.add_argument(
         "--context", default=None,
@@ -156,7 +159,8 @@ def register(sub) -> None:
     )
     t_delegate.add_argument(
         "--note", default=None,
-        help="Optional cover note shown atop the email to a human VA (--handler email).",
+        help="For --handler email, a cover note atop the VA email; for --handler sms, "
+             "your own phrasing of what to ask.",
     )
     p_todo.set_defaults(func=_cmd_todo)
 
@@ -628,6 +632,7 @@ def _cmd_todo(args: argparse.Namespace) -> int:
         elif args.todo_action == "delegate":
             from prefrontal.delegation import run_delegation
             from prefrontal.integrations.ollama import OllamaClient
+            from prefrontal.integrations.sms import TwilioConfig
             from prefrontal.sources import resolve_smtp
 
             todo = store.get_todo(args.todo_id)
@@ -635,8 +640,9 @@ def _cmd_todo(args: argparse.Namespace) -> int:
                 print(f"Todo #{args.todo_id} is not open.", file=sys.stderr)
                 return 1
             destination = (args.to or "").strip() or None
-            if args.handler == "email" and destination is None:
-                print("`--to <email>` is required for --handler email.", file=sys.stderr)
+            if args.handler in ("email", "sms") and destination is None:
+                what = "email" if args.handler == "email" else "phone number"
+                print(f"`--to <{what}>` is required for --handler {args.handler}.", file=sys.stderr)
                 return 1
             # Use the local model when it's up; otherwise prep falls back to a
             # heuristic brief (client=None) rather than blocking on a down model.
@@ -645,6 +651,7 @@ def _cmd_todo(args: argparse.Namespace) -> int:
             )
             client = ollama if ollama.available() else None
             smtp = resolve_smtp(store) if args.handler == "email" else None
+            sms = TwilioConfig.from_settings(settings) if args.handler == "sms" else None
             result = run_delegation(
                 store,
                 todo,
@@ -654,6 +661,7 @@ def _cmd_todo(args: argparse.Namespace) -> int:
                 va_note=(args.note or "").strip() or None,
                 client=client,
                 smtp=smtp,
+                sms=sms,
             )
             print(f"Todo #{args.todo_id} delegated to {result.handler} → {result.status}.")
             if result.detail:

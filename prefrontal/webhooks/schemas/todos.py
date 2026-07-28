@@ -132,30 +132,40 @@ class DelegateTodo(BaseModel):
 
     ``handler='agent'`` runs the in-app AI assistant (local model writes a brief +
     drafts back onto the todo); ``handler='email'`` mails the brief to a human VA
-    at ``destination`` over the user's SMTP source.
+    at ``destination`` over the user's SMTP source; ``handler='sms'`` composes a
+    short question and texts it to ``destination`` (a phone number) via Twilio — the
+    "just ask someone" case (e.g. checking a date with your partner).
     """
 
-    handler: Literal["agent", "email"] = Field(
+    handler: Literal["agent", "email", "sms"] = Field(
         default="agent",
-        description="Who does the prep: 'agent' (in-app AI) or 'email' (human VA).",
+        description=(
+            "Who does the prep: 'agent' (in-app AI), 'email' (human VA), or 'sms' "
+            "(text a person a question via Twilio)."
+        ),
     )
     destination: str | None = Field(
         default=None,
-        description="The VA's email address (required for handler='email'; ignored for 'agent').",
+        description=(
+            "Where to send it: the VA's email address for handler='email', or the "
+            "recipient's phone number for handler='sms'. Required for both; ignored "
+            "for 'agent'."
+        ),
     )
     context: str | None = Field(
         default=None,
         description=(
             "Optional free-text context to give the assistant more to work with — "
             "e.g. output pasted from another AI agent that has access to your work "
-            "email. Fed into the prep for both handlers."
+            "email. Fed into the prep for all handlers."
         ),
     )
     note: str | None = Field(
         default=None,
         description=(
-            "Optional personal cover note shown at the top of the email to a human "
-            "VA (handler='email' only; ignored for 'agent')."
+            "Optional personal note: for handler='email' a cover note shown at the "
+            "top of the email to the VA; for handler='sms' your own phrasing of what "
+            "to ask (it shapes the drafted text). Ignored for 'agent'."
         ),
     )
 

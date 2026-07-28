@@ -28,6 +28,7 @@ from prefrontal.coaching import CoachContext, _fired_key
 from prefrontal.config import Settings, get_settings
 from prefrontal.crypto import generate_key
 from prefrontal.delegation import (
+    HANDLER_SMS,
     STATUS_FAILED,
     STATUS_FORWARDED,
     STATUS_IN_PREP,
@@ -39,10 +40,12 @@ from prefrontal.delegation import (
     compose_va_email,
     delegation_notice,
     generate_prep,
+    generate_question,
     match_delegated_reply,
     run_delegation,
 )
 from prefrontal.integrations.ollama import OllamaClient
+from prefrontal.integrations.sms import SmsResult, TwilioConfig
 from prefrontal.integrations.smtp import SmtpClient
 from prefrontal.memory.db import init_db
 from prefrontal.memory.store import MemoryStore, provision_user
@@ -92,6 +95,29 @@ class _FakeConn:
         self.record["to"] = message["To"]
         self.record["from"] = message["From"]
         self.record["body"] = message.get_content()
+
+
+class _FakeSms:
+    """A stand-in for ``TwilioSmsClient`` recording a send (configurable delivery)."""
+
+    def __init__(self, *, delivered: bool = True):
+        self.delivered = delivered
+        self.sent: dict | None = None
+
+    def send(self, account_sid, auth_token, *, sender, to, body):
+        self.sent = {
+            "sid": account_sid, "token": auth_token,
+            "sender": sender, "to": to, "body": body,
+        }
+        return SmsResult(
+            delivered=self.delivered,
+            status_code=201 if self.delivered else 400,
+            detail="twilio responded",
+        )
+
+
+#: A configured Twilio account for the sms-handler tests.
+_TWILIO = TwilioConfig(account_sid="AC_sid", auth_token="tok", sender="+14155550100")
 
 
 @pytest.fixture()
@@ -260,6 +286,57 @@ def test_fit_num_ctx_none_when_small_and_capped_when_huge():
     assert _fit_num_ctx(10_000_000) == 16384   # capped at the max
 
 
+# -- question composer (sms handler) -----------------------------------------
+
+
+def test_generate_question_with_model_returns_the_message():
+    """A JSON reply's ``message`` becomes the text to send (trimmed of whitespace)."""
+    client = _ollama_json({"message": "  Hey — can we help my dad on the 19th?  "})
+    assert generate_question("Help dad", client=client) == "Hey — can we help my dad on the 19th?"
+
+
+def test_generate_question_note_and_context_reach_the_prompt():
+    """The user's note (what to ask) and any context are fed to the model."""
+    seen = {}
+
+    def capture(request):
+        seen["prompt"] = json.loads(request.content)["prompt"]
+        return httpx.Response(200, json={"response": json.dumps({"message": "ok"})})
+
+    client = OllamaClient(transport=httpx.MockTransport(capture))
+    generate_question(
+        "Help dad Aug 19", note="triple-check we're free", context="nothing on the calendar",
+        client=client,
+    )
+    assert "triple-check we're free" in seen["prompt"]
+    assert "nothing on the calendar" in seen["prompt"]
+
+
+def test_generate_question_salvages_prose_reply():
+    """A non-JSON prose reply is used as the message rather than discarded."""
+    client = _ollama_text("Are we free to help my dad on the 19th?")
+    assert generate_question("Help dad", client=client) == "Are we free to help my dad on the 19th?"
+
+
+def test_generate_question_offline_uses_note():
+    """No model → the heuristic leans on the user's own phrasing (note)."""
+    msg = generate_question("Help dad", note="Can we help my dad on Aug 19?", client=None)
+    assert msg == "Can we help my dad on Aug 19?"
+
+
+def test_generate_question_offline_without_note_falls_back_to_title():
+    """No model and no note → a neutral question about the todo, nothing invented."""
+    msg = generate_question("Help dad on the 19th", client=None)
+    assert "Help dad on the 19th" in msg
+    assert msg.endswith("can you let me know?")
+
+
+def test_generate_question_caps_a_runaway_reply():
+    """A model that returns a wall of text is trimmed to one text's worth."""
+    client = _ollama_json({"message": "x" * 5000})
+    assert len(generate_question("Digest", client=client)) <= 320
+
+
 # -- handlers + orchestration ------------------------------------------------
 
 
@@ -299,6 +376,15 @@ def test_delegation_recipients_are_distinct_and_exclude_agent(store):
     store.set_delegation(t4, handler="agent", status="prepped")  # no destination
     recips = store.delegation_recipients()
     assert sorted(recips) == ["va1@x.com", "va2@x.com"]  # distinct, agent excluded
+
+
+def test_delegation_recipients_are_scoped_by_handler(store):
+    """Email addresses and texted numbers stay in separate pick-lists."""
+    t1, t2 = store.add_todo("a"), store.add_todo("b")
+    store.set_delegation(t1, handler="email", destination="va@x.com", status="forwarded")
+    store.set_delegation(t2, handler="sms", destination="+14155551234", status="forwarded")
+    assert store.delegation_recipients(handler="email") == ["va@x.com"]
+    assert store.delegation_recipients(handler="sms") == ["+14155551234"]
 
 
 def test_http_delegate_recipients_endpoint(http):
@@ -574,6 +660,64 @@ def test_email_handler_send_error_is_caught(store):
     assert "send failed" in result.detail
 
 
+def test_sms_handler_sends_and_forwards(store):
+    """A configured Twilio account texts the composed question and lands forwarded."""
+    tid = store.add_todo("Help dad on Aug 19")
+    fake = _FakeSms()
+    result = run_delegation(
+        store, store.get_todo(tid), handler="sms", destination="+1 (415) 555-1234",
+        va_note="check we're free the 19th",
+        client=_ollama_json({"message": "Are we free to help my dad on the 19th?"}),
+        sms=_TWILIO, sms_client=fake,
+    )
+    assert result.status == STATUS_FORWARDED
+    assert result.handler == HANDLER_SMS
+    # The number was normalized to E.164 before the send.
+    assert fake.sent["to"] == "+14155551234"
+    assert fake.sent["body"] == "Are we free to help my dad on the 19th?"
+    assert fake.sent["sender"] == "+14155550100"
+    stored = store.get_delegation(tid)
+    assert stored["status"] == STATUS_FORWARDED
+    assert stored["brief"] == "Are we free to help my dad on the 19th?"  # message kept on the row
+
+
+def test_sms_handler_no_twilio_stores_message_and_fails(store):
+    """Twilio unconfigured → the composed text is stored; status is failed (not lost)."""
+    tid = store.add_todo("Ask about the 19th")
+    result = run_delegation(
+        store, store.get_todo(tid), handler="sms", destination="+14155551234",
+        va_note="are we free?", client=None, sms=None,
+    )
+    assert result.status == STATUS_FAILED
+    assert "isn't set up" in result.detail
+    assert store.get_delegation(tid)["brief"]  # the message survives for manual sending
+
+
+def test_sms_handler_bad_number_fails_without_sending(store):
+    """An unusable phone number fails cleanly (and never reaches Twilio)."""
+    tid = store.add_todo("Ask about the 19th")
+    fake = _FakeSms()
+    result = run_delegation(
+        store, store.get_todo(tid), handler="sms", destination="not a phone",
+        va_note="are we free?", client=None, sms=_TWILIO, sms_client=fake,
+    )
+    assert result.status == STATUS_FAILED
+    assert "phone number" in result.detail
+    assert fake.sent is None  # short-circuited before any send
+
+
+def test_sms_handler_send_error_is_caught(store):
+    """A Twilio non-2xx (delivered False) lands failed with the message kept."""
+    tid = store.add_todo("Ask about the 19th")
+    result = run_delegation(
+        store, store.get_todo(tid), handler="sms", destination="+14155551234",
+        va_note="are we free?", client=None, sms=_TWILIO, sms_client=_FakeSms(delivered=False),
+    )
+    assert result.status == STATUS_FAILED
+    assert "send failed" in result.detail
+    assert store.get_delegation(tid)["brief"]
+
+
 def test_run_delegation_rejects_unknown_handler(store):
     tid = store.add_todo("x")
     with pytest.raises(ValueError):
@@ -588,6 +732,25 @@ def test_delegation_notice_by_status():
         "X", R("email", STATUS_FORWARDED, "b", [], detail="emailed")
     )
     assert delegation_notice("X", R("agent", STATUS_RETURNED, "b")) is None
+
+
+def test_delegation_notice_sms_is_text_flavored():
+    """A forwarded sms hand-off reads as a texted question, not a VA hand-off."""
+    R = delegation.DelegationResult
+    msg = delegation_notice(
+        "Help dad", R(HANDLER_SMS, STATUS_FORWARDED, "b", detail="texted +14155551234")
+    )
+    assert "Texted your question" in msg and "Help dad" in msg
+
+
+def test_checkin_message_sms_variant():
+    """A parked sms hand-off asks 'you texted … heard back?', not 'handed off'."""
+    fwd = {
+        "status": "forwarded", "handler": HANDLER_SMS,
+        "destination": "+14155551234", "prepped_at": "2026-07-07 10:00:00",
+    }
+    m = checkin_message({"title": "Help dad"}, fwd, _NOW)
+    assert "texted" in m and "Help dad" in m and "Heard back" in m
 
 
 def test_delegation_notice_counts_your_action_items():
@@ -865,6 +1028,46 @@ def test_http_delegate_email_without_smtp_fails_gracefully(http):
     assert r.json()["status"] == STATUS_FAILED  # brief stored, nothing sent
 
 
+def test_http_delegate_sms_needs_destination(http):
+    """handler='sms' with no phone number is a 422 (mirrors the email guard)."""
+    tid = http.post("/todos", json={"title": "x"}, headers=_headers()).json()["todo_id"]
+    r = http.post(f"/todos/{tid}/delegate", json={"handler": "sms"}, headers=_headers())
+    assert r.status_code == 422
+
+
+def test_http_delegate_sms_without_twilio_fails_gracefully(http):
+    """No Twilio configured → 200 with status failed and the drafted text stored."""
+    tid = http.post(
+        "/todos", json={"title": "Help dad on the 19th"}, headers=_headers()
+    ).json()["todo_id"]
+    r = http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "sms", "destination": "+14155551234", "note": "are we free?"},
+        headers=_headers(),
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == STATUS_FAILED  # message stored, nothing sent
+    stored = http.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+    assert stored["brief"]  # the composed question survives on the row
+
+
+def test_http_delegate_recipients_splits_email_and_sms(http):
+    """The pick-list endpoint returns email and sms recipients separately."""
+    tid = http.post("/todos", json={"title": "x"}, headers=_headers()).json()["todo_id"]
+    http.post(
+        f"/todos/{tid}/delegate",
+        json={"handler": "email", "destination": "va@x.com"}, headers=_headers(),
+    )
+    tid2 = http.post("/todos", json={"title": "y"}, headers=_headers()).json()["todo_id"]
+    http.post(
+        f"/todos/{tid2}/delegate",
+        json={"handler": "sms", "destination": "+14155551234"}, headers=_headers(),
+    )
+    body = http.get("/todos/delegate-recipients", headers=_headers()).json()
+    assert body["recipients"] == ["va@x.com"]
+    assert body["sms_recipients"] == ["+14155551234"]
+
+
 def test_http_delegate_return_and_action_route_intact(http):
     tid = http.post("/todos", json={"title": "x"}, headers=_headers()).json()["todo_id"]
     http.post(f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers())
@@ -986,6 +1189,31 @@ def test_assistant_op_email_requires_destination(store):
     )
     assert actions == []
     assert any("destination" in e for e in errors)
+
+
+def test_assistant_op_sms_requires_destination(store):
+    """A text hand-off with no phone number is rejected at validation."""
+    tid = store.add_todo("Help dad")
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid, "handler": "sms"}], build_snapshot(store)
+    )
+    assert actions == []
+    assert any("destination" in e for e in errors)
+
+
+def test_assistant_op_sms_validates_and_carries_note(store):
+    """A well-formed sms op validates; the 'what to ask' note rides through as params."""
+    tid = store.add_todo("Help dad")
+    actions, errors = validate_actions(
+        [{"op": "delegate_todo", "todo_id": tid, "handler": "sms",
+          "destination": "+14155551234", "note": "are we free the 19th?"}],
+        build_snapshot(store),
+    )
+    assert errors == []
+    assert actions[0].params["handler"] == "sms"
+    assert actions[0].params["destination"] == "+14155551234"
+    assert actions[0].params["note"] == "are we free the 19th?"
+    assert "Text a question" in actions[0].summary
 
 
 def test_assistant_op_rejects_unknown_todo(store):

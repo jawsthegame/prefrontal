@@ -40,7 +40,9 @@ from prefrontal.commitments import to_utc
 from prefrontal.delegation import (
     HANDLER_AGENT,
     HANDLER_EMAIL,
+    HANDLER_SMS,
     HANDLERS,
+    HUMAN_HANDLERS,
     STATUS_FAILED,
     run_delegation,
 )
@@ -139,7 +141,7 @@ ASSISTANT_SYSTEM = (
     '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
     '- {"op":"add_blocker","person":str,"what":str,"priority":0-3?,'
     '"deadline":"YYYY-MM-DD"?,"notes":str?}\n'
-    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email",'
+    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email"|"sms",'
     '"destination":str?,"context":str?,"note":str?}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
@@ -165,7 +167,10 @@ ASSISTANT_SYSTEM = (
     "handler:\"agent\" (the default) is the in-app AI — it writes a research brief "
     "and draft messages back onto the todo; handler:\"email\" sends that brief to a "
     "human assistant and so REQUIRES a destination email (use \"agent\" when the "
-    "user names no address).\n"
+    "user names no address). handler:\"sms\" texts a short question to a PERSON — use "
+    "it when the user wants to ask someone something they need before they can move "
+    "a todo forward (\"text my wife to check if we're free the 19th\", \"ask Sam by "
+    "text\"); it REQUIRES a destination phone number, and put what to ask in note.\n"
     "A commitment's hardness is how firm it is: \"hard\" = a must-happen "
     "obligation (a slip is a real problem), \"soft\" = an elastic/optional block "
     "you could move. Use set_commitment_hardness for \"this one's non-negotiable\" "
@@ -805,20 +810,23 @@ def _v_delegate_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) 
     tid, title = _require_todo(action, snapshot)
     handler = str(action.get("handler") or HANDLER_AGENT).strip().lower()
     if handler not in HANDLERS:
-        raise _ActionError('handler must be "agent" or "email"')
+        raise _ActionError('handler must be "agent", "email", or "sms"')
     params: dict[str, Any] = {"todo_id": tid, "handler": handler}
     context = str(action.get("context") or "").strip()
     if context:
         params["context"] = context
-    if handler == HANDLER_EMAIL:
-        # An email hand-off has to know who to send to — reject it here rather than
-        # letting it fall through to a "failed" delegation at execute time.
+    if handler in HUMAN_HANDLERS:
+        # A hand-off to a human has to know who to send to — reject it here rather
+        # than letting it fall through to a "failed" delegation at execute time.
         dest = _nonblank(action.get("destination"), "destination")
         params["destination"] = dest
         note = str(action.get("note") or "").strip()
         if note:
             params["note"] = note
-        summary = f"Delegate “{title}” to your assistant ({dest})"
+        if handler == HANDLER_SMS:
+            summary = f"Text a question about “{title}” to {dest}"
+        else:
+            summary = f"Delegate “{title}” to your assistant ({dest})"
     else:
         summary = f"Delegate “{title}” to the AI assistant to prep"
     return ValidatedAction(op, params, summary)
@@ -1585,16 +1593,24 @@ def _execute_one(
             else:
                 handler = p["handler"]
                 smtp = None
+                sms = None
                 if handler == HANDLER_EMAIL:
                     src = memory.mail_sources_for_todos([todo["id"]]).get(todo["id"]) or {}
                     smtp = resolve_smtp_for(
                         memory, account=src.get("account"), domain=todo.get("domain")
                     )
+                elif handler == HANDLER_SMS:
+                    # Twilio is operator-level (env/Settings), not a per-user store
+                    # source — resolve it lazily here so execute_actions stays
+                    # settings-agnostic in its signature.
+                    from prefrontal.config import get_settings
+                    from prefrontal.integrations.sms import TwilioConfig
+                    sms = TwilioConfig.from_settings(get_settings())
                 outcome = run_delegation(
                     memory, todo, handler=handler,
                     destination=p.get("destination"), context=p.get("context"),
                     va_note=p.get("note"),
-                    client=client, smtp=smtp,
+                    client=client, smtp=smtp, sms=sms,
                 )
                 # A failed hand-off (e.g. SMTP unconfigured) still stored the brief,
                 # but the delegation didn't land — report it as not-ok with the reason.
