@@ -316,7 +316,19 @@ def arm_focus_session(
     Returns the same shape the endpoint returns: ``{"armed": bool, ...}`` — with
     ``session_id``/``intended_task``/``planned_minutes``/``from_commitment`` when
     it armed, or a ``reason`` when it didn't.
+
+    Gated on this module being on for this user — zero-tap arming *is* a hyperfocus
+    intervention, so it stops when the module is off deployment-wide or in the
+    user's Settings ▸ Features, matching ``/webhooks/focus/check``. Without that
+    gate the every-60s ``prefrontal focus arm`` tick kept creating sessions (visible
+    in Today, the widget, and the session history) for a module that was supposed to
+    be off.
     """
+    # Lazy import: the registry imports this module's package at init time.
+    from prefrontal.modules.registry import user_module_enabled
+
+    if not user_module_enabled(store, "hyperfocus", settings):
+        return {"armed": False, "reason": "the Hyperfocus module is off"}
     if store.active_focus_sessions():
         return {"armed": False, "reason": "a focus session is already active"}
 

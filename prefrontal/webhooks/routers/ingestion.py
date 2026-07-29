@@ -37,6 +37,9 @@ from prefrontal.mail.feedback import (
 from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
+from prefrontal.modules.registry import (
+    user_module_off,
+)
 from prefrontal.triage import (
     apply as triage_apply,
 )
@@ -455,7 +458,11 @@ def build_router(services: RouterServices) -> APIRouter:
             "hint": balance_hint(
                 ctx.store,
                 balance,
-                trip_tracking_enabled=module_enabled("trip_tracking", resolved_settings),
+                # The *effective* state for this caller: deployment config plus
+                # their own Settings ▸ Features switch, so the empty-view hint says
+                # "trip tracking is off" when they turned it off themselves.
+                trip_tracking_enabled=module_enabled("trip_tracking", resolved_settings)
+                and not user_module_off(ctx.store, "trip_tracking"),
             ),
             "domains": [
                 {

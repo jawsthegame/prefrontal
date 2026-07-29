@@ -188,3 +188,38 @@ def user_enabled_modules(store: Any, settings: Settings | None = None) -> list[M
     """
     off = user_disabled_module_keys(store)
     return [m for m in enabled_modules(settings) if m.key not in off]
+
+
+def user_module_off(store: Any, key: str) -> bool:
+    """Whether *this user* turned ``key`` off in Settings ▸ Features.
+
+    The single-key form of :func:`user_disabled_module_keys` and the enable twin of
+    :func:`is_muted`, for the intervention entry points (the webhook "check"
+    routes) that gate one module: they consult deployment enablement
+    (:func:`is_enabled`), then mute, then this — so a module the user switched off
+    stops firing its proactive nudges on *every* path, not only in the coaching
+    tick's fan-out. Best-effort like its siblings: a store without the state repo
+    (older test doubles) reports "not off", so the overlay can never hard-fail a
+    nudge path.
+
+    Args:
+        store: The user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        key: The module key to test.
+
+    Returns:
+        ``True`` only if a working store reports an explicit ``"off"`` override.
+    """
+    try:
+        return (store.get_state(f"{MODULE_ENABLED_PREFIX}{key}") or "").strip().lower() == "off"
+    except Exception:  # noqa: BLE001 — the overlay is a convenience, never a hard gate
+        return False
+
+
+def user_module_enabled(store: Any, key: str, settings: Settings | None = None) -> bool:
+    """Deployment-enabled **and** not turned off by this user.
+
+    The module twin of :func:`prefrontal.packs.registry.user_pack_enabled` — the
+    effective per-user answer to "is this module on?", for callers that want one
+    gate instead of :func:`is_enabled` plus :func:`user_module_off`.
+    """
+    return is_enabled(key, settings) and not user_module_off(store, key)

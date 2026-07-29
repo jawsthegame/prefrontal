@@ -1372,6 +1372,40 @@ def _safe_sweep(label: str, run: Any) -> int:
         return 0
 
 
+def effective_modules(store: Any, settings: Any = None) -> list[Any]:
+    """The modules that may actually act for this user, in registration order.
+
+    One definition of "on for me", shared by :func:`run_coaching_tick` and the
+    ``prefrontal coach --dry-run`` preview so they can't drift:
+
+    1. deployment-enabled (``PREFRONTAL_MODULES`` plus whatever the enabled Context
+       Packs switch on), then
+    2. minus the ones this user **muted** from the weekly usage nudge, then
+    3. minus the ones this user turned **off** in Settings ▸ Features.
+
+    Both per-user reads are best-effort: a store without the state repo (an older
+    test double) or a raising read yields "nothing removed", so the overlays are a
+    convenience that can never block a tick.
+
+    Args:
+        store: The user-scoped :class:`~prefrontal.memory.store.MemoryStore`.
+        settings: Operator settings; defaults to the process settings.
+
+    Returns:
+        The effective module instances — no cues, no protection, and no ``offered``
+        events come from anything left out.
+    """
+    from prefrontal.modules.registry import user_enabled_modules
+
+    modules = user_enabled_modules(store, settings)
+    try:
+        muted = store.muted_features()
+    except Exception:  # noqa: BLE001 — mute is a convenience, never a tick blocker
+        logger.warning("muted_features() read failed; running with none muted", exc_info=True)
+        muted = set()
+    return [m for m in modules if m.key not in muted]
+
+
 def run_coaching_tick(
     store: Any,
     *,
@@ -1427,33 +1461,14 @@ def run_coaching_tick(
     """
     from prefrontal.clarify import sweep_ambiguous_items
     from prefrontal.impact import utcnow
-    from prefrontal.modules import enabled_modules
     from prefrontal.todos import sweep_avoided_decompositions
 
     now = now or utcnow()
-    modules = enabled_modules(settings)
-    # Per-user mute (the usage loop's "act on it" half): a module the user muted
-    # from the weekly usage nudge is dropped from the whole tick — it offers no
-    # cues, provides no protection, and records no `offered` events — without
-    # touching global config. Best-effort read so a store without the repo (older
-    # test doubles) still runs the tick.
-    try:
-        muted = store.muted_features()
-    except Exception:  # noqa: BLE001 — mute is a convenience, never a tick blocker
-        logger.warning("muted_features() read failed; running with none muted", exc_info=True)
-        muted = set()
-    if muted:
-        modules = [m for m in modules if m.key not in muted]
-    # Per-user enablement (the Settings "Features" toggles): a module the user
-    # turned off for themselves is dropped from the whole tick — no cues, no
-    # protection, no `offered` events — without touching deployment config. Same
-    # best-effort contract as mute above, and the settings view starts from the
-    # same deployment-enabled base, so this only ever removes modules.
-    from prefrontal.modules.registry import user_disabled_module_keys
-
-    disabled = user_disabled_module_keys(store)
-    if disabled:
-        modules = [m for m in modules if m.key not in disabled]
+    # Deployment-enabled, minus this user's muted and Settings ▸ Features-off
+    # modules: anything dropped offers no cues, provides no protection, and records
+    # no `offered` events, without touching deployment config. Shared with the
+    # ``coach --dry-run`` preview so the two can't disagree.
+    modules = effective_modules(store, settings)
     # Close last round's channel outcomes (taps clear their own markers, so what's
     # swept really went unanswered). Engine-native; a module's own pre-collection
     # housekeeping runs through its before_collect hook below.

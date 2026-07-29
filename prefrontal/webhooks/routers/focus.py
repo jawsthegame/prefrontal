@@ -40,6 +40,9 @@ from prefrontal.modules.registry import (
 from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
+from prefrontal.modules.registry import (
+    user_module_off,
+)
 from prefrontal.todos import (
     avoided_todos,
 )
@@ -223,6 +226,11 @@ def build_router(services: RouterServices) -> APIRouter:
         # just in the coaching tick — so muting is authoritative across fire paths.
         if module_muted(memory, "hyperfocus"):
             return {"active": [], "protect": False, "skipped": "module_muted"}
+        # Same for the per-user Settings ▸ Features switch: "off" means off on every
+        # fire path, not just the tick's fan-out (and protection goes with it — a
+        # module the user turned off must not shield other nudges either).
+        if user_module_off(memory, "hyperfocus"):
+            return {"active": [], "protect": False, "skipped": "module_off"}
         name = ctx.user.get("display_name") or ""
         soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)
