@@ -42,6 +42,7 @@ from prefrontal.memory.patterns import task_bias_resolver
 from prefrontal.memory.store import MemoryStore
 from prefrontal.modules.impulsivity import switch_rate_feedback
 from prefrontal.modules.registry import is_enabled as module_enabled
+from prefrontal.modules.registry import user_module_off
 from prefrontal.scheduling import (
     free_windows,
     suggest_for_windows,
@@ -349,7 +350,10 @@ def build_briefing(store: MemoryStore, now: Any | None = None) -> Briefing:
     # Blindness (which owns departure timing); attend-mode meetings (you're already
     # there) and zero-lead items are omitted.
     departures: list[dict[str, Any]] = []
-    if module_enabled("time_blindness"):
+    # Both switches count: the deployment's module list and this reader's own
+    # Settings ▸ Features toggle (the briefing is built per user, so a module they
+    # turned off must not come back as a digest section).
+    if module_enabled("time_blindness") and not user_module_off(store, "time_blindness"):
         loc = store.get_location()
         dep_kwargs = departure_kwargs(store)
         # `attendable` (above) is the same subset the departure nudge itself uses

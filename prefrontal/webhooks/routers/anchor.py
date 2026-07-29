@@ -57,6 +57,9 @@ from prefrontal.modules.registry import (
 from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
+from prefrontal.modules.registry import (
+    user_module_off,
+)
 from prefrontal.nudges import apply_nudge_action
 from prefrontal.webhooks.deps import (
     ScopedRequest,
@@ -227,6 +230,10 @@ def build_router(services: RouterServices) -> APIRouter:
         # here too, not just in the coaching tick — mute is authoritative.
         if module_muted(memory, "location_anchor"):
             return {"active": [], "skipped": "module_muted"}
+        # And the per-user Settings ▸ Features switch: "off" silences the escalation
+        # on every fire path, matching what the coaching tick already does.
+        if user_module_off(memory, "location_anchor"):
+            return {"active": [], "skipped": "module_off"}
         try:
             body = await request.json()
         except Exception:

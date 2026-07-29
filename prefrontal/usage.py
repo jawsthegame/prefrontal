@@ -33,8 +33,8 @@ from prefrontal.delivery import (
     resolve_route,
 )
 from prefrontal.log import get_logger
-from prefrontal.modules import enabled_modules
 from prefrontal.modules.registry import get as get_module
+from prefrontal.modules.registry import user_enabled_modules
 from prefrontal.stats import (
     USAGE_IGNORED_MIN_OFFERED,
     USAGE_IGNORED_RATE,
@@ -92,7 +92,11 @@ def build_usage_nudge(
         when nothing is worth nudging about.
     """
     now = now or utcnow()
-    module_keys = {m.key for m in enabled_modules(settings)}
+    # The candidate set is what's live *for this user*: a module they already turned
+    # off in Settings ▸ Features fires nothing, so offering to mute it would nag
+    # about a behavior that's already gone (its history stays in the window for up
+    # to USAGE_WINDOW_DAYS after the switch).
+    module_keys = {m.key for m in user_enabled_modules(store, settings)}
     muted = store.muted_features()
     best: dict[str, Any] | None = None
     for row in store.feature_usage_rollup(USAGE_WINDOW_DAYS):
