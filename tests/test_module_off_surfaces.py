@@ -46,10 +46,15 @@ def store():
 
 @pytest.fixture()
 def client(store):
+    """A client on the default deployment (every module on).
+
+    Context-managed: entering it runs the app lifespan, which is what publishes
+    ``app.state.store``, and the ``with`` guarantees the lifespan and HTTPX pool
+    close with the test rather than outliving it.
+    """
     app = create_app(store=store, settings=Settings(webhook_secret=SECRET, modules=(), packs=()))
-    c = TestClient(app)
-    c.__enter__()
-    return c
+    with TestClient(app) as c:
+        yield c
 
 
 def _auth():
@@ -114,10 +119,9 @@ def test_read_surface_reports_module_off_deployment_wide(store):
     app = create_app(
         store=store, settings=Settings(webhook_secret=SECRET, modules=("projects",), packs=())
     )
-    c = TestClient(app)
-    c.__enter__()
-    assert c.get("/focus", headers=_auth()).json()["module_off"] is True
-    assert c.get("/trips", headers=_auth()).json()["module_off"] is True
+    with TestClient(app) as c:
+        assert c.get("/focus", headers=_auth()).json()["module_off"] is True
+        assert c.get("/trips", headers=_auth()).json()["module_off"] is True
 
 
 # -- writes that only feed the intervention are refused ----------------------
