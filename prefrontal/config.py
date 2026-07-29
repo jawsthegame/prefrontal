@@ -213,6 +213,13 @@ class Settings:
     # model; set it (and `ollama pull` the model) to keep vision on the host. See
     # ``prefrontal.integrations.provider.ProviderResolver.select_vision``.
     ollama_vision_model: str = ""
+    # Let a hybrid-thinking local model (Qwen3, DeepSeek-R1, …) emit its reasoning
+    # pass. Off by default: every call site here wants a short structured answer, and
+    # the reasoning costs multiples of the answer without improving it — measured at
+    # 64.5s vs 25.8s for the same auto-run loop turn on ``qwen3:14b``, and the snappy
+    # inference paths (10s timeout) would time out to their heuristics. See
+    # ``prefrontal.integrations.ollama.OllamaClient``.
+    ollama_think: bool = False
     # Optional Claude/Anthropic provider for the dashboard assistant. Local-first:
     # empty key means the assistant uses the local Ollama model. When set, the
     # assistant prefers Claude for natural-language parsing and Ollama remains the
@@ -576,6 +583,8 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
         ollama_vision_model=os.environ.get("OLLAMA_VISION_MODEL", ""),
+        ollama_think=os.environ.get("OLLAMA_THINK", "").strip().lower()
+        in ("1", "true", "yes", "on"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
         anthropic_agents=_parse_anthropic_agents(os.environ.get("ANTHROPIC_AGENTS")),

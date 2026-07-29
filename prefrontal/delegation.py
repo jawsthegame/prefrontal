@@ -299,6 +299,14 @@ _PREP_MAX_NUM_CTX = 16384
 #: give the call room to finish rather than time out into the heuristic.
 _PREP_TIMEOUT = 240.0
 
+#: Output-token budget for the prep generation. The default client cap (1024) is
+#: sized for the assistant's small action lists; a brief + drafts + action items is
+#: several times that, and on a *reasoning* model the thinking block is spent from
+#: the same budget — at 1024, claude-sonnet-5 returned a thinking-only response with
+#: no text at all, and the prep silently served its offline heuristic. Only tokens
+#: actually generated are billed, so the headroom is close to free.
+_PREP_MAX_TOKENS = 4096
+
 #: Most of the context we ever echo in the *heuristic* fallback — so a model-down
 #: fallback surfaces a short excerpt of what you pasted, never the whole thing.
 _HEURISTIC_CONTEXT_EXCERPT = 500
@@ -506,13 +514,17 @@ def generate_prep(
         timeout = _PREP_TIMEOUT if num_ctx else None
         try:
             reply = client.generate(
-                prompt, system=_PREP_SYSTEM, num_ctx=num_ctx, timeout=timeout
+                prompt, system=_PREP_SYSTEM, num_ctx=num_ctx, timeout=timeout,
+                max_tokens=_PREP_MAX_TOKENS,
             )
-        except ProviderError:
+        except ProviderError as exc:
             # ProviderError, not OllamaError: the injected client is whatever the
             # `summarizer` agent resolved to, so a cloud failure has to degrade to the
             # heuristic exactly like a local one (it used to escape and surface as
-            # "prep failed unexpectedly").
+            # "prep failed unexpectedly"). Logged, not swallowed silently — the user
+            # only sees "generated offline", which is indistinguishable from the model
+            # being down unless the reason is written somewhere.
+            logger.warning("delegation prep generation failed, using heuristic: %s", exc)
             reply = ""
         raw = extract_json_object(reply)
         brief = raw.get("brief")

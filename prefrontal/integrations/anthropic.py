@@ -57,8 +57,11 @@ class AnthropicClient:
             returns ``False``) so callers fall back to the local model.
         model: Model id to generate with (defaults to :data:`DEFAULT_MODEL`).
         timeout: Per-request timeout in seconds.
-        max_tokens: Output-token cap. Assistant action lists are small, so the
-            default is modest and keeps the request well under the HTTP timeout.
+        max_tokens: Default output-token cap. Sized for the dashboard assistant's
+            small action lists; a call that needs a long answer passes its own
+            ``max_tokens`` (see :meth:`generate`). Note a *reasoning* model spends
+            this budget on its thinking block first, so an under-sized cap can
+            return a response with no text at all.
     """
 
     def __init__(
@@ -100,6 +103,7 @@ class AnthropicClient:
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate a single completion, returning the concatenated text blocks.
 
@@ -111,6 +115,10 @@ class AnthropicClient:
                 protocol (hosted models size their own context).
             timeout: Ignored here for the same reason (transport timeout is fixed
                 at construction).
+            max_tokens: Output-token cap for this call, overriding the client
+                default. Pass a generous one for a long answer — on a reasoning
+                model the thinking block is spent from this same budget, so too
+                small a cap yields a truncated reply with no text in it.
 
         Returns:
             The model's response text (stripped). A safety refusal yields an
@@ -134,7 +142,7 @@ class AnthropicClient:
         client = anthropic.Anthropic(api_key=self.api_key, timeout=self.timeout)
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
         if system:
@@ -241,9 +249,18 @@ class AnthropicClient:
     def _text(resp: Any) -> str:
         """Concatenate a response's text blocks (empty on a safety refusal).
 
-        Shared by :meth:`generate` and :meth:`describe_image`: a refusal (or any
-        non-text stop) leaves no usable content, so return empty and let the caller
-        fall back rather than parsing a refusal string as if it were an answer.
+        Shared by :meth:`generate` and :meth:`describe_image`: a refusal leaves no
+        usable content, so return empty and let the caller fall back rather than
+        parsing a refusal string as if it were an answer.
+
+        Raises:
+            AnthropicError: When the reply was cut off at ``max_tokens`` *before any
+                text* — on a reasoning model the thinking block is spent from the
+                same budget, so an under-sized cap returns a ``thinking``-only
+                response. That is a fixable configuration problem, and returning ""
+                for it made it indistinguishable from a refusal: the caller silently
+                served its offline heuristic with no way to know why (observed with a
+                delegation prep on claude-sonnet-5 at the default 1024).
         """
         if getattr(resp, "stop_reason", None) == "refusal":
             return ""
@@ -252,4 +269,13 @@ class AnthropicClient:
             for block in resp.content
             if getattr(block, "type", None) == "text"
         ]
-        return "".join(parts).strip()
+        text = "".join(parts).strip()
+        if not text and getattr(resp, "stop_reason", None) == "max_tokens":
+            blocks = ", ".join(
+                sorted({getattr(b, "type", "?") for b in resp.content}) or ["none"]
+            )
+            raise AnthropicError(
+                "reply hit max_tokens before producing any text "
+                f"(blocks: {blocks}) — raise max_tokens for this call"
+            )
+        return text

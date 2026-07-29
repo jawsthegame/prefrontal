@@ -90,6 +90,11 @@ DEFAULT_OBSERVATION_CHARS = 2000
 _TURN_MAX_NUM_CTX = 16384
 _TURN_TIMEOUT = 120.0
 
+#: Output-token budget for one loop turn. A move is a couple of lines of JSON, but a
+#: reasoning model spends this budget on its thinking first, so the cap has to clear
+#: both or the turn comes back with no text and the run reads as stalled.
+_TURN_MAX_TOKENS = 2048
+
 #: The most questions one run may ask. A handful is a conversation; twenty is a
 #: form, and a form is the thing "activation energy → zero" exists to prevent. The
 #: cap is also what stops a confused model turning a run into an interrogation.
@@ -353,7 +358,8 @@ def _next_turn(
     num_ctx = fit_num_ctx(len(prompt) + len(system), cap=_TURN_MAX_NUM_CTX)
     try:
         reply = client.generate(
-            prompt, system=system, num_ctx=num_ctx, timeout=_TURN_TIMEOUT
+            prompt, system=system, num_ctx=num_ctx, timeout=_TURN_TIMEOUT,
+            max_tokens=_TURN_MAX_TOKENS,
         )
     except ProviderError as exc:  # Ollama/Anthropic transport or model failure
         logger.info("auto-run turn failed: %s", exc)

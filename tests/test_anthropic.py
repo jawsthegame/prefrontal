@@ -182,3 +182,46 @@ def test_available_false_without_key():
 
 def test_available_true_with_key_and_sdk(fake_sdk):
     assert AnthropicClient(api_key="k").available() is True
+
+
+# --- max_tokens: the per-call override and the truncation trap ---------------
+#
+# The client default (1024) is sized for the dashboard assistant's small action
+# lists. A *reasoning* model spends that same budget on its thinking block first,
+# so an under-sized cap can return a response whose only block is `thinking` — no
+# text at all. Seen live: a delegation prep on claude-sonnet-5 came back
+# thinking-only, `_text` returned "" (indistinguishable from a refusal), and the
+# prep silently served its offline heuristic with no way to know why.
+
+
+def test_generate_uses_the_client_max_tokens_by_default(fake_sdk):
+    _client().generate("hi")
+    assert _FakeClientSDK.calls[0]["max_tokens"] == 512
+
+
+def test_generate_accepts_a_per_call_max_tokens(fake_sdk):
+    _client().generate("hi", max_tokens=4096)
+    assert _FakeClientSDK.calls[0]["max_tokens"] == 4096
+
+
+def test_generate_raises_when_truncated_before_any_text(fake_sdk):
+    """Thinking ate the whole budget: a fixable config problem, not a refusal."""
+    _FakeClientSDK.response = _Response([_Block("thinking")], stop_reason="max_tokens")
+    with pytest.raises(AnthropicError) as excinfo:
+        _client().generate("hi")
+    msg = str(excinfo.value)
+    assert "max_tokens" in msg and "thinking" in msg
+
+
+def test_generate_keeps_a_truncated_reply_that_did_produce_text(fake_sdk):
+    """Truncation *with* text is still usable — the salvage paths handle it."""
+    _FakeClientSDK.response = _Response(
+        [_Block("thinking"), _Block("text", '{"brief": "partial')], stop_reason="max_tokens"
+    )
+    assert _client().generate("hi") == '{"brief": "partial'
+
+
+def test_generate_refusal_still_returns_empty(fake_sdk):
+    """A refusal is a different thing from a truncation and must not raise."""
+    _FakeClientSDK.response = _Response([], stop_reason="refusal")
+    assert _client().generate("hi") == ""

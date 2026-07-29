@@ -137,3 +137,70 @@ def test_can_describe_images_tolerates_non_string_names():
 
     c = OllamaClient(vision_model="llava", transport=httpx.MockTransport(handler))
     assert c.can_describe_images() is True  # the one valid entry still matches
+
+
+# --- generate: the thinking-mode flag ---------------------------------------
+#
+# A hybrid-thinking model (Qwen3, DeepSeek-R1) runs a reasoning pass by default,
+# which costs multiples of the answer without improving it for any call site here
+# (measured: 64.5s vs 25.8s on the same auto-run loop turn with qwen3:14b). The
+# snappy inference paths run on a 10s timeout, so leaving it on times every one of
+# them out to a heuristic — hence "off" is the default, and it must actually reach
+# the wire.
+
+
+def _capture(handler_response=None, status=200):
+    """A client plus the captured request bodies."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        bodies.append(json.loads(request.content))
+        if callable(handler_response):
+            return handler_response(len(bodies))
+        return httpx.Response(status, json={"response": "ok"})
+
+    return OllamaClient(transport=httpx.MockTransport(handler)), bodies
+
+
+def test_generate_sends_think_false_by_default():
+    client, bodies = _capture()
+    client.generate("hi")
+    assert bodies[0]["think"] is False
+
+
+def test_generate_think_is_configurable_and_overridable_per_call():
+    client, bodies = _capture()
+    client.think = True
+    client.generate("hi")
+    assert bodies[0]["think"] is True
+    client.generate("hi", think=False)  # per-call override wins
+    assert bodies[1]["think"] is False
+
+
+def test_from_settings_carries_the_think_setting():
+    from prefrontal.config import Settings
+
+    assert OllamaClient.from_settings(Settings()).think is False
+    assert OllamaClient.from_settings(Settings(ollama_think=True)).think is True
+
+
+def test_generate_retries_without_think_when_the_server_rejects_it():
+    """An older server rejects `think` for a non-thinking model. Sending the field is
+    what keeps a hybrid model fast, so a version quirk must not break generation."""
+    def responses(call_number: int) -> httpx.Response:
+        if call_number == 1:
+            return httpx.Response(400, json={"error": '"think" is not supported'})
+        return httpx.Response(200, json={"response": "recovered"})
+
+    client, bodies = _capture(responses)
+    assert client.generate("hi") == "recovered"
+    assert "think" in bodies[0]
+    assert "think" not in bodies[1]  # the retry drops it
+
+
+def test_generate_still_raises_on_an_unrelated_400():
+    client, _bodies = _capture(lambda n: httpx.Response(400, json={"error": "no model"}))
+    with pytest.raises(OllamaError):
+        client.generate("hi")

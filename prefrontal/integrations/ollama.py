@@ -25,6 +25,9 @@ import httpx
 
 from prefrontal.config import Settings, get_settings
 from prefrontal.integrations.base import ProviderError
+from prefrontal.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class OllamaError(ProviderError):
@@ -41,6 +44,15 @@ class OllamaClient:
             (e.g. ``llava``). Empty means on-device vision is off — the vision
             flow falls back to the cloud Anthropic model.
         timeout: Per-request timeout in seconds (generation can be slow).
+        think: Whether a *hybrid-thinking* model (Qwen3, DeepSeek-R1, …) should emit
+            its reasoning pass. **Off by default**, which matters as soon as one of
+            those is the configured model: every Prefrontal call site wants a short
+            structured answer, and the reasoning pass costs multiples of the answer
+            for no gain in it. Measured on this project's own loop turn with
+            ``qwen3:14b``: 64.5s with thinking (2.7 KB of reasoning) vs 25.8s
+            without, same JSON quality — and the snappy inference paths run on a 10s
+            timeout, so leaving it on would time every one of them out to a
+            heuristic. A model with no thinking mode ignores the flag.
         transport: Optional ``httpx`` transport, primarily for tests.
     """
 
@@ -50,12 +62,14 @@ class OllamaClient:
         model: str = "llama3.1:8b",
         vision_model: str = "",
         timeout: float = 60.0,
+        think: bool = False,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.vision_model = vision_model
         self.timeout = timeout
+        self.think = think
         self._transport = transport
 
     @classmethod
@@ -66,6 +80,7 @@ class OllamaClient:
             base_url=resolved.ollama_url,
             model=resolved.ollama_model,
             vision_model=resolved.ollama_vision_model,
+            think=resolved.ollama_think,
         )
 
     def _client(self, timeout: float | None = None) -> httpx.Client:
@@ -137,6 +152,8 @@ class OllamaClient:
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        think: bool | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate a single non-streamed completion.
 
@@ -149,9 +166,20 @@ class OllamaClient:
                 otherwise the model only ever sees a sliver.
             timeout: Optional per-call timeout override (seconds); a large ``num_ctx``
                 makes prompt evaluation much slower, so bump this alongside it.
+            think: Per-call override of :attr:`think` (see the class docstring) — for
+                the rare call where a reasoning pass is worth its latency.
+            max_tokens: Accepted for the shared
+                :class:`~prefrontal.integrations.Generator` protocol and **not**
+                applied — it exists because a hosted model must be told how long an
+                answer may be, whereas a local model costs nothing to let finish, and
+                capping it (Ollama's ``num_predict``) would only truncate good
+                answers. Mirrors how the Anthropic client accepts and ignores
+                ``num_ctx``.
 
         Returns:
-            The model's response text (stripped).
+            The model's response text (stripped). A thinking model's reasoning is
+            *not* included: Ollama returns it in a separate ``thinking`` field, and
+            this returns the answer only.
 
         Raises:
             OllamaError: On transport failure, a non-2xx status, or a malformed
@@ -161,6 +189,7 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "think": self.think if think is None else think,
         }
         if system:
             payload["system"] = system
@@ -169,6 +198,14 @@ class OllamaClient:
         try:
             with self._client(timeout) as client:
                 resp = client.post("/api/generate", json=payload)
+                # Older Ollama builds reject `think` outright for a model with no
+                # thinking mode. Sending the field is what keeps a hybrid model fast,
+                # so retry once without it rather than let a server-version quirk
+                # break every generation in the app.
+                if resp.status_code == 400 and "think" in resp.text.lower():
+                    logger.debug("Ollama rejected the 'think' field; retrying without it")
+                    payload.pop("think", None)
+                    resp = client.post("/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPError as exc:

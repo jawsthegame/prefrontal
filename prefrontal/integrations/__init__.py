@@ -42,6 +42,7 @@ class Generator(Protocol):
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        max_tokens: int | None = None,
     ) -> str: ...
 
 

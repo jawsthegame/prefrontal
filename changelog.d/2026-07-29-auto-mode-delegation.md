@@ -32,3 +32,25 @@
   assistant. Answered questions survive the re-run and are never re-asked.
   `needs_input` is deliberately **not** parked — the ball is with you. Covered by
   `tests/test_autorun.py`.
+- **Delegation honours `ANTHROPIC_AGENTS`** ✅ — the todos router read the raw local
+  client, so delegation prep (and an `auto` run's tool loop) ignored the per-agent
+  provider config entirely: `provider.client("summarizer")` had exactly one call
+  site in the codebase, and the *same* hand-off ran on Claude from the NL box but
+  on the local model from the dashboard button and the CLI. Now resolved through
+  the provider with the longer-timeout local client as the fallback. Three fixes
+  this exposed: `generate_prep` caught only `OllamaError` (a cloud failure escaped
+  as "prep failed unexpectedly" instead of degrading to the heuristic) and now
+  catches `ProviderError` *and logs it*; the Anthropic client accepts a per-call
+  `max_tokens` (the 1024 default is sized for the assistant's action lists, not a
+  brief); and a reply truncated at `max_tokens` **before any text** now raises
+  instead of returning `""` — on a reasoning model the thinking block is spent from
+  the same budget, so claude-sonnet-5 returned a thinking-only response and the
+  prep silently served its offline heuristic with no way to see why.
+- **Local model: thinking off by default** ✅ — `OllamaClient` gained a `think` flag
+  (`OLLAMA_THINK`, default off) that reaches the wire, so a hybrid-thinking model
+  (Qwen3, DeepSeek-R1) can be the configured local model without its reasoning pass
+  tripling every call. Measured on an auto-run loop turn with `qwen3:14b`: 64.5s
+  with thinking (2.7 KB of reasoning) vs 25.8s without, same JSON quality — and the
+  snappy inference paths run on a 10s timeout, so leaving it on would time every
+  one of them out to a heuristic. An older server that rejects the field gets one
+  retry without it.

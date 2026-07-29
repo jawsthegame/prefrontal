@@ -732,7 +732,8 @@ def test_delegation_resolves_the_summarizer_agent(monkeypatch):
         def available(self):
             return True
 
-        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None,
+                     max_tokens=None):
             return _prep("Written by the cloud model.")
 
     settings = Settings(webhook_secret=SECRET, anthropic_agents=("summarizer",))
@@ -761,7 +762,8 @@ def test_delegation_stays_local_when_the_agent_is_not_opted_in(monkeypatch):
         def available(self):
             return True
 
-        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None,
+                     max_tokens=None):
             raise AssertionError("must not reach the cloud provider")
 
     settings = Settings(webhook_secret=SECRET, anthropic_agents=("assistant",))
@@ -785,7 +787,8 @@ def test_prep_degrades_when_the_resolved_provider_fails(store):
     from prefrontal.integrations.anthropic import AnthropicError
 
     class _Broken:
-        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None,
+                     max_tokens=None):
             raise AnthropicError("overloaded")
 
     tid = store.add_todo("Book dentist", notes="the one on Pine St")
