@@ -224,7 +224,10 @@ class Settings:
     # agent not listed here stays on Ollama regardless of the key. Historical
     # default: only the dashboard ``assistant`` (its long-standing behavior when
     # a key is present). The sentinel ``all`` opts every agent in. Selectable
-    # names: assistant, summarizer, briefing, sensor, triage. See
+    # names: assistant, summarizer, briefing, sensor, triage. ``summarizer`` covers
+    # the profile summary *and* delegation prep (including an ``auto`` run's tool
+    # loop — see ``prefrontal.autorun``), so opting it in sends the todo, any pasted
+    # context, and the run's tool observations outbound. See
     # ``prefrontal.integrations.provider``.
     anthropic_agents: tuple[str, ...] = ("assistant",)
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"

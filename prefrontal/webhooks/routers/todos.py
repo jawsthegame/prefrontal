@@ -42,6 +42,7 @@ from prefrontal.delegation import (
 from prefrontal.impact import (
     utcnow,
 )
+from prefrontal.integrations.provider import SUMMARIZER
 from prefrontal.log import get_logger
 from prefrontal.mail.feedback import (
     record_drop_feedback,
@@ -138,10 +139,18 @@ def build_router(services: RouterServices) -> APIRouter:
     resolved_settings = services.settings
     ollama_client = services.provider.ollama
     # Delegation prep writes a multi-sentence brief + draft messages — a heavier
-    # generation than the snappy window/title inference, so it uses the longer-
-    # timeout summarizer client (like the profile/briefing paths) rather than the
-    # 10s inference client, which would often time out to the heuristic outline.
-    summarizer_client = services.summarizer
+    # generation than the snappy window/title inference — and an `auto` run adds a
+    # multi-turn tool loop on top, which is the most quality-sensitive generation in
+    # the app. So it resolves the `summarizer` agent through the provider (Claude when
+    # opted in via ANTHROPIC_AGENTS) rather than pinning the local client, with the
+    # longer-timeout summarizer client as the local fallback: the 10s inference client
+    # would often time out to the heuristic outline.
+    #
+    # This used to read `services.summarizer` directly, which meant delegation ignored
+    # ANTHROPIC_AGENTS entirely — the same hand-off ran on Claude from the NL box (that
+    # path resolves the `assistant` agent) but on the local model from the dashboard
+    # button and the CLI.
+    summarizer_client = services.provider.client(SUMMARIZER, fallback=services.summarizer)
 
     @router.post("/todos", status_code=status.HTTP_201_CREATED, tags=["todos"])
     def todo_create(

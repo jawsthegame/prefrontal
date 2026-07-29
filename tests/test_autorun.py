@@ -712,6 +712,91 @@ def test_http_answers_rejects_a_non_auto_delegation(http):
     assert "auto" in r.json()["detail"]
 
 
+def test_delegation_resolves_the_summarizer_agent(monkeypatch):
+    """Delegation must honour ANTHROPIC_AGENTS like every other selectable agent.
+
+    It didn't: the router read `services.summarizer` (the raw local client) directly,
+    so the *same* hand-off ran on Claude from the NL box — which resolves the
+    `assistant` agent — but on the local model from the dashboard button and the CLI.
+    """
+    monkeypatch.setenv("PREFRONTAL_SECRET_KEY", "")
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "me", display_name="Me", token=SECRET, is_operator=True)
+    from prefrontal.webhooks.app import create_app
+
+    # A stand-in "cloud" client that the resolver should pick for `summarizer`.
+    class _Cloud:
+        model = "claude-test"
+
+        def available(self):
+            return True
+
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+            return _prep("Written by the cloud model.")
+
+    settings = Settings(webhook_secret=SECRET, anthropic_agents=("summarizer",))
+    ollama = _scripted(_prep("Written by the local model."))
+    app = create_app(store=unscoped, settings=settings, ollama=ollama, anthropic=_Cloud())
+    with TestClient(app) as c:
+        tid = c.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+        body = c.post(
+            f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers()
+        ).json()
+    assert body["brief"] == "Written by the cloud model."
+    conn.close()
+
+
+def test_delegation_stays_local_when_the_agent_is_not_opted_in(monkeypatch):
+    """The default has to stay local-first: no opt-in, no cloud call."""
+    monkeypatch.setenv("PREFRONTAL_SECRET_KEY", "")
+    conn = init_db(":memory:")
+    unscoped = MemoryStore(conn)
+    provision_user(unscoped, "me", display_name="Me", token=SECRET, is_operator=True)
+    from prefrontal.webhooks.app import create_app
+
+    class _Cloud:
+        model = "claude-test"
+
+        def available(self):
+            return True
+
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+            raise AssertionError("must not reach the cloud provider")
+
+    settings = Settings(webhook_secret=SECRET, anthropic_agents=("assistant",))
+    ollama = _scripted(_prep("aug"), _prep("Written by the local model."))
+    app = create_app(store=unscoped, settings=settings, ollama=ollama, anthropic=_Cloud())
+    with TestClient(app) as c:
+        tid = c.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+        body = c.post(
+            f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers()
+        ).json()
+    assert body["brief"] == "Written by the local model."
+    conn.close()
+
+
+def test_prep_degrades_when_the_resolved_provider_fails(store):
+    """A cloud failure has to fall back to the heuristic like a local one does.
+
+    `generate_prep` caught only OllamaError, so once delegation could actually resolve
+    to Claude an AnthropicError would escape as "prep failed unexpectedly".
+    """
+    from prefrontal.integrations.anthropic import AnthropicError
+
+    class _Broken:
+        def generate(self, prompt, *, system=None, num_ctx=None, timeout=None):
+            raise AnthropicError("overloaded")
+
+    tid = store.add_todo("Book dentist", notes="the one on Pine St")
+    result = run_delegation(
+        store, store.get_todo(tid), handler=HANDLER_AUTO, client=_Broken(),
+    )
+    assert result.status == STATUS_PREPPED
+    assert "Generated offline" in result.brief  # the honest heuristic, not a crash
+    assert "the one on Pine St" in result.brief
+
+
 def test_http_answers_404s_without_a_delegation(http):
     client, _replies = http
     tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]

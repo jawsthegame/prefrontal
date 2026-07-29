@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from prefrontal.autorun import Toolbox, answered_context, merge_questions, run_research
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
-from prefrontal.integrations.ollama import OllamaError
+from prefrontal.integrations.base import ProviderError
 from prefrontal.integrations.smtp import SmtpClient
 from prefrontal.llm_json import extract_json_object, fit_num_ctx
 from prefrontal.log import get_logger
@@ -461,8 +461,10 @@ def generate_prep(
 ) -> tuple[str, list[dict[str, str]], list[dict[str, Any]]]:
     """Produce a ``(brief, drafts, actions)`` prep package for a task.
 
-    One JSON call to the injected local model (house style: catch
-    :class:`OllamaError`, tolerant JSON extraction, coerce, fall back). Two things
+    One JSON call to the injected model (house style: catch
+    :class:`~prefrontal.integrations.base.ProviderError`, tolerant JSON extraction,
+    coerce, fall back — the client may be local or cloud, whichever the ``summarizer``
+    agent resolved to). Two things
     make this robust to a big pasted transcript:
 
     - **The whole context reaches the model.** Ollama's default context window
@@ -506,7 +508,11 @@ def generate_prep(
             reply = client.generate(
                 prompt, system=_PREP_SYSTEM, num_ctx=num_ctx, timeout=timeout
             )
-        except OllamaError:
+        except ProviderError:
+            # ProviderError, not OllamaError: the injected client is whatever the
+            # `summarizer` agent resolved to, so a cloud failure has to degrade to the
+            # heuristic exactly like a local one (it used to escape and surface as
+            # "prep failed unexpectedly").
             reply = ""
         raw = extract_json_object(reply)
         brief = raw.get("brief")
