@@ -12,6 +12,7 @@ weekly usage nudge, and zero-tap focus arming).
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from datetime import timedelta
 
 import pytest
@@ -50,14 +51,27 @@ def store():
         conn.close()
 
 
-def _client(store, *, modules=(), packs=()):
-    app = create_app(
-        store=store,
-        settings=Settings(webhook_secret=SECRET, modules=modules, packs=packs),
-    )
-    client = TestClient(app)
-    client.__enter__()
-    return client
+@pytest.fixture()
+def make_client():
+    """Build ``TestClient``s whose lifespan is entered now and closed at teardown.
+
+    A factory rather than a plain fixture because these tests need clients built on
+    *different* deployment settings (an explicit ``modules`` list is how the
+    deployment-off cases are expressed). Entering the context is what runs the app
+    lifespan — which is what publishes ``app.state.store`` — and the ``ExitStack``
+    guarantees every client is exited, so no lifespan or HTTPX pool outlives the
+    test that opened it.
+    """
+    with ExitStack() as stack:
+
+        def build(store, *, modules=(), packs=()):
+            app = create_app(
+                store=store,
+                settings=Settings(webhook_secret=SECRET, modules=modules, packs=packs),
+            )
+            return stack.enter_context(TestClient(app))
+
+        yield build
 
 
 def _auth():
@@ -104,41 +118,41 @@ def test_user_module_enabled_combines_both_switches(store):
 
 
 @pytest.mark.parametrize(("route", "key"), CHECK_ROUTES)
-def test_check_route_fires_when_the_module_is_on(store, route, key):
+def test_check_route_fires_when_the_module_is_on(store, make_client, route, key):
     """Control: with everything on, the route runs (no ``skipped`` marker)."""
-    client = _client(store)
+    client = make_client(store)
     body = client.post(route, headers=_auth(), json={}).json()
     assert "skipped" not in body
 
 
 @pytest.mark.parametrize(("route", "key"), CHECK_ROUTES)
-def test_check_route_honors_deployment_off(store, route, key):
-    client = _client(store, modules=("projects",))
+def test_check_route_honors_deployment_off(store, make_client, route, key):
+    client = make_client(store, modules=("projects",))
     body = client.post(route, headers=_auth(), json={}).json()
     assert body["skipped"] == "module_disabled"
 
 
 @pytest.mark.parametrize(("route", "key"), CHECK_ROUTES)
-def test_check_route_honors_the_usage_mute(store, route, key):
+def test_check_route_honors_the_usage_mute(store, make_client, route, key):
     store.set_state("usage_muted_features", key, source="explicit")
-    client = _client(store)
+    client = make_client(store)
     body = client.post(route, headers=_auth(), json={}).json()
     assert body["skipped"] == "module_muted"
 
 
 @pytest.mark.parametrize(("route", "key"), CHECK_ROUTES)
-def test_check_route_honors_the_per_user_features_switch(store, route, key):
+def test_check_route_honors_the_per_user_features_switch(store, make_client, route, key):
     """The regression this suite exists for: "off" in the app silences the poll."""
     _turn_off(store, key)
-    client = _client(store)
+    client = make_client(store)
     body = client.post(route, headers=_auth(), json={}).json()
     assert body["skipped"] == "module_off"
 
 
-def test_disabled_hyperfocus_check_claims_no_protection(store):
+def test_disabled_hyperfocus_check_claims_no_protection(store, make_client):
     """A module the user turned off must not shield other modules' nudges either."""
     _turn_off(store, "hyperfocus")
-    client = _client(store)
+    client = make_client(store)
     body = client.post("/webhooks/focus/check", headers=_auth(), json={}).json()
     assert body["protect"] is False
     assert body["active"] == []
@@ -178,10 +192,10 @@ def test_focus_arm_respects_deployment_off(store):
     assert store.active_focus_sessions() == []
 
 
-def test_focus_arm_endpoint_respects_the_per_user_switch(store):
+def test_focus_arm_endpoint_respects_the_per_user_switch(store, make_client):
     _live_focus_block(store)
     _turn_off(store, "hyperfocus")
-    client = _client(store)
+    client = make_client(store)
     body = client.post("/webhooks/focus/arm", headers=_auth(), json={}).json()
     assert body["armed"] is False
 
@@ -189,8 +203,8 @@ def test_focus_arm_endpoint_respects_the_per_user_switch(store):
 # -- read surfaces that already follow deployment-off ------------------------
 
 
-def test_guide_hides_a_module_the_user_turned_off(store):
-    client = _client(store)
+def test_guide_hides_a_module_the_user_turned_off(store, make_client):
+    client = make_client(store)
     on = client.get("/guide/data", headers=_auth()).json()
     assert "hyperfocus" in {m["key"] for m in on["modules"]}
     _turn_off(store, "hyperfocus")
@@ -200,7 +214,7 @@ def test_guide_hides_a_module_the_user_turned_off(store):
     assert off["total"] == on["total"] - 1
 
 
-def test_departure_next_hides_the_leave_by_when_time_blindness_is_off(store):
+def test_departure_next_hides_the_leave_by_when_time_blindness_is_off(store, make_client):
     """The widget/Today pull mirrors the nudge: off means no leave-by."""
     now = utcnow()
     store.upsert_commitment(
@@ -209,19 +223,19 @@ def test_departure_next_hides_the_leave_by_when_time_blindness_is_off(store):
         location="123 Main St",
         lead_minutes=20.0,
     )
-    client = _client(store)
+    client = make_client(store)
     assert client.get("/departure/next", headers=_auth()).json()["departure"] is not None
     _turn_off(store, "time_blindness")
     assert client.get("/departure/next", headers=_auth()).json()["departure"] is None
 
 
-def test_balance_hint_reports_trip_tracking_off_for_this_user(store):
+def test_balance_hint_reports_trip_tracking_off_for_this_user(store, make_client):
     """The empty-view explanation reflects the user's own switch, not just config."""
     # The hint only speaks up for a user who expects the guardrail (a weekly aim or
     # the nudge flag), so arm it the way the Parent pack does.
     store.set_state("focus_balance_nudge", "1", source="explicit")
     _turn_off(store, "trip_tracking")
-    client = _client(store)
+    client = make_client(store)
     hint = client.get("/balance", headers=_auth()).json()["hint"] or ""
     assert "trip" in hint.lower()
 
