@@ -24,6 +24,7 @@ from prefrontal.assistant import (
 from prefrontal.assistant import (
     plan as assistant_plan_message,
 )
+from prefrontal.autorun import build_toolbox
 from prefrontal.availability import plan_availability, render_plan
 from prefrontal.braindump import (
     CAPTURE_FEATURE,
@@ -31,6 +32,7 @@ from prefrontal.braindump import (
     plan_braindump,
 )
 from prefrontal.clock import local_datetime, parse_ts, utcnow
+from prefrontal.delegation import HANDLER_AUTO
 from prefrontal.integrations.anthropic import SUPPORTED_IMAGE_MEDIA_TYPES
 from prefrontal.log import get_logger
 from prefrontal.scheduling import window_config_for
@@ -126,8 +128,17 @@ def build_router(services: RouterServices) -> APIRouter:
         # provider-selected client the interpret step used (falls back to a heuristic
         # brief when unavailable). Other ops ignore it.
         client, _ = provider.select("assistant")
+        # An `auto` delegation also needs its unattended toolbox. Built only when one
+        # is actually being applied — assembling it lists tools over the network.
+        toolbox = None
+        if any(
+            a.op == "delegate_todo" and a.params.get("handler") == HANDLER_AUTO
+            for a in actions
+        ):
+            toolbox = build_toolbox(memory, resolved_settings)
         results = execute_actions(
-            memory, actions, timezone=resolved_settings.timezone, client=client
+            memory, actions, timezone=resolved_settings.timezone, client=client,
+            toolbox=toolbox,
         )
         applied = sum(1 for r in results if r["ok"])
         return {"applied": applied, "results": results, "errors": errors}

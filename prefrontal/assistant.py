@@ -39,6 +39,7 @@ from prefrontal.clock import local_datetime, utcnow
 from prefrontal.commitments import to_utc
 from prefrontal.delegation import (
     HANDLER_AGENT,
+    HANDLER_AUTO,
     HANDLER_EMAIL,
     HANDLERS,
     STATUS_FAILED,
@@ -139,7 +140,7 @@ ASSISTANT_SYSTEM = (
     '- {"op":"set_todo_notes","todo_id":int,"notes":str or null}\n'
     '- {"op":"add_blocker","person":str,"what":str,"priority":0-3?,'
     '"deadline":"YYYY-MM-DD"?,"notes":str?}\n'
-    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"email",'
+    '- {"op":"delegate_todo","todo_id":int,"handler":"agent"|"auto"|"email",'
     '"destination":str?,"context":str?,"note":str?}\n'
     '- {"op":"add_commitment","title":str,"start_at":"YYYY-MM-DD HH:MM",'
     '"end_at":"YYYY-MM-DD HH:MM"?,"location":str?,"notes":str?}\n'
@@ -163,7 +164,11 @@ ASSISTANT_SYSTEM = (
     "mark it done): use delegate_todo when the user says \"have the assistant "
     "handle/prep X\", \"get my VA on X\", \"draft the email for X\". "
     "handler:\"agent\" (the default) is the in-app AI — it writes a research brief "
-    "and draft messages back onto the todo; handler:\"email\" sends that brief to a "
+    "and draft messages back onto the todo; handler:\"auto\" is the same but it looks "
+    "things up first with its tools and may come back with questions only the user "
+    "can answer, so pick it when the ask is to go *do the legwork* (\"research…\", "
+    "\"look into…\", \"work out whether I should…\", \"generate a report on…\"); "
+    "handler:\"email\" sends that brief to a "
     "human assistant and so REQUIRES a destination email (use \"agent\" when the "
     "user names no address).\n"
     "A commitment's hardness is how firm it is: \"hard\" = a must-happen "
@@ -805,7 +810,7 @@ def _v_delegate_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) 
     tid, title = _require_todo(action, snapshot)
     handler = str(action.get("handler") or HANDLER_AGENT).strip().lower()
     if handler not in HANDLERS:
-        raise _ActionError('handler must be "agent" or "email"')
+        raise _ActionError('handler must be "agent", "auto", or "email"')
     params: dict[str, Any] = {"todo_id": tid, "handler": handler}
     context = str(action.get("context") or "").strip()
     if context:
@@ -819,6 +824,8 @@ def _v_delegate_todo(op: str, action: dict[str, Any], snapshot: dict[str, Any]) 
         if note:
             params["note"] = note
         summary = f"Delegate “{title}” to your assistant ({dest})"
+    elif handler == HANDLER_AUTO:
+        summary = f"Have the AI assistant research “{title}” and write it up"
     else:
         summary = f"Delegate “{title}” to the AI assistant to prep"
     return ValidatedAction(op, params, summary)
@@ -1514,6 +1521,7 @@ def execute_actions(
     *,
     timezone: str = "UTC",
     client: Generator | None = None,
+    toolbox: Any = None,
 ) -> list[dict[str, Any]]:
     """Execute validated actions against the scoped store.
 
@@ -1529,15 +1537,23 @@ def execute_actions(
         client: Optional model client, used only by ``delegate_todo`` to write the
             prep brief (falls back to a heuristic brief when ``None`` / offline).
             Ignored by every other op, so callers with no model can omit it.
+        toolbox: Optional :class:`~prefrontal.autorun.Toolbox`, used only by
+            ``delegate_todo`` with ``handler="auto"`` — resolved by the caller (like
+            ``client``) so this stays independent of the MCP/settings layer. Omitting
+            it leaves an auto delegation with no tools, i.e. a plain ``agent`` prep.
 
     Returns:
         One ``{op, summary, ok, detail}`` result per action.
     """
-    return [_execute_one(memory, a, timezone, client) for a in actions]
+    return [_execute_one(memory, a, timezone, client, toolbox) for a in actions]
 
 
 def _execute_one(
-    memory: Any, action: ValidatedAction, tz: str, client: Generator | None = None
+    memory: Any,
+    action: ValidatedAction,
+    tz: str,
+    client: Generator | None = None,
+    toolbox: Any = None,
 ) -> dict[str, Any]:
     """Apply one action, returning a result row (never raises)."""
     op, p = action.op, action.params
@@ -1595,6 +1611,7 @@ def _execute_one(
                     destination=p.get("destination"), context=p.get("context"),
                     va_note=p.get("note"),
                     client=client, smtp=smtp,
+                    toolbox=toolbox if handler == HANDLER_AUTO else None,
                 )
                 # A failed hand-off (e.g. SMTP unconfigured) still stored the brief,
                 # but the delegation didn't land — report it as not-ok with the reason.

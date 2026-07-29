@@ -394,6 +394,26 @@
   .deleg-action.other .atext { color: var(--muted); }
   .deleg-action .btn-sm { flex: 0 0 auto; white-space: nowrap; }
   .deleg-action .added { flex: 0 0 auto; color: var(--good); font-size: 12px; white-space: nowrap; }
+  /* Questions an auto run is waiting on: answer them right here, inline. Given
+     more visual weight than the rest of the panel — this is the one part of a
+     delegation that's *your* move. */
+  .deleg-panel .deleg-qs { margin-top: 10px; border-top: 1px solid var(--line);
+    padding-top: 8px; }
+  .deleg-panel .deleg-qs .dh { font-size: 11px; color: var(--warn, var(--muted));
+    text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+  .deleg-q { margin-bottom: 8px; }
+  .deleg-q .qt { font-weight: 600; }
+  .deleg-q .qwhy { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .deleg-q .deleg-ans { width: 100%; margin-top: 4px; }
+  .deleg-q.answered .qa { color: var(--muted); border-left: 2px solid var(--line);
+    padding-left: 8px; margin-top: 2px; }
+  /* The run's trail — the receipt, quiet by default but always inspectable. */
+  .deleg-steps { margin-top: 10px; }
+  .deleg-steps > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .deleg-step { display: flex; gap: 6px; font-size: 12px; padding: 2px 0; }
+  .deleg-step .stool { font-family: ui-monospace, monospace; }
+  .deleg-step .swhy { color: var(--muted); }
+  .deleg-step.bad .mark { color: var(--warn, var(--muted)); }
   /* The pasted context, tucked behind a show-more so it never floods the card. */
   .deleg-context-view { margin-top: 10px; }
   .deleg-context-view > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
@@ -1477,6 +1497,14 @@ function openDelegateMenu(anchor, id) {
   ai.title = "The in-app assistant researches and drafts, on-device";
   ai.onclick = () => go({ handler: "agent", context: context() });
   menu.appendChild(ai);
+  // Auto mode: the same prep, but it looks things up first with its allowlisted
+  // tools and can come back with the questions only you can answer.
+  const auto = document.createElement("button");
+  auto.className = "cat-act";
+  auto.textContent = "🔎 Research it, then prep";
+  auto.title = "It does the legwork with its tools first, and may ask you a few things";
+  auto.onclick = () => go({ handler: "auto", context: context() });
+  menu.appendChild(auto);
   const mail = document.createElement("button");
   mail.className = "cat-act";
   mail.textContent = "✉ Email an assistant…";
@@ -1868,7 +1896,7 @@ function renderFocusConflict(fc) {
 const DELEG_LABEL = {
   prepped: ["🤖 prepped", "ok"], forwarded: ["✉ sent", "ok"],
   in_prep: ["… prepping", ""], returned: ["↩ returned", ""],
-  failed: ["⚠ needs a hand", "warn"],
+  needs_input: ["❓ needs you", "warn"], failed: ["⚠ needs a hand", "warn"],
 };
 function delegationPill(g) {
   const [label, cls] = DELEG_LABEL[g.status] || [g.status, ""];
@@ -1892,6 +1920,43 @@ function actionRow(a, parentTitle) {
     ? `<button class="btn-sm" data-action="deleg-add-todo" data-atext="${esc(a.text)}" data-asrc="${esc(parentTitle)}">＋ Add as todo</button>`
     : "";
   return `<div class="deleg-action ${cls}"><span class="atext">${esc(a.text)}</span>${btn}</div>`;
+}
+
+// An auto run's trail: what it actually looked up, behind a show-more. Kept quiet
+// by default (the brief is the answer; this is the receipt) but always available,
+// because a run you can't inspect is a run you can't trust.
+function stepsBlock(g) {
+  const steps = g.steps || [];
+  if (!steps.length) return "";
+  const rows = steps.map((s) =>
+    `<div class="deleg-step ${s.ok ? "ok" : "bad"}"><span class="mark">${s.ok ? "✓" : "✗"}</span>`
+    + `<span class="stool">${esc((s.server ? s.server + "." : "") + (s.tool || ""))}</span>`
+    + `<span class="swhy">${esc(s.why || s.detail || "")}</span></div>`).join("");
+  return `<details class="deleg-steps"><summary>What it looked up (${steps.length})</summary>${rows}</details>`;
+}
+
+// The questions an auto run is waiting on, as an inline form. Answering is the
+// fast path — right here, on the card you're already looking at — but the same
+// answers can land later from anywhere, so nothing here is a session.
+function questionsBlock(x, g) {
+  const qs = g.questions || [];
+  const pending = qs.filter((q) => !q.answer);
+  if (!qs.length) return "";
+  const answered = qs.filter((q) => q.answer).map((q) =>
+    `<div class="deleg-q answered"><div class="qt">${esc(q.text)}</div>`
+    + `<div class="qa">${esc(q.answer)}</div></div>`).join("");
+  if (!pending.length) return answered ? `<div class="deleg-qs">${answered}</div>` : "";
+  // Inputs are indexed by position in the *full* list, which is what the API takes.
+  const fields = qs.map((q, i) => q.answer ? "" :
+    `<div class="deleg-q"><div class="qt">${esc(q.text)}</div>`
+    + (q.why ? `<div class="qwhy">${esc(q.why)}</div>` : "")
+    + `<input class="deleg-ans" data-qi="${i}" placeholder="Your answer…">`
+    + `</div>`).join("");
+  return `<div class="deleg-qs">
+    <div class="dh">It needs ${pending.length} thing${pending.length > 1 ? "s" : ""} from you</div>
+    ${answered}${fields}
+    <button class="btn-sm" data-action="deleg-answer" data-id="${x.id}" data-n="${qs.length}">Send answers &amp; carry on</button>
+  </div>`;
 }
 
 function delegationPanel(x) {
@@ -1927,12 +1992,19 @@ function delegationPanel(x) {
   const bits = [];
   if (drafts.length) bits.push(`${drafts.length} draft${drafts.length > 1 ? "s" : ""}`);
   if (mine.length) bits.push(`${mine.length} action${mine.length > 1 ? "s" : ""} for you`);
+  const pendingQs = (g.questions || []).filter((q) => !q.answer).length;
+  if (pendingQs) bits.push(`${pendingQs} question${pendingQs > 1 ? "s" : ""} for you`);
   const counts = bits.length ? ` · ${bits.join(" · ")}` : "";
-  return `<details class="deleg-panel"${g.status === "prepped" ? " open" : ""}>
+  // Open by default when there's something waiting on you — a question you can't
+  // see is a question you won't answer.
+  const open = g.status === "prepped" || g.status === "needs_input";
+  return `<details class="deleg-panel"${open ? " open" : ""}>
     <summary>Assistant prep${counts}</summary>
     ${g.brief ? `<div class="brief-text">${esc(g.brief)}</div>` : ""}
+    ${questionsBlock(x, g)}
     ${actionHtml}
     ${draftHtml}
+    ${stepsBlock(g)}
     ${contextBlock(g)}
     ${ret}
   </details>`;
@@ -3452,6 +3524,19 @@ document.addEventListener("click", async (e) => {
       return;
     }
     else if (act === "delegate-return") { await post(`/todos/${id}/delegate/return`, {}); }
+    else if (act === "deleg-answer") {
+      // Collect the inline answers positionally (blanks stay unanswered) and let it
+      // pick the work back up. Answering re-runs the research, so this reloads.
+      const n = parseInt(el.dataset.n || "0", 10);
+      const answers = new Array(n).fill("");
+      el.closest(".deleg-qs").querySelectorAll(".deleg-ans").forEach((inp) => {
+        answers[parseInt(inp.dataset.qi, 10)] = inp.value.trim();
+      });
+      if (!answers.some((a) => a)) return;  // nothing typed — don't spend a re-run
+      el.disabled = true;
+      el.textContent = "Picking it back up…";
+      await post(`/todos/${id}/delegate/answers`, { answers });
+    }
     else if (act === "deleg-add-todo") {
       // Turn an extracted action item into a real todo, linked back to the meeting
       // it came from. Mark the button done rather than reloading, so the panel stays

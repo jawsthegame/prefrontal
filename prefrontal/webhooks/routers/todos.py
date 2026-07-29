@@ -22,12 +22,14 @@ from fastapi import (
     status,
 )
 
+from prefrontal.autorun import build_toolbox
 from prefrontal.clock import TS_FMT, local_datetime
 from prefrontal.clock import parse_ts_strict as _parse_ts
 from prefrontal.commitments import (
     to_utc,
 )
 from prefrontal.delegation import (
+    HANDLER_AUTO,
     HANDLER_EMAIL,
     STATUS_FAILED,
     STATUS_IN_PREP,
@@ -92,6 +94,7 @@ from prefrontal.webhooks.helpers import (
 )
 from prefrontal.webhooks.schemas import (
     AutoDecomposeConfig,
+    DelegateAnswers,
     DelegateSend,
     DelegateSendPreview,
     DelegateTodo,
@@ -809,13 +812,19 @@ def build_router(services: RouterServices) -> APIRouter:
         return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
 
     def _run_prep_and_notify(store, todo, *, handler, destination, context, va_note,
-                             owner_name, smtp, handle):
+                             owner_name, smtp, handle, answered=None):
         """Run the (possibly slow) prep, persist it, and push the heads-up.
 
         Shared by the inline and background paths. ``store`` must be usable on the
         calling thread — the request's scoped store inline, a fresh thread-scoped
         store in the background.
         """
+        # The auto handler's toolbox is built here rather than on the request thread:
+        # listing a server's tools is a network round-trip, and `run_action` audits
+        # through this same (thread-local) store.
+        toolbox = (
+            build_toolbox(store, resolved_settings) if handler == HANDLER_AUTO else None
+        )
         result = run_delegation(
             store,
             todo,
@@ -826,6 +835,8 @@ def build_router(services: RouterServices) -> APIRouter:
             owner_name=owner_name,
             client=summarizer_client,
             smtp=smtp,
+            toolbox=toolbox,
+            answered=answered,
         )
         # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
         # import keeps the delivery module (and its coaching cycle) off the hot path,
@@ -922,15 +933,7 @@ def build_router(services: RouterServices) -> APIRouter:
             # Inline (tests / injected single-connection store): finish now and
             # return the completed result.
             result = _run_prep_and_notify(memory, todo, **kwargs)
-            return {
-                "todo_id": todo_id,
-                "handler": result.handler,
-                "status": result.status,
-                "brief": result.brief,
-                "drafts": result.drafts,
-                "actions": result.actions,
-                "detail": result.detail,
-            }
+            return _delegation_response(todo_id, result)
 
         # Background: stamp an `in_prep` row now (keeping the pasted context so the
         # UI can already show it), then run the slow prep off the request thread.
@@ -961,6 +964,105 @@ def build_router(services: RouterServices) -> APIRouter:
             "drafts": [],
             "actions": [],
             "detail": "prepping… you'll get a heads-up when it's ready",
+            "steps": [],
+            "questions": [],
+        }
+
+    @router.post("/todos/{todo_id}/delegate/answers", tags=["todos"])
+    def todo_delegate_answers(
+        todo_id: int,
+        payload: DelegateAnswers,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Answer an ``auto`` run's questions — and let it pick the work back up.
+
+        An auto run stops at ``needs_input`` when the task needs facts only you have
+        (your numbers, preferences, constraints), with the questions on the row and the
+        partial write-up already usable. This records your answers (positionally — see
+        :class:`DelegateAnswers`, so answering two of five now and the rest later is
+        fine) and **re-runs the research** with them in hand: there's no suspended run
+        to resume, so answers can arrive minutes or days later, from anywhere.
+
+        Answers are kept even if the re-run fails, and an answered question is never
+        asked again. Like the initial delegation, the re-run happens on a background
+        thread and returns ``in_prep`` immediately. 404 if the todo has no delegation
+        to answer; 422 if the delegation isn't an auto run.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        delegation = memory.get_delegation(todo_id) if todo is not None else None
+        if todo is None or delegation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no delegation to answer.",
+            )
+        if delegation.get("handler") != HANDLER_AUTO:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Only an 'auto' delegation asks questions.",
+            )
+        answered = memory.answer_delegation_questions(todo_id, payload.answers)
+        kwargs = dict(
+            handler=HANDLER_AUTO,
+            destination=delegation.get("destination"),
+            # The *original* context, not the accumulated one: the findings from the
+            # last attempt were that attempt's working notes, and the re-run gathers
+            # its own. What must persist is the Q&A, which rides `answered`.
+            context=delegation.get("context"),
+            va_note=None,
+            owner_name=ctx.user.get("display_name") or ctx.user.get("handle"),
+            smtp=None,
+            handle=ctx.user["handle"],
+            answered=answered,
+        )
+
+        if not getattr(request.app.state, "delegation_async", False):
+            result = _run_prep_and_notify(memory, todo, **kwargs)
+            return _delegation_response(todo_id, result)
+
+        memory.update_delegation_status(
+            todo_id, STATUS_IN_PREP, detail="picking it back up with your answers…"
+        )
+        uid = ctx.user["id"]
+        root_store = request.app.state.store
+
+        def _bg() -> None:
+            scoped = root_store.scoped(uid)  # own connection on this thread
+            try:
+                _run_prep_and_notify(scoped, todo, **kwargs)
+            except Exception:  # never let a prep thread die silently
+                logger.exception("delegation re-run failed for todo %s", todo_id)
+                scoped.update_delegation_status(
+                    todo_id, STATUS_FAILED,
+                    detail="picking it back up failed unexpectedly — see server logs",
+                )
+
+        threading.Thread(target=_bg, name=f"delegate-answers-{todo_id}", daemon=True).start()
+        return {
+            "todo_id": todo_id,
+            "handler": HANDLER_AUTO,
+            "status": STATUS_IN_PREP,
+            "brief": delegation.get("brief"),
+            "drafts": delegation.get("drafts") or [],
+            "actions": delegation.get("actions") or [],
+            "detail": "picking it back up with your answers…",
+            "steps": delegation.get("steps") or [],
+            "questions": answered or [],
+        }
+
+    def _delegation_response(todo_id: int, result) -> dict[str, Any]:
+        """The delegate/answers response body (one shape for both endpoints)."""
+        return {
+            "todo_id": todo_id,
+            "handler": result.handler,
+            "status": result.status,
+            "brief": result.brief,
+            "drafts": result.drafts,
+            "actions": result.actions,
+            "detail": result.detail,
+            "steps": result.steps,
+            "questions": result.questions,
         }
 
     def _resolve_outbox(memory, todo_id: int, todo: dict[str, Any]):

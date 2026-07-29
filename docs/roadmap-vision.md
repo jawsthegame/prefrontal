@@ -379,9 +379,23 @@ documented, ready-to-productize LLM use among ADHD adults. *(Design commandment
   `create_todo`, and `place_call` (a *scoped* reminder call to the caller's own
   number), each a thin wrapper over an existing op, per-user-token-scoped, with
   operator-configured tools (`place_call`) operator-gated — so calendar-write / a
-  scoped call are real MCP tools without needing a third-party server. Open remainder:
-  richer served tools (real form-fill, multi-stop), wiring a tool-call onto a
-  delegated todo's draft, per-user encrypted MCP *client* sources (like SMTP), and
+  scoped call are real MCP tools without needing a third-party server. ✅ *And the
+  **`auto` delegation handler** now closes the loop from "one generation" to "go do
+  the legwork"* (`prefrontal/autorun.py`, `docs/design/auto-mode-delegation.md`): a
+  **bounded research loop** — plan → allowlisted tool call → observe → repeat, under
+  a hard step/time/size budget, every step persisted as an inspectable trail — whose
+  findings feed the existing prep generator. Unattended execution gets its **own**
+  gate (a per-server `unattended_tools` subset of `allowed_tools`, empty by default,
+  so no deployment gains autonomy by upgrading), because "callable after a preview"
+  is a weaker claim than "may fire while you're away". And **asking is a first-class
+  move**: a run that needs facts only the user has (their equity, their rate) parks
+  at `needs_input` with its partial write-up, and answering *re-runs* it with the Q&A
+  as context — inline on the card, from the CLI, or in prose — so the multi-step
+  "should I…?" report is finishable rather than merely startable. Open remainder:
+  richer served tools (real form-fill, multi-stop), the **pre-authorized delivery
+  contract** (email-the-result / Drive doc, digest-pinned at delegate time so the
+  agent supplies content but never the recipient — with `needs_confirm` as its
+  escape hatch), per-user encrypted MCP *client* sources (like SMTP), and
   stdio-transport servers.
 - **Communication translation as a first-class tool** ✅ **shipped** — decode an
   ambiguous work email, draft a reply in the right register, or soften a message.

@@ -144,8 +144,11 @@ def register(sub) -> None:
     )
     t_delegate.add_argument("todo_id", type=int)
     t_delegate.add_argument(
-        "--handler", choices=["agent", "email"], default="agent",
-        help="agent = in-app AI prep (default); email = send the brief to a human VA.",
+        "--handler", choices=["agent", "auto", "email"], default="agent",
+        help=(
+            "agent = in-app AI prep (default); auto = research it with tools first "
+            "(may come back with questions); email = send the brief to a human VA."
+        ),
     )
     t_delegate.add_argument(
         "--to", default=None, help="The assistant's email address (required for --handler email)."
@@ -157,6 +160,18 @@ def register(sub) -> None:
     t_delegate.add_argument(
         "--note", default=None,
         help="Optional cover note shown atop the email to a human VA (--handler email).",
+    )
+    t_answer = todo_sub.add_parser(
+        "answer",
+        help="Answer an auto run's questions (it then picks the work back up).",
+    )
+    t_answer.add_argument("todo_id", type=int)
+    t_answer.add_argument(
+        "answers", nargs="+",
+        help=(
+            "One answer per question, in the order they were asked. Use '' to skip one "
+            "and answer it later."
+        ),
     )
     p_todo.set_defaults(func=_cmd_todo)
 
@@ -556,6 +571,33 @@ def _cmd_place(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_delegation(todo_id: int, result) -> None:
+    """Print a delegation outcome: the brief line, an auto run's trail, its questions.
+
+    Shared by ``todo delegate`` and ``todo answer`` so both read the same.
+    """
+    print(f"Todo #{todo_id} delegated to {result.handler} → {result.status}.")
+    if result.detail:
+        print(f"  {result.detail}")
+    if result.brief:
+        print(f"  Brief: {result.brief.splitlines()[0]}")
+    if result.drafts:
+        print(f"  {len(result.drafts)} draft(s) prepared.")
+    for step in result.steps:
+        mark = "✓" if step.get("ok") else "✗"
+        why = f" — {step['why']}" if step.get("why") else ""
+        print(f"  {mark} {step.get('server')}.{step.get('tool')}{why}")
+    pending = [q for q in result.questions if not q.get("answer")]
+    if pending:
+        print(f"  It needs {len(pending)} thing(s) from you:")
+        for i, q in enumerate(result.questions, 1):
+            if q.get("answer"):
+                continue
+            why = f" ({q['why']})" if q.get("why") else ""
+            print(f"    {i}. {q['text']}{why}")
+        print(f'  Answer with: prefrontal todo answer {todo_id} "…" "…"')
+
+
 def _cmd_todo(args: argparse.Namespace) -> int:
     """Add, list, or close open todos.
 
@@ -645,6 +687,11 @@ def _cmd_todo(args: argparse.Namespace) -> int:
             )
             client = ollama if ollama.available() else None
             smtp = resolve_smtp(store) if args.handler == "email" else None
+            toolbox = None
+            if args.handler == "auto":
+                from prefrontal.autorun import build_toolbox
+
+                toolbox = build_toolbox(store, settings)
             result = run_delegation(
                 store,
                 todo,
@@ -654,17 +701,46 @@ def _cmd_todo(args: argparse.Namespace) -> int:
                 va_note=(args.note or "").strip() or None,
                 client=client,
                 smtp=smtp,
+                toolbox=toolbox,
+                # Re-running after answers: whatever's already on the row, so the
+                # research picks up with what you've told it and doesn't re-ask.
+                answered=(store.get_delegation(args.todo_id) or {}).get("questions"),
             )
-            print(f"Todo #{args.todo_id} delegated to {result.handler} → {result.status}.")
-            if result.detail:
-                print(f"  {result.detail}")
-            if result.brief:
-                print(f"  Brief: {result.brief.splitlines()[0]}")
-            if result.drafts:
-                print(f"  {len(result.drafts)} draft(s) prepared.")
+            _print_delegation(args.todo_id, result)
             # A failed email hand-off still stored the brief — surface that it's not lost.
             if result.status == "failed":
                 return 1
+        elif args.todo_action == "answer":
+            from prefrontal.delegation import HANDLER_AUTO, run_delegation
+            from prefrontal.integrations.ollama import OllamaClient
+
+            todo = store.get_todo(args.todo_id)
+            delegation = store.get_delegation(args.todo_id) if todo is not None else None
+            if todo is None or delegation is None:
+                print(f"Todo #{args.todo_id} has no delegation to answer.", file=sys.stderr)
+                return 1
+            if delegation.get("handler") != HANDLER_AUTO:
+                print("Only an 'auto' delegation asks questions.", file=sys.stderr)
+                return 1
+            answered = store.answer_delegation_questions(args.todo_id, list(args.answers))
+            from prefrontal.autorun import build_toolbox
+
+            ollama = OllamaClient(
+                base_url=settings.ollama_url, model=settings.ollama_model
+            )
+            result = run_delegation(
+                store,
+                todo,
+                handler=HANDLER_AUTO,
+                # The *original* context: last attempt's findings were its working
+                # notes, and the re-run gathers its own. The Q&A rides `answered`.
+                context=delegation.get("context"),
+                client=ollama if ollama.available() else None,
+                toolbox=build_toolbox(store, settings),
+                answered=answered,
+            )
+            print("Answers recorded — picking it back up…")
+            _print_delegation(args.todo_id, result)
     return 0
 
 

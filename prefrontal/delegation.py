@@ -11,6 +11,12 @@ schema and :class:`~prefrontal.memory.repos.todos.TodosRepo`):
   (the email/message the todo probably needs), straight back onto the row. The
   work happens on the box; nothing leaves it. Ends at ``prepped`` — ready for you
   to review and act on.
+- ``auto`` — the same in-app assistant, but it does the **legwork** first: a bounded
+  loop of allowlisted, unattended-declared tool calls (:mod:`prefrontal.autorun`)
+  whose findings feed the same prep. It may also come back with **questions** only
+  the user can answer ("what's your current mortgage rate?"), parking at
+  ``needs_input`` with the partial write-up already on the todo; answering re-runs it
+  with the answers as context. Ends at ``prepped`` or ``needs_input``.
 - ``email`` — a human virtual assistant. The same brief + drafts are composed into
   an email and sent to the VA at ``destination`` over the user's own SMTP source
   (:func:`prefrontal.sources.resolve_smtp`). Ends at ``forwarded`` (sent, VA is on
@@ -35,11 +41,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from prefrontal.autorun import Toolbox, answered_context, merge_questions, run_research
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.integrations.smtp import SmtpClient
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, fit_num_ctx
 from prefrontal.log import get_logger
 from prefrontal.sources import SmtpSource
 
@@ -51,6 +58,7 @@ logger = get_logger(__name__)
 #: Handler names (also the ``handler`` column values).
 HANDLER_AGENT = "agent"
 HANDLER_EMAIL = "email"
+HANDLER_AUTO = "auto"
 
 #: Lifecycle statuses (the ``status`` column values).
 STATUS_FORWARDED = "forwarded"
@@ -58,6 +66,13 @@ STATUS_IN_PREP = "in_prep"
 STATUS_PREPPED = "prepped"
 STATUS_RETURNED = "returned"
 STATUS_FAILED = "failed"
+
+#: An ``auto`` run stopped because it needs facts only the user has (their own
+#: numbers, preferences, constraints) — the questions are on the row, waiting to be
+#: answered inline or whenever. Deliberately **not** parked: the ball is with the
+#: user, exactly like ``returned``/``failed``, so the check-in cadence surfaces it.
+#: The partial write-up ships alongside, so this is never a bare "waiting".
+STATUS_NEEDS_INPUT = "needs_input"
 
 #: Statuses that mean the todo is actively "off your plate" — with a human VA
 #: (``forwarded``), the agent still working (``in_prep``), or an agent brief
@@ -284,9 +299,6 @@ _PREP_MAX_NUM_CTX = 16384
 #: give the call room to finish rather than time out into the heuristic.
 _PREP_TIMEOUT = 240.0
 
-#: Rough chars-per-token used only to size ``num_ctx`` (order-of-magnitude is fine).
-_CHARS_PER_TOKEN = 4
-
 #: Most of the context we ever echo in the *heuristic* fallback — so a model-down
 #: fallback surfaces a short excerpt of what you pasted, never the whole thing.
 _HEURISTIC_CONTEXT_EXCERPT = 500
@@ -320,7 +332,7 @@ class DelegationResult:
     """What a handler produced — persisted onto the ``todo_delegations`` row.
 
     Attributes:
-        handler: The handler that ran (``agent`` / ``email``).
+        handler: The handler that ran (``agent`` / ``email`` / ``auto``).
         status: The lifecycle status the delegation ended at.
         brief: The prep write-up (may be a heuristic stub when the model is down).
         drafts: Drafted communications, each ``{channel, to, subject, body}``.
@@ -328,6 +340,12 @@ class DelegationResult:
             ones the model attributes to the user — the dashboard offers to turn
             those into todos).
         detail: A human-readable note (transport response, failure reason, …).
+        steps: For the ``auto`` handler, the executed tool calls (see
+            :class:`prefrontal.autorun.RunStep`) — the inspectable trail of a run.
+            Empty for the single-shot handlers.
+        questions: For the ``auto`` handler, what the run needs from the user, each
+            ``{text, why, answer}`` (``answer`` ``None`` until they reply). Non-empty
+            exactly when the status is :data:`STATUS_NEEDS_INPUT`.
     """
 
     handler: str
@@ -336,6 +354,8 @@ class DelegationResult:
     drafts: list[dict[str, str]] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
     detail: str = ""
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    questions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _coerce_drafts(raw: Any) -> list[dict[str, str]]:
@@ -426,18 +446,8 @@ def _heuristic_brief(
 
 
 def _fit_num_ctx(prompt_chars: int) -> int | None:
-    """Pick a ``num_ctx`` that holds ``prompt_chars`` (plus room to answer), or None.
-
-    Returns ``None`` when the prompt is small enough for Ollama's default window
-    (no need to pay for a bigger, slower context). Otherwise sizes up to
-    :data:`_PREP_MAX_NUM_CTX`; a prompt past that gets a truncated *context* upstream
-    rather than a window we won't grant.
-    """
-    est_tokens = prompt_chars // _CHARS_PER_TOKEN + 512  # headroom for the reply
-    if est_tokens <= 2048:
-        return None
-    # Round up to the next power-ish step Ollama likes, capped.
-    return min(_PREP_MAX_NUM_CTX, 1 << (est_tokens - 1).bit_length())
+    """Size the prep call's context window; see :func:`llm_json.fit_num_ctx`."""
+    return fit_num_ctx(prompt_chars, cap=_PREP_MAX_NUM_CTX)
 
 
 def generate_prep(
@@ -509,8 +519,43 @@ def generate_prep(
         # Salvage: the model said something usable, just not as JSON. Use it as the
         # brief rather than falling through to the parrot-the-context heuristic.
         if reply and reply.strip():
-            return reply.strip(), [], []
+            return _salvage_brief(reply), [], []
     return _heuristic_brief(title, notes, decomposition, context), [], []
+
+
+#: Pulls the ``brief`` field out of a JSON-shaped reply that wouldn't *parse* — the
+#: value runs to the quote that precedes the next top-level key (or the end).
+_BRIEF_FIELD = re.compile(
+    r'"brief"\s*:\s*"(.*?)"\s*(?:,\s*"(?:drafts|actions)"|,?\s*[}\]]\s*$)', re.DOTALL
+)
+
+
+def _salvage_brief(reply: str) -> str:
+    """The best readable brief from a reply that didn't parse as JSON.
+
+    :func:`~prefrontal.llm_json.extract_json` already repairs the common
+    malformation (raw newlines inside string values), so reaching here means the reply
+    is broken in some *other* way — an unterminated string, a stray quote, a truncated
+    object. Storing that verbatim puts a wall of JSON on the todo card (seen live), so
+    if the reply is visibly a JSON object with a ``brief`` field, lift the field out;
+    otherwise keep the prose as-is, which is the case this salvage was built for.
+    """
+    text = reply.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)(?:```|\Z)", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    if text.startswith("{") and '"brief"' in text:
+        match = _BRIEF_FIELD.search(text)
+        if match:
+            # Unescape the JSON-ish escapes we're likely to see in a prose value; the
+            # value never reached a JSON decoder, so nothing else did it for us.
+            brief = (
+                match.group(1)
+                .replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
+            ).strip()
+            if brief:
+                return brief
+    return text
 
 
 def compose_va_email(
@@ -566,6 +611,10 @@ class DelegationRequest:
     client: Generator | None = None  # local LLM for prep
     smtp: SmtpSource | None = None  # resolved SMTP source (email handler)
     smtp_client: SmtpClient | None = None
+    toolbox: Toolbox | None = None  # unattended tools (auto handler); None = none
+    #: Previously-asked questions the user has answered, each ``{text, why, answer}``
+    #: — folded in as facts so a re-run doesn't re-ask them (auto handler).
+    answered: list[dict[str, Any]] | None = None
 
 
 class DelegationHandler(Protocol):
@@ -599,6 +648,90 @@ class AgentHandler:
             drafts=drafts,
             actions=actions,
             detail=detail,
+        )
+
+
+def _join_context(*parts: str | None) -> str | None:
+    """Blank-line-join the non-empty context blocks, or ``None`` if there are none."""
+    kept = [p.strip() for p in parts if p and p.strip()]
+    return "\n\n".join(kept) or None
+
+
+class AutoHandler:
+    """Auto mode: research the todo with tools first, *then* write the prep.
+
+    A superset of :class:`AgentHandler` — it runs a bounded loop of allowlisted,
+    unattended-declared MCP tool calls (:mod:`prefrontal.autorun`), folds what it
+    learned into the context, and hands off to the same :func:`generate_prep`. So the
+    brief/drafts/actions come back in the shape every surface already renders, and the
+    only difference is that the write-up is informed by real lookups.
+
+    It can also **ask**: when the task needs facts only the user has ("should I take a
+    HELOC?" needs their equity and rate), the run stops, the questions go on the row,
+    and the status becomes :data:`STATUS_NEEDS_INPUT` — with the partial write-up
+    alongside, so answering is a choice rather than a toll gate. Answers arrive
+    whenever (inline, from iOS, or in prose via the assistant) and a re-delegation
+    folds them back in through :func:`~prefrontal.autorun.answered_context`.
+
+    Phase 1 gathers information and delivers nothing: emailing the result or dropping
+    a file in Drive is a *pre-authorized delivery contract* (phase 3), not a tool the
+    loop may choose. With no tools enabled this degrades, honestly and silently, to
+    exactly what the ``agent`` handler does.
+    """
+
+    kind = HANDLER_AUTO
+
+    def run(self, req: DelegationRequest) -> DelegationResult:
+        # Anything the user already answered is a *fact*, so it joins the context the
+        # same way pasted material does — and it goes in before the loop starts, so
+        # the run doesn't re-ask what it's already been told.
+        answers = answered_context(req.answered)
+        context = _join_context(req.context, answers)
+        run = run_research(
+            req.title,
+            req.notes,
+            context=context,
+            client=req.client,
+            toolbox=req.toolbox,
+            # It has had its round of questions — press it to conclude rather than
+            # asking a fresh one every time (observed against the local model).
+            already_asked=bool(answers),
+        )
+        if run.findings:
+            context = _join_context(
+                context,
+                "Material the assistant gathered for this task (tool results):\n"
+                f"{run.findings}",
+            )
+        # Always write up what we have, even when parking for answers: a partial
+        # report the user can read beats a bare "waiting on you".
+        brief, drafts, actions = generate_prep(
+            req.title, req.notes, req.decomposition,
+            context=context, owner_name=req.owner_name, client=req.client,
+        )
+        offline = "Generated offline" in brief
+        if run.questions:
+            status = STATUS_NEEDS_INPUT
+            detail = f"researched what it could — {run.detail}"
+        else:
+            status = STATUS_PREPPED
+            if offline:
+                detail = "prep drafted offline (heuristic)"
+            elif run.calls:
+                detail = f"researched the task — {run.detail}, then drafted the prep"
+            else:
+                # No calls: say why, since "auto mode did nothing autonomous" is
+                # surprising unless it's visible (no tools enabled, model down, …).
+                detail = f"prep drafted by the agent — no tools used ({run.detail})"
+        return DelegationResult(
+            handler=self.kind,
+            status=status,
+            brief=brief,
+            drafts=drafts,
+            actions=actions,
+            detail=detail,
+            steps=[s.as_dict() for s in run.steps],
+            questions=[q.as_dict() for q in run.questions],
         )
 
 
@@ -656,6 +789,7 @@ class EmailHandler:
 #: handler name that has no implementation (mirrors the assistant's ALLOWED_OPS).
 _HANDLERS: dict[str, DelegationHandler] = {
     HANDLER_AGENT: AgentHandler(),
+    HANDLER_AUTO: AutoHandler(),
     HANDLER_EMAIL: EmailHandler(),
 }
 
@@ -675,6 +809,8 @@ def run_delegation(
     client: Generator | None = None,
     smtp: SmtpSource | None = None,
     smtp_client: SmtpClient | None = None,
+    toolbox: Toolbox | None = None,
+    answered: list[dict[str, Any]] | None = None,
 ) -> DelegationResult:
     """Delegate ``todo`` to ``handler``, run the prep, and persist the result.
 
@@ -687,7 +823,12 @@ def run_delegation(
 
     ``smtp`` is only used by the ``email`` handler; resolve it via
     :func:`prefrontal.sources.resolve_smtp` before calling (kept out of here so
-    this stays store-agnostic about the encryption boundary).
+    this stays store-agnostic about the encryption boundary). ``toolbox`` is only used
+    by the ``auto`` handler and is resolved the same way, by the caller — via
+    :func:`prefrontal.autorun.build_toolbox` — so this function stays independent of
+    the MCP/settings layer. Omitting it leaves auto mode with no tools (it then
+    behaves like ``agent``), which is also the correct default for a caller that has
+    no settings to hand.
     """
     impl = _HANDLERS.get(handler)
     if impl is None:
@@ -704,6 +845,8 @@ def run_delegation(
         client=client,
         smtp=smtp,
         smtp_client=smtp_client,
+        toolbox=toolbox,
+        answered=answered,
     )
     result = impl.run(req)
     store.set_delegation(
@@ -716,6 +859,9 @@ def run_delegation(
         actions=result.actions,
         detail=result.detail,
         context=context,
+        steps=result.steps,
+        # Answered history survives the re-run; this round's asks are appended.
+        questions=merge_questions(answered, result.questions),
         prepped=result.status in (STATUS_PREPPED, STATUS_FORWARDED),
     )
     return result
@@ -1025,9 +1171,21 @@ def delegation_notice(todo_title: str, result: DelegationResult) -> str | None:
     """The push message when a delegation reaches a terminal state, or ``None``.
 
     ``prepped`` (agent) → "prep is ready to review"; ``forwarded`` (email) → "sent
-    to your assistant"; ``failed`` → a gentle heads-up that it needs a hand.
-    ``None`` for non-terminal states (no push worth sending).
+    to your assistant"; ``needs_input`` (auto) → the questions it's waiting on;
+    ``failed`` → a gentle heads-up that it needs a hand. ``None`` for non-terminal
+    states (no push worth sending).
     """
+    if result.status == STATUS_NEEDS_INPUT:
+        pending = [q for q in result.questions if not q.get("answer")]
+        n = len(pending)
+        # Lead with the work already done, so this reads as progress rather than as a
+        # request for homework — and name the first question, since one concrete
+        # question is answerable from a notification while "3 questions" is a chore.
+        first = f' First: {pending[0]["text"]}' if pending else ""
+        return (
+            f'Got a start on "{todo_title}" — it needs {n} thing{"s" if n != 1 else ""} '
+            f"from you to finish.{first}"
+        )
     if result.status == STATUS_PREPPED:
         bits = []
         nd = len(result.drafts)

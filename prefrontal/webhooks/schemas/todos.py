@@ -131,17 +131,23 @@ class DelegateTodo(BaseModel):
     """Body of ``POST /todos/{id}/delegate`` — hand a todo to an assistant.
 
     ``handler='agent'`` runs the in-app AI assistant (local model writes a brief +
-    drafts back onto the todo); ``handler='email'`` mails the brief to a human VA
-    at ``destination`` over the user's SMTP source.
+    drafts back onto the todo); ``handler='auto'`` is the same but lets it *research*
+    first with allowlisted tools, and lets it ask you questions it can't look up;
+    ``handler='email'`` mails the brief to a human VA at ``destination`` over the
+    user's SMTP source.
     """
 
-    handler: Literal["agent", "email"] = Field(
+    handler: Literal["agent", "auto", "email"] = Field(
         default="agent",
-        description="Who does the prep: 'agent' (in-app AI) or 'email' (human VA).",
+        description=(
+            "Who does the prep: 'agent' (in-app AI, one pass), 'auto' (in-app AI that "
+            "researches with tools first and may ask you questions), or 'email' "
+            "(human VA)."
+        ),
     )
     destination: str | None = Field(
         default=None,
-        description="The VA's email address (required for handler='email'; ignored for 'agent').",
+        description="The VA's email address (required for handler='email'; ignored otherwise).",
     )
     context: str | None = Field(
         default=None,
@@ -156,6 +162,23 @@ class DelegateTodo(BaseModel):
         description=(
             "Optional personal cover note shown at the top of the email to a human "
             "VA (handler='email' only; ignored for 'agent')."
+        ),
+    )
+
+
+class DelegateAnswers(BaseModel):
+    """Body of ``POST /todos/{id}/delegate/answers`` — answer an auto run's questions.
+
+    Positional against the delegation's ``questions`` list, so a client sends back
+    what it has: ``null`` (or a blank string) leaves a question unanswered, and a short
+    list only answers the questions it covers. Answering re-runs the research with the
+    answers in hand.
+    """
+
+    answers: list[str | None] = Field(
+        description=(
+            "Answers by position, matching the delegation's 'questions' order. Use "
+            "null or '' for a question you're not answering yet."
         ),
     )
 
