@@ -24,10 +24,22 @@ struct TripsView: View {
             VStack(spacing: 14) {
                 if let error { ErrorBanner(message: error) }
                 if let s = snapshot {
-                    if let active = s.active { activeCard(active) }
-                    if !s.unlabeled.isEmpty { unlabeledCard(s.unlabeled) }
-                    historyCard
-                    balanceLink
+                    if s.moduleOff == true {
+                        // Trip Tracking is off, so nothing is being detected — name the
+                        // switch instead of showing an empty history that reads as
+                        // "you never go anywhere".
+                        ModuleOffCard(
+                            module: "Trip Tracking",
+                            detail: "Trips aren't being logged. Turn it back on in "
+                                + "Settings ▸ Features. Nothing was deleted — your "
+                                + "history returns when it's on."
+                        )
+                    } else {
+                        if let active = s.active { activeCard(active) }
+                        if !s.unlabeled.isEmpty { unlabeledCard(s.unlabeled) }
+                        historyCard
+                        balanceLink
+                    }
                 } else if !loaded {
                     ProgressView().padding(.top, 40)
                 }

@@ -41,6 +41,7 @@ from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
 from prefrontal.modules.registry import (
+    user_module_enabled,
     user_module_off,
 )
 from prefrontal.todos import (
@@ -54,6 +55,8 @@ from prefrontal.webhooks.helpers import (
     _focus_end_confirmation,
     _focus_started_confirmation,
     _nudge_actions,
+    module_off_payload,
+    require_module,
 )
 from prefrontal.webhooks.schemas import (
     FocusEnd,
@@ -98,7 +101,12 @@ def build_router(services: RouterServices) -> APIRouter:
         falls back to the ``hyperfocus_block_minutes`` default when no
         ``planned_minutes`` is given, and the hard biological break is keyed off
         ``hard_interrupt_minutes`` regardless.
+
+        Refused with 409 when Hyperfocus is off (deployment-wide or in the user's
+        Settings ▸ Features): a session exists to be interrupted and protected by
+        that module, so starting one behind an off switch would do nothing.
         """
+        require_module(ctx.store, "hyperfocus", resolved_settings)
         memory = ctx.store
         task = payload.intended_task.strip()
         planned = payload.planned_minutes
@@ -350,7 +358,14 @@ def build_router(services: RouterServices) -> APIRouter:
         freely. Active sessions carry their current interrupt ``level`` and
         ``protect`` flag (computed, not recorded); recent sessions are returned
         newest first for history.
+
+        Reports empty with ``module_off`` when Hyperfocus is off, so the surface
+        that starts and watches sessions disappears with the module rather than
+        offering controls that can't fire. Nothing is deleted — the history comes
+        back intact when the module is switched on again.
         """
+        if not user_module_enabled(ctx.store, "hyperfocus", resolved_settings):
+            return module_off_payload(active=[], recent=[])
         memory = ctx.store
         soft = memory.get_float("hyperfocus_block_minutes", DEFAULT_SOFT_BLOCK_MINUTES)
         hard = memory.get_float("hard_interrupt_minutes", DEFAULT_HARD_INTERRUPT_MINUTES)

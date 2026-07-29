@@ -428,6 +428,14 @@ function scReviewRow(r) {
 }
 
 function renderSelfCare(d) {
+  // The module itself is off (deployment-wide or unchecked below in Features), so
+  // there are no checks to configure — point at the switch that actually governs
+  // this rather than showing a master toggle whose write would 409.
+  if (d && d.module_off) {
+    return `<span class="sc-hint">The <b>Self-Care</b> module is off, so these checks aren't`
+      + ` running. Turn it back on under <a href="#c-features">Features</a> below (or`
+      + ` deployment-wide with <code>PREFRONTAL_MODULES</code>).</span>`;
+  }
   const on = !!(d && d.enabled);
   const master = `<label class="sc-master"><input type="checkbox" data-sc-master`
     + `${on ? " checked" : ""}/> <span>Self-care checks <b>${on ? "on" : "off"}</b></span></label>`;

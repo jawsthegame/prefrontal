@@ -46,6 +46,9 @@ struct SelfCareEntry: TimelineEntry {
     let count: Int
     let target: Int
     let notConfigured: Bool
+    /// The Self-Care module is off, so there's nothing to track — rendered as "off"
+    /// rather than an empty gauge (see `Glance.selfCareOff`).
+    var moduleOff = false
 }
 
 struct SelfCareCircleProvider: AppIntentTimelineProvider {
@@ -69,7 +72,8 @@ struct SelfCareCircleProvider: AppIntentTimelineProvider {
         let ct = g.selfCareChecks[check.rawValue]
         return SelfCareEntry(date: Date(), check: check,
                              count: ct?.0 ?? 0, target: ct?.1 ?? 0,
-                             notConfigured: g.notConfigured)
+                             notConfigured: g.notConfigured,
+                             moduleOff: g.selfCareOff)
     }
 }
 
@@ -77,9 +81,11 @@ struct SelfCareCircleView: View {
     let entry: SelfCareEntry
     var body: some View {
         Gauge(value: Double(entry.count), in: 0...Double(max(1, entry.target))) {
-            Image(systemName: entry.check.symbol)
+            Image(systemName: entry.moduleOff ? "slash.circle" : entry.check.symbol)
         } currentValueLabel: {
-            Text("\(entry.count)")
+            // "off" reads honestly; a bare 0 on a full-size ring looks like you're
+            // behind on a check that isn't actually running.
+            Text(entry.moduleOff ? "off" : "\(entry.count)")
         }
         .gaugeStyle(.accessoryCircular)
         .containerBackground(for: .widget) { Color.clear }

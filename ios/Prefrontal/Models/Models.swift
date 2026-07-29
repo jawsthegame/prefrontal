@@ -370,8 +370,18 @@ struct DepartureNext: Codable {
 // MARK: - Outings
 
 struct Outings: Codable {
+    enum CodingKeys: String, CodingKey {
+        case active, recent
+        case moduleOff = "module_off"
+    }
+
     let active: [Outing]
     let recent: [Outing]
+    /// True when the module that owns this surface is off — deployment-wide
+    /// (`PREFRONTAL_MODULES`) or via this user's Settings ▸ Features toggle. The
+    /// payload is empty in that case, so a view hides itself rather than showing
+    /// controls whose writes would be refused. Absent on an older server → nil.
+    let moduleOff: Bool?
     struct Outing: Codable, Identifiable {
         let outingId: Int
         let intention: String
@@ -389,8 +399,18 @@ struct Outings: Codable {
 // MARK: - Focus
 
 struct FocusState: Codable {
+    enum CodingKeys: String, CodingKey {
+        case active, recent
+        case moduleOff = "module_off"
+    }
+
     let active: [Session]
     let recent: [Session]
+    /// True when the module that owns this surface is off — deployment-wide
+    /// (`PREFRONTAL_MODULES`) or via this user's Settings ▸ Features toggle. The
+    /// payload is empty in that case, so a view hides itself rather than showing
+    /// controls whose writes would be refused. Absent on an older server → nil.
+    let moduleOff: Bool?
     struct Session: Codable, Identifiable {
         let sessionId: Int
         let intendedTask: String?
@@ -422,8 +442,18 @@ struct Nudges: Codable {
 // MARK: - Self-care
 
 struct SelfCare: Codable {
+    enum CodingKeys: String, CodingKey {
+        case enabled, checks
+        case moduleOff = "module_off"
+    }
+
     let enabled: Bool
     let checks: [Check]
+    /// True when the module that owns this surface is off — deployment-wide
+    /// (`PREFRONTAL_MODULES`) or via this user's Settings ▸ Features toggle. The
+    /// payload is empty in that case, so a view hides itself rather than showing
+    /// controls whose writes would be refused. Absent on an older server → nil.
+    let moduleOff: Bool?
     struct Check: Codable, Identifiable {
         let key: String
         let enabled: Bool
@@ -629,6 +659,16 @@ struct ParkedImpulse: Codable, Identifiable, Hashable {
 struct ParkedImpulses: Codable {
     let parked: [ParkedImpulse]
     let retro: String?
+    /// True when the module that owns this surface is off — deployment-wide
+    /// (`PREFRONTAL_MODULES`) or via this user's Settings ▸ Features toggle. The
+    /// payload is empty in that case, so a view hides itself rather than showing
+    /// controls whose writes would be refused. Absent on an older server → nil.
+    let moduleOff: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case parked, retro
+        case moduleOff = "module_off"
+    }
 }
 
 // MARK: - Mail

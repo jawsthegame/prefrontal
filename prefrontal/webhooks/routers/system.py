@@ -28,6 +28,7 @@ from prefrontal.modules.registry import (
     MODULE_ENABLED_PREFIX,
     user_disabled_module_keys,
     user_enabled_modules,
+    user_module_enabled,
 )
 from prefrontal.modules.self_care import (
     apply_self_care_config,
@@ -69,6 +70,10 @@ from prefrontal.webhooks._common import (
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    module_off_payload,
+    require_module,
 )
 from prefrontal.webhooks.schemas import (
     ApnsTokenRegistration,
@@ -428,7 +433,16 @@ def build_router(services: RouterServices) -> APIRouter:
         switch plus each check's progress toward its daily target — so the
         dashboard can show at a glance whether the checks are even on (the
         common "why am I not getting nudges?" cause) and where today stands.
+
+        When the **Self-Care module** itself is off (deployment-wide or in the
+        user's Settings ▸ Features) the checks aren't running at all, so this
+        reports ``enabled: false`` with no checks — the same shape as a flipped
+        master switch, plus ``module_off`` so a client can name the right switch.
         """
+        if not user_module_enabled(ctx.store, "self_care", services.settings):
+            # ``review: null`` (not ``{}``) so a client that renders the evening-review
+            # row only when the block is present skips it instead of drawing an empty one.
+            return module_off_payload(enabled=False, checks=[], review=None)
         return self_care_status(ctx.store, utcnow(), services.settings.timezone)
 
     @router.get("/self-care/review", tags=["system"])
@@ -441,7 +455,14 @@ def build_router(services: RouterServices) -> APIRouter:
         timeline and surfaces the gaps a raw count hides — a late first glass of
         water, a long stretch between bio breaks, a quota finished short — plus
         what went well. A pure read (no writes), safe to poll any time.
+
+        Follows the module switch like ``GET /self-care``: nothing ran, so there's
+        no gap analysis to show.
         """
+        if not user_module_enabled(ctx.store, "self_care", services.settings):
+            return module_off_payload(
+                date=None, enabled=False, gaps=[], wins=[], has_content=False
+            )
         return self_care_review(ctx.store, utcnow(), services.settings.timezone)
 
     def _features_view(store: Any) -> dict[str, Any]:
@@ -524,7 +545,11 @@ def build_router(services: RouterServices) -> APIRouter:
         target, start hour, and cadence — so the card's controls can write the
         same coaching state that was previously sqlite-only. Returns the fresh
         status so the caller re-renders from the response.
+
+        Refused with 409 while the Self-Care module is off — the checks can't be
+        configured into running behind a switch that's off.
         """
+        require_module(ctx.store, "self_care", services.settings)
         apply_self_care_config(
             ctx.store,
             enabled=payload.enabled,
@@ -547,7 +572,11 @@ def build_router(services: RouterServices) -> APIRouter:
         once it's at the target — the mobile-friendly wrap-around, since touch has
         no shift-click. Returns the fresh status (plus a short ``headline`` for
         feedback) so the card re-renders from it.
+
+        Refused with 409 while the Self-Care module is off (nothing to count
+        toward).
         """
+        require_module(ctx.store, "self_care", services.settings)
         now = utcnow()
         tz = services.settings.timezone
         today = local_datetime(now, tz).strftime("%Y-%m-%d")

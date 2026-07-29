@@ -2636,8 +2636,11 @@ async function load() {
   for (const p of (lastProjects && lastProjects.projects) || []) projById[p.id] = p;
   // Self-care card: shown whenever the endpoint answers — including when the
   // checks are off, so a silently-disabled switch (the common "why no nudges?"
-  // cause) is visible rather than absent. Hidden only if the fetch itself fails.
-  if (selfcare.status === "fulfilled") {
+  // cause) is visible rather than absent. Hidden only if the fetch itself fails,
+  // or when the whole *module* is off (`module_off`): the user turned that off
+  // themselves in Settings ▸ Features, so a card that can't log anything — and
+  // whose controls would 409 — just takes up space.
+  if (selfcare.status === "fulfilled" && !selfcare.value.module_off) {
     $("#c-selfcare").style.display = "";
     // Don't clobber the card mid-interaction: a poll fires every few seconds, so
     // skip the re-render while focus is inside it (e.g. a just-tapped "mark done"
@@ -2670,6 +2673,12 @@ async function load() {
     $("#c-situations").style.display = "none";
   }
   const put = (sel, r, render) => { $(sel + " .body").innerHTML = r.status === "fulfilled" ? render(r.value) : `<div class="err">unavailable</div>`; };
+  // Outings (live + history) belong to the Location-Aware Task Anchor: when that
+  // module is off the endpoint reports `module_off`, and both cards go with it
+  // rather than showing a permanently-empty "No active outings."
+  const anchorOff = outings.status === "fulfilled" && !!outings.value.module_off;
+  $("#c-outings").style.display = anchorOff ? "none" : "";
+  $("#c-recent").style.display = anchorOff ? "none" : "";
   put("#c-outings", outings, renderOutings);
   // A live focus session takes over the "right now" card — that session *is* the
   // one thing to do now. No session → the next-action suggestion.

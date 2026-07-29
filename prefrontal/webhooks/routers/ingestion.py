@@ -38,6 +38,7 @@ from prefrontal.modules.registry import (
     is_enabled as module_enabled,
 )
 from prefrontal.modules.registry import (
+    user_module_enabled,
     user_module_off,
 )
 from prefrontal.triage import (
@@ -62,6 +63,9 @@ from prefrontal.webhooks._common import (
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
+)
+from prefrontal.webhooks.helpers import (
+    module_off_payload,
 )
 from prefrontal.webhooks.schemas import (
     EpisodeCreated,
@@ -354,7 +358,21 @@ def build_router(services: RouterServices) -> APIRouter:
         it. ``categories`` is the suggested activity vocabulary; ``domains`` the
         life-sphere vocabulary (shop/work/home/kids/personal) the focus-balance
         rollup buckets time-out by — both for the label form.
+
+        Reports empty with ``module_off`` when Trip Tracking is off (deployment-wide
+        or in the user's Settings ▸ Features), so the trips view goes with the
+        detection that fills it. Detection itself keeps running on
+        ``POST /webhooks/location`` — it carries vacation mode's auto-lift on return
+        home — so nothing is lost, and the history reappears when it's switched on.
         """
+        if not user_module_enabled(ctx.store, "trip_tracking", resolved_settings):
+            return module_off_payload(
+                active=None,
+                recent=[],
+                unlabeled=[],
+                categories=list(TRIP_CATEGORIES),
+                domains=list(FOCUS_DOMAINS),
+            )
         memory = ctx.store
         # Prefetch the curated places + match radius once, not per trip (each
         # suggestion still reads its own trip's waypoints — those differ per trip).

@@ -24,6 +24,11 @@ struct Glance {
     /// Every enabled self-care check, keyed by its `key` (count, target) — so the
     /// configurable Lock Screen ring can render whichever one you pick.
     var selfCareChecks: [String: (Int, Int)] = [:]
+    /// The Self-Care module is off (deployment-wide or this user's Settings ▸
+    /// Features toggle), so there are no checks to count. Distinct from "0 of 6
+    /// so far today": the ring shows "off" instead of an empty gauge that reads
+    /// like you're behind on something that isn't running.
+    var selfCareOff = false
     // Active lifecycle state — when set, the widget offers a one-tap end action.
     var outingIntention: String?
     var focusTask: String?
@@ -67,16 +72,17 @@ struct Glance {
                 g.suggestionMinutes = s.estimateMinutes.map { Int($0) }
             }
         }
-        g.applySelfCare(sc?.checks)
+        g.applySelfCare(sc)
         return g
     }
 
     /// Fold the enabled self-care checks — plus the `meal`/`water` aliases the
     /// widgets read directly — into this glance. Shared by `fetch()` and
     /// `fetchSelfCare()` so the payload mapping lives in exactly one place.
-    mutating func applySelfCare(_ checks: [SelfCare.Check]?) {
-        guard let checks else { return }
-        for c in checks where c.enabled { selfCareChecks[c.key] = (c.count, c.target) }
+    mutating func applySelfCare(_ payload: SelfCare?) {
+        guard let payload else { return }
+        selfCareOff = payload.moduleOff == true
+        for c in payload.checks where c.enabled { selfCareChecks[c.key] = (c.count, c.target) }
         meal = selfCareChecks["meal"]
         water = selfCareChecks["water"]
     }
@@ -95,7 +101,7 @@ struct Glance {
         catch { return Glance(notConfigured: true) }
 
         var g = Glance()
-        g.applySelfCare((try? await client.selfCare())?.checks)
+        g.applySelfCare(try? await client.selfCare())
         return g
     }
 }

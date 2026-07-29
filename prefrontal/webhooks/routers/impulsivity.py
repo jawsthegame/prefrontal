@@ -29,6 +29,7 @@ from prefrontal.modules.impulsivity import (
     pause_seconds,
     switch_response,
 )
+from prefrontal.modules.registry import user_module_enabled
 from prefrontal.webhooks.deps import (
     ScopedRequest,
     resolve_user,
@@ -37,6 +38,7 @@ from prefrontal.webhooks.helpers import (
     _impulse_captured_confirmation,
     _nudge_actions,
     _switch_resolved_confirmation,
+    module_off_payload,
 )
 from prefrontal.webhooks.schemas import (
     CaptureImpulse,
@@ -108,7 +110,14 @@ def build_router(services: RouterServices) -> APIRouter:
         the parked (``source='impulse'``) todos to triage — keep the real ones,
         drop the noise — plus a ready-to-speak retro line. Triage itself reuses the
         normal todo done/drop endpoints; this just surfaces the batch.
+
+        Reports empty with ``module_off`` when Impulsivity is off: the retro *is*
+        the intervention. Capturing an impulse still works either way — it parks a
+        real todo, and dropping a capture path would lose what the user typed — so
+        those todos simply stay in the normal todo list until the module is back on.
         """
+        if not user_module_enabled(ctx.store, "impulsivity", resolved_settings):
+            return module_off_payload(parked=[], retro=None)
         memory = ctx.store
         parked = memory.parked_impulses(limit=CAPTURE_RETRO_LIMIT)
         name = ctx.user.get("display_name") or ""
