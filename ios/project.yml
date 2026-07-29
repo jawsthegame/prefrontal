@@ -148,9 +148,11 @@ targets:
     deploymentTarget: "10.0"
     sources:
       - path: PrefrontalWatch
-      # Just Models.swift (pure Foundation), NOT the whole Models/ dir —
-      # SessionActivity.swift imports ActivityKit, which watchOS lacks.
+      # Just the pure-Foundation model files, NOT the whole Models/ dir —
+      # SessionActivity.swift imports ActivityKit, which watchOS lacks. Todo
+      # references Delegation, so that file has to come along.
       - path: Prefrontal/Models/Models.swift
+      - path: Prefrontal/Models/Delegation.swift
       - path: Prefrontal/Watch/WatchProtocol.swift
     dependencies:
       - target: PrefrontalWatchWidgets
@@ -182,9 +184,11 @@ targets:
     deploymentTarget: "10.0"
     sources:
       - path: PrefrontalWatchWidgets
-      # Just Models.swift, NOT the whole Models/ dir — SessionActivity.swift
-      # imports ActivityKit, which watchOS lacks (matches the watch app target).
+      # Just the pure-Foundation model files, NOT the whole Models/ dir —
+      # SessionActivity.swift imports ActivityKit, which watchOS lacks (matches
+      # the watch app target). Todo references Delegation, so it comes along too.
       - path: Prefrontal/Models/Models.swift
+      - path: Prefrontal/Models/Delegation.swift
       - path: Prefrontal/Watch/WatchProtocol.swift
     info:
       path: PrefrontalWatchWidgets/Info.plist

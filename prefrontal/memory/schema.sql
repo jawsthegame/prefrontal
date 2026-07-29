@@ -706,14 +706,16 @@ CREATE INDEX IF NOT EXISTS idx_decomp_feedback_user
 -- write-up and `drafts` is a JSON array of drafted messages the user can review.
 CREATE TABLE IF NOT EXISTS todo_delegations (
     todo_id      INTEGER PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
-    handler      TEXT    NOT NULL,   -- agent | email
-    destination  TEXT,               -- VA email for the `email` handler; NULL for `agent`
-    status       TEXT    NOT NULL DEFAULT 'forwarded', -- forwarded | in_prep | prepped | returned | failed
+    handler      TEXT    NOT NULL,   -- agent | auto | email
+    destination  TEXT,               -- VA email for the `email` handler; NULL for `agent`/`auto`
+    status       TEXT    NOT NULL DEFAULT 'forwarded', -- forwarded | in_prep | prepped | needs_input | returned | failed
     brief        TEXT,               -- the prep write-up (LLM or heuristic)
     drafts       TEXT,               -- JSON array of drafted comms {channel, to, subject, body}
     actions      TEXT,               -- JSON array of extracted action items {text, mine}
     detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
     context      TEXT,               -- optional free-text context supplied at delegation time (e.g. pasted work-AI output)
+    steps        TEXT,               -- `auto` runs: JSON array of executed tool calls {index, server, tool, arguments, ok, detail, observation, why}
+    questions    TEXT,               -- `auto` runs: JSON array of {text, why, answer} — answer NULL until the user replies (status needs_input)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     prepped_at   DATETIME            -- when prep completed (status reached prepped)

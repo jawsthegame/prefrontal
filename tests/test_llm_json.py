@@ -50,6 +50,21 @@ def test_extract_json_prose_wrapped_object_with_inner_array():
     }
 
 
+def test_extract_json_repairs_raw_newlines_inside_strings():
+    """A model writing a multi-paragraph body emits JSON that's invalid by one
+    character class. Observed for real (a delegation prep whose whole fenced blob
+    ended up stored *as* the brief); one bad newline mustn't cost the answer."""
+    text = '```json\n{"brief": "Decide.", "body": "Line one\n\nLine two\n"}\n```'
+    got = extract_json_object(text)
+    assert got["brief"] == "Decide."
+    assert got["body"] == "Line one\n\nLine two\n"
+
+
+def test_extract_json_repair_leaves_valid_escapes_alone():
+    text = '{"a": "already\\nescaped", "b": "tab\\there"}'
+    assert extract_json_object(text) == {"a": "already\nescaped", "b": "tab\there"}
+
+
 def test_extract_json_garbage_returns_none():
     assert extract_json("I can't help with that.") is None
 
