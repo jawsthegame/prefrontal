@@ -294,7 +294,7 @@ _DRAFT_CHANNELS = ("email", "message", "call")
 _PREP_MAX_NUM_CTX = 16384
 
 #: Per-call timeout (seconds) for the prep generation. A full-transcript prompt at
-#: a large ``num_ctx`` can take a couple of minutes to evaluate on an 8B model, far
+#: a large ``num_ctx`` can take a couple of minutes to evaluate on a local 14B model, far
 #: past the client default — so prep runs in the background (see the router) and we
 #: give the call room to finish rather than time out into the heuristic.
 _PREP_TIMEOUT = 240.0

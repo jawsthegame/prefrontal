@@ -206,7 +206,7 @@ class Settings:
     #: ``prefrontal.packs`` and ``PREFRONTAL_PACKS``.
     packs: tuple[str, ...] = ()
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "qwen2.5:14b"
     # Optional local multimodal model for on-device vision capture (photo →
     # transcript), e.g. ``llava`` or ``llama3.2-vision``. Empty (default) means
     # on-device vision is off and the vision flow falls back to the cloud Anthropic
@@ -574,7 +574,7 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
         modules=modules,
         packs=packs,
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
-        ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
+        ollama_model=os.environ.get("OLLAMA_MODEL", "qwen2.5:14b"),
         ollama_vision_model=os.environ.get("OLLAMA_VISION_MODEL", ""),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
