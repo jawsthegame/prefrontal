@@ -853,6 +853,13 @@ def run_delegation(
     impl = _HANDLERS.get(handler)
     if impl is None:
         raise ValueError(f"Unknown delegation handler: {handler!r}")
+    # Canonicalize an sms recipient to E.164 once, here, so the value we *persist*
+    # matches what actually gets texted — and an unusable string is stored as NULL
+    # rather than leaking into the recent-numbers pick-list or the check-in copy.
+    # (The handler also normalizes defensively; passing the canonical form through
+    # makes that a no-op.) Other handlers keep their destination verbatim.
+    if handler == HANDLER_SMS:
+        destination = normalize_phone(destination)
     decomposition = store.get_decomposition(todo["id"])
     req = DelegationRequest(
         title=todo["title"],

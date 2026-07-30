@@ -679,6 +679,9 @@ def test_sms_handler_sends_and_forwards(store):
     stored = store.get_delegation(tid)
     assert stored["status"] == STATUS_FORWARDED
     assert stored["brief"] == "Are we free to help my dad on the 19th?"  # message kept on the row
+    # The persisted destination is canonical E.164, not the raw typed form — so the
+    # recent-numbers pick-list and check-in copy stay consistent.
+    assert stored["destination"] == "+14155551234"
 
 
 def test_sms_handler_no_twilio_stores_message_and_fails(store):
@@ -704,6 +707,10 @@ def test_sms_handler_bad_number_fails_without_sending(store):
     assert result.status == STATUS_FAILED
     assert "phone number" in result.detail
     assert fake.sent is None  # short-circuited before any send
+    # An unusable number is persisted as NULL, so it never pollutes the sms
+    # recent-numbers pick-list (which lists non-blank destinations of that handler).
+    assert store.get_delegation(tid)["destination"] is None
+    assert store.delegation_recipients(handler="sms") == []
 
 
 def test_sms_handler_send_error_is_caught(store):
