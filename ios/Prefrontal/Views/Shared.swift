@@ -44,6 +44,37 @@ struct ErrorBanner: View {
     }
 }
 
+/// Shown while reads are being served from the offline cache (`ResponseCache`) —
+/// the read-side twin of the "N changes waiting to sync" queue banner. It names
+/// when the shown data was last synced so stale numbers are never a mystery.
+struct OfflineBanner: View {
+    let lastSyncedAt: Date?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash").foregroundStyle(Brand.muted)
+            Text(message).font(.footnote).foregroundStyle(Brand.fg)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Brand.muted.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.muted.opacity(0.30)))
+    }
+
+    private var message: String {
+        guard let at = lastSyncedAt else {
+            return "Offline — showing saved data. Reconnect to your server to sync."
+        }
+        let f = DateFormatter()
+        f.timeStyle = .short
+        // Include the date once the sync is older than today, so "9:41" can't be
+        // mistaken for this morning when it's actually yesterday's.
+        f.dateStyle = Calendar.current.isDateInToday(at) ? .none : .short
+        return "Offline — showing data from \(f.string(from: at)). Reconnect to sync."
+    }
+}
+
 /// Small-caps section heading used across cards.
 struct CardLabel: View {
     let text: String

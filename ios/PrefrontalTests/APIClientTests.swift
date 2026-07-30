@@ -44,7 +44,11 @@ final class APIClientTests: XCTestCase {
 
     override func tearDown() {
         StubURLProtocol.responder = nil
+        StubURLProtocol.failure = nil
         URLProtocol.unregisterClass(StubURLProtocol.self)
+        // Don't let cached bodies / connectivity flags leak between tests.
+        ResponseCache.clear()
+        ConnectionStore.reset()
         super.tearDown()
     }
 
@@ -242,6 +246,74 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(payload.retro, "You parked 1 thing while heads-down.")
     }
 
+    // MARK: offline read cache (ResponseCache + ConnectionStore)
+
+    func testGetServesCachedBodyOnTransportFailure() async throws {
+        ResponseCache.clear(); ConnectionStore.reset()
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // 1) A successful GET caches the body and marks us online.
+        StubURLProtocol.responder = { _ in (200, Data(#"{"ok":true}"#.utf8)) }
+        let fresh = try await client().get("cache-probe", as: Echo.self)
+        XCTAssertEqual(fresh, Echo(ok: true))
+        XCTAssertFalse(ConnectionStore.isOffline)
+        // 2) Now the transport fails (off the tailnet) — the cached body is served
+        //    instead of throwing, and connectivity flips to stale.
+        StubURLProtocol.responder = nil
+        StubURLProtocol.failure = URLError(.notConnectedToInternet)
+        let cached = try await client().get("cache-probe", as: Echo.self)
+        XCTAssertEqual(cached, Echo(ok: true))
+        XCTAssertTrue(ConnectionStore.isOffline)
+        XCTAssertNotNil(ConnectionStore.lastSyncedAt)   // kept from the last real sync
+    }
+
+    func testGetWithoutCacheRethrowsTransportFailure() async {
+        ResponseCache.clear(); ConnectionStore.reset()
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // No prior success for this path → nothing to serve → surface the failure.
+        StubURLProtocol.failure = URLError(.timedOut)
+        do {
+            _ = try await client().get("never-cached", as: Echo.self)
+            XCTFail("expected APIError.transport with no cache to fall back to")
+        } catch APIError.transport {
+            // expected
+        } catch {
+            XCTFail("expected APIError.transport, got \(error)")
+        }
+    }
+
+    func testHTTPErrorIsNotMaskedByCache() async throws {
+        ResponseCache.clear(); ConnectionStore.reset()
+        URLProtocol.registerClass(StubURLProtocol.self)
+        // Prime the cache with a good body...
+        StubURLProtocol.responder = { _ in (200, Data(#"{"ok":true}"#.utf8)) }
+        _ = try await client().get("http-vs-cache", as: Echo.self)
+        // ...then a real server error must surface (not be hidden behind stale data),
+        // and must not flip us to "offline".
+        StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
+        do {
+            _ = try await client().get("http-vs-cache", as: Echo.self)
+            XCTFail("expected APIError.http to propagate past the cache")
+        } catch let APIError.http(code, _) {
+            XCTAssertEqual(code, 500)
+            XCTAssertFalse(ConnectionStore.isOffline)
+        } catch {
+            XCTFail("expected APIError.http, got \(error)")
+        }
+    }
+
+    func testCacheKeyDistinguishesQueryAndIsTokenNamespaced() {
+        // Same path, different query → different cache entries (so `todos/now?cap=60`
+        // and `?cap=30` don't clobber each other).
+        let a = ResponseCache.key(token: "t1", path: "todos/now", query: ["cap_minutes": "60"])
+        let b = ResponseCache.key(token: "t1", path: "todos/now", query: ["cap_minutes": "30"])
+        XCTAssertNotEqual(a, b)
+        // Same request, different token → different entries (no cross-user reads).
+        let c = ResponseCache.key(token: "t2", path: "todos/now", query: ["cap_minutes": "60"])
+        XCTAssertNotEqual(a, c)
+        // The raw token is hashed, never embedded verbatim.
+        XCTAssertFalse(a.contains("t1"))
+    }
+
     func testNon2xxMapsToHTTPError() async {
         URLProtocol.registerClass(StubURLProtocol.self)
         StubURLProtocol.responder = { _ in (500, Data("boom".utf8)) }
@@ -292,14 +364,21 @@ final class StubURLProtocol: URLProtocol {
     /// swallow an unrelated request during the test run.
     static let host = "h.example"
     static var responder: ((URLRequest) -> (Int, Data))?
+    /// When set, the request fails with this error before any response — the
+    /// transport-failure path (off the tailnet) `ResponseCache` falls back on.
+    static var failure: URLError?
 
     override class func canInit(with request: URLRequest) -> Bool {
-        responder != nil && request.url?.host == host
+        (responder != nil || failure != nil) && request.url?.host == host
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
     override func startLoading() {
+        if let failure = Self.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
         guard let responder = Self.responder else {
             // Unreachable given canInit, but fail fast rather than risk a live
             // request if the interception logic ever changes.
