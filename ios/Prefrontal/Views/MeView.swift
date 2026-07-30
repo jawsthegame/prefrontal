@@ -60,6 +60,13 @@ struct MeView: View {
                     } onError: { error = $0 }
                     .buttonStyle(.plain)
                 }
+            } else if selfCare?.moduleOff == true {
+                // The whole module is off (deployment-wide or this user's own
+                // Settings ▸ Features toggle), so there are no checks to log and
+                // the mark/config writes would be refused — name that switch, not
+                // the master one.
+                Text("The Self-Care module is off — turn it back on in Settings ▸ Features.")
+                    .font(.footnote).foregroundStyle(Brand.muted)
             } else if selfCare != nil {
                 Text("Self-care checks are off. Enable them in the web settings.")
                     .font(.footnote).foregroundStyle(Brand.muted)

@@ -371,6 +371,19 @@ function renderActive(t) {
 }
 
 function render(trips, bal) {
+  // Trip Tracking is off (deployment-wide or unchecked in Settings ▸ Features), so
+  // there's nothing being detected and nothing to label. Say which switch, the way
+  // /care does for a disabled pack, instead of reading as "you never go anywhere".
+  if (trips.module_off) {
+    $("#recent").innerHTML = `<p class="empty">The <b>Trip Tracking</b> module is off, so trips`
+      + ` aren't being logged. Turn it back on under <a href="/settings#c-features">Settings ▸`
+      + ` Features</a>. Nothing was deleted — your history returns when it's on.</p>`;
+    $("#c-unlabeled").style.display = "none";
+    renderActive(null);
+    renderBalance(bal);
+    $("#status").textContent = "Trip tracking is off";
+    return;
+  }
   renderActive(trips.active);
   renderBalance(bal);
 

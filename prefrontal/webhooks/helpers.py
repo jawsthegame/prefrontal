@@ -21,6 +21,67 @@ from prefrontal.todos import (
 from prefrontal.webhooks.notify import nudge_actions
 from prefrontal.webhooks.oauth import sign_dismiss
 
+#: Marker every module-owned surface adds to its "this module is off" payload, so
+#: an updated client can name the switch to flip ("Hyperfocus is off — Settings ▸
+#: Features") instead of showing a bare empty card. The rest of the payload keeps
+#: the shape a client already renders for "nothing here", so an *older* client that
+#: ignores this key still degrades correctly (empty, not broken).
+MODULE_OFF_KEY = "module_off"
+
+
+def module_off_payload(**empty: Any) -> dict[str, Any]:
+    """An "its module is off" response: the caller's empty shape + the marker.
+
+    Args:
+        **empty: The endpoint's own no-content payload (e.g. ``active=[]``,
+            ``projects=[]``) — whatever that surface already returns when the user
+            has nothing, so clients need no new rendering path.
+
+    Returns:
+        That payload with :data:`MODULE_OFF_KEY` set.
+    """
+    return {**empty, MODULE_OFF_KEY: True}
+
+
+def module_off_detail(key: str) -> str:
+    """The 409 message for a write to a surface whose module is off.
+
+    Names both switches, since either can be the cause — mirroring how the
+    Caregiver-pack surfaces phrase their refusal.
+    """
+    try:
+        from prefrontal.modules.registry import get as get_module
+
+        title = get_module(key).title or key.replace("_", " ").title()
+    except KeyError:  # pragma: no cover — defensive: an unregistered key
+        title = key.replace("_", " ").title()
+    return (
+        f"The {title} module is off — either deployment-wide (PREFRONTAL_MODULES) "
+        "or turned off for you in Settings ▸ Features."
+    )
+
+
+def require_module(store: Any, key: str, settings: Settings | None = None) -> None:
+    """Refuse a write when the module that owns this surface is off.
+
+    The write twin of :func:`module_off_payload`: a disabled module's surfaces stop
+    *accepting* new state as well as showing it, so "off" can't be worked around by
+    an action button. Existing rows are never touched — flipping the module back on
+    in Settings ▸ Features restores the surface exactly as it was.
+
+    Raises:
+        fastapi.HTTPException: 409 when the module is off deployment-wide or for
+            this user.
+    """
+    from fastapi import HTTPException, status
+
+    from prefrontal.modules.registry import user_module_enabled
+
+    if not user_module_enabled(store, key, settings):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=module_off_detail(key)
+        )
+
 
 def _fmt_minutes(value: float | None) -> str:
     """Render a minutes value without a trailing ``.0`` (30.0 -> "30", 12.5 -> "12.5")."""

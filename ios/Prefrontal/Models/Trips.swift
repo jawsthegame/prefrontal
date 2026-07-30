@@ -81,4 +81,14 @@ struct TripsSnapshot: Codable {
     let unlabeled: [Trip]
     let categories: [String]
     let domains: [String]
+    /// True when Trip Tracking is off — deployment-wide (`PREFRONTAL_MODULES`) or
+    /// via this user's Settings ▸ Features toggle. The lists are empty in that case
+    /// (detection is what fills them), so the view explains the switch instead of
+    /// implying you never left home. Absent on an older server → nil.
+    let moduleOff: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case active, recent, unlabeled, categories, domains
+        case moduleOff = "module_off"
+    }
 }

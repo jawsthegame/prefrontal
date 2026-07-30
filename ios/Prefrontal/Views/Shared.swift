@@ -44,6 +44,28 @@ struct ErrorBanner: View {
     }
 }
 
+/// "This module is off" placeholder for a surface whose owning module is disabled.
+///
+/// Shown when a payload comes back with `module_off` — the module is off either
+/// deployment-wide (`PREFRONTAL_MODULES`) or via this user's own **Settings ▸
+/// Features** toggle. It names the switch rather than rendering an empty list,
+/// since a blank history reads as "nothing ever happened" instead of "you turned
+/// this off". Nothing is deleted while a module is off, so the copy says so.
+struct ModuleOffCard: View {
+    /// Human module name, e.g. "Trip Tracking".
+    let module: String
+    /// One or two sentences on what stopped and how to get it back.
+    let detail: String
+    var body: some View {
+        Card {
+            CardLabel(text: "Turned off")
+            Text("\(module) is off")
+                .font(.headline).foregroundStyle(Brand.nearWhite)
+            Text(detail).font(.footnote).foregroundStyle(Brand.muted)
+        }
+    }
+}
+
 /// Small-caps section heading used across cards.
 struct CardLabel: View {
     let text: String

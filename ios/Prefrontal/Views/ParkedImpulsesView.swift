@@ -13,6 +13,8 @@ struct ParkedImpulsesView: View {
     @State private var retro: String?
     @State private var error: String?
     @State private var loaded = false
+    /// The Impulsivity module is off for this user, so the retro isn't running.
+    @State private var moduleOff = false
 
     var body: some View {
         ScrollView {
@@ -25,7 +27,16 @@ struct ParkedImpulsesView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if parked.isEmpty && loaded && error == nil {
+                if moduleOff {
+                    // The retro *is* the intervention, so it goes with the module.
+                    // Capturing still works, so say where those thoughts land.
+                    ModuleOffCard(
+                        module: "Impulsivity",
+                        detail: "The parked-impulse review is off. Turn it back on in "
+                            + "Settings ▸ Features. Anything you capture still lands "
+                            + "in your todos in the meantime."
+                    )
+                } else if parked.isEmpty && loaded && error == nil {
                     emptyState
                 } else {
                     ForEach(parked) { impulseCard($0) }
@@ -85,6 +96,7 @@ struct ParkedImpulsesView: View {
             let payload = try await withAPI { try await $0.parkedImpulses() }
             parked = payload.parked
             retro = payload.retro
+            moduleOff = payload.moduleOff == true
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

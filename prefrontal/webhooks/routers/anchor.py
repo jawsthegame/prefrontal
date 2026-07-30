@@ -58,6 +58,7 @@ from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
 from prefrontal.modules.registry import (
+    user_module_enabled,
     user_module_off,
 )
 from prefrontal.nudges import apply_nudge_action
@@ -72,6 +73,8 @@ from prefrontal.webhooks.helpers import (
     _nudge_actions,
     _outing_return_confirmation,
     _outing_started_confirmation,
+    module_off_payload,
+    require_module,
 )
 from prefrontal.webhooks.oauth import (
     verify_action,
@@ -118,7 +121,14 @@ def build_router(services: RouterServices) -> APIRouter:
         intention (:func:`infer_domain_from_text` — "swim with the kids" → kids,
         but a domain-less "grab a coffee" stays unassigned). Correct a wrong guess
         with ``/webhooks/outing/domain``.
+
+        Refused with 409 when the Location-Aware Task Anchor is off (deployment-wide
+        or in the user's Settings ▸ Features): an outing exists to be escalated by
+        that module, so declaring one behind an off switch buys nothing. Closing an
+        outing that's already open (``/webhooks/outing/return``) still works, so a
+        mid-outing toggle can't strand it.
         """
+        require_module(ctx.store, "location_anchor", resolved_settings)
         memory = ctx.store
         window = payload.time_window_minutes
         source = "explicit"
@@ -500,7 +510,12 @@ def build_router(services: RouterServices) -> APIRouter:
         freely. Active outings carry their current elapsed-time escalation
         ``level`` (computed, not recorded); recent outings are returned newest
         first for history.
+
+        Reports empty with ``module_off`` when the module is off — the outing card
+        goes with the escalation it drives. History is kept, not deleted.
         """
+        if not user_module_enabled(ctx.store, "location_anchor", resolved_settings):
+            return module_off_payload(active=[], recent=[])
         memory = ctx.store
         active = [
             {
