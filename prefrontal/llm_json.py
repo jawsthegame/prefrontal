@@ -41,6 +41,32 @@ def extract_json_object(text: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+#: Rough characters-per-token for sizing a context window (English prose ≈ 4).
+CHARS_PER_TOKEN = 4
+
+
+def fit_num_ctx(prompt_chars: int, *, cap: int, reply_tokens: int = 512) -> int | None:
+    """Pick a ``num_ctx`` that holds ``prompt_chars`` (plus room to answer), or None.
+
+    Ollama's default context window (~2048 tokens) silently truncates a longer
+    prompt *from the front*, which reads as the model ignoring its instructions —
+    so any call site that can be handed a large prompt has to size the window
+    itself. Returns ``None`` when the prompt fits the default (no need to pay for a
+    bigger, slower window), otherwise the next power-of-two step, capped at ``cap``.
+    A prompt past ``cap`` needs truncating upstream rather than a window we won't
+    grant.
+
+    Args:
+        prompt_chars: Total characters going to the model (prompt + system).
+        cap: The largest window to ask for.
+        reply_tokens: Headroom reserved for the model's own answer.
+    """
+    est_tokens = prompt_chars // CHARS_PER_TOKEN + reply_tokens
+    if est_tokens <= 2048:
+        return None
+    return min(cap, 1 << (est_tokens - 1).bit_length())
+
+
 def generate_json(
     prompt: str,
     *,
@@ -102,4 +128,34 @@ def _json_candidates(text: str) -> list[str]:
                     spans.append((start, text[start : i + 1]))
                     break
     candidates.extend(span for _, span in sorted(spans))
+    # Last resort: the same candidates with un-escaped newlines inside string values
+    # repaired. A model writing a multi-paragraph body ("body": "Line one\nLine two"
+    # with a *real* newline) emits JSON that is invalid by one character class, and
+    # discarding the whole object over it loses a perfectly good answer.
+    repaired = [fixed for c in list(candidates) if (fixed := _escape_raw_newlines(c)) != c]
+    candidates.extend(repaired)
     return candidates
+
+
+def _escape_raw_newlines(text: str) -> str:
+    """Escape literal newlines/tabs that appear *inside* JSON string literals.
+
+    A tiny scanner rather than a regex, because "inside a string literal" needs the
+    quote/backslash state a regex can't track. Text outside strings is untouched, so
+    formatting whitespace between fields still parses as before.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string and not escaped and ch in "\n\r\t":
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+            continue
+        out.append(ch)
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            in_string = not in_string
+    return "".join(out)

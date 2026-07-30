@@ -7,6 +7,7 @@ struct PrefrontalApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var config = AppConfig.shared
     @StateObject private var onboarding = OnboardingModel.shared
+    @StateObject private var offline = OfflineState.shared
     @Environment(\.scenePhase) private var scenePhase
 
     /// Must match `BGTaskSchedulerPermittedIdentifiers` in the app's Info.plist.
@@ -17,6 +18,7 @@ struct PrefrontalApp: App {
             RootView()
                 .environmentObject(config)
                 .environmentObject(onboarding)
+                .environmentObject(offline)
                 .tint(Brand.accent)
                 .onOpenURL { url in
                     // A `prefrontal://connect?…` link (scanned QR or tapped in a
@@ -40,6 +42,7 @@ struct PrefrontalApp: App {
             switch phase {
             case .active:
                 Task { await Self.flushQueue() }   // reconnect → drain captures
+                offline.refresh()                  // reflect connectivity on return
                 // Keep the watch's connected-state fresh (config may have changed
                 // while backgrounded, e.g. just after onboarding).
                 PhoneWatchConnectivity.shared.pushStatus()

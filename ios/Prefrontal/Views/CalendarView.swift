@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CalendarView: View {
+    @EnvironmentObject private var offline: OfflineState
     @State private var commitments: [Commitment] = []
     @State private var previous: [Commitment] = []
     @State private var conflicts: ConflictList?
@@ -15,6 +16,7 @@ struct CalendarView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if offline.isOffline { OfflineBanner(lastSyncedAt: offline.lastSyncedAt) }
                 if let error { ErrorBanner(message: error) }
                 if let cl = conflicts, !cl.conflicts.isEmpty || !cl.possibleConflicts.isEmpty {
                     conflictsCard(cl)
@@ -223,6 +225,7 @@ struct CalendarView: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         await loadSlots()
+        offline.refresh()   // reads may have come from cache — reflect that
         loaded = true
     }
 

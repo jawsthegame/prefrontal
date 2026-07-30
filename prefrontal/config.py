@@ -76,12 +76,25 @@ class McpServerConfig:
             server. A tool not in this set is refused — the bounded-action guard
             (M4 is scoped, verifiable tool-calls, never arbitrary execution). An
             empty set means *no* tool is callable (the server is effectively off).
+        unattended_tools: The subset of :attr:`allowed_tools` that a *delegated
+            auto-mode run* (:mod:`prefrontal.autorun`) may call with nobody
+            watching. A second, narrower gate on purpose: "the user may call this
+            after previewing it" is a weaker claim than "this may fire while the
+            user is away," so unattended execution is opted into per tool.
+            Empty by default, so enabling MCP servers grants no autonomy at all.
+
+            Named for what it *records* — an operator's declaration that a tool is
+            safe to run unattended — rather than ``read_only_tools``, because
+            Prefrontal cannot verify that a remote tool is side-effect-free, and
+            inferring it from the tool's name would be a safety hole dressed as a
+            feature. List only read-only tools here.
     """
 
     name: str
     url: str
     auth_token: str = ""
     allowed_tools: frozenset[str] = frozenset()
+    unattended_tools: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -211,7 +224,10 @@ class Settings:
     # agent not listed here stays on Ollama regardless of the key. Historical
     # default: only the dashboard ``assistant`` (its long-standing behavior when
     # a key is present). The sentinel ``all`` opts every agent in. Selectable
-    # names: assistant, summarizer, briefing, sensor, triage. See
+    # names: assistant, summarizer, briefing, sensor, triage. ``summarizer`` covers
+    # the profile summary *and* delegation prep (including an ``auto`` run's tool
+    # loop — see ``prefrontal.autorun``), so opting it in sends the todo, any pasted
+    # context, and the run's tool observations outbound. See
     # ``prefrontal.integrations.provider``.
     anthropic_agents: tuple[str, ...] = ("assistant",)
     geocoder_url: str = "https://nominatim.openstreetmap.org/search"
@@ -629,15 +645,26 @@ def load_settings(dotenv_path: str = ".env") -> Settings:
     )
 
 
+def _tool_names(raw: object) -> frozenset[str]:
+    """Coerce a JSON tool-name list into a clean set (non-list → empty)."""
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(str(t).strip() for t in raw if str(t).strip())
+
+
 def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
     """Parse ``PREFRONTAL_MCP_SERVERS`` into :class:`McpServerConfig` entries.
 
     The value is a JSON array of objects, each ``{"name", "url", "auth"?,
-    "allowed_tools": [...]}``. A malformed blob, a non-array, or an entry missing
-    ``name``/``url`` is skipped (never raises — a bad config leaves the capability
-    off rather than crashing boot). ``allowed_tools`` is the callable-tool
-    allowlist; an entry with no tools listed is kept but can call nothing, so a
-    server is never accidentally wide-open.
+    "allowed_tools": [...], "unattended_tools": [...]}``. A malformed blob, a
+    non-array, or an entry missing ``name``/``url`` is skipped (never raises — a bad
+    config leaves the capability off rather than crashing boot). ``allowed_tools``
+    is the callable-tool allowlist; an entry with no tools listed is kept but can
+    call nothing, so a server is never accidentally wide-open.
+
+    ``unattended_tools`` (optional) marks which of those an auto-mode run may call
+    on its own; it is **intersected with** ``allowed_tools``, so a name listed only
+    there grants nothing — the confirm-gated allowlist stays the outer bound.
 
     Args:
         raw: The raw environment-variable value (may be empty).
@@ -664,18 +691,16 @@ def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
         if not name or not url or name in seen:
             continue
         seen.add(name)
-        tools_raw = item.get("allowed_tools")
-        allowed = frozenset(
-            str(t).strip()
-            for t in (tools_raw if isinstance(tools_raw, list) else [])
-            if str(t).strip()
-        )
+        allowed = _tool_names(item.get("allowed_tools"))
         out.append(
             McpServerConfig(
                 name=name,
                 url=url,
                 auth_token=str(item.get("auth", "")).strip(),
                 allowed_tools=allowed,
+                # Intersected: unattended is a *subset* of confirm-gated, never a
+                # way around it.
+                unattended_tools=_tool_names(item.get("unattended_tools")) & allowed,
             )
         )
     return tuple(out)

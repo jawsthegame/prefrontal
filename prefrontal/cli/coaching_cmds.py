@@ -15,7 +15,7 @@ from pathlib import Path
 
 from prefrontal.briefing import build_briefing, render_briefing, summarize_briefing
 from prefrontal.cli._common import _resolve_user_store, _user_targets
-from prefrontal.coaching import build_context, collect_cues
+from prefrontal.coaching import build_context, collect_cues, effective_modules
 from prefrontal.config import get_settings
 from prefrontal.encouragement import (
     assess_day,
@@ -26,7 +26,6 @@ from prefrontal.encouragement import (
 )
 from prefrontal.impact import utcnow
 from prefrontal.memory.store import MemoryStore
-from prefrontal.modules import enabled_modules
 from prefrontal.panic import build_panic, render_panic, summarize_panic
 
 
@@ -632,7 +631,10 @@ def _coach_tick(
         # Read-only debug path: show the raw cues without running any of the
         # (mutating) sweeps or recording anything.
         ctx = build_context(store, now=now, timezone=settings.timezone)
-        cues = collect_cues(store, enabled_modules(settings), ctx)
+        # The *effective* module set, exactly as the real tick computes it (mute +
+        # the Settings ▸ Features overlay). Otherwise --dry-run advertises cues that
+        # can never fire.
+        cues = collect_cues(store, effective_modules(store, settings), ctx)
         # The encouragement/recovery layer is a non-module cue producer folded into
         # the real tick (spec §9); show it here too so --dry-run matches what fires.
         cues.extend(encouragement_cues(store, ctx))

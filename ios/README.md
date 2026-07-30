@@ -264,7 +264,33 @@ The QR encodes a `prefrontal://connect?url=…&token=…&ntfy_topic=…` deep li
 Treat it like the token itself — it *is* the token, just denser. The base URL
 defaults to `OAUTH_BASE_URL`; ntfy hints come from the user's delivery route.
 
-## Offline capture queue + background refresh
+## Offline mode
+
+Off the tailnet the app degrades gracefully in **both directions** — writes
+queue, reads fall back to cache — so it stays useful on the train, not a wall of
+errors. Two App-Group-backed stores (shared by the app, widget, and intents) do
+the work: `OfflineQueue` (writes) and `ResponseCache` + `ConnectionStore`
+(reads).
+
+### Read side — last-known-good cache
+
+Every successful **GET** body is cached in `ResponseCache`
+(`Config/ResponseCache.swift`), keyed by path + query and namespaced by a stable
+hash of the token (a different user's cache is never read). When a GET then hits
+a **transport** failure (server unreachable), `APIClient.get` decodes and returns
+the last cached body instead of throwing — so Today, Todos, Calendar, Household,
+and even the **widget** render last-known-good data rather than blanking out. The
+cache is bounded (oldest-out past a 64-entry / 2 MB cap) and cleared on a
+server/user switch. HTTP (4xx/5xx) and decoding errors are **never** masked by
+the cache — a real server error must surface, not hide behind stale data.
+
+`ConnectionStore` records whether the last read was fresh or stale, plus the last
+successful sync time; `OfflineState` mirrors it on the main actor, and the primary
+read screens (**Today**, **Todos**, **Calendar**) show a "Offline — showing data
+from HH:MM" banner (`OfflineBanner`) while reads are being served from cache.
+Nothing stale is ever silent.
+
+### Write side — capture queue + background refresh
 
 Off the tailnet, a write would otherwise just fail and the capture would be
 lost. Capture writes — **Capture a Thought**, **Add Todo**, **self-care** marks,

@@ -139,6 +139,12 @@ final class AppConfig: ObservableObject {
         didSet {
             KeychainStore.setToken(token)
             SharedStore.defaults.removeObject(forKey: "token")
+            // A server/user switch invalidates cached reads + connectivity state,
+            // so an old account's data can't linger behind the new token.
+            if token != oldValue {
+                ResponseCache.clear()
+                ConnectionStore.reset()
+            }
         }
     }
     @Published var ntfyServer: String {

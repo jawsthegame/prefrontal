@@ -95,10 +95,33 @@ struct APIClient {
         return data
     }
 
+    /// A GET, made offline-tolerant. On success the raw body is cached
+    /// (`ResponseCache`) and connectivity is marked online; on a **transport**
+    /// failure (off the tailnet) the last cached body is decoded and returned
+    /// instead — marked stale so the UI can say so — so screens render
+    /// last-known-good data rather than blanking out. HTTP (4xx/5xx) and decoding
+    /// errors are real failures and always propagate — a server error must never
+    /// be masked by stale cache.
     func get<T: Decodable>(_ path: String, query: [String: String] = [:], as type: T.Type) async throws -> T {
-        let data = try await send(try request("GET", path, query: query))
-        do { return try Self.decoder.decode(T.self, from: data) }
-        catch { throw APIError.decoding("\(error)") }
+        let cacheKey = ResponseCache.key(token: token, path: path, query: query)
+        do {
+            let data = try await send(try request("GET", path, query: query))
+            // Decode first, so a schema mismatch surfaces as a decoding error
+            // rather than poisoning the cache with an unreadable body.
+            let value: T
+            do { value = try Self.decoder.decode(T.self, from: data) }
+            catch { throw APIError.decoding("\(error)") }
+            ResponseCache.store(cacheKey, data: data)
+            ConnectionStore.markOnline()
+            return value
+        } catch let APIError.transport(message) {
+            guard let cached = ResponseCache.load(cacheKey),
+                  let value = try? Self.decoder.decode(T.self, from: cached) else {
+                throw APIError.transport(message)      // nothing cached → real failure
+            }
+            ConnectionStore.markStale()
+            return value
+        }
     }
 
     @discardableResult

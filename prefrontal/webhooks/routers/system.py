@@ -24,7 +24,11 @@ from fastapi.responses import (
 from prefrontal.clock import local_datetime, utcnow
 from prefrontal.integrations.nominatim import GeocoderError
 from prefrontal.modules import available, enabled_modules
-from prefrontal.modules.registry import MODULE_ENABLED_PREFIX, user_disabled_module_keys
+from prefrontal.modules.registry import (
+    MODULE_ENABLED_PREFIX,
+    user_disabled_module_keys,
+    user_enabled_modules,
+)
 from prefrontal.modules.self_care import (
     apply_self_care_config,
     apply_self_care_mark,
@@ -131,8 +135,10 @@ def _guide_payload(store: Any, settings: Any) -> dict[str, Any]:
     """Assemble the Guide's JSON — one entry per *enabled* module, plus progress.
 
     Built from each module's own ``tutorial()`` and ``interventions()`` so the
-    walkthrough always matches what the deployment actually runs (a disabled
-    module never appears), and adding a module surfaces its guide automatically.
+    walkthrough always matches what actually runs *for this reader*, and adding a
+    module surfaces its guide automatically. "Enabled" means effectively enabled:
+    deployment config **and** the reader's own Settings ▸ Features switches, so a
+    module they turned off doesn't teach them behavior they won't get.
     """
     seen = _guide_seen(store)
     modules = [
@@ -152,7 +158,7 @@ def _guide_payload(store: Any, settings: Any) -> dict[str, Any]:
                 for i in m.interventions()
             ],
         }
-        for m in enabled_modules(settings)
+        for m in user_enabled_modules(store, settings)
     ]
     live = {m["key"] for m in modules}
     return {

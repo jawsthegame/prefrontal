@@ -94,6 +94,9 @@ from prefrontal.modules.registry import (
 from prefrontal.modules.registry import (
     is_muted as module_muted,
 )
+from prefrontal.modules.registry import (
+    user_module_off,
+)
 from prefrontal.next_thing import build_next_thing, render_next_thing
 from prefrontal.packs.registry import get as get_pack
 from prefrontal.packs.registry import user_pack_enabled
@@ -267,6 +270,16 @@ def build_router(services: RouterServices) -> APIRouter:
                 "reminder": None,
                 "location_known": False,
                 "skipped": "module_muted",
+            }
+        # The per-user Settings ▸ Features switch, honored on every fire path (not
+        # just the coaching tick) so "off" means off wherever the nudge can start.
+        if user_module_off(memory, "time_blindness"):
+            return {
+                "fire": False,
+                "message": None,
+                "reminder": None,
+                "location_known": False,
+                "skipped": "module_off",
             }
         try:
             body = await request.json()
@@ -665,8 +678,13 @@ def build_router(services: RouterServices) -> APIRouter:
         module (which owns departure timing) is off.
         """
         # Departure timing is a Time Blindness intervention; when it's off there's
-        # no leave-by to surface, matching /webhooks/departure/check.
-        if not module_enabled("time_blindness", resolved_settings):
+        # no leave-by to surface, matching /webhooks/departure/check. Both switches
+        # count: deployment config *and* the user's own Settings ▸ Features toggle,
+        # so turning the module off also clears the leave-by from the widget and the
+        # iOS Today view (the pull twin of silencing its nudge).
+        if not module_enabled("time_blindness", resolved_settings) or user_module_off(
+            ctx.store, "time_blindness"
+        ):
             return {"departure": None, "location_known": False}
         memory = ctx.store
         location_known = memory.get_location() is not None

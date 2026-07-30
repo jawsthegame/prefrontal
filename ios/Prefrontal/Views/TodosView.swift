@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct TodosView: View {
+    @EnvironmentObject private var offline: OfflineState
     @State private var todos: [Todo] = []
     @State private var clarifyCount = 0
     @State private var error: String?
@@ -10,6 +11,7 @@ struct TodosView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                if offline.isOffline { OfflineBanner(lastSyncedAt: offline.lastSyncedAt) }
                 if let error { ErrorBanner(message: error) }
                 if clarifyCount > 0 { clarifyBanner }
                 if todos.isEmpty && loaded && error == nil {
@@ -69,6 +71,7 @@ struct TodosView: View {
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+        offline.refresh()   // reads may have come from cache — reflect that
         loaded = true
     }
 }
