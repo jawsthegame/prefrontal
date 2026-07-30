@@ -8,7 +8,8 @@
   so Today, Todos, Calendar, Household, and the **widget** render last-known-good
   data offline. HTTP (4xx/5xx) and decoding errors are never masked by the cache.
   A companion `ConnectionStore` tracks fresh-vs-stale + the last sync time, mirrored
-  on the main actor by `OfflineState`, and **Today** shows an "Offline — showing
-  data from HH:MM" banner (`OfflineBanner`) while serving from cache. Covered by
+  on the main actor by `OfflineState`, and the primary read screens (Today,
+  Todos, Calendar) show an "Offline — showing data from HH:MM" banner
+  (`OfflineBanner`) while serving from cache. Covered by
   new `APIClientTests` cases (serve-on-failure, no-cache rethrow, HTTP-not-masked,
   token/query key namespacing) via a transport-failure `URLProtocol` stub.

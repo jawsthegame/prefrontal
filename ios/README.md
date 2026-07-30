@@ -285,9 +285,10 @@ server/user switch. HTTP (4xx/5xx) and decoding errors are **never** masked by
 the cache — a real server error must surface, not hide behind stale data.
 
 `ConnectionStore` records whether the last read was fresh or stale, plus the last
-successful sync time; `OfflineState` mirrors it on the main actor, and **Today**
-shows a "Offline — showing data from HH:MM" banner (`OfflineBanner`) while reads
-are being served from cache. Nothing stale is ever silent.
+successful sync time; `OfflineState` mirrors it on the main actor, and the primary
+read screens (**Today**, **Todos**, **Calendar**) show a "Offline — showing data
+from HH:MM" banner (`OfflineBanner`) while reads are being served from cache.
+Nothing stale is ever silent.
 
 ### Write side — capture queue + background refresh
 
