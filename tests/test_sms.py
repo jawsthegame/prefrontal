@@ -11,6 +11,7 @@ import pytest
 from prefrontal.config import Settings
 from prefrontal.integrations.sms import (
     SmsResult,
+    TwilioConfig,
     TwilioSmsClient,
     invite_sms_text,
     normalize_phone,
@@ -42,6 +43,29 @@ TO = "+14155551234"
 )
 def test_normalize_phone(raw, expected):
     assert normalize_phone(raw) == expected
+
+
+# -- TwilioConfig -------------------------------------------------------------
+
+
+def test_twilio_config_from_settings_and_configured():
+    cfg = TwilioConfig.from_settings(
+        Settings(twilio_account_sid=SID, twilio_auth_token=TOKEN, twilio_from=FROM)
+    )
+    assert (cfg.account_sid, cfg.auth_token, cfg.sender) == (SID, TOKEN, FROM)
+    assert cfg.configured is True
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {},  # nothing set
+        {"twilio_account_sid": SID},
+        {"twilio_account_sid": SID, "twilio_auth_token": TOKEN},  # no from-number
+    ],
+)
+def test_twilio_config_not_configured_until_all_present(kw):
+    assert TwilioConfig.from_settings(Settings(**kw)).configured is False
 
 
 # -- invite_sms_text ----------------------------------------------------------

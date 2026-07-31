@@ -1464,14 +1464,15 @@ function openDeadlineMenu(anchor, id, current) {
 // assistant" reveals an address field and mails the brief (the SMTP outbox is
 // auto-picked from the todo's account/domain — configure it in Settings). Reuses
 // the pill-menu shell + POST-and-reload pattern, like the deadline/domain menus.
-// Cache the user's past VA addresses so re-opening the menu doesn't refetch.
+// Cache the user's past recipients so re-opening the menu doesn't refetch:
+// { email: [...VA addresses], sms: [...phone numbers] }, newest-used first.
 let _delegRecipients = null;
 async function loadDelegRecipients() {
   if (_delegRecipients) return _delegRecipients;
   try {
     const d = await api("/todos/delegate-recipients");
-    _delegRecipients = d.recipients || [];
-  } catch (_) { _delegRecipients = []; }
+    _delegRecipients = { email: d.recipients || [], sms: d.sms_recipients || [] };
+  } catch (_) { _delegRecipients = { email: [], sms: [] }; }
   return _delegRecipients;
 }
 
@@ -1543,7 +1544,8 @@ function openDelegateMenu(anchor, id) {
     wrap.appendChild(inp);
     wrap.appendChild(send);
     mail.replaceWith(col);
-    loadDelegRecipients().then((recips) => {
+    loadDelegRecipients().then((r) => {
+      const recips = r.email || [];
       if (!recips.length) return;
       const dl = document.createElement("datalist");
       dl.id = "deleg-recip-list";
@@ -1567,6 +1569,68 @@ function openDelegateMenu(anchor, id) {
     inp.focus();
   };
   menu.appendChild(mail);
+  // Text a person a question — the "just ask someone" case (e.g. checking a date
+  // with your partner before you can move the todo). Reveals a phone field + an
+  // optional "what to ask"; the server drafts a short, natural text and sends it
+  // over Twilio (set up under Settings). Mirrors the email flow's inline fields.
+  const sms = document.createElement("button");
+  sms.className = "cat-act";
+  sms.textContent = "💬 Text someone…";
+  sms.title = "Text a person a question via Twilio (set up texting in Settings)";
+  sms.onclick = () => {
+    const col = document.createElement("div");
+    const askBox = document.createElement("textarea");
+    askBox.className = "deleg-context";
+    askBox.placeholder = "What to ask (optional — e.g. “can we help my dad on the 19th?”)…";
+    const wrap = document.createElement("div");
+    wrap.className = "deleg-mail";
+    const inp = document.createElement("input");
+    inp.type = "tel";
+    inp.placeholder = "+15551234567";
+    inp.setAttribute("list", "deleg-sms-list");  // type-ahead of numbers you've texted
+    const send = document.createElement("button");
+    send.className = "cat-act";
+    send.textContent = "Send";
+    const submit = () => {
+      const to = inp.value.trim();
+      if (!to) return;
+      _delegRecipients = null;  // a possibly-new number → refresh the pick-list next open
+      go({ handler: "sms", destination: to, context: context(), note: askBox.value.trim() || undefined });
+    };
+    send.onclick = submit;
+    inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") submit(); });
+    const recipRow = document.createElement("div");
+    recipRow.className = "deleg-recips";
+    col.appendChild(recipRow);
+    col.appendChild(askBox);
+    col.appendChild(wrap);
+    wrap.appendChild(inp);
+    wrap.appendChild(send);
+    sms.replaceWith(col);
+    loadDelegRecipients().then((r) => {
+      const recips = r.sms || [];
+      if (!recips.length) return;
+      const dl = document.createElement("datalist");
+      dl.id = "deleg-sms-list";
+      recipRow.appendChild(document.createTextNode("Recent: "));
+      recips.forEach((num) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "recip-chip";
+        chip.textContent = num;
+        chip.title = `Text this question to ${num}`;
+        chip.onclick = () => { inp.value = num; inp.focus(); };
+        recipRow.appendChild(chip);
+        const opt = document.createElement("option");
+        opt.value = num;
+        dl.appendChild(opt);
+      });
+      col.appendChild(dl);
+      if (recips.length === 1) inp.value = recips[0];
+    });
+    inp.focus();
+  };
+  menu.appendChild(sms);
   placePillMenu(menu, anchor);
 }
 

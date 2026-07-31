@@ -23,6 +23,15 @@ schema and :class:`~prefrontal.memory.repos.todos.TodosRepo`):
   it) — you mark it ``returned`` when their work comes back. If SMTP isn't
   configured or the relay errors, the brief is still stored so you can send it by
   hand, and the row ends ``failed`` with the reason.
+- ``sms`` — a person in your life. The "just ask someone" case: a todo needs a
+  quick answer before it can move ("Dad wants help on the 19th — are we free?"), so
+  instead of a research brief the local model drafts *one* short, natural question
+  (:func:`generate_question`) and it's texted to ``destination`` (a phone number)
+  over the operator's Twilio account (:class:`~prefrontal.integrations.sms.TwilioConfig`).
+  Same contract as ``email``: ends ``forwarded`` on send, and a bad number /
+  unconfigured Twilio / transport error stores the drafted text and ends ``failed``
+  so nothing is lost. One-way for now — the reply lands on the Twilio number, so you
+  ``mark returned`` by hand (an inbound loop-closer is future work).
 
 The prep generation mirrors the rest of the codebase's LLM usage
 (:func:`prefrontal.todos.augment_todo` / :func:`~prefrontal.todos.decompose_task`):
@@ -45,6 +54,7 @@ from prefrontal.autorun import Toolbox, answered_context, merge_questions, run_r
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
 from prefrontal.integrations.base import ProviderError
+from prefrontal.integrations.sms import TwilioConfig, TwilioSmsClient, normalize_phone
 from prefrontal.integrations.smtp import SmtpClient
 from prefrontal.llm_json import extract_json_object, fit_num_ctx
 from prefrontal.log import get_logger
@@ -57,8 +67,15 @@ logger = get_logger(__name__)
 
 #: Handler names (also the ``handler`` column values).
 HANDLER_AGENT = "agent"
-HANDLER_EMAIL = "email"
 HANDLER_AUTO = "auto"
+HANDLER_EMAIL = "email"
+HANDLER_SMS = "sms"
+
+#: Handlers that hand a todo to a *human* (someone you're waiting to hear back
+#: from), as opposed to the on-box ``agent``/``auto``. These end at ``forwarded``
+#: and drive the "heard back?" check-in and stalled-handoff escalation. Naming them
+#: here keeps that shared behaviour from having to enumerate handlers by hand.
+HUMAN_HANDLERS = frozenset({HANDLER_EMAIL, HANDLER_SMS})
 
 #: Lifecycle statuses (the ``status`` column values).
 STATUS_FORWARDED = "forwarded"
@@ -123,8 +140,9 @@ def checkin_message(
 ) -> str | None:
     """The gentle "still handled?" check-in text for a parked delegation, or ``None``.
 
-    ``forwarded`` → "heard back from your assistant?"; ``prepped`` → "your prep is
-    ready to review"; ``in_prep`` → nothing (it's mid-flight, not worth a nudge).
+    ``forwarded`` → "heard back?" (worded for the handler — a texted question reads
+    differently from a VA hand-off); ``prepped`` → "your prep is ready to review";
+    ``in_prep`` → nothing (it's mid-flight, not worth a nudge).
     """
     status = (delegation or {}).get("status")
     title = todo.get("title", "this")
@@ -143,6 +161,12 @@ def checkin_message(
             days = int((now - stamp).total_seconds() // 86400)
             ago = f" {days}d ago" if days >= 1 else " today"
         dest = delegation.get("destination")
+        if delegation.get("handler") == HANDLER_SMS:
+            who = f" {dest}" if dest else " them"
+            return (
+                f'You texted{who}{ago} to check on “{title}”. Heard back? Mark it '
+                "returned once you know, or nudge them."
+            )
         who = f" to {dest}" if dest else ""
         return (
             f'You handed “{title}” off{who}{ago}. Heard back? Mark it returned once '
@@ -529,6 +553,80 @@ def generate_prep(
     return _heuristic_brief(title, notes, decomposition, context), [], []
 
 
+#: Cap on an outbound SMS body (chars). A delegated question should be *one* short
+#: text, not a wall — Twilio splits a long body into billed segments — so we trim
+#: to a couple of segments' worth. Sizing, not truncation-as-feature: the composer
+#: is told to be brief; this only guards a runaway model reply.
+_SMS_MAX_CHARS = 320
+
+_QUESTION_SYSTEM = (
+    "You help someone send ONE short, friendly text message to a person in their "
+    "life to get a quick answer they need before they can move a to-do forward "
+    "(for example, checking a date with their partner). You are given the to-do and "
+    "any note or context they added. Write the text the way they would — warm, "
+    "natural, and to the point, ending in the actual question. No email-style "
+    "greeting or sign-off, no subject line; a first name up front is fine if you're "
+    'given one. Reply with ONLY a JSON object: {"message": "<the text to send>"}. '
+    "Never invent specifics (a date, a place, a name) you weren't given — leave a "
+    "clearly-marked [bracketed placeholder] where a real detail is missing so the "
+    "user can fill it in before it sends."
+)
+
+
+def _heuristic_question(title: str, note: str | None = None) -> str:
+    """A plain question text for the ``sms`` handler when the local model is down.
+
+    No drafting is possible offline, so this leans on the user's own ``note`` (their
+    framing of what to ask) and otherwise falls back to a neutral ask about the
+    todo — never inventing wording or details it wasn't given.
+    """
+    if note and note.strip():
+        return note.strip()[:_SMS_MAX_CHARS]
+    return f"Quick question about “{title}” — can you let me know?"[:_SMS_MAX_CHARS]
+
+
+def generate_question(
+    title: str,
+    *,
+    note: str | None = None,
+    context: str | None = None,
+    client: Generator | None = None,
+) -> str:
+    """Draft the short SMS question to send for an ``sms`` delegation.
+
+    The text-message analogue of :func:`generate_prep`, in the same house style —
+    one JSON call to the injected local model, tolerant extraction, a plain-language
+    heuristic when the model is slow/down — but it produces a single concise text
+    rather than a research brief + drafts. The user's ``note`` is their own framing
+    of the question and carries the most weight; ``context`` gives the model more to
+    work with. Never raises: any model failure degrades to :func:`_heuristic_question`.
+
+    Args:
+        title: The todo text (what the question is in service of).
+        note: The user's own phrasing of what to ask (given the most weight).
+        context: Optional extra free-text context to inform the wording.
+        client: An Ollama-like client; ``None`` uses the heuristic.
+    """
+    if client is not None:
+        lines = [f"To-do: {title}"]
+        if note:
+            lines.append(f"What they want to ask (their words): {note}")
+        if context:
+            lines.append(f"Extra context: {context}")
+        try:
+            reply = client.generate("\n".join(lines), system=_QUESTION_SYSTEM)
+        except ProviderError:
+            reply = ""
+        message = extract_json_object(reply).get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()[:_SMS_MAX_CHARS]
+        # Salvage a prose reply (small local models often skip the JSON envelope)
+        # rather than falling through to the terser heuristic.
+        if reply and reply.strip():
+            return reply.strip()[:_SMS_MAX_CHARS]
+    return _heuristic_question(title, note)
+
+
 #: Pulls the ``brief`` field out of a JSON-shaped reply that wouldn't *parse* — the
 #: value runs to the quote that precedes the next top-level key (or the end).
 _BRIEF_FIELD = re.compile(
@@ -611,12 +709,14 @@ class DelegationRequest:
     notes: str | None = None
     decomposition: dict | None = None
     context: str | None = None  # optional free-text context pasted at delegation time
-    va_note: str | None = None  # optional cover note shown atop the email to a human VA
+    va_note: str | None = None  # email: cover note atop the VA email; sms: what to ask
     owner_name: str | None = None  # user's display name (to flag their action items)
-    destination: str | None = None
+    destination: str | None = None  # email: VA address; sms: recipient phone number
     client: Generator | None = None  # local LLM for prep
     smtp: SmtpSource | None = None  # resolved SMTP source (email handler)
     smtp_client: SmtpClient | None = None
+    sms: TwilioConfig | None = None  # resolved Twilio config (sms handler)
+    sms_client: TwilioSmsClient | None = None
     toolbox: Toolbox | None = None  # unattended tools (auto handler); None = none
     #: Previously-asked questions the user has answered, each ``{text, why, answer}``
     #: — folded in as facts so a re-run doesn't re-ask them (auto handler).
@@ -790,6 +890,63 @@ class EmailHandler:
         )
 
 
+class SmsHandler:
+    """Text a person a question: compose a short SMS and send it via Twilio.
+
+    The follow-up-by-text case: a todo needs a quick answer from someone in your
+    life ("Dad wants help on the 19th — are we free?") before you can move it
+    forward, so instead of a VA research brief this composes *one* short, natural
+    question (:func:`generate_question`) and texts it to ``destination`` — a phone
+    number — on the operator's Twilio account (the same one household invites use).
+
+    Mirrors :class:`EmailHandler`'s contract exactly: the composed text is always
+    stored (as the ``brief``) so nothing is lost, and a missing/blank number,
+    unconfigured Twilio, or a transport error lands ``failed`` with a clear,
+    non-alarming reason rather than raising — you can still send the text by hand.
+    A send Twilio accepts ends ``forwarded`` (parked, awaiting their reply). This is
+    a one-way send: the reply arrives on the operator's Twilio number, so closing
+    the loop is a manual "mark returned" for now (an inbound SMS loop-closer, the
+    mirror of :func:`match_delegated_reply`, is future work).
+    """
+
+    kind = HANDLER_SMS
+
+    def run(self, req: DelegationRequest) -> DelegationResult:
+        message = generate_question(
+            req.title, note=req.va_note, context=req.context, client=req.client
+        )
+        number = normalize_phone(req.destination)
+        # No usable number: keep the composed text so it can be sent by hand, and
+        # land in `failed` with a clear reason. Nothing is lost.
+        if number is None:
+            return DelegationResult(
+                self.kind, STATUS_FAILED, message, [], [],
+                "no valid phone number given — message stored for manual sending",
+            )
+        if req.sms is None or not req.sms.configured:
+            return DelegationResult(
+                self.kind, STATUS_FAILED, message, [], [],
+                "texting isn't set up — message stored; configure Twilio to send texts",
+            )
+        client = req.sms_client or TwilioSmsClient()
+        result = client.send(
+            req.sms.account_sid,
+            req.sms.auth_token,
+            sender=req.sms.sender,
+            to=number,
+            body=message,
+        )
+        if not result.delivered:
+            return DelegationResult(
+                self.kind, STATUS_FAILED, message, [], [],
+                f"text send failed ({result.detail}) — message stored for manual sending",
+            )
+        return DelegationResult(
+            self.kind, STATUS_FORWARDED, message, [], [],
+            f"texted {number} ({result.detail})",
+        )
+
+
 #: The dispatch registry. ``HANDLERS`` (the accepted set) is derived from it so a
 #: new handler is enabled everywhere by adding one entry — the API can't accept a
 #: handler name that has no implementation (mirrors the assistant's ALLOWED_OPS).
@@ -797,6 +954,7 @@ _HANDLERS: dict[str, DelegationHandler] = {
     HANDLER_AGENT: AgentHandler(),
     HANDLER_AUTO: AutoHandler(),
     HANDLER_EMAIL: EmailHandler(),
+    HANDLER_SMS: SmsHandler(),
 }
 
 #: Handler names the API accepts, kept in lockstep with what's dispatchable.
@@ -815,6 +973,8 @@ def run_delegation(
     client: Generator | None = None,
     smtp: SmtpSource | None = None,
     smtp_client: SmtpClient | None = None,
+    sms: TwilioConfig | None = None,
+    sms_client: TwilioSmsClient | None = None,
     toolbox: Toolbox | None = None,
     answered: list[dict[str, Any]] | None = None,
 ) -> DelegationResult:
@@ -827,18 +987,26 @@ def run_delegation(
     local model), so the HTTP router runs it on a background thread after writing an
     ``in_prep`` row; the CLI just waits.
 
-    ``smtp`` is only used by the ``email`` handler; resolve it via
-    :func:`prefrontal.sources.resolve_smtp` before calling (kept out of here so
-    this stays store-agnostic about the encryption boundary). ``toolbox`` is only used
-    by the ``auto`` handler and is resolved the same way, by the caller — via
-    :func:`prefrontal.autorun.build_toolbox` — so this function stays independent of
-    the MCP/settings layer. Omitting it leaves auto mode with no tools (it then
-    behaves like ``agent``), which is also the correct default for a caller that has
-    no settings to hand.
+    ``smtp`` is only used by the ``email`` handler (resolve it via
+    :func:`prefrontal.sources.resolve_smtp`); ``sms`` only by the ``sms`` handler
+    (build it via :meth:`~prefrontal.integrations.sms.TwilioConfig.from_settings`).
+    Both are resolved by the caller so this stays store-/settings-agnostic.
+    ``toolbox`` is only used by the ``auto`` handler and is resolved the same way, by
+    the caller — via :func:`prefrontal.autorun.build_toolbox` — so this function stays
+    independent of the MCP/settings layer. Omitting it leaves auto mode with no tools
+    (it then behaves like ``agent``), which is also the correct default for a caller
+    that has no settings to hand.
     """
     impl = _HANDLERS.get(handler)
     if impl is None:
         raise ValueError(f"Unknown delegation handler: {handler!r}")
+    # Canonicalize an sms recipient to E.164 once, here, so the value we *persist*
+    # matches what actually gets texted — and an unusable string is stored as NULL
+    # rather than leaking into the recent-numbers pick-list or the check-in copy.
+    # (The handler also normalizes defensively; passing the canonical form through
+    # makes that a no-op.) Other handlers keep their destination verbatim.
+    if handler == HANDLER_SMS:
+        destination = normalize_phone(destination)
     decomposition = store.get_decomposition(todo["id"])
     req = DelegationRequest(
         title=todo["title"],
@@ -851,6 +1019,8 @@ def run_delegation(
         client=client,
         smtp=smtp,
         smtp_client=smtp_client,
+        sms=sms,
+        sms_client=sms_client,
         toolbox=toolbox,
         answered=answered,
     )
@@ -1176,10 +1346,10 @@ def send_prepared_draft(
 def delegation_notice(todo_title: str, result: DelegationResult) -> str | None:
     """The push message when a delegation reaches a terminal state, or ``None``.
 
-    ``prepped`` (agent) → "prep is ready to review"; ``forwarded`` (email) → "sent
-    to your assistant"; ``needs_input`` (auto) → the questions it's waiting on;
-    ``failed`` → a gentle heads-up that it needs a hand. ``None`` for non-terminal
-    states (no push worth sending).
+    ``prepped`` (agent) → "prep is ready to review"; ``forwarded`` → "sent to your
+    assistant" (email) / "texted your question" (sms); ``needs_input`` (auto) → the
+    questions it's waiting on; ``failed`` → a gentle heads-up that it needs a hand.
+    ``None`` for non-terminal states (no push worth sending).
     """
     if result.status == STATUS_NEEDS_INPUT:
         pending = [q for q in result.questions if not q.get("answer")]
@@ -1203,6 +1373,11 @@ def delegation_notice(todo_title: str, result: DelegationResult) -> str | None:
         extra = f" ({', '.join(bits)})" if bits else ""
         return f'Prep ready for "{todo_title}"{extra} — review it when you have a sec.'
     if result.status == STATUS_FORWARDED:
+        if result.handler == HANDLER_SMS:
+            return (
+                f'Texted your question about "{todo_title}" — {result.detail}. '
+                "Mark it returned once you hear back."
+            )
         return f'Sent "{todo_title}" to your assistant — {result.detail}.'
     if result.status == STATUS_FAILED:
         return f'Couldn\'t hand off "{todo_title}": {result.detail}.'

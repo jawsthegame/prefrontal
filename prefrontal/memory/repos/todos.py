@@ -776,20 +776,24 @@ class TodosRepo(Repo):
                 d[key] = []
         return d
 
-    def delegation_recipients(self, limit: int = 10) -> list[str]:
-        """The user's previously-used VA email addresses, most-recently-used first.
+    def delegation_recipients(
+        self, limit: int = 10, *, handler: str = "email"
+    ) -> list[str]:
+        """The user's previously-used destinations for ``handler``, newest-used first.
 
-        Powers the "pick an assistant" list in the delegate popover so a recurring
-        VA doesn't have to be retyped each time. Distinct, non-blank ``destination``
-        values from this user's ``email`` hand-offs, newest first.
+        Powers the "pick a recipient" list in the delegate popover so a recurring VA
+        (``handler='email'`` — email addresses) or person you text (``handler='sms'``
+        — phone numbers) doesn't have to be retyped each time. Distinct, non-blank
+        ``destination`` values from this user's hand-offs of that handler. Scoping by
+        handler keeps phone numbers out of the email pick-list and vice-versa.
         """
         rows = self.conn.execute(
             "SELECT d.destination, MAX(d.updated_at) AS last_used "
             "FROM todo_delegations d JOIN todos t ON t.id = d.todo_id "
-            "WHERE t.user_id = ? AND d.destination IS NOT NULL "
+            "WHERE t.user_id = ? AND d.handler = ? AND d.destination IS NOT NULL "
             "AND TRIM(d.destination) != '' "
             "GROUP BY d.destination ORDER BY last_used DESC LIMIT ?",
-            (self._uid(), limit),
+            (self._uid(), handler, limit),
         ).fetchall()
         return [r["destination"] for r in rows]
 

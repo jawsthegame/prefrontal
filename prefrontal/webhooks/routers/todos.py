@@ -31,6 +31,8 @@ from prefrontal.commitments import (
 from prefrontal.delegation import (
     HANDLER_AUTO,
     HANDLER_EMAIL,
+    HANDLER_SMS,
+    HUMAN_HANDLERS,
     STATUS_FAILED,
     STATUS_IN_PREP,
     STATUS_RETURNED,
@@ -43,6 +45,7 @@ from prefrontal.impact import (
     utcnow,
 )
 from prefrontal.integrations.provider import SUMMARIZER
+from prefrontal.integrations.sms import TwilioConfig
 from prefrontal.log import get_logger
 from prefrontal.mail.feedback import (
     record_drop_feedback,
@@ -821,7 +824,7 @@ def build_router(services: RouterServices) -> APIRouter:
         return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
 
     def _run_prep_and_notify(store, todo, *, handler, destination, context, va_note,
-                             owner_name, smtp, handle, answered=None):
+                             owner_name, smtp, handle, sms=None, answered=None):
         """Run the (possibly slow) prep, persist it, and push the heads-up.
 
         Shared by the inline and background paths. ``store`` must be usable on the
@@ -844,6 +847,7 @@ def build_router(services: RouterServices) -> APIRouter:
             owner_name=owner_name,
             client=summarizer_client,
             smtp=smtp,
+            sms=sms,
             toolbox=toolbox,
             answered=answered,
         )
@@ -869,13 +873,18 @@ def build_router(services: RouterServices) -> APIRouter:
     def todo_delegate_recipients(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
     ) -> dict[str, Any]:
-        """VA email addresses you've delegated to before, newest first.
+        """Recipients you've delegated to before, newest first, per handler.
 
-        Lets the delegate popover offer a pick-list so a recurring assistant isn't
-        retyped each time. Static path declared before ``/todos/{todo_id}/...`` so
+        Lets the delegate popover offer a pick-list so a recurring assistant (email)
+        or person you text (sms) isn't retyped each time. ``recipients`` stays the
+        VA-email list (unchanged for existing callers); ``sms_recipients`` is the
+        phone-number list. Static path declared before ``/todos/{todo_id}/...`` so
         "delegate-recipients" isn't read as a todo id.
         """
-        return {"recipients": ctx.store.delegation_recipients()}
+        return {
+            "recipients": ctx.store.delegation_recipients(handler=HANDLER_EMAIL),
+            "sms_recipients": ctx.store.delegation_recipients(handler=HANDLER_SMS),
+        }
 
     @router.post("/todos/{todo_id}/delegate", tags=["todos"])
     def todo_delegate(
@@ -901,7 +910,12 @@ def build_router(services: RouterServices) -> APIRouter:
         the app runs against an injected single-connection store — tests — prep runs
         inline and this returns the finished result directly.)
 
-        404 if the todo isn't open; 422 if ``handler='email'`` without a
+        ``handler='sms'`` texts a short, model-drafted question to a person at
+        ``destination`` (a phone number) over the operator's Twilio account —
+        ``forwarded`` on send, or ``failed`` (with the drafted text stored) if the
+        number is unusable or Twilio isn't configured.
+
+        404 if the todo isn't open; 422 if ``handler='email'`` or ``'sms'`` without a
         ``destination``. Declared before the ``{action}`` route so "delegate" isn't
         read as a done/drop action.
         """
@@ -913,21 +927,26 @@ def build_router(services: RouterServices) -> APIRouter:
                 detail=f"Todo {todo_id} is not open.",
             )
         destination = (payload.destination or "").strip() or None
-        if payload.handler == HANDLER_EMAIL and destination is None:
+        if payload.handler in HUMAN_HANDLERS and destination is None:
+            need = "the assistant's email" if payload.handler == HANDLER_EMAIL else "a phone number"
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="handler='email' needs a 'destination' (the assistant's email).",
+                detail=f"handler='{payload.handler}' needs a 'destination' ({need}).",
             )
         # Auto-pick the outbox: the todo's own mail account (a work-mailbox todo →
         # the "work" SMTP), else its domain, else the default source. Resolved here
         # on the request thread (touches the encrypted store) and passed as a plain
-        # dataclass into the background prep.
+        # dataclass into the background prep. The sms handler instead rides the
+        # operator-level Twilio account (from settings, not the per-user store).
         smtp = None
+        sms = None
         if payload.handler == HANDLER_EMAIL:
             src = memory.mail_sources_for_todos([todo_id]).get(todo_id) or {}
             smtp = resolve_smtp_for(
                 memory, account=src.get("account"), domain=todo.get("domain")
             )
+        elif payload.handler == HANDLER_SMS:
+            sms = TwilioConfig.from_settings(resolved_settings)
         context = (payload.context or "").strip() or None
         va_note = (payload.note or "").strip() or None
         owner_name = ctx.user.get("display_name") or ctx.user.get("handle")
@@ -935,7 +954,7 @@ def build_router(services: RouterServices) -> APIRouter:
 
         kwargs = dict(
             handler=payload.handler, destination=destination, context=context,
-            va_note=va_note, owner_name=owner_name, smtp=smtp, handle=handle,
+            va_note=va_note, owner_name=owner_name, smtp=smtp, sms=sms, handle=handle,
         )
 
         if not getattr(request.app.state, "delegation_async", False):
