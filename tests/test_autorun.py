@@ -661,6 +661,11 @@ def test_begin_delegation_rerun_claims_then_blocks(store):
     store.set_delegation(other, handler="agent", status=STATUS_PREPPED)
     assert store.begin_delegation_rerun(other) is False
     assert store.begin_delegation_rerun(store.add_todo("none")) is False
+    # Claiming with no detail keeps the existing note (COALESCE), never blanks it.
+    keep = store.add_todo("k")
+    store.set_delegation(keep, handler=HANDLER_AUTO, status=STATUS_PREPPED, detail="prep by the agent")
+    assert store.begin_delegation_rerun(keep) is True
+    assert store.get_delegation(keep)["detail"] == "prep by the agent"
 
 
 # -- resume rendering (pure) ----------------------------------------------

@@ -905,7 +905,10 @@ class TodosRepo(Repo):
         ``auto`` delegation; ``detail`` is the in-flight note.
         """
         cur = self.conn.execute(
-            "UPDATE todo_delegations SET status = 'in_prep', detail = ?, "
+            # COALESCE keeps the existing note when detail is None, matching
+            # update_delegation_status (None => leave the note as-is), so a claim
+            # never blanks a prior handler note.
+            "UPDATE todo_delegations SET status = 'in_prep', detail = COALESCE(?, detail), "
             "updated_at = CURRENT_TIMESTAMP "
             "WHERE todo_id = ? AND handler = 'auto' AND status != 'in_prep' "
             "AND todo_id IN (SELECT id FROM todos WHERE user_id = ?)",
