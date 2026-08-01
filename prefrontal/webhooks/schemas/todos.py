@@ -190,6 +190,17 @@ class DelegateAnswers(BaseModel):
     )
 
 
+class DelegateMessage(BaseModel):
+    """Body of ``POST /todos/{id}/delegate/message`` — a free-form follow-up.
+
+    Appends the message to the delegation's conversation thread and re-runs the
+    ``auto`` research, *resuming* from what it has already gathered (the thread plus
+    prior tool findings) rather than starting over. Async, like the initial delegation.
+    """
+
+    message: str = Field(description="Your follow-up message to the assistant.")
+
+
 class DelegateSendPreview(BaseModel):
     """Body of ``POST /todos/{id}/delegate/send/preview`` — dry-run a draft send."""
 

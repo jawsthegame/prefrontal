@@ -146,6 +146,7 @@ from prefrontal.webhooks.schemas.system import (
 from prefrontal.webhooks.schemas.todos import (
     AutoDecomposeConfig,
     DelegateAnswers,
+    DelegateMessage,
     DelegateSend,
     DelegateSendPreview,
     DelegateTodo,
@@ -199,6 +200,7 @@ __all__ = [
     "ConflictDismiss",
     "ConversationTurn",
     "DelegateAnswers",
+    "DelegateMessage",
     "DelegateSend",
     "DelegateSendPreview",
     "DelegateTodo",

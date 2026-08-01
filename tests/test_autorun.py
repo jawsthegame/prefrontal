@@ -25,8 +25,10 @@ from prefrontal.autorun import (
     Toolbox,
     answered_context,
     build_toolbox,
+    findings_from_dicts,
     merge_questions,
     run_research,
+    thread_context,
 )
 from prefrontal.config import McpServerConfig, Settings, _parse_mcp_servers
 from prefrontal.delegation import (
@@ -622,6 +624,57 @@ def test_answer_delegation_questions_missing_row(store):
     assert store.answer_delegation_questions(tid, ["x"]) is None
 
 
+def test_append_delegation_message_thread(store):
+    tid = store.add_todo("t")
+    store.set_delegation(tid, handler=HANDLER_AUTO, status=STATUS_PREPPED, brief="v1")
+    msgs = store.append_delegation_message(tid, role="user", text="focus on the 15-year option")
+    assert msgs == [{"role": "user", "kind": "message", "text": "focus on the 15-year option"}]
+    msgs = store.append_delegation_message(tid, role="agent", text="On it.", kind="note")
+    assert [m["role"] for m in msgs] == ["user", "agent"]
+    # A blank turn is a no-op that still returns the current thread.
+    assert store.append_delegation_message(tid, role="user", text="   ") == msgs
+    assert store.get_delegation(tid)["messages"] == msgs
+
+
+def test_append_delegation_message_missing_row(store):
+    tid = store.add_todo("t")
+    assert store.append_delegation_message(tid, role="user", text="hi") is None
+
+
+def test_set_delegation_round_trips_messages(store):
+    tid = store.add_todo("t")
+    thread = [{"role": "user", "kind": "message", "text": "hi"}]
+    store.set_delegation(tid, handler=HANDLER_AUTO, status=STATUS_PREPPED, messages=thread)
+    assert store.get_delegation(tid)["messages"] == thread
+
+
+# -- resume rendering (pure) ----------------------------------------------
+
+
+def test_thread_context_renders_the_conversation():
+    assert thread_context([]) == ""
+    ctx = thread_context([
+        {"role": "user", "text": "focus on 15-year"},
+        {"role": "agent", "text": "On it."},
+        {"role": "user", "text": "   "},  # blank turn skipped
+    ])
+    assert "You: focus on 15-year" in ctx
+    assert "Assistant: On it." in ctx
+    assert ctx.count("\n") == 2  # header + two non-blank turns
+
+
+def test_findings_from_dicts_renders_persisted_steps():
+    assert findings_from_dicts([]) == ""
+    f = findings_from_dicts([
+        {"index": 1, "server": "research", "tool": "search", "ok": True,
+         "observation": "rate is 8.1%", "why": "current rate"},
+        {"index": 2, "server": "research", "tool": "fetch", "ok": False, "detail": "timeout"},
+    ])
+    assert "research.search — current rate" in f
+    assert "rate is 8.1%" in f
+    assert "(no result: timeout)" in f
+
+
 # -- HTTP surface ---------------------------------------------------------
 
 
@@ -710,6 +763,63 @@ def test_http_answers_rejects_a_non_auto_delegation(http):
     r = client.post(f"/todos/{tid}/delegate/answers", json={"answers": ["x"]}, headers=_headers())
     assert r.status_code == 422
     assert "auto" in r.json()["detail"]
+
+
+def test_http_message_appends_thread_and_resumes(http, fake_mcp):
+    """A free-form follow-up records the exchange and continues the research: the
+    trail accumulates (prior + this run's lookups) rather than restarting."""
+    client, replies = http
+    tid = client.post(
+        "/todos", json={"title": "HELOC report"}, headers=_headers()
+    ).json()["todo_id"]
+    replies.extend([_call("research.search"), _DONE, _prep("v1")])
+    first = client.post(
+        f"/todos/{tid}/delegate", json={"handler": "auto"}, headers=_headers()
+    ).json()
+    assert first["status"] == STATUS_PREPPED
+    assert len(first["steps"]) == 1
+
+    replies.extend([_call("research.search"), _DONE, _prep("v2: the 15-year path")])
+    second = client.post(
+        f"/todos/{tid}/delegate/message",
+        json={"message": "focus on the 15-year option"}, headers=_headers(),
+    ).json()
+    assert second["status"] == STATUS_PREPPED
+    assert second["brief"] == "v2: the 15-year path"
+    # The trail accumulated across the conversation (prior search + this run's),
+    # renumbered to a single contiguous sequence (each run indexes from 1).
+    assert len(second["steps"]) == 2
+    assert [s["index"] for s in second["steps"]] == [1, 2]
+    # The thread records the user's message and the agent's reply, in order.
+    assert [m["role"] for m in second["messages"]] == ["user", "agent"]
+    assert second["messages"][0]["text"] == "focus on the 15-year option"
+    stored = client.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+    assert [m["role"] for m in stored["messages"]] == ["user", "agent"]
+
+
+def test_http_message_rejects_a_non_auto_delegation(http):
+    client, replies = http
+    replies.append(_prep())
+    tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+    client.post(f"/todos/{tid}/delegate", json={"handler": "agent"}, headers=_headers())
+    r = client.post(f"/todos/{tid}/delegate/message", json={"message": "hi"}, headers=_headers())
+    assert r.status_code == 422
+
+
+def test_http_message_blank_is_422(http, fake_mcp):
+    client, replies = http
+    tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+    replies.extend([_DONE, _prep()])
+    client.post(f"/todos/{tid}/delegate", json={"handler": "auto"}, headers=_headers())
+    r = client.post(f"/todos/{tid}/delegate/message", json={"message": "   "}, headers=_headers())
+    assert r.status_code == 422
+
+
+def test_http_message_404s_without_a_delegation(http):
+    client, _ = http
+    tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+    r = client.post(f"/todos/{tid}/delegate/message", json={"message": "hi"}, headers=_headers())
+    assert r.status_code == 404
 
 
 def test_delegation_resolves_the_summarizer_agent(monkeypatch):

@@ -714,18 +714,22 @@ class TodosRepo(Repo):
         context: str | None = None,
         steps: list[dict[str, Any]] | None = None,
         questions: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, Any]] | None = None,
         prepped: bool = False,
     ) -> bool:
         """Store (or replace) a todo's delegation. Returns ``True`` if a row was written.
 
         Mirrors :meth:`set_decomposition` — one row per todo, so re-delegating
         overwrites the prior handoff (and its brief/drafts). ``drafts``, ``actions``,
-        ``steps`` and ``questions`` are JSON-encoded. ``context`` is any free-text the
-        user pasted at delegation time (kept so a re-delegation can reuse it).
-        ``steps`` is an ``auto`` run's executed tool calls (the inspectable trail) and
-        ``questions`` what it needs from the user, each ``{text, why, answer}``.
-        ``prepped=True`` stamps ``prepped_at`` (call it when the handler has finished
-        producing the brief). No-ops if the todo isn't this user's.
+        ``steps``, ``questions`` and ``messages`` are JSON-encoded. ``context`` is any
+        free-text the user pasted at delegation time (kept so a re-delegation can reuse
+        it). ``steps`` is an ``auto`` run's executed tool calls (the inspectable trail),
+        ``questions`` what it needs from the user (each ``{text, why, answer}``), and
+        ``messages`` the follow-up conversation transcript (the resumable thread).
+        Because this ``INSERT OR REPLACE`` rewrites the whole row, a caller re-running a
+        conversation must pass the accumulated ``messages``/``steps`` back or they are
+        cleared. ``prepped=True`` stamps ``prepped_at`` (call it when the handler has
+        finished producing the brief). No-ops if the todo isn't this user's.
         """
         if not self._owns_todo(todo_id):
             return False
@@ -733,8 +737,8 @@ class TodosRepo(Repo):
         self.conn.execute(
             f"INSERT OR REPLACE INTO todo_delegations "
             f"(todo_id, handler, destination, status, brief, drafts, actions, detail, "
-            f"context, steps, questions, prepped_at) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {prepped_at})",
+            f"context, steps, questions, messages, prepped_at) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {prepped_at})",
             (
                 todo_id,
                 handler,
@@ -747,6 +751,7 @@ class TodosRepo(Repo):
                 context,
                 json.dumps(steps) if steps else None,
                 json.dumps(questions) if questions else None,
+                json.dumps(messages) if messages else None,
             ),
         )
         self.conn.commit()
@@ -755,21 +760,22 @@ class TodosRepo(Repo):
     def get_delegation(self, todo_id: int) -> dict[str, Any] | None:
         """Return a todo's delegation, or ``None``.
 
-        ``drafts``, ``actions``, ``steps`` and ``questions`` are decoded to lists of
-        dicts. Returns ``None`` if the todo has no delegation or isn't this user's.
+        ``drafts``, ``actions``, ``steps``, ``questions`` and ``messages`` are decoded
+        to lists of dicts. Returns ``None`` if the todo has no delegation or isn't this
+        user's.
         """
         if not self._owns_todo(todo_id):
             return None
         row = self.conn.execute(
             "SELECT handler, destination, status, brief, drafts, actions, detail, context, "
-            "steps, questions, created_at, updated_at, prepped_at "
+            "steps, questions, messages, created_at, updated_at, prepped_at "
             "FROM todo_delegations WHERE todo_id = ?",
             (todo_id,),
         ).fetchone()
         if row is None:
             return None
         d = dict(row)
-        for key in ("drafts", "actions", "steps", "questions"):
+        for key in ("drafts", "actions", "steps", "questions", "messages"):
             try:
                 d[key] = json.loads(d[key]) if d[key] else []
             except (ValueError, TypeError):
@@ -828,6 +834,37 @@ class TodosRepo(Repo):
         )
         self.conn.commit()
         return questions
+
+    def append_delegation_message(
+        self, todo_id: int, *, role: str, text: str, kind: str = "message"
+    ) -> list[dict[str, Any]] | None:
+        """Append one turn to an ``auto`` delegation's follow-up thread.
+
+        The transcript half of the resumable conversation (design/delegation-workspace
+        Phase 2): each turn is ``{role: "user"|"agent", kind, text}``, kept in order.
+        Returns the updated message list, or ``None`` if the todo has no delegation (or
+        isn't this user's) — the caller turns that into a 404. A blank ``text`` is a
+        no-op that still returns the current thread.
+
+        The append is a **single atomic** statement (SQLite ``json_insert(… '$[#]')``)
+        rather than a read-modify-write of the whole transcript, so two concurrent
+        follow-ups can't lose a turn to a lost update.
+        """
+        if self.get_delegation(todo_id) is None:  # ownership + existence gate
+            return None
+        text = (text or "").strip()
+        if text:
+            turn = json.dumps({"role": role, "kind": kind, "text": text})
+            self.conn.execute(
+                "UPDATE todo_delegations "
+                "SET messages = json_insert(COALESCE(messages, '[]'), '$[#]', json(?)), "
+                "    updated_at = CURRENT_TIMESTAMP "
+                "WHERE todo_id = ?",
+                (turn, todo_id),
+            )
+            self.conn.commit()
+        row = self.get_delegation(todo_id)
+        return (row.get("messages") or []) if row else []
 
     def update_delegation_status(
         self, todo_id: int, status: str, *, detail: str | None = None, prepped: bool = False
