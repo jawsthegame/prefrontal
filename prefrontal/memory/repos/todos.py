@@ -845,21 +845,26 @@ class TodosRepo(Repo):
         Returns the updated message list, or ``None`` if the todo has no delegation (or
         isn't this user's) — the caller turns that into a 404. A blank ``text`` is a
         no-op that still returns the current thread.
+
+        The append is a **single atomic** statement (SQLite ``json_insert(… '$[#]')``)
+        rather than a read-modify-write of the whole transcript, so two concurrent
+        follow-ups can't lose a turn to a lost update.
         """
-        row = self.get_delegation(todo_id)
-        if row is None:
+        if self.get_delegation(todo_id) is None:  # ownership + existence gate
             return None
-        messages = row.get("messages") or []
         text = (text or "").strip()
         if text:
-            messages.append({"role": role, "kind": kind, "text": text})
+            turn = json.dumps({"role": role, "kind": kind, "text": text})
             self.conn.execute(
-                "UPDATE todo_delegations SET messages = ?, updated_at = CURRENT_TIMESTAMP "
+                "UPDATE todo_delegations "
+                "SET messages = json_insert(COALESCE(messages, '[]'), '$[#]', json(?)), "
+                "    updated_at = CURRENT_TIMESTAMP "
                 "WHERE todo_id = ?",
-                (json.dumps(messages), todo_id),
+                (turn, todo_id),
             )
             self.conn.commit()
-        return messages
+        row = self.get_delegation(todo_id)
+        return (row.get("messages") or []) if row else []
 
     def update_delegation_status(
         self, todo_id: int, status: str, *, detail: str | None = None, prepped: bool = False

@@ -786,8 +786,10 @@ def test_http_message_appends_thread_and_resumes(http, fake_mcp):
     ).json()
     assert second["status"] == STATUS_PREPPED
     assert second["brief"] == "v2: the 15-year path"
-    # The trail accumulated across the conversation (prior search + this run's).
+    # The trail accumulated across the conversation (prior search + this run's),
+    # renumbered to a single contiguous sequence (each run indexes from 1).
     assert len(second["steps"]) == 2
+    assert [s["index"] for s in second["steps"]] == [1, 2]
     # The thread records the user's message and the agent's reply, in order.
     assert [m["role"] for m in second["messages"]] == ["user", "agent"]
     assert second["messages"][0]["text"] == "focus on the 15-year option"

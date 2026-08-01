@@ -869,8 +869,12 @@ class AutoHandler:
                 detail = f"prep drafted by the agent — no tools used ({run.detail})"
         # The trail accumulates across the conversation: prior findings stay on the
         # row alongside this run's, so the inspectable "what it looked up" only grows
-        # and the next resume is handed the whole picture.
+        # and the next resume is handed the whole picture. Each run indexes its steps
+        # from 1, so renumber the combined list to a single contiguous 1..N sequence —
+        # otherwise a resume repeats indices and the trail reads ambiguously.
         steps = list(req.prior_steps or []) + [s.as_dict() for s in run.steps]
+        for i, s in enumerate(steps, 1):
+            s["index"] = i
         return DelegationResult(
             handler=self.kind,
             status=status,
