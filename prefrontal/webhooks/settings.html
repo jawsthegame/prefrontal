@@ -108,7 +108,8 @@
   .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
   .field.wide { grid-column: 1 / -1; }
   .field > span { color: var(--muted); font-weight: 600; }
-  .field input[type="text"], .field input[type="password"], .field input[type="number"], .field input[type="email"] {
+  .field input[type="text"], .field input[type="password"], .field input[type="number"], .field input[type="email"],
+  .field select {
     padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px;
     background: var(--bg); color: var(--fg); font: inherit; }
   .field-check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
@@ -288,6 +289,34 @@
       relabel it, or remove it — no CLI needed.</p>
     <div id="places-list"></div>
     <div class="saved" id="places-saved"></div>
+  </section>
+
+  <section class="card" id="c-mail">
+    <h2>Mail accounts (IMAP)</h2>
+    <p class="sub">The inboxes Prefrontal scans for actionable mail — a bill, an
+      RSVP, a school form — and turns into todos. Name each account (<code>personal</code>,
+      <code>work</code>) so its todos can be labeled and routed. For Gmail use an
+      <a href="https://myaccount.google.com/apppasswords" target="_blank"
+      rel="noopener">app password</a>, not your login password, and leave
+      <b>Important-only</b> on to scan just flagged mail. <b>Retention</b> picks what's
+      stored: <code>full</code> keeps bodies; <code>signals</code> keeps only
+      subject + sender + the triage verdict. Passwords are encrypted at rest and
+      never shown again.</p>
+    <div id="mail-list"></div>
+    <div class="saved" id="mail-saved"></div>
+  </section>
+
+  <section class="card" id="c-calendar">
+    <h2>Calendar feeds (iCal)</h2>
+    <p class="sub">Private <code>.ics</code> feed URLs Prefrontal syncs for your
+      commitments. In Google Calendar / Outlook use the <b>secret address in iCal
+      format</b> (Settings → your calendar → "Secret address in iCal format"). Name
+      each feed (<code>personal</code>, <code>work</code>) — the name is the calendar's
+      slug on the Calendar page. Add <b>your own addresses</b> so events you've
+      declined are skipped. The feed URL is a bearer secret — encrypted at rest and
+      never shown again.</p>
+    <div id="calendar-list"></div>
+    <div class="saved" id="calendar-saved"></div>
   </section>
 
   <section class="card" id="c-smtp">
@@ -852,6 +881,224 @@ $("#smtp-list").addEventListener("click", async (ev) => {
   }
 });
 
+// ── Mail accounts (IMAP): one inline form per mailbox + a dashed "add" form ──
+// Modeled on the SMTP card. An account's `account` name is the key (fixed once
+// created); the new form lets you name it. The password is write-only — a blank
+// keeps the stored one. Retention is a full/signals select.
+function mailForm(e, isNew, ready) {
+  const acct = e.account || "";
+  const nameField = isNew
+    ? `<label class="field"><span>Account name</span>`
+      + `<input type="text" data-f="account" placeholder="personal" value="${esc(acct)}" autocomplete="off" /></label>`
+    : "";
+  const pill = isNew ? "" :
+    `<span class="pill${e.enabled ? " on" : ""}">${e.enabled ? "on" : "off"}</span>`;
+  const head = isNew
+    ? `<div class="head"><span class="name">Add a mailbox</span></div>`
+    : `<div class="head"><span class="name">${esc(acct)}</span>${pill}</div>`;
+  const pwHint = (!isNew && e.password_set)
+    ? "•••• (saved — leave blank to keep)" : "app password";
+  const ret = e.retention || "signals";
+  return `<div class="smtp-acct${isNew ? " new" : ""}" data-account="${esc(acct)}" data-new="${isNew ? 1 : 0}">
+    ${head}
+    <div class="form-grid">
+      ${nameField}
+      <label class="field"><span>IMAP host</span>
+        <input type="text" data-f="host" placeholder="imap.gmail.com" value="${esc(e.host || "")}" autocomplete="off"/></label>
+      <label class="field"><span>Username</span>
+        <input type="text" data-f="username" placeholder="you@gmail.com" value="${esc(e.username || "")}" autocomplete="off"/></label>
+      <label class="field"><span>Password / app password</span>
+        <input type="password" data-f="password" placeholder="${esc(pwHint)}" autocomplete="new-password"/></label>
+      <label class="field"><span>Mailbox / folder</span>
+        <input type="text" data-f="mailbox" placeholder="INBOX" value="${esc(e.mailbox || "INBOX")}" autocomplete="off"/></label>
+      <label class="field"><span>Retention</span>
+        <select data-f="retention">
+          <option value="signals"${ret === "signals" ? " selected" : ""}>signals (subject + sender only)</option>
+          <option value="full"${ret === "full" ? " selected" : ""}>full (keep bodies)</option>
+        </select></label>
+    </div>
+    <label class="field-check" style="margin-top:12px"><input type="checkbox" data-f="important_only" ${e.important_only ? "checked" : ""}/>
+      <span>Important-only (Gmail — scan just flagged mail)</span></label>
+    <label class="field-check" style="margin-top:8px"><input type="checkbox" data-f="enabled" ${e.enabled === false ? "" : "checked"}/>
+      <span>Scan this mailbox</span></label>
+    <div class="btnrow">
+      <button class="btn" data-act="save" type="button" ${(isNew && !ready) ? "disabled" : ""}>${isNew ? "Add mailbox" : "Save"}</button>
+      ${isNew ? "" : `<button class="btn ghost" data-act="remove" type="button">Remove</button>`}
+    </div>
+  </div>`;
+}
+
+function renderMail(d) {
+  const ready = d.secret_key_ready !== false;
+  const host = d.default_host || "imap.gmail.com";
+  const accounts = d.accounts || [];
+  const note = ready ? "" :
+    `<p class="sub" style="color:var(--danger)">No encryption key is configured on
+     this deployment, so mailbox passwords can't be stored yet. Ask your operator to
+     run <code>prefrontal secrets init</code>, then reload.</p>`;
+  $("#mail-list").innerHTML = note
+    + accounts.map((e) => mailForm(e, false, ready)).join("")
+    + mailForm({ host, mailbox: "INBOX", retention: "signals", enabled: true }, true, ready);
+}
+
+async function loadMail() {
+  try {
+    if ($("#mail-list").contains(document.activeElement)) return;
+    renderMail(await api("/mail-sources"));
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+
+function mailFlash(msg) {
+  $("#mail-saved").textContent = msg;
+  setTimeout(() => { $("#mail-saved").textContent = ""; }, 1800);
+}
+
+$("#mail-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const block = btn.closest(".smtp-acct");
+  const isNew = block.dataset.new === "1";
+  const val = (f) => block.querySelector(`[data-f="${f}"]`);
+  // Clicking Save/Remove leaves focus on the button, which is inside #mail-list;
+  // loadMail()'s edit-guard would then skip the re-render, leaving the list stale
+  // and the typed password still in the DOM. Blur first so the reload takes.
+  btn.blur();
+  try {
+    if (btn.dataset.act === "remove") {
+      const acct = block.dataset.account;
+      if (!confirm(`Remove the "${acct}" mailbox?`)) return;
+      await api("/mail-sources/" + encodeURIComponent(acct), { method: "DELETE" });
+      mailFlash("Removed ✓");
+      return loadMail();
+    }
+    const account = isNew ? val("account").value.trim() : block.dataset.account;
+    if (!account) { mailFlash("name is required"); return; }
+    const body = {
+      account,
+      host: val("host").value.trim() || "imap.gmail.com",
+      username: val("username").value.trim(),
+      mailbox: val("mailbox").value.trim() || "INBOX",
+      retention: val("retention").value,
+      important_only: val("important_only").checked,
+      enabled: val("enabled").checked,
+    };
+    const pw = val("password").value;
+    if (isNew && !pw) { mailFlash("a password is required for a new mailbox"); return; }
+    if (pw) body.password = pw;
+    await api("/mail-sources", { method: "POST", body: JSON.stringify(body) });
+    mailFlash("Saved ✓");
+    loadMail();
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    mailFlash("couldn't save — retry");
+  }
+});
+
+// ── Calendar feeds (ICS): one inline form per feed + a dashed "add" form ─────
+// Modeled on the SMTP card. A feed's `account` slug is the key (fixed once
+// created). The feed URL is write-only — a blank keeps the stored one. "Your
+// addresses" is a comma-separated list, used to drop declined events.
+function calForm(e, isNew, ready) {
+  const acct = e.account || "";
+  const nameField = isNew
+    ? `<label class="field"><span>Feed name (slug)</span>`
+      + `<input type="text" data-f="account" placeholder="personal" value="${esc(acct)}" autocomplete="off" /></label>`
+    : "";
+  const pill = isNew ? "" :
+    `<span class="pill${e.enabled ? " on" : ""}">${e.enabled ? "on" : "off"}</span>`;
+  const head = isNew
+    ? `<div class="head"><span class="name">Add a calendar feed</span></div>`
+    : `<div class="head"><span class="name">${esc(e.label || acct)}</span>${pill}</div>`;
+  const urlHint = (!isNew && e.url_set)
+    ? "•••• (saved — leave blank to keep)" : "https://calendar.google.com/…/basic.ics";
+  const me = (e.me_emails || []).join(", ");
+  return `<div class="smtp-acct${isNew ? " new" : ""}" data-account="${esc(acct)}" data-new="${isNew ? 1 : 0}">
+    ${head}
+    <div class="form-grid">
+      ${nameField}
+      <label class="field"><span>Label (optional)</span>
+        <input type="text" data-f="label" placeholder="Work calendar" value="${esc(e.label || "")}" autocomplete="off"/></label>
+      <label class="field wide"><span>Private iCal (.ics) URL</span>
+        <input type="password" data-f="url" placeholder="${esc(urlHint)}" autocomplete="new-password"/></label>
+      <label class="field wide"><span>Your addresses on this calendar (comma-separated)</span>
+        <input type="text" data-f="me_emails" placeholder="you@gmail.com, you@work.com" value="${esc(me)}" autocomplete="off"/></label>
+    </div>
+    <label class="field-check" style="margin-top:12px"><input type="checkbox" data-f="enabled" ${e.enabled === false ? "" : "checked"}/>
+      <span>Sync this feed</span></label>
+    <div class="btnrow">
+      <button class="btn" data-act="save" type="button" ${(isNew && !ready) ? "disabled" : ""}>${isNew ? "Add feed" : "Save"}</button>
+      ${isNew ? "" : `<button class="btn ghost" data-act="remove" type="button">Remove</button>`}
+    </div>
+  </div>`;
+}
+
+function renderCalendar(d) {
+  const ready = d.secret_key_ready !== false;
+  const feeds = d.feeds || [];
+  const note = ready ? "" :
+    `<p class="sub" style="color:var(--danger)">No encryption key is configured on
+     this deployment, so feed URLs can't be stored yet. Ask your operator to run
+     <code>prefrontal secrets init</code>, then reload.</p>`;
+  $("#calendar-list").innerHTML = note
+    + feeds.map((e) => calForm(e, false, ready)).join("")
+    + calForm({ enabled: true }, true, ready);
+}
+
+async function loadCalendar() {
+  try {
+    if ($("#calendar-list").contains(document.activeElement)) return;
+    renderCalendar(await api("/calendar-sources"));
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+
+function calFlash(msg) {
+  $("#calendar-saved").textContent = msg;
+  setTimeout(() => { $("#calendar-saved").textContent = ""; }, 1800);
+}
+
+$("#calendar-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const block = btn.closest(".smtp-acct");
+  const isNew = block.dataset.new === "1";
+  const val = (f) => block.querySelector(`[data-f="${f}"]`);
+  // Clicking Save/Remove leaves focus on the button, which is inside
+  // #calendar-list; loadCalendar()'s edit-guard would then skip the re-render,
+  // leaving the list stale and the typed URL still in the DOM. Blur first.
+  btn.blur();
+  try {
+    if (btn.dataset.act === "remove") {
+      const acct = block.dataset.account;
+      if (!confirm(`Remove the "${acct}" calendar feed?`)) return;
+      await api("/calendar-sources/" + encodeURIComponent(acct), { method: "DELETE" });
+      calFlash("Removed ✓");
+      return loadCalendar();
+    }
+    const account = isNew ? val("account").value.trim() : block.dataset.account;
+    if (!account) { calFlash("name is required"); return; }
+    const me = val("me_emails").value.split(",").map((s) => s.trim()).filter(Boolean);
+    const body = {
+      account,
+      label: val("label").value.trim(),
+      me_emails: me,
+      enabled: val("enabled").checked,
+    };
+    const url = val("url").value.trim();
+    if (isNew && !url) { calFlash("a feed URL is required for a new feed"); return; }
+    if (url) body.url = url;
+    await api("/calendar-sources", { method: "POST", body: JSON.stringify(body) });
+    calFlash("Saved ✓");
+    loadCalendar();
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    calFlash("couldn't save — retry");
+  }
+});
+
 // ── Curated places: one inline form per place + a dashed "add" form ──────────
 // Modeled on the SMTP card. A place's `name` is the normalized match key; the
 // server re-normalizes whatever's typed. Save is an upsert (POST /places), so
@@ -1060,6 +1307,8 @@ async function load() {
   await loadHours();
   await loadLocation();
   await loadPlaces();
+  await loadMail();
+  await loadCalendar();
   await loadSmtp();
   $("#status").textContent = "your preferences";
   if (window.initCardCollapse) initCardCollapse();  // make the card collapsible once visible
