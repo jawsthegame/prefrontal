@@ -1035,6 +1035,15 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Only an 'auto' delegation asks questions.",
             )
+        # Claim the delegation before recording answers, so an answer that arrives while
+        # a run is already in flight is rejected cleanly rather than racing it.
+        if not memory.begin_delegation_rerun(
+            todo_id, detail="picking it back up with your answers…"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This delegation is already working — try again once it's done.",
+            )
         answered = memory.answer_delegation_questions(todo_id, payload.answers)
         kwargs = dict(
             handler=HANDLER_AUTO,
@@ -1057,9 +1066,7 @@ def build_router(services: RouterServices) -> APIRouter:
             result = _run_prep_and_notify(memory, todo, **kwargs)
             return _delegation_response(todo_id, result)
 
-        memory.update_delegation_status(
-            todo_id, STATUS_IN_PREP, detail="picking it back up with your answers…"
-        )
+        # Status is already `in_prep` from the claim above.
         uid = ctx.user["id"]
         root_store = request.app.state.store
 
@@ -1122,6 +1129,16 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Message is empty.",
             )
+        # Claim the delegation for this re-run *before* touching the thread, so a
+        # rejected (already-running) follow-up neither races the in-flight run nor
+        # pollutes the transcript with a message that never triggered anything.
+        if not memory.begin_delegation_rerun(
+            todo_id, detail="picking it back up with your message…"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This delegation is already working — try again once it's done.",
+            )
         # Append the user's turn now, so it's on the row (and drives the resume) even if
         # the re-run is slow or fails; the agent's reply turn is added when it finishes.
         messages = memory.append_delegation_message(todo_id, role="user", text=text)
@@ -1146,9 +1163,7 @@ def build_router(services: RouterServices) -> APIRouter:
             resp["messages"] = (memory.get_delegation(todo_id) or {}).get("messages") or []
             return resp
 
-        memory.update_delegation_status(
-            todo_id, STATUS_IN_PREP, detail="picking it back up with your message…"
-        )
+        # Status is already `in_prep` from the claim above.
         uid = ctx.user["id"]
         root_store = request.app.state.store
 
