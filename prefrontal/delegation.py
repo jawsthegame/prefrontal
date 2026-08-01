@@ -50,7 +50,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from prefrontal.autorun import Toolbox, answered_context, merge_questions, run_research
+from prefrontal.autorun import (
+    Toolbox,
+    answered_context,
+    findings_from_dicts,
+    merge_questions,
+    run_research,
+    thread_context,
+)
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
 from prefrontal.integrations.base import ProviderError
@@ -730,6 +737,13 @@ class DelegationRequest:
     #: Previously-asked questions the user has answered, each ``{text, why, answer}``
     #: — folded in as facts so a re-run doesn't re-ask them (auto handler).
     answered: list[dict[str, Any]] | None = None
+    #: The follow-up conversation transcript so far, each ``{role, kind, text}`` —
+    #: folded in as history so a resumed run continues it (auto handler, Phase 2).
+    messages: list[dict[str, Any]] | None = None
+    #: Tool-call findings already gathered on this todo (the persisted ``steps``) —
+    #: fed back so a resumed run builds on them instead of re-running the lookups,
+    #: and carried forward so the trail accumulates across the conversation.
+    prior_steps: list[dict[str, Any]] | None = None
 
 
 class DelegationHandler(Protocol):
@@ -797,20 +811,35 @@ class AutoHandler:
     kind = HANDLER_AUTO
 
     def run(self, req: DelegationRequest) -> DelegationResult:
-        # Anything the user already answered is a *fact*, so it joins the context the
-        # same way pasted material does — and it goes in before the loop starts, so
-        # the run doesn't re-ask what it's already been told.
+        # Everything durable from the conversation so far joins the context *before*
+        # the loop starts, so a resumed run continues rather than restarts: the facts
+        # the user already gave (answers), the free-form follow-up thread, and the
+        # material earlier runs already gathered (so it doesn't re-run those lookups).
         answers = answered_context(req.answered)
-        context = _join_context(req.context, answers)
+        thread = thread_context(req.messages)
+        prior_findings = findings_from_dicts(req.prior_steps)
+        resumed = bool(answers or thread or prior_findings)
+        context = _join_context(
+            req.context,
+            answers,
+            thread,
+            (
+                "Material already gathered on this task (earlier tool results):\n"
+                f"{prior_findings}"
+                if prior_findings
+                else None
+            ),
+        )
         run = run_research(
             req.title,
             req.notes,
             context=context,
             client=req.client,
             toolbox=req.toolbox,
-            # It has had its round of questions — press it to conclude rather than
-            # asking a fresh one every time (observed against the local model).
-            already_asked=bool(answers),
+            # Once the conversation is under way (answers, a follow-up, or prior
+            # findings in hand), press it to conclude rather than opening a fresh
+            # round of questions every time (observed against the local model).
+            already_asked=resumed,
         )
         if run.findings:
             context = _join_context(
@@ -838,6 +867,10 @@ class AutoHandler:
                 # No calls: say why, since "auto mode did nothing autonomous" is
                 # surprising unless it's visible (no tools enabled, model down, …).
                 detail = f"prep drafted by the agent — no tools used ({run.detail})"
+        # The trail accumulates across the conversation: prior findings stay on the
+        # row alongside this run's, so the inspectable "what it looked up" only grows
+        # and the next resume is handed the whole picture.
+        steps = list(req.prior_steps or []) + [s.as_dict() for s in run.steps]
         return DelegationResult(
             handler=self.kind,
             status=status,
@@ -845,7 +878,7 @@ class AutoHandler:
             drafts=drafts,
             actions=actions,
             detail=detail,
-            steps=[s.as_dict() for s in run.steps],
+            steps=steps,
             questions=[q.as_dict() for q in run.questions],
         )
 
@@ -986,6 +1019,9 @@ def run_delegation(
     sms_client: TwilioSmsClient | None = None,
     toolbox: Toolbox | None = None,
     answered: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    prior_steps: list[dict[str, Any]] | None = None,
+    reply_to_thread: bool = False,
 ) -> DelegationResult:
     """Delegate ``todo`` to ``handler``, run the prep, and persist the result.
 
@@ -1005,6 +1041,14 @@ def run_delegation(
     independent of the MCP/settings layer. Omitting it leaves auto mode with no tools
     (it then behaves like ``agent``), which is also the correct default for a caller
     that has no settings to hand.
+
+    ``messages`` / ``prior_steps`` drive the resumable ``auto`` conversation (Phase 2):
+    the caller passes the accumulated thread and the findings gathered so far, so a
+    re-run *continues* rather than restarts — and because ``set_delegation`` rewrites
+    the whole row, passing them back is also what keeps them from being wiped. A caller
+    that omits them starts a fresh delegation (the initial hand-off / a re-delegate).
+    ``reply_to_thread`` appends the agent's response to the thread (a free-form
+    follow-up), which the question round-trip leaves off.
     """
     impl = _HANDLERS.get(handler)
     if impl is None:
@@ -1032,8 +1076,16 @@ def run_delegation(
         sms_client=sms_client,
         toolbox=toolbox,
         answered=answered,
+        messages=messages,
+        prior_steps=prior_steps,
     )
     result = impl.run(req)
+    # The thread carried in is persisted back (INSERT OR REPLACE would otherwise wipe
+    # it); a free-form follow-up also records the agent's reply so the transcript reads
+    # as a conversation.
+    thread = list(messages or [])
+    if reply_to_thread and result.handler == HANDLER_AUTO:
+        thread.append({"role": "agent", "kind": "note", "text": result.detail or ""})
     store.set_delegation(
         todo["id"],
         handler=result.handler,
@@ -1047,6 +1099,7 @@ def run_delegation(
         steps=result.steps,
         # Answered history survives the re-run; this round's asks are appended.
         questions=merge_questions(answered, result.questions),
+        messages=thread or None,
         prepped=result.status in (STATUS_PREPPED, STATUS_FORWARDED),
     )
     return result

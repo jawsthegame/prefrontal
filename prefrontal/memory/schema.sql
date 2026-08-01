@@ -714,8 +714,9 @@ CREATE TABLE IF NOT EXISTS todo_delegations (
     actions      TEXT,               -- JSON array of extracted action items {text, mine}
     detail       TEXT,               -- last handler note (e.g. "smtp responded 250", failure reason)
     context      TEXT,               -- optional free-text context supplied at delegation time (e.g. pasted work-AI output)
-    steps        TEXT,               -- `auto` runs: JSON array of executed tool calls {index, server, tool, arguments, ok, detail, observation, why}
+    steps        TEXT,               -- `auto` runs: JSON array of executed tool calls {index, server, tool, arguments, ok, detail, observation, why} — accumulated across a conversation's re-runs
     questions    TEXT,               -- `auto` runs: JSON array of {text, why, answer} — answer NULL until the user replies (status needs_input)
+    messages     TEXT,               -- `auto` runs: JSON transcript of the follow-up conversation {role: user|agent, kind, text} — the resumable thread (design/delegation-workspace.md Phase 2)
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     prepped_at   DATETIME            -- when prep completed (status reached prepped)

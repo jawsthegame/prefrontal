@@ -99,6 +99,7 @@ from prefrontal.webhooks.helpers import (
 from prefrontal.webhooks.schemas import (
     AutoDecomposeConfig,
     DelegateAnswers,
+    DelegateMessage,
     DelegateSend,
     DelegateSendPreview,
     DelegateTodo,
@@ -824,7 +825,8 @@ def build_router(services: RouterServices) -> APIRouter:
         return {"todo_id": todo_id, "todo": memory.get_todo(todo_id)}
 
     def _run_prep_and_notify(store, todo, *, handler, destination, context, va_note,
-                             owner_name, smtp, handle, sms=None, answered=None):
+                             owner_name, smtp, handle, sms=None, answered=None,
+                             messages=None, prior_steps=None, reply_to_thread=False):
         """Run the (possibly slow) prep, persist it, and push the heads-up.
 
         Shared by the inline and background paths. ``store`` must be usable on the
@@ -850,6 +852,9 @@ def build_router(services: RouterServices) -> APIRouter:
             sms=sms,
             toolbox=toolbox,
             answered=answered,
+            messages=messages,
+            prior_steps=prior_steps,
+            reply_to_thread=reply_to_thread,
         )
         # Heads-up push on the terminal state (prep ready / sent / needs a hand). Lazy
         # import keeps the delivery module (and its coaching cycle) off the hot path,
@@ -1034,15 +1039,18 @@ def build_router(services: RouterServices) -> APIRouter:
         kwargs = dict(
             handler=HANDLER_AUTO,
             destination=delegation.get("destination"),
-            # The *original* context, not the accumulated one: the findings from the
-            # last attempt were that attempt's working notes, and the re-run gathers
-            # its own. What must persist is the Q&A, which rides `answered`.
+            # The original pasted context (the Q&A rides `answered`).
             context=delegation.get("context"),
             va_note=None,
             owner_name=ctx.user.get("display_name") or ctx.user.get("handle"),
             smtp=None,
             handle=ctx.user["handle"],
             answered=answered,
+            # Resume rather than restart (Phase 2): carry the follow-up thread and the
+            # findings gathered so far, so answering builds on them instead of re-running
+            # the same lookups — and so this re-run's INSERT OR REPLACE keeps the thread.
+            messages=delegation.get("messages"),
+            prior_steps=delegation.get("steps"),
         )
 
         if not getattr(request.app.state, "delegation_async", False):
@@ -1077,6 +1085,96 @@ def build_router(services: RouterServices) -> APIRouter:
             "detail": "picking it back up with your answers…",
             "steps": delegation.get("steps") or [],
             "questions": answered or [],
+        }
+
+    @router.post("/todos/{todo_id}/delegate/message", tags=["todos"])
+    def todo_delegate_message(
+        todo_id: int,
+        payload: DelegateMessage,
+        request: Request,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Send a free-form follow-up to an ``auto`` delegation — and let it resume.
+
+        Unlike the question round-trip (which answers what *it* asked), this is an
+        open-ended message — "focus on the 15-year option", "skip the HOA part". It's
+        appended to the delegation's conversation thread and re-runs the research,
+        **resuming** from the thread plus everything gathered so far rather than starting
+        over. Async like the initial delegation (returns ``in_prep`` immediately). 404 if
+        the todo has no delegation; 422 if it isn't an auto run or the message is blank.
+        """
+        memory = ctx.store
+        todo = memory.get_todo(todo_id)
+        delegation = memory.get_delegation(todo_id) if todo is not None else None
+        if todo is None or delegation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Todo {todo_id} has no delegation to message.",
+            )
+        if delegation.get("handler") != HANDLER_AUTO:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Only an 'auto' delegation holds a conversation.",
+            )
+        text = (payload.message or "").strip()
+        if not text:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Message is empty.",
+            )
+        # Append the user's turn now, so it's on the row (and drives the resume) even if
+        # the re-run is slow or fails; the agent's reply turn is added when it finishes.
+        messages = memory.append_delegation_message(todo_id, role="user", text=text)
+        answered = [q for q in (delegation.get("questions") or []) if q.get("answer")]
+        kwargs = dict(
+            handler=HANDLER_AUTO,
+            destination=delegation.get("destination"),
+            context=delegation.get("context"),
+            va_note=None,
+            owner_name=ctx.user.get("display_name") or ctx.user.get("handle"),
+            smtp=None,
+            handle=ctx.user["handle"],
+            answered=answered,
+            messages=messages,
+            prior_steps=delegation.get("steps"),
+            reply_to_thread=True,
+        )
+
+        if not getattr(request.app.state, "delegation_async", False):
+            result = _run_prep_and_notify(memory, todo, **kwargs)
+            resp = _delegation_response(todo_id, result)
+            resp["messages"] = (memory.get_delegation(todo_id) or {}).get("messages") or []
+            return resp
+
+        memory.update_delegation_status(
+            todo_id, STATUS_IN_PREP, detail="picking it back up with your message…"
+        )
+        uid = ctx.user["id"]
+        root_store = request.app.state.store
+
+        def _bg() -> None:
+            scoped = root_store.scoped(uid)  # own connection on this thread
+            try:
+                _run_prep_and_notify(scoped, todo, **kwargs)
+            except Exception:  # never let a prep thread die silently
+                logger.exception("delegation message re-run failed for todo %s", todo_id)
+                scoped.update_delegation_status(
+                    todo_id, STATUS_FAILED,
+                    detail="picking it back up failed unexpectedly — see server logs",
+                )
+
+        threading.Thread(target=_bg, name=f"delegate-message-{todo_id}", daemon=True).start()
+        return {
+            "todo_id": todo_id,
+            "handler": HANDLER_AUTO,
+            "status": STATUS_IN_PREP,
+            "brief": delegation.get("brief"),
+            "drafts": delegation.get("drafts") or [],
+            "actions": delegation.get("actions") or [],
+            "detail": "picking it back up with your message…",
+            "steps": delegation.get("steps") or [],
+            "questions": delegation.get("questions") or [],
+            "messages": messages or [],
         }
 
     def _delegation_response(todo_id: int, result) -> dict[str, Any]:

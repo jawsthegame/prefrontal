@@ -465,6 +465,49 @@ def _findings(steps: list[RunStep]) -> str:
     return "\n".join(lines)
 
 
+def findings_from_dicts(steps: list[dict[str, Any]] | None) -> str:
+    """Render already-gathered material from persisted step dicts (see :func:`_findings`).
+
+    The resume counterpart of :func:`_findings`: it reads the ``todo_delegations.steps``
+    shape (dicts, not :class:`RunStep`) so a follow-up run can be handed everything the
+    conversation has gathered *so far* and build on it, instead of re-running the same
+    lookups from cold.
+    """
+    lines: list[str] = []
+    for s in steps or []:
+        if not isinstance(s, dict):
+            continue
+        head = f"[{s.get('index')}] {s.get('server')}.{s.get('tool')}"
+        if s.get("why"):
+            head += f" — {s['why']}"
+        lines.append(head)
+        got = s.get("observation") if s.get("ok") and s.get("observation") else ""
+        lines.append(got or f"  (no result: {s.get('detail')})")
+    return "\n".join(lines)
+
+
+def thread_context(messages: list[dict[str, Any]] | None) -> str:
+    """Render the follow-up conversation as context for a resumed run, or ``""``.
+
+    The free-form transcript the user builds up over a delegation (Phase 2): each
+    ``{role, kind, text}`` turn becomes a labelled line so a re-run reads the
+    back-and-forth as plain history and *continues* it rather than restarting cold.
+    Blank turns are skipped.
+    """
+    lines: list[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        text = str(m.get("text") or "").strip()
+        if not text:
+            continue
+        who = "You" if m.get("role") == "user" else "Assistant"
+        lines.append(f"{who}: {text}")
+    if not lines:
+        return ""
+    return "The follow-up conversation so far:\n" + "\n".join(lines)
+
+
 def run_research(
     title: str,
     notes: str | None = None,
