@@ -219,6 +219,13 @@ extension APIClient {
         let body: [String: Any] = ["answers": answers]
         try await post("todos/\(id)/delegate/answers", json: body)
     }
+    /// Send a free-form follow-up to an `auto` delegation. It's appended to the
+    /// conversation thread and *resumes* the research (builds on what it already
+    /// gathered) rather than restarting. Mirrors POST /todos/{id}/delegate/message.
+    func delegateMessage(_ id: Int, message: String) async throws {
+        let body: [String: Any] = ["message": message]
+        try await post("todos/\(id)/delegate/message", json: body)
+    }
 
     // Blockers — who's waiting on you (the ball's in your court). Feeds
     // prioritization; mirrors prefrontal/webhooks/routers/blockers.py.
