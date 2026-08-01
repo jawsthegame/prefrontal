@@ -39,7 +39,7 @@ import re
 from typing import Any
 
 from prefrontal.integrations import Generator, ProviderError
-from prefrontal.llm_json import extract_json
+from prefrontal.llm_json import extract_json, generate_text
 
 #: How the user relates to a person. ``unknown`` is the pre-identification default;
 #: everything else is a category the user assigns when they identify a mention.
@@ -321,7 +321,9 @@ def extract_names_llm(text: str, client: Generator) -> list[str] | None:
     if not (text or "").strip():
         return []
     try:
-        reply = client.generate(f"Text:\n{text[:1500]}", system=_LLM_SYSTEM)
+        reply = generate_text(
+            client, f"Text:\n{text[:1500]}", system=_LLM_SYSTEM, want_json=True
+        )
     except ProviderError:
         return None
     raw = extract_json(reply)

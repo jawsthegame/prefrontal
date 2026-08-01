@@ -56,7 +56,7 @@ from prefrontal.integrations import Generator
 from prefrontal.integrations.base import ProviderError
 from prefrontal.integrations.sms import TwilioConfig, TwilioSmsClient, normalize_phone
 from prefrontal.integrations.smtp import SmtpClient
-from prefrontal.llm_json import extract_json_object, fit_num_ctx
+from prefrontal.llm_json import extract_json_object, fit_num_ctx, generate_text
 from prefrontal.log import get_logger
 from prefrontal.sources import SmtpSource
 
@@ -299,7 +299,9 @@ def _llm_pick_delegation(
     lines += ["", "Tasks delegated to this assistant:"]
     lines += [f"- id={c['id']}: {(c.get('title') or '').strip()}" for c in candidates]
     try:
-        reply = client.generate("\n".join(lines), system=_MATCH_SYSTEM)
+        reply = generate_text(
+            client, "\n".join(lines), system=_MATCH_SYSTEM, want_json=True
+        )
     except ProviderError:
         return None
     chosen = extract_json_object(reply).get("todo_id")
@@ -529,8 +531,13 @@ def generate_prep(
         # Only the (slow) large-context calls need the extended timeout.
         timeout = _PREP_TIMEOUT if num_ctx else None
         try:
-            reply = client.generate(
-                prompt, system=_PREP_SYSTEM, num_ctx=num_ctx, timeout=timeout
+            reply = generate_text(
+                client,
+                prompt,
+                system=_PREP_SYSTEM,
+                num_ctx=num_ctx,
+                timeout=timeout,
+                want_json=True,
             )
         except ProviderError:
             # ProviderError, not OllamaError: the injected client is whatever the
@@ -614,7 +621,9 @@ def generate_question(
         if context:
             lines.append(f"Extra context: {context}")
         try:
-            reply = client.generate("\n".join(lines), system=_QUESTION_SYSTEM)
+            reply = generate_text(
+                client, "\n".join(lines), system=_QUESTION_SYSTEM, want_json=True
+            )
         except ProviderError:
             reply = ""
         message = extract_json_object(reply).get("message")

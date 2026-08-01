@@ -33,7 +33,7 @@ from prefrontal.delegation import STATUS_FAILED, STATUS_FORWARDED
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
 from prefrontal.integrations.smtp import SmtpClient
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 from prefrontal.log import get_logger
 
 if TYPE_CHECKING:
@@ -215,7 +215,9 @@ def build_reschedule_draft(
             prompt_lines.append("Alternative times the user is free:")
             prompt_lines += [f"  - {s}" for s in slots]
         try:
-            reply = client.generate("\n".join(prompt_lines), system=_DRAFT_SYSTEM)
+            reply = generate_text(
+                client, "\n".join(prompt_lines), system=_DRAFT_SYSTEM, want_json=True
+            )
         except OllamaError:
             reply = ""
         raw = extract_json_object(reply)

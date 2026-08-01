@@ -32,7 +32,7 @@ from typing import Any
 from prefrontal.clock import TS_FMT, utcnow
 from prefrontal.commitments import to_utc
 from prefrontal.integrations import Generator, ProviderError
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 from prefrontal.memory._helpers import EPISODE_TYPES
 from prefrontal.projects import suggest_project
 from prefrontal.todos import augment_todo
@@ -308,7 +308,7 @@ def _llm_classify(signal: Signal, client: Generator, *, today: date) -> TriageDe
         f"Subject: {signal.title}\nBody: {signal.body[:1500]}"
     )
     try:
-        reply = client.generate(prompt, system=_LLM_SYSTEM)
+        reply = generate_text(client, prompt, system=_LLM_SYSTEM, want_json=True)
     except ProviderError:
         return None
     raw = extract_json_object(reply)

@@ -62,7 +62,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.clock import utcnow
 from prefrontal.integrations import Generator
 from prefrontal.integrations.base import ProviderError
-from prefrontal.llm_json import extract_json_object, fit_num_ctx
+from prefrontal.llm_json import extract_json_object, fit_num_ctx, generate_text
 from prefrontal.log import get_logger
 
 if TYPE_CHECKING:
@@ -352,8 +352,13 @@ def _next_turn(
     )
     num_ctx = fit_num_ctx(len(prompt) + len(system), cap=_TURN_MAX_NUM_CTX)
     try:
-        reply = client.generate(
-            prompt, system=system, num_ctx=num_ctx, timeout=_TURN_TIMEOUT
+        reply = generate_text(
+            client,
+            prompt,
+            system=system,
+            num_ctx=num_ctx,
+            timeout=_TURN_TIMEOUT,
+            want_json=True,
         )
     except ProviderError as exc:  # Ollama/Anthropic transport or model failure
         logger.info("auto-run turn failed: %s", exc)

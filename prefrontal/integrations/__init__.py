@@ -16,7 +16,8 @@ and the notification button builder therefore lives one layer up, at
 (``from prefrontal.delivery import DeliveryClient``).
 """
 
-from typing import Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 from prefrontal.integrations.anthropic import AnthropicClient, AnthropicError
 from prefrontal.integrations.base import ProviderError
@@ -42,6 +43,7 @@ class Generator(Protocol):
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        format: str | Mapping[str, Any] | None = None,
     ) -> str: ...
 
 

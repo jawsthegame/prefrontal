@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from prefrontal.integrations.base import ProviderError
 from prefrontal.integrations.provider import SENSOR, ProviderResolver
+from prefrontal.llm_json import generate_text
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
@@ -308,7 +309,9 @@ def extract_candidates(
     client = client or ProviderResolver.from_settings().client(SENSOR)
     prompt = _build_prompt(text, avoid_keys=avoid_keys or frozenset())
     try:
-        reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
+        reply = generate_text(
+            client, prompt, system=SENSOR_SYSTEM_PROMPT, want_json=True
+        )
     except ProviderError:
         return []  # no model → observe nothing rather than invent
     candidates = [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]
@@ -352,7 +355,9 @@ def extract_candidates_from_transcript(
     client = client or ProviderResolver.from_settings().client(SENSOR)
     prompt = _build_transcript_prompt(transcript, avoid_keys=avoid_keys or frozenset())
     try:
-        reply = client.generate(prompt, system=SENSOR_SYSTEM_PROMPT)
+        reply = generate_text(
+            client, prompt, system=SENSOR_SYSTEM_PROMPT, want_json=True
+        )
     except ProviderError:
         return []  # no model → observe nothing rather than invent
     return [c for c in (_validate(r) for r in _coerce_json_array(reply)) if c is not None]

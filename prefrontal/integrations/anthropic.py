@@ -28,6 +28,7 @@ network-free. A missing SDK or unset key simply makes :meth:`available` return
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from prefrontal.config import Settings, get_settings
@@ -100,6 +101,7 @@ class AnthropicClient:
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        format: str | Mapping[str, Any] | None = None,
     ) -> str:
         """Generate a single completion, returning the concatenated text blocks.
 
@@ -111,6 +113,11 @@ class AnthropicClient:
                 protocol (hosted models size their own context).
             timeout: Ignored here for the same reason (transport timeout is fixed
                 at construction).
+            format: Ignored — Ollama's structured-output hint. Accepted only to
+                satisfy the shared :class:`~prefrontal.integrations.Generator`
+                protocol; a JSON-mode request is a no-op here, and the caller's
+                tolerant :func:`prefrontal.llm_json.extract_json` still recovers the
+                object from a hosted reply.
 
         Returns:
             The model's response text (stripped). A safety refusal yields an
