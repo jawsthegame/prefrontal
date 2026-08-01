@@ -43,17 +43,19 @@ from prefrontal.packs.registry import available as available_packs
 from prefrontal.self_care_review import self_care_review
 from prefrontal.sources import (
     ICS,
+    IMAP,
     SMTP_ACCOUNT,
     delete_ics_source,
     delete_imap_source,
     delete_smtp_source,
-    ics_sources,
+    ics_summaries,
+    ics_summary,
     imap_accounts,
-    imap_sources,
+    imap_summaries,
+    imap_summary,
     put_ics_source,
     put_imap_source,
     put_smtp_source,
-    resolve_imap,
     resolve_smtp,
     smtp_sources,
 )
@@ -786,10 +788,12 @@ def build_router(services: RouterServices) -> APIRouter:
         return {"account": account, "deleted": True}
 
     def _imap_entry(src: Any) -> dict[str, Any]:
-        """Serialize one IMAP source for the client — the password is NEVER included.
+        """Serialize one IMAP source summary for the client.
 
-        ``password_set`` says whether a secret is stored, so the form can show
-        "•••• (saved)" without the browser ever seeing the sealed value.
+        Takes an :class:`~prefrontal.sources.ImapSummary` — metadata only, built
+        **without decrypting** — so the password never reaches this path at all.
+        ``password_set`` (from ``has_password``) says whether a secret is stored,
+        so the form can show "•••• (saved)" without the browser seeing it.
         """
         return {
             "account": src.account,
@@ -799,7 +803,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "important_only": src.important_only,
             "retention": src.retention,
             "enabled": src.enabled,
-            "password_set": bool(src.password),
+            "password_set": src.has_password,
         }
 
     @router.get("/mail-sources", tags=["system"])
@@ -808,15 +812,17 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """The signed-in user's inbound mail (IMAP) accounts, for the Settings card.
 
-        Each account's password is sealed at rest and **never** returned (see
-        :func:`_imap_entry`). ``secret_key_ready`` tells the UI whether the box has
-        an encryption key configured — without one, a new mailbox can't be saved
-        (the password has nowhere safe to live), so the form disables itself and
-        explains why instead of failing on submit. ``default_host`` seeds the host
-        field for the common Gmail case.
+        Each account's password is sealed at rest and **never** returned — the
+        listing is built from metadata-only summaries (:func:`imap_summaries`,
+        which don't decrypt), so a missing or rotated key can't 500 the page.
+        ``secret_key_ready`` tells the UI whether the box has an encryption key
+        configured — without one, a new mailbox can't be saved (the password has
+        nowhere safe to live), so the form disables itself and explains why instead
+        of failing on submit. ``default_host`` seeds the host field for the common
+        Gmail case.
         """
         return {
-            "accounts": [_imap_entry(s) for s in imap_sources(ctx.store)],
+            "accounts": [_imap_entry(s) for s in imap_summaries(ctx.store)],
             "secret_key_ready": secret_key_configured(),
             "default_host": DEFAULT_IMAP_HOST,
         }
@@ -840,7 +846,10 @@ def build_router(services: RouterServices) -> APIRouter:
             raise HTTPException(status_code=422, detail="An account name is required.")
         host = (payload.host or "").strip() or DEFAULT_IMAP_HOST
         password = payload.password if (payload.password or "").strip() else None
-        existing = resolve_imap(ctx.store, account)
+        # Non-decrypting existence check: whether a password is *required* only
+        # depends on whether a row already exists, so never open the vault here
+        # (a missing/rotated key must not turn this into a 500).
+        existing = ctx.store.get_source(IMAP, account)
         if password is None and existing is None:
             raise HTTPException(
                 status_code=422,
@@ -864,7 +873,9 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=400,
                 detail=f"Can't store the mailbox password — no encryption key configured ({exc}).",
             ) from exc
-        src = resolve_imap(ctx.store, account)
+        # Response is metadata-only (no decrypt), so a config-only edit under a
+        # missing key still returns 200 rather than 500 on the read-back.
+        src = imap_summary(ctx.store, account)
         return _imap_entry(src) if src else {"account": account}
 
     @router.delete("/mail-sources/{account}", tags=["system"])
@@ -878,10 +889,12 @@ def build_router(services: RouterServices) -> APIRouter:
         return {"account": account, "deleted": True}
 
     def _ics_entry(src: Any) -> dict[str, Any]:
-        """Serialize one ICS feed for the client — the feed URL is NEVER included.
+        """Serialize one ICS feed summary for the client.
 
-        The URL is a bearer secret (anyone with it can read the calendar), so only
-        ``url_set`` (whether one is stored) is exposed, never the link itself.
+        Takes an :class:`~prefrontal.sources.IcsSummary` — metadata only, built
+        **without decrypting** — so the feed URL (a bearer secret anyone with it
+        can read the calendar from) never reaches this path. Only ``url_set`` (from
+        ``has_url``) is exposed, never the link itself.
         """
         return {
             "account": src.account,
@@ -889,7 +902,7 @@ def build_router(services: RouterServices) -> APIRouter:
             "me_emails": list(src.me_emails),
             "label": src.label or "",
             "enabled": src.enabled,
-            "url_set": bool(src.url),
+            "url_set": src.has_url,
         }
 
     @router.get("/calendar-sources", tags=["system"])
@@ -898,12 +911,14 @@ def build_router(services: RouterServices) -> APIRouter:
     ) -> dict[str, Any]:
         """The signed-in user's calendar (private ICS feed) sources, for Settings.
 
-        Each feed's URL is a bearer secret, sealed at rest and **never** returned
-        (see :func:`_ics_entry`). ``secret_key_ready`` tells the UI whether an
-        encryption key is configured — a new feed can't be saved without one.
+        Each feed's URL is a bearer secret, sealed at rest and **never** returned —
+        the listing is built from metadata-only summaries (:func:`ics_summaries`,
+        which don't decrypt), so a missing or rotated key can't 500 the page.
+        ``secret_key_ready`` tells the UI whether an encryption key is configured —
+        a new feed can't be saved without one.
         """
         return {
-            "feeds": [_ics_entry(s) for s in ics_sources(ctx.store, include_disabled=True)],
+            "feeds": [_ics_entry(s) for s in ics_summaries(ctx.store)],
             "secret_key_ready": secret_key_configured(),
         }
 
@@ -947,9 +962,11 @@ def build_router(services: RouterServices) -> APIRouter:
                 status_code=400,
                 detail=f"Can't store the feed URL — no encryption key configured ({exc}).",
             ) from exc
-        feeds = ics_sources(ctx.store, include_disabled=True)
-        match = next((f for f in feeds if f.account == account), None)
-        return _ics_entry(match) if match else {"account": account}
+        # Response is metadata-only (no decrypt) and scoped to just this feed, so a
+        # config-only edit — or an unrelated feed sealed under a rotated key — can't
+        # 500 the read-back.
+        src = ics_summary(ctx.store, account)
+        return _ics_entry(src) if src else {"account": account}
 
     @router.delete("/calendar-sources/{account}", tags=["system"])
     def delete_calendar_source(

@@ -187,6 +187,53 @@ def test_delete_calendar_source(client_store):
     assert client.delete("/calendar-sources/nope", headers=_auth()).status_code == 404
 
 
+def test_listing_survives_a_missing_key_after_sources_exist(monkeypatch):
+    """A key that vanishes/rotates after sources are saved must not 500 the page.
+
+    The Settings read + config-only-edit paths never decrypt (they build from
+    metadata-only summaries), so GET still lists the sources and a config-only POST
+    still succeeds — the secret just stays sealed and unreadable until the key is
+    restored.
+    """
+    monkeypatch.setenv("PREFRONTAL_SECRET_KEY", generate_key())
+    get_settings.cache_clear()
+    store = scoped_default(MemoryStore(init_db(":memory:")))
+    app = create_app(store=store, settings=Settings(webhook_secret=_SECRET))
+    with TestClient(app) as client:
+        client.post(
+            "/mail-sources", json={"account": "m", "password": "pw"}, headers=_auth()
+        )
+        client.post(
+            "/calendar-sources",
+            json={"account": "c", "url": "https://cal/x.ics"},
+            headers=_auth(),
+        )
+        # The key disappears (rotated out / keyfile lost) — rows keep their sealed
+        # secrets, but nothing can decrypt them now.
+        monkeypatch.delenv("PREFRONTAL_SECRET_KEY", raising=False)
+        get_settings.cache_clear()
+        try:
+            mail = client.get("/mail-sources", headers=_auth())
+            assert mail.status_code == 200
+            assert mail.json()["accounts"][0]["password_set"] is True
+            assert mail.json()["secret_key_ready"] is False
+
+            cal = client.get("/calendar-sources", headers=_auth())
+            assert cal.status_code == 200
+            assert cal.json()["feeds"][0]["url_set"] is True
+
+            # A config-only edit (no new secret) still succeeds — it never decrypts.
+            r = client.post(
+                "/mail-sources",
+                json={"account": "m", "host": "imap.fastmail.com"},
+                headers=_auth(),
+            )
+            assert r.status_code == 200
+            assert r.json()["password_set"] is True
+        finally:
+            get_settings.cache_clear()
+
+
 def test_secret_key_missing_blocks_new_source(monkeypatch):
     """With no encryption key, GET flags it and POST of a new secret 400s."""
     monkeypatch.delenv("PREFRONTAL_SECRET_KEY", raising=False)

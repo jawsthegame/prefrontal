@@ -961,6 +961,10 @@ $("#mail-list").addEventListener("click", async (ev) => {
   const block = btn.closest(".smtp-acct");
   const isNew = block.dataset.new === "1";
   const val = (f) => block.querySelector(`[data-f="${f}"]`);
+  // Clicking Save/Remove leaves focus on the button, which is inside #mail-list;
+  // loadMail()'s edit-guard would then skip the re-render, leaving the list stale
+  // and the typed password still in the DOM. Blur first so the reload takes.
+  btn.blur();
   try {
     if (btn.dataset.act === "remove") {
       const acct = block.dataset.account;
@@ -1062,6 +1066,10 @@ $("#calendar-list").addEventListener("click", async (ev) => {
   const block = btn.closest(".smtp-acct");
   const isNew = block.dataset.new === "1";
   const val = (f) => block.querySelector(`[data-f="${f}"]`);
+  // Clicking Save/Remove leaves focus on the button, which is inside
+  // #calendar-list; loadCalendar()'s edit-guard would then skip the re-render,
+  // leaving the list stale and the typed URL still in the DOM. Blur first.
+  btn.blur();
   try {
     if (btn.dataset.act === "remove") {
       const acct = block.dataset.account;

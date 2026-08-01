@@ -131,6 +131,58 @@ def delete_imap_source(store: MemoryStore, account: str) -> bool:
     return store.delete_source(IMAP, account)
 
 
+@dataclass(frozen=True)
+class ImapSummary:
+    """An IMAP source's *metadata* — everything except the sealed password.
+
+    The read-side view the Settings UI needs: config fields plus ``has_password``
+    (whether a secret is stored), built **without decrypting**. Kept distinct from
+    :class:`ImapSource` so a listing never has to open the vault — a missing or
+    rotated key can't 500 the page, and the plaintext password never leaves the
+    seal boundary just to render a card.
+    """
+
+    account: str
+    host: str
+    username: str
+    mailbox: str
+    important_only: bool
+    retention: str
+    enabled: bool
+    has_password: bool
+
+
+def _row_to_imap_summary(row: Any) -> ImapSummary:
+    """Build an :class:`ImapSummary` from a ``sources`` row (no decryption)."""
+    cfg = json.loads(row["config"] or "{}")
+    return ImapSummary(
+        account=row["account"],
+        host=cfg.get("host", ""),
+        username=cfg.get("username", ""),
+        mailbox=cfg.get("mailbox", "INBOX"),
+        important_only=bool(cfg.get("important_only", False)),
+        retention=cfg.get("retention", "signals"),
+        enabled=bool(row["enabled"]),
+        has_password=row["secret_enc"] is not None,
+    )
+
+
+def imap_summaries(
+    store: MemoryStore, *, include_disabled: bool = True
+) -> list[ImapSummary]:
+    """List the user's IMAP sources as metadata-only summaries (no decryption)."""
+    return [
+        _row_to_imap_summary(row)
+        for row in store.list_sources(kind=IMAP, include_disabled=include_disabled)
+    ]
+
+
+def imap_summary(store: MemoryStore, account: str) -> ImapSummary | None:
+    """Return one IMAP source's metadata summary (no decryption), or ``None``."""
+    row = store.get_source(IMAP, account)
+    return _row_to_imap_summary(row) if row is not None else None
+
+
 # -- calendar (private ICS feeds) --------------------------------------------
 
 
@@ -203,6 +255,53 @@ def ics_sources(
 def delete_ics_source(store: MemoryStore, account: str) -> bool:
     """Remove one of the user's ICS calendar sources. Returns ``True`` if deleted."""
     return store.delete_source(ICS, account)
+
+
+@dataclass(frozen=True)
+class IcsSummary:
+    """An ICS feed's *metadata* — everything except the sealed feed URL.
+
+    The read-side analogue of :class:`ImapSummary` for calendar feeds: config
+    fields plus ``has_url`` (whether a feed URL is stored), built **without
+    decrypting**. The feed URL is a bearer secret, so a listing must never open the
+    vault just to render a card — and a missing/rotated key can't 500 the page.
+    """
+
+    account: str
+    namespace: str
+    me_emails: tuple[str, ...]
+    label: str | None
+    enabled: bool
+    has_url: bool
+
+
+def _row_to_ics_summary(row: Any) -> IcsSummary:
+    """Build an :class:`IcsSummary` from a ``sources`` row (no decryption)."""
+    cfg = json.loads(row["config"] or "{}")
+    return IcsSummary(
+        account=row["account"],
+        namespace=cfg.get("namespace") or row["account"],
+        me_emails=tuple(cfg.get("me_emails", [])),
+        label=cfg.get("label"),
+        enabled=bool(row["enabled"]),
+        has_url=row["secret_enc"] is not None,
+    )
+
+
+def ics_summaries(
+    store: MemoryStore, *, include_disabled: bool = True
+) -> list[IcsSummary]:
+    """List the user's ICS feeds as metadata-only summaries (no decryption)."""
+    return [
+        _row_to_ics_summary(row)
+        for row in store.list_sources(kind=ICS, include_disabled=include_disabled)
+    ]
+
+
+def ics_summary(store: MemoryStore, account: str) -> IcsSummary | None:
+    """Return one ICS feed's metadata summary (no decryption), or ``None``."""
+    row = store.get_source(ICS, account)
+    return _row_to_ics_summary(row) if row is not None else None
 
 
 # -- outbound mail (SMTP relay for delegating a todo to a human assistant) -----
