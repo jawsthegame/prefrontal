@@ -180,6 +180,71 @@ class SmtpConfig(BaseModel):
     enabled: bool = Field(default=True, description="Whether the email handler may send.")
 
 
+class ImapConfig(BaseModel):
+    """Body of ``POST /mail-sources`` — one of the user's IMAP mailboxes.
+
+    A partial-update: an omitted/blank ``password`` leaves the stored one in place
+    (so the operator can edit the host/mailbox without retyping the secret). The
+    password is sealed at rest and never returned by ``GET /mail-sources``.
+    """
+
+    account: str = Field(
+        description="Logical account name (e.g. 'personal', 'work') — the stable "
+        "key the account is stored and referenced under.",
+    )
+    host: str = Field(
+        default="imap.gmail.com", description="IMAP server host, e.g. imap.gmail.com."
+    )
+    username: str = Field(default="", description="IMAP login (usually the full email).")
+    password: str | None = Field(
+        default=None,
+        description="IMAP password / app password. Omit or leave blank to keep the stored one.",
+    )
+    mailbox: str = Field(default="INBOX", description="Folder to scan (default INBOX).")
+    important_only: bool = Field(
+        default=False,
+        description="Gmail only — scan just the Important-flagged mail, not everything.",
+    )
+    retention: str = Field(
+        default="signals",
+        description="'full' (store subject/sender/snippet/body) or 'signals' "
+        "(store only subject + sender + verdict; bodies dropped before storage).",
+    )
+    enabled: bool = Field(default=True, description="Whether mail fetch reads this mailbox.")
+
+
+class IcsConfig(BaseModel):
+    """Body of ``POST /calendar-sources`` — one of the user's private ICS feeds.
+
+    A partial-update: an omitted/blank ``url`` leaves the stored feed URL in place
+    (so the operator can relabel the feed without re-pasting the secret link). The
+    feed URL is a bearer secret — sealed at rest and never returned by
+    ``GET /calendar-sources``.
+    """
+
+    account: str = Field(
+        description="Feed slug (e.g. 'personal', 'work') — the stable key and the "
+        "external_id namespace synced commitments carry.",
+    )
+    url: str | None = Field(
+        default=None,
+        description="The private .ics feed URL. Omit or leave blank to keep the stored one.",
+    )
+    namespace: str | None = Field(
+        default=None,
+        description="external_id namespace for synced events (defaults to the account slug).",
+    )
+    me_emails: list[str] = Field(
+        default_factory=list,
+        description="Your own addresses on this calendar, used to drop events you've "
+        "declined (an event where your attendee status is DECLINED is skipped).",
+    )
+    label: str | None = Field(
+        default=None, description="Optional display label for the feed."
+    )
+    enabled: bool = Field(default=True, description="Whether calendar sync reads this feed.")
+
+
 class VacationSet(BaseModel):
     """Body of ``POST /vacation`` — turn vacation mode on or off for the user.
 

@@ -22,7 +22,9 @@ from fastapi.responses import (
 )
 
 from prefrontal.clock import local_datetime, utcnow
+from prefrontal.crypto import SecretKeyError, secret_key_configured
 from prefrontal.integrations.nominatim import GeocoderError
+from prefrontal.mail.imap import DEFAULT_IMAP_HOST
 from prefrontal.modules import available, enabled_modules
 from prefrontal.modules.registry import (
     MODULE_ENABLED_PREFIX,
@@ -40,10 +42,18 @@ from prefrontal.packs.registry import PACK_ENABLED_PREFIX, enabled_packs, user_d
 from prefrontal.packs.registry import available as available_packs
 from prefrontal.self_care_review import self_care_review
 from prefrontal.sources import (
+    ICS,
     SMTP_ACCOUNT,
+    delete_ics_source,
+    delete_imap_source,
     delete_smtp_source,
+    ics_sources,
     imap_accounts,
+    imap_sources,
+    put_ics_source,
+    put_imap_source,
     put_smtp_source,
+    resolve_imap,
     resolve_smtp,
     smtp_sources,
 )
@@ -75,6 +85,8 @@ from prefrontal.webhooks.schemas import (
     FeatureToggle,
     GeocodingToggle,
     GuideProgress,
+    IcsConfig,
+    ImapConfig,
     SelfCareConfig,
     SelfCareMark,
     SmtpConfig,
@@ -771,6 +783,182 @@ def build_router(services: RouterServices) -> APIRouter:
         """Remove one of the user's SMTP accounts. 404 if there's no such account."""
         if not delete_smtp_source(ctx.store, account):
             raise HTTPException(status_code=404, detail=f"No SMTP account '{account}'.")
+        return {"account": account, "deleted": True}
+
+    def _imap_entry(src: Any) -> dict[str, Any]:
+        """Serialize one IMAP source for the client — the password is NEVER included.
+
+        ``password_set`` says whether a secret is stored, so the form can show
+        "•••• (saved)" without the browser ever seeing the sealed value.
+        """
+        return {
+            "account": src.account,
+            "host": src.host,
+            "username": src.username,
+            "mailbox": src.mailbox,
+            "important_only": src.important_only,
+            "retention": src.retention,
+            "enabled": src.enabled,
+            "password_set": bool(src.password),
+        }
+
+    @router.get("/mail-sources", tags=["system"])
+    def mail_sources_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's inbound mail (IMAP) accounts, for the Settings card.
+
+        Each account's password is sealed at rest and **never** returned (see
+        :func:`_imap_entry`). ``secret_key_ready`` tells the UI whether the box has
+        an encryption key configured — without one, a new mailbox can't be saved
+        (the password has nowhere safe to live), so the form disables itself and
+        explains why instead of failing on submit. ``default_host`` seeds the host
+        field for the common Gmail case.
+        """
+        return {
+            "accounts": [_imap_entry(s) for s in imap_sources(ctx.store)],
+            "secret_key_ready": secret_key_configured(),
+            "default_host": DEFAULT_IMAP_HOST,
+        }
+
+    @router.post("/mail-sources", tags=["system"])
+    def set_mail_source(
+        payload: ImapConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Create or update one IMAP mailbox Prefrontal scans for actionable mail.
+
+        ``account`` is the stable logical name (``personal``/``work``). A partial
+        update: a blank/omitted ``password`` keeps the stored one (``None`` into
+        :func:`~prefrontal.sources.put_imap_source` preserves the sealed secret), so
+        editing the host doesn't require retyping the app password — but a brand-new
+        account needs one. The password is sealed at rest; a 400 is returned if no
+        encryption key is configured. Returns the fresh (password-free) entry.
+        """
+        account = (payload.account or "").strip()
+        if not account:
+            raise HTTPException(status_code=422, detail="An account name is required.")
+        host = (payload.host or "").strip() or DEFAULT_IMAP_HOST
+        password = payload.password if (payload.password or "").strip() else None
+        existing = resolve_imap(ctx.store, account)
+        if password is None and existing is None:
+            raise HTTPException(
+                status_code=422,
+                detail="A password is required for a new mail account.",
+            )
+        retention = payload.retention if payload.retention in ("full", "signals") else "signals"
+        try:
+            put_imap_source(
+                ctx.store,
+                account=account,
+                host=host,
+                username=payload.username.strip(),
+                password=password,
+                mailbox=(payload.mailbox or "INBOX").strip() or "INBOX",
+                important_only=payload.important_only,
+                retention=retention,
+                enabled=payload.enabled,
+            )
+        except SecretKeyError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Can't store the mailbox password — no encryption key configured ({exc}).",
+            ) from exc
+        src = resolve_imap(ctx.store, account)
+        return _imap_entry(src) if src else {"account": account}
+
+    @router.delete("/mail-sources/{account}", tags=["system"])
+    def delete_mail_source(
+        account: str,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Remove one of the user's IMAP mailboxes. 404 if there's no such account."""
+        if not delete_imap_source(ctx.store, account):
+            raise HTTPException(status_code=404, detail=f"No mail account '{account}'.")
+        return {"account": account, "deleted": True}
+
+    def _ics_entry(src: Any) -> dict[str, Any]:
+        """Serialize one ICS feed for the client — the feed URL is NEVER included.
+
+        The URL is a bearer secret (anyone with it can read the calendar), so only
+        ``url_set`` (whether one is stored) is exposed, never the link itself.
+        """
+        return {
+            "account": src.account,
+            "namespace": src.namespace,
+            "me_emails": list(src.me_emails),
+            "label": src.label or "",
+            "enabled": src.enabled,
+            "url_set": bool(src.url),
+        }
+
+    @router.get("/calendar-sources", tags=["system"])
+    def calendar_sources_data(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The signed-in user's calendar (private ICS feed) sources, for Settings.
+
+        Each feed's URL is a bearer secret, sealed at rest and **never** returned
+        (see :func:`_ics_entry`). ``secret_key_ready`` tells the UI whether an
+        encryption key is configured — a new feed can't be saved without one.
+        """
+        return {
+            "feeds": [_ics_entry(s) for s in ics_sources(ctx.store, include_disabled=True)],
+            "secret_key_ready": secret_key_configured(),
+        }
+
+    @router.post("/calendar-sources", tags=["system"])
+    def set_calendar_source(
+        payload: IcsConfig,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Create or update one private ICS calendar feed Prefrontal syncs.
+
+        ``account`` is the feed slug (also the ``external_id`` namespace). A partial
+        update: a blank/omitted ``url`` keeps the stored feed link (so relabeling
+        doesn't require re-pasting the secret URL) — but a brand-new feed needs one.
+        The URL is sealed at rest; a 400 is returned if no encryption key is
+        configured. Returns the fresh (URL-free) entry.
+        """
+        account = (payload.account or "").strip()
+        if not account:
+            raise HTTPException(status_code=422, detail="A feed name is required.")
+        url = payload.url if (payload.url or "").strip() else None
+        existing = ctx.store.get_source(ICS, account)
+        if url is None and existing is None:
+            raise HTTPException(
+                status_code=422, detail="A feed URL is required for a new calendar feed."
+            )
+        me_emails = tuple(e.strip() for e in payload.me_emails if e.strip())
+        label = (payload.label or "").strip() or None
+        namespace = (payload.namespace or "").strip() or None
+        try:
+            put_ics_source(
+                ctx.store,
+                account=account,
+                url=url,
+                namespace=namespace,
+                me_emails=me_emails,
+                label=label,
+                enabled=payload.enabled,
+            )
+        except SecretKeyError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Can't store the feed URL — no encryption key configured ({exc}).",
+            ) from exc
+        feeds = ics_sources(ctx.store, include_disabled=True)
+        match = next((f for f in feeds if f.account == account), None)
+        return _ics_entry(match) if match else {"account": account}
+
+    @router.delete("/calendar-sources/{account}", tags=["system"])
+    def delete_calendar_source(
+        account: str,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Remove one of the user's ICS calendar feeds. 404 if there's no such feed."""
+        if not delete_ics_source(ctx.store, account):
+            raise HTTPException(status_code=404, detail=f"No calendar feed '{account}'.")
         return {"account": account, "deleted": True}
 
     @router.get("/vacation", tags=["system"])

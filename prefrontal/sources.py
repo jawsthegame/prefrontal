@@ -109,6 +109,28 @@ def imap_accounts(store: MemoryStore, *, include_disabled: bool = False) -> list
     return [r["account"] for r in rows]
 
 
+def imap_sources(
+    store: MemoryStore, *, include_disabled: bool = True
+) -> list[ImapSource]:
+    """Return the user's IMAP sources (passwords decrypted).
+
+    The list counterpart to :func:`resolve_imap`, used by the Settings dashboard
+    to render one card per mailbox. Includes disabled sources by default so a
+    paused account is still shown (and re-enableable) rather than vanishing.
+    """
+    out: list[ImapSource] = []
+    for row in store.list_sources(kind=IMAP, include_disabled=include_disabled):
+        src = resolve_imap(store, row["account"])
+        if src is not None:
+            out.append(src)
+    return out
+
+
+def delete_imap_source(store: MemoryStore, account: str) -> bool:
+    """Remove one of the user's IMAP sources. Returns ``True`` if a row was deleted."""
+    return store.delete_source(IMAP, account)
+
+
 # -- calendar (private ICS feeds) --------------------------------------------
 
 
@@ -176,6 +198,11 @@ def ics_sources(
             )
         )
     return out
+
+
+def delete_ics_source(store: MemoryStore, account: str) -> bool:
+    """Remove one of the user's ICS calendar sources. Returns ``True`` if deleted."""
+    return store.delete_source(ICS, account)
 
 
 # -- outbound mail (SMTP relay for delegating a todo to a human assistant) -----
