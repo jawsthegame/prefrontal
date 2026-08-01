@@ -237,7 +237,7 @@ struct DelegationDetailView: View {
                             } onError: { onError($0) }
                             .accessibilityLabel("Send follow-up")
                             .tint(Brand.accent)
-                            .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
                 }
