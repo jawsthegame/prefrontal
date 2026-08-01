@@ -83,6 +83,7 @@ struct TodoRow: View {
     @State private var expanded = false
     @State private var showDelegate = false
     @State private var showEdit = false
+    @State private var showDelegationDetail = false
 
     var body: some View {
         SwipeToReveal(label: "Drop", systemImage: "trash", tint: Brand.danger, cornerRadius: 12) {
@@ -127,6 +128,9 @@ struct TodoRow: View {
         }
         .sheet(isPresented: $showEdit) {
             EditTodoSheet(todo: todo, onSaved: reload)
+        }
+        .sheet(isPresented: $showDelegationDetail) {
+            DelegationDetailView(todo: todo, reload: reload, onError: onError)
         }
     }
 
@@ -186,61 +190,53 @@ struct TodoRow: View {
         delegationPanel
     }
 
+    // A compact summary that opens the full delegation on its own screen
+    // (DelegationDetailView) rather than stacking the brief/drafts/actions/steps
+    // and the answer form into the todo card. Crucially this makes a `needs_input`
+    // run answerable on iOS — see docs/design/delegation-workspace.md (Phase 1).
     @ViewBuilder private var delegationPanel: some View {
         if let g = todo.delegation {
             Divider().overlay(Brand.line)
-            VStack(alignment: .leading, spacing: 8) {
-                if g.isWorking {
-                    Label("Reading your context and prepping — you'll get a heads-up when it's ready.",
-                          systemImage: "brain.head.profile")
-                        .font(.caption).foregroundStyle(Brand.muted)
-                } else {
-                    if let brief = g.brief, !brief.isEmpty {
-                        Text(brief).font(.footnote).foregroundStyle(Brand.nearWhite)
-                    }
-                    if let actions = g.actions?.filter({ !($0.text ?? "").isEmpty }), !actions.isEmpty {
-                        ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
-                            let text = a.text ?? ""
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: a.mine == true ? "person.fill" : "person")
-                                    .font(.caption2).foregroundStyle(a.mine == true ? Brand.teal : Brand.muted)
-                                Text(text).font(.caption).foregroundStyle(Brand.nearWhite)
-                                Spacer(minLength: 0)
-                                if a.mine == true {
-                                    AsyncButton {
-                                        try await withAPI { try await $0.addTodo(title: text) }
-                                        await reload()
-                                    } label: { Text("＋ Todo").font(.caption2) } onError: { onError($0) }
-                                    .buttonStyle(.borderless).tint(Brand.teal)
-                                }
-                            }
+            Button { showDelegationDetail = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: g.status == "needs_input" ? "questionmark.circle.fill" : "brain.head.profile")
+                        .font(.caption)
+                        .foregroundStyle(g.status == "needs_input" ? Brand.warn : Brand.accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(delegationHeadline(g))
+                            .font(.caption.weight(.medium)).foregroundStyle(Brand.nearWhite)
+                        if let sub = delegationSubline(g) {
+                            Text(sub).font(.caption2).foregroundStyle(Brand.muted).lineLimit(1)
                         }
                     }
-                    if let drafts = g.drafts, !drafts.isEmpty {
-                        ForEach(Array(drafts.enumerated()), id: \.offset) { _, dr in
-                            VStack(alignment: .leading, spacing: 2) {
-                                let head = [dr.channel, dr.to, dr.subject].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-                                if !head.isEmpty { Text(head).font(.caption2.weight(.semibold)).foregroundStyle(Brand.muted) }
-                                if let b = dr.body, !b.isEmpty {
-                                    Text(b).font(.caption2).foregroundStyle(Brand.nearWhite).lineLimit(8)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(Brand.raise, in: RoundedRectangle(cornerRadius: 8))
-                        }
-                    }
-                    if g.canReturn {
-                        actionBtn("Mark returned", "arrow.uturn.left") {
-                            try await withAPI { try await $0.returnDelegation(todo.id) }
-                        }
-                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Brand.muted)
                 }
-                if g.status == "failed", let d = g.detail, !d.isEmpty {
-                    Text(d).font(.caption2).foregroundStyle(Brand.warn)
-                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 2)
             }
+            .buttonStyle(.plain)
         }
+    }
+
+    private func delegationHeadline(_ g: Delegation) -> String {
+        switch g.status {
+        case "needs_input":
+            let n = g.pendingQuestions.count
+            return "Needs you — \(n) question\(n == 1 ? "" : "s") to answer"
+        case "in_prep": return "Working on it…"
+        case "failed":  return "Needs a hand — tap to review"
+        default:        return "\(g.label) — tap to open"
+        }
+    }
+
+    private func delegationSubline(_ g: Delegation) -> String? {
+        var bits: [String] = []
+        if let d = g.drafts?.count, d > 0 { bits.append("\(d) draft\(d == 1 ? "" : "s")") }
+        let mine = (g.actions ?? []).filter { $0.mine == true }.count
+        if mine > 0 { bits.append("\(mine) for you") }
+        if let s = g.steps?.count, s > 0 { bits.append("\(s) lookup\(s == 1 ? "" : "s")") }
+        return bits.isEmpty ? nil : bits.joined(separator: " · ")
     }
 
     private func delegColor(_ status: String) -> Color {

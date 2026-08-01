@@ -36,7 +36,9 @@ Two distinct complaints hide in "it doesn't maintain state or allow follow-ups":
    round-trip*, not a thread you can send a free-form message to. And the `auto`
    loop **restarts** on each answer rather than resuming — the original context
    and the answered Q&A persist, but the prior run's findings are thrown away and
-   re-gathered (`todos.py:1037`, by design). So "state" is partial by
+   re-gathered (`prefrontal/webhooks/routers/todos.py`, `todo_delegate_answers` —
+   the `context=delegation.get("context")` comment spells out the intent). So
+   "state" is partial by
    construction, and there's no free-form follow-up channel at all.
 
 These want different fixes, and conflating them is a trap. The first is solved by
@@ -64,7 +66,8 @@ carrying `handler` (`agent`/`auto`/`email`/`sms`), `status`, `brief`, `drafts`,
   `generate_prep` writes it up. It may **ask** — parking in `needs_input` with a
   partial write-up and its questions on the row.
 
-**The round-trip** (`POST /todos/{id}/delegate/answers`, `todos.py`): answers are
+**The round-trip** (`POST /todos/{id}/delegate/answers`, in
+`prefrontal/webhooks/routers/todos.py`): answers are
 recorded positionally onto the stored questions, status flips to `in_prep`, and
 the run is **re-invoked on a background thread**. There is no suspended run to
 resume — `answered_context` renders the Q&A as plain facts and the loop starts

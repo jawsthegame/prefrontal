@@ -212,6 +212,13 @@ extension APIClient {
         try await post("todos/\(id)/delegate", json: body)
     }
     func returnDelegation(_ id: Int) async throws { try await post("todos/\(id)/delegate/return") }
+    /// Answer an `auto` run's questions and let it pick the work back up. `answers`
+    /// is positional against the delegation's `questions` list — a blank entry
+    /// leaves that question unanswered — mirroring POST /todos/{id}/delegate/answers.
+    func delegateAnswers(_ id: Int, answers: [String]) async throws {
+        let body: [String: Any] = ["answers": answers]
+        try await post("todos/\(id)/delegate/answers", json: body)
+    }
 
     // Blockers — who's waiting on you (the ball's in your court). Feeds
     // prioritization; mirrors prefrontal/webhooks/routers/blockers.py.
