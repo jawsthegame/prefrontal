@@ -376,7 +376,6 @@
   .pill.deleg.warn { background: var(--call); color: #fff; }
   .deleg-panel { margin-top: 8px; font-size: 13px; border: 1px solid var(--line);
     border-radius: 8px; padding: 6px 10px; background: var(--raise); }
-  .deleg-panel > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .deleg-panel .brief-text { white-space: pre-wrap; margin: 8px 0; }
   .deleg-panel .draft { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
   .deleg-panel .draft .dh { font-size: 11px; color: var(--muted); text-transform: uppercase;
@@ -698,12 +697,22 @@
   /* Guide overlay — the "walk me through it" popup a resolved item unlocks. Same
      dim-everything overlay shell as panic mode, so it reads as one focused screen
      of ordered steps you can tick off. */
-  #guide, #project-detail { position: fixed; inset: 0; z-index: 21; display: none; overflow-y: auto;
+  #guide, #project-detail, #deleg-detail { position: fixed; inset: 0; z-index: 21; display: none; overflow-y: auto;
     background: rgba(0,0,0,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     align-items: flex-start; justify-content: center;
     padding: max(24px, env(safe-area-inset-top)) 16px 32px; }
-  #guide .box, #project-detail .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  #guide .box, #project-detail .box, #deleg-detail .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     padding: 18px 20px 20px; width: min(620px, 100%); box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+  /* The compact, tappable delegation summary that replaces the old in-row panel;
+     the full brief/drafts/actions/steps/Q&A now live in the #deleg-detail modal
+     (docs/design/delegation-workspace.md, Phase 1). */
+  .deleg-open { display: block; width: 100%; text-align: left; margin-top: 8px; padding: 8px 10px;
+    background: var(--raise); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--fg); font-size: 13px; cursor: pointer; }
+  .deleg-open:hover { border-color: var(--muted); }
+  .deleg-open.needs { border-color: var(--warn); }
+  .deleg-open .do-sub { color: var(--muted); font-size: 12px; }
+  .deleg-open .do-caret { float: right; color: var(--muted); }
   /* Projects card + detail view: a project's group of open todos / upcoming
      commitments / recent focus sessions, and the at-a-glance rollup rows. */
   .proj-row { display: flex; align-items: baseline; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); cursor: pointer; }
@@ -931,6 +940,17 @@
       <h2 id="project-detail-title">Project</h2>
       <span class="spacer"></span>
       <button class="ghost" id="project-detail-close">Close</button>
+    </div>
+    <div class="body"><div class="empty">loading…</div></div>
+  </div>
+</div>
+
+<div id="deleg-detail" role="dialog" aria-modal="true" aria-label="Delegation detail">
+  <div class="box">
+    <div class="guide-head">
+      <h2 id="deleg-detail-title">Delegation</h2>
+      <span class="spacer"></span>
+      <button class="ghost" id="deleg-detail-close">Close</button>
     </div>
     <div class="body"><div class="empty">loading…</div></div>
   </div>
@@ -2023,7 +2043,7 @@ function questionsBlock(x, g) {
   </div>`;
 }
 
-function delegationPanel(x) {
+function delegationDetailBody(x) {
   const g = x.delegation;
   if (!g) return "";
   // Still working (async prep of a long transcript): say so, and let them peek at
@@ -2053,17 +2073,7 @@ function delegationPanel(x) {
   const ret = canReturn
     ? `<div class="deleg-actions"><button class="btn-sm" data-action="delegate-return" data-id="${x.id}">Mark returned</button></div>`
     : "";
-  const bits = [];
-  if (drafts.length) bits.push(`${drafts.length} draft${drafts.length > 1 ? "s" : ""}`);
-  if (mine.length) bits.push(`${mine.length} action${mine.length > 1 ? "s" : ""} for you`);
-  const pendingQs = (g.questions || []).filter((q) => !q.answer).length;
-  if (pendingQs) bits.push(`${pendingQs} question${pendingQs > 1 ? "s" : ""} for you`);
-  const counts = bits.length ? ` · ${bits.join(" · ")}` : "";
-  // Open by default when there's something waiting on you — a question you can't
-  // see is a question you won't answer.
-  const open = g.status === "prepped" || g.status === "needs_input";
-  return `<details class="deleg-panel"${open ? " open" : ""}>
-    <summary>Assistant prep${counts}</summary>
+  return `<div class="deleg-panel">
     ${g.brief ? `<div class="brief-text">${esc(g.brief)}</div>` : ""}
     ${questionsBlock(x, g)}
     ${actionHtml}
@@ -2071,8 +2081,43 @@ function delegationPanel(x) {
     ${stepsBlock(g)}
     ${contextBlock(g)}
     ${ret}
-  </details>`;
+  </div>`;
 }
+
+// The compact row opener: status + a tiny roll-up, tapping into the full
+// delegation on its own screen (#deleg-detail) rather than stacking the whole
+// panel into the todo card. See docs/design/delegation-workspace.md (Phase 1).
+function delegationSummary(x) {
+  const g = x.delegation;
+  if (!g) return "";
+  const drafts = g.drafts || [], actions = g.actions || [];
+  const mine = actions.filter((a) => a.mine).length;
+  const pendingQs = (g.questions || []).filter((q) => !q.answer).length;
+  const bits = [];
+  if (drafts.length) bits.push(`${drafts.length} draft${drafts.length > 1 ? "s" : ""}`);
+  if (mine) bits.push(`${mine} for you`);
+  if (pendingQs) bits.push(`${pendingQs} question${pendingQs > 1 ? "s" : ""}`);
+  if ((g.steps || []).length) bits.push(`${g.steps.length} lookup${g.steps.length > 1 ? "s" : ""}`);
+  const sub = bits.length ? `<span class="do-sub"> · ${bits.join(" · ")}</span>` : "";
+  const head = g.status === "needs_input" ? "Needs you"
+    : g.status === "in_prep" ? "Working on it…"
+    : g.status === "failed" ? "Needs a hand"
+    : "Assistant prep";
+  const needs = g.status === "needs_input" ? " needs" : "";
+  return `<button class="deleg-open${needs}" data-action="deleg-open" data-id="${x.id}">`
+    + `<span class="do-caret">›</span>${head}${sub}</button>`;
+}
+
+// Fill and show the delegation detail modal for a todo already in `lastTodos`
+// (the delegation data rides on the /todos payload, so no extra fetch).
+function openDelegationDetail(id) {
+  const x = (lastTodos && lastTodos.todos || []).find((t) => String(t.id) === String(id));
+  if (!x || !x.delegation) return;
+  $("#deleg-detail-title").textContent = x.title || "Delegation";
+  $("#deleg-detail .body").innerHTML = delegationDetailBody(x);
+  $("#deleg-detail").style.display = "flex";
+}
+function closeDelegationDetail() { $("#deleg-detail").style.display = "none"; }
 
 function renderTodos(d) {
   const t = (d.todos || []);
@@ -2171,7 +2216,7 @@ function renderTodos(d) {
         <div class="sub">${x.estimate_minutes != null ? "~" + mins(x.estimate_minutes) + " · " : ""}${dueText} <button class="lnk" data-action="todo-deadline" data-id="${x.id}" data-deadline="${esc(x.deadline || "")}" title="Change deadline">edit</button>${x.energy ? " · " + esc(x.energy) + " energy" : ""}</div>
         ${step}
         ${dismiss}
-        ${delegationPanel(x)}
+        ${delegationSummary(x)}
       </div>
       <div class="acts">
         ${breakBtn}
@@ -3587,7 +3632,8 @@ document.addEventListener("click", async (e) => {
       openDelegateMenu(el, id);
       return;
     }
-    else if (act === "delegate-return") { await post(`/todos/${id}/delegate/return`, {}); }
+    else if (act === "deleg-open") { openDelegationDetail(id); return; }
+    else if (act === "delegate-return") { closeDelegationDetail(); await post(`/todos/${id}/delegate/return`, {}); }
     else if (act === "deleg-answer") {
       // Collect the inline answers positionally (blanks stay unanswered) and let it
       // pick the work back up. Answering re-runs the research, so this reloads.
@@ -3600,6 +3646,7 @@ document.addEventListener("click", async (e) => {
       el.disabled = true;
       el.textContent = "Picking it back up…";
       await post(`/todos/${id}/delegate/answers`, { answers });
+      closeDelegationDetail();  // the modal's answer form is spent; the row reflects the new status on reload
     }
     else if (act === "deleg-add-todo") {
       // Turn an extracted action item into a real todo, linked back to the meeting
@@ -3800,11 +3847,13 @@ $("#panic-close").onclick = closePanic;
 $("#panic-refresh").onclick = loadPanic;
 $("#guide-close").onclick = closeGuide;
 $("#project-detail-close").onclick = closeProjectDetail;
+$("#deleg-detail-close").onclick = closeDelegationDetail;
 // Backdrop tap and Escape both dismiss an overlay.
 $("#panic").addEventListener("click", (e) => { if (e.target.id === "panic") closePanic(); });
 $("#guide").addEventListener("click", (e) => { if (e.target.id === "guide") closeGuide(); });
 $("#project-detail").addEventListener("click", (e) => { if (e.target.id === "project-detail") closeProjectDetail(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closeGuide(); closeProjectDetail(); closePillMenu(); } });
+$("#deleg-detail").addEventListener("click", (e) => { if (e.target.id === "deleg-detail") closeDelegationDetail(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePanic(); closeGuide(); closeProjectDetail(); closeDelegationDetail(); closePillMenu(); } });
 $("#signout").onclick = () => gate("");
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();
