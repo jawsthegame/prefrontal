@@ -17,7 +17,7 @@ from typing import Any
 
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 
 #: Below this confidence a suggestion is dropped (item left unassigned). The bar
 #: is deliberately high — a wrong auto-assignment is more annoying than none, and
@@ -95,7 +95,7 @@ def _llm_project(
     if notes:
         prompt += f"\nDetail: {notes}"
     try:
-        reply = client.generate(prompt, system=system)
+        reply = generate_text(client, prompt, system=system, want_json=True)
     except OllamaError:
         return None
     raw = extract_json_object(reply)

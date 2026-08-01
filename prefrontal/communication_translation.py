@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from prefrontal.integrations.base import ProviderError
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 
 if TYPE_CHECKING:
     from prefrontal.integrations import Generator
@@ -228,7 +228,7 @@ def translate(
     if client is not None:
         prompt = _prompt(resolved_mode, resolved_register or DEFAULT_REGISTER, stripped)
         try:
-            reply = client.generate(prompt, system=_SYSTEM)
+            reply = generate_text(client, prompt, system=_SYSTEM, want_json=True)
         except ProviderError:
             reply = ""
         output = _coerce_output(extract_json_object(reply))

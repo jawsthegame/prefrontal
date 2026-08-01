@@ -19,6 +19,7 @@ path, so simplicity beats streaming/async here. Errors surface as
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -137,6 +138,7 @@ class OllamaClient:
         system: str | None = None,
         num_ctx: int | None = None,
         timeout: float | None = None,
+        format: str | Mapping[str, Any] | None = None,
     ) -> str:
         """Generate a single non-streamed completion.
 
@@ -149,6 +151,12 @@ class OllamaClient:
                 otherwise the model only ever sees a sliver.
             timeout: Optional per-call timeout override (seconds); a large ``num_ctx``
                 makes prompt evaluation much slower, so bump this alongside it.
+            format: Optional Ollama structured-output constraint. ``"json"`` forces
+                the reply to be a single syntactically valid JSON value (Ollama's
+                JSON mode); a mapping is treated as a JSON Schema the reply must
+                conform to. Left unset for prose completions. The JSON-extraction
+                path (:func:`prefrontal.llm_json.generate_json`) sets ``"json"`` so
+                the tolerant extractor almost always parses the first candidate.
 
         Returns:
             The model's response text (stripped).
@@ -166,6 +174,8 @@ class OllamaClient:
             payload["system"] = system
         if num_ctx is not None:
             payload["options"] = {"num_ctx": num_ctx}
+        if format is not None:
+            payload["format"] = format
         try:
             with self._client(timeout) as client:
                 resp = client.post("/api/generate", json=payload)

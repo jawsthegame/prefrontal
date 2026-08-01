@@ -84,6 +84,45 @@ def test_describe_image_wraps_transport_error():
         _vision_client(handler).describe_image("aGk=", prompt="p")
 
 
+# --- generate: structured-output (JSON mode) wire shape ---------------------
+
+
+def _text_client(handler, *, model: str = "qwen2.5:14b") -> OllamaClient:
+    return OllamaClient(model=model, transport=httpx.MockTransport(handler))
+
+
+def test_generate_sends_format_when_requested():
+    """A JSON-mode request rides in the ``format`` key of ``/api/generate``."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"response": '{"ok": true}'})
+
+    out = _text_client(handler).generate("hi", system="s", format="json")
+    assert out == '{"ok": true}'
+    body = captured["body"]
+    assert body["format"] == "json"
+    assert body["prompt"] == "hi"
+    assert body["system"] == "s"
+
+
+def test_generate_omits_format_by_default():
+    """A prose completion carries no ``format`` key (JSON mode is opt-in)."""
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"response": "hello"})
+
+    _text_client(handler).generate("hi")
+    assert "format" not in captured["body"]
+
+
 # --- can_describe_images: routing gate --------------------------------------
 
 

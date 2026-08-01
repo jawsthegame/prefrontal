@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from prefrontal.integrations import OllamaError
-from prefrontal.llm_json import extract_json, extract_json_object, generate_json
+from prefrontal.llm_json import (
+    extract_json,
+    extract_json_object,
+    generate_json,
+    generate_text,
+)
 
 
 def test_extract_json_plain_object():
@@ -110,3 +115,64 @@ def test_generate_json_returns_none_on_unparseable_reply():
 )
 def test_generate_json_handles_object_and_array(reply, expected):
     assert generate_json("p", client=_FakeClient(reply=reply)) == expected
+
+
+class _RecordingClient:
+    """A Generator that declares the full real signature and records its kwargs."""
+
+    def __init__(self, *, reply: str = "{}") -> None:
+        self._reply = reply
+        self.calls: list[dict[str, object]] = []
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        num_ctx: int | None = None,
+        timeout: float | None = None,
+        format: object = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "num_ctx": num_ctx,
+                "timeout": timeout,
+                "format": format,
+            }
+        )
+        return self._reply
+
+
+def test_generate_text_requests_json_mode_when_supported():
+    """want_json sets the backend's native JSON format when it accepts ``format``."""
+    client = _RecordingClient()
+    generate_text(client, "p", system="s", want_json=True)
+    assert client.calls[0]["format"] == "json"
+    assert client.calls[0]["system"] == "s"
+
+
+def test_generate_text_passes_num_ctx_and_timeout_when_supported():
+    client = _RecordingClient()
+    generate_text(client, "p", num_ctx=8192, timeout=30.0)
+    assert client.calls[0]["num_ctx"] == 8192
+    assert client.calls[0]["timeout"] == 30.0
+    assert client.calls[0]["format"] is None  # want_json defaults False
+
+
+def test_generate_text_omits_unsupported_kwargs_for_minimal_client():
+    """A double declaring only ``(prompt, *, system)`` must not get format/num_ctx/
+    timeout — passing an unknown keyword would raise TypeError, not degrade."""
+    client = _FakeClient(reply="ok")
+    got = generate_text(
+        client, "p", system="s", num_ctx=9, timeout=1.0, want_json=True
+    )
+    assert got == "ok"  # no TypeError; the extra kwargs were dropped
+
+
+def test_generate_json_requests_json_mode():
+    """The facade asks for JSON mode, so a capable backend returns valid JSON."""
+    client = _RecordingClient(reply='{"a": 1}')
+    assert generate_json("p", client=client) == {"a": 1}
+    assert client.calls[0]["format"] == "json"

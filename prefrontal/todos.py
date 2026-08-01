@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from prefrontal.clock import parse_ts as _parse_ts
 from prefrontal.integrations import Generator
 from prefrontal.integrations.ollama import OllamaError
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 
 if TYPE_CHECKING:
     from prefrontal.memory.store import MemoryStore
@@ -338,8 +338,11 @@ def _llm_fields(
     """Ask the model for all fields at once; return the usable subset (or {})."""
     system = _SYSTEM + _category_guidance(existing_categories or [], category_cap)
     try:
-        reply = client.generate(
-            f"Title: {title}\nToday: {today.isoformat()}", system=system
+        reply = generate_text(
+            client,
+            f"Title: {title}\nToday: {today.isoformat()}",
+            system=system,
+            want_json=True,
         )
     except OllamaError:
         return {}
@@ -554,9 +557,11 @@ def decompose_task(
         if allow_decline:
             system += _DECOMP_DECLINE_INSTRUCTION
         try:
-            reply = client.generate(
+            reply = generate_text(
+                client,
                 f"Task: {title}\nFirst step max minutes: {int(max_first_minutes)}",
                 system=system,
+                want_json=True,
             )
         except OllamaError:
             reply = ""

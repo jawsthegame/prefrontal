@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from prefrontal.llm_json import extract_json
+from prefrontal.llm_json import extract_json, generate_text
 from prefrontal.mail.models import MailItem
 
 if TYPE_CHECKING:
@@ -272,7 +272,9 @@ def triage_message(
     client = client or ProviderResolver.from_settings().client(TRIAGE)
     prompt = _build_prompt(item)
     try:
-        raw = client.generate(prompt, system=TRIAGE_SYSTEM_PROMPT + corrections)
+        raw = generate_text(
+            client, prompt, system=TRIAGE_SYSTEM_PROMPT + corrections, want_json=True
+        )
     except ProviderError:
         if not fallback:
             raise

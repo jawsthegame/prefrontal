@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from prefrontal.integrations.ollama import OllamaError
-from prefrontal.llm_json import extract_json_object
+from prefrontal.llm_json import extract_json_object, generate_text
 from prefrontal.memory.repos.clarifications import TARGET_COMMITMENT, TARGET_TODO
 
 if TYPE_CHECKING:
@@ -365,7 +365,9 @@ def detect_clarification(
         return None
     if client is not None:
         try:
-            reply = client.generate(f"Title: {title.strip()}", system=_SYSTEM)
+            reply = generate_text(
+                client, f"Title: {title.strip()}", system=_SYSTEM, want_json=True
+            )
         except OllamaError:
             reply = ""
         candidate = _coerce_llm_candidate(title, extract_json_object(reply))
