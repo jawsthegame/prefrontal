@@ -25,6 +25,10 @@ struct Delegation: Codable, Hashable {
     /// when `status == "needs_input"`; POST them back to
     /// `/todos/{id}/delegate/answers` (positionally) and the run picks up again.
     let questions: [Question]?
+    /// The follow-up conversation transcript (Phase 2): each `{role, kind, text}`.
+    /// A free-form message to `/todos/{id}/delegate/message` appends here and
+    /// *resumes* the run rather than restarting it.
+    let messages: [Message]?
 
     struct Draft: Codable, Hashable {
         let channel: String?; let to: String?; let subject: String?; let body: String?
@@ -38,6 +42,9 @@ struct Delegation: Codable, Hashable {
     }
     struct Question: Codable, Hashable {
         let text: String?; let why: String?; let answer: String?
+    }
+    struct Message: Codable, Hashable {
+        let role: String?; let kind: String?; let text: String?
     }
 
     /// (label, done-ish) for the status pill.

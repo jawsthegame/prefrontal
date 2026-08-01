@@ -19,6 +19,8 @@ struct DelegationDetailView: View {
     /// Typed answers keyed by the question's position in the full `questions`
     /// list — the server records answers positionally.
     @State private var answers: [Int: String] = [:]
+    /// A free-form follow-up being composed (Phase 2): sending it resumes the run.
+    @State private var message: String = ""
 
     var body: some View {
         NavigationStack {
@@ -33,6 +35,7 @@ struct DelegationDetailView: View {
                         draftsSection(g)
                         stepsSection(g)
                         contextSection(g)
+                        threadSection(g)
                         footer(g)
                     }
                     .padding(16)
@@ -196,6 +199,48 @@ struct DelegationDetailView: View {
             Card {
                 CardLabel(text: "Context you gave the assistant")
                 Text(c).font(.caption2).foregroundStyle(Brand.muted)
+            }
+        }
+    }
+
+    @ViewBuilder private func threadSection(_ g: Delegation) -> some View {
+        // The follow-up conversation (Phase 2): the transcript, plus a box to send a
+        // free-form message that resumes the run. Only `auto` delegations hold a
+        // conversation; a returned hand-off is read-only.
+        if g.handler == "auto" {
+            let msgs = g.messages ?? []
+            if !msgs.isEmpty || g.status != "returned" {
+                Card {
+                    CardLabel(text: "Follow-up conversation")
+                    ForEach(Array(msgs.enumerated()), id: \.offset) { _, m in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(m.role == "user" ? "You" : "Assistant")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(m.role == "user" ? Brand.accent : Brand.muted)
+                            Text(m.text ?? "").font(.caption).foregroundStyle(Brand.nearWhite)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if g.status != "returned" {
+                        HStack(spacing: 8) {
+                            TextField("Send a follow-up…", text: $message)
+                                .textFieldStyle(.roundedBorder)
+                            AsyncButton {
+                                let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !text.isEmpty else { return }
+                                try await withAPI { try await $0.delegateMessage(todo.id, message: text) }
+                                message = ""
+                                await reload()
+                                dismiss()
+                            } label: {
+                                Image(systemName: "paperplane.fill").font(.title3)
+                            } onError: { onError($0) }
+                            .accessibilityLabel("Send follow-up")
+                            .tint(Brand.accent)
+                            .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }
             }
         }
     }

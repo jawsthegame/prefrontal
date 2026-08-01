@@ -406,6 +406,16 @@
   .deleg-q .deleg-ans { width: 100%; margin-top: 4px; }
   .deleg-q.answered .qa { color: var(--muted); border-left: 2px solid var(--line);
     padding-left: 8px; margin-top: 2px; }
+  /* The follow-up conversation (Phase 2): the transcript + a box to resume the run. */
+  .deleg-thread { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .deleg-thread .dh { font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .4px; margin-bottom: 6px; }
+  .deleg-msg { margin-bottom: 6px; }
+  .deleg-msg .dm-who { font-size: 11px; color: var(--muted); }
+  .deleg-msg .dm-text { white-space: pre-wrap; padding-left: 8px; }
+  .deleg-msg.mine .dm-text { border-left: 2px solid var(--accent); }
+  .deleg-msg.theirs .dm-text { border-left: 2px solid var(--line); }
+  .deleg-msg-input { width: 100%; margin: 4px 0 6px; }
   /* The run's trail — the receipt, quiet by default but always inspectable. */
   .deleg-steps { margin-top: 10px; }
   .deleg-steps > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
@@ -2080,8 +2090,28 @@ function delegationDetailBody(x) {
     ${draftHtml}
     ${stepsBlock(g)}
     ${contextBlock(g)}
+    ${threadBlock(x, g)}
     ${ret}
   </div>`;
+}
+
+// The follow-up conversation (Phase 2): the transcript so far plus a box to send a
+// free-form message that *resumes* the run (POST /delegate/message). Only `auto`
+// delegations hold a conversation; a returned hand-off is read-only.
+function threadBlock(x, g) {
+  if (g.handler !== "auto") return "";
+  const msgs = g.messages || [];
+  const log = msgs.map((m) => {
+    const who = m.role === "user" ? "You" : "Assistant";
+    const cls = m.role === "user" ? "mine" : "theirs";
+    return `<div class="deleg-msg ${cls}"><div class="dm-who">${who}</div>`
+      + `<div class="dm-text">${esc(m.text)}</div></div>`;
+  }).join("");
+  const composer = g.status === "returned" ? "" :
+    `<input class="deleg-msg-input" placeholder="Send a follow-up — e.g. focus on the 15-year option…">`
+    + `<button class="btn-sm" data-action="deleg-message" data-id="${x.id}">Send &amp; resume</button>`;
+  if (!log && !composer) return "";
+  return `<div class="deleg-thread"><div class="dh">Follow-up conversation</div>${log}${composer}</div>`;
 }
 
 // The compact row opener: status + a tiny roll-up, tapping into the full
@@ -3647,6 +3677,18 @@ document.addEventListener("click", async (e) => {
       el.textContent = "Picking it back up…";
       await post(`/todos/${id}/delegate/answers`, { answers });
       closeDelegationDetail();  // the modal's answer form is spent; the row reflects the new status on reload
+    }
+    else if (act === "deleg-message") {
+      // A free-form follow-up: append it to the thread and resume the research
+      // (POST /delegate/message). Falls through to load(); close the modal so the
+      // row's "working on it" is visible while it re-runs.
+      const box = el.closest(".deleg-thread").querySelector(".deleg-msg-input");
+      const msg = (box && box.value || "").trim();
+      if (!msg) return;  // nothing typed — don't spend a re-run
+      el.disabled = true;
+      el.textContent = "Resuming…";
+      await post(`/todos/${id}/delegate/message`, { message: msg });
+      closeDelegationDetail();
     }
     else if (act === "deleg-add-todo") {
       // Turn an extracted action item into a real todo, linked back to the meeting
