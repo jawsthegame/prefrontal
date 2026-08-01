@@ -836,7 +836,7 @@ Set in `.env` (see [`deployment.md`](deployment.md) for the full list):
 | `PREFRONTAL_MODULES` | _(all)_ | Comma-separated modules to enable |
 | `PREFRONTAL_PACKS` | _(none)_ | Comma-separated Context Packs (life-context layers, e.g. `parent`); each switches on modules + seeds vocabulary. Earlier-listed wins a conflict. `prefrontal packs -v` |
 | `PREFRONTAL_TRIAGE_LLM` / `_DROP` | `true` / `0` | Triage: use the model for ambiguous signals / confidence below which "noise" is surfaced not dropped |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.1:8b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `qwen2.5:14b` | Local inference (tip: set `127.0.0.1` explicitly to skip IPv6 `localhost` resolution) |
 | `OLLAMA_VISION_MODEL` | _(empty)_ | Local multimodal model for on-device vision capture (e.g. `llava`); blank falls back to the cloud model for `/vision` |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | _(empty)_ / `claude-opus-4-8` | Opt-in cloud reasoning; blank keeps every agent local. Needs `pip install -e '.[anthropic]'` |
 | `ANTHROPIC_AGENTS` | `assistant` | Which agents prefer Claude when a key is set: `assistant,summarizer,briefing,sensor,triage,vision`, `all`, or empty for all-local (`vision` is local-first — listing it flips it to prefer cloud) |

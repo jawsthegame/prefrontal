@@ -183,14 +183,15 @@ assume the launchd job above.
 
 ```bash
 brew services start ollama          # always-on daemon on :11434
-ollama pull llama3.1:8b             # or your preferred model
+ollama pull qwen2.5:14b             # or your preferred model
 # Smoke test:
 curl -s http://localhost:11434/api/generate \
-  -d '{"model":"llama3.1:8b","prompt":"say hi","stream":false}' | head
+  -d '{"model":"qwen2.5:14b","prompt":"say hi","stream":false}' | head
 ```
 
 n8n calls this endpoint; Prefrontal itself does not (in this setup). Pick a model
-that fits the mini's RAM — `llama3.1:8b` is a good default on 16GB+.
+that fits the mini's RAM — `qwen2.5:14b` is the default (24GB+); drop to
+`llama3.1:8b` on a 16GB box.
 
 ### Optional: Claude for the dashboard assistant
 
@@ -683,7 +684,7 @@ keys, both off by default):
   `… VALUES (<uid>, 'learning_half_life_days:type:focus', '14', 'explicit');`.
 
 `prefrontal summarize` generates the narrative with the local Ollama model from
-`.env` (`OLLAMA_MODEL`, default `llama3.1:8b`); if Ollama is down it falls back to
+`.env` (`OLLAMA_MODEL`, default `qwen2.5:14b`); if Ollama is down it falls back to
 the structured profile, so it always produces something. It **caches** the
 narrative in the `profile_cache` table (and writes `profile-<handle>.md` for inspection),
 so the live `GET /profile` endpoint serves that prose to agents without a

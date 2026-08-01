@@ -47,7 +47,7 @@ class OllamaClient:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model: str = "llama3.1:8b",
+        model: str = "qwen2.5:14b",
         vision_model: str = "",
         timeout: float = 60.0,
         transport: httpx.BaseTransport | None = None,
