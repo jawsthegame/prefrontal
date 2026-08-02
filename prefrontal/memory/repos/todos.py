@@ -891,3 +891,28 @@ class TodosRepo(Repo):
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def begin_delegation_rerun(self, todo_id: int, *, detail: str | None = None) -> bool:
+        """Atomically claim an ``auto`` delegation for a re-run — the concurrency gate.
+
+        A re-run (answering questions, or a free-form follow-up) reads the delegation,
+        runs, and rewrites the whole row with ``INSERT OR REPLACE``; two overlapping
+        re-runs would clobber each other's brief/steps/thread. This is the
+        compare-and-swap that serializes them: in a single statement it flips the status
+        to ``in_prep`` **only if** a run isn't already in flight, and reports whether
+        this caller won the claim. ``False`` means another re-run holds it — the caller
+        returns 409 rather than starting a second, racing run. Scoped to this user's
+        ``auto`` delegation; ``detail`` is the in-flight note.
+        """
+        cur = self.conn.execute(
+            # COALESCE keeps the existing note when detail is None, matching
+            # update_delegation_status (None => leave the note as-is), so a claim
+            # never blanks a prior handler note.
+            "UPDATE todo_delegations SET status = 'in_prep', detail = COALESCE(?, detail), "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE todo_id = ? AND handler = 'auto' AND status != 'in_prep' "
+            "AND todo_id IN (SELECT id FROM todos WHERE user_id = ?)",
+            (detail, todo_id, self._uid()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0

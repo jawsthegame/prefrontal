@@ -648,6 +648,28 @@ def test_set_delegation_round_trips_messages(store):
     assert store.get_delegation(tid)["messages"] == thread
 
 
+def test_begin_delegation_rerun_claims_then_blocks(store):
+    tid = store.add_todo("t")
+    store.set_delegation(tid, handler=HANDLER_AUTO, status=STATUS_PREPPED)
+    # First claim wins and marks the run in flight.
+    assert store.begin_delegation_rerun(tid, detail="working") is True
+    assert store.get_delegation(tid)["status"] == "in_prep"
+    # A second claim while a run is in flight is refused (the concurrency gate).
+    assert store.begin_delegation_rerun(tid) is False
+    # A non-auto delegation is never claimable, and neither is a missing one.
+    other = store.add_todo("o")
+    store.set_delegation(other, handler="agent", status=STATUS_PREPPED)
+    assert store.begin_delegation_rerun(other) is False
+    assert store.begin_delegation_rerun(store.add_todo("none")) is False
+    # Claiming with no detail keeps the existing note (COALESCE), never blanks it.
+    keep = store.add_todo("k")
+    store.set_delegation(
+        keep, handler=HANDLER_AUTO, status=STATUS_PREPPED, detail="prep by the agent"
+    )
+    assert store.begin_delegation_rerun(keep) is True
+    assert store.get_delegation(keep)["detail"] == "prep by the agent"
+
+
 # -- resume rendering (pure) ----------------------------------------------
 
 
@@ -820,6 +842,31 @@ def test_http_message_404s_without_a_delegation(http):
     tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
     r = client.post(f"/todos/{tid}/delegate/message", json={"message": "hi"}, headers=_headers())
     assert r.status_code == 404
+
+
+def test_http_message_409_when_a_rerun_is_in_flight(http, fake_mcp):
+    """A follow-up sent while a run is already in flight is refused, not raced."""
+    client, replies = http
+    tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+    replies.extend([_DONE, _prep()])
+    client.post(f"/todos/{tid}/delegate", json={"handler": "auto"}, headers=_headers())
+    # Simulate a re-run already in flight (what begin_delegation_rerun would set).
+    client.app.state.store.scoped(1).update_delegation_status(tid, "in_prep")
+    r = client.post(f"/todos/{tid}/delegate/message", json={"message": "hi"}, headers=_headers())
+    assert r.status_code == 409
+    # The refused message did not land on the thread.
+    stored = client.get("/todos", headers=_headers()).json()["todos"][0]["delegation"]
+    assert stored["messages"] == []
+
+
+def test_http_answers_409_when_a_rerun_is_in_flight(http, fake_mcp):
+    client, replies = http
+    tid = client.post("/todos", json={"title": "t"}, headers=_headers()).json()["todo_id"]
+    replies.extend([_ask({"text": "Rate?", "why": "w"}), _prep()])
+    client.post(f"/todos/{tid}/delegate", json={"handler": "auto"}, headers=_headers())
+    client.app.state.store.scoped(1).update_delegation_status(tid, "in_prep")
+    r = client.post(f"/todos/{tid}/delegate/answers", json={"answers": ["6%"]}, headers=_headers())
+    assert r.status_code == 409
 
 
 def test_delegation_resolves_the_summarizer_agent(monkeypatch):
