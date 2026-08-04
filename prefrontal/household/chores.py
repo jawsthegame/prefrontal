@@ -226,6 +226,35 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         # Free text (like a fact category), just normalized: lowercased, single-
         # spaced, capped. Blank → None (an ordinary, non-service chore).
         service = re.sub(r"\s+", " ", str(service).strip().lower())[:40] or None
+
+    # Limited-course window: both bounds optional (blank = open), each a local
+    # calendar date, and end never before start.
+    def _course_date(value: Any, label: str) -> tuple[str, str | None]:
+        if value in (None, ""):
+            return "", None
+        text = str(value).strip()
+        try:
+            datetime.strptime(text, "%Y-%m-%d")  # tz-ok: validates a local calendar date
+        except ValueError:
+            return "", f"{label} must be a date 'YYYY-MM-DD', or blank"
+        return text, None
+
+    starts_on, err = _course_date(raw.get("starts_on"), "starts_on")
+    if err is not None:
+        return None, err
+    ends_on, err = _course_date(raw.get("ends_on"), "ends_on")
+    if err is not None:
+        return None, err
+    if starts_on and ends_on and ends_on < starts_on:
+        return None, "ends_on must be on or after starts_on"
+    miss_after = raw.get("miss_after", 0)
+    try:
+        miss_after = int(miss_after)
+    except (ValueError, TypeError):
+        return None, "miss_after must be a whole number of minutes"
+    if not 0 <= miss_after <= MAX_CHORE_REMIND_BEFORE_MINUTES:
+        return None, f"miss_after must be 0–{MAX_CHORE_REMIND_BEFORE_MINUTES} minutes"
+
     return {
         "title": title,
         "owner_id": owner_id,
@@ -237,6 +266,9 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
         "enabled": bool(raw.get("enabled", True)),
         "away_behavior": away_behavior,
         "service": service,
+        "starts_on": starts_on,
+        "ends_on": ends_on,
+        "miss_after": miss_after,
     }, None
 
 
@@ -339,7 +371,9 @@ def chore_ids_scheduled_on(
     ids: set[int] = set()
     for c in store.chores():
         eff = with_effective_schedule(c, routines_by_id.get(c.get("routine_id")))
-        if scheduled_on(eff["days"], eff["month_days"], now_local):
+        if scheduled_on(eff["days"], eff["month_days"], now_local) and within_course_window(
+            c, now_local
+        ):
             ids.add(c["id"])
     return ids
 
@@ -375,6 +409,25 @@ def _due_minute(chore: dict[str, Any]) -> int | None:
     return due.hour * 60 + due.minute if due is not None else None
 
 
+def within_course_window(chore: dict[str, Any], now_local: datetime) -> bool:
+    """Whether ``now_local``'s date falls inside the chore's course window.
+
+    A **limited course** (e.g. a kid's or pet's 10-day antibiotic) sets ``starts_on``
+    / ``ends_on`` (local ``YYYY-MM-DD``): the chore fires only within
+    ``[starts_on, ends_on]`` and goes quiet once the course ends — no hand-cleanup.
+    An empty bound is open, so an ordinary open-ended chore (both blank) is always in
+    window. ISO dates compare correctly as plain strings.
+    """
+    today = now_local.strftime("%Y-%m-%d")
+    starts = str(chore.get("starts_on") or "")
+    ends = str(chore.get("ends_on") or "")
+    if starts and today < starts:
+        return False
+    if ends and today > ends:
+        return False
+    return True
+
+
 def reminder_due(
     chore: dict[str, Any],
     *,
@@ -393,6 +446,8 @@ def reminder_due(
     if not chore.get("enabled", True) or done_today:
         return False
     if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
+        return False
+    if not within_course_window(chore, now_local):
         return False
     due_min = _due_minute(chore)
     if due_min is None:
@@ -421,13 +476,19 @@ def miss_due(
         return False
     if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
         return False
+    if not within_course_window(chore, now_local):
+        return False
     due_min = _due_minute(chore)
     if due_min is None:
         return False
     if last_missed_on == now_local.strftime("%Y-%m-%d"):
         return False
     now_min = now_local.hour * 60 + now_local.minute
-    return now_min >= due_min
+    # A grace before the co-parent heads-up: `miss_after` minutes past due (0 =
+    # at the due time, unchanged). A medication the owner is meant to give sets
+    # e.g. 30, so the other parent is only pinged if it's still not done later.
+    miss_after = max(0, int(chore.get("miss_after") or 0))
+    return now_min >= due_min + miss_after
 
 
 def away_covers(window: dict[str, Any] | None, now_local: datetime) -> bool:
@@ -543,6 +604,8 @@ def resolve_chore_context(
     if not chore.get("enabled", True):
         return ChoreDecision("proceed")
     if not scheduled_on(chore.get("days"), chore.get("month_days"), now_local):
+        return ChoreDecision("proceed")
+    if not within_course_window(chore, now_local):
         return ChoreDecision("proceed")
     if chore.get("away_behavior") == "suppress":
         if away_covers(away_window, now_local):

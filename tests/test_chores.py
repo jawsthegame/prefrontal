@@ -53,6 +53,7 @@ from prefrontal.household import (
     scheduled_on,
     service_week,
     with_effective_schedule,
+    within_course_window,
 )
 from prefrontal.impact import utcnow
 from prefrontal.memory.db import init_db
@@ -207,6 +208,9 @@ def test_normalize_chore_clean():
         "enabled": True,
         "away_behavior": "keep",
         "service": None,
+        "starts_on": "",
+        "ends_on": "",
+        "miss_after": 0,
     }
 
 
@@ -360,6 +364,59 @@ def test_scheduling_gates_on_weekday():
     c = _chore(days="0,4")
     assert not reminder_due(c, now_local=REMIND_NOW, done_today=False)
     assert not miss_due(c, now_local=MISS_NOW, done_today=False)
+
+
+# --- limited-course window + miss grace (medications) --------------------
+
+
+def test_within_course_window_bounds():
+    # REMIND_NOW is 2026-07-01.
+    assert within_course_window(_chore(), REMIND_NOW)  # open bounds → always in
+    assert not within_course_window(_chore(starts_on="2026-07-02"), REMIND_NOW)  # starts tomorrow
+    assert within_course_window(_chore(starts_on="2026-07-01", ends_on="2026-07-10"), REMIND_NOW)
+    assert not within_course_window(_chore(ends_on="2026-06-30"), REMIND_NOW)  # ended yesterday
+
+
+def test_course_window_gates_reminder_and_miss():
+    # A course that ended before today never fires, even on a scheduled day.
+    ended = _chore(ends_on="2026-06-30")
+    assert not reminder_due(ended, now_local=REMIND_NOW, done_today=False)
+    assert not miss_due(ended, now_local=MISS_NOW, done_today=False)
+    # One that hasn't started yet is silent too.
+    future = _chore(starts_on="2026-07-02")
+    assert not reminder_due(future, now_local=REMIND_NOW, done_today=False)
+    assert not miss_due(future, now_local=MISS_NOW, done_today=False)
+    # In-window, it behaves like an ordinary chore.
+    live = _chore(starts_on="2026-07-01", ends_on="2026-07-10")
+    assert reminder_due(live, now_local=REMIND_NOW, done_today=False)
+    assert miss_due(live, now_local=MISS_NOW, done_today=False)
+
+
+def test_miss_after_delays_the_coparent_heads_up():
+    # due 22:00; miss_after=30 → the co-parent heads-up holds until 22:30.
+    c = _chore(miss_after=30)
+    at_due = MISS_NOW.replace(hour=22, minute=0)
+    assert not miss_due(c, now_local=at_due, done_today=False)        # at due — still in grace
+    just_before = MISS_NOW.replace(hour=22, minute=29)
+    assert not miss_due(c, now_local=just_before, done_today=False)   # 22:29 — still in grace
+    assert miss_due(c, now_local=MISS_NOW, done_today=False)          # 22:30 — grace elapsed
+    # Default (miss_after=0) still fires right at the due time.
+    assert miss_due(_chore(), now_local=at_due, done_today=False)
+
+
+def test_normalize_chore_course_validation():
+    clean, err = normalize_chore(
+        {"title": "amoxicillin for Max", "due_time": "08:00",
+         "starts_on": "2026-07-01", "ends_on": "2026-07-10", "miss_after": 30}
+    )
+    assert err is None
+    assert (clean["starts_on"], clean["ends_on"], clean["miss_after"]) == (
+        "2026-07-01", "2026-07-10", 30,
+    )
+    # A malformed date, a backwards window, and an out-of-range grace each error.
+    assert normalize_chore({"title": "x", "starts_on": "07/01/2026"})[1]
+    assert normalize_chore({"title": "x", "starts_on": "2026-07-10", "ends_on": "2026-07-01"})[1]
+    assert normalize_chore({"title": "x", "miss_after": -5})[1]
     assert reminder_due(_chore(days="2"), now_local=REMIND_NOW, done_today=False)
 
 
@@ -841,6 +898,29 @@ def test_chore_endpoint_accepts_month_days(client, store):
     chore = next(c for c in sheet["sheet"]["chores"] if c["title"] == "pay allowance")
     assert chore["month_days"] == "1,15"
     assert chore["effective_month_days"] == "1,15"
+
+
+def test_chore_endpoint_accepts_a_limited_course(client, store):
+    # A kid's/pet's medication as a finite course with a co-parent-backup grace.
+    r = client.post(
+        "/household/chores",
+        json={"title": "amoxicillin for Max", "due_time": "08:00",
+              "starts_on": "2026-07-01", "ends_on": "2026-07-10", "miss_after": 30},
+        headers=_h("dana-tok"),
+    )
+    assert r.status_code == 200
+    sheet = client.get("/household/sheet", headers=_h("alex-tok")).json()
+    chore = next(c for c in sheet["sheet"]["chores"] if c["title"] == "amoxicillin for Max")
+    assert (chore["starts_on"], chore["ends_on"], chore["miss_after"]) == (
+        "2026-07-01", "2026-07-10", 30,
+    )
+    # A backwards course window is rejected.
+    bad = client.post(
+        "/household/chores",
+        json={"title": "bad", "starts_on": "2026-07-10", "ends_on": "2026-07-01"},
+        headers=_h("dana-tok"),
+    )
+    assert bad.status_code == 422
 
 
 def test_one_tap_done_marks_chore_and_is_idempotent(client, store, dana):

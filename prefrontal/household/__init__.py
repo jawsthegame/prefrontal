@@ -158,6 +158,9 @@ from prefrontal.household.chores import (
 from prefrontal.household.chores import (
     with_effective_schedule as with_effective_schedule,
 )
+from prefrontal.household.chores import (
+    within_course_window as within_course_window,
+)
 
 # Co-parent load-balancing (check-in / digest / balance) now lives in a
 # submodule (audit #408, god-unit split); re-export its public API so
@@ -508,7 +511,10 @@ def _chores_with_status(
         out.append({
             **c,
             "done_today": c["id"] in done_ids,
-            "scheduled_today": scheduled_on(eff["days"], eff["month_days"], now_local),
+            "scheduled_today": (
+                scheduled_on(eff["days"], eff["month_days"], now_local)
+                and within_course_window(c, now_local)
+            ),
             "effective_days": eff["days"],
             "effective_month_days": eff["month_days"],
             "effective_due_time": eff["due_time"],
