@@ -722,6 +722,24 @@ CREATE TABLE IF NOT EXISTS todo_delegations (
     prepped_at   DATETIME            -- when prep completed (status reached prepped)
 );
 
+-- A read-only, unauthenticated share link for a human assistant/VA — the URL
+-- shows only the owner's open `work`-domain todos, no editing, no account. One
+-- active link per user in practice: minting a new one revokes the prior row
+-- (see VaShareRepo.create_va_share) so an old URL stops working rather than
+-- two staying live. Modeled on household_invites (token shown once, only its
+-- hash stored) but unlike an invite this never expires on its own and grants
+-- no membership — just this one narrow read, resolved by token alone since the
+-- visitor has no Prefrontal account.
+CREATE TABLE IF NOT EXISTS va_shares (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_va_shares_token ON va_shares (token_hash);
+
 -- User-curated named places — aliases that map a recurring destination to fixed
 -- coordinates without any network geocoding (e.g. "gym", "the office", "mom's").
 -- Checked against a commitment's location/title *before* the geocoder, so the

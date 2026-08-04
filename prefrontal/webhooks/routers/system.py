@@ -76,6 +76,7 @@ from prefrontal.webhooks._common import (
     SETTINGS_HTML,
     STATS_HTML,
     TRIPS_HTML,
+    VA_HTML,
     lens_html,
 )
 from prefrontal.webhooks.deps import (
@@ -299,6 +300,18 @@ def build_router(services: RouterServices) -> APIRouter:
         page. Read-only; edits live on ``/household``.
         """
         return _page(lens_html("pets"))
+
+    @router.get("/va/{token}", response_class=HTMLResponse, tags=["system"])
+    def va_share_page(token: str) -> HTMLResponse:
+        """Serve the read-only **VA** (assistant) share page — no login, no account.
+
+        Unlike every other page here, this one carries no nav to the rest of the
+        app and needs no signed-in session: the token in the URL *is* the access
+        control. The shell is identical for any token (valid or not); the client
+        reads it back off the URL and calls ``GET /va/{token}/todos``, which is
+        where an invalid/revoked token actually 404s.
+        """
+        return _page(VA_HTML)
 
     @router.get("/family", tags=["system"])
     def family() -> RedirectResponse:

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🧠</text></svg>" />
+<title>Prefrontal — Work items</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("prefrontal_theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
+<style>
+  :root {
+    --bg: #f7f5f1; --card: #ffffff; --line: #e7e2d8; --fg: #2c2a26; --muted: #7c7568;
+    --accent: #4a7c59; --warn: #b9762f; --danger: #b03a3a; --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a; --card: #1c2028; --line: #2b313c; --fg: #e7e9ee; --muted: #98a0af;
+    --accent: #6fbf86; --warn: #d59a4f; --danger: #e0707a; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
+    justify-content: space-between; gap: 12px; padding: 10px 16px;
+    padding-top: max(10px, env(safe-area-inset-top)); background: var(--bg);
+    border-bottom: 1px solid var(--line); }
+  .topnav .brand { font-weight: 700; font-size: 15px; color: var(--fg);
+    display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .theme-toggle { background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 9px; width: 38px; height: 38px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .theme-toggle:hover { border-color: var(--accent); }
+  header { max-width: 640px; margin: 0 auto; padding: 22px 18px 4px; }
+  header h1 { font-size: 24px; margin: 0; font-weight: 680; }
+  header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 4px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
+  .empty { color: var(--muted); font-style: italic; }
+  .row { display: flex; align-items: baseline; gap: 8px 10px; flex-wrap: wrap;
+    padding: 10px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: none; }
+  .row .title { font-weight: 550; }
+  .row .when { color: var(--muted); font-size: 13px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid var(--line); color: var(--muted); }
+  .pill.urgent { border-color: var(--danger); color: var(--danger); }
+  .pill.high { border-color: var(--warn); color: var(--warn); }
+  .notice { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; margin: 16px 0 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <span class="brand">🧠 Prefrontal</span>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark">☾</button>
+</nav>
+
+<header>
+  <h1>Work items</h1>
+  <div class="meta" id="status">loading…</div>
+</header>
+
+<div class="wrap">
+  <section class="card" id="c-todos" style="display:none">
+    <div id="todos"></div>
+  </section>
+  <div class="notice" id="invalid" style="display:none">
+    This link isn't valid anymore — ask for a fresh one.
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+(function () {
+  const btn = $("#theme-toggle");
+  const sync = () => { const d = document.documentElement.getAttribute("data-theme") === "dark"; btn.textContent = d ? "☀" : "☾"; };
+  sync();
+  btn.addEventListener("click", () => {
+    const d = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = d ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("prefrontal_theme", next); } catch (e) {}
+    sync();
+  });
+})();
+
+// "YYYY-MM-DD HH:MM:SS" (UTC) → a friendly local string.
+function fmt(ts) {
+  if (!ts) return "";
+  const d = new Date(String(ts).replace(" ", "T") + "Z");
+  return isNaN(d.getTime()) ? ts
+    : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function priorityPill(p) {
+  if (p >= 3) return `<span class="pill urgent">urgent</span>`;
+  if (p >= 2) return `<span class="pill high">high</span>`;
+  return "";
+}
+function todoRow(t) {
+  const due = t.deadline ? ` <span class="when">due ${esc(fmt(t.deadline))}</span>` : "";
+  const est = t.estimate_minutes ? ` <span class="when">~${Math.round(t.estimate_minutes)}m</span>` : "";
+  return `<div class="row"><span class="title">${esc(t.title)}</span>${priorityPill(t.priority)}${due}${est}</div>`;
+}
+
+async function load() {
+  // The token is the URL's last path segment (/va/<token>) — no header, no cookie.
+  const token = location.pathname.replace(/\/+$/, "").split("/").pop();
+  $("#status").textContent = "loading…";
+  let data;
+  try {
+    const r = await fetch(`/va/${encodeURIComponent(token)}/todos`);
+    if (r.status === 404) {
+      $("#status").textContent = "";
+      $("#invalid").style.display = "block";
+      return;
+    }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    data = await r.json();
+  } catch (err) {
+    $("#status").textContent = "couldn't load — retry";
+    return;
+  }
+  const todos = data.todos || [];
+  $("#c-todos").style.display = "block";
+  $("#todos").innerHTML = todos.length
+    ? todos.map(todoRow).join("") : `<div class="empty">No open work items.</div>`;
+  $("#status").textContent = "read-only — open work items";
+}
+
+load();
+</script>
+</body>
+</html>
