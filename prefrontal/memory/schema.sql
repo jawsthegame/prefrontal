@@ -1085,6 +1085,16 @@ CREATE TABLE IF NOT EXISTS household_chores (
     updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_reminded_on TEXT,                           -- local "YYYY-MM-DD" the reminder last fired (dedup)
     last_missed_on   TEXT,                           -- local "YYYY-MM-DD" the miss-handoff last fired (dedup)
+    -- Limited-course window (e.g. a kid's/pet's 10-day medication): the chore only
+    -- fires within [starts_on, ends_on] and goes quiet once the course ends, never
+    -- re-enabled by hand. Empty bound = open (an ordinary open-ended chore).
+    starts_on        TEXT NOT NULL DEFAULT '',        -- local "YYYY-MM-DD" the course begins ('' = no start bound)
+    ends_on          TEXT NOT NULL DEFAULT '',        -- local "YYYY-MM-DD" the course ends, inclusive ('' = open-ended)
+    -- Minutes after the due time before the miss → co-parent heads-up fires. 0 (the
+    -- default) escalates at the due time, unchanged; a medication a partner is meant
+    -- to give sets e.g. 30, so the other parent is only pinged if it's still not done
+    -- half an hour later ("remind me in case she forgets").
+    miss_after       INTEGER NOT NULL DEFAULT 0,
     UNIQUE (household_id, title)
 );
 

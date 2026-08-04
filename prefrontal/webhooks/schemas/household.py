@@ -211,6 +211,28 @@ class ChoreSet(BaseModel):
             "shift. Null = an ordinary chore."
         ),
     )
+    starts_on: str = Field(
+        default="",
+        description=(
+            "Limited-course start, local 'YYYY-MM-DD'. Blank = no start bound. With "
+            "ends_on, turns a chore into a finite course (e.g. a 10-day medication)."
+        ),
+    )
+    ends_on: str = Field(
+        default="",
+        description=(
+            "Limited-course end (inclusive), local 'YYYY-MM-DD'. Blank = open-ended. "
+            "Past it the chore stops firing on its own — no need to disable it."
+        ),
+    )
+    miss_after: int = Field(
+        default=0,
+        description=(
+            "Minutes after the due time before the co-parent heads-up fires. 0 = at "
+            "due (default). Set e.g. 30 for a dose the owner gives, so the other "
+            "parent is only pinged if it's still not done half an hour later."
+        ),
+    )
 
 class ChoreEnabled(BaseModel):
     """Body of ``POST /household/chores/{id}/enabled`` — pause or resume a chore."""

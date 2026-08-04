@@ -1074,6 +1074,9 @@ class HouseholdRepo(Repo):
         enabled: bool = True,
         away_behavior: str = "keep",
         service: str | None = None,
+        starts_on: str = "",
+        ends_on: str = "",
+        miss_after: int = 0,
         updated_by: int | None,
     ) -> int:
         """Upsert a recurring chore (keyed on title within the household), returning its id.
@@ -1090,9 +1093,9 @@ class HouseholdRepo(Repo):
             """
             INSERT INTO household_chores
                 (household_id, title, owner_id, routine_id, days, month_days, due_time,
-                 remind_before, impact, enabled, away_behavior, service, updated_by,
-                 updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                 remind_before, impact, enabled, away_behavior, service,
+                 starts_on, ends_on, miss_after, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT (household_id, title) DO UPDATE SET
                 owner_id      = excluded.owner_id,
                 routine_id    = excluded.routine_id,
@@ -1104,12 +1107,15 @@ class HouseholdRepo(Repo):
                 enabled       = excluded.enabled,
                 away_behavior = excluded.away_behavior,
                 service       = excluded.service,
+                starts_on     = excluded.starts_on,
+                ends_on       = excluded.ends_on,
+                miss_after    = excluded.miss_after,
                 updated_by    = excluded.updated_by,
                 updated_at    = CURRENT_TIMESTAMP
             """,
             (hid, title.strip(), owner_id, routine_id, days, month_days, due_time,
              int(remind_before), impact, 1 if enabled else 0, away_behavior, service,
-             updated_by),
+             starts_on, ends_on, int(miss_after), updated_by),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -1133,6 +1139,9 @@ class HouseholdRepo(Repo):
         enabled: bool = True,
         away_behavior: str = "keep",
         service: str | None = None,
+        starts_on: str = "",
+        ends_on: str = "",
+        miss_after: int = 0,
         updated_by: int | None,
     ) -> str:
         """Edit a chore by id — including **renaming** it, which the title-keyed
@@ -1162,13 +1171,14 @@ class HouseholdRepo(Repo):
             UPDATE household_chores SET
                 title = ?, owner_id = ?, routine_id = ?, days = ?, month_days = ?,
                 due_time = ?, remind_before = ?, impact = ?, enabled = ?,
-                away_behavior = ?, service = ?, updated_by = ?,
+                away_behavior = ?, service = ?, starts_on = ?, ends_on = ?,
+                miss_after = ?, updated_by = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND household_id = ?
             """,
             (title, owner_id, routine_id, days, month_days, due_time,
              int(remind_before), impact, 1 if enabled else 0, away_behavior, service,
-             updated_by, chore_id, hid),
+             starts_on, ends_on, int(miss_after), updated_by, chore_id, hid),
         )
         self.conn.commit()
         return "ok"
@@ -1207,7 +1217,8 @@ class HouseholdRepo(Repo):
             """
             SELECT c.id, c.title, c.owner_id, c.routine_id, c.days, c.month_days,
                    c.due_time, c.remind_before, c.impact, c.enabled, c.away_behavior,
-                   c.service, c.last_reminded_on, c.last_missed_on,
+                   c.service, c.starts_on, c.ends_on, c.miss_after,
+                   c.last_reminded_on, c.last_missed_on,
                    COALESCE(u.display_name, u.handle) AS owner_name,
                    r.title AS routine_title
             FROM household_chores c
@@ -1228,8 +1239,8 @@ class HouseholdRepo(Repo):
         """
         row = self.conn.execute(
             "SELECT id, title, owner_id, routine_id, days, month_days, due_time, "
-            "remind_before, impact, enabled, away_behavior, service, last_reminded_on, "
-            "last_missed_on "
+            "remind_before, impact, enabled, away_behavior, service, "
+            "starts_on, ends_on, miss_after, last_reminded_on, last_missed_on "
             "FROM household_chores WHERE id = ? AND household_id = ?",
             (chore_id, self._household_id()),
         ).fetchone()

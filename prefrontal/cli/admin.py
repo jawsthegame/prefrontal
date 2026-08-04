@@ -216,6 +216,20 @@ def register(sub) -> None:
         help="Link to a municipal service (e.g. 'trash') whose pickup day can shift "
         "on a holiday week — the reminder then follows the shift (see 'household shift').",
     )
+    h_chore.add_argument(
+        "--starts", default=None,
+        help="Course start 'YYYY-MM-DD' (with --add). Blank = no start bound.",
+    )
+    h_chore.add_argument(
+        "--ends", default=None,
+        help="Course end 'YYYY-MM-DD', inclusive (with --add) — a limited course "
+        "(e.g. a 10-day med) that stops firing on its own after this date.",
+    )
+    h_chore.add_argument(
+        "--miss-after", dest="miss_after", type=int, default=0,
+        help="Minutes after due before the co-parent heads-up fires (with --add). "
+        "0 = at due; set e.g. 30 for a dose someone gives ('remind me if it's not done').",
+    )
     h_chore.add_argument("--done", type=int, default=None, help="Mark chore done today, by id.")
     h_chore.add_argument("--remove", type=int, default=None, help="Remove chore by id.")
     h_chore.add_argument("--enable", type=int, default=None, help="Resume chore by id.")
@@ -783,6 +797,9 @@ def _chores_cli(store, args, settings) -> int:
                 "impact": args.impact,
                 "away_behavior": args.away_behavior or "keep",
                 "service": args.service,
+                "starts_on": args.starts,
+                "ends_on": args.ends,
+                "miss_after": args.miss_after,
             }
         )
         if error is not None:
