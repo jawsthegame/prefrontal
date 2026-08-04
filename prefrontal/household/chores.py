@@ -234,10 +234,12 @@ def normalize_chore(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
             return "", None
         text = str(value).strip()
         try:
-            datetime.strptime(text, "%Y-%m-%d")  # tz-ok: validates a local calendar date
+            parsed = datetime.strptime(text, "%Y-%m-%d")  # tz-ok: validates a local date
         except ValueError:
             return "", f"{label} must be a date 'YYYY-MM-DD', or blank"
-        return text, None
+        # Re-emit canonical zero-padded form: strptime accepts "2026-7-1", which
+        # would break the string-lexical ordering within_course_window relies on.
+        return parsed.strftime("%Y-%m-%d"), None
 
     starts_on, err = _course_date(raw.get("starts_on"), "starts_on")
     if err is not None:
@@ -487,8 +489,11 @@ def miss_due(
     # A grace before the co-parent heads-up: `miss_after` minutes past due (0 =
     # at the due time, unchanged). A medication the owner is meant to give sets
     # e.g. 30, so the other parent is only pinged if it's still not done later.
+    # Clamp to end-of-day: a late dose + grace that would cross midnight (23:50 +
+    # 30) still escalates by 23:59 that day rather than never — minute-of-day
+    # comparison can't wrap past midnight.
     miss_after = max(0, int(chore.get("miss_after") or 0))
-    return now_min >= due_min + miss_after
+    return now_min >= min(due_min + miss_after, 23 * 60 + 59)
 
 
 def away_covers(window: dict[str, Any] | None, now_local: datetime) -> bool:

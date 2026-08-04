@@ -417,6 +417,17 @@ def test_normalize_chore_course_validation():
     assert normalize_chore({"title": "x", "starts_on": "07/01/2026"})[1]
     assert normalize_chore({"title": "x", "starts_on": "2026-07-10", "ends_on": "2026-07-01"})[1]
     assert normalize_chore({"title": "x", "miss_after": -5})[1]
+    # A non-canonical but parseable date is stored zero-padded, so string ordering
+    # (which within_course_window relies on) stays chronological.
+    assert normalize_chore({"title": "x", "starts_on": "2026-7-1"})[0]["starts_on"] == "2026-07-01"
+
+
+def test_miss_after_clamps_at_end_of_day():
+    # A late dose (23:50) + 30-min grace would cross midnight; the miss still fires
+    # by 23:59 that day rather than never (minute-of-day can't wrap).
+    c = _chore(due_time="23:50", miss_after=30)
+    assert not miss_due(c, now_local=MISS_NOW.replace(hour=23, minute=58), done_today=False)
+    assert miss_due(c, now_local=MISS_NOW.replace(hour=23, minute=59), done_today=False)
     assert reminder_due(_chore(days="2"), now_local=REMIND_NOW, done_today=False)
 
 
