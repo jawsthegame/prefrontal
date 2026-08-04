@@ -1366,13 +1366,29 @@ def build_router(services: RouterServices) -> APIRouter:
         account of their own) on the unscoped store, then reads that one user's
         open todos through the normal scoped path. 404 for an unknown or revoked
         token — indistinguishable from "never existed" so a guess reveals nothing.
+
+        The response is a deliberately minimal shape — just what the VA page
+        renders — not the raw todo row: a todo's ``notes`` can carry private
+        detail (account numbers, context for the person doing the work) that has
+        no business reaching an anonymous, unauthenticated visitor, and there's
+        no reason to hand out internal fields like ``user_id`` either.
         """
         unscoped = request.app.state.store
         user_id = unscoped.resolve_va_share(token)
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found.")
         scoped = unscoped.scoped(user_id)
-        todos = [t for t in scoped.open_todos() if t.get("domain") == "work"]
+        todos = [
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "priority": t["priority"],
+                "deadline": t["deadline"],
+                "estimate_minutes": t["estimate_minutes"],
+            }
+            for t in scoped.open_todos()
+            if t.get("domain") == "work"
+        ]
         return {"todos": todos}
 
     @router.post("/todos/{todo_id}/project", tags=["todos"])

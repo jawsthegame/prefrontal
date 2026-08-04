@@ -21,9 +21,12 @@ class VaShareRepo(Repo):
 
         Returns ``(row, raw_token)`` — the token is shown once, like a user's
         API token; only its ``sha256`` is stored. One active link per user: a
-        fresh mint invalidates the old URL rather than leaving two live.
+        fresh mint invalidates the old URL rather than leaving two live. The
+        revoke and insert share **one commit** (not two), so a concurrent mint
+        from another connection can't interleave between them and leave two
+        rows active at once.
         """
-        self.revoke_va_share()
+        self._revoke_va_share_uncommitted()
         raw_token = generate_token()
         self.conn.execute(
             "INSERT INTO va_shares (user_id, token_hash) VALUES (?, ?)",
@@ -46,12 +49,18 @@ class VaShareRepo(Repo):
 
     def revoke_va_share(self) -> bool:
         """Revoke the caller's active share link, if any. ``True`` if one was revoked."""
+        changed = self._revoke_va_share_uncommitted()
+        self.conn.commit()
+        return changed
+
+    def _revoke_va_share_uncommitted(self) -> bool:
+        """The revoke UPDATE without its own commit, so :meth:`create_va_share`
+        can fold it into the same transaction as the insert that follows."""
         cur = self.conn.execute(
             "UPDATE va_shares SET revoked_at = CURRENT_TIMESTAMP "
             "WHERE user_id = ? AND revoked_at IS NULL",
             (self._uid(),),
         )
-        self.conn.commit()
         return cur.rowcount > 0
 
     def resolve_va_share(self, token: str) -> int | None:

@@ -86,6 +86,20 @@ def test_va_share_regenerate_revokes_the_old_token(store):
         assert c.get(f"/va/{second}/todos").status_code == 200
 
 
+def test_va_share_create_leaves_exactly_one_active_row(store):
+    # The regenerate above proves the old token stops working; this asserts the
+    # underlying invariant directly — revoke-then-insert commits as one
+    # transaction, so there's never more than one un-revoked row for a user.
+    store.create_va_share()
+    store.create_va_share()
+    store.create_va_share()
+    active = store.conn.execute(
+        "SELECT COUNT(*) FROM va_shares WHERE user_id = ? AND revoked_at IS NULL",
+        (store._uid(),),
+    ).fetchone()[0]
+    assert active == 1
+
+
 def test_va_share_revoke(store):
     with _client(store) as c:
         token = c.post("/todos/va-share", headers=_auth()).json()["token"]
@@ -110,6 +124,21 @@ def test_va_share_data_shows_only_open_work_domain_todos(store):
 
     titles = [t["title"] for t in body["todos"]]
     assert titles == ["Ship the report"]
+
+
+def test_va_share_data_shape_is_minimal_no_notes_or_internal_fields(store):
+    # An anonymous visitor gets exactly what the page renders — not the raw
+    # todo row. `notes` in particular can carry private detail (account
+    # numbers, context meant for the person doing the work).
+    store.add_todo(
+        "Ship the report", domain="work", notes="account #4471, ask Sam", category="admin"
+    )
+    with _client(store) as c:
+        token = c.post("/todos/va-share", headers=_auth()).json()["token"]
+        body = c.get(f"/va/{token}/todos").json()
+
+    todo = body["todos"][0]
+    assert set(todo) == {"id", "title", "priority", "deadline", "estimate_minutes"}
 
 
 def test_va_share_data_404s_for_unknown_token(store):
