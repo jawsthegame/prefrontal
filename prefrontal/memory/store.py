@@ -64,6 +64,7 @@ from prefrontal.memory.repos.todos import TodosRepo
 from prefrontal.memory.repos.triage import TriageRepo
 from prefrontal.memory.repos.trips import TripsRepo
 from prefrontal.memory.repos.users import UsersRepo
+from prefrontal.memory.repos.va_share import VaShareRepo
 
 __all__ = [
     "MemoryStore",
@@ -101,6 +102,7 @@ class MemoryStore(
     TriageRepo,
     SourcesRepo,
     SearchRepo,
+    VaShareRepo,
 ):
     """A high-level, dict-returning interface to the Prefrontal memory tables.
 

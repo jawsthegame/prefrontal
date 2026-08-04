@@ -163,6 +163,13 @@ TRIPS_HTML = _with_shortcuts(_shell("trips.html"))
 #: commitments + fitted todos + free time (the Structured/Tiimo pattern). Reads
 #: GET /day; served at /day/board (the bare /day path is the JSON endpoint).
 DAY_HTML = _with_shortcuts(_shell("day.html"))
+#: The read-only, unauthenticated **VA** (assistant) surface — a visitor holding
+#: the share-link token sees only the owner's open `work`-domain todos, no login,
+#: no edit forms, no nav to the rest of the app (unlike every other page above,
+#: this one is served to someone with no Prefrontal account at all). Reads
+#: GET /va/{token}/todos, token read client-side from the URL path.
+VA_HTML = (Path(__file__).with_name("va.html")).read_text(encoding="utf-8")
+
 #: The operator-only user-management page — provision users (token shown once),
 #: rotate/disable them, create households, and wire members in. Reads/writes the
 #: ``/admin/*`` endpoints, all guarded by ``require_operator``.

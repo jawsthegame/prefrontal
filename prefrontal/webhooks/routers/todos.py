@@ -1323,6 +1323,58 @@ def build_router(services: RouterServices) -> APIRouter:
             )
         return {"todo_id": todo_id, "status": STATUS_RETURNED}
 
+    @router.post("/todos/va-share", status_code=status.HTTP_201_CREATED, tags=["todos"])
+    def va_share_create(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Mint a read-only link for a human assistant/VA, shown once.
+
+        The link needs no Prefrontal account and no login — anyone holding the
+        URL sees only your open ``work``-domain todos, read-only. Minting a new
+        link revokes any prior one, so an old URL stops working. Kept under
+        ``/todos`` (not ``/va``) so this owner-only management route can never
+        collide with the public ``/va/{token}`` page a plain token could match.
+        """
+        share, token = ctx.store.create_va_share()
+        base = resolved_settings.oauth_base_url
+        return {
+            "token": token,
+            "url": f"{base}/va/{token}" if base else "",
+            "created_at": share["created_at"],
+        }
+
+    @router.get("/todos/va-share", tags=["todos"])
+    def va_share_status(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Whether a VA share link is active, and when it was minted. Never the token."""
+        share = ctx.store.get_va_share()
+        return {"active": share is not None, "created_at": share["created_at"] if share else None}
+
+    @router.delete("/todos/va-share", tags=["todos"])
+    def va_share_revoke(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Revoke the caller's active VA share link, if any."""
+        return {"revoked": ctx.store.revoke_va_share()}
+
+    @router.get("/va/{token}/todos", tags=["todos"])
+    def va_share_todos(token: str, request: Request) -> dict[str, Any]:
+        """Read-only, unauthenticated: open ``work``-domain todos for a share token.
+
+        Resolves ``token`` straight to its owning ``user_id`` (the visitor has no
+        account of their own) on the unscoped store, then reads that one user's
+        open todos through the normal scoped path. 404 for an unknown or revoked
+        token — indistinguishable from "never existed" so a guess reveals nothing.
+        """
+        unscoped = request.app.state.store
+        user_id = unscoped.resolve_va_share(token)
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found.")
+        scoped = unscoped.scoped(user_id)
+        todos = [t for t in scoped.open_todos() if t.get("domain") == "work"]
+        return {"todos": todos}
+
     @router.post("/todos/{todo_id}/project", tags=["todos"])
     def todo_set_project(
         todo_id: int,
