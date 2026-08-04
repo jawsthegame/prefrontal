@@ -124,19 +124,47 @@ class RescheduleRequest(BaseModel):
             "server suggest one (it prefers moving the softer/later appointment)."
         ),
     )
+    via: str = Field(
+        default="other_party",
+        description=(
+            "`other_party` (default) emails the reschedule note straight to the "
+            "other side. `assistant` instead emails your VA and asks *them* to make "
+            "the move — `to` is then the assistant's address, and `recipient_name`/"
+            "`recipient_email` (both optional) name who the assistant should "
+            "contact, folded in as context rather than sent to directly."
+        ),
+    )
     to: str | None = Field(
         default=None,
         description=(
-            "Recipient email for the reschedule notice. Required to actually `send`; "
-            "for a preview (the default) it may be omitted."
+            "Recipient email for the reschedule notice — the other party's address "
+            "when `via='other_party'`, or your assistant's when `via='assistant'`. "
+            "Required to actually `send`; for a preview (the default) it may be "
+            "omitted."
         ),
     )
     recipient_name: str | None = Field(
-        default=None, description="The other party's display name, used in the draft."
+        default=None,
+        description=(
+            "The other party's display name, used in the draft (or, in "
+            "`assistant` mode, in the brief telling the assistant who to contact)."
+        ),
+    )
+    recipient_email: str | None = Field(
+        default=None,
+        description=(
+            "The other party's email — only used in `assistant` mode, folded into "
+            "the assistant's brief and the ready-to-forward note as who to reach. "
+            "Ignored when `via='other_party'` (use `to` instead)."
+        ),
     )
     note: str | None = Field(
         default=None,
-        description="Optional cover note from the user folded into the request.",
+        description=(
+            "Optional cover note from the user. In `other_party` mode it's folded "
+            "into the note itself; in `assistant` mode it's shown atop the email to "
+            "your assistant instead (it's for them, not the other party)."
+        ),
     )
     offer_slots: bool = Field(
         default=True,
@@ -157,6 +185,14 @@ class RescheduleRequest(BaseModel):
         if value is not None and value.strip().lower() not in ("a", "b"):
             raise ValueError("move must be 'a' or 'b'")
         return value.strip().lower() if value is not None else None
+
+    @field_validator("via")
+    @classmethod
+    def _valid_via(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("other_party", "assistant"):
+            raise ValueError("via must be 'other_party' or 'assistant'")
+        return normalized
 
 
 class CommitmentKind(BaseModel):

@@ -51,6 +51,7 @@ from prefrontal.config import (
     Settings,
 )
 from prefrontal.day_shape import build_day_shape, day_shape_payload, render_day_shape
+from prefrontal.delegation import compose_va_email
 from prefrontal.departure import (
     DEFAULT_DEPARTURE_GRACE_MINUTES,
     DEFAULT_TRAVEL_PAD_AUTOLEARN,
@@ -108,6 +109,7 @@ from prefrontal.panic import (
 from prefrontal.reschedule import (
     STATUS_DRAFTED,
     STATUS_FORWARDED,
+    RescheduleDraft,
     RescheduleResult,
     build_reschedule_draft,
     pick_move_side,
@@ -1226,9 +1228,16 @@ def build_router(services: RouterServices) -> APIRouter:
         Identifies the conflicting pair by its ``key`` (from
         ``GET /commitments/conflicts``), picks which appointment to move (the
         softer/later one by default; override with ``move: "a"|"b"``), and drafts a
-        short, polite reschedule request to the other party — offering a few of your
-        open slots as alternatives. The local model writes the draft when reachable,
-        with an honest offline fallback.
+        short, polite reschedule request — offering a few of your open slots as
+        alternatives. The local model writes the draft when reachable, with an
+        honest offline fallback.
+
+        ``via`` picks who it's addressed to: ``other_party`` (default) drafts it
+        straight to the other side; ``assistant`` instead wraps that same draft
+        (mirroring :func:`prefrontal.delegation.compose_va_email` — the same
+        hand-off email a delegated todo sends) into a note asking *your* VA to make
+        the move, with the ready-to-forward note-to-the-other-party attached as a
+        "Draft" they can send with minimal edits.
 
         Confirm-first by design: with ``send`` omitted/false this only **previews**
         the draft (``status: "drafted"``, nothing leaves the box). With ``send:
@@ -1310,15 +1319,50 @@ def build_router(services: RouterServices) -> APIRouter:
                 )
 
         client = ollama_client if ollama_client.available() else None
+        owner_name = ctx.user.get("display_name") or None
+        # In `assistant` mode the user's note is an instruction for the assistant
+        # (who to contact, what's going on) — not content for the other party, so
+        # it's withheld from the party-facing draft and folded into the VA email
+        # below instead.
+        party_note = payload.note if payload.via == "other_party" else None
         draft = build_reschedule_draft(
             move_title=move["title"],
             move_when=move_when,
             recipient_name=payload.recipient_name,
-            owner_name=ctx.user.get("display_name") or None,
-            note=payload.note,
+            owner_name=owner_name,
+            note=party_note,
             slots=slot_labels or None,
             client=client,
         )
+
+        if payload.via == "assistant":
+            # Wrap the same ready-to-forward note in a hand-off email to the VA,
+            # reusing the delegation email's exact composition (subject/preamble/
+            # brief/appended draft) rather than a bespoke prompt — the VA gets the
+            # note-to-Julie as a "Draft" they can forward with minimal edits.
+            who = payload.recipient_name or payload.recipient_email
+            brief_lines = [
+                f"Double-booked: “{move['title']}”"
+                + (f" ({move_when})" if move_when else "")
+                + f" clashes with “{keep['title']}”.",
+                f"Could you reach out to {who or 'the other party'} to find a new time?"
+                if (who or payload.recipient_email)
+                else "Could you reach out to the other party to find a new time?",
+            ]
+            if slot_labels:
+                brief_lines.append("A few times that work for me: " + "; ".join(slot_labels))
+            subject, body = compose_va_email(
+                title=f"reschedule “{move['title']}”",
+                brief="\n".join(brief_lines),
+                drafts=[{
+                    "channel": "email",
+                    "to": payload.recipient_email or "",
+                    "subject": draft.subject,
+                    "body": draft.body,
+                }],
+                note=payload.note,
+            )
+            draft = RescheduleDraft(subject=subject, body=body, offline=draft.offline)
 
         if not payload.send:
             result = RescheduleResult(
