@@ -63,18 +63,6 @@ struct Todo: Codable, Identifiable, Hashable {
     }
 
     var isStarted: Bool { startedAt != nil }
-
-    /// The single "current task" to externalize as a running Live Activity timer:
-    /// the most-recently-started **open** todo (M2). Nil when nothing's in
-    /// progress. Matches the server's "working on" definition — `started_at` set,
-    /// status still `open` (`prefrontal/todos.py`). When several are started, the
-    /// latest start wins: that's the one you're actually on right now.
-    static func current(in todos: [Todo]) -> Todo? {
-        todos
-            .filter { $0.isStarted && $0.status == "open" }
-            .max { (PFDate.parse($0.startedAt) ?? .distantPast)
-                 < (PFDate.parse($1.startedAt) ?? .distantPast) }
-    }
 }
 
 struct Avoidance: Codable, Hashable {

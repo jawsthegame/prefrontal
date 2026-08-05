@@ -10,24 +10,24 @@ import ActivityKit
 enum LiveActivityManager {
     static let outingKind = "outing"
     static let focusKind = "focus"
-    static let taskKind = "task"
 
     /// Reconcile the running Live Activity with the current active session.
     ///
     /// **Exactly one** timer shows at a time, chosen by a priority ladder:
-    /// **outing → focus → task**. This is deliberate — two competing clocks
-    /// dilute the anti-time-agnosia signal, and the Dynamic Island's compact
-    /// view can only render one activity anyway (with two active, iOS picks
-    /// non-deterministically). The order reflects salience: an outing means
-    /// you're physically out with a hard back-by deadline (whatever task you
-    /// left is paused in reality, even if still flagged started); a focus block
-    /// is the deliberate, richer count-up; a bare started `task` (the current
-    /// todo, see `Todo.current(in:)`) is the loosest signal and the general
-    /// "this has been running 22 min" glance (M2). The lower-priority kinds are
-    /// ended so only the winner remains.
+    /// **outing → focus**. This is deliberate — two competing clocks dilute the
+    /// anti-time-agnosia signal, and the Dynamic Island's compact view can only
+    /// render one activity anyway (with two active, iOS picks non-deterministically).
+    /// The order reflects salience: an outing means you're physically out with a
+    /// hard back-by deadline, and it outranks a focus block's deliberate count-up.
+    /// The lower-priority kind is ended so only the winner remains.
+    ///
+    /// A bare started todo is deliberately *not* externalized here. With no
+    /// planned end it produced an open-ended timer that never went stale and
+    /// lingered in the Dynamic Island until the todo was cleared — Live Activities
+    /// are reserved for the two bounded, deliberately-begun sessions (outing /
+    /// focus), which is what makes their clock meaningful.
     static func sync(outing: Outings.Outing?,
-                     focus: FocusState.Session?,
-                     task: Todo? = nil) async {
+                     focus: FocusState.Session?) async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             await endAll()   // user turned Live Activities off — don't leave stragglers
             return
@@ -39,7 +39,7 @@ enum LiveActivityManager {
         // Island. `ensure` then reconciles the winner without disturbing it when
         // it's already the one on screen.
         if let outing {
-            // Outing → "back by" countdown; it outranks any focus/task.
+            // Outing → "back by" countdown; it outranks a focus session.
             await endAll(except: outingKind)
             let started = PFDate.parse(outing.departureAt) ?? Date()
             let ends = outing.timeWindowMinutes.map { started.addingTimeInterval($0 * 60) }
@@ -50,13 +50,6 @@ enum LiveActivityManager {
             let started = PFDate.parse(focus.startedAt) ?? Date()
             let ends = focus.plannedMinutes.map { started.addingTimeInterval($0 * 60) }
             await ensure(kind: focusKind, title: focus.intendedTask ?? "Focusing", started: started, ends: ends)
-        } else if let task, task.isStarted {
-            // Task → elapsed count-up from when it was started (estimate, when
-            // set, is only the stale mark — the clock keeps counting past it).
-            await endAll(except: taskKind)
-            let started = PFDate.parse(task.startedAt) ?? Date()
-            let ends = task.estimateMinutes.map { started.addingTimeInterval($0 * 60) }
-            await ensure(kind: taskKind, title: task.title, started: started, ends: ends)
         } else {
             await endAll()
         }
