@@ -305,6 +305,7 @@ struct AvailableHoursSection: View {
 /// user's default waking hours. Reuses `AvailableHours`' picker ↔ HH:MM helpers.
 struct DomainWindowsSection: View {
     @State private var domains: [String: DomainWindows.Domain] = [:]
+    @State private var order: [String] = []
     @State private var loaded = false
     @State private var status: String?
 
@@ -316,7 +317,7 @@ struct DomainWindowsSection: View {
                     Text("Loading…").font(.footnote).foregroundStyle(Brand.muted)
                 }
             } else {
-                ForEach(DomainWindows.order, id: \.self) { key in
+                ForEach(order, id: \.self) { key in
                     domainRow(key)
                 }
                 Text("Optional hours per life domain. A todo tagged to a domain is only suggested inside its window — so a work task isn't offered at 9pm. Off = that domain uses your default waking hours.")
@@ -386,7 +387,7 @@ struct DomainWindowsSection: View {
         }
     }
 
-    private func apply(_ w: DomainWindows) { domains = w.domains }
+    private func apply(_ w: DomainWindows) { domains = w.domains; order = w.order }
 }
 
 /// Location-permission UX for the geofence/visit auto-logging (#566). Owns the

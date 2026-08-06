@@ -745,10 +745,10 @@ $("#hours").addEventListener("change", async (e) => {
 // The stored shape mirrors the /schedule/domain-windows contract exactly
 // (tests/contracts/domain_windows.*). A change writes the whole edited domain —
 // configured + start + end together — so a cleared domain keeps its band client-side.
-const DW_DOMAINS = [
-  ["shop", "Shop"], ["work", "Work"], ["home", "Home"],
-  ["kids", "Kids"], ["personal", "Personal"],
-];
+// Canonical labels; any extra (free-text) domain a todo uses falls back to a
+// capitalized key. The row set + order come from the server payload's `order`.
+const DW_LABELS = { shop: "Shop", work: "Work", home: "Home", kids: "Kids", personal: "Personal" };
+function dwLabel(key) { return DW_LABELS[key] || (key.charAt(0).toUpperCase() + key.slice(1)); }
 function dwRow(key, label, d) {
   const on = !!d.configured;
   const time = (field, val) =>
@@ -763,8 +763,9 @@ function dwRow(key, label, d) {
 }
 function renderDomains(body) {
   const domains = (body && body.domains) || {};
-  return DW_DOMAINS.map(([key, label]) =>
-    dwRow(key, label, domains[key] || { configured: false, start: "09:00", end: "17:00" })
+  const order = (body && body.order) || Object.keys(domains);
+  return order.map((key) =>
+    dwRow(key, dwLabel(key), domains[key] || { configured: false, start: "09:00", end: "17:00" })
   ).join("");
 }
 function flashDomains(msg) {

@@ -892,14 +892,31 @@ def build_router(services: RouterServices) -> APIRouter:
 
     # -- Per-domain windows (the work/life guardrail, made editable) ----------
 
-    def _domain_windows_payload(store: Any) -> dict[str, Any]:
-        """Every life domain's effective window + whether it's an explicit override.
+    def _in_use_domains(store: Any) -> list[str]:
+        """Non-canonical domains actually tagged on an open todo, sorted.
 
-        The effective band is what a todo in that domain is actually held to
-        (:func:`resolve_window`): the user's override when set, otherwise the
-        inherited default — a shared category default (``work``/``home``) or the
-        global default window. ``configured`` distinguishes an explicit override
-        from that inherited fallback, so the client can offer a "revert" affordance.
+        The canonical :data:`FOCUS_DOMAINS` are always offered; these are the
+        *extra*, free-text domains a todo carries (e.g. ``gardening``) so they can
+        be tuned too. Keyed off live open todos — not lingering override keys — so a
+        domain no longer in use quietly drops off the editor.
+        """
+        seen = {
+            (t.get("domain") or "").strip().lower() for t in store.open_todos()
+        }
+        return sorted(d for d in seen if d and d not in FOCUS_DOMAINS)
+
+    def _domain_windows_payload(store: Any) -> dict[str, Any]:
+        """Every domain's effective window + whether it's an explicit override.
+
+        Covers the canonical life domains (:data:`FOCUS_DOMAINS`) plus any
+        non-canonical domain currently in use on an open todo (see
+        :func:`_in_use_domains`). ``order`` is the display order — canonical first,
+        then extras alphabetically. The effective band is what a todo in that domain
+        is actually held to (:func:`resolve_window`): the user's override when set,
+        otherwise the inherited default (a shared category default such as
+        ``work``/``home``, or the global default window). ``configured``
+        distinguishes an explicit override from that inherited fallback, so the
+        client can offer a "revert" affordance.
         """
         cfg = window_config_for(resolved_settings, store)
         state = store.all_state() or {}
@@ -908,8 +925,9 @@ def build_router(services: RouterServices) -> APIRouter:
             hour, minute = divmod(minute, 60)
             return f"{hour:02d}:{minute:02d}"
 
+        order = [*FOCUS_DOMAINS, *_in_use_domains(store)]
         domains: dict[str, dict[str, Any]] = {}
-        for domain in FOCUS_DOMAINS:
+        for domain in order:
             entry = state.get(f"{STATE_WINDOW_PREFIX}{domain}")
             value = entry.get("value") if isinstance(entry, dict) else entry
             configured = isinstance(value, str) and parse_window(value) is not None
@@ -919,7 +937,7 @@ def build_router(services: RouterServices) -> APIRouter:
                 "start": _hhmm(start_min),
                 "end": _hhmm(end_min),
             }
-        return {"domains": domains}
+        return {"domains": domains, "order": order}
 
     @router.get("/schedule/domain-windows", tags=["schedule"])
     def get_domain_windows(
@@ -950,11 +968,24 @@ def build_router(services: RouterServices) -> APIRouter:
         same overrides `resolve_window` already honours), marked an explicit user
         choice, with the fresh full view echoed back.
 
-        Note: a domain sharing a name with a todo category (`work`, `home`) writes
-        the same window key, so configuring it also governs that category — intended,
-        since the life sphere is the same.
+        A domain must be either canonical (`FOCUS_DOMAINS`) or currently in use on a
+        todo — so the editor can tune a free-text domain a todo actually carries, but
+        the API won't mint windows for domains that don't exist (a 422). A domain
+        sharing a name with a todo category (`work`, `home`) writes the same window
+        key, so configuring it also governs that category — intended, since the life
+        sphere is the same.
         """
         memory = ctx.store
+        allowed = set(FOCUS_DOMAINS) | set(_in_use_domains(memory))
+        unknown = sorted(set(payload.domains) - allowed)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"unknown domain(s): {', '.join(unknown)}; expected a canonical "
+                    "life domain or one currently in use on a todo"
+                ),
+            )
         # Read-modify-write per key; hold the write lock so concurrent one-domain
         # saves can't interleave (mirrors the available-hours merge).
         with memory.transaction():

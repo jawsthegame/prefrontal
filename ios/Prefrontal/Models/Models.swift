@@ -475,8 +475,12 @@ struct AvailableHours: Codable {
 /// with the Pydantic `DomainWindow` and the web dashboard's `settings.html`.
 /// Reuses `AvailableHours.date`/`hhmm` for the picker ↔ `"HH:MM"` conversion.
 struct DomainWindows: Codable {
-    /// Life-domain key (`shop`…`personal`) → that domain's window.
+    /// Domain key → that domain's window.
     var domains: [String: Domain]
+    /// Display order the server chose: the canonical life domains
+    /// (`shop`…`personal`) first, then any extra free-text domain a todo currently
+    /// uses. Render rows by iterating this, not a hardcoded list.
+    var order: [String]
 
     struct Domain: Codable {
         /// Whether this domain has an explicit window (`false` inherits the default).
@@ -485,12 +489,11 @@ struct DomainWindows: Codable {
         var end: String     // local "HH:MM"; must be after `start` when configured
     }
 
-    /// Domain keys in display order, matching the server's `FOCUS_DOMAINS`.
-    static let order = ["shop", "work", "home", "kids", "personal"]
     private static let labels = [
         "shop": "Shop", "work": "Work", "home": "Home",
         "kids": "Kids", "personal": "Personal",
     ]
+    /// A canonical label, or a capitalized fallback for an extra free-text domain.
     static func label(_ key: String) -> String { labels[key] ?? key.capitalized }
 }
 
