@@ -275,9 +275,16 @@ def test_expand_keeps_wall_clock_across_dst():
     assert occ["start_at"] == "2026-01-07 12:30:00"  # 07:30 EST → 12:30 UTC
 
 
-# A future Wednesday, so occurrences land ahead of the real clock and survive
-# upcoming_commitments()'s `start_at >= now` filter regardless of test run date.
+# A fixed Wednesday noon (UTC) used as the injected clock for these recurrence
+# tests. The weekly master's 07:30 America/New_York slot lands at 11:30 UTC that
+# day; sync windows the expansion around this `now`, and the reads below pass the
+# SAME clock to upcoming_commitments() so retrieval is deterministic. (Previously
+# the reads passed no `now`, so they fell back to the real wall clock and dropped
+# occurrences once this date slipped into the past — a run-date-dependent flake.)
 _FUTURE_WED = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
+# One hour before _FUTURE_WED — the expansion window's lower edge — so the same-day
+# 11:30 UTC occurrence is included by upcoming_commitments()'s `start_at >= now`.
+_READ_AS_OF = _FUTURE_WED - timedelta(hours=1)
 
 
 def test_expand_stable_id_upserts_across_polls(store):
@@ -288,7 +295,7 @@ def test_expand_stable_id_upserts_across_polls(store):
             store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED,
             recur_horizon_hours=36,
         )
-    rows = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    rows = [c for c in store.upcoming_commitments(now=_READ_AS_OF) if c["title"] == "Tom Workout"]
     assert len(rows) == 1
 
 
@@ -348,7 +355,7 @@ def test_sync_default_expands_a_month_end_to_end(store):
     summary = sync_calendar(
         store, [dict(_WEEKLY_WED)], default_tz="America/New_York", now=_FUTURE_WED
     )
-    rows = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    rows = [c for c in store.upcoming_commitments(now=_READ_AS_OF) if c["title"] == "Tom Workout"]
     assert summary.added == 5  # Aug 5, 12, 19, 26, Sep 2
     assert [r["start_at"] for r in rows] == [
         "2026-08-05 11:30:00", "2026-08-12 11:30:00", "2026-08-19 11:30:00",
@@ -383,7 +390,7 @@ def test_sync_expands_recurring_end_to_end(store):
         recur_horizon_hours=36,
     )
     assert summary.added == 1
-    (got,) = [c for c in store.upcoming_commitments() if c["title"] == "Tom Workout"]
+    (got,) = [c for c in store.upcoming_commitments(now=_READ_AS_OF) if c["title"] == "Tom Workout"]
     assert got["start_at"] == "2026-08-05 11:30:00"  # 07:30 EDT → 11:30 UTC
 
 

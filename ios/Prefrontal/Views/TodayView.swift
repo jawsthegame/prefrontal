@@ -8,9 +8,6 @@ struct TodayView: View {
     @State private var departure: DepartureNext.Departure?
     @State private var activeOuting: Outings.Outing?
     @State private var activeFocus: FocusState.Session?
-    /// The current started todo — drives the "this has been running N min" Live
-    /// Activity when no focus session is active. Not rendered as a card here.
-    @State private var currentTask: Todo?
     @State private var nudges: [Nudges.Nudge] = []
     @State private var briefing: Briefing?
     /// Held only to feed `LocalNotifications.reconcileSelfCare` (not rendered here).
@@ -293,7 +290,6 @@ struct TodayView: View {
             async let dep = client.departureNext()
             async let out = client.outings()
             async let foc = client.focus()
-            async let td = client.todos()
             async let nud = client.nudges(limit: 8)
             async let brief = client.briefing()
             // Fetched only to refresh the offline self-care local notifications
@@ -306,7 +302,6 @@ struct TodayView: View {
             self.departure = (d?.departure?.title != nil) ? d?.departure : nil
             self.activeOuting = (try? await out)?.active.first
             self.activeFocus = (try? await foc)?.active.first
-            self.currentTask = Todo.current(in: (try? await td) ?? [])
             self.nudges = (try? await nud) ?? []
             self.briefing = try? await brief
             self.selfCareForNotifs = try? await care
@@ -321,9 +316,8 @@ struct TodayView: View {
         // from current state). No-op unless notifications are authorized.
         await LocalNotifications.reconcileDeparture(departure)
         await LocalNotifications.reconcileSelfCare(selfCareForNotifs)
-        // Keep the outing/focus/task Live Activity in sync with the active
-        // session — a started todo gets an elapsed timer when no focus is running.
-        await LiveActivityManager.sync(outing: activeOuting, focus: activeFocus, task: currentTask)
+        // Keep the outing/focus Live Activity in sync with the active session.
+        await LiveActivityManager.sync(outing: activeOuting, focus: activeFocus)
         loaded = true
     }
 }
