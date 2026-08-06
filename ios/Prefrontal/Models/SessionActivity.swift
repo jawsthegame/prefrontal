@@ -22,7 +22,10 @@ struct SessionActivityAttributes: ActivityAttributes {
         var endsAt: Date?
     }
 
-    /// "outing" or "focus" — fixed for the life of the activity.
+    /// "outing" or "focus" — fixed for the life of the activity. (A legacy
+    /// "task" kind from an older build may still ride an in-flight activity at
+    /// upgrade; the label/icon helpers below keep rendering it correctly until
+    /// the next `sync` ends it.)
     var kind: String
     /// The intention (outing) or task (focus) shown as the headline.
     var title: String
@@ -38,6 +41,7 @@ struct SessionActivityAttributes: ActivityAttributes {
     var noun: String {
         switch kind {
         case "outing": return "Out"
+        case "task":   return "Task"   // legacy in-flight activity only (see `kind`)
         default:       return "Focus"
         }
     }
@@ -46,6 +50,7 @@ struct SessionActivityAttributes: ActivityAttributes {
     var symbolName: String {
         switch kind {
         case "outing": return "figure.walk"
+        case "task":   return "checklist"   // legacy in-flight activity only (see `kind`)
         default:       return "scope"
         }
     }
