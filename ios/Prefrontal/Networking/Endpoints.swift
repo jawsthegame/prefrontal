@@ -263,6 +263,15 @@ extension APIClient {
         }
         return try await post("schedule/available-hours", json: ["days": payload], as: AvailableHours.self)
     }
+    func domainWindows() async throws -> DomainWindows {
+        try await get("schedule/domain-windows", as: DomainWindows.self)
+    }
+    func setDomainWindows(_ domains: [String: DomainWindows.Domain]) async throws -> DomainWindows {
+        let payload = domains.mapValues {
+            ["configured": $0.configured, "start": $0.start, "end": $0.end] as [String: Any]
+        }
+        return try await post("schedule/domain-windows", json: ["domains": payload], as: DomainWindows.self)
+    }
 
     // Commitment outcome (honest made/missed self-report on an elapsed event).
     // Pass nil to clear the answer, resurfacing it if still in-window.

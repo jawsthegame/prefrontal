@@ -49,6 +49,13 @@
   header { max-width: 720px; margin: 0 auto; padding: 22px 18px 4px; }
   header h1 { font-size: 24px; margin: 0; font-weight: 680; }
   header .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  /* ── Today / Tomorrow switch (text labels, not colour alone) ─────────────── */
+  .dayswitch { display: inline-flex; gap: 2px; margin-top: 10px; padding: 3px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 11px; }
+  .dayswitch button { appearance: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--muted); font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 8px; }
+  .dayswitch button:hover { color: var(--fg); }
+  .dayswitch button[aria-selected="true"] { background: var(--accent); color: var(--accent-fg); font-weight: 650; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 4px 16px 48px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
     padding: 18px 20px; margin: 16px 0 0; box-shadow: var(--shadow); }
@@ -163,7 +170,11 @@
 </nav>
 
 <header>
-  <h1>🗓 Today's shape</h1>
+  <h1 id="title">🗓 Today's shape</h1>
+  <div class="dayswitch" role="tablist" aria-label="Which day to show">
+    <button id="d-today" type="button" role="tab" aria-selected="true">Today</button>
+    <button id="d-tomorrow" type="button" role="tab" aria-selected="false">Tomorrow</button>
+  </div>
   <div class="meta" id="status">loading…</div>
 </header>
 
@@ -281,8 +292,9 @@ function nowLineHtml(day) {
   return `<div class="nowline"><div class="lbl">${esc(day.now_local)}</div><div class="bar"></div></div>`;
 }
 
-function render(day) {
+function render(day, off = 0) {
   const segs = day.segments || [];
+  const dayWord = off === 1 ? "tomorrow" : "today";
   // Summary line — plain-text totals, no chart needed to read them.
   const bits = [
     `<span><b>${esc(day.band_start_local)}–${esc(day.band_end_local)}</b></span>`,
@@ -295,7 +307,7 @@ function render(day) {
   $("#summary").innerHTML = bits.join("");
 
   if (!segs.length) {
-    $("#tl").innerHTML = `<p class="empty">Nothing scheduled and no free time in your waking hours today. Enjoy it. 🌿</p>`;
+    $("#tl").innerHTML = `<p class="empty">Nothing scheduled and no free time in your waking hours ${dayWord}. Enjoy it. 🌿</p>`;
     $("#status").textContent = "A clear day";
     return;
   }
@@ -320,17 +332,29 @@ function render(day) {
     `${committed} commitment${committed === 1 ? "" : "s"} · ${day.fitted_count} fitted todo${day.fitted_count === 1 ? "" : "s"}`;
 }
 
-async function load() {
+// Which day is showing: 0 = today, 1 = tomorrow. The server draws a future day
+// as a forward-looking preview (nothing dimmed, whole day fittable).
+let dayOffset = 0;
+function setDaySwitch(off) {
+  dayOffset = off;
+  $("#d-today").setAttribute("aria-selected", off === 0 ? "true" : "false");
+  $("#d-tomorrow").setAttribute("aria-selected", off === 1 ? "true" : "false");
+  $("#title").textContent = off === 1 ? "🗓 Tomorrow's shape" : "🗓 Today's shape";
+}
+async function load(off = dayOffset) {
+  setDaySwitch(off);
   try {
-    const day = await api("/day");
+    const day = await api("/day?offset=" + off);
     $("#gate").style.display = "none";
     $("#wrap").style.display = "";
-    render(day);
+    render(day, off);
   } catch (e) {
     if (e.code === 401) gate();
     else $("#status").textContent = "Couldn't load your day — " + e.message;
   }
 }
+$("#d-today").onclick = () => load(0);
+$("#d-tomorrow").onclick = () => load(1);
 
 $("#token-save").onclick = () => {
   const v = $("#token-input").value.trim();

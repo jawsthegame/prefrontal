@@ -274,6 +274,16 @@
     <div class="saved" id="hr-saved"></div>
   </section>
 
+  <section class="card" id="c-domains">
+    <h2>Domain hours</h2>
+    <p class="sub">Optional per-<b>domain</b> hours. A todo tagged to a life domain
+      (work, home, kids…) is only suggested <b>inside</b> that domain's window — so a
+      work task isn't offered at 9pm. Off = that domain just uses your default
+      waking hours.</p>
+    <div id="domains"></div>
+    <div class="saved" id="dw-saved"></div>
+  </section>
+
   <section class="card" id="c-location">
     <h2>Location</h2>
     <p class="sub">Tunables for the iOS app's background location. The on/off switch
@@ -728,6 +738,74 @@ $("#hours").addEventListener("change", async (e) => {
     flashHours(day.available && day.start >= day.end
       ? "end must be after start" : "couldn't save — retry");
     loadHours();  // resync the controls to what's actually stored
+  }
+});
+
+// ── Domain hours: an optional per-life-domain window (unchecked = default) ───
+// The stored shape mirrors the /schedule/domain-windows contract exactly
+// (tests/contracts/domain_windows.*). A change writes the whole edited domain —
+// configured + start + end together — so a cleared domain keeps its band client-side.
+const DW_DOMAINS = [
+  ["shop", "Shop"], ["work", "Work"], ["home", "Home"],
+  ["kids", "Kids"], ["personal", "Personal"],
+];
+function dwRow(key, label, d) {
+  const on = !!d.configured;
+  const time = (field, val) =>
+    `<input class="hr-time" type="time" data-dw-domain="${key}" data-dw-field="${field}" `
+    + `value="${esc(val)}"${on ? "" : " disabled"} />`;
+  return `<div class="sc-check${on ? "" : " sc-check-off"}">
+    <label class="sc-en"><input type="checkbox" data-dw-domain="${key}" data-dw-field="configured"`
+    + `${on ? " checked" : ""}/> ${esc(label)}</label>
+    <span class="sc-field">${time("start", d.start)}</span>
+    <span class="sc-field">to ${time("end", d.end)}</span>
+  </div>`;
+}
+function renderDomains(body) {
+  const domains = (body && body.domains) || {};
+  return DW_DOMAINS.map(([key, label]) =>
+    dwRow(key, label, domains[key] || { configured: false, start: "09:00", end: "17:00" })
+  ).join("");
+}
+function flashDomains(msg) {
+  $("#dw-saved").textContent = msg;
+  setTimeout(() => { $("#dw-saved").textContent = ""; }, 1600);
+}
+async function loadDomains() {
+  try {
+    if (!$("#domains").contains(document.activeElement)) {
+      $("#domains").innerHTML = renderDomains(await api("/schedule/domain-windows"));
+    }
+  } catch (err) {
+    if (err.code === 401) gate("Session expired.");
+  }
+}
+$("#domains").addEventListener("change", async (e) => {
+  const inp = e.target.closest("input");
+  if (!inp) return;
+  const key = inp.dataset.dwDomain;
+  if (!key) return;
+  // Send the domain as a whole so the server keeps a valid, complete band (and so
+  // a cleared domain's hours survive for when it's toggled back on).
+  const row = $("#domains");
+  const val = (field) => row.querySelector(`[data-dw-domain="${key}"][data-dw-field="${field}"]`);
+  const dw = {
+    configured: val("configured").checked,
+    start: val("start").value || "09:00",
+    end: val("end").value || "17:00",
+  };
+  try {
+    const fresh = await api("/schedule/domain-windows", {
+      method: "POST", body: JSON.stringify({ domains: { [key]: dw } }),
+    });
+    $("#domains").innerHTML = renderDomains(fresh);
+    flashDomains("Saved ✓");
+  } catch (err) {
+    if (err.code === 401) { gate("Session expired."); return; }
+    // A 422 here is almost always end ≤ start on a configured domain.
+    flashDomains(dw.configured && dw.start >= dw.end
+      ? "end must be after start" : "couldn't save — retry");
+    loadDomains();  // resync the controls to what's actually stored
   }
 });
 
@@ -1347,6 +1425,7 @@ async function load() {
   await loadTodos();
   await loadDeparture();
   await loadHours();
+  await loadDomains();
   await loadLocation();
   await loadPlaces();
   await loadMail();

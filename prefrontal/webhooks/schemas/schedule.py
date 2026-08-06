@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from prefrontal.focus_balance import FOCUS_DOMAINS
 from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.scheduling import WEEKDAYS
 
@@ -423,5 +424,71 @@ class AvailableHours(BaseModel):
             raise ValueError(
                 f"unknown weekday key(s): {', '.join(unknown)}; "
                 f"expected any of {', '.join(WEEKDAYS)}"
+            )
+        return value
+
+
+class DomainWindow(BaseModel):
+    """One life-domain's time-of-day window in ``GET/POST /schedule/domain-windows``.
+
+    A life domain (``work``/``home``/…) can carry a within-day ``start``/``end``
+    band that todos in that domain are only *suggested* inside (see
+    :func:`prefrontal.scheduling.resolve_window`) — so a work errand doesn't get
+    offered at 9pm. ``configured=false`` clears the override and reverts the domain
+    to its inherited default band. ``start``/``end`` are kept even when cleared, so
+    re-enabling the domain restores its last band.
+    """
+
+    configured: bool = Field(
+        default=True,
+        description=(
+            "Whether this domain has an explicit window. `false` clears the "
+            "override so the domain falls back to its inherited default band."
+        ),
+    )
+    start: str = Field(
+        default="09:00",
+        pattern=_HHMM_PATTERN,
+        description="Local start of the domain's window, `HH:MM` (24-hour).",
+    )
+    end: str = Field(
+        default="17:00",
+        pattern=_HHMM_PATTERN,
+        description="Local end of the domain's window, `HH:MM`; must be after `start`.",
+    )
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> DomainWindow:
+        # Only meaningful for a configured domain; a cleared one's band is inert.
+        # Both are zero-padded HH:MM, so a string compare is chronological.
+        if self.configured and self.start >= self.end:
+            raise ValueError("`end` must be later than `start` for a configured domain")
+        return self
+
+
+class DomainWindows(BaseModel):
+    """Body/response of ``/schedule/domain-windows`` — per-life-domain windows.
+
+    ``domains`` maps a life-domain key
+    (:data:`prefrontal.focus_balance.FOCUS_DOMAINS` — ``shop``/``work``/``home``/
+    ``kids``/``personal``) to its :class:`DomainWindow`. A write may be partial:
+    only the domains present are updated, the rest keep their stored value. A read
+    returns all of them, each with its effective band and whether it's an explicit
+    override.
+    """
+
+    domains: dict[str, DomainWindow] = Field(
+        default_factory=dict,
+        description="Life-domain key → that domain's window.",
+    )
+
+    @field_validator("domains")
+    @classmethod
+    def _known_domains(cls, value: dict[str, DomainWindow]) -> dict[str, DomainWindow]:
+        unknown = sorted(set(value) - set(FOCUS_DOMAINS))
+        if unknown:
+            raise ValueError(
+                f"unknown domain key(s): {', '.join(unknown)}; "
+                f"expected any of {', '.join(FOCUS_DOMAINS)}"
             )
         return value

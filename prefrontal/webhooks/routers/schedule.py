@@ -17,6 +17,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
     status,
 )
@@ -68,7 +69,7 @@ from prefrontal.departure import (
     travel_leads,
 )
 from prefrontal.encouragement import OPEN_DAY_CHOICES, OPEN_DAY_KEY
-from prefrontal.focus_balance import normalize_focus_domain
+from prefrontal.focus_balance import FOCUS_DOMAINS, normalize_focus_domain
 from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.geocode import (
     normalize_query,
@@ -118,8 +119,11 @@ from prefrontal.reschedule import (
 from prefrontal.scheduling import (
     DEFAULT_SLOT_DAYS,
     STATE_AVAILABLE_HOURS_KEY,
+    STATE_WINDOW_PREFIX,
     WEEKDAYS,
     find_slots,
+    parse_window,
+    resolve_window,
     window_config_for,
 )
 from prefrontal.sources import (
@@ -150,6 +154,7 @@ from prefrontal.webhooks.schemas import (
     CommitmentOutcome,
     CommitmentPrepared,
     ConflictDismiss,
+    DomainWindows,
     LocationSettings,
     PlaceCreate,
     RescheduleRequest,
@@ -884,6 +889,82 @@ def build_router(services: RouterServices) -> APIRouter:
                 STATE_AVAILABLE_HOURS_KEY, json.dumps(stored), source="explicit"
             )
         return _available_hours_payload(memory)
+
+    # -- Per-domain windows (the work/life guardrail, made editable) ----------
+
+    def _domain_windows_payload(store: Any) -> dict[str, Any]:
+        """Every life domain's effective window + whether it's an explicit override.
+
+        The effective band is what a todo in that domain is actually held to
+        (:func:`resolve_window`): the user's override when set, otherwise the
+        inherited default — a shared category default (``work``/``home``) or the
+        global default window. ``configured`` distinguishes an explicit override
+        from that inherited fallback, so the client can offer a "revert" affordance.
+        """
+        cfg = window_config_for(resolved_settings, store)
+        state = store.all_state() or {}
+
+        def _hhmm(minute: int) -> str:
+            hour, minute = divmod(minute, 60)
+            return f"{hour:02d}:{minute:02d}"
+
+        domains: dict[str, dict[str, Any]] = {}
+        for domain in FOCUS_DOMAINS:
+            entry = state.get(f"{STATE_WINDOW_PREFIX}{domain}")
+            value = entry.get("value") if isinstance(entry, dict) else entry
+            configured = isinstance(value, str) and parse_window(value) is not None
+            start_min, end_min = resolve_window({"domain": domain}, cfg)
+            domains[domain] = {
+                "configured": configured,
+                "start": _hhmm(start_min),
+                "end": _hhmm(end_min),
+            }
+        return {"domains": domains}
+
+    @router.get("/schedule/domain-windows", tags=["schedule"])
+    def get_domain_windows(
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """The per-life-domain time-of-day windows todos are suggested within.
+
+        Returns every life domain (`shop`, `work`, `home`, `kids`, `personal`) with
+        its effective local `start`/`end` band and a `configured` flag. A domain
+        with no explicit override inherits a default band (a shared category default
+        such as work/home, or the global default window) and reports
+        `configured=false`. These bands gate when a todo in that domain is
+        suggested (the work/life guardrail; see `resolve_window`).
+        """
+        return _domain_windows_payload(ctx.store)
+
+    @router.post("/schedule/domain-windows", tags=["schedule"])
+    def set_domain_windows(
+        payload: DomainWindows,
+        ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+    ) -> dict[str, Any]:
+        """Set (or clear) per-life-domain windows from Settings.
+
+        A **partial** write: only the domains present in `domains` are touched. For
+        each, `configured=true` stores its `start`-`end` band as the domain's
+        override; `configured=false` clears the override so the domain reverts to
+        its inherited default. Stored as `todo_window:<domain>` coaching keys (the
+        same overrides `resolve_window` already honours), marked an explicit user
+        choice, with the fresh full view echoed back.
+
+        Note: a domain sharing a name with a todo category (`work`, `home`) writes
+        the same window key, so configuring it also governs that category — intended,
+        since the life sphere is the same.
+        """
+        memory = ctx.store
+        # Read-modify-write per key; hold the write lock so concurrent one-domain
+        # saves can't interleave (mirrors the available-hours merge).
+        with memory.transaction():
+            for domain, win in payload.domains.items():
+                key = f"{STATE_WINDOW_PREFIX}{domain}"
+                if win.configured:
+                    memory.set_state(key, f"{win.start}-{win.end}", source="explicit")
+                else:
+                    memory.delete_state(key)
+        return _domain_windows_payload(memory)
 
     # -- Location settings (tunables on web; the phone keeps only the opt-in) --
     #
@@ -1791,21 +1872,27 @@ def build_router(services: RouterServices) -> APIRouter:
     @router.get("/day", tags=["schedule"])
     def day_shape(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        offset: Annotated[int, Query(ge=0, le=1)] = 0,
     ) -> dict[str, Any]:
-        """The visual **day-shape** — today laid out as a timeline of blocks.
+        """The visual **day-shape** — a day laid out as a timeline of blocks.
 
         Where ``/briefing`` narrates the day and ``/next`` names one action, this
-        returns the day's *shape*: today's commitments as fixed blocks, the open
+        returns the day's *shape*: the day's commitments as fixed blocks, the open
         todos fitted into the forward gaps, and the free time in between — the
         Structured / Tiimo pattern, built from the same fitting the briefing uses.
         Every block carries a non-colour kind signal (``glyph`` + ``pattern`` +
         ``kind``) so a client can draw it legibly without relying on hue (the
         CHI-2024 finding on ADHD chart-reading). Read-only, fast, and model-free —
         it powers the ``/day/board`` timeline and any glanceable day widget, so a
-        client can poll it on a timeline cadence. See
-        :func:`prefrontal.day_shape.build_day_shape`.
+        client can poll it on a timeline cadence.
+
+        ``offset`` selects the day: ``0`` (default) is today; ``1`` is tomorrow,
+        drawn as a forward-looking preview (the whole day is fittable and nothing
+        is dimmed as past). See :func:`prefrontal.day_shape.build_day_shape`.
         """
-        shape = build_day_shape(ctx.store, settings=resolved_settings)
+        shape = build_day_shape(
+            ctx.store, settings=resolved_settings, day_offset=offset
+        )
         return {**day_shape_payload(shape), "text": render_day_shape(shape)}
 
     @router.post("/webhooks/panic/check", tags=["schedule"])
