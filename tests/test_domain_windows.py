@@ -49,6 +49,8 @@ def _auth():
 def test_get_returns_all_domains_with_inherited_defaults(client) -> None:
     body = client.get("/schedule/domain-windows", headers=_auth()).json()
     assert set(body["domains"]) == set(FOCUS_DOMAINS)
+    # With no todos there are no extra domains, so order is exactly the canonical five.
+    assert body["order"] == list(FOCUS_DOMAINS)
     # Nothing configured yet: every domain reports its inherited band, not an override.
     assert all(d["configured"] is False for d in body["domains"].values())
     # "work" inherits the shared category default (09:00–17:00); a domain with no
@@ -111,12 +113,45 @@ def test_post_rejects_end_before_start_and_unknown_domain(client) -> None:
         headers=_auth(),
     )
     assert bad_band.status_code == 422
+    # "bogus" is neither canonical nor in use on any todo, so it's rejected.
     unknown = client.post(
         "/schedule/domain-windows",
         json={"domains": {"bogus": {"configured": True, "start": "09:00", "end": "17:00"}}},
         headers=_auth(),
     )
     assert unknown.status_code == 422
+
+
+def test_free_text_domain_in_use_is_surfaced_and_editable(client, store) -> None:
+    """A non-canonical domain a todo actually carries is offered and tunable."""
+    store.add_todo("Weed the beds", domain="gardening")
+    body = client.get("/schedule/domain-windows", headers=_auth()).json()
+    # Canonical five first, then the extra domain the todo uses.
+    assert body["order"][: len(FOCUS_DOMAINS)] == list(FOCUS_DOMAINS)
+    assert body["order"][len(FOCUS_DOMAINS):] == ["gardening"]
+    assert body["domains"]["gardening"] == {"configured": False, "start": "06:00", "end": "22:00"}
+    # It can be configured like any canonical domain, and the override takes hold.
+    resp = client.post(
+        "/schedule/domain-windows",
+        json={"domains": {"gardening": {"configured": True, "start": "07:00", "end": "10:00"}}},
+        headers=_auth(),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["domains"]["gardening"] == {
+        "configured": True, "start": "07:00", "end": "10:00",
+    }
+    cfg = window_config_for(Settings(webhook_secret=SECRET), store)
+    assert resolve_window({"domain": "gardening"}, cfg) == (7 * 60, 10 * 60)
+
+
+def test_domain_drops_off_once_no_todo_uses_it(client, store) -> None:
+    """Once no open todo carries a free-text domain, it leaves the editor list."""
+    tid = store.add_todo("Weed the beds", domain="gardening")
+    assert "gardening" in client.get("/schedule/domain-windows", headers=_auth()).json()["order"]
+    store.close_todo(tid)  # status defaults to "done"
+    body = client.get("/schedule/domain-windows", headers=_auth()).json()
+    assert body["order"] == list(FOCUS_DOMAINS)
+    assert "gardening" not in body["domains"]
 
 
 def test_override_changes_the_resolved_window(client, store) -> None:

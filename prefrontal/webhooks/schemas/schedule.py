@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from prefrontal.focus_balance import FOCUS_DOMAINS
 from prefrontal.geo import DEFAULT_HOME_RADIUS_M
 from prefrontal.scheduling import WEEKDAYS
 
@@ -484,11 +483,16 @@ class DomainWindows(BaseModel):
 
     @field_validator("domains")
     @classmethod
-    def _known_domains(cls, value: dict[str, DomainWindow]) -> dict[str, DomainWindow]:
-        unknown = sorted(set(value) - set(FOCUS_DOMAINS))
-        if unknown:
-            raise ValueError(
-                f"unknown domain key(s): {', '.join(unknown)}; "
-                f"expected any of {', '.join(FOCUS_DOMAINS)}"
-            )
-        return value
+    def _normalize_keys(cls, value: dict[str, DomainWindow]) -> dict[str, DomainWindow]:
+        # A domain key mirrors a todo's ``domain`` field (lower-cased, trimmed), so
+        # normalize here for a stable match. The canonical vocabulary is
+        # :data:`FOCUS_DOMAINS`, but a todo may carry a free-text domain too, so the
+        # *set* of acceptable domains is enforced by the endpoint (which can see the
+        # todos in use); this only rejects a structurally empty key.
+        out: dict[str, DomainWindow] = {}
+        for key, win in value.items():
+            norm = key.strip().lower()
+            if not norm:
+                raise ValueError("domain key must be a non-empty string")
+            out[norm] = win
+        return out
