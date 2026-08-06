@@ -383,6 +383,65 @@ def test_http_reschedule_rejects_a_possible_conflict(http):
     assert "firm double-booking" in r.json()["detail"]
 
 
+def test_http_reschedule_via_assistant_wraps_as_va_handoff(http):
+    """`via: "assistant"` wraps the same ready-to-forward note in a VA hand-off
+    email (mirrors delegation's compose_va_email) instead of addressing the
+    other party directly."""
+    key = _make_conflict(http)
+    r = http.post(
+        "/commitments/conflicts/reschedule",
+        json={
+            "key": key,
+            "via": "assistant",
+            "recipient_name": "Julie",
+            "recipient_email": "julie@example.com",
+            "note": "please handle this one",
+        },
+        headers=_headers(),
+    ).json()
+    assert r["status"] == STATUS_DRAFTED
+    assert r["subject"].startswith("[Prefrontal] Please help with:")
+    assert "please handle this one" in r["body"]  # the user's note — for the VA
+    assert "Julie" in r["body"]  # who the VA should contact
+    assert "julie@example.com" in r["body"]  # the forwardable draft's "to"
+    assert "Move our meeting?" in r["body"]  # the drafted note, attached to forward
+
+
+def test_http_reschedule_via_assistant_sends_to_the_assistant_not_the_other_party(http):
+    key = _make_conflict(http)
+    r = http.post(
+        "/commitments/conflicts/reschedule",
+        json={
+            "key": key, "via": "assistant", "to": "va@example.com",
+            "recipient_email": "julie@example.com", "send": True,
+        },
+        headers=_headers(),
+    ).json()
+    # No SMTP configured in this fixture, so the send fails gracefully — but
+    # `recipient` shows who it would have gone to: the assistant, not Julie.
+    assert r["status"] == STATUS_FAILED
+    assert r["recipient"] == "va@example.com"
+
+
+def test_http_reschedule_via_defaults_to_other_party(http):
+    """Omitting `via` keeps the old direct-to-the-other-party behavior."""
+    key = _make_conflict(http)
+    r = http.post(
+        "/commitments/conflicts/reschedule",
+        json={"key": key, "recipient_name": "Sam"}, headers=_headers(),
+    ).json()
+    assert not r["subject"].startswith("[Prefrontal] Please help with:")
+
+
+def test_http_reschedule_via_invalid_value_422s(http):
+    key = _make_conflict(http)
+    r = http.post(
+        "/commitments/conflicts/reschedule",
+        json={"key": key, "via": "carrier_pigeon"}, headers=_headers(),
+    )
+    assert r.status_code == 422
+
+
 def test_http_reschedule_offers_open_slots(http):
     key = _make_conflict(http)
     r = http.post(

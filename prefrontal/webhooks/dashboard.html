@@ -301,6 +301,9 @@
   .conflict { background: var(--call-bg); color: var(--call); }
   .possible { background: var(--soft-bg); color: var(--soft); }
   /* Reschedule popover: preview of the "ask the other side to move" email. */
+  .cat-menu .move-opt.active, .cat-menu .via-opt.active { background: var(--accent-bg, var(--raise));
+    color: var(--accent); border-color: var(--accent); border-style: solid; }
+  .cat-menu .resched-assistant-fields { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
   .cat-menu .resched-preview { flex-basis: 100%; border-top: 1px solid var(--line);
     margin-top: 4px; padding-top: 6px; }
   .resched-move { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
@@ -1668,14 +1671,46 @@ function openDelegateMenu(anchor, id) {
 // one appointment. Confirm-first — "Preview draft" (send:false) shows the drafted
 // note; "Send" (send:true, needs an email) mails it over your SMTP and, on
 // success, dismisses the conflict. Reuses the .cat-menu shell + POST pattern.
-function openRescheduleMenu(anchor, key) {
+function openRescheduleMenu(anchor, key, aTitle, bTitle) {
   closePillMenu();
   const menu = document.createElement("div");
   menu.className = "cat-menu";
   const lead = document.createElement("span");
   lead.className = "lead";
-  lead.textContent = "Ask the other party to move one appointment. Preview first — nothing sends until you hit Send.";
+  lead.textContent = "Pick which one moves and who hears about it. Preview first — nothing sends until you hit Send.";
   menu.appendChild(lead);
+
+  // Which appointment moves — explicit, not silently auto-picked. Left unset
+  // (null) lets the server suggest one (named in the preview below); clicking
+  // either title pins your choice and invalidates any stale preview.
+  let moveSide = null;
+  const aBtn = document.createElement("button");
+  aBtn.type = "button"; aBtn.className = "cat-act move-opt";
+  aBtn.textContent = `Move "${aTitle || "A"}"`;
+  const bBtn = document.createElement("button");
+  bBtn.type = "button"; bBtn.className = "cat-act move-opt";
+  bBtn.textContent = `Move "${bTitle || "B"}"`;
+  aBtn.onclick = () => { moveSide = "a"; aBtn.classList.add("active"); bBtn.classList.remove("active"); invalidate(); };
+  bBtn.onclick = () => { moveSide = "b"; bBtn.classList.add("active"); aBtn.classList.remove("active"); invalidate(); };
+  menu.appendChild(aBtn);
+  menu.appendChild(bBtn);
+
+  const sep1 = document.createElement("div");
+  sep1.className = "cat-sep";
+  menu.appendChild(sep1);
+
+  // Who the request goes to: the other party directly, or your assistant (who
+  // coordinates the move on your behalf) — mirrors the todo delegate popover's
+  // "Prep with AI" / "Email an assistant" choice.
+  let via = "other_party";
+  const partyBtn = document.createElement("button");
+  partyBtn.type = "button"; partyBtn.className = "cat-act via-opt active";
+  partyBtn.textContent = "✉ Ask them directly";
+  const vaBtn = document.createElement("button");
+  vaBtn.type = "button"; vaBtn.className = "cat-act via-opt";
+  vaBtn.textContent = "🤝 Ask my assistant";
+  menu.appendChild(partyBtn);
+  menu.appendChild(vaBtn);
 
   const nameInp = document.createElement("input");
   nameInp.type = "text";
@@ -1685,10 +1720,55 @@ function openRescheduleMenu(anchor, key) {
   toInp.type = "email";
   toInp.placeholder = "their@email.com (needed to send)";
   menu.appendChild(toInp);
+
+  // Assistant-only fields: the other party's email (context for the assistant,
+  // never sent to directly) + a chip row of VA addresses you've used before.
+  const assistantFields = document.createElement("div");
+  assistantFields.className = "resched-assistant-fields";
+  assistantFields.style.display = "none";
+  const partyEmailInp = document.createElement("input");
+  partyEmailInp.type = "email";
+  partyEmailInp.placeholder = "Their email, so your assistant knows who to contact (optional)";
+  const recipRow = document.createElement("div");
+  recipRow.className = "deleg-recips";
+  assistantFields.appendChild(partyEmailInp);
+  assistantFields.appendChild(recipRow);
+  menu.appendChild(assistantFields);
+
   const noteBox = document.createElement("textarea");
   noteBox.className = "deleg-context";
   noteBox.placeholder = "Optional note folded into the request…";
   menu.appendChild(noteBox);
+
+  const setVia = (next) => {
+    via = next;
+    partyBtn.classList.toggle("active", next === "other_party");
+    vaBtn.classList.toggle("active", next === "assistant");
+    assistantFields.style.display = next === "assistant" ? "" : "none";
+    toInp.placeholder = next === "assistant"
+      ? "your-assistant@example.com (needed to send)" : "their@email.com (needed to send)";
+    noteBox.placeholder = next === "assistant"
+      ? "Optional note to your assistant (shown atop the email)…" : "Optional note folded into the request…";
+    if (next === "assistant" && !recipRow.dataset.loaded) {
+      recipRow.dataset.loaded = "1";
+      loadDelegRecipients().then((r) => {
+        const recips = r.email || [];
+        if (!recips.length) return;
+        recipRow.appendChild(document.createTextNode("Recent: "));
+        recips.forEach((addr) => {
+          const chip = document.createElement("button");
+          chip.type = "button"; chip.className = "recip-chip";
+          chip.textContent = addr;
+          chip.title = `Ask ${addr} to make the move`;
+          chip.onclick = () => { toInp.value = addr; invalidate(); };
+          recipRow.appendChild(chip);
+        });
+      });
+    }
+    invalidate();
+  };
+  partyBtn.onclick = () => setVia("other_party");
+  vaBtn.onclick = () => setVia("assistant");
 
   const preview = document.createElement("div");
   preview.className = "resched-preview";
@@ -1699,10 +1779,14 @@ function openRescheduleMenu(anchor, key) {
   menu.appendChild(statusEl);
 
   const bodyFor = (send) => {
-    const b = { key, send };
+    const b = { key, send, via };
+    if (moveSide) b.move = moveSide;
     const to = toInp.value.trim(); if (to) b.to = to;
     const nm = nameInp.value.trim(); if (nm) b.recipient_name = nm;
     const nt = noteBox.value.trim(); if (nt) b.note = nt;
+    if (via === "assistant") {
+      const pe = partyEmailInp.value.trim(); if (pe) b.recipient_email = pe;
+    }
     return b;
   };
   const renderResult = (r) => {
@@ -1734,7 +1818,10 @@ function openRescheduleMenu(anchor, key) {
   sendBtn.textContent = "Send";
   sendBtn.disabled = true;
   sendBtn.onclick = async () => {
-    if (!toInp.value.trim()) { statusEl.textContent = "Add their email to send."; return; }
+    if (!toInp.value.trim()) {
+      statusEl.textContent = via === "assistant" ? "Add your assistant's email to send." : "Add their email to send.";
+      return;
+    }
     statusEl.textContent = "Sending…";
     try {
       const r = await post("/commitments/conflicts/reschedule", bodyFor(true));
@@ -1746,13 +1833,14 @@ function openRescheduleMenu(anchor, key) {
 
   // Confirm-first: editing any field after a preview invalidates it, so Send is
   // re-locked until you preview again — you never send an unpreviewed note.
-  const invalidate = () => {
+  function invalidate() {
     sendBtn.disabled = true;
     preview.style.display = "none";
     statusEl.textContent = "";
-  };
+  }
   nameInp.oninput = invalidate;
   toInp.oninput = invalidate;
+  partyEmailInp.oninput = invalidate;
   noteBox.oninput = invalidate;
 
   placePillMenu(menu, anchor);
@@ -2376,7 +2464,8 @@ function renderCommitments(list, conflicts, cascade) {
         <span class="sub">${esc(p.a.title)} ↔ ${esc(p.b.title)} overlap ${mins(p.overlap_minutes)}</span>
         <div class="sub">${fmt(conflictWhen(p))}</div></div>
       <div class="acts"><button class="btn-sm" data-action="reschedule-conflict" data-key="${esc(p.key)}"
-        title="Ask the other party to move one of these — drafts a polite email, sends only when you confirm">Reschedule…</button>
+        data-a-title="${esc(p.a.title)}" data-b-title="${esc(p.b.title)}"
+        title="Pick which one moves — drafts a polite email, sends only when you confirm">Reschedule…</button>
         <button class="btn-sm" data-action="dismiss-conflict" data-key="${esc(p.key)}"
         title="I know these overlap — stop flagging it (resurfaces if either event moves)">Dismiss</button></div>
     </div>`;
@@ -3606,7 +3695,10 @@ document.addEventListener("click", async (e) => {
     else if (act === "outing-return") { if (!confirm("Mark this outing as returned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "returned" }); }
     else if (act === "outing-abandon") { if (!confirm("Mark this outing abandoned?")) return; await post("/webhooks/outing/return", { outing_id: Number(id), status: "abandoned" }); }
     else if (act === "dismiss-conflict") { await post("/commitments/conflicts/dismiss", { key: el.dataset.key }); }
-    else if (act === "reschedule-conflict") { openRescheduleMenu(el, el.dataset.key); return; }
+    else if (act === "reschedule-conflict") {
+      openRescheduleMenu(el, el.dataset.key, el.dataset.aTitle, el.dataset.bTitle);
+      return;
+    }
     else if (act === "commitment-kind") { await post(`/commitments/${id}/kind`, { kind: el.dataset.kind }); }
     else if (act === "commitment-hardness") { await post(`/commitments/${id}/hardness`, { hardness: el.dataset.hardness }); }
     else if (act === "commitment-hide") { await post(`/commitments/${id}/hidden`, { hidden: true }); }
