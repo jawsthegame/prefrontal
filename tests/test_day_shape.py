@@ -272,6 +272,39 @@ def test_times_render_in_local_zone(store):
     assert shape.now_local == "10:00"
 
 
+# --- Tomorrow (day_offset) ---------------------------------------------------
+
+
+def test_tomorrow_previews_the_next_local_day(store):
+    """``day_offset=1`` draws tomorrow: its date, only its blocks, no now-marker."""
+    now = datetime(2026, 7, 6, 14, 0, 0)  # today, mid-afternoon UTC
+    store.upsert_commitment(
+        title="Today thing", start_at="2026-07-06 18:00:00",
+        end_at="2026-07-06 19:00:00", external_id="t:0",
+    )
+    store.upsert_commitment(
+        title="Tomorrow mtg", start_at="2026-07-07 15:00:00",
+        end_at="2026-07-07 16:00:00", external_id="t:1",
+    )
+    shape = build_day_shape(store, now=now, settings=UTC, day_offset=1)
+    assert shape.date == "2026-07-07"
+    # A future day is a preview: no "you are here" marker, only tomorrow's own
+    # commitment is drawn, and nothing is dimmed as past.
+    assert shape.now_fraction is None
+    assert [s.title for s in shape.segments if s.kind == "commitment"] == ["Tomorrow mtg"]
+    assert all(s.state != "past" for s in shape.segments)
+
+
+def test_tomorrow_opens_the_whole_day_for_fitting(store):
+    """Late today leaves little forward gap; tomorrow opens the whole waking band."""
+    now = datetime(2026, 7, 6, 21, 30, 0)  # late — today is nearly over
+    store.add_todo("Write report", estimate_minutes=30, priority=1)
+    today = build_day_shape(store, now=now, settings=UTC, day_offset=0)
+    tomorrow = build_day_shape(store, now=now, settings=UTC, day_offset=1)
+    assert tomorrow.free_minutes > today.free_minutes
+    assert tomorrow.fitted_count >= 1  # the whole day is forward, so it fits
+
+
 # --- Render ------------------------------------------------------------------
 
 
@@ -331,6 +364,22 @@ def test_day_endpoint_is_token_guarded(store, noon):
     assert any(s["kind"] == "commitment" for s in body["segments"])
 
 
+def test_day_endpoint_offset_selects_tomorrow(store):
+    """GET /day?offset=1 is the next local day; only today/tomorrow are allowed."""
+    app = create_app(store=store, settings=UTC)
+    with TestClient(app) as c:
+        h = {"X-Prefrontal-Token": SECRET}
+        today = c.get("/day", headers=h).json()
+        tomorrow = c.get("/day?offset=1", headers=h).json()
+        # ISO dates sort chronologically; tomorrow is the day after today.
+        assert tomorrow["date"] > today["date"]
+        assert tomorrow["now_fraction"] is None  # a future day draws no now-marker
+        assert tomorrow["day_offset"] == 1
+        assert tomorrow["text"].startswith("# Tomorrow —")  # header names the day
+        # The switch only offers today/tomorrow, so anything past that is rejected.
+        assert c.get("/day?offset=2", headers=h).status_code == 422
+
+
 def test_day_board_page_serves(store):
     """GET /day/board serves the self-contained timeline shell (no auth needed)."""
     app = create_app(store=store, settings=UTC)
@@ -339,3 +388,4 @@ def test_day_board_page_serves(store):
     assert r.status_code == 200
     assert 'id="tl"' in r.text  # the timeline container
     assert 'href="/day/board"' in r.text  # its own nav entry
+    assert 'id="d-tomorrow"' in r.text  # the Today/Tomorrow switch

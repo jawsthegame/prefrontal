@@ -17,6 +17,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     Request,
     status,
 )
@@ -1791,21 +1792,27 @@ def build_router(services: RouterServices) -> APIRouter:
     @router.get("/day", tags=["schedule"])
     def day_shape(
         ctx: Annotated[ScopedRequest, Depends(resolve_user)],
+        offset: Annotated[int, Query(ge=0, le=1)] = 0,
     ) -> dict[str, Any]:
-        """The visual **day-shape** — today laid out as a timeline of blocks.
+        """The visual **day-shape** — a day laid out as a timeline of blocks.
 
         Where ``/briefing`` narrates the day and ``/next`` names one action, this
-        returns the day's *shape*: today's commitments as fixed blocks, the open
+        returns the day's *shape*: the day's commitments as fixed blocks, the open
         todos fitted into the forward gaps, and the free time in between — the
         Structured / Tiimo pattern, built from the same fitting the briefing uses.
         Every block carries a non-colour kind signal (``glyph`` + ``pattern`` +
         ``kind``) so a client can draw it legibly without relying on hue (the
         CHI-2024 finding on ADHD chart-reading). Read-only, fast, and model-free —
         it powers the ``/day/board`` timeline and any glanceable day widget, so a
-        client can poll it on a timeline cadence. See
-        :func:`prefrontal.day_shape.build_day_shape`.
+        client can poll it on a timeline cadence.
+
+        ``offset`` selects the day: ``0`` (default) is today; ``1`` is tomorrow,
+        drawn as a forward-looking preview (the whole day is fittable and nothing
+        is dimmed as past). See :func:`prefrontal.day_shape.build_day_shape`.
         """
-        shape = build_day_shape(ctx.store, settings=resolved_settings)
+        shape = build_day_shape(
+            ctx.store, settings=resolved_settings, day_offset=offset
+        )
         return {**day_shape_payload(shape), "text": render_day_shape(shape)}
 
     @router.post("/webhooks/panic/check", tags=["schedule"])

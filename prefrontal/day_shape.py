@@ -150,6 +150,8 @@ class DayShape:
         committed_minutes: Total minutes held by your own (attendable) commitments.
         free_minutes: Total minutes of open time still ahead (from now on).
         fitted_count: How many open todos got a slot in the day.
+        day_offset: Which local day this is relative to today — ``0`` today, ``1``
+            tomorrow. Lets a renderer name the day and a client label the view.
     """
 
     date: str
@@ -165,6 +167,7 @@ class DayShape:
     committed_minutes: float = 0.0
     free_minutes: float = 0.0
     fitted_count: int = 0
+    day_offset: int = 0
 
 
 def _hhmm_parts(hhmm: str) -> tuple[int, int]:
@@ -204,7 +207,11 @@ def _commitment_end(c: dict[str, Any]) -> datetime:
 
 
 def build_day_shape(
-    store: Any, now: datetime | None = None, *, settings: Any | None = None
+    store: Any,
+    now: datetime | None = None,
+    *,
+    settings: Any | None = None,
+    day_offset: int = 0,
 ) -> DayShape:
     """Assemble the visual day-shape from memory (deterministic, model-free).
 
@@ -221,6 +228,10 @@ def build_day_shape(
         now: Optional naive-UTC "now" (defaults to :func:`prefrontal.clock.utcnow`).
         settings: Optional resolved settings (timezone + window config). Defaults
             to :func:`prefrontal.config.get_settings`.
+        day_offset: Which local day to draw — ``0`` (default) is today; ``1`` is
+            tomorrow, and so on. A future day is drawn as a forward-looking
+            *preview*: the whole day is fittable and nothing is dimmed as past (see
+            below).
 
     Returns:
         A :class:`DayShape`.
@@ -233,6 +244,17 @@ def build_day_shape(
     tz = settings.timezone
 
     day_start, day_end = local_day_bounds(now, tz)
+    # "Tomorrow" (or further ahead): walk forward one whole local day at a time,
+    # DST-correct (each hop re-derives the bounds from the prior local midnight).
+    for _ in range(max(0, day_offset)):
+        day_start, day_end = local_day_bounds(day_end, tz)
+    if day_offset > 0:
+        # The whole day is ahead of the real clock, so anchor "now" to its start:
+        # every block then reads as upcoming (nothing dimmed as past), the entire
+        # day is available for fitting, and no "you are here" marker is drawn — a
+        # clean preview of the day rather than a live view. Everything downstream
+        # reasons from this anchored ``now``; offset 0 keeps the real clock.
+        now = day_start
     today = store.commitments_between(day_start.strftime(TS_FMT), day_end.strftime(TS_FMT))
 
     # The visual band is the local waking window (the off-zone's complement, or
@@ -433,6 +455,7 @@ def build_day_shape(
         committed_minutes=round(committed_minutes, 1),
         free_minutes=round(free_minutes, 1),
         fitted_count=fitted_count,
+        day_offset=max(0, day_offset),
     )
 
 
@@ -514,6 +537,7 @@ def day_shape_payload(shape: DayShape) -> dict[str, Any]:
         "committed_minutes": shape.committed_minutes,
         "free_minutes": shape.free_minutes,
         "fitted_count": shape.fitted_count,
+        "day_offset": shape.day_offset,
         "segments": [_segment_payload(s) for s in shape.segments],
     }
 
@@ -535,7 +559,8 @@ def render_day_shape(shape: DayShape) -> str:
     the kind, and indentation as the channels. A ``▸`` marks the block in progress;
     the past is shown plainly, not scored.
     """
-    lines = [f"# Today — {shape.date}", ""]
+    label = {0: "Today", 1: "Tomorrow"}.get(shape.day_offset, shape.date)
+    lines = [f"# {label} — {shape.date}", ""]
     if not shape.segments:
         lines.append("_Nothing scheduled and no free time in your waking hours today._")
         return "\n".join(lines).rstrip() + "\n"
