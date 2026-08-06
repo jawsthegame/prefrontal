@@ -466,6 +466,34 @@ struct AvailableHours: Codable {
     }
 }
 
+// MARK: - Domain hours (per-life-domain windows)
+
+/// The user's optional per-life-domain time-of-day windows. Mirrors the server's
+/// `GET/POST /schedule/domain-windows` shape — see the contract fixture in
+/// `tests/contracts/domain_windows.*` and the drift guard in
+/// `tests/test_contract_domain_windows.py`. Keep `Domain`'s fields in lockstep
+/// with the Pydantic `DomainWindow` and the web dashboard's `settings.html`.
+/// Reuses `AvailableHours.date`/`hhmm` for the picker ↔ `"HH:MM"` conversion.
+struct DomainWindows: Codable {
+    /// Life-domain key (`shop`…`personal`) → that domain's window.
+    var domains: [String: Domain]
+
+    struct Domain: Codable {
+        /// Whether this domain has an explicit window (`false` inherits the default).
+        var configured: Bool
+        var start: String   // local "HH:MM" (24-hour)
+        var end: String     // local "HH:MM"; must be after `start` when configured
+    }
+
+    /// Domain keys in display order, matching the server's `FOCUS_DOMAINS`.
+    static let order = ["shop", "work", "home", "kids", "personal"]
+    private static let labels = [
+        "shop": "Shop", "work": "Work", "home": "Home",
+        "kids": "Kids", "personal": "Personal",
+    ]
+    static func label(_ key: String) -> String { labels[key] ?? key.capitalized }
+}
+
 // MARK: - Briefing
 
 struct Briefing: Codable {

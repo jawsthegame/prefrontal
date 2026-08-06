@@ -1,0 +1,9 @@
+{
+  "domains": {
+    "shop": {"configured": true, "start": "09:00", "end": "20:00"},
+    "work": {"configured": true, "start": "09:00", "end": "17:00"},
+    "home": {"configured": false, "start": "06:00", "end": "22:00"},
+    "kids": {"configured": true, "start": "15:00", "end": "20:00"},
+    "personal": {"configured": true, "start": "18:00", "end": "22:00"}
+  }
+}

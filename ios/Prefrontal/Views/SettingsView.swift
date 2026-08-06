@@ -64,6 +64,7 @@ struct SettingsView: View {
                 FeaturesSection()
                 VacationSection()
                 AvailableHoursSection()
+                DomainWindowsSection()
                 AppLockSection()
                 LocationSection()
                 diagnostics
@@ -294,6 +295,98 @@ struct AvailableHoursSection: View {
     }
 
     private func apply(_ h: AvailableHours) { days = h.days }
+}
+
+/// Optional per-life-domain "domain hours" — a todo tagged to a domain (work,
+/// home, kids…) is only *suggested* inside that domain's window (the work/life
+/// guardrail), configurable here. Loads `/schedule/domain-windows`, renders a
+/// toggle + two time pickers per domain, and writes each edited domain back (a
+/// partial POST the server merges). An off (unconfigured) domain inherits the
+/// user's default waking hours. Reuses `AvailableHours`' picker ↔ HH:MM helpers.
+struct DomainWindowsSection: View {
+    @State private var domains: [String: DomainWindows.Domain] = [:]
+    @State private var loaded = false
+    @State private var status: String?
+
+    var body: some View {
+        Section("Domain hours") {
+            if !loaded {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading…").font(.footnote).foregroundStyle(Brand.muted)
+                }
+            } else {
+                ForEach(DomainWindows.order, id: \.self) { key in
+                    domainRow(key)
+                }
+                Text("Optional hours per life domain. A todo tagged to a domain is only suggested inside its window — so a work task isn't offered at 9pm. Off = that domain uses your default waking hours.")
+                    .font(.caption).foregroundStyle(Brand.muted)
+                if let status {
+                    Text(status).font(.caption).foregroundStyle(Brand.danger)
+                }
+            }
+        }
+        .task { if !loaded { await load() } }
+    }
+
+    @ViewBuilder private func domainRow(_ key: String) -> some View {
+        if let dw = domains[key] {
+            HStack(spacing: 10) {
+                Text(DomainWindows.label(key))
+                    .font(.subheadline).frame(width: 68, alignment: .leading)
+                Spacer(minLength: 0)
+                if dw.configured {
+                    DatePicker("", selection: timeBinding(key, \.start),
+                               displayedComponents: .hourAndMinute).labelsHidden()
+                    Text("–").foregroundStyle(Brand.muted)
+                    DatePicker("", selection: timeBinding(key, \.end),
+                               displayedComponents: .hourAndMinute).labelsHidden()
+                } else {
+                    Text("Default").font(.footnote).foregroundStyle(Brand.muted)
+                }
+                Toggle("", isOn: configuredBinding(key)).labelsHidden()
+            }
+        }
+    }
+
+    private func configuredBinding(_ key: String) -> Binding<Bool> {
+        Binding(
+            get: { domains[key]?.configured ?? false },
+            set: { on in domains[key]?.configured = on; Task { await save(key) } }
+        )
+    }
+
+    /// A `Date` binding over a domain's `"HH:MM"` string field, for the picker.
+    private func timeBinding(_ key: String, _ field: WritableKeyPath<DomainWindows.Domain, String>) -> Binding<Date> {
+        Binding(
+            get: { AvailableHours.date(from: domains[key]?[keyPath: field] ?? "09:00") },
+            set: { d in domains[key]?[keyPath: field] = AvailableHours.hhmm(from: d); Task { await save(key) } }
+        )
+    }
+
+    private func load() async {
+        do { apply(try await withAPI { try await $0.domainWindows() }) }
+        catch { status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+        loaded = true
+    }
+
+    private func save(_ key: String) async {
+        guard let dw = domains[key] else { return }
+        // Both bounds are zero-padded HH:MM, so a string compare is chronological.
+        // The server enforces this too (422); catching it here avoids a round-trip.
+        if dw.configured && dw.start >= dw.end {
+            status = "\(DomainWindows.label(key)): end must be after start"
+            return
+        }
+        status = nil
+        do { apply(try await withAPI { try await $0.setDomainWindows([key: dw]) }) }
+        catch {
+            status = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            await load()  // resync the controls to what's actually stored
+        }
+    }
+
+    private func apply(_ w: DomainWindows) { domains = w.domains }
 }
 
 /// Location-permission UX for the geofence/visit auto-logging (#566). Owns the
