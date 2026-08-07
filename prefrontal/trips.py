@@ -538,9 +538,9 @@ def suggest_trip_labeling(
 def trip_route(
     trip: dict[str, Any],
     *,
+    waypoints: list[dict[str, Any]],
     places: list[dict[str, Any]] | None = None,
     radius_m: float = DEFAULT_PLACE_MATCH_RADIUS_M,
-    waypoints: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """A completed trip's start, destination, and stops — the geography for labeling.
 
@@ -549,16 +549,21 @@ def trip_route(
     never pre-named ("oh, that was the loop to the far side of town"):
 
     - ``start``: the home fix the loop opened from (``depart_lat``/``lon`` +
-      ``departed_at``), or ``None`` if the trip opened without a fix.
+      ``departed_at``), or ``None`` if the trip opened without a fix — a client
+      should not imply "Home" in that case.
     - ``stops``: the dwell points in chronological order, each snapped to a curated
       place *name* when one is within ``radius_m`` (else ``place`` is ``None`` and
-      the client still has the coordinate to drop on a map).
-    - ``destination``: the farthest-from-home stop — the trip's real endpoint — or
-      ``None`` for a quick out-and-back that never dwelt anywhere.
+      the client still has the coordinate to drop on a map). Exactly one stop (the
+      farthest from home) is flagged ``is_destination`` so a client can emphasise it
+      without re-deriving the max or comparing timestamps.
+    - ``destination``: that same farthest-from-home stop (the trip's real endpoint),
+      or ``None`` for a quick out-and-back that never dwelt anywhere.
 
-    Every point is ``{lat, lon, distance_m, at, place}``. Pure and offline (no
-    network reverse-geocode) and prefetch-friendly: pass ``places``/``waypoints`` to
-    reuse reads across a batch of trips (the ``/trips`` list annotates many at once).
+    Every point is ``{lat, lon, distance_m, at, place, is_destination}``. ``start``
+    and ``destination`` may each be ``None`` (see above). ``waypoints`` is required —
+    the caller has already read them (shared with the place-match suggestion), and
+    defaulting would silently yield an empty route if forgotten. Pure and offline
+    (no network reverse-geocode) and prefetch-friendly.
     """
     def _point(
         lat: float | None,
@@ -578,6 +583,7 @@ def trip_route(
             "distance_m": round(distance_m) if distance_m is not None else None,
             "at": at,
             "place": place,
+            "is_destination": False,
         }
 
     start = None
@@ -588,10 +594,15 @@ def trip_route(
 
     stops = [
         _point(w.get("lat"), w.get("lon"), distance_m=w.get("distance_m"), at=w.get("arrived_at"))
-        for w in (waypoints or [])
+        for w in waypoints
         if w.get("lat") is not None and w.get("lon") is not None
     ]
+    # Flag the single farthest stop as the destination on the stop object itself, so
+    # ``destination`` and the matching entry in ``stops`` are the same dict — a client
+    # emphasises it by the flag, never by a fragile timestamp compare.
     destination = max(stops, key=lambda s: s["distance_m"] or 0) if stops else None
+    if destination is not None:
+        destination["is_destination"] = True
     return {"start": start, "destination": destination, "stops": stops}
 
 

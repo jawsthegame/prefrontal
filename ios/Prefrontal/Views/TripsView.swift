@@ -166,22 +166,20 @@ struct TripRouteView: View {
 
     var body: some View {
         FlowRow(spacing: 6) {
-            segment(text: startLabel, url: route.start?.mapURL, emphasized: false)
-            ForEach(Array(route.stops.enumerated()), id: \.offset) { _, stop in
-                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(Brand.muted)
-                segment(text: stop.label, url: stop.mapURL, emphasized: isDestination(stop))
+            // Only lead with a start when the loop opened from a known fix — a nil
+            // start must not be implied as "Home".
+            if let start = route.start {
+                segment(text: start.place?.isEmpty == false ? start.place! : "Home",
+                        url: start.mapURL, emphasized: false)
+            }
+            ForEach(Array(route.stops.enumerated()), id: \.offset) { index, stop in
+                if index > 0 || route.start != nil {
+                    Image(systemName: "arrow.right").font(.caption2)
+                        .foregroundStyle(Brand.muted).accessibilityHidden(true)
+                }
+                segment(text: stop.label, url: stop.mapURL, emphasized: stop.isDestination == true)
             }
         }
-    }
-
-    private var startLabel: String {
-        if let place = route.start?.place, !place.isEmpty { return place }
-        return "Home"
-    }
-
-    private func isDestination(_ stop: TripPoint) -> Bool {
-        guard let destAt = route.destination?.at else { return false }
-        return stop.at == destAt
     }
 
     @ViewBuilder

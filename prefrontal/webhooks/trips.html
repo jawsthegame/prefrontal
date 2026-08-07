@@ -334,20 +334,24 @@ function fileForm(t, sg) {
 // curated place shows its name; otherwise its distance-from-home, linked to a map
 // pin so you can still place it. Nothing renders for a trip that never dwelt
 // anywhere (a straight out-and-back with no stops).
-function routeSeg(p, isDest) {
+function routeSeg(p) {
   const txt = p.place ? esc(p.place) : (p.distance_m != null ? km(p.distance_m) + " out" : "a stop");
   const inner = (p.lat != null && p.lon != null)
-    ? `<a href="https://www.google.com/maps?q=${p.lat},${p.lon}" target="_blank" rel="noopener">${txt}</a>`
+    ? `<a href="https://www.google.com/maps?q=${p.lat},${p.lon}" target="_blank" rel="noopener noreferrer">${txt}</a>`
     : txt;
-  return isDest ? `<b>${inner}</b>` : inner;
+  // The server flags exactly one stop as the destination — emphasise that, never a
+  // timestamp match (two stops can share a coarse timestamp).
+  return p.is_destination ? `<b>${inner}</b>` : inner;
 }
 function routeLine(t) {
   const r = t.route;
   if (!r || !(r.stops || []).length) return "";
-  const destAt = r.destination && r.destination.at;
-  const start = r.start && r.start.place ? esc(r.start.place) : "Home";
-  const chain = [start, ...r.stops.map((s) => routeSeg(s, !!destAt && s.at === destAt))]
-    .join(' <span class="arrow" aria-hidden="true">→</span> ');
+  // Only lead with a start when the loop opened from a known fix — a null start
+  // must not be implied as "Home".
+  const parts = [];
+  if (r.start) parts.push(r.start.place ? esc(r.start.place) : "Home");
+  parts.push(...r.stops.map(routeSeg));
+  const chain = parts.join(' <span class="arrow" aria-hidden="true">→</span> ');
   return `<div class="route" aria-label="Where this trip went">🧭 ${chain}</div>`;
 }
 

@@ -82,10 +82,14 @@ struct TripPoint: Codable {
     let distanceM: Double?
     let at: String?
     let place: String?
+    /// Set by the server on the single farthest-from-home stop (the destination),
+    /// so the UI emphasises it by flag rather than a fragile timestamp compare.
+    let isDestination: Bool?
 
     enum CodingKeys: String, CodingKey {
         case lat, lon, at, place
         case distanceM = "distance_m"
+        case isDestination = "is_destination"
     }
 
     /// A short human label: the matched place name, else the distance from home.

@@ -353,9 +353,12 @@ def build_router(services: RouterServices) -> APIRouter:
         ``suggestion`` (``{place, label, domain, distance_m}`` or ``null``) when one
         of its stops reverse-matches a curated place, so the label form can pre-fill
         it. Each also carries a ``route`` (``{start, destination, stops}``, each point
-        ``{lat, lon, distance_m, at, place}``) — the raw geography of the loop so you
-        can *see where you went* (start, the farthest stop, and any stops in between)
-        and label it even when nothing matched a curated place. ``categories`` is the
+        ``{lat, lon, distance_m, at, place, is_destination}``) — the raw geography of
+        the loop so you can *see where you went* (start, the farthest stop, and any
+        stops in between) and label it even when nothing matched a curated place.
+        ``start`` is ``null`` when the trip opened without a fix and ``destination``
+        is ``null`` when it never dwelt anywhere; the farthest stop is flagged
+        ``is_destination``. ``categories`` is the
         suggested activity vocabulary; ``domains`` the life-sphere vocabulary
         (shop/work/home/kids/personal) the focus-balance rollup buckets time-out by —
         both for the label form.

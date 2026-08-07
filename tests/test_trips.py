@@ -317,14 +317,18 @@ def test_trip_route_start_stops_and_farthest_destination(store):
         store.get_trip(tid), places=store.places(), waypoints=store.trip_waypoints(tid)
     )
     assert route["start"] == {
-        "lat": HOME[0], "lon": HOME[1], "distance_m": 0, "at": _ts(0), "place": None,
+        "lat": HOME[0], "lon": HOME[1], "distance_m": 0, "at": _ts(0),
+        "place": None, "is_destination": False,
     }
     # Chronological stops; only the curated one carries a place name.
     assert [s["distance_m"] for s in route["stops"]] == [7000, 11000]
     assert route["stops"][0]["place"] is None
     assert route["stops"][1]["place"] == "costco"
-    # Destination is the farthest stop, not the last-visited one.
-    assert route["destination"]["distance_m"] == 11000
+    # Exactly the farthest stop is flagged the destination (and is the same object).
+    assert route["stops"][0]["is_destination"] is False
+    assert route["stops"][1]["is_destination"] is True
+    assert route["destination"] is route["stops"][1]
+    assert route["destination"]["distance_m"] == 11000  # farthest, not last-visited
     assert route["destination"]["place"] == "costco"
 
 
@@ -336,6 +340,14 @@ def test_trip_route_no_stops_has_start_but_no_destination(store):
     assert route["start"]["place"] is None and route["start"]["lat"] == HOME[0]
     assert route["stops"] == []
     assert route["destination"] is None
+
+
+def test_trip_route_null_start_when_no_departure_fix(store):
+    """A trip opened without a home fix has a null start (client must not say Home)."""
+    tid = store.open_trip(departed_at=_ts(0))  # no depart_lat/lon
+    store.close_trip(tid)
+    route = trip_route(store.get_trip(tid), places=store.places(), waypoints=[])
+    assert route["start"] is None
 
 
 def test_trip_label_prompt_leads_with_suggestion():
@@ -663,6 +675,8 @@ def test_trips_unlabeled_carries_route(client, store):
     assert route["start"]["lat"] == HOME[0]
     assert [s["distance_m"] for s in route["stops"]] == [55, 7000]
     assert route["destination"]["place"] == "costco"
+    # The farthest stop is flagged, not the nearer one.
+    assert [s["is_destination"] for s in route["stops"]] == [False, True]
 
 
 def test_location_endpoint_dormant_without_home(client):
