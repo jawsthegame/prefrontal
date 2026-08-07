@@ -107,6 +107,12 @@
     background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .filing .err { color: var(--danger); font-size: 12px; margin-top: 5px; }
   .hint { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
+  .route { font-size: 13px; color: var(--muted); margin: 2px 0 8px; line-height: 1.7; }
+  .route a { color: var(--accent); text-decoration: none; }
+  .route a:hover { text-decoration: underline; }
+  .route b { color: var(--fg); font-weight: 650; }
+  .route b a { color: var(--fg); }
+  .route .arrow { margin: 0 3px; opacity: .55; }
 
   .active-trip { display: flex; align-items: center; gap: 12px; }
   .active-trip .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--warn);
@@ -323,6 +329,28 @@ function fileForm(t, sg) {
   </div>`;
 }
 
+// A compact "where did I go" line for a trip being labeled: Home → each stop, in
+// order, with the farthest (the real destination) bolded. A stop that matched a
+// curated place shows its name; otherwise its distance-from-home, linked to a map
+// pin so you can still place it. Nothing renders for a trip that never dwelt
+// anywhere (a straight out-and-back with no stops).
+function routeSeg(p, isDest) {
+  const txt = p.place ? esc(p.place) : (p.distance_m != null ? km(p.distance_m) + " out" : "a stop");
+  const inner = (p.lat != null && p.lon != null)
+    ? `<a href="https://www.google.com/maps?q=${p.lat},${p.lon}" target="_blank" rel="noopener">${txt}</a>`
+    : txt;
+  return isDest ? `<b>${inner}</b>` : inner;
+}
+function routeLine(t) {
+  const r = t.route;
+  if (!r || !(r.stops || []).length) return "";
+  const destAt = r.destination && r.destination.at;
+  const start = r.start && r.start.place ? esc(r.start.place) : "Home";
+  const chain = [start, ...r.stops.map((s) => routeSeg(s, !!destAt && s.at === destAt))]
+    .join(' <span class="arrow" aria-hidden="true">→</span> ');
+  return `<div class="route" aria-label="Where this trip went">🧭 ${chain}</div>`;
+}
+
 function tripRow(t, fileable) {
   const w = fmtWhen(t.departed_at);
   const dur = durationOf(t);
@@ -350,9 +378,10 @@ function tripRow(t, fileable) {
       : `<div class="hint">Looks like ${esc(sg.label)}${dom}.</div>`;
   }
   const filing = fileable ? fileForm(t, sg) : "";
+  const route = fileable ? routeLine(t) : "";
   return `<div class="trip">
     <div class="when"><b>${esc(w.day)}</b>${esc(w.time)}</div>
-    <div class="main">${name}${sugg}<div class="tags">${tags.join("")}</div>${refl}${filing}</div>
+    <div class="main">${name}${sugg}${route}<div class="tags">${tags.join("")}</div>${refl}${filing}</div>
   </div>`;
 }
 

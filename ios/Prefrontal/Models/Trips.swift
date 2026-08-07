@@ -23,9 +23,10 @@ struct Trip: Codable, Identifiable {
     let reflectionOutcome: String?
     let elapsedMinutes: Double?
     let suggestion: TripSuggestion?
+    let route: TripRoute?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, label, category, domain, reflection, suggestion
+        case id, status, label, category, domain, reflection, suggestion, route
         case departedAt = "departed_at"
         case returnedAt = "returned_at"
         case maxDistanceM = "max_distance_m"
@@ -71,6 +72,47 @@ struct TripSuggestion: Codable {
         case place, label, domain
         case distanceM = "distance_m"
     }
+}
+
+/// One point on a trip's route: a coordinate, its distance from home (metres),
+/// when the phone was there, and a curated place name if the stop matched one.
+struct TripPoint: Codable {
+    let lat: Double?
+    let lon: Double?
+    let distanceM: Double?
+    let at: String?
+    let place: String?
+
+    enum CodingKeys: String, CodingKey {
+        case lat, lon, at, place
+        case distanceM = "distance_m"
+    }
+
+    /// A short human label: the matched place name, else the distance from home.
+    var label: String {
+        if let p = place, !p.isEmpty { return p }
+        guard let m = distanceM, m > 0 else { return "a stop" }
+        return m >= 1000 ? String(format: "%.1f km out", m / 1000) : "\(Int(m.rounded())) m out"
+    }
+
+    /// An Apple Maps URL for the coordinate, or nil when it has none.
+    var mapURL: URL? {
+        guard let lat, let lon else { return nil }
+        return URL(string: "http://maps.apple.com/?ll=\(lat),\(lon)&q=\(lat),\(lon)")
+    }
+}
+
+/// A completed trip's geography for labeling: where it started (home), the stops
+/// in order, and the farthest-from-home stop (the real destination). Present only
+/// on unlabeled trips in `GET /trips` — the raw route so you can *see where you
+/// went* and name a trip even when nothing matched a curated place.
+struct TripRoute: Codable {
+    let start: TripPoint?
+    let destination: TripPoint?
+    let stops: [TripPoint]
+
+    /// True when there's a route worth drawing (at least one dwell stop).
+    var hasStops: Bool { !stops.isEmpty }
 }
 
 /// The `GET /trips` snapshot: the open trip, recent history, the completed trips

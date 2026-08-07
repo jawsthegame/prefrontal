@@ -535,6 +535,66 @@ def suggest_trip_labeling(
     return None
 
 
+def trip_route(
+    trip: dict[str, Any],
+    *,
+    places: list[dict[str, Any]] | None = None,
+    radius_m: float = DEFAULT_PLACE_MATCH_RADIUS_M,
+    waypoints: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """A completed trip's start, destination, and stops — the geography for labeling.
+
+    Where :func:`suggest_trip_labeling` only fires when a stop lands on a *curated*
+    place, this always returns the raw route so a person can recognise a trip they
+    never pre-named ("oh, that was the loop to the far side of town"):
+
+    - ``start``: the home fix the loop opened from (``depart_lat``/``lon`` +
+      ``departed_at``), or ``None`` if the trip opened without a fix.
+    - ``stops``: the dwell points in chronological order, each snapped to a curated
+      place *name* when one is within ``radius_m`` (else ``place`` is ``None`` and
+      the client still has the coordinate to drop on a map).
+    - ``destination``: the farthest-from-home stop — the trip's real endpoint — or
+      ``None`` for a quick out-and-back that never dwelt anywhere.
+
+    Every point is ``{lat, lon, distance_m, at, place}``. Pure and offline (no
+    network reverse-geocode) and prefetch-friendly: pass ``places``/``waypoints`` to
+    reuse reads across a batch of trips (the ``/trips`` list annotates many at once).
+    """
+    def _point(
+        lat: float | None,
+        lon: float | None,
+        *,
+        distance_m: float | None = None,
+        at: str | None = None,
+    ) -> dict[str, Any]:
+        place: str | None = None
+        if places and lat is not None and lon is not None:
+            match = nearest_place(places, lat, lon, radius_m=radius_m)
+            if match is not None:
+                place = match[0].get("name") or match[0].get("label")
+        return {
+            "lat": lat,
+            "lon": lon,
+            "distance_m": round(distance_m) if distance_m is not None else None,
+            "at": at,
+            "place": place,
+        }
+
+    start = None
+    if trip.get("depart_lat") is not None and trip.get("depart_lon") is not None:
+        start = _point(
+            trip["depart_lat"], trip["depart_lon"], distance_m=0, at=trip.get("departed_at")
+        )
+
+    stops = [
+        _point(w.get("lat"), w.get("lon"), distance_m=w.get("distance_m"), at=w.get("arrived_at"))
+        for w in (waypoints or [])
+        if w.get("lat") is not None and w.get("lon") is not None
+    ]
+    destination = max(stops, key=lambda s: s["distance_m"] or 0) if stops else None
+    return {"start": start, "destination": destination, "stops": stops}
+
+
 def trip_label_prompt(
     trip: dict[str, Any], *, suggestion: dict[str, Any] | None = None
 ) -> str:
